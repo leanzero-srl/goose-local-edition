@@ -23,6 +23,8 @@ pub struct LiteLLMProvider {
     api_client: ApiClient,
     base_path: String,
     model: ModelConfig,
+    #[serde(skip)]
+    name: String,
 }
 
 impl LiteLLMProvider {
@@ -67,6 +69,7 @@ impl LiteLLMProvider {
             api_client,
             base_path,
             model,
+            name: Self::metadata().name,
         })
     }
 
@@ -152,6 +155,10 @@ impl Provider for LiteLLMProvider {
                 ConfigKey::new("LITELLM_TIMEOUT", false, false, Some("600")),
             ],
         )
+    }
+
+    fn get_name(&self) -> &str {
+        &self.name
     }
 
     fn get_model_config(&self) -> ModelConfig {

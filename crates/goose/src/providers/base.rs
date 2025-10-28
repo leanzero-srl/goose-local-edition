@@ -325,6 +325,9 @@ pub trait Provider: Send + Sync {
     where
         Self: Sized;
 
+    /// Get the name of this provider instance
+    fn get_name(&self) -> &str;
+
     // Internal implementation of complete, used by complete_fast and complete
     // Providers should override this to implement their actual completion logic
     async fn complete_with_model(

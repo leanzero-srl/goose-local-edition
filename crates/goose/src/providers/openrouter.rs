@@ -40,6 +40,8 @@ pub struct OpenRouterProvider {
     #[serde(skip)]
     api_client: ApiClient,
     model: ModelConfig,
+    #[serde(skip)]
+    name: String,
 }
 
 impl OpenRouterProvider {
@@ -57,7 +59,11 @@ impl OpenRouterProvider {
             .with_header("HTTP-Referer", "https://block.github.io/goose")?
             .with_header("X-Title", "goose")?;
 
-        Ok(Self { api_client, model })
+        Ok(Self {
+            api_client,
+            model,
+            name: Self::metadata().name,
+        })
     }
 
     async fn post(&self, payload: &Value) -> Result<Value, ProviderError> {
@@ -240,6 +246,10 @@ impl Provider for OpenRouterProvider {
                 ),
             ],
         )
+    }
+
+    fn get_name(&self) -> &str {
+        &self.name
     }
 
     fn get_model_config(&self) -> ModelConfig {
