@@ -382,6 +382,25 @@
         }
       }
     },
+    "/config/check_provider": {
+      "post": {
+        "tags": [
+          "super::routes::config_management"
+        ],
+        "operationId": "check_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
     "/config/custom-providers": {
       "post": {
         "tags": [
@@ -838,6 +857,25 @@
             "description": "Internal server error"
           }
         }
+      }
+    },
+    "/config/set_provider": {
+      "post": {
+        "tags": [
+          "super::routes::config_management"
+        ],
+        "operationId": "set_config_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
       }
     },
     "/config/upsert": {
@@ -2148,6 +2186,17 @@
             "nullable": true
           },
           "session_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckProviderRequest": {
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "provider": {
             "type": "string"
           }
         }
@@ -4356,6 +4405,21 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "SetProviderRequest": {
+        "type": "object",
+        "required": [
+          "provider",
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
           }
         }
       },
