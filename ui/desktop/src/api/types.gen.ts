@@ -969,7 +969,9 @@ export type ToolPermission = {
 
 export type ToolRequest = {
     id: string;
-    thoughtSignature?: string | null;
+    metadata?: {
+        [key: string]: unknown;
+    };
     toolCall: {
         [key: string]: unknown;
     };
@@ -977,6 +979,9 @@ export type ToolRequest = {
 
 export type ToolResponse = {
     id: string;
+    metadata?: {
+        [key: string]: unknown;
+    };
     toolResult: {
         [key: string]: unknown;
     };
