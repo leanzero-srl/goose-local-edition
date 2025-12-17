@@ -62,8 +62,6 @@ use tracing::{debug, error, info, instrument, warn};
 
 const DEFAULT_MAX_TURNS: u32 = 1000;
 const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
-pub const MANUAL_COMPACT_TRIGGERS: &[&str] =
-    &["Please compact this conversation", "/compact", "/summarize"];
 
 /// Context needed for the reply function
 pub struct ReplyContext {
@@ -777,50 +775,70 @@ impl Agent {
         }
 
         let message_text = user_message.as_concat_text();
-        let is_manual_compact = MANUAL_COMPACT_TRIGGERS.contains(&message_text.trim());
 
-        let slash_command_recipe = if message_text.trim().starts_with('/') {
+        // Track custom slash command usage (don't track command name for privacy)
+        if message_text.trim().starts_with('/') {
             let command = message_text.split_whitespace().next();
-
-            // Check if it's a builtin command first
-            let is_builtin = command
-                .map(|cmd| MANUAL_COMPACT_TRIGGERS.contains(&cmd))
-                .unwrap_or(false);
-
-            if is_builtin {
-                None
-            } else {
-                // Try to resolve as recipe command
-                let recipe = command.and_then(crate::slash_commands::resolve_slash_command);
-
-                // Track non-builtin slash command usage (don't track command name for privacy)
-                if recipe.is_some() {
+            if let Some(cmd) = command {
+                if crate::slash_commands::get_recipe_for_command(cmd).is_some() {
                     crate::posthog::emit_custom_slash_command_used();
                 }
-
-                recipe
             }
-        } else {
-            None
-        };
+        }
 
-        if let Some(recipe) = slash_command_recipe {
-            let prompt = [recipe.instructions.as_deref(), recipe.prompt.as_deref()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let prompt_message = Message::user()
-                .with_text(prompt)
-                .with_visibility(false, true);
-            SessionManager::add_message(&session_config.id, &prompt_message).await?;
-            SessionManager::add_message(
-                &session_config.id,
-                &user_message.with_visibility(true, false),
-            )
-            .await?;
-        } else {
-            SessionManager::add_message(&session_config.id, &user_message).await?;
+        let command_result = self
+            .execute_command(&message_text, &session_config.id)
+            .await;
+
+        match command_result {
+            Some(response) if response.role == rmcp::model::Role::Assistant => {
+                SessionManager::add_message(
+                    &session_config.id,
+                    &user_message.clone().with_visibility(true, false),
+                )
+                .await?;
+                SessionManager::add_message(
+                    &session_config.id,
+                    &response.clone().with_visibility(true, false),
+                )
+                .await?;
+
+                // Check if this was a command that modifies conversation history
+                let modifies_history = crate::agents::execute_commands::COMPACT_TRIGGERS
+                    .contains(&message_text.trim())
+                    || message_text.trim() == "/clear";
+
+                return Ok(Box::pin(async_stream::try_stream! {
+                    yield AgentEvent::Message(user_message);
+                    yield AgentEvent::Message(response);
+
+                    // After commands that modify history, notify UI that history was replaced
+                    if modifies_history {
+                        let updated_session = SessionManager::get_session(&session_config.id, true)
+                            .await
+                            .map_err(|e| anyhow!("Failed to fetch updated session: {}", e))?;
+                        let updated_conversation = updated_session
+                            .conversation
+                            .ok_or_else(|| anyhow!("Session has no conversation after history modification"))?;
+                        yield AgentEvent::HistoryReplaced(updated_conversation);
+                    }
+                }));
+            }
+            Some(resolved_message) => {
+                SessionManager::add_message(
+                    &session_config.id,
+                    &user_message.clone().with_visibility(true, false),
+                )
+                .await?;
+                SessionManager::add_message(
+                    &session_config.id,
+                    &resolved_message.clone().with_visibility(false, true),
+                )
+                .await?;
+            }
+            None => {
+                SessionManager::add_message(&session_config.id, &user_message).await?;
+            }
         }
         let session = SessionManager::get_session(&session_config.id, true).await?;
         let conversation = session
@@ -828,40 +846,37 @@ impl Agent {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Session {} has no conversation", session_config.id))?;
 
-        let needs_auto_compact = !is_manual_compact
-            && check_if_compaction_needed(
-                self.provider().await?.as_ref(),
-                &conversation,
-                None,
-                &session,
-            )
-            .await?;
+        let needs_auto_compact = check_if_compaction_needed(
+            self.provider().await?.as_ref(),
+            &conversation,
+            None,
+            &session,
+        )
+        .await?;
 
         let conversation_to_compact = conversation.clone();
 
         Ok(Box::pin(async_stream::try_stream! {
-            let final_conversation = if !needs_auto_compact && !is_manual_compact {
+            let final_conversation = if !needs_auto_compact {
                 conversation
             } else {
-                if !is_manual_compact {
-                    let config = crate::config::Config::global();
-                    let threshold = config
-                        .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
-                    let threshold_percentage = (threshold * 100.0) as u32;
+                let config = Config::global();
+                let threshold = config
+                    .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
+                    .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
+                let threshold_percentage = (threshold * 100.0) as u32;
 
-                    let inline_msg = format!(
-                        "Exceeded auto-compact threshold of {}%. Performing auto-compaction...",
-                        threshold_percentage
-                    );
+                let inline_msg = format!(
+                    "Exceeded auto-compact threshold of {}%. Performing auto-compaction...",
+                    threshold_percentage
+                );
 
-                    yield AgentEvent::Message(
-                        Message::assistant().with_system_notification(
-                            SystemNotificationType::InlineMessage,
-                            inline_msg,
-                        )
-                    );
-                }
+                yield AgentEvent::Message(
+                    Message::assistant().with_system_notification(
+                        SystemNotificationType::InlineMessage,
+                        inline_msg,
+                    )
+                );
 
                 yield AgentEvent::Message(
                     Message::assistant().with_system_notification(
@@ -870,7 +885,7 @@ impl Agent {
                     )
                 );
 
-                match compact_messages(self.provider().await?.as_ref(), &conversation_to_compact, is_manual_compact).await {
+                match compact_messages(self.provider().await?.as_ref(), &conversation_to_compact, false).await {
                     Ok((compacted_conversation, summarization_usage)) => {
                         SessionManager::replace_conversation(&session_config.id, &compacted_conversation).await?;
                         Self::update_session_metrics(&session_config, &summarization_usage, true).await?;
@@ -897,11 +912,9 @@ impl Agent {
                 }
             };
 
-            if !is_manual_compact {
-                let mut reply_stream = self.reply_internal(final_conversation, session_config, session, cancel_token).await?;
-                while let Some(event) = reply_stream.next().await {
-                    yield event?;
-                }
+            let mut reply_stream = self.reply_internal(final_conversation, session_config, session, cancel_token).await?;
+            while let Some(event) = reply_stream.next().await {
+                yield event?;
             }
         }))
     }
