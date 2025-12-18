@@ -3084,6 +3084,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "chrono",
+ "clap",
  "criterion",
  "ctor",
  "dashmap",
