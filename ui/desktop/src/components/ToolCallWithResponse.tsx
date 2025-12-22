@@ -106,6 +106,21 @@ export default function ToolCallWithResponse({
             return null;
           }
         })}
+
+      {/* MCP Apps - This data will be coming from a resources/read result. */}
+      {/* TODO Hook this up */}
+      {/* {toolResponse?.toolResult &&
+        mockResourceReadResult.contents.map((content) => {
+          return (
+            <McpAppRenderer
+              resource={content}
+              key={content.uri}
+              toolInput={{ arguments: toolCall.arguments }}
+              toolResult={toolResponse.toolResult.value as unknown as ToolResult}
+              append={append}
+            />
+          );
+        })} */}
     </>
   );
 }
