@@ -275,7 +275,7 @@ const getToolName = (toolCallName: string): string => {
   if (lastIndex === -1) return toolCallName;
 
   return toolCallName.substring(lastIndex + 2);
-}
+};
 
 // Helper function to extract extension name for tooltip
 const getExtensionTooltip = (toolCallName: string): string | null => {

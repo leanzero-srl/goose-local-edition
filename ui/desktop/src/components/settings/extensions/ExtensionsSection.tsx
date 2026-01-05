@@ -38,7 +38,8 @@ export default function ExtensionsSection({
   onModalClose,
   searchTerm = '',
 }: ExtensionSectionProps) {
-  const { getExtensions, addExtension, removeExtension, extensionsList, extensionWarnings } = useConfig();
+  const { getExtensions, addExtension, removeExtension, extensionsList, extensionWarnings } =
+    useConfig();
   const [selectedExtension, setSelectedExtension] = useState<FixedExtensionEntry | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
