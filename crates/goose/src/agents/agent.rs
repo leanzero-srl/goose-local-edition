@@ -70,6 +70,7 @@ pub struct ReplyContext {
     pub toolshim_tools: Vec<Tool>,
     pub system_prompt: String,
     pub goose_mode: GooseMode,
+    pub tool_call_cut_off: usize,
     pub initial_messages: Vec<Message>,
 }
 
@@ -282,7 +283,10 @@ impl Agent {
         let mut messages = Vec::new();
         let manager = self.config.session_manager.clone();
         let mut elicitation_rx = ActionRequiredManager::global().request_rx.lock().await;
-        while let Ok(elicitation_message) = elicitation_rx.try_recv() {
+        while let Ok(mut elicitation_message) = elicitation_rx.try_recv() {
+            if elicitation_message.id.is_none() {
+                elicitation_message = elicitation_message.with_generated_id();
+            }
             if let Err(e) = manager.add_message(session_id, &elicitation_message).await {
                 warn!("Failed to save elicitation message to session: {}", e);
             }
@@ -321,6 +325,9 @@ impl Agent {
             toolshim_tools,
             system_prompt,
             goose_mode: self.config.goose_mode,
+            tool_call_cut_off: Config::global()
+                .get_param::<usize>("GOOSE_TOOL_CALL_CUTOFF")
+                .unwrap_or(10),
             initial_messages,
         })
     }
@@ -1079,6 +1086,7 @@ impl Agent {
             mut tools,
             mut toolshim_tools,
             mut system_prompt,
+            tool_call_cut_off,
             goose_mode,
             initial_messages,
         } = context;
@@ -1129,6 +1137,13 @@ impl Agent {
                     );
                     break;
                 }
+
+                let tool_pair_summarization_task = crate::context_mgmt::maybe_summarize_tool_pair(
+                    self.provider().await?,
+                    session_config.id.clone(),
+                    conversation.clone(),
+                    tool_call_cut_off,
+                );
 
                 let conversation_with_moim = super::moim::inject_moim(
                     &session_config.id,
@@ -1202,9 +1217,7 @@ impl Agent {
                                 }
 
                                 let tool_response_messages: Vec<Arc<Mutex<Message>>> = (0..num_tool_requests)
-                                    .map(|_| Arc::new(Mutex::new(Message::user().with_id(
-                                        format!("msg_{}", Uuid::new_v4())
-                                    ))))
+                                    .map(|_| Arc::new(Mutex::new(Message::user().with_generated_id())))
                                     .collect();
 
                                 let mut request_to_response_map = HashMap::new();
@@ -1526,6 +1539,36 @@ impl Agent {
                                 exit_chat = true;
                             }
                         }
+                    }
+                }
+
+                if let Ok(Some((summary_msg, tool_id))) = tool_pair_summarization_task.await {
+                    let mut updated_messages = conversation.messages().clone();
+
+                    let matching: Vec<&mut Message> = updated_messages
+                        .iter_mut()
+                        .filter(|msg| {
+                            msg.id.is_some() && msg.content.iter().any(|c| match c {
+                                MessageContent::ToolRequest(req) => req.id == tool_id,
+                                MessageContent::ToolResponse(resp) => resp.id == tool_id,
+                                _ => false,
+                            })
+                        })
+                        .collect();
+
+                    if matching.len() == 2 {
+                        for msg in matching {
+                            let id = msg.id.as_ref().unwrap();
+                            msg.metadata = msg.metadata.with_agent_invisible();
+                            SessionManager::update_message_metadata(&session_config.id, id, |metadata| {
+                                metadata.with_agent_invisible()
+                            }).await?;
+                        }
+                        conversation = Conversation::new_unvalidated(updated_messages);
+                        messages_to_add.push(summary_msg);
+                    } else {
+                        warn!("Expected a tool request/reply pair, but found {} matching messages",
+                            matching.len());
                     }
                 }
 
