@@ -189,9 +189,7 @@ const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
       setIsShareModalOpen(true);
     } catch (error) {
       console.error('Error sharing session:', error);
-      toast.error(
-        `Failed to share session: ${errorMessage(error, 'Unknown error')}`
-      );
+      toast.error(`Failed to share session: ${errorMessage(error, 'Unknown error')}`);
     } finally {
       setIsSharing(false);
     }

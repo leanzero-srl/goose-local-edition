@@ -247,12 +247,7 @@ export function registerUpdateIpcHandlers() {
       log.error('Error downloading update:', error);
       const version = githubUpdateInfo.latestVersion || lastUpdateState?.latestVersion || 'unknown';
       const method = isUsingGitHubFallback ? 'github-fallback' : 'electron-updater';
-      trackUpdateDownloadCompleted(
-        false,
-        version,
-        method,
-        errorMessage(error, 'unknown')
-      );
+      trackUpdateDownloadCompleted(false, version, method, errorMessage(error, 'unknown'));
       return {
         success: false,
         error: errorMessage(error, 'Unknown error'),

@@ -90,9 +90,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
       }
     } catch (error) {
       console.error('Error saving threshold:', error);
-      window.alert(
-        `Failed to save threshold: ${errorMessage(error, 'Unknown error')}`
-      );
+      window.alert(`Failed to save threshold: ${errorMessage(error, 'Unknown error')}`);
     } finally {
       setIsSaving(false);
     }

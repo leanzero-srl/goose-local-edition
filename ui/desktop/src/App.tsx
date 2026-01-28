@@ -418,9 +418,7 @@ export function AppInner() {
       window.electron.reactReady();
     } catch (error) {
       console.error('Error sending reactReady:', error);
-      setFatalError(
-        `React ready notification failed: ${errorMessage(error, 'Unknown error')}`
-      );
+      setFatalError(`React ready notification failed: ${errorMessage(error, 'Unknown error')}`);
     }
   }, []);
 

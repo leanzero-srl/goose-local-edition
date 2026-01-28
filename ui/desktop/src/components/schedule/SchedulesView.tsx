@@ -206,9 +206,7 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
       setSchedules(fetchedSchedules);
     } catch (error) {
       console.error('Failed to fetch schedules:', error);
-      setApiError(
-        errorMessage(error, 'An unknown error occurred while fetching schedules.')
-      );
+      setApiError(errorMessage(error, 'An unknown error occurred while fetching schedules.'));
     } finally {
       setIsLoading(false);
     }
@@ -375,8 +373,7 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
       await fetchSchedules();
     } catch (error) {
       console.error(`Failed to kill running job "${id}":`, error);
-      const errorMsg =
-        errorMessage(error, `Unknown error killing job "${id}".`);
+      const errorMsg = errorMessage(error, `Unknown error killing job "${id}".`);
       setApiError(errorMsg);
       toastError({
         title: 'Kill Job Error',
@@ -413,8 +410,7 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
       }
     } catch (error) {
       console.error(`Failed to inspect running job "${id}":`, error);
-      const errorMsg =
-        errorMessage(error, `Unknown error inspecting job "${id}".`);
+      const errorMsg = errorMessage(error, `Unknown error inspecting job "${id}".`);
       setApiError(errorMsg);
       toastError({
         title: 'Inspect Job Error',

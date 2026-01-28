@@ -1,3 +1,5 @@
+use crate::cli::StreamableHttpOptions;
+
 use super::output;
 use super::CliSession;
 use console::style;
@@ -87,7 +89,7 @@ pub struct SessionBuilderConfig {
     /// List of stdio extension commands to add
     pub extensions: Vec<String>,
     /// List of streamable HTTP extension commands to add
-    pub streamable_http_extensions: Vec<String>,
+    pub streamable_http_extensions: Vec<StreamableHttpOptions>,
     /// List of builtin extension commands to add
     pub builtins: Vec<String>,
     /// Recipe for the session
@@ -578,6 +580,7 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
     )
     .await;
 
+
     if let Err(e) = session
         .agent
         .persist_extension_state(&session_id.clone())
@@ -629,7 +632,10 @@ mod tests {
             fork: false,
             no_session: false,
             extensions: vec!["echo test".to_string()],
-            streamable_http_extensions: vec!["http://localhost:8080/mcp".to_string()],
+            streamable_http_extensions: vec![StreamableHttpOptions {
+                url: "http://localhost:8080/mcp".to_string(),
+                timeout: goose::config::DEFAULT_EXTENSION_TIMEOUT,
+            }],
             builtins: vec!["developer".to_string()],
             recipe: None,
             additional_system_prompt: Some("Test prompt".to_string()),

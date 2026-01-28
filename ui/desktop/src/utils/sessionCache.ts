@@ -58,7 +58,9 @@ export async function loadSession(sessionId: string, forceRefresh = false): Prom
 
       return session;
     } catch (error) {
-      throw new Error(`Error loading session ${sessionId}: ${errorMessage(error, 'Unknown error')}`);
+      throw new Error(
+        `Error loading session ${sessionId}: ${errorMessage(error, 'Unknown error')}`
+      );
     } finally {
       inFlightRequests.delete(sessionId);
     }

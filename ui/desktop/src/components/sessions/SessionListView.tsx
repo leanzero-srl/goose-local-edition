@@ -476,7 +476,9 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
         );
       } catch (error) {
         console.error('Error deleting session:', error);
-        toast.error(`Failed to delete session "${sessionName}": ${errorMessage(error, 'Unknown error')}`);
+        toast.error(
+          `Failed to delete session "${sessionName}": ${errorMessage(error, 'Unknown error')}`
+        );
       }
       await loadSessions();
     }, [sessionToDelete, loadSessions]);
