@@ -162,6 +162,33 @@ pub fn hide_thinking() {
     }
 }
 
+pub fn run_status_hook(status: &str) {
+    if let Ok(hook) = Config::global().get_param::<String>("GOOSE_STATUS_HOOK") {
+        let status = status.to_string();
+        std::thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            let result = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg(format!("{} {}", hook, status))
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+
+            #[cfg(not(target_os = "windows"))]
+            let result = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("{} {}", hook, status))
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+
+            let _ = result;
+        });
+    }
+}
+
 pub fn is_showing_thinking() -> bool {
     THINKING.with(|t| t.borrow().is_shown())
 }
