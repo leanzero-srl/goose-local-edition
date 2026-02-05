@@ -9,6 +9,7 @@ import {
   ToolRequestMessageContent,
   ToolResponseMessageContent,
   NotificationEvent,
+  ToolConfirmationData,
 } from '../types/message';
 import { cn, snakeToTitleCase } from '../utils';
 import { LoadingStatus } from './ui/Dot';
@@ -18,6 +19,7 @@ import MCPUIResourceRenderer from './MCPUIResourceRenderer';
 import { isUIResource } from '@mcp-ui/client';
 import { CallToolResponse, Content, EmbeddedResource } from '../api';
 import McpAppRenderer from './McpApps/McpAppRenderer';
+import ToolApprovalButtons from './ToolApprovalButtons';
 
 interface ToolGraphNode {
   tool: string;
@@ -58,6 +60,8 @@ interface ToolCallWithResponseProps {
   isStreamingMessage?: boolean;
   isPendingApproval: boolean;
   append?: (value: string) => void;
+  confirmationContent?: ToolConfirmationData;
+  isApprovalClicked?: boolean;
 }
 
 function getToolResultContent(toolResult: Record<string, unknown>): Content[] {
@@ -155,6 +159,8 @@ export default function ToolCallWithResponse({
   isStreamingMessage,
   isPendingApproval,
   append,
+  confirmationContent,
+  isApprovalClicked,
 }: ToolCallWithResponseProps) {
   // Handle both the wrapped ToolResult format and the unwrapped format
   // The server serializes ToolResult<T> as { status: "success", value: T } or { status: "error", error: string }
@@ -176,11 +182,14 @@ export default function ToolCallWithResponse({
 
   const shouldShowMcpContent = !isPendingApproval;
 
+  const showInlineApproval = isPendingApproval && confirmationContent && sessionId;
+
   return (
     <>
       <div
         className={cn(
-          'w-full text-sm font-sans rounded-lg overflow-hidden border-borderSubtle border'
+          'w-full text-sm font-sans rounded-lg overflow-hidden border',
+          showInlineApproval ? 'border-amber-500/50 bg-amber-50/5' : 'border-borderSubtle'
         )}
       >
         <ToolCallView
@@ -192,6 +201,27 @@ export default function ToolCallWithResponse({
             isStreamingMessage,
           }}
         />
+        {/* Inline approval UI */}
+        {showInlineApproval && (
+          <div className="border-t border-amber-500/30">
+            {confirmationContent.prompt && (
+              <div className="px-4 py-2 text-sm text-amber-600 dark:text-amber-400 bg-amber-50/10">
+                {confirmationContent.prompt}
+              </div>
+            )}
+            <div className="px-4 pb-2">
+              <ToolApprovalButtons
+                data={{
+                  id: confirmationContent.id,
+                  toolName: confirmationContent.toolName,
+                  prompt: confirmationContent.prompt ?? undefined,
+                  sessionId,
+                  isClicked: isApprovalClicked,
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
       {/* MCP UI — Inline */}
       {shouldShowMcpContent &&
