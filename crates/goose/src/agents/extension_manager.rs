@@ -925,6 +925,7 @@ impl ExtensionManager {
                                 input_schema: tool.input_schema,
                                 annotations: tool.annotations,
                                 output_schema: tool.output_schema,
+                                execution: tool.execution,
                                 icons: tool.icons,
                                 title: tool.title,
                                 meta: Some(rmcp::model::Meta(meta_map)),
