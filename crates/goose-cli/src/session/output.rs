@@ -6,6 +6,8 @@ use goose::conversation::message::{
     ActionRequiredData, Message, MessageContent, ToolRequest, ToolResponse,
 };
 use goose::providers::canonical::maybe_get_canonical_model;
+#[cfg(target_os = "windows")]
+use goose::subprocess::SubprocessExt;
 use goose::utils::safe_truncate;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rmcp::model::{CallToolRequestParams, JsonObject, PromptArgument};
@@ -179,6 +181,7 @@ pub fn run_status_hook(status: &str) {
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
+                .set_no_window()
                 .status();
 
             #[cfg(not(target_os = "windows"))]
