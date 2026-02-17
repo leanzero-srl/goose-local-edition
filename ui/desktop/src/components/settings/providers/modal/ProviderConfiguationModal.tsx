@@ -107,8 +107,7 @@ export default function ProviderConfigurationModal({
       Object.entries(configValues)
         .filter(
           ([_k, entry]) =>
-            !!entry.value ||
-            (entry.serverValue != null && typeof entry.serverValue === 'string')
+            !!entry.value || (entry.serverValue != null && typeof entry.serverValue === 'string')
         )
         .map(([k, entry]) => [
           k,

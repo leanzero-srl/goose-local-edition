@@ -535,10 +535,6 @@ impl ExtensionManager {
             return Ok(());
         }
 
-        // Resolve working_dir: explicit > current_dir
-        let effective_working_dir =
-            working_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
         let mut temp_dir = None;
 
         let client: Box<dyn McpClientTrait> = match &config {
@@ -576,6 +572,74 @@ impl ExtensionManager {
                     capability,
                 )
                 .await?
+            }
+            ExtensionConfig::Builtin { name, timeout, .. } => {
+                let timeout_duration = Duration::from_secs(timeout.unwrap_or(300));
+                let normalized_name = name_to_key(name);
+                let extension_fn =
+                    get_builtin_extension(normalized_name.as_str()).ok_or_else(|| {
+                        ExtensionError::ConfigError(format!("Unknown builtin extension: {}", name))
+                    })?;
+
+                if let Some(container) = container {
+                    let container_id = container.id();
+                    tracing::info!(
+                        container = %container_id,
+                        builtin = %name,
+                        "Starting builtin extension inside Docker container"
+                    );
+                    let normalized_name = name_to_key(name);
+                    let command = Command::new("docker").configure(|command| {
+                        command
+                            .arg("exec")
+                            .arg("-i")
+                            .arg(container_id)
+                            .arg("goose")
+                            .arg("mcp")
+                            .arg(&normalized_name);
+                    });
+
+                    let effective_working_dir = working_dir
+                        .clone()
+                        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+                    let capabilities = GooseMcpClientCapabilities {
+                        mcpui: self.capabilities.mcpui,
+                    };
+
+                    let client = child_process_client(
+                        command,
+                        timeout,
+                        self.provider.clone(),
+                        Some(&effective_working_dir),
+                        Some(container_id.to_string()),
+                        self.client_name.clone(),
+                        capabilities,
+                    )
+                    .await?;
+                    Box::new(client)
+                } else {
+                    // Non-containerized builtin runs in-process via duplex channels.
+                    // Working directory is passed per-request via call_tool metadata, not here.
+                    let (server_read, client_write) = tokio::io::duplex(65536);
+                    let (client_read, server_write) = tokio::io::duplex(65536);
+                    extension_fn(server_read, server_write);
+
+                    let capabilities = GooseMcpClientCapabilities {
+                        mcpui: self.capabilities.mcpui,
+                    };
+
+                    Box::new(
+                        McpClient::connect(
+                            (client_read, client_write),
+                            timeout_duration,
+                            self.provider.clone(),
+                            self.client_name.clone(),
+                            capabilities,
+                        )
+                        .await?,
+                    )
+                }
             }
             ExtensionConfig::Stdio {
                 cmd,
@@ -619,6 +683,9 @@ impl ExtensionManager {
                     })
                 };
 
+                let effective_working_dir = working_dir
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
                 let capabilities = GooseMcpClientCapabilities {
                     mcpui: self.capabilities.mcpui,
                 };
@@ -633,65 +700,6 @@ impl ExtensionManager {
                 )
                 .await?;
                 Box::new(client)
-            }
-            ExtensionConfig::Builtin { name, timeout, .. } => {
-                let timeout_duration = Duration::from_secs(timeout.unwrap_or(300));
-                let normalized_name = name_to_key(name);
-                let extension_fn =
-                    get_builtin_extension(normalized_name.as_str()).ok_or_else(|| {
-                        ExtensionError::ConfigError(format!("Unknown builtin extension: {}", name))
-                    })?;
-
-                if let Some(container) = container {
-                    let container_id = container.id();
-                    tracing::info!(
-                        container = %container_id,
-                        builtin = %name,
-                        "Starting builtin extension inside Docker container"
-                    );
-                    let normalized_name = name_to_key(name);
-                    let command = Command::new("docker").configure(|command| {
-                        command
-                            .arg("exec")
-                            .arg("-i")
-                            .arg(container_id)
-                            .arg("goose")
-                            .arg("mcp")
-                            .arg(&normalized_name);
-                    });
-
-                    let capabilities = GooseMcpClientCapabilities {
-                        mcpui: self.capabilities.mcpui,
-                    };
-                    let client = child_process_client(
-                        command,
-                        timeout,
-                        self.provider.clone(),
-                        Some(&effective_working_dir),
-                        Some(container_id.to_string()),
-                        self.client_name.clone(),
-                        capabilities,
-                    )
-                    .await?;
-                    Box::new(client)
-                } else {
-                    let (server_read, client_write) = tokio::io::duplex(65536);
-                    let (client_read, server_write) = tokio::io::duplex(65536);
-                    extension_fn(server_read, server_write);
-                    let capabilities = GooseMcpClientCapabilities {
-                        mcpui: self.capabilities.mcpui,
-                    };
-                    Box::new(
-                        McpClient::connect(
-                            (client_read, client_write),
-                            timeout_duration,
-                            self.provider.clone(),
-                            self.client_name.clone(),
-                            capabilities,
-                        )
-                        .await?,
-                    )
-                }
             }
             ExtensionConfig::Platform { name, .. } => {
                 let normalized_key = name_to_key(name);
@@ -723,6 +731,11 @@ impl ExtensionManager {
                     });
                     command.arg("python").arg(file_path.to_str().unwrap());
                 });
+
+                // Compute working_dir for InlinePython (runs as child process via uvx)
+                let effective_working_dir = working_dir
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
                 let capabilities = GooseMcpClientCapabilities {
                     mcpui: self.capabilities.mcpui,
