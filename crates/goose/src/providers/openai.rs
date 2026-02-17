@@ -228,9 +228,10 @@ impl OpenAiProvider {
         normalized.ends_with("responses") || normalized.contains("/responses")
     }
 
-    fn is_codex_gpt_5_model(model_name: &str) -> bool {
+    fn is_responses_model(model_name: &str) -> bool {
         let normalized_model = model_name.to_ascii_lowercase();
-        normalized_model.starts_with("gpt-5") && normalized_model.contains("codex")
+        (normalized_model.starts_with("gpt-5") && normalized_model.contains("codex"))
+            || normalized_model.starts_with("gpt-5.2-pro")
     }
 
     fn should_use_responses_api(model_name: &str, base_path: &str) -> bool {
@@ -246,7 +247,7 @@ impl OpenAiProvider {
             }
         }
 
-        Self::is_codex_gpt_5_model(model_name)
+        Self::is_responses_model(model_name)
     }
 
     fn map_base_path(base_path: &str, target: &str, fallback: &str) -> String {
@@ -625,10 +626,34 @@ mod tests {
     }
 
     #[test]
+    fn gpt_5_2_pro_uses_responses_when_base_path_is_default() {
+        assert!(OpenAiProvider::should_use_responses_api(
+            "gpt-5.2-pro",
+            "v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn gpt_5_2_pro_with_date_uses_responses() {
+        assert!(OpenAiProvider::should_use_responses_api(
+            "gpt-5.2-pro-2025-12-11",
+            "v1/chat/completions"
+        ));
+    }
+
+    #[test]
     fn explicit_chat_path_forces_chat_completions() {
         assert!(!OpenAiProvider::should_use_responses_api(
             "gpt-5.2-codex",
             "openai/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn gpt_4o_does_not_use_responses() {
+        assert!(!OpenAiProvider::should_use_responses_api(
+            "gpt-4o",
+            "v1/chat/completions"
         ));
     }
 
