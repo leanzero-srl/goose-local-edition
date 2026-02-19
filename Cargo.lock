@@ -4310,12 +4310,14 @@ dependencies = [
  "fs-err",
  "futures",
  "goose",
+ "goose-acp-macros",
  "goose-mcp",
  "goose-test-support",
  "http-body-util",
  "regex",
  "rmcp 0.16.0",
  "sacp",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "tempfile",
@@ -4328,6 +4330,15 @@ dependencies = [
  "url",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "goose-acp-macros"
+version = "1.24.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
