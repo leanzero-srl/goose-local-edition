@@ -172,14 +172,12 @@ export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children
   }, [setIsNavExpanded]);
 
   useEffect(() => {
-    const handleModeChange = (e: Event) =>
-      setNavigationModeState((e as CustomEvent).detail.mode);
+    const handleModeChange = (e: Event) => setNavigationModeState((e as CustomEvent).detail.mode);
     const handleStyleChange = (e: Event) =>
       setNavigationStyleState((e as CustomEvent).detail.style);
     const handlePositionChange = (e: Event) =>
       setNavigationPositionState((e as CustomEvent).detail.position);
-    const handlePrefsChange = (e: Event) =>
-      setPreferences((e as CustomEvent).detail);
+    const handlePrefsChange = (e: Event) => setPreferences((e as CustomEvent).detail);
 
     window.addEventListener('navigation-mode-changed', handleModeChange);
     window.addEventListener('navigation-style-changed', handleStyleChange);
