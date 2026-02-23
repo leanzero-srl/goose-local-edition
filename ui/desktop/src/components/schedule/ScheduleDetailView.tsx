@@ -247,7 +247,9 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
       <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-gray-900 text-text-primary p-8">
         <BackButton onClick={onNavigateBack} />
         <h1 className="text-2xl font-medium text-text-primary mt-4">Schedule Not Found</h1>
-        <p className="text-text-secondary mt-2">No schedule ID provided. Return to schedules list.</p>
+        <p className="text-text-secondary mt-2">
+          No schedule ID provided. Return to schedules list.
+        </p>
       </div>
     );
   }

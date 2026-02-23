@@ -99,7 +99,8 @@ Use {{parameter_name}} syntax for any user-provided values.`;
               </Button>
             </div>
             <p className="text-xs text-text-secondary mb-3">
-              Use <code className="bg-background-secondary px-1 rounded">{`{{parameter_name}}`}</code>{' '}
+              Use{' '}
+              <code className="bg-background-secondary px-1 rounded">{`{{parameter_name}}`}</code>{' '}
               syntax to define parameters that users can fill in
             </p>
           </div>

@@ -80,7 +80,9 @@ export default function ApiKeyTester({ onSuccess, onStartTesting }: ApiKeyTester
             <h3 className="font-medium text-text-primary text-sm sm:text-base">
               Quick Setup with API Key
             </h3>
-            <span className="text-text-secondary text-xs sm:text-sm">Auto-detect your provider</span>
+            <span className="text-text-secondary text-xs sm:text-sm">
+              Auto-detect your provider
+            </span>
           </div>
         </div>
 

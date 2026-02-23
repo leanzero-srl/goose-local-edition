@@ -345,7 +345,9 @@ export function SessionInsights() {
                     </div>
                   ))
                 ) : (
-                  <div className="text-text-secondary text-sm py-2">No recent chat sessions found.</div>
+                  <div className="text-text-secondary text-sm py-2">
+                    No recent chat sessions found.
+                  </div>
                 )}
               </div>
             </CardContent>

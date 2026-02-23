@@ -24,9 +24,7 @@ type ThemeTokens = Record<McpUiStyleVariableKey, string>;
 // Subset of keys that are the same across both themes.
 type BaseTokenKey = Extract<
   McpUiStyleVariableKey,
-  | `--font-${string}`
-  | `--border-radius-${string}`
-  | `--border-width-${string}`
+  `--font-${string}` | `--border-radius-${string}` | `--border-width-${string}`
 >;
 
 type ColorTokenKey = Exclude<McpUiStyleVariableKey, BaseTokenKey>;
@@ -143,8 +141,7 @@ const lightColorTokens: ColorTokens = {
   '--shadow-hairline': '0 0 0 1px rgba(0, 0, 0, 0.05)',
   '--shadow-sm': '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
   '--shadow-md': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)',
-  '--shadow-lg':
-    '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)',
+  '--shadow-lg': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)',
 };
 
 // ---------------------------------------------------------------------------
@@ -200,8 +197,7 @@ const darkColorTokens: ColorTokens = {
   '--shadow-hairline': '0 0 0 1px rgba(0, 0, 0, 0.2)',
   '--shadow-sm': '0 1px 2px 0 rgba(0, 0, 0, 0.2)',
   '--shadow-md': '0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2)',
-  '--shadow-lg':
-    '0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2)',
+  '--shadow-lg': '0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2)',
 };
 
 // ---------------------------------------------------------------------------

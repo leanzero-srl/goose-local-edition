@@ -494,7 +494,9 @@ const SchedulesView: React.FC<SchedulesViewProps> = ({ onClose: _onClose }) => {
                 {!isLoading && !apiError && schedules.length === 0 && (
                   <div className="flex flex-col pt-4 pb-12">
                     <CircleDotDashed className="h-5 w-5 text-text-secondary mb-3.5" />
-                    <p className="text-base text-text-secondary font-light mb-2">No schedules yet</p>
+                    <p className="text-base text-text-secondary font-light mb-2">
+                      No schedules yet
+                    </p>
                   </div>
                 )}
 

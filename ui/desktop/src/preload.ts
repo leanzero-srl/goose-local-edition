@@ -274,7 +274,12 @@ const electronAPI: ElectronAPI = {
   emit: (channel: string, ...args: unknown[]) => {
     ipcRenderer.emit(channel, ...args);
   },
-  broadcastThemeChange: (themeData: { mode: string; useSystemTheme: boolean; theme: string; tokensUpdated?: boolean }) => {
+  broadcastThemeChange: (themeData: {
+    mode: string;
+    useSystemTheme: boolean;
+    theme: string;
+    tokensUpdated?: boolean;
+  }) => {
     ipcRenderer.send('broadcast-theme-change', themeData);
   },
   openExternal: (url: string): Promise<void> => {

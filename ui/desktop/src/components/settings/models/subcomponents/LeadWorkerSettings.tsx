@@ -225,7 +225,9 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
           <div className="space-y-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className={`text-sm ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+                <label
+                  className={`text-sm ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+                >
                   Lead Model
                 </label>
                 {isLeadCustomModel && (
@@ -270,14 +272,18 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
                   disabled={!isEnabled}
                 />
               )}
-              <p className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+              <p
+                className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+              >
                 Strong model for initial planning and fallback recovery
               </p>
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className={`text-sm ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+                <label
+                  className={`text-sm ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+                >
                   Worker Model
                 </label>
                 {isWorkerCustomModel && (
@@ -324,7 +330,9 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
                   disabled={!isEnabled}
                 />
               )}
-              <p className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+              <p
+                className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+              >
                 Fast model for routine execution tasks
               </p>
             </div>
@@ -347,7 +355,9 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
                   className={`w-20 ${!isEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   disabled={!isEnabled}
                 />
-                <p className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+                <p
+                  className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+                >
                   Number of turns to use the lead model at the start
                 </p>
               </div>
@@ -367,7 +377,9 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
                   className={`w-20 ${!isEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   disabled={!isEnabled}
                 />
-                <p className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+                <p
+                  className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+                >
                   Consecutive failures before switching back to lead
                 </p>
               </div>
@@ -387,7 +399,9 @@ export function LeadWorkerSettings({ isOpen, onClose }: LeadWorkerSettingsProps)
                   className={`w-20 ${!isEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   disabled={!isEnabled}
                 />
-                <p className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}>
+                <p
+                  className={`text-xs ${!isEnabled ? 'text-text-secondary' : 'text-text-secondary'}`}
+                >
                   Turns to use lead model during fallback
                 </p>
               </div>

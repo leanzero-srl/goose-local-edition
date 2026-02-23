@@ -258,7 +258,10 @@ export default function CreateRecipeFromSessionModal({
                   Analyzing your conversation
                 </div>
               </div>
-              <div className="text-text-secondary text-center max-w-md" data-testid="analysis-stage">
+              <div
+                className="text-text-secondary text-center max-w-md"
+                data-testid="analysis-stage"
+              >
                 {analysisStage}
               </div>
               <div className="flex items-center space-x-2 text-text-secondary">

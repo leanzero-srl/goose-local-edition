@@ -277,7 +277,9 @@ export default function PromptsSettingsSection() {
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-text-secondary mt-0.5 truncate">{prompt.description}</p>
+                  <p className="text-sm text-text-secondary mt-0.5 truncate">
+                    {prompt.description}
+                  </p>
                 </div>
                 <Button
                   variant="outline"
