@@ -538,8 +538,14 @@ impl ExtensionManager {
     ) -> ExtensionResult<()> {
         let sanitized_name = config.key();
 
-        if self.extensions.lock().await.contains_key(&sanitized_name) {
-            return Ok(());
+        if let Some(existing) = self.extensions.lock().await.get(&sanitized_name) {
+            if existing.config == config {
+                return Ok(());
+            }
+            tracing::debug!(
+                name = sanitized_name,
+                "extension config changed, restarting with updated config"
+            );
         }
 
         let mut temp_dir = None;
@@ -2234,5 +2240,91 @@ mod tests {
 
         assert!(tool_names.iter().any(|n| n.starts_with("ext_a__")));
         assert!(!tool_names.iter().any(|n| n.starts_with("ext_b__")));
+    }
+
+    #[tokio::test]
+    async fn test_add_extension_noop_on_identical_config() {
+        // When add_extension is called with a config that is byte-for-byte identical to
+        // the already-loaded one, it must return Ok(()) without removing the extension.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp_dir.path().to_path_buf(),
+        ));
+
+        let config = ExtensionConfig::Frontend {
+            name: "test-ext".to_string(),
+            description: "original".to_string(),
+            tools: vec![],
+            instructions: None,
+            bundled: None,
+            available_tools: vec![],
+        };
+
+        em.add_client(
+            "test-ext".to_string(),
+            config.clone(),
+            Arc::new(MockClient {}),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(em.extensions.lock().await.len(), 1);
+
+        // Calling add_extension with the same config must be a no-op (Ok, count unchanged).
+        let result = em.add_extension(config, None, None, None).await;
+        assert!(result.is_ok(), "identical config should be a no-op");
+        assert_eq!(
+            em.extensions.lock().await.len(),
+            1,
+            "extension must not be removed on no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_extension_replaces_extension_on_config_change() {
+        // When add_extension is called with an updated config (same name, different fields),
+        // the existing extension must be removed so the caller can re-add with new config.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let em = Arc::new(ExtensionManager::new_without_provider(
+            temp_dir.path().to_path_buf(),
+        ));
+
+        let config_a = ExtensionConfig::Frontend {
+            name: "test-ext".to_string(),
+            description: "version-a".to_string(),
+            tools: vec![],
+            instructions: None,
+            bundled: None,
+            available_tools: vec![],
+        };
+        let config_b = ExtensionConfig::Frontend {
+            name: "test-ext".to_string(),
+            description: "version-b".to_string(), // changed
+            tools: vec![],
+            instructions: None,
+            bundled: None,
+            available_tools: vec![],
+        };
+
+        em.add_client(
+            "test-ext".to_string(),
+            config_a,
+            Arc::new(MockClient {}),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(em.extensions.lock().await.len(), 1);
+
+        // add_extension with changed config attempts to create a new client (fails here
+        // because Frontend configs cannot be added as server extensions), but must preserve
+        // the old extension so the session isn't left without it.
+        let result = em.add_extension(config_b, None, None, None).await;
+        assert!(result.is_err(), "Frontend add_extension must return Err");
+        assert_eq!(
+            em.extensions.lock().await.len(),
+            1,
+            "old extension must be preserved when replacement client creation fails"
+        );
     }
 }
