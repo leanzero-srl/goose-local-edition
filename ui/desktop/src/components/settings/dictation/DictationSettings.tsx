@@ -206,10 +206,7 @@ export const DictationSettings = () => {
             </div>
           )}
 
-          <MicrophoneSelector
-            selectedDeviceId={preferredMic}
-            onDeviceChange={handleMicChange}
-          />
+          <MicrophoneSelector selectedDeviceId={preferredMic} onDeviceChange={handleMicChange} />
         </>
       )}
     </div>

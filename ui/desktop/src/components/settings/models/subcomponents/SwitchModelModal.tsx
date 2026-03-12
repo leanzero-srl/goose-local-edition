@@ -101,7 +101,11 @@ export const SwitchModelModal = ({
   sessionProvider,
 }: SwitchModelModalProps) => {
   const { getProviders, read, upsert } = useConfig();
-  const { changeModel, currentModel: configModel, currentProvider: configProvider } = useModelAndProvider();
+  const {
+    changeModel,
+    currentModel: configModel,
+    currentProvider: configProvider,
+  } = useModelAndProvider();
   // Use session-specific model/provider if available, otherwise fall back to config defaults
   const currentModel = sessionModel ?? configModel;
   const currentProvider = sessionProvider ?? configProvider;

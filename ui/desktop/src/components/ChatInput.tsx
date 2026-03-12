@@ -145,11 +145,17 @@ export default function ChatInput({
     null
   ) as React.RefObject<HTMLDivElement>;
   const { getProviders } = useConfig();
-  const { getCurrentModelAndProvider, currentModel: configModel, currentProvider: configProvider } = useModelAndProvider();
+  const {
+    getCurrentModelAndProvider,
+    currentModel: configModel,
+    currentProvider: configProvider,
+  } = useModelAndProvider();
 
   // Local override for when the user changes the model in the modal,
   // before the session object is re-fetched from the backend.
-  const [modelOverride, setModelOverride] = useState<{ model: string; provider: string } | null>(null);
+  const [modelOverride, setModelOverride] = useState<{ model: string; provider: string } | null>(
+    null
+  );
   const effectiveModel = modelOverride?.model ?? sessionModel ?? configModel;
   const effectiveProvider = modelOverride?.provider ?? sessionProvider ?? configProvider;
 
@@ -157,8 +163,12 @@ export default function ChatInput({
   // active chats, config defaults for Hub / no-session contexts).
   useEffect(() => {
     if (!modelOverride) return;
-    const sessionCaughtUp = sessionModel === modelOverride.model && sessionProvider === modelOverride.provider;
-    const configCaughtUp = !sessionId && configModel === modelOverride.model && configProvider === modelOverride.provider;
+    const sessionCaughtUp =
+      sessionModel === modelOverride.model && sessionProvider === modelOverride.provider;
+    const configCaughtUp =
+      !sessionId &&
+      configModel === modelOverride.model &&
+      configProvider === modelOverride.provider;
     if (sessionCaughtUp || configCaughtUp) {
       setModelOverride(null);
     }

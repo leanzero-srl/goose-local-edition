@@ -16,7 +16,10 @@ interface MicrophoneSelectorProps {
 
 const TEST_DURATION_MS = 5000;
 
-export const MicrophoneSelector = ({ selectedDeviceId, onDeviceChange }: MicrophoneSelectorProps) => {
+export const MicrophoneSelector = ({
+  selectedDeviceId,
+  onDeviceChange,
+}: MicrophoneSelectorProps) => {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [hasPermission, setHasPermission] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -163,9 +166,7 @@ export const MicrophoneSelector = ({ selectedDeviceId, onDeviceChange }: Microph
                 value={selectedDeviceId ?? 'system_default'}
                 onValueChange={(v) => onDeviceChange(v === 'system_default' ? null : v)}
               >
-                <DropdownMenuRadioItem value="system_default">
-                  System Default
-                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="system_default">System Default</DropdownMenuRadioItem>
                 {devices.map((device, i) => (
                   <DropdownMenuRadioItem key={device.deviceId} value={device.deviceId}>
                     <span className="truncate">{getDeviceLabel(device, i)}</span>

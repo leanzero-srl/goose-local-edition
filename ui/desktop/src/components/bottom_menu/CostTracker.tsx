@@ -18,7 +18,13 @@ interface CostTrackerProps {
   provider: string | null;
 }
 
-export function CostTracker({ inputTokens = 0, outputTokens = 0, sessionCosts, model: currentModel, provider: currentProvider }: CostTrackerProps) {
+export function CostTracker({
+  inputTokens = 0,
+  outputTokens = 0,
+  sessionCosts,
+  model: currentModel,
+  provider: currentProvider,
+}: CostTrackerProps) {
   const [costInfo, setCostInfo] = useState<ModelInfoData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showPricing, setShowPricing] = useState(true);
