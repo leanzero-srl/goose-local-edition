@@ -707,6 +707,12 @@ pub trait Provider: Send + Sync {
         ))
     }
 
+    async fn refresh_credentials(&self) -> Result<(), ProviderError> {
+        Err(ProviderError::NotImplemented(
+            "credential refresh not supported by this provider".to_string(),
+        ))
+    }
+
     async fn update_mode(&self, _session_id: &str, _mode: GooseMode) -> Result<(), ProviderError> {
         Ok(())
     }
