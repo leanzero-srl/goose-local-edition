@@ -68,9 +68,10 @@ sigstore-verify = { version = "0.6", default-features = false, features = ["rust
 winapi = { version = "0.3", features = ["wincred"] }
 
 [features]
-default = ["code-mode"]
+default = ["code-mode", "local-inference"]
 code-mode = ["goose/code-mode", "goose-acp/code-mode"]
-cuda = ["goose/cuda"]
+local-inference = ["goose/local-inference"]
+cuda = ["goose/cuda", "local-inference"]
 # disables the update command
 disable-update = []
 
