@@ -23,10 +23,11 @@ import type {
   McpUiResourcePermissions,
   McpUiSizeChangedNotification,
 } from '@modelcontextprotocol/ext-apps/app-bridge';
-import type { CallToolResult, JSONRPCRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, JSONRPCRequest, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { GripHorizontal, Maximize2, PictureInPicture2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { callTool, readResource } from '../../api';
+import { getCachedTools } from './toolsCache';
 import { AppEvents } from '../../constants/events';
 import { useTheme } from '../../contexts/ThemeContext';
 import { cn } from '../../utils';
@@ -140,6 +141,7 @@ async function fetchMcpAppProxyUrl(csp: McpUiResourceCsp | null): Promise<string
 interface McpAppRendererProps {
   resourceUri: string;
   extensionName: string;
+  toolName?: string;
   sessionId?: string | null;
   toolInput?: McpAppToolInput;
   toolInputPartial?: McpAppToolInputPartial;
@@ -237,6 +239,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
 export default function McpAppRenderer({
   resourceUri,
   extensionName,
+  toolName,
   sessionId,
   toolInput,
   toolInputPartial,
@@ -270,6 +273,42 @@ export default function McpAppRenderer({
   } = dm;
 
   const { resolvedTheme, mcpHostStyles } = useTheme();
+
+  // Fetch the MCP Tool definition (name, description, inputSchema) for hostContext.toolInfo.
+  // Note: the spec also calls for toolInfo.id — the JSON-RPC id of the tools/call request
+  // between the MCP client and server. That id is generated internally by rmcp's transport
+  // layer and isn't surfaced through the extension manager or message stream to the frontend.
+  // Plumbing it would require changes from rmcp → extension_manager → message → SSE → UI.
+  const [mcpTool, setMcpTool] = useState<Tool | null>(null);
+  const toolDefRef = useRef<Tool | null>(null);
+  useEffect(() => {
+    if (!sessionId || !toolName || toolDefRef.current) {
+      if (toolDefRef.current) setMcpTool(toolDefRef.current);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const tools = await getCachedTools(sessionId, extensionName || undefined);
+      if (cancelled || !tools) return;
+
+      const prefixedName = extensionName ? `${extensionName}__${toolName}` : toolName;
+      const match = tools.find((t) => t.name === prefixedName);
+      if (match) {
+        const tool: Tool = {
+          name: toolName,
+          description: match.description || undefined,
+          inputSchema: (match.input_schema as Tool['inputSchema']) ?? { type: 'object' as const },
+        };
+        toolDefRef.current = tool;
+        setMcpTool(tool);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, toolName, extensionName]);
 
   // Survive StrictMode remounts — replay cached results instead of re-fetching,
   // which prevents the iframe from being torn down and recreated (visible flicker).
@@ -664,7 +703,7 @@ export default function McpAppRenderer({
 
   const hostContext = useMemo((): McpUiHostContext => {
     const context: McpUiHostContext = {
-      // todo: toolInfo: {}
+      toolInfo: mcpTool ? { tool: mcpTool } : undefined,
       theme: resolvedTheme,
       styles: mcpHostStyles,
       displayMode: activeDisplayMode as McpUiDisplayMode,
@@ -704,6 +743,7 @@ export default function McpAppRenderer({
     containerWidth,
     containerHeight,
     effectiveDisplayModes,
+    mcpTool,
   ]);
 
   const isToolCancelled = !!toolCancelled;

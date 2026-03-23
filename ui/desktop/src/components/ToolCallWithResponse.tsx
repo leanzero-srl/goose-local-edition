@@ -115,6 +115,8 @@ function McpAppWrapper({
     requestWithMeta.toolCall.status === 'success' ? requestWithMeta.toolCall.value.name : '';
   const delimiterIndex = toolCallName.lastIndexOf('__');
   const extensionName = delimiterIndex === -1 ? '' : toolCallName.substring(0, delimiterIndex);
+  const toolName =
+    delimiterIndex === -1 ? toolCallName : toolCallName.substring(delimiterIndex + 2);
 
   const toolArguments =
     requestWithMeta.toolCall.status === 'success'
@@ -139,6 +141,7 @@ function McpAppWrapper({
         toolInput={toolInput}
         toolResult={toolResult}
         extensionName={extensionName}
+        toolName={toolName}
         sessionId={sessionId}
         append={append}
       />
