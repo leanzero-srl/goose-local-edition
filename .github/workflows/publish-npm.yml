@@ -37,6 +37,9 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs: build-native
+    environment:
+      name: npm-production-publishing
+      url: https://www.npmjs.com/org/block
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -117,9 +120,6 @@ jobs:
         if: inputs.dry-run != true && github.ref == 'refs/heads/main'
         id: changesets
         uses: changesets/action@6d3568c53fbe1db6c1f9ab1c7fbf9092bc18627f # v1
-        environment:
-          name: npm-production-publishing
-          url: https://www.npmjs.com/org/block
         with:
           publish: npm run release
           version: npm run version
