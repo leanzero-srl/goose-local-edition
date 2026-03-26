@@ -19,8 +19,8 @@ use super::{
     cursor_agent::CursorAgentProvider,
     databricks::DatabricksProvider,
     gcpvertexai::GcpVertexAIProvider,
-    gemini_acp::GeminiAcpProvider,
     gemini_cli::GeminiCliProvider,
+    gemini_oauth::GeminiOAuthProvider,
     githubcopilot::GithubCopilotProvider,
     google::GoogleProvider,
     litellm::LiteLLMProvider,
@@ -57,7 +57,6 @@ async fn init_registry() -> RwLock<ProviderRegistry> {
         registry.register::<LocalInferenceProvider>(false);
         registry.register::<ChatGptCodexProvider>(true);
         registry.register::<ClaudeAcpProvider>(false);
-        registry.register::<GeminiAcpProvider>(false);
         registry.register::<ClaudeCodeProvider>(true);
         registry.register::<CodexAcpProvider>(false);
         registry.register::<CodexProvider>(true);
@@ -65,6 +64,7 @@ async fn init_registry() -> RwLock<ProviderRegistry> {
         registry.register::<DatabricksProvider>(true);
         registry.register::<GcpVertexAIProvider>(false);
         registry.register::<GeminiCliProvider>(false);
+        registry.register::<GeminiOAuthProvider>(true);
         registry.register::<GithubCopilotProvider>(false);
         registry.register::<GoogleProvider>(true);
         registry.register::<LiteLLMProvider>(false);
