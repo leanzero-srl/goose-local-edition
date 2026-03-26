@@ -76,7 +76,9 @@ thread_local! {
                     .unwrap_or(Theme::Ansi)
             )
     );
-    static SHOW_FULL_TOOL_OUTPUT: RefCell<bool> = const { RefCell::new(false) };
+    static SHOW_FULL_TOOL_OUTPUT: RefCell<bool> = RefCell::new(
+        Config::global().get_param::<bool>("GOOSE_SHOW_FULL_OUTPUT").unwrap_or(false)
+    );
 }
 
 pub fn set_theme(theme: Theme) {
