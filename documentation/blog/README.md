@@ -181,7 +181,7 @@ npm start
 
 3. Open your browser and visit:
 ```
-http://localhost:3000/goose/blog
+http://localhost:3000/blog
 ```
 
 The development server features:

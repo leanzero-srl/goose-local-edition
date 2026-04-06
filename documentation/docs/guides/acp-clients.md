@@ -247,7 +247,7 @@ import chooseYourIde from '@site/blog/2025-10-24-intro-to-agent-client-protocol-
       title: 'Intro to Agent Client Protocol (ACP): The Standard for AI Agent-Editor Integration',
       description: 'Learn how to integrate AI agents like goose directly into your code editor via ACP, eliminating window-switching and vendor lock-in.',
       thumbnailUrl: chooseYourIde,
-      linkUrl: '/goose/blog/2025/10/24/intro-to-agent-client-protocol-acp',
+      linkUrl: '/blog/2025/10/24/intro-to-agent-client-protocol-acp',
       date: '2025-10-24',
       duration: '7 min read'
     }

@@ -71,7 +71,7 @@ export default function SkillDetailPage(): JSX.Element {
 
   const handleDownload = () => {
     if (skill) {
-      const zipUrl = `/goose/skills-data-zips/${skill.id}.zip`;
+      const zipUrl = `/skills-data-zips/${skill.id}.zip`;
       const link = document.createElement('a');
       link.href = zipUrl;
       link.download = `${skill.id}.zip`;
