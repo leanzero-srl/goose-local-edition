@@ -95,8 +95,20 @@ struct AgentMetadata {
     model: Option<String>,
 }
 
-fn parse_agent_content(content: &str, path: PathBuf) -> Option<Source> {
-    let (metadata, body): (AgentMetadata, String) = parse_frontmatter(content)?;
+fn parse_agent_content(content: &str, path: &Path) -> Option<Source> {
+    let (metadata, body): (AgentMetadata, String) = match parse_frontmatter(content) {
+        Ok(Some(parsed)) => parsed,
+        Ok(None) => return None,
+        Err(e) => {
+            // Missing fields means this file has valid YAML but isn't an agent — skip silently.
+            // Only warn on actual YAML syntax errors.
+            if e.to_string().contains("missing field") {
+                return None;
+            }
+            warn!("Failed to parse agent file {}: {}", path.display(), e);
+            return None;
+        }
+    };
 
     let description = metadata.description.unwrap_or_else(|| {
         let model_info = metadata
@@ -111,7 +123,7 @@ fn parse_agent_content(content: &str, path: PathBuf) -> Option<Source> {
         name: metadata.name,
         kind: SourceKind::Agent,
         description,
-        path,
+        path: path.to_path_buf(),
         content: body,
         supporting_files: Vec::new(),
     })
@@ -197,7 +209,7 @@ fn scan_agents_from_dir(
             }
         };
 
-        if let Some(source) = parse_agent_content(&content, path) {
+        if let Some(source) = parse_agent_content(&content, &path) {
             if !seen.contains(&source.name) {
                 seen.insert(source.name.clone());
                 sources.push(source);
@@ -1182,8 +1194,9 @@ impl SummonClient {
                 .map_err(|e| format!("Failed to read agent file: {}", e))?
         };
 
-        let (metadata, _): (AgentMetadata, String) =
-            parse_frontmatter(&agent_content).ok_or("Failed to parse agent frontmatter")?;
+        let (metadata, _): (AgentMetadata, String) = parse_frontmatter(&agent_content)
+            .map_err(|e| format!("Failed to parse agent frontmatter: {}", e))?
+            .ok_or("No frontmatter found in agent file")?;
 
         let model = metadata.model;
 
@@ -1647,6 +1660,7 @@ impl McpClientTrait for SummonClient {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use std::collections::HashSet;
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -1666,9 +1680,44 @@ name: reviewer
 model: sonnet
 ---
 You review code."#;
-        let source = parse_agent_content(agent, PathBuf::new()).unwrap();
+        let source = parse_agent_content(agent, Path::new("")).unwrap();
         assert_eq!(source.name, "reviewer");
         assert!(source.description.contains("sonnet"));
+    }
+
+    #[test]
+    fn test_agent_scan_skips_non_agent_markdown() {
+        let temp_dir = TempDir::new().unwrap();
+        let agents_dir = temp_dir.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("README.md"),
+            "---\ntitle: Notes\n---\nThis is not an agent.",
+        )
+        .unwrap();
+        fs::write(
+            agents_dir.join("notes.md"),
+            "---\nauthor: someone\ntags: [docs]\n---\nJust documentation.",
+        )
+        .unwrap();
+        fs::write(
+            agents_dir.join("reviewer.md"),
+            "---\nname: reviewer\nmodel: sonnet\n---\nYou review code.",
+        )
+        .unwrap();
+        fs::write(agents_dir.join("plain.md"), "No frontmatter at all.").unwrap();
+        fs::write(
+            agents_dir.join("broken.md"),
+            "---\nname: [unterminated\n---\nBroken YAML.",
+        )
+        .unwrap();
+
+        let mut sources = Vec::new();
+        let mut seen = HashSet::new();
+        scan_agents_from_dir(&agents_dir, &mut sources, &mut seen);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].name, "reviewer");
     }
 
     #[tokio::test]
