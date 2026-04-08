@@ -76,8 +76,12 @@ jobs:
 #  # ------------------------------------------------------------
   bundle-desktop-windows:
     uses: ./.github/workflows/bundle-desktop-windows.yml
+    permissions:
+      id-token: write
+      contents: read
     with:
       signing: true
+    secrets: inherit
 
   # ------------------------------------
   # 7) Create/Update GitHub Release
