@@ -79,6 +79,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: read
     with:
       signing: true
     secrets: inherit
