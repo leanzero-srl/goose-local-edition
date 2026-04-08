@@ -102,7 +102,7 @@ This happened because each subagent wasn't aware of the other subagents' plan. T
 
 ## A Better Prompt Strategy
 
-This time, I took a different approach.I told Goose to spin up one subagent to analyze the UI and come up with a shared design plan. Once the plan was ready, Goose could then spawn four more subagents to implement the plan in parallel.
+This time, I took a different approach. I told Goose to spin up one subagent to analyze the UI and come up with a shared design plan. Once the plan was ready, Goose could then spawn four more subagents to implement the plan in parallel.
 
 ```
 Can you take a look at the UI? The color scheme is all over the place. I want it to be unified but also have a playground theme like a real-life playground. Not just the colors but the elements as well.

@@ -71,7 +71,7 @@ can always reopen.
 ## Quick Responsible AI Tips
 
 There's no need to tell us you used AI in your work. You are contributing to an agent, it would be odd if 
-you had not. Our general thinking is, use AI anyway you want, but until the robot revolution comes, you
+you had not. Our general thinking is, use AI any way you want, but until the robot revolution comes, you
 are responsible for the final code. Before submitting a PR for review, make sure you have reviewed it yourself.
 We'll close any vibe coded submissions that obviously skip this step.
 
