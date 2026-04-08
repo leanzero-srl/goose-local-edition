@@ -1366,7 +1366,9 @@ pub fn configure_goose_mode_dialog() -> anyhow::Result<()> {
     let config = Config::global();
 
     if std::env::var("GOOSE_MODE").is_ok() {
-        let _ = cliclack::log::info("Notice: GOOSE_MODE environment variable is set and will override the configuration here.");
+        let _ = cliclack::log::info(
+            "Notice: GOOSE_MODE environment variable is set and will override the configuration here.",
+        );
     }
 
     let mode = cliclack::select("Which goose mode would you like to configure?")
@@ -1408,7 +1410,9 @@ pub fn configure_telemetry_dialog() -> anyhow::Result<()> {
     let config = Config::global();
 
     if std::env::var("GOOSE_TELEMETRY_OFF").is_ok() {
-        let _ = cliclack::log::info("Notice: GOOSE_TELEMETRY_OFF environment variable is set and will override the configuration here.");
+        let _ = cliclack::log::info(
+            "Notice: GOOSE_TELEMETRY_OFF environment variable is set and will override the configuration here.",
+        );
     }
 
     let current_choice = get_telemetry_choice();
@@ -1439,7 +1443,9 @@ pub fn configure_tool_output_dialog() -> anyhow::Result<()> {
     let config = Config::global();
 
     if std::env::var("GOOSE_CLI_MIN_PRIORITY").is_ok() {
-        let _ = cliclack::log::info("Notice: GOOSE_CLI_MIN_PRIORITY environment variable is set and will override the configuration here.");
+        let _ = cliclack::log::info(
+            "Notice: GOOSE_CLI_MIN_PRIORITY environment variable is set and will override the configuration here.",
+        );
     }
     let tool_log_level = cliclack::select("Which tool output would you like to show?")
         .item("high", "High Importance", "")
@@ -1470,7 +1476,9 @@ pub fn configure_keyring_dialog() -> anyhow::Result<()> {
     let config = Config::global();
 
     if std::env::var("GOOSE_DISABLE_KEYRING").is_ok() {
-        let _ = cliclack::log::info("Notice: GOOSE_DISABLE_KEYRING environment variable is set and will override the configuration here.");
+        let _ = cliclack::log::info(
+            "Notice: GOOSE_DISABLE_KEYRING environment variable is set and will override the configuration here.",
+        );
     }
 
     let currently_disabled = config.get_param::<String>("GOOSE_DISABLE_KEYRING").is_ok();
@@ -1863,7 +1871,9 @@ pub async fn handle_openrouter_auth() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("⚠️  Configuration test failed: {}", e);
-                    eprintln!("Your settings have been saved, but there may be an issue with the connection.");
+                    eprintln!(
+                        "Your settings have been saved, but there may be an issue with the connection."
+                    );
                 }
             }
         }
@@ -1934,7 +1944,9 @@ pub async fn handle_tetrate_auth() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("⚠️  Configuration test failed: {}", e);
-                    eprintln!("Your settings have been saved, but there may be an issue with the connection.");
+                    eprintln!(
+                        "Your settings have been saved, but there may be an issue with the connection."
+                    );
                 }
             }
         }
