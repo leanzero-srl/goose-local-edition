@@ -1,3 +1,4 @@
+use base64::Engine;
 use serde::Serialize;
 use tauri::Window;
 use tauri_plugin_dialog::DialogExt;
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_FILE_MENTION_LIMIT: usize = 1500;
 const MAX_FILE_MENTION_LIMIT: usize = 5000;
 const MAX_SCAN_DEPTH: usize = 8;
+const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,23 @@ pub struct FileTreeEntry {
     pub name: String,
     pub path: String,
     pub kind: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentPathInfo {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAttachmentPayload {
+    pub base64: String,
+    pub mime_type: String,
 }
 
 #[tauri::command]
@@ -81,31 +100,18 @@ fn read_directory_entries(path: &Path) -> Result<Vec<FileTreeEntry>, String> {
         .map_err(|error| format!("Failed to read directory '{}': {}", path.display(), error))?;
 
     for entry in reader {
-        let entry = entry
-            .map_err(|error| format!("Failed to read directory '{}': {}", path.display(), error))?;
+        let Ok(entry) = entry else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if name == ".git" {
             continue;
         }
+        let Some(file_tree_entry) = build_file_tree_entry(entry.path(), name) else {
+            continue;
+        };
 
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "Failed to inspect directory entry '{}' in '{}': {}",
-                name,
-                path.display(),
-                error
-            )
-        })?;
-
-        entries.push(FileTreeEntry {
-            name,
-            path: entry.path().to_string_lossy().into_owned(),
-            kind: if file_type.is_dir() {
-                "directory".to_string()
-            } else {
-                "file".to_string()
-            },
-        });
+        entries.push(file_tree_entry);
     }
 
     entries.sort_by(|a, b| {
@@ -120,9 +126,136 @@ fn read_directory_entries(path: &Path) -> Result<Vec<FileTreeEntry>, String> {
     Ok(entries)
 }
 
+fn build_file_tree_entry(path: PathBuf, name: String) -> Option<FileTreeEntry> {
+    let metadata = fs::symlink_metadata(&path).ok()?;
+    let file_type = metadata.file_type();
+
+    Some(FileTreeEntry {
+        name,
+        path: path.to_string_lossy().into_owned(),
+        kind: if file_type.is_dir() {
+            "directory".to_string()
+        } else {
+            "file".to_string()
+        },
+    })
+}
+
 #[tauri::command]
 pub fn list_directory_entries(path: String) -> Result<Vec<FileTreeEntry>, String> {
     read_directory_entries(Path::new(&path))
+}
+
+fn inspect_attachment_path(path: &Path) -> Result<AttachmentPathInfo, String> {
+    if !path.exists() {
+        return Err(format!(
+            "Attachment path does not exist: {}",
+            path.display()
+        ));
+    }
+
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Failed to inspect '{}': {}", path.display(), error))?;
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+
+    Ok(AttachmentPathInfo {
+        name,
+        path: path.to_string_lossy().into_owned(),
+        kind: if metadata.is_dir() {
+            "directory".to_string()
+        } else {
+            "file".to_string()
+        },
+        mime_type: if metadata.is_file() {
+            mime_guess::from_path(path)
+                .first_raw()
+                .map(std::borrow::ToOwned::to_owned)
+        } else {
+            None
+        },
+    })
+}
+
+fn normalized_path_key(path: &Path) -> String {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical.to_string_lossy().into_owned();
+    }
+
+    let raw = path.to_string_lossy().into_owned();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        raw.to_lowercase()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        raw
+    }
+}
+
+fn normalize_attachment_paths(paths: Vec<String>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for raw_path in paths {
+        let trimmed = raw_path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let path = PathBuf::from(trimmed);
+        let key = normalized_path_key(&path);
+        if seen.insert(key) {
+            normalized.push(path);
+        }
+    }
+
+    normalized
+}
+
+#[tauri::command]
+pub fn inspect_attachment_paths(paths: Vec<String>) -> Result<Vec<AttachmentPathInfo>, String> {
+    let mut attachments = Vec::new();
+
+    for path in normalize_attachment_paths(paths) {
+        if let Ok(attachment) = inspect_attachment_path(&path) {
+            attachments.push(attachment);
+        }
+    }
+
+    Ok(attachments)
+}
+
+#[tauri::command]
+pub fn read_image_attachment(path: String) -> Result<ImageAttachmentPayload, String> {
+    let attachment = inspect_attachment_path(Path::new(&path))?;
+    let mime_type = attachment
+        .mime_type
+        .ok_or_else(|| format!("Unable to determine image type for '{}'", attachment.path))?;
+
+    if !mime_type.starts_with("image/") {
+        return Err(format!("Attachment is not an image: {}", attachment.path));
+    }
+
+    let metadata = fs::metadata(&attachment.path)
+        .map_err(|error| format!("Failed to inspect image '{}': {}", attachment.path, error))?;
+    if metadata.len() > MAX_IMAGE_ATTACHMENT_BYTES {
+        return Err(format!(
+            "Image attachment '{}' exceeds the {} MB limit",
+            attachment.path,
+            MAX_IMAGE_ATTACHMENT_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let bytes = fs::read(&attachment.path)
+        .map_err(|error| format!("Failed to read image '{}': {}", attachment.path, error))?;
+
+    Ok(ImageAttachmentPayload {
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        mime_type,
+    })
 }
 
 fn normalize_roots(roots: Vec<String>) -> Vec<PathBuf> {
@@ -134,7 +267,7 @@ fn normalize_roots(roots: Vec<String>) -> Vec<PathBuf> {
             continue;
         }
         let path = PathBuf::from(trimmed);
-        let key = path.to_string_lossy().to_lowercase();
+        let key = normalized_path_key(&path);
         if dedup.insert(key) {
             normalized.push(path);
         }
@@ -195,7 +328,7 @@ fn scan_files_for_mentions(roots: Vec<String>, max_results: Option<usize>) -> Ve
             continue;
         }
         let path_str = entry.path().to_string_lossy().to_string();
-        let dedup_key = path_str.to_lowercase();
+        let dedup_key = normalized_path_key(entry.path());
         if seen.insert(dedup_key) {
             files.push(path_str);
         }
@@ -217,10 +350,16 @@ pub async fn list_files_for_mentions(
 
 #[cfg(test)]
 mod tests {
-    use super::{read_directory_entries, scan_files_for_mentions};
+    use super::{
+        build_file_tree_entry, inspect_attachment_path, inspect_attachment_paths,
+        normalize_attachment_paths, normalize_roots, read_directory_entries, read_image_attachment,
+        scan_files_for_mentions, MAX_IMAGE_ATTACHMENT_BYTES,
+    };
+    use base64::Engine;
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
     use std::process::Command;
     use tempfile::tempdir;
 
@@ -341,6 +480,16 @@ mod tests {
     }
 
     #[test]
+    fn build_file_tree_entry_skips_missing_children() {
+        let dir = tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.ts");
+
+        let entry = build_file_tree_entry(missing, "missing.ts".into());
+
+        assert_eq!(entry, None);
+    }
+
+    #[test]
     #[cfg(unix)]
     fn list_directory_entries_errors_for_unreadable_directories() {
         let dir = tempdir().expect("tempdir");
@@ -359,5 +508,119 @@ mod tests {
         fs::set_permissions(&blocked, restored_permissions).expect("restore permissions");
 
         assert!(error.contains("Failed to read directory"));
+    }
+
+    #[test]
+    fn inspects_file_and_directory_attachments() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path();
+        let folder = root.join("screenshots");
+        let file = root.join("report.txt");
+
+        fs::create_dir_all(&folder).expect("folder");
+        fs::write(&file, "hello").expect("file");
+
+        let inspected_dir = inspect_attachment_path(&folder).expect("directory");
+        let inspected_file = inspect_attachment_path(&file).expect("file");
+
+        assert_eq!(inspected_dir.kind, "directory");
+        assert_eq!(inspected_dir.name, "screenshots");
+        assert_eq!(inspected_dir.mime_type, None);
+
+        assert_eq!(inspected_file.kind, "file");
+        assert_eq!(inspected_file.name, "report.txt");
+        assert_eq!(inspected_file.mime_type.as_deref(), Some("text/plain"));
+    }
+
+    #[test]
+    fn reads_image_attachment_payloads() {
+        let dir = tempdir().expect("tempdir");
+        let image = dir.path().join("pixel.png");
+        let png_bytes = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sU4nS0AAAAASUVORK5CYII=")
+            .expect("decode png");
+
+        fs::write(&image, png_bytes).expect("png file");
+
+        let payload = read_image_attachment(image.to_string_lossy().into_owned()).expect("payload");
+
+        assert_eq!(payload.mime_type, "image/png");
+        assert!(!payload.base64.is_empty());
+    }
+
+    #[test]
+    fn dedupes_attachment_paths_using_platform_path_rules() {
+        let normalized = normalize_attachment_paths(vec![
+            "/tmp/Readme.md".into(),
+            "/tmp/README.md".into(),
+            "/tmp/Readme.md".into(),
+        ]);
+
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert_eq!(normalized, vec![PathBuf::from("/tmp/Readme.md")]);
+        } else {
+            assert_eq!(
+                normalized,
+                vec![
+                    PathBuf::from("/tmp/Readme.md"),
+                    PathBuf::from("/tmp/README.md")
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn skips_invalid_attachment_paths_without_dropping_valid_ones() {
+        let dir = tempdir().expect("tempdir");
+        let valid = dir.path().join("report.txt");
+        let missing = dir.path().join("missing.txt");
+        fs::write(&valid, "hello").expect("file");
+
+        let attachments = inspect_attachment_paths(vec![
+            valid.to_string_lossy().into_owned(),
+            missing.to_string_lossy().into_owned(),
+        ])
+        .expect("attachments");
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].name, "report.txt");
+        assert_eq!(attachments[0].kind, "file");
+    }
+
+    #[test]
+    fn dedupes_mention_roots_using_platform_path_rules() {
+        let normalized = normalize_roots(vec![
+            "/tmp/Workspace".into(),
+            "/tmp/workspace".into(),
+            "/tmp/Workspace".into(),
+        ]);
+
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert_eq!(normalized, vec![PathBuf::from("/tmp/Workspace")]);
+        } else {
+            assert_eq!(
+                normalized,
+                vec![
+                    PathBuf::from("/tmp/Workspace"),
+                    PathBuf::from("/tmp/workspace")
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_image_attachment_payloads() {
+        let dir = tempdir().expect("tempdir");
+        let image = dir.path().join("huge.png");
+        fs::write(
+            &image,
+            vec![0_u8; (MAX_IMAGE_ATTACHMENT_BYTES as usize) + 1],
+        )
+        .expect("oversized image file");
+
+        let error =
+            read_image_attachment(image.to_string_lossy().into_owned()).expect_err("size limit");
+
+        assert!(error.contains("exceeds the 20 MB limit"));
     }
 }
