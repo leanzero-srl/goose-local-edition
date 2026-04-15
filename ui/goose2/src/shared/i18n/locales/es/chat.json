@@ -46,7 +46,8 @@
       "folderNotSet": "Carpeta no configurada",
       "noChanges": "No hay cambios sin confirmar",
       "noProjectAssigned": "No hay proyecto asignado.",
-      "noServersConfigured": "No hay servidores configurados"
+      "noExtensions": "No hay extensiones habilitadas",
+      "noMatchingExtensions": "No hay extensiones que coincidan"
     },
     "errors": {
       "gitRead": "No se pudo leer el estado de git."
@@ -89,7 +90,8 @@
       "artifacts": "Artefactos",
       "changes": "Cambios",
       "changesOnBranch": "en",
-      "mcpServers": "Servidores MCP",
+      "extensions": "Extensiones",
+      "searchExtensions": "Buscar extensiones...",
       "workspace": "Espacio de trabajo"
     }
   },

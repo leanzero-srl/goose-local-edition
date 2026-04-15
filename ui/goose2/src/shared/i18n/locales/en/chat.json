@@ -46,7 +46,8 @@
       "folderNotSet": "Folder not set",
       "noChanges": "No uncommitted changes",
       "noProjectAssigned": "No project assigned.",
-      "noServersConfigured": "No servers configured"
+      "noExtensions": "No extensions enabled",
+      "noMatchingExtensions": "No matching extensions"
     },
     "errors": {
       "gitRead": "Unable to read git status."
@@ -89,7 +90,8 @@
       "artifacts": "Artifacts",
       "changes": "Changes",
       "changesOnBranch": "on",
-      "mcpServers": "MCP Servers",
+      "extensions": "Extensions",
+      "searchExtensions": "Search extensions...",
       "workspace": "Workspace"
     }
   },

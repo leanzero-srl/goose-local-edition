@@ -55,6 +55,54 @@
     "description": "¿Seguro que quieres eliminar permanentemente \"{{name}}\"? Esta acción no se puede deshacer.",
     "title": "¿Eliminar el proyecto de forma permanente?"
   },
+  "extensions": {
+    "title": "Extensiones",
+    "description": "Administra las extensiones MCP que agregan herramientas y capacidades a Goose.",
+    "search": "Buscar extensiones...",
+    "enabled": "Habilitadas",
+    "enabledCount": "Habilitadas ({{count}})",
+    "available": "Disponibles",
+    "availableCount": "Disponibles ({{count}})",
+    "empty": "No hay extensiones configuradas.",
+    "noResults": "Ninguna extensión coincide con tu búsqueda.",
+    "addExtension": "Agregar extensión",
+    "editExtension": "Editar extensión",
+    "deleteExtension": "Eliminar extensión",
+    "toggle": "Activar/desactivar {{name}}",
+    "configure": "Configurar {{name}}",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "fields": {
+      "name": "Nombre",
+      "namePlaceholder": "mi-extension",
+      "type": "Tipo",
+      "command": "Comando",
+      "commandPlaceholder": "npx",
+      "arguments": "Argumentos",
+      "argumentsPlaceholder": "Un argumento por línea",
+      "url": "URL",
+      "urlPlaceholder": "http://localhost:3000/mcp",
+      "description": "Descripción",
+      "descriptionPlaceholder": "¿Qué hace esta extensión?",
+      "timeout": "Tiempo de espera (segundos)",
+      "envVars": "Variables de entorno",
+      "envKeyPlaceholder": "CLAVE",
+      "envValuePlaceholder": "valor",
+      "addEnvVar": "Agregar variable",
+      "removeEnvVar": "Eliminar variable"
+    },
+    "types": {
+      "stdio": "Stdio",
+      "streamable_http": "HTTP",
+      "builtin": "Integrada"
+    },
+    "errors": {
+      "toggleFailed": "Error al cambiar la extensión. Inténtalo de nuevo.",
+      "saveFailed": "Error al guardar la extensión. Inténtalo de nuevo.",
+      "deleteFailed": "Error al eliminar la extensión. Inténtalo de nuevo.",
+      "nameConflict": "Ya existe una extensión llamada \"{{name}}\"."
+    }
+  },
   "doctor": {
     "agents": "Agentes",
     "copied": "Copiado",
@@ -85,6 +133,7 @@
     "doctor": "Diagnóstico",
     "general": "General",
     "projects": "Proyectos",
+    "extensions": "Extensiones",
     "providers": "Proveedores"
   },
   "projects": {
