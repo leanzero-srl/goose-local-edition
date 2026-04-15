@@ -6,9 +6,9 @@ const DEFAULT_LIMIT = 500;
 // Add narrowly scoped exceptions here with justification
 const EXCEPTIONS = {
   "src/features/sidebar/ui/SidebarProjectsSection.tsx": {
-    limit: 560,
+    limit: 570,
     justification:
-      "Drag-and-drop handlers plus activeProjectId highlight for draft-in-project sessions.",
+      "Drag-and-drop handlers for session-to-project moves and project reorder, plus activeProjectId highlight.",
   },
   "src/features/chat/ui/ChatView.tsx": {
     limit: 535,
@@ -49,6 +49,11 @@ const EXCEPTIONS = {
     limit: 640,
     justification:
       "ACP-backed session overlay persistence, draft migration, and sidebar-facing session merge logic live together for now.",
+  },
+  "src-tauri/src/commands/projects.rs": {
+    limit: 520,
+    justification:
+      "Project CRUD plus reorder_projects command for sidebar drag-and-drop ordering.",
   },
   "src-tauri/src/services/acp/manager/dispatcher.rs": {
     limit: 540,
