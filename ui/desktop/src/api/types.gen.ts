@@ -1295,8 +1295,6 @@ export type SessionListResponse = {
 
 export type SessionReplyRequest = {
     override_conversation?: Array<Message> | null;
-    recipe_name?: string | null;
-    recipe_version?: string | null;
     /**
      * Client-generated UUIDv7 identifying this request.
      */

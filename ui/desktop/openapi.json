@@ -7944,14 +7944,6 @@
             },
             "nullable": true
           },
-          "recipe_name": {
-            "type": "string",
-            "nullable": true
-          },
-          "recipe_version": {
-            "type": "string",
-            "nullable": true
-          },
           "request_id": {
             "type": "string",
             "description": "Client-generated UUIDv7 identifying this request."
