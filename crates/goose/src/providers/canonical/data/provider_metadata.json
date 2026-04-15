@@ -41,7 +41,7 @@
     "env": [
       "NANO_GPT_API_KEY"
     ],
-    "model_count": 519
+    "model_count": 518
   },
   {
     "id": "abacus",
@@ -129,7 +129,7 @@
     "env": [
       "FIREWORKS_API_KEY"
     ],
-    "model_count": 16
+    "model_count": 17
   },
   {
     "id": "kimi-for-coding",
@@ -162,7 +162,7 @@
     "env": [
       "OPENCODE_API_KEY"
     ],
-    "model_count": 7
+    "model_count": 9
   },
   {
     "id": "io-net",
@@ -415,7 +415,7 @@
     "env": [
       "OPENCODE_API_KEY"
     ],
-    "model_count": 49
+    "model_count": 51
   },
   {
     "id": "stepfun",
@@ -635,7 +635,7 @@
     "env": [
       "NVIDIA_API_KEY"
     ],
-    "model_count": 75
+    "model_count": 76
   },
   {
     "id": "inference",
@@ -657,7 +657,7 @@
     "env": [
       "INCEPTION_API_KEY"
     ],
-    "model_count": 4
+    "model_count": 2
   },
   {
     "id": "requesty",
