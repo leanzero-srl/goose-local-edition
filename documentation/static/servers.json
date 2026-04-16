@@ -634,6 +634,26 @@
     ]
   },
   {
+    "id": "rendex-mcp",
+    "name": "Rendex",
+    "description": "Capture screenshots, generate PDFs, and render HTML to images via AI agents",
+    "url": "https://mcp.rendex.dev/mcp",
+    "link": "https://github.com/copperline-labs/rendex-mcp",
+    "installation_notes": "This is a remote extension that requires a Rendex API key from https://rendex.dev/dashboard/keys as a Request Header e.g Authorization: Bearer <YOUR_RENDEX_API_KEY>. Free tier includes 500 calls/month, no credit card required.",
+    "is_builtin": false,
+    "endorsed": false,
+    "environmentVariables": [],
+    "headers": [
+      {
+        "name": "Authorization",
+        "description": "Bearer <YOUR_RENDEX_API_KEY>",
+        "required": true
+      }
+    ],
+    "show_install_command": false,
+    "type": "streamable-http"
+  },
+  {
     "id": "repomix-mcp",
     "name": "Repomix",
     "description": "Repository analysis and code organization",
