@@ -28,6 +28,7 @@ pub mod gemini_oauth;
 pub mod githubcopilot;
 pub mod google;
 mod init;
+pub mod kimicode;
 pub mod litellm;
 #[cfg(feature = "local-inference")]
 pub mod local_inference;
