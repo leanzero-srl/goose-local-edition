@@ -753,6 +753,34 @@ body,
   }
 }
 
+[data-streamdown="table-wrapper"],
+[data-streamdown="code-block"],
+[data-streamdown="mermaid-block"] {
+  border: none;
+}
+
+/* Doubled attribute selector bumps specificity above Tailwind's `flex` class
+   (0,2,0 vs 0,1,0) so grid wins regardless of source order. */
+[data-streamdown="code-block"][data-streamdown] {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+[data-streamdown="code-block"] > [data-streamdown="code-block-header"] {
+  grid-column: 1;
+}
+
+[data-streamdown="code-block"]
+  > [data-streamdown="code-block-header"]
+  + div:has([data-streamdown="code-block-actions"]) {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+[data-streamdown="code-block"] > :last-child {
+  grid-column: 1 / -1;
+}
+
 /* ═══════════════════════════════════════════════════════════
    goose2 custom utilities
    ═══════════════════════════════════════════════════════════ */
