@@ -55,6 +55,7 @@ export function createWebSocketStream(wsUrl: string): Stream {
     async pull(controller) {
       await waitForMessage();
       while (incoming.length > 0) {
+        // biome-ignore lint/style/noNonNullAssertion: length checked in while condition
         controller.enqueue(incoming.shift()!);
       }
       if (closed && incoming.length === 0) {

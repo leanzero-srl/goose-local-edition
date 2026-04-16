@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import { FilesList } from "./FilesList";
 import { useGitState } from "@/shared/hooks/useGitState";
 import { useChangedFiles } from "@/shared/hooks/useChangedFiles";
@@ -160,17 +159,6 @@ export function ContextPanel({
   const handleRefresh = useCallback(() => {
     void refetchAll();
   }, [refetchAll]);
-
-  useEffect(() => {
-    const unlisten = listen<{ sessionId: string }>("acp:done", (event) => {
-      if (event.payload.sessionId === sessionId) {
-        void refetchFiles();
-      }
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [sessionId, refetchFiles]);
 
   return (
     <Tabs

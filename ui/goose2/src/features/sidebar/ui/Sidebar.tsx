@@ -491,73 +491,70 @@ export function Sidebar({
             })}
           </div>
 
-          {!collapsed && (
-            <>
-              {sidebarSearch.submittedQuery ? (
-                <div className="relative z-10 space-y-2">
-                  {sidebarSearch.error && (
-                    <p className="px-1 text-xs text-danger">
-                      {t("search.error")}
-                    </p>
+          {!collapsed &&
+            (sidebarSearch.submittedQuery ? (
+              <div className="relative z-10 space-y-2">
+                {sidebarSearch.error && (
+                  <p className="px-1 text-xs text-danger">
+                    {t("search.error")}
+                  </p>
+                )}
+
+                {sidebarSearch.isSearching &&
+                  sidebarSearch.results.length === 0 && (
+                    <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                      {t("search.searching")}
+                    </div>
                   )}
 
-                  {sidebarSearch.isSearching &&
-                    sidebarSearch.results.length === 0 && (
-                      <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-                        {t("search.searching")}
-                      </div>
-                    )}
-
-                  {(!sidebarSearch.isSearching ||
-                    sidebarSearch.results.length > 0) && (
-                    <SidebarSearchResults
-                      results={sidebarSearch.results}
-                      activeSessionId={activeSessionId}
-                      onSelectResult={(sessionId, messageId) => {
-                        if (messageId) {
-                          onSelectSearchResult?.(
-                            sessionId,
-                            messageId,
-                            sidebarSearch.submittedQuery,
-                          );
-                          return;
-                        }
-                        onSelectSession?.(sessionId);
-                      }}
-                      getPersonaName={sidebarResolvers.getPersonaName}
-                      getProjectName={sidebarResolvers.getProjectName}
-                    />
-                  )}
-                </div>
-              ) : (
-                <SidebarProjectsSection
-                  projects={projects}
-                  projectSessions={projectSessions}
-                  expandedProjects={expandedProjects}
-                  toggleProject={toggleProject}
-                  collapsed={collapsed}
-                  labelTransition={labelTransition}
-                  labelVisible={labelVisible}
-                  activeSessionId={activeSessionId}
-                  activeProjectId={activeProjectId}
-                  onNavigate={onNavigate}
-                  onSelectSession={onSelectSession}
-                  onNewChatInProject={onNewChatInProject}
-                  onNewChat={onNewChat}
-                  onCreateProject={onCreateProject}
-                  onEditProject={onEditProject}
-                  onArchiveProject={onArchiveProject}
-                  onArchiveChat={onArchiveChat}
-                  onRenameChat={onRenameChat}
-                  onMoveToProject={onMoveToProject}
-                  onReorderProject={onReorderProject}
-                  onItemMouseEnter={onItemMouseEnter}
-                  activeSessionRefCallback={activeSessionRefCallback}
-                  activeProjectRefCallback={activeProjectRefCallback}
-                />
-              )}
-            </>
-          )}
+                {(!sidebarSearch.isSearching ||
+                  sidebarSearch.results.length > 0) && (
+                  <SidebarSearchResults
+                    results={sidebarSearch.results}
+                    activeSessionId={activeSessionId}
+                    onSelectResult={(sessionId, messageId) => {
+                      if (messageId) {
+                        onSelectSearchResult?.(
+                          sessionId,
+                          messageId,
+                          sidebarSearch.submittedQuery,
+                        );
+                        return;
+                      }
+                      onSelectSession?.(sessionId);
+                    }}
+                    getPersonaName={sidebarResolvers.getPersonaName}
+                    getProjectName={sidebarResolvers.getProjectName}
+                  />
+                )}
+              </div>
+            ) : (
+              <SidebarProjectsSection
+                projects={projects}
+                projectSessions={projectSessions}
+                expandedProjects={expandedProjects}
+                toggleProject={toggleProject}
+                collapsed={collapsed}
+                labelTransition={labelTransition}
+                labelVisible={labelVisible}
+                activeSessionId={activeSessionId}
+                activeProjectId={activeProjectId}
+                onNavigate={onNavigate}
+                onSelectSession={onSelectSession}
+                onNewChatInProject={onNewChatInProject}
+                onNewChat={onNewChat}
+                onCreateProject={onCreateProject}
+                onEditProject={onEditProject}
+                onArchiveProject={onArchiveProject}
+                onArchiveChat={onArchiveChat}
+                onRenameChat={onRenameChat}
+                onMoveToProject={onMoveToProject}
+                onReorderProject={onReorderProject}
+                onItemMouseEnter={onItemMouseEnter}
+                activeSessionRefCallback={activeSessionRefCallback}
+                activeProjectRefCallback={activeProjectRefCallback}
+              />
+            ))}
         </nav>
       </div>
     </div>

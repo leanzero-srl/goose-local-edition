@@ -124,8 +124,6 @@ export function buildInitScript(options?: {
               return Promise.resolve("/tmp/avatars");
             case "save_persona_avatar_bytes":
               return Promise.resolve("avatar.png");
-            case "discover_acp_providers":
-              return Promise.resolve([]);
             case "list_files_for_mentions":
               return Promise.resolve([]);
             case "get_home_dir":

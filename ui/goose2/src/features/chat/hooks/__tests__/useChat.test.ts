@@ -125,18 +125,12 @@ describe("useChat", () => {
       result.current.stopGeneration();
     });
 
-    expect(mockAcpSendMessage).toHaveBeenCalledWith(
-      "session-1",
-      "goose",
-      "Hello",
-      {
-        systemPrompt: undefined,
-        workingDir: undefined,
-        personaId: "persona-b",
-        personaName: "Persona B",
-        images: undefined,
-      },
-    );
+    expect(mockAcpSendMessage).toHaveBeenCalledWith("session-1", "Hello", {
+      systemPrompt: undefined,
+      personaId: "persona-b",
+      personaName: "Persona B",
+      images: undefined,
+    });
     expect(mockAcpCancelSession).toHaveBeenCalledWith("session-1", "persona-b");
 
     deferred.resolve();
@@ -316,11 +310,9 @@ describe("useChat", () => {
     expect(mockAcpSendMessage).toHaveBeenNthCalledWith(
       1,
       "session-1",
-      "goose",
       "First",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: undefined,
@@ -329,11 +321,9 @@ describe("useChat", () => {
     expect(mockAcpSendMessage).toHaveBeenNthCalledWith(
       2,
       "session-2",
-      "goose",
       "Second",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: undefined,
@@ -374,18 +364,12 @@ describe("useChat", () => {
       personaId: undefined,
     });
     expect(mockAcpSetModel).toHaveBeenCalledWith("session-1", "gpt-4.1");
-    expect(mockAcpSendMessage).toHaveBeenCalledWith(
-      "session-1",
-      "openai",
-      "Hello",
-      {
-        systemPrompt: undefined,
-        workingDir: undefined,
-        personaId: undefined,
-        personaName: undefined,
-        images: undefined,
-      },
-    );
+    expect(mockAcpSendMessage).toHaveBeenCalledWith("session-1", "Hello", {
+      systemPrompt: undefined,
+      personaId: undefined,
+      personaName: undefined,
+      images: undefined,
+    });
   });
 
   it("appends an error message and removes the empty assistant placeholder when send fails", async () => {

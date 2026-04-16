@@ -23,28 +23,40 @@ const DEPRECATED_PROVIDER_IDS = new Set(["claude-code", "codex", "gemini-cli"]);
 export async function listProviders(): Promise<AcpProvider[]> {
   const client = await getClient();
   const result = await client.goose.GooseProvidersList({});
+  // biome-ignore lint/suspicious/noExplicitAny: ACP SDK types don't expose providers field
   return (result as any).providers
-    .filter((p: any) => !DEPRECATED_PROVIDER_IDS.has(p.id))
-    .map((p: any) => ({ id: p.id, label: p.label }));
+    .filter(
+      (p: { id: string; label: string }) => !DEPRECATED_PROVIDER_IDS.has(p.id),
+    )
+    .map((p: { id: string; label: string }) => ({ id: p.id, label: p.label }));
 }
 
 export async function listSessions(): Promise<AcpSessionInfo[]> {
   const client = await getClient();
   // GooseClient.unstable_listSessions doesn't work with SDK 0.19 (renamed to listSessions).
   // Bypass GooseClient and call the connection directly. Fix when ui/acp is updated.
+  // biome-ignore lint/suspicious/noExplicitAny: SDK doesn't expose conn property
   const conn = (client as any).conn;
   const response = await conn.listSessions({});
-  return response.sessions.map((info: any) => ({
-    sessionId: info.sessionId,
-    title: info.title ?? null,
-    updatedAt: info.updatedAt ?? null,
-    messageCount: (info._meta?.messageCount as number) ?? 0,
-  }));
+  return response.sessions.map(
+    (info: {
+      sessionId: string;
+      title?: string;
+      updatedAt?: string;
+      _meta?: Record<string, unknown>;
+    }) => ({
+      sessionId: info.sessionId,
+      title: info.title ?? null,
+      updatedAt: info.updatedAt ?? null,
+      messageCount: (info._meta?.messageCount as number) ?? 0,
+    }),
+  );
 }
 
 export async function exportSession(sessionId: string): Promise<string> {
   const client = await getClient();
   const result = await client.goose.GooseSessionExport({ sessionId });
+  // biome-ignore lint/suspicious/noExplicitAny: SDK doesn't expose data field on export result
   return (result as any).data;
 }
 

@@ -235,7 +235,7 @@ function handleLive(
           ...msg,
           content: msg.content.map((c) =>
             c.type === "toolRequest" && c.id === update.toolCallId
-              ? { ...c, name: update.title! }
+              ? { ...c, name: update.title ?? "" }
               : c,
           ),
         }));
@@ -310,7 +310,8 @@ function handleShared(sessionId: string, update: SessionUpdate): void {
       };
       if ("options" in configUpdate && Array.isArray(configUpdate.options)) {
         const modelOption = configUpdate.options.find(
-          (opt: any) => opt.category === "model",
+          (opt: { category?: string; kind?: Record<string, unknown> }) =>
+            opt.category === "model",
         );
         if (modelOption?.kind?.type === "select") {
           const select = modelOption.kind;
@@ -391,6 +392,7 @@ function findMessageWithToolCall(
 }
 
 function extractToolResultText(update: {
+  // biome-ignore lint/suspicious/noExplicitAny: ACP SDK ToolCallContent type is complex
   content?: Array<any> | null;
   rawOutput?: unknown;
 }): string {

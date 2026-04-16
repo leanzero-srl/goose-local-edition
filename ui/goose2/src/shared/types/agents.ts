@@ -1,8 +1,6 @@
-// Provider types — these map to goose serve provider names.
-// All sessions run through goose serve; the provider ID selects which
-// backend provider goose uses for inference.  The list is dynamic
-// (fetched from the backend via discover_acp_providers) so this is a
-// plain string rather than a narrow union.
+// Provider types map to goose serve provider names.
+// The provider list is dynamic, so this remains a plain string rather than
+// a narrow union.
 export type ProviderType = string;
 
 export interface ProviderConfig {

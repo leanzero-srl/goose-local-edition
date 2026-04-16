@@ -106,7 +106,7 @@ function searchSession(
   };
 }
 
-function safeParse(json: string): Record<string, any> | null {
+function safeParse(json: string): Record<string, unknown> | null {
   try {
     return JSON.parse(json);
   } catch {

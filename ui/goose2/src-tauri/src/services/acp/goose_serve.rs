@@ -1,16 +1,18 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use futures::{SinkExt, StreamExt};
 use tokio::process::{Child, Command};
 use tokio::sync::OnceCell;
-use tokio_tungstenite::connect_async;
 
 const GOOSE_SERVE_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const GOOSE_SERVE_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(100);
 const LOCALHOST: &str = "127.0.0.1";
-pub(crate) const WS_BRIDGE_BUFFER_BYTES: usize = 64 * 1024;
-
+const COMMON_GOOSE_PATHS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/home/linuxbrew/.linuxbrew/bin",
+];
 // ---------------------------------------------------------------------------
 // GooseServeProcess — singleton that owns the long-lived `goose serve` child
 // ---------------------------------------------------------------------------
@@ -97,9 +99,7 @@ impl GooseServeProcess {
             )
         })?;
 
-        // Wait for the server to become ready by polling the WebSocket endpoint.
-        let ws_url = format!("ws://{LOCALHOST}:{port}/acp");
-        wait_for_server_ready(&ws_url, &mut child).await?;
+        wait_for_server_ready(port, &mut child).await?;
 
         log::info!("Goose serve is ready on port {port}");
 
@@ -110,22 +110,14 @@ impl GooseServeProcess {
     }
 }
 
-/// Wait for the goose serve process to accept WebSocket connections.
-///
-/// We do a connect-then-immediately-close loop until the server responds,
-/// the child exits, or we time out.
-async fn wait_for_server_ready(ws_url: &str, child: &mut Child) -> Result<(), String> {
+async fn wait_for_server_ready(port: u16, child: &mut Child) -> Result<(), String> {
     let deadline = Instant::now() + GOOSE_SERVE_CONNECT_TIMEOUT;
+    let addr = format!("{LOCALHOST}:{port}");
 
     loop {
-        match connect_async(ws_url).await {
-            Ok((ws_stream, _)) => {
-                // Server is up — close the probe connection.
-                let (mut writer, _) = ws_stream.split();
-                let _ = writer.close().await;
-                return Ok(());
-            }
-            Err(connect_error) => {
+        match tokio::net::TcpStream::connect(&addr).await {
+            Ok(_) => return Ok(()),
+            Err(_) => {
                 if let Some(status) = child
                     .try_wait()
                     .map_err(|e| format!("Failed to poll goose serve process: {e}"))?
@@ -136,9 +128,7 @@ async fn wait_for_server_ready(ws_url: &str, child: &mut Child) -> Result<(), St
                 }
 
                 if Instant::now() >= deadline {
-                    return Err(format!(
-                        "Timed out waiting for goose serve at {ws_url}: {connect_error}"
-                    ));
+                    return Err(format!("Timed out waiting for goose serve on port {port}"));
                 }
 
                 tokio::time::sleep(GOOSE_SERVE_CONNECT_RETRY_DELAY).await;
@@ -175,21 +165,21 @@ pub(crate) fn resolve_goose_binary() -> Result<PathBuf, String> {
         log::info!("Using GOOSE_BIN override: {override_path}");
         path
     } else {
-        let agent = acp_client::find_acp_agent_by_id("goose")
+        let path = find_goose_binary()
             .ok_or_else(|| "Unknown or unavailable agent provider: goose".to_string())?;
 
-        if !goose_binary_supports_serve(&agent.binary_path)? {
+        if !goose_binary_supports_serve(&path)? {
             return Err(format!(
                 "Resolved goose binary does not support `serve`: {}. Set GOOSE_BIN to a newer goose binary.",
-                agent.binary_path.display()
+                path.display()
             ));
         }
 
         log::info!(
-            "Resolved goose binary via login-shell discovery: {}",
-            agent.binary_path.display()
+            "Resolved goose binary via local discovery: {}",
+            path.display()
         );
-        agent.binary_path
+        path
     };
 
     // Log the binary version for debugging.
@@ -215,6 +205,62 @@ pub(crate) fn resolve_goose_binary() -> Result<PathBuf, String> {
     }
 
     Ok(binary_path)
+}
+
+fn find_goose_binary() -> Option<PathBuf> {
+    find_goose_via_login_shell().or_else(find_goose_in_common_paths)
+}
+
+fn find_goose_via_login_shell() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Ok(output) = std::process::Command::new(shell)
+                .args(["-l", "-c", "which goose"])
+                .output()
+            else {
+                continue;
+            };
+
+            if !output.status.success() {
+                continue;
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(path_str) = stdout.lines().rfind(|line| !line.trim().is_empty()) {
+                let path = PathBuf::from(path_str.trim());
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+fn find_goose_in_common_paths() -> Option<PathBuf> {
+    COMMON_GOOSE_PATHS
+        .iter()
+        .map(|dir| Path::new(dir).join(goose_binary_name()))
+        .find(|path| path.is_file())
+}
+
+fn goose_binary_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "goose.exe"
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        "goose"
+    }
 }
 
 fn goose_binary_supports_serve(binary_path: &PathBuf) -> Result<bool, String> {

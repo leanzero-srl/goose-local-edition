@@ -94,11 +94,9 @@ describe("useChat attachments", () => {
     ]);
     expect(mockAcpSendMessage).toHaveBeenCalledWith(
       "session-1",
-      "goose",
       "Attached items:\n- [file] /tmp/report.pdf\n- [directory] /tmp/screenshots\nPlease review these",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: undefined,
@@ -147,11 +145,9 @@ describe("useChat attachments", () => {
     ]);
     expect(mockAcpSendMessage).toHaveBeenCalledWith(
       "session-1",
-      "goose",
       "Attached items:\n- [image] diagram.png (image attached)\n ",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: [["abc123", "image/png"]],
@@ -196,11 +192,9 @@ describe("useChat attachments", () => {
 
     expect(mockAcpSendMessage).toHaveBeenCalledWith(
       "session-1",
-      "goose",
       "Attached items:\n- [file] /tmp/mobile-confirmation.html\n- [directory] /tmp/neighborhood block\n- [image] Screenshot 2026-04-09 at 1.25.32 PM.png (image attached)\ncan you see the attachments i attached?",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: [["abc123", "image/png"]],
@@ -238,11 +232,9 @@ describe("useChat attachments", () => {
     ]);
     expect(mockAcpSendMessage).toHaveBeenCalledWith(
       "session-1",
-      "goose",
       "Attached items:\n- [file] report.pdf\nPlease review this",
       {
         systemPrompt: undefined,
-        workingDir: undefined,
         personaId: undefined,
         personaName: undefined,
         images: undefined,
