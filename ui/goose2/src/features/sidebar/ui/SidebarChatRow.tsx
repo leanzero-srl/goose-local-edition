@@ -64,6 +64,7 @@ export function SidebarChatRow({
     t("common:session.defaultTitle"),
   );
   const [draftTitle, setDraftTitle] = useState(editableTitle);
+  const showActivityIndicator = isRunning || hasUnread;
 
   useEffect(() => {
     setDraftTitle(editableTitle);
@@ -186,10 +187,17 @@ export function SidebarChatRow({
           isActive ? ACTIVE_CHAT_ROW_CLASS : INACTIVE_CHAT_ROW_CLASS,
         )}
       >
+        {showActivityIndicator && (
+          <span className="flex h-3 w-3 shrink-0 items-center justify-center">
+            <SessionActivityIndicator
+              isRunning={isRunning}
+              hasUnread={hasUnread}
+            />
+          </span>
+        )}
         <span className="flex-1 min-w-0 truncate text-left">
           {displayTitle}
         </span>
-        <SessionActivityIndicator isRunning={isRunning} hasUnread={hasUnread} />
       </Button>
 
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
