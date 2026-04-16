@@ -667,6 +667,22 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+    optionalDependencies:
+      '@aaif/goose-binary-darwin-arm64':
+        specifier: workspace:*
+        version: link:../goose-binary/goose-binary-darwin-arm64
+      '@aaif/goose-binary-darwin-x64':
+        specifier: workspace:*
+        version: link:../goose-binary/goose-binary-darwin-x64
+      '@aaif/goose-binary-linux-arm64':
+        specifier: workspace:*
+        version: link:../goose-binary/goose-binary-linux-arm64
+      '@aaif/goose-binary-linux-x64':
+        specifier: workspace:*
+        version: link:../goose-binary/goose-binary-linux-x64
+      '@aaif/goose-binary-win32-x64':
+        specifier: workspace:*
+        version: link:../goose-binary/goose-binary-win32-x64
 
   text:
     dependencies:
@@ -716,22 +732,6 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
-    optionalDependencies:
-      '@aaif/goose-binary-darwin-arm64':
-        specifier: workspace:*
-        version: link:../goose-binary/goose-binary-darwin-arm64
-      '@aaif/goose-binary-darwin-x64':
-        specifier: workspace:*
-        version: link:../goose-binary/goose-binary-darwin-x64
-      '@aaif/goose-binary-linux-arm64':
-        specifier: workspace:*
-        version: link:../goose-binary/goose-binary-linux-arm64
-      '@aaif/goose-binary-linux-x64':
-        specifier: workspace:*
-        version: link:../goose-binary/goose-binary-linux-x64
-      '@aaif/goose-binary-win32-x64':
-        specifier: workspace:*
-        version: link:../goose-binary/goose-binary-win32-x64
 
 packages:
 

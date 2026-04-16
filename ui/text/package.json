@@ -19,15 +19,11 @@
     "goose": "dist/tui.js"
   },
   "files": [
-    "dist",
-    "scripts/postinstall.mjs",
-    "server-binary.json"
+    "dist"
   ],
   "scripts": {
     "build": "tsc",
-    "dev:binary": "node scripts/dev-binary.mjs",
-    "start": "npm run dev:binary && tsx src/tui.tsx",
-    "postinstall": "node scripts/postinstall.mjs",
+    "start": "node scripts/dev-start.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -40,13 +36,6 @@
     "marked-terminal": "^7.3.0",
     "meow": "^13.2.0",
     "react": "^19.2.4"
-  },
-  "optionalDependencies": {
-    "@aaif/goose-binary-darwin-arm64": "workspace:*",
-    "@aaif/goose-binary-darwin-x64": "workspace:*",
-    "@aaif/goose-binary-linux-arm64": "workspace:*",
-    "@aaif/goose-binary-linux-x64": "workspace:*",
-    "@aaif/goose-binary-win32-x64": "workspace:*"
   },
   "overrides": {
     "react": "^19.2.4"

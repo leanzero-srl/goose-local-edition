@@ -17,6 +17,16 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/resolve-binary.d.ts",
+      "default": "./dist/resolve-binary.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -34,6 +44,13 @@
   },
   "peerDependencies": {
     "@agentclientprotocol/sdk": "*"
+  },
+  "optionalDependencies": {
+    "@aaif/goose-binary-darwin-arm64": "workspace:*",
+    "@aaif/goose-binary-darwin-x64": "workspace:*",
+    "@aaif/goose-binary-linux-arm64": "workspace:*",
+    "@aaif/goose-binary-linux-x64": "workspace:*",
+    "@aaif/goose-binary-win32-x64": "workspace:*"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",

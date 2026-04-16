@@ -79,7 +79,6 @@ apt-get install -y -qq --no-install-recommends \
 echo "==> Compiling goose (this takes a while)..."
 cargo build --release --bin goose
 cp /build/target/release/goose /output/goose
-chmod +x /output/goose
 echo "==> Done"
 '
 
@@ -123,8 +122,7 @@ WORKDIR /build
 COPY . .
 RUN mkdir -p /output && \
     cargo build --release --bin goose && \
-    cp target/release/goose /output/goose && \
-    chmod +x /output/goose
+    cp target/release/goose /output/goose
 DEOF
 
   # Build in Docker and extract the binary
@@ -141,7 +139,6 @@ DEOF
   docker cp "${cid}:/output/goose" "${pkg_dir}/goose"
   docker rm "${cid}" >/dev/null
   docker rmi "${iid}" >/dev/null 2>&1 || true
-  chmod +x "${pkg_dir}/goose"
 
   rm -rf "${ctx}"
 

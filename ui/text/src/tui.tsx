@@ -5,9 +5,6 @@ import { MultilineInput } from "ink-multiline-input";
 import meow from "meow";
 import { spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
   SessionNotification,
   RequestPermissionRequest,
@@ -19,6 +16,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { ndJsonStream } from "@agentclientprotocol/sdk";
 import { GooseClient } from "@aaif/goose-sdk";
+import { resolveGooseBinary } from "@aaif/goose-sdk/node";
 import Onboarding from "./onboarding.js";
 import ConfigureScreen, { ConfigureIntent } from "./configure.js";
 import ExtensionsManager from "./extensions.js";
@@ -35,7 +33,15 @@ import {
 import { Header } from "./components/Header.js";
 import { Rule } from "./components/Rule.js";
 import { isErrorStatus, formatError } from "./utils.js";
-import { CRANBERRY, TEAL, GOLD, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DIM, RULE_COLOR } from "./colors.js";
+import {
+  CRANBERRY,
+  TEAL,
+  GOLD,
+  TEXT_PRIMARY,
+  TEXT_SECONDARY,
+  TEXT_DIM,
+  RULE_COLOR,
+} from "./colors.js";
 import { Spinner, SPINNER_FRAMES } from "./components/Spinner.js";
 import {
   PASTE_THRESHOLD,
@@ -137,7 +143,9 @@ const InputBar = React.memo(function InputBar({
       flexShrink={0}
     >
       <Box>
-        <Text color={CRANBERRY} bold>{"❯ "}</Text>
+        <Text color={CRANBERRY} bold>
+          {"❯ "}
+        </Text>
         {isPasteMode ? (
           <Box width={contentWidth} justifyContent="space-between">
             <Box width={Math.max(contentWidth - 20, 10)}>
@@ -145,10 +153,16 @@ const InputBar = React.memo(function InputBar({
                 {(() => {
                   const text = pastedFull;
                   const availableWidth = Math.max(contentWidth - 20, 10);
-                  const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+                  const flat = text
+                    .replace(/\n/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
                   if (flat.length <= availableWidth) return flat;
                   const suffix = ` (${flat.length.toLocaleString()} chars)`;
-                  const previewLen = Math.max(availableWidth - suffix.length - 1, 5);
+                  const previewLen = Math.max(
+                    availableWidth - suffix.length - 1,
+                    5,
+                  );
                   return flat.slice(0, previewLen) + "…" + suffix;
                 })()}
               </Text>
@@ -170,10 +184,13 @@ const InputBar = React.memo(function InputBar({
                 newline: (key) => key.return && key.ctrl,
               }}
               useCustomInput={(handler, isActive) => {
-                useInput((ch, key) => {
-                  if (key.shift && (key.upArrow || key.downArrow)) return;
-                  handler(ch, key);
-                }, { isActive });
+                useInput(
+                  (ch, key) => {
+                    if (key.shift && (key.upArrow || key.downArrow)) return;
+                    handler(ch, key);
+                  },
+                  { isActive },
+                );
               }}
             />
             {scrollHint && <Text color={TEXT_DIM}>shift+↑↓ history</Text>}
@@ -227,36 +244,64 @@ function buildContentLines({
   const safeWidth = Math.max(width, 20);
 
   const turnId = String(turnIndex);
-  lines.push(...renderUserPrompt(turn.userText, safeWidth, turnId, (text: string, availableWidth: number) => {
-    const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
-    const safeWidth = Math.max(availableWidth, 10);
-    const maxPreview = Math.max(safeWidth - 30, Math.min(SENT_PREVIEW_LEN, safeWidth - 10));
-    if (flat.length <= maxPreview + 10) {
-      return (
-        <Box width={safeWidth}>
-          <Text color={TEXT_PRIMARY} bold wrap="wrap">{flat}</Text>
-        </Box>
-      );
-    }
-    const preview = flat.slice(0, maxPreview) + "…";
-    const remaining = flat.length - maxPreview;
-    return (
-      <Box width={safeWidth}>
-        <Text color={TEXT_PRIMARY} bold wrap="wrap">{preview}</Text>
-        <Text color={TEXT_DIM}> ({remaining.toLocaleString()} more chars)</Text>
-      </Box>
-    );
-  }));
+  lines.push(
+    ...renderUserPrompt(
+      turn.userText,
+      safeWidth,
+      turnId,
+      (text: string, availableWidth: number) => {
+        const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+        const safeWidth = Math.max(availableWidth, 10);
+        const maxPreview = Math.max(
+          safeWidth - 30,
+          Math.min(SENT_PREVIEW_LEN, safeWidth - 10),
+        );
+        if (flat.length <= maxPreview + 10) {
+          return (
+            <Box width={safeWidth}>
+              <Text color={TEXT_PRIMARY} bold wrap="wrap">
+                {flat}
+              </Text>
+            </Box>
+          );
+        }
+        const preview = flat.slice(0, maxPreview) + "…";
+        const remaining = flat.length - maxPreview;
+        return (
+          <Box width={safeWidth}>
+            <Text color={TEXT_PRIMARY} bold wrap="wrap">
+              {preview}
+            </Text>
+            <Text color={TEXT_DIM}>
+              {" "}
+              ({remaining.toLocaleString()} more chars)
+            </Text>
+          </Box>
+        );
+      },
+    ),
+  );
 
   // Process response items
-  const hasToolCalls = turn.responseItems.some((it) => it.itemType === "tool_call");
+  const hasToolCalls = turn.responseItems.some(
+    (it) => it.itemType === "tool_call",
+  );
   let tcIdx = 0;
 
   for (let i = 0; i < turn.responseItems.length; i++) {
     const item = turn.responseItems[i]!;
 
     if (item.itemType === "tool_call") {
-      lines.push(...renderToolCallItem(item, i, safeWidth, toolCallsExpanded, tcIdx === 0, hasToolCalls));
+      lines.push(
+        ...renderToolCallItem(
+          item,
+          i,
+          safeWidth,
+          toolCallsExpanded,
+          tcIdx === 0,
+          hasToolCalls,
+        ),
+      );
       tcIdx++;
     } else if (item.itemType === "error") {
       lines.push(...renderErrorItem(item, i, safeWidth));
@@ -280,7 +325,12 @@ function buildContentLines({
     const hRule = "─".repeat(Math.max(dialogWidth - 2, 0));
     const permissionLines: React.ReactElement[] = [];
 
-    permissionLines.push(emptyLine(`pm-gap-${perm.toolTitle.slice(0, 10).replace(/[^a-zA-Z0-9]/g, '')}`, fullWidth));
+    permissionLines.push(
+      emptyLine(
+        `pm-gap-${perm.toolTitle.slice(0, 10).replace(/[^a-zA-Z0-9]/g, "")}`,
+        fullWidth,
+      ),
+    );
 
     permissionLines.push(
       <Box key="pm-t" width={fullWidth} height={1}>
@@ -292,15 +342,27 @@ function buildContentLines({
       permissionLines.push(
         <Box key={key} width={fullWidth} height={1}>
           <Text color={GOLD}>│ </Text>
-          <Box width={innerWidth} height={1}>{content}</Box>
+          <Box width={innerWidth} height={1}>
+            {content}
+          </Box>
           <Text color={GOLD}> │</Text>
         </Box>,
       );
     };
 
-    row("pm-title", <Text color={GOLD} bold>🔒 Permission required</Text>);
+    row(
+      "pm-title",
+      <Text color={GOLD} bold>
+        🔒 Permission required
+      </Text>,
+    );
     row("pm-g1", <Text> </Text>);
-    row("pm-tool", <Text wrap="truncate-end" color={TEXT_PRIMARY}>{perm.toolTitle}</Text>);
+    row(
+      "pm-tool",
+      <Text wrap="truncate-end" color={TEXT_PRIMARY}>
+        {perm.toolTitle}
+      </Text>,
+    );
     row("pm-g2", <Text> </Text>);
 
     for (let i = 0; i < perm.options.length; i++) {
@@ -308,18 +370,22 @@ function buildContentLines({
       const k = PERMISSION_KEYS[opt.kind] ?? String(i + 1);
       const label = PERMISSION_LABELS[opt.kind] ?? opt.name;
       const active = i === selectedIdx;
-      row(`pm-o${i}`, (
+      row(
+        `pm-o${i}`,
         <>
           <Text color={active ? GOLD : RULE_COLOR}>{active ? "▸ " : "  "}</Text>
           <Text color={active ? TEXT_PRIMARY : TEXT_SECONDARY} bold={active}>
             [{k}] {label}
           </Text>
-        </>
-      ));
+        </>,
+      );
     }
 
     row("pm-g3", <Text> </Text>);
-    row("pm-help", <Text color={TEXT_DIM}>↑↓ select · enter confirm · esc cancel</Text>);
+    row(
+      "pm-help",
+      <Text color={TEXT_DIM}>↑↓ select · enter confirm · esc cancel</Text>,
+    );
 
     permissionLines.push(
       <Box key="pm-b" width={fullWidth} height={1}>
@@ -367,9 +433,11 @@ const Viewport = React.memo(function Viewport({
     const above = startIdx;
     elements.push(
       <Box key="si-up" width={width} height={1} justifyContent="center">
-        {above > 0
-          ? <Text color={TEXT_DIM}>▲ {above} more (↑)</Text>
-          : <Text> </Text>}
+        {above > 0 ? (
+          <Text color={TEXT_DIM}>▲ {above} more (↑)</Text>
+        ) : (
+          <Text> </Text>
+        )}
       </Box>,
     );
   }
@@ -383,9 +451,11 @@ const Viewport = React.memo(function Viewport({
     const below = total - endIdx;
     elements.push(
       <Box key="si-dn" width={width} height={1} justifyContent="center">
-        {below > 0
-          ? <Text color={TEXT_DIM}>▼ {below} more (↓)</Text>
-          : <Text> </Text>}
+        {below > 0 ? (
+          <Text color={TEXT_DIM}>▼ {below} more (↓)</Text>
+        ) : (
+          <Text> </Text>
+        )}
       </Box>,
     );
   }
@@ -394,7 +464,11 @@ const Viewport = React.memo(function Viewport({
   const constrainedHeight = Math.max(height, 1);
 
   return (
-    <Box flexDirection="column" height={constrainedHeight} width={constrainedWidth}>
+    <Box
+      flexDirection="column"
+      height={constrainedHeight}
+      width={constrainedWidth}
+    >
       {elements}
     </Box>
   );
@@ -438,11 +512,15 @@ const SplashScreen = React.memo(function SplashScreen({
       {topPad > 0 && <Box height={topPad} />}
       <Box flexDirection="column" alignItems="center">
         {frame.map((line, i) => (
-          <Text key={i} color={TEXT_PRIMARY}>{line}</Text>
+          <Text key={i} color={TEXT_PRIMARY}>
+            {line}
+          </Text>
         ))}
       </Box>
       <Box marginTop={1}>
-        <Text color={TEXT_PRIMARY} bold>goose</Text>
+        <Text color={TEXT_PRIMARY} bold>
+          goose
+        </Text>
       </Box>
       <Box alignItems="center">
         <Text color={TEXT_DIM}>your on-machine AI agent</Text>
@@ -484,7 +562,9 @@ function App({
   const [scrollOffset, setScrollOffset] = useState(0);
   const [pastedFull, setPastedFull] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
-  type Overlay = { screen: "configure"; intent: ConfigureIntent } | { screen: "extensions" };
+  type Overlay =
+    | { screen: "configure"; intent: ConfigureIntent }
+    | { screen: "extensions" };
   const [overlay, setOverlay] = useState<Overlay | null>(null);
 
   const clientRef = useRef<GooseClient | null>(null);
@@ -527,13 +607,22 @@ function App({
         if (lastItem.content.type === "text") {
           newItems[newItems.length - 1] = {
             ...lastItem,
-            content: { ...lastItem.content, text: lastItem.content.text + text },
+            content: {
+              ...lastItem.content,
+              text: lastItem.content.text + text,
+            },
           };
         } else {
-          newItems.push({ itemType: "content_chunk", content: { type: "text", text } });
+          newItems.push({
+            itemType: "content_chunk",
+            content: { type: "text", text },
+          });
         }
       } else {
-        newItems.push({ itemType: "content_chunk", content: { type: "text", text } });
+        newItems.push({
+          itemType: "content_chunk",
+          content: { type: "text", text },
+        });
       }
 
       return [...prev.slice(0, -1), { ...last, responseItems: newItems }];
@@ -605,7 +694,9 @@ function App({
       if (option === "cancelled") {
         resolve({ outcome: { outcome: "cancelled" } });
       } else {
-        resolve({ outcome: { outcome: "selected", optionId: option.optionId } });
+        resolve({
+          outcome: { outcome: "selected", optionId: option.optionId },
+        });
       }
       setPendingPermission(null);
       setPermissionIdx(0);
@@ -665,29 +756,32 @@ function App({
     [executePrompt, processQueue],
   );
 
-  const createSession = useCallback(async (client: GooseClient) => {
-    setStatus("creating session…");
-    setLoading(true);
-    try {
-      const session = await client.newSession({
-        cwd: process.cwd(),
-        mcpServers: [],
-      });
-      sessionIdRef.current = session.sessionId;
-      setLoading(false);
-      setStatus("ready");
+  const createSession = useCallback(
+    async (client: GooseClient) => {
+      setStatus("creating session…");
+      setLoading(true);
+      try {
+        const session = await client.newSession({
+          cwd: process.cwd(),
+          mcpServers: [],
+        });
+        sessionIdRef.current = session.sessionId;
+        setLoading(false);
+        setStatus("ready");
 
-      if (initialPrompt && !sentInitialPrompt.current) {
-        sentInitialPrompt.current = true;
-        await sendPrompt(initialPrompt);
-        setTimeout(() => exit(), 100);
+        if (initialPrompt && !sentInitialPrompt.current) {
+          sentInitialPrompt.current = true;
+          await sendPrompt(initialPrompt);
+          setTimeout(() => exit(), 100);
+        }
+      } catch (e: unknown) {
+        const errorMsg = formatError(e);
+        setStatus(`failed: ${errorMsg}`);
+        setLoading(false);
       }
-    } catch (e: unknown) {
-      const errorMsg = formatError(e);
-      setStatus(`failed: ${errorMsg}`);
-      setLoading(false);
-    }
-  }, [initialPrompt, sendPrompt, exit]);
+    },
+    [initialPrompt, sendPrompt, exit],
+  );
 
   const handleOnboardingComplete = useCallback(() => {
     setNeedsOnboarding(false);
@@ -751,8 +845,11 @@ function App({
         setStatus("checking provider…");
         let hasProvider = false;
         try {
-          const resp = await client.goose.GooseConfigRead({ key: "GOOSE_PROVIDER" });
-          hasProvider = resp.value != null && resp.value !== "" && resp.value !== "null";
+          const resp = await client.goose.GooseConfigRead({
+            key: "GOOSE_PROVIDER",
+          });
+          hasProvider =
+            resp.value != null && resp.value !== "" && resp.value !== "null";
         } catch {
           hasProvider = false;
         }
@@ -774,10 +871,17 @@ function App({
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [
-    serverConnection, initialPrompt, createSession,
-    appendAgent, handleToolCall, handleToolCallUpdate, exit,
+    serverConnection,
+    initialPrompt,
+    createSession,
+    appendAgent,
+    handleToolCall,
+    handleToolCallUpdate,
+    exit,
   ]);
 
   const handleSubmit = useCallback(
@@ -800,86 +904,118 @@ function App({
     [loading, sendPrompt],
   );
 
-  useInput((ch, key) => {
-    if (key.escape || (ch === "c" && key.ctrl)) {
-      if (pendingPermission) { resolvePermission("cancelled"); return; }
-      if (key.escape && pastedFull !== null) return;
-      exit();
-    }
+  useInput(
+    (ch, key) => {
+      if (key.escape || (ch === "c" && key.ctrl)) {
+        if (pendingPermission) {
+          resolvePermission("cancelled");
+          return;
+        }
+        if (key.escape && pastedFull !== null) return;
+        exit();
+      }
 
-    if (!loading && !pendingPermission && sessionIdRef.current) {
-      if (key.ctrl && (ch === "p" || ch === "P")) { setOverlay({ screen: "configure", intent: "provider" }); return; }
-      if (key.ctrl && (ch === "m" || ch === "M")) { setOverlay({ screen: "configure", intent: "model" }); return; }
-      if (key.ctrl && (ch === "e" || ch === "E")) { setOverlay({ screen: "extensions" }); return; }
-      if (ch === "g" && key.ctrl) { setOverlay({ screen: "configure", intent: "provider" }); return; }
-    }
+      if (!loading && !pendingPermission && sessionIdRef.current) {
+        if (key.ctrl && (ch === "p" || ch === "P")) {
+          setOverlay({ screen: "configure", intent: "provider" });
+          return;
+        }
+        if (key.ctrl && (ch === "m" || ch === "M")) {
+          setOverlay({ screen: "configure", intent: "model" });
+          return;
+        }
+        if (key.ctrl && (ch === "e" || ch === "E")) {
+          setOverlay({ screen: "extensions" });
+          return;
+        }
+        if (ch === "g" && key.ctrl) {
+          setOverlay({ screen: "configure", intent: "provider" });
+          return;
+        }
+      }
 
-    if (pendingPermission) {
-      const opts = pendingPermission.options;
-      if (key.upArrow) { setPermissionIdx((i) => (i - 1 + opts.length) % opts.length); return; }
-      if (key.downArrow) { setPermissionIdx((i) => (i + 1) % opts.length); return; }
-      if (key.return) {
-        const sel = opts[permissionIdx];
-        if (sel) resolvePermission({ optionId: sel.optionId });
+      if (pendingPermission) {
+        const opts = pendingPermission.options;
+        if (key.upArrow) {
+          setPermissionIdx((i) => (i - 1 + opts.length) % opts.length);
+          return;
+        }
+        if (key.downArrow) {
+          setPermissionIdx((i) => (i + 1) % opts.length);
+          return;
+        }
+        if (key.return) {
+          const sel = opts[permissionIdx];
+          if (sel) resolvePermission({ optionId: sel.optionId });
+          return;
+        }
+        const keyMap: Record<string, string> = {
+          y: "allow_once",
+          a: "allow_always",
+          n: "reject_once",
+          N: "reject_always",
+        };
+        const kind = keyMap[ch];
+        if (kind) {
+          const m = opts.find((o) => o.kind === kind);
+          if (m) resolvePermission({ optionId: m.optionId });
+        }
         return;
       }
-      const keyMap: Record<string, string> = {
-        y: "allow_once", a: "allow_always", n: "reject_once", N: "reject_always",
-      };
-      const kind = keyMap[ch];
-      if (kind) {
-        const m = opts.find((o) => o.kind === kind);
-        if (m) resolvePermission({ optionId: m.optionId });
+
+      const viewingHistory =
+        viewTurnIdx !== -1 && viewTurnIdx < turns.length - 1;
+      const multilineOwnsArrows =
+        !pendingPermission &&
+        !initialPrompt &&
+        !viewingHistory &&
+        pastedFull === null;
+
+      if (key.tab) {
+        const idx = viewTurnIdx === -1 ? turns.length - 1 : viewTurnIdx;
+        const t = turns[idx];
+        if (t && t.responseItems.some((it) => it.itemType === "tool_call")) {
+          setToolCallsExpanded((prev) => !prev);
+        }
+        return;
       }
-      return;
-    }
 
-    const viewingHistory = viewTurnIdx !== -1 && viewTurnIdx < turns.length - 1;
-    const multilineOwnsArrows =
-      !pendingPermission && !initialPrompt && !viewingHistory && pastedFull === null;
-
-    if (key.tab) {
-      const idx = viewTurnIdx === -1 ? turns.length - 1 : viewTurnIdx;
-      const t = turns[idx];
-      if (t && t.responseItems.some((it) => it.itemType === "tool_call")) {
-        setToolCallsExpanded((prev) => !prev);
+      if (key.upArrow && !key.shift) {
+        if (!multilineOwnsArrows) setScrollOffset((prev) => prev + 3);
+        return;
       }
-      return;
-    }
+      if (key.downArrow && !key.shift) {
+        if (!multilineOwnsArrows)
+          setScrollOffset((prev) => Math.max(prev - 3, 0));
+        return;
+      }
 
-    if (key.upArrow && !key.shift) {
-      if (!multilineOwnsArrows) setScrollOffset((prev) => prev + 3);
-      return;
-    }
-    if (key.downArrow && !key.shift) {
-      if (!multilineOwnsArrows) setScrollOffset((prev) => Math.max(prev - 3, 0));
-      return;
-    }
-
-    if (key.upArrow && key.shift) {
-      setTurns((cur) => {
-        if (cur.length <= 1) return cur;
-        setViewTurnIdx((prev) => {
-          const eff = prev === -1 ? cur.length - 1 : prev;
-          return Math.max(eff - 1, 0);
+      if (key.upArrow && key.shift) {
+        setTurns((cur) => {
+          if (cur.length <= 1) return cur;
+          setViewTurnIdx((prev) => {
+            const eff = prev === -1 ? cur.length - 1 : prev;
+            return Math.max(eff - 1, 0);
+          });
+          return cur;
         });
-        return cur;
-      });
-      return;
-    }
-    if (key.downArrow && key.shift) {
-      setTurns((cur) => {
-        if (cur.length <= 1) return cur;
-        setViewTurnIdx((prev) => {
-          if (prev === -1) return -1;
-          const next = prev + 1;
-          return next >= cur.length ? -1 : next;
+        return;
+      }
+      if (key.downArrow && key.shift) {
+        setTurns((cur) => {
+          if (cur.length <= 1) return cur;
+          setViewTurnIdx((prev) => {
+            if (prev === -1) return -1;
+            const next = prev + 1;
+            return next >= cur.length ? -1 : next;
+          });
+          return cur;
         });
-        return cur;
-      });
-      return;
-    }
-  }, { isActive: !needsOnboarding && !overlay });
+        return;
+      }
+    },
+    { isActive: !needsOnboarding && !overlay },
+  );
 
   const PAD_X = 2;
   const PAD_Y = 1;
@@ -891,7 +1027,8 @@ function App({
   const currentTurn = turns[effectiveTurnIdx];
   const isViewingHistory = viewTurnIdx !== -1 && viewTurnIdx < turns.length - 1;
   const isLatest = !isViewingHistory;
-  const showInputBar = !pendingPermission && !initialPrompt && !isViewingHistory;
+  const showInputBar =
+    !pendingPermission && !initialPrompt && !isViewingHistory;
 
   const headerH = 2;
   const isPasteMode = pastedFull !== null;
@@ -924,11 +1061,7 @@ function App({
 
   if (needsOnboarding && clientRef.current) {
     return (
-      <Box
-        flexDirection="column"
-        width={safeTermWidth}
-        height={safeTermHeight}
-      >
+      <Box flexDirection="column" width={safeTermWidth} height={safeTermHeight}>
         <Onboarding
           client={clientRef.current}
           width={safeTermWidth}
@@ -943,13 +1076,20 @@ function App({
     if (overlay.screen === "configure") {
       const intent = overlay.intent;
       return (
-        <Box flexDirection="column" width={safeTermWidth} height={safeTermHeight}>
+        <Box
+          flexDirection="column"
+          width={safeTermWidth}
+          height={safeTermHeight}
+        >
           <ConfigureScreen
             client={clientRef.current}
             sessionId={sessionIdRef.current}
             width={safeTermWidth}
             height={safeTermHeight}
-            onComplete={() => { setOverlay(null); setStatus("ready"); }}
+            onComplete={() => {
+              setOverlay(null);
+              setStatus("ready");
+            }}
             onCancel={() => setOverlay(null)}
             initialIntent={intent}
           />
@@ -957,7 +1097,11 @@ function App({
       );
     } else if (overlay.screen === "extensions") {
       return (
-        <Box flexDirection="column" width={safeTermWidth} height={safeTermHeight}>
+        <Box
+          flexDirection="column"
+          width={safeTermWidth}
+          height={safeTermHeight}
+        >
           <ExtensionsManager
             client={clientRef.current}
             sessionId={sessionIdRef.current}
@@ -1057,8 +1201,6 @@ const cli = meow(
   },
 );
 
-
-
 let serverProcess: ReturnType<typeof spawn> | null = null;
 
 async function runTextMode(serverConnection: Stream | string, prompt: string) {
@@ -1077,7 +1219,9 @@ async function runTextMode(serverConnection: Stream | string, prompt: string) {
           params: RequestPermissionRequest,
         ): Promise<RequestPermissionResponse> => {
           // Auto-reject in text mode
-          const rejectOption = params.options.find(o => o.kind === "reject_once");
+          const rejectOption = params.options.find(
+            (o) => o.kind === "reject_once",
+          );
           if (rejectOption) {
             return {
               outcome: { outcome: "selected", optionId: rejectOption.optionId },
@@ -1119,29 +1263,7 @@ async function main() {
   if (cli.flags.server) {
     serverConnection = cli.flags.server;
   } else {
-    const binary = (() => {
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const candidates = [
-        join(__dirname, "..", "server-binary.json"),
-        join(__dirname, "server-binary.json"),
-      ];
-      for (const candidate of candidates) {
-        try {
-          const data = JSON.parse(readFileSync(candidate, "utf-8"));
-          return data.binaryPath ?? null;
-        } catch {
-          // not found here, try next
-        }
-      }
-      return null;
-    })();
-    if (!binary) {
-      console.error(
-        "No goose binary found. Use --server <url> or install the native package.",
-      );
-      process.exit(1);
-    }
-
+    const binary = resolveGooseBinary();
     serverProcess = spawn(binary, ["acp"], {
       stdio: ["pipe", "pipe", "ignore"],
       detached: false,
@@ -1152,8 +1274,12 @@ async function main() {
       process.exit(1);
     });
 
-    const output = Writable.toWeb(serverProcess.stdin!) as WritableStream<Uint8Array>;
-    const input = Readable.toWeb(serverProcess.stdout!) as ReadableStream<Uint8Array>;
+    const output = Writable.toWeb(
+      serverProcess.stdin!,
+    ) as WritableStream<Uint8Array>;
+    const input = Readable.toWeb(
+      serverProcess.stdout!,
+    ) as ReadableStream<Uint8Array>;
     serverConnection = ndJsonStream(output, input);
   }
 
@@ -1180,8 +1306,14 @@ function cleanup() {
 }
 
 process.on("exit", cleanup);
-process.on("SIGINT", () => { cleanup(); process.exit(0); });
-process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+process.on("SIGINT", () => {
+  cleanup();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  cleanup();
+  process.exit(0);
+});
 
 main().catch((err) => {
   console.error(err);
