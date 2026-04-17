@@ -443,10 +443,7 @@ async fn create_streamable_http_client(
 
     let transport = StreamableHttpClientTransport::with_client(
         http_client,
-        StreamableHttpClientTransportConfig {
-            uri: uri.into(),
-            ..Default::default()
-        },
+        StreamableHttpClientTransportConfig::with_uri(uri),
     );
 
     let timeout_duration = Duration::from_secs(resolve_timeout(timeout));
@@ -475,10 +472,7 @@ async fn create_streamable_http_client(
                 let auth_client = AuthClient::new(auth_http_client, auth_manager);
                 let transport = StreamableHttpClientTransport::with_client(
                     auth_client,
-                    StreamableHttpClientTransportConfig {
-                        uri: uri.into(),
-                        ..Default::default()
-                    },
+                    StreamableHttpClientTransportConfig::with_uri(uri),
                 );
                 Ok(Box::new(
                     McpClient::connect(
@@ -2318,11 +2312,11 @@ mod tests {
 
     fn transport_err(error: Box<dyn std::error::Error + Send + Sync>) -> ClientInitializeError {
         ClientInitializeError::TransportError {
-            error: rmcp::transport::DynamicTransportError {
-                transport_name: "test".into(),
-                transport_type_id: std::any::TypeId::of::<()>(),
+            error: rmcp::transport::DynamicTransportError::from_parts(
+                "test",
+                std::any::TypeId::of::<()>(),
                 error,
-            },
+            ),
             context: "test context".into(),
         }
     }
@@ -2337,9 +2331,9 @@ mod tests {
     fn test_oauth_fallback_on_typed_auth_required() {
         let err = streamable_err(
             rmcp::transport::streamable_http_client::StreamableHttpError::AuthRequired(
-                rmcp::transport::streamable_http_client::AuthRequiredError {
-                    www_authenticate_header: "Bearer realm=\"test\"".to_string(),
-                },
+                rmcp::transport::streamable_http_client::AuthRequiredError::new(
+                    "Bearer realm=\"test\"".to_string(),
+                ),
             ),
         );
         assert!(should_attempt_oauth_fallback(&Err(err)));
