@@ -21,8 +21,7 @@ import {
   clearReplayBuffer,
   getAndDeleteReplayBuffer,
 } from "@/features/chat/hooks/replayBuffer";
-import { getHomeDir } from "@/shared/api/system";
-import { resolveEffectiveWorkingDir } from "@/features/projects/lib/chatProjectContext";
+import { resolveSessionCwd } from "@/features/projects/lib/sessionCwdSelection";
 
 export type AppView =
   | "home"
@@ -93,11 +92,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             .projects.find((candidate) => candidate.id === session.projectId) ??
           null)
         : null;
-      const workingDir =
-        resolveEffectiveWorkingDir(project) ??
-        (!project
-          ? resolveEffectiveWorkingDir(null, await getHomeDir())
-          : undefined);
+      const workingDir = await resolveSessionCwd(project);
       await acpLoadSession(sessionId, gooseSessionId, workingDir);
       useChatStore.getState().setSessionLoading(sessionId, false);
       const buffer = getAndDeleteReplayBuffer(sessionId);
@@ -315,19 +310,15 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             : (useProjectStore
                 .getState()
                 .projects.find((project) => project.id === projectId) ?? null);
-        const nextWorkingDir =
-          resolveEffectiveWorkingDir(nextProject) ??
-          (nextProject == null
-            ? resolveEffectiveWorkingDir(null, await getHomeDir())
-            : undefined);
-        if (!nextWorkingDir) {
+        const workingDir = await resolveSessionCwd(nextProject);
+        if (!workingDir) {
           return;
         }
         await acpPrepareSession(
           sessionId,
           session.providerId ?? agentStore.selectedProvider ?? "goose",
+          workingDir,
           {
-            workingDir: nextWorkingDir,
             personaId: session.personaId,
           },
         );
