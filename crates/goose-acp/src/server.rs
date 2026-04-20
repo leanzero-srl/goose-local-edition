@@ -40,7 +40,7 @@ use sacp::schema::{
     SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse,
     SetSessionModelRequest, SetSessionModelResponse, StopReason, TextContent, TextResourceContents,
     ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    ToolCallUpdateFields, ToolKind, Usage, UsageUpdate,
 };
 use sacp::util::MatchDispatchFrom;
 use sacp::{
@@ -601,6 +601,22 @@ fn build_config_options(
         )
         .category(SessionConfigOptionCategory::Model),
     ]
+}
+
+fn to_nonnegative_u64(value: Option<i32>) -> Option<u64> {
+    value.and_then(|v| u64::try_from(v).ok())
+}
+
+fn build_prompt_usage(session: &Session) -> Option<Usage> {
+    let total = to_nonnegative_u64(session.total_tokens)?;
+    let input = to_nonnegative_u64(session.input_tokens).unwrap_or(0);
+    let output = to_nonnegative_u64(session.output_tokens).unwrap_or(0);
+    Some(Usage::new(total, input, output))
+}
+
+fn build_usage_update(session: &Session, context_limit: usize) -> UsageUpdate {
+    let used = session.total_tokens.unwrap_or(0).max(0) as u64;
+    UsageUpdate::new(used, context_limit as u64)
 }
 
 impl GooseAcpAgent {
@@ -1383,26 +1399,37 @@ impl GooseAcpAgent {
         // Resolve provider + model from config so we can include the current
         // model in the response without waiting for the full agent setup.
         let resolved = resolve_provider_and_model(&self.config_dir, &goose_session).await;
+        let initial_usage_update = resolved
+            .as_ref()
+            .ok()
+            .map(|(_, mc)| build_usage_update(&goose_session, mc.context_limit()));
         let (model_state, config_options) =
             build_eager_config(&resolved, &mode_state, &goose_session).await;
+        let session_id = SessionId::new(thread_id.clone());
 
         self.spawn_agent_setup(
             cx,
             agent_tx,
             AgentSetupRequest {
-                session_id: SessionId::new(thread_id.clone()),
+                session_id: session_id.clone(),
                 goose_session,
                 mcp_servers: args.mcp_servers,
-                resolved_provider: resolved.ok(),
+                resolved_provider: resolved.as_ref().ok().cloned(),
             },
         );
 
-        let mut response = NewSessionResponse::new(SessionId::new(thread_id)).modes(mode_state);
+        let mut response = NewSessionResponse::new(session_id.clone()).modes(mode_state);
         if let Some(ms) = model_state {
             response = response.models(ms);
         }
         if let Some(co) = config_options {
             response = response.config_options(co);
+        }
+        if let Some(usage_update) = initial_usage_update {
+            cx.send_notification(SessionNotification::new(
+                session_id,
+                SessionUpdate::UsageUpdate(usage_update),
+            ))?;
         }
         debug!(
             target: "perf",
@@ -1748,6 +1775,16 @@ impl GooseAcpAgent {
         let mode_state = build_mode_state(loaded_mode)?;
 
         let resolved = resolve_provider_and_model(&self.config_dir, &goose_session).await;
+        let initial_usage_update = resolved
+            .as_ref()
+            .ok()
+            .map(|(_, mc)| build_usage_update(&goose_session, mc.context_limit()))
+            .or_else(|| {
+                goose_session
+                    .model_config
+                    .as_ref()
+                    .map(|mc| build_usage_update(&goose_session, mc.context_limit()))
+            });
         let (model_state, config_options) =
             build_eager_config(&resolved, &mode_state, &goose_session).await;
 
@@ -1768,6 +1805,12 @@ impl GooseAcpAgent {
         }
         if let Some(co) = config_options {
             response = response.config_options(co);
+        }
+        if let Some(usage_update) = initial_usage_update {
+            cx.send_notification(SessionNotification::new(
+                args.session_id.clone(),
+                SessionUpdate::UsageUpdate(usage_update),
+            ))?;
         }
         debug!(
             target: "perf",
@@ -1882,10 +1925,30 @@ impl GooseAcpAgent {
             }
         }
 
-        let mut sessions = self.sessions.lock().await;
-        if let Some(session) = sessions.get_mut(&thread_id) {
-            session.cancel_token = None;
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&thread_id) {
+                session.cancel_token = None;
+            }
         }
+
+        let session = self
+            .session_manager
+            .get_session(&internal_session_id, false)
+            .await
+            .map_err(|e| {
+                sacp::Error::internal_error().data(format!("Failed to load session: {}", e))
+            })?;
+        let provider = agent.provider().await.map_err(|e| {
+            sacp::Error::internal_error().data(format!("Failed to get provider: {}", e))
+        })?;
+        let usage_update =
+            build_usage_update(&session, provider.get_model_config().context_limit());
+        cx.send_notification(SessionNotification::new(
+            args.session_id.clone(),
+            SessionUpdate::UsageUpdate(usage_update),
+        ))?;
+
         debug!(
             target: "perf",
             sid = %sid,
@@ -1894,11 +1957,17 @@ impl GooseAcpAgent {
             cancelled = was_cancelled,
             "perf: prompt done"
         );
-        Ok(PromptResponse::new(if was_cancelled {
+        let stop_reason = if was_cancelled {
             StopReason::Cancelled
         } else {
             StopReason::EndTurn
-        }))
+        };
+
+        let mut response = PromptResponse::new(stop_reason);
+        if let Some(usage) = build_prompt_usage(&session) {
+            response = response.usage(usage);
+        }
+        Ok(response)
     }
 
     async fn on_cancel(&self, args: CancelNotification) -> Result<(), sacp::Error> {
@@ -3484,6 +3553,80 @@ print(\"hello, world\")
     ) -> Option<Vec<(PathBuf, Option<u32>)>> {
         extract_locations_from_meta(&response)
             .map(|locs| locs.into_iter().map(|loc| (loc.path, loc.line)).collect())
+    }
+
+    fn make_session_with_usage(
+        total_tokens: Option<i32>,
+        input_tokens: Option<i32>,
+        output_tokens: Option<i32>,
+        accumulated_total_tokens: Option<i32>,
+        accumulated_input_tokens: Option<i32>,
+        accumulated_output_tokens: Option<i32>,
+    ) -> Session {
+        Session {
+            id: "session-1".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            name: "ACP Session".to_string(),
+            user_set_name: false,
+            session_type: SessionType::Acp,
+            created_at: Default::default(),
+            updated_at: Default::default(),
+            extension_data: goose::session::ExtensionData::default(),
+            total_tokens,
+            input_tokens,
+            output_tokens,
+            accumulated_total_tokens,
+            accumulated_input_tokens,
+            accumulated_output_tokens,
+            schedule_id: None,
+            recipe: None,
+            user_recipe_values: None,
+            conversation: None,
+            message_count: 0,
+            provider_name: None,
+            model_config: None,
+            goose_mode: GooseMode::default(),
+            thread_id: None,
+        }
+    }
+
+    #[test]
+    fn test_build_prompt_usage_uses_current_turn_tokens() {
+        let session = make_session_with_usage(
+            Some(120),
+            Some(80),
+            Some(40),
+            Some(360),
+            Some(210),
+            Some(150),
+        );
+        let usage = build_prompt_usage(&session).expect("usage should be present");
+        assert_eq!(usage.total_tokens, 120);
+        assert_eq!(usage.input_tokens, 80);
+        assert_eq!(usage.output_tokens, 40);
+    }
+
+    #[test]
+    fn test_build_prompt_usage_falls_back_to_current_tokens() {
+        let session = make_session_with_usage(Some(120), Some(80), Some(40), None, None, None);
+        let usage = build_prompt_usage(&session).expect("usage should be present");
+        assert_eq!(usage.total_tokens, 120);
+        assert_eq!(usage.input_tokens, 80);
+        assert_eq!(usage.output_tokens, 40);
+    }
+
+    #[test]
+    fn test_build_prompt_usage_requires_total_tokens() {
+        let session = make_session_with_usage(None, Some(80), Some(40), None, None, None);
+        assert!(build_prompt_usage(&session).is_none());
+    }
+
+    #[test]
+    fn test_build_usage_update_clamps_negative_used_to_zero() {
+        let session = make_session_with_usage(Some(-7), Some(0), Some(0), None, None, None);
+        let usage = build_usage_update(&session, 258_000);
+        assert_eq!(usage.used, 0);
+        assert_eq!(usage.size, 258_000);
     }
 
     #[test_case(

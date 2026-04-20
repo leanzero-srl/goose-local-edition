@@ -14,11 +14,55 @@ import type {
   ToolResponseContent,
 } from "@/shared/types/messages";
 import type { AcpNotificationHandler } from "./acpConnection";
-import { getLocalSessionId } from "./acpSessionTracker";
+import {
+  getLocalSessionId,
+  subscribeToSessionRegistration,
+} from "./acpSessionTracker";
 import { perfLog } from "@/shared/lib/perfLog";
 
 // Pre-set message ID for the next live stream per goose session
 const presetMessageIds = new Map<string, string>();
+const pendingUsageUpdates = new Map<string, SessionUpdate[]>();
+
+function shouldBufferPendingUpdate(update: SessionUpdate): boolean {
+  return update.sessionUpdate === "usage_update";
+}
+
+function queuePendingUsageUpdate(
+  gooseSessionId: string,
+  update: SessionUpdate,
+): void {
+  const pending = pendingUsageUpdates.get(gooseSessionId);
+  if (pending) {
+    pending.push(update);
+    return;
+  }
+  pendingUsageUpdates.set(gooseSessionId, [update]);
+}
+
+function flushPendingUsageUpdates(
+  localSessionId: string,
+  gooseSessionId: string,
+): void {
+  const pending = pendingUsageUpdates.get(gooseSessionId);
+  if (!pending?.length) {
+    return;
+  }
+
+  pendingUsageUpdates.delete(gooseSessionId);
+
+  for (const update of pending) {
+    if (useChatStore.getState().loadingSessionIds.has(localSessionId)) {
+      handleReplay(localSessionId, update);
+    } else {
+      handleLive(localSessionId, gooseSessionId, update);
+    }
+  }
+}
+
+subscribeToSessionRegistration((localSessionId, gooseSessionId) => {
+  flushPendingUsageUpdates(localSessionId, gooseSessionId);
+});
 
 // Per-session perf counters for replay/live streaming.
 interface ReplayPerf {
@@ -67,22 +111,32 @@ export async function handleSessionNotification(
   notification: SessionNotification,
 ): Promise<void> {
   const gooseSessionId = notification.sessionId;
-  const sessionId = getLocalSessionId(gooseSessionId) ?? gooseSessionId;
   const { update } = notification;
-  const isReplay = useChatStore.getState().loadingSessionIds.has(sessionId);
+  const localSessionId = getLocalSessionId(gooseSessionId);
+
+  if (!localSessionId) {
+    if (shouldBufferPendingUpdate(update)) {
+      queuePendingUsageUpdate(gooseSessionId, update);
+    }
+    return;
+  }
+
+  const isReplay = useChatStore
+    .getState()
+    .loadingSessionIds.has(localSessionId);
 
   if (isReplay) {
-    const sid = sessionId.slice(0, 8);
-    let perf = replayPerf.get(sessionId);
+    const sid = localSessionId.slice(0, 8);
+    let perf = replayPerf.get(localSessionId);
     const now = performance.now();
     if (!perf) {
       perf = { firstAt: now, lastAt: now, count: 0 };
-      replayPerf.set(sessionId, perf);
+      replayPerf.set(localSessionId, perf);
       perfLog(`[perf:replay] ${sid} first notification received`);
     }
     perf.lastAt = now;
     perf.count += 1;
-    handleReplay(sessionId, update);
+    handleReplay(localSessionId, update);
   } else {
     const perf = livePerf.get(gooseSessionId);
     if (perf && update.sessionUpdate === "agent_message_chunk") {
@@ -95,7 +149,7 @@ export async function handleSessionNotification(
         );
       }
     }
-    handleLive(sessionId, gooseSessionId, update);
+    handleLive(localSessionId, gooseSessionId, update);
   }
 }
 

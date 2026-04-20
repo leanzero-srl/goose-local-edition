@@ -146,17 +146,22 @@ export async function acpLoadSession(
   const effectiveWorkingDir = workingDir ?? "~/.goose/artifacts";
   const sid = sessionId.slice(0, 8);
   const t0 = performance.now();
-  perfLog(`[perf:load] ${sid} acpLoadSession → client.loadSession`);
-  await directAcp.loadSession(gooseSessionId, effectiveWorkingDir);
-  perfLog(
-    `[perf:load] ${sid} client.loadSession resolved in ${(performance.now() - t0).toFixed(1)}ms`,
-  );
-  sessionTracker.registerSession(
+  const rollbackSessionRegistration = sessionTracker.registerSession(
     sessionId,
     gooseSessionId,
     "goose",
     effectiveWorkingDir,
   );
+  try {
+    perfLog(`[perf:load] ${sid} acpLoadSession → client.loadSession`);
+    await directAcp.loadSession(gooseSessionId, effectiveWorkingDir);
+    perfLog(
+      `[perf:load] ${sid} client.loadSession resolved in ${(performance.now() - t0).toFixed(1)}ms`,
+    );
+  } catch (error) {
+    rollbackSessionRegistration();
+    throw error;
+  }
 }
 
 /** Export a session as JSON via the goose binary. */

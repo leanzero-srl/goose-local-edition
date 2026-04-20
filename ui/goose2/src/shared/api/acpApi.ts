@@ -132,11 +132,23 @@ export async function cancelSession(sessionId: string): Promise<void> {
 
 export async function newSession(
   workingDir: string,
+  providerId?: string,
 ): Promise<NewSessionResponse> {
   const tClient = performance.now();
   const client = await getClient();
+  const request: Parameters<typeof client.newSession>[0] & {
+    meta?: Record<string, string>;
+  } = {
+    cwd: workingDir,
+    mcpServers: [],
+  };
+
+  if (providerId) {
+    request.meta = { provider: providerId };
+  }
+
   const tCall = performance.now();
-  const response = await client.newSession({ cwd: workingDir, mcpServers: [] });
+  const response = await client.newSession(request);
   const sid = response.sessionId.slice(0, 8);
   perfLog(
     `[perf:api] ${sid} newSession getClient=${(tCall - tClient).toFixed(1)}ms wire=${(performance.now() - tCall).toFixed(1)}ms`,

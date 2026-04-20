@@ -53,7 +53,6 @@ export function ChatView({
   const { t } = useTranslation("chat");
   const activeSessionId = sessionId;
   const mountStart = useRef(performance.now());
-  // biome-ignore lint/correctness/useExhaustiveDependencies: log once on mount per session
   useEffect(() => {
     const ms = (performance.now() - mountStart.current).toFixed(1);
     perfLog(`[perf:chatview] ${sessionId.slice(0, 8)} mounted in ${ms}ms`);
@@ -363,6 +362,7 @@ export function ChatView({
     chatState,
     tokenState,
     sendMessage,
+    compactConversation,
     stopStreaming,
     streamingMessageId,
   } = useChat(
@@ -453,6 +453,7 @@ export function ChatView({
     onInitialMessageConsumed,
   ]);
   const isStreaming = chatState === "streaming";
+  const isCompacting = chatState === "compacting";
   const showIndicator =
     chatState === "thinking" ||
     chatState === "streaming" ||
@@ -544,6 +545,13 @@ export function ChatView({
             }
             contextTokens={tokenState.accumulatedTotal}
             contextLimit={tokenState.contextLimit}
+            onCompactContext={compactConversation}
+            canCompactContext={
+              chatState === "idle" &&
+              tokenState.accumulatedTotal > 0 &&
+              !projectMetadataPending
+            }
+            isCompactingContext={isCompacting}
           />
         </div>
 

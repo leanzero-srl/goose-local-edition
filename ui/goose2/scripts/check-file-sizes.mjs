@@ -13,7 +13,17 @@ const EXCEPTIONS = {
   "src/features/chat/ui/ChatView.tsx": {
     limit: 570,
     justification:
-      "ACP prewarm guards, project-aware working dir selection, working context sync, and chat bootstrapping still live together here. Includes gated [perf:chatview] logging via perfLog (dev-only by default).",
+      "ACP prewarm guards, project-aware working dir selection, working context sync, chat bootstrapping, context-ring compaction wiring, and gated [perf:chatview] logging via perfLog (dev-only by default).",
+  },
+  "src/features/chat/hooks/useChat.ts": {
+    limit: 510,
+    justification:
+      "Session preparation, provider/model handoff, persona-aware sends, cancellation, and compaction replay still live in one chat lifecycle hook.",
+  },
+  "src/shared/api/acpNotificationHandler.ts": {
+    limit: 550,
+    justification:
+      "ACP replay/live update handling, pending session buffering, model/config propagation, and streaming perf tracking still share one notification entrypoint.",
   },
   "src/features/chat/ui/__tests__/ContextPanel.test.tsx": {
     limit: 550,
