@@ -3115,6 +3115,85 @@ impl GooseAcpAgent {
         Ok(EmptyResponse {})
     }
 
+    #[custom_method(CreateSourceRequest)]
+    async fn on_create_source(
+        &self,
+        req: CreateSourceRequest,
+    ) -> Result<CreateSourceResponse, sacp::Error> {
+        let source = goose::sources::create_source(
+            req.source_type,
+            &req.name,
+            &req.description,
+            &req.content,
+            req.global,
+            req.project_dir.as_deref(),
+        )?;
+        Ok(CreateSourceResponse { source })
+    }
+
+    #[custom_method(ListSourcesRequest)]
+    async fn on_list_sources(
+        &self,
+        req: ListSourcesRequest,
+    ) -> Result<ListSourcesResponse, sacp::Error> {
+        let sources = goose::sources::list_sources(req.source_type, req.project_dir.as_deref())?;
+        Ok(ListSourcesResponse { sources })
+    }
+
+    #[custom_method(UpdateSourceRequest)]
+    async fn on_update_source(
+        &self,
+        req: UpdateSourceRequest,
+    ) -> Result<UpdateSourceResponse, sacp::Error> {
+        let source = goose::sources::update_source(
+            req.source_type,
+            &req.name,
+            &req.description,
+            &req.content,
+            req.global,
+            req.project_dir.as_deref(),
+        )?;
+        Ok(UpdateSourceResponse { source })
+    }
+
+    #[custom_method(DeleteSourceRequest)]
+    async fn on_delete_source(
+        &self,
+        req: DeleteSourceRequest,
+    ) -> Result<EmptyResponse, sacp::Error> {
+        goose::sources::delete_source(
+            req.source_type,
+            &req.name,
+            req.global,
+            req.project_dir.as_deref(),
+        )?;
+        Ok(EmptyResponse {})
+    }
+
+    #[custom_method(ExportSourceRequest)]
+    async fn on_export_source(
+        &self,
+        req: ExportSourceRequest,
+    ) -> Result<ExportSourceResponse, sacp::Error> {
+        let (json, filename) = goose::sources::export_source(
+            req.source_type,
+            &req.name,
+            req.global,
+            req.project_dir.as_deref(),
+        )?;
+        Ok(ExportSourceResponse { json, filename })
+    }
+
+    #[custom_method(ImportSourcesRequest)]
+    async fn on_import_sources(
+        &self,
+        req: ImportSourcesRequest,
+    ) -> Result<ImportSourcesResponse, sacp::Error> {
+        let sources =
+            goose::sources::import_sources(&req.data, req.global, req.project_dir.as_deref())?;
+        Ok(ImportSourcesResponse { sources })
+    }
+
     #[custom_method(DictationTranscribeRequest)]
     async fn on_dictation_transcribe(
         &self,

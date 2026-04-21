@@ -349,6 +349,130 @@ export const zUnarchiveSessionRequest = z.object({
 });
 
 /**
+ * The type of source entity.
+ */
+export const zSourceType = z.enum(['skill']);
+
+/**
+ * Create a new source (global or project-scoped).
+ */
+export const zCreateSourceRequest = z.object({
+    type: zSourceType,
+    name: z.string(),
+    description: z.string(),
+    content: z.string(),
+    global: z.boolean(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A source — a user-editable entity backed by an on-disk directory. Sources
+ * may be either `global` (shared across all projects) or project-specific.
+ */
+export const zSourceEntry = z.object({
+    type: zSourceType,
+    name: z.string(),
+    description: z.string(),
+    content: z.string(),
+    directory: z.string(),
+    global: z.boolean()
+});
+
+export const zCreateSourceResponse = z.object({
+    source: zSourceEntry
+});
+
+/**
+ * List sources. If `type` is omitted, sources of all known types are returned.
+ * Both global and project-scoped sources are included when `project_dir` is set.
+ */
+export const zListSourcesRequest = z.object({
+    type: z.union([
+        zSourceType,
+        z.null()
+    ]).optional(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zListSourcesResponse = z.object({
+    sources: z.array(zSourceEntry)
+});
+
+/**
+ * Update an existing source's description and content.
+ */
+export const zUpdateSourceRequest = z.object({
+    type: zSourceType,
+    name: z.string(),
+    description: z.string(),
+    content: z.string(),
+    global: z.boolean(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zUpdateSourceResponse = z.object({
+    source: zSourceEntry
+});
+
+/**
+ * Delete a source and its on-disk directory.
+ */
+export const zDeleteSourceRequest = z.object({
+    type: zSourceType,
+    name: z.string(),
+    global: z.boolean(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Export a source as a portable JSON payload.
+ */
+export const zExportSourceRequest = z.object({
+    type: zSourceType,
+    name: z.string(),
+    global: z.boolean(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zExportSourceResponse = z.object({
+    json: z.string(),
+    filename: z.string()
+});
+
+/**
+ * Import a source from a JSON export payload produced by `_goose/sources/export`.
+ * The imported source is written under the given scope; on name collisions a
+ * `-imported` suffix is appended.
+ */
+export const zImportSourcesRequest = z.object({
+    data: z.string(),
+    global: z.boolean(),
+    projectDir: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zImportSourcesResponse = z.object({
+    sources: z.array(zSourceEntry)
+});
+
+/**
  * Transcribe audio via a dictation provider.
  */
 export const zDictationTranscribeRequest = z.object({
@@ -515,6 +639,12 @@ export const zExtRequest = z.object({
             zImportSessionRequest,
             zArchiveSessionRequest,
             zUnarchiveSessionRequest,
+            zCreateSourceRequest,
+            zListSourcesRequest,
+            zUpdateSourceRequest,
+            zDeleteSourceRequest,
+            zExportSourceRequest,
+            zImportSourcesRequest,
             zDictationTranscribeRequest,
             zDictationConfigRequest,
             zDictationModelsListRequest,
@@ -549,6 +679,11 @@ export const zExtResponse = z.union([
                 zCheckSecretResponse,
                 zExportSessionResponse,
                 zImportSessionResponse,
+                zCreateSourceResponse,
+                zListSourcesResponse,
+                zUpdateSourceResponse,
+                zExportSourceResponse,
+                zImportSourcesResponse,
                 zDictationTranscribeResponse,
                 zDictationConfigResponse,
                 zDictationModelsListResponse,

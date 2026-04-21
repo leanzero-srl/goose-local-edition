@@ -2,6 +2,10 @@
  * Playwright custom fixture that injects a Tauri IPC mock into the page
  * before every navigation. This allows E2E tests to run against the frontend
  * without the real Tauri backend.
+ *
+ * Also installs a `window.WebSocket` stub for the ACP connection so features
+ * like skills (which use `client.extMethod("_goose/sources/...")`) can run
+ * without a live goose-acp server.
  */
 
 import { test as base, expect, type Page } from "@playwright/test";
@@ -11,7 +15,7 @@ import { MOCK_PERSONAS, MOCK_PROJECTS, MOCK_SKILLS } from "./mock-data";
  * Build the init script that will be injected into the page via
  * `page.addInitScript()`. The script sets up `window.__TAURI_INTERNALS__`
  * with an `invoke` handler that returns mock data for every Tauri command
- * the app is known to call.
+ * the app is known to call, plus a WebSocket mock for ACP traffic.
  *
  * Callers can override the default personas and skills arrays to test
  * empty-state or custom scenarios.
@@ -30,7 +34,17 @@ export function buildInitScript(options?: {
       const PERSONAS = ${personas};
       const SKILLS = ${skills};
       const PROJECTS = ${projects};
+      const FAKE_ACP_URL = "ws://127.0.0.1:0/mock-acp";
       const ACP_SESSIONS = [];
+
+      const skillToSourceEntry = (s) => ({
+        type: "skill",
+        name: s.name,
+        description: s.description,
+        content: s.instructions ?? s.content ?? "",
+        directory: (s.path ?? ("/mock/.agents/skills/" + s.name + "/SKILL.md")).replace(/\\/SKILL\\.md$/, ""),
+        global: true,
+      });
 
       function nowIso() {
         return new Date().toISOString();
@@ -120,6 +134,39 @@ export function buildInitScript(options?: {
           case "_goose/working_dir/update":
           case "goose/working_dir/update":
             return jsonRpcResult(message.id, {});
+          case "_goose/sources/list":
+            return jsonRpcResult(message.id, { sources: SKILLS.map(skillToSourceEntry) });
+          case "_goose/sources/create":
+            return jsonRpcResult(message.id, {
+              source: {
+                name: message.params?.name ?? "new-skill",
+                type: "skill",
+                description: message.params?.description ?? "",
+                content: message.params?.content ?? "",
+                directory: "/mock/.agents/skills/" + (message.params?.name ?? "new-skill"),
+                global: message.params?.global ?? true,
+              },
+            });
+          case "_goose/sources/update":
+            return jsonRpcResult(message.id, {
+              source: {
+                name: message.params?.name ?? "updated-skill",
+                type: "skill",
+                description: message.params?.description ?? "",
+                content: message.params?.content ?? "",
+                directory: "/mock/.agents/skills/" + (message.params?.name ?? "updated-skill"),
+                global: message.params?.global ?? true,
+              },
+            });
+          case "_goose/sources/delete":
+            return jsonRpcResult(message.id, {});
+          case "_goose/sources/export":
+            return jsonRpcResult(message.id, {
+              json: "{}",
+              filename: (message.params?.name ?? "skill") + ".skill.json",
+            });
+          case "_goose/sources/import":
+            return jsonRpcResult(message.id, { sources: SKILLS.map(skillToSourceEntry) });
           default:
             return jsonRpcResult(message.id, {});
         }
@@ -165,6 +212,10 @@ export function buildInitScript(options?: {
       window.__TAURI_INTERNALS__ = {
         invoke(cmd, args) {
           switch (cmd) {
+            // ---- ACP transport ----
+            case "get_goose_serve_url":
+              return Promise.resolve(FAKE_ACP_URL);
+
             // ---- Personas ----
             case "list_personas":
               return Promise.resolve(PERSONAS);
@@ -202,28 +253,6 @@ export function buildInitScript(options?: {
             case "import_personas":
               return Promise.resolve(PERSONAS);
 
-            // ---- Skills ----
-            case "list_skills":
-              return Promise.resolve(SKILLS);
-            case "create_skill":
-              return Promise.resolve(null);
-            case "update_skill":
-              return Promise.resolve({
-                name: args?.name ?? "updated-skill",
-                description: args?.description ?? "",
-                instructions: args?.instructions ?? "",
-                path: "",
-              });
-            case "delete_skill":
-              return Promise.resolve(null);
-            case "export_skill":
-              return Promise.resolve({
-                json: "{}",
-                filename: "skill.json",
-              });
-            case "import_skills":
-              return Promise.resolve(SKILLS);
-
             // ---- Sessions / Misc ----
             case "list_sessions":
               return Promise.resolve(
@@ -234,8 +263,6 @@ export function buildInitScript(options?: {
                   messageCount: session.messageCount,
                 })),
               );
-            case "get_goose_serve_url":
-              return Promise.resolve("ws://mock-goose");
             case "create_session":
               return Promise.resolve({
                 id: "session-" + Math.random().toString(36).slice(2, 10),

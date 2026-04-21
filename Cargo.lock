@@ -4358,6 +4358,7 @@ dependencies = [
  "fs-err",
  "fs2",
  "futures",
+ "goose-sdk",
  "goose-test-support",
  "http 1.4.0",
  "ignore",
