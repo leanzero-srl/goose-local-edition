@@ -1,37 +1,36 @@
-use crate::custom_requests::*;
-use crate::fs::AcpTools;
-use crate::tools::AcpAwareToolMeta;
-use anyhow::Result;
-use fs_err as fs;
-use futures::future::BoxFuture;
-use goose::acp::{PermissionDecision, ACP_CURRENT_MODEL};
-use goose::agents::extension::{Envs, PLATFORM_EXTENSIONS};
-use goose::agents::mcp_client::McpClientTrait;
-use goose::agents::platform_extensions::developer::DeveloperClient;
-use goose::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform, SessionConfig};
-use goose::builtin_extension::register_builtin_extensions;
-use goose::config::base::CONFIG_YAML_NAME;
-use goose::config::extensions::get_enabled_extensions_with_config;
-use goose::config::paths::Paths;
-use goose::config::permission::PermissionManager;
-use goose::config::{Config, GooseMode};
-use goose::conversation::message::{ActionRequiredData, Message, MessageContent};
+use crate::acp::custom_requests::*;
+use crate::acp::fs::AcpTools;
+use crate::acp::tools::AcpAwareToolMeta;
+use crate::acp::{PermissionDecision, ACP_CURRENT_MODEL};
+use crate::agents::extension::{Envs, PLATFORM_EXTENSIONS};
+use crate::agents::mcp_client::McpClientTrait;
+use crate::agents::platform_extensions::developer::DeveloperClient;
+use crate::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform, SessionConfig};
+use crate::config::base::CONFIG_YAML_NAME;
+use crate::config::extensions::get_enabled_extensions_with_config;
+use crate::config::paths::Paths;
+use crate::config::permission::PermissionManager;
+use crate::config::{Config, GooseMode};
+use crate::conversation::message::{ActionRequiredData, Message, MessageContent};
 #[cfg(feature = "local-inference")]
-use goose::dictation::providers::transcribe_local;
-use goose::dictation::providers::{
+use crate::dictation::providers::transcribe_local;
+use crate::dictation::providers::{
     all_providers, is_configured, transcribe_with_provider, DictationProvider,
 };
 #[cfg(feature = "local-inference")]
-use goose::dictation::whisper;
-use goose::mcp_utils::ToolResult;
-use goose::permission::permission_confirmation::PrincipalType;
-use goose::permission::{Permission, PermissionConfirmation};
-use goose::providers::base::Provider;
-use goose::providers::inventory::{
+use crate::dictation::whisper;
+use crate::mcp_utils::ToolResult;
+use crate::permission::permission_confirmation::PrincipalType;
+use crate::permission::{Permission, PermissionConfirmation};
+use crate::providers::base::Provider;
+use crate::providers::inventory::{
     ProviderInventoryEntry, ProviderInventoryService, RefreshSkipReason,
 };
-use goose::session::session_manager::SessionType;
-use goose::session::{EnabledExtensionsState, Session, SessionManager};
+use crate::session::session_manager::SessionType;
+use crate::session::{EnabledExtensionsState, Session, SessionManager};
+use anyhow::Result;
+use fs_err as fs;
+use futures::future::BoxFuture;
 use goose_acp_macros::custom_methods;
 use rmcp::model::{CallToolResult, RawContent, ResourceContents, Role};
 use sacp::schema::{
@@ -69,7 +68,7 @@ use url::Url;
 pub type AcpProviderFactory = Arc<
     dyn Fn(
             String,
-            goose::model::ModelConfig,
+            crate::model::ModelConfig,
             Vec<ExtensionConfig>,
         ) -> BoxFuture<'static, Result<Arc<dyn Provider>>>
         + Send
@@ -106,7 +105,7 @@ const ELEVENLABS_TRANSCRIPTION_MODEL: &str = "scribe_v1";
 struct GooseAcpSession {
     agent: AgentHandle,
     internal_session_id: String,
-    tool_requests: HashMap<String, goose::conversation::message::ToolRequest>,
+    tool_requests: HashMap<String, crate::conversation::message::ToolRequest>,
     cancel_token: Option<CancellationToken>,
     /// Working directory set while the agent was still loading.
     /// Applied once the agent becomes ready.
@@ -127,7 +126,7 @@ struct AgentSetupRequest {
     mcp_servers: Vec<McpServer>,
     /// Pre-resolved provider name + model config (from config, no network).
     /// When present the spawn skips re-deriving these from config.
-    resolved_provider: Option<(String, goose::model::ModelConfig)>,
+    resolved_provider: Option<(String, crate::model::ModelConfig)>,
     /// Pre-instantiated provider reused from synchronous session initialization.
     prebuilt_provider: Option<Arc<dyn Provider>>,
 }
@@ -140,7 +139,7 @@ pub struct GooseAcpAgent {
     client_terminal: OnceCell<bool>,
     config_dir: std::path::PathBuf,
     session_manager: Arc<SessionManager>,
-    thread_manager: Arc<goose::session::ThreadManager>,
+    thread_manager: Arc<crate::session::ThreadManager>,
     permission_manager: Arc<PermissionManager>,
     goose_mode: GooseMode,
     disable_session_naming: bool,
@@ -220,7 +219,7 @@ fn is_developer_file_tool(tool_name: &str) -> bool {
 }
 
 fn extract_locations_from_meta(
-    tool_response: &goose::conversation::message::ToolResponse,
+    tool_response: &crate::conversation::message::ToolResponse,
 ) -> Option<Vec<ToolCallLocation>> {
     let result = tool_response.tool_result.as_ref().ok()?;
     let meta = result.meta.as_ref()?;
@@ -242,8 +241,8 @@ fn extract_locations_from_meta(
 }
 
 fn extract_tool_locations(
-    tool_request: &goose::conversation::message::ToolRequest,
-    tool_response: &goose::conversation::message::ToolResponse,
+    tool_request: &crate::conversation::message::ToolRequest,
+    tool_response: &crate::conversation::message::ToolResponse,
 ) -> Vec<ToolCallLocation> {
     let mut locations = Vec::new();
 
@@ -385,7 +384,7 @@ fn summarize_tool_call(tool_name: &str, arguments: Option<&serde_json::Value>) -
                 if !s.is_empty() {
                     let first_line = s.lines().next().unwrap_or(&s);
                     if first_line.len() > 60 {
-                        return Some(format!("{}…", goose::utils::safe_truncate(first_line, 57)));
+                        return Some(format!("{}…", crate::utils::safe_truncate(first_line, 57)));
                     }
                     return Some(first_line.to_string());
                 }
@@ -458,7 +457,7 @@ fn inventory_entry_to_dto(entry: ProviderInventoryEntry) -> ProviderInventoryEnt
     }
 }
 
-fn provider_config_key_to_dto(key: goose::providers::base::ConfigKey) -> ProviderConfigKey {
+fn provider_config_key_to_dto(key: crate::providers::base::ConfigKey) -> ProviderConfigKey {
     ProviderConfigKey {
         name: key.name,
         required: key.required,
@@ -494,7 +493,7 @@ struct ProviderOptionEntry {
 }
 
 async fn list_provider_entries(current_provider: Option<&str>) -> Vec<ProviderOptionEntry> {
-    let mut providers = goose::providers::providers()
+    let mut providers = crate::providers::providers()
         .await
         .into_iter()
         .map(|(metadata, _)| ProviderOptionEntry {
@@ -548,7 +547,7 @@ fn session_provider_selection(session: &Session) -> &str {
 async fn resolve_provider_and_model_from_config(
     config: &Config,
     goose_session: &Session,
-) -> Result<(String, goose::model::ModelConfig), String> {
+) -> Result<(String, crate::model::ModelConfig), String> {
     let global_provider = config.get_goose_provider().ok();
     let provider_override = goose_session
         .provider_name
@@ -563,17 +562,17 @@ async fn resolve_provider_and_model_from_config(
     let model_config = match &goose_session.model_config {
         Some(mc) => mc.clone(),
         None if explicitly_switched => {
-            let entry = goose::providers::get_from_registry(&provider_name)
+            let entry = crate::providers::get_from_registry(&provider_name)
                 .await
                 .map_err(|e| e.to_string())?;
             let default_model = &entry.metadata().default_model;
-            goose::model::ModelConfig::new(default_model)
+            crate::model::ModelConfig::new(default_model)
                 .map_err(|e| e.to_string())?
                 .with_canonical_limits(&provider_name)
         }
         None => {
             let model_id = config.get_goose_model().map_err(|e| e.to_string())?;
-            goose::model::ModelConfig::new(&model_id)
+            crate::model::ModelConfig::new(&model_id)
                 .map_err(|e| e.to_string())?
                 .with_canonical_limits(&provider_name)
         }
@@ -586,7 +585,7 @@ async fn resolve_provider_and_model_from_config(
 async fn resolve_provider_and_model(
     config_dir: &std::path::Path,
     goose_session: &Session,
-) -> Result<(String, goose::model::ModelConfig), String> {
+) -> Result<(String, crate::model::ModelConfig), String> {
     let config =
         Config::new(config_dir.join(CONFIG_YAML_NAME), "goose").map_err(|e| e.to_string())?;
     resolve_provider_and_model_from_config(&config, goose_session).await
@@ -704,7 +703,7 @@ impl GooseAcpAgent {
         disable_session_naming: bool,
     ) -> Result<Self> {
         let session_manager = Arc::new(SessionManager::new(data_dir));
-        let thread_manager = Arc::new(goose::session::ThreadManager::new(
+        let thread_manager = Arc::new(crate::session::ThreadManager::new(
             session_manager.storage().clone(),
         ));
         let permission_manager = Arc::new(PermissionManager::new(config_dir.clone()));
@@ -733,7 +732,7 @@ impl GooseAcpAgent {
     async fn create_provider(
         &self,
         provider_name: &str,
-        model_config: goose::model::ModelConfig,
+        model_config: crate::model::ModelConfig,
         extensions: Vec<ExtensionConfig>,
     ) -> Result<Arc<dyn Provider>> {
         (self.provider_factory)(provider_name.to_string(), model_config, extensions).await
@@ -741,7 +740,7 @@ impl GooseAcpAgent {
 
     async fn prepare_session_init_config(
         &self,
-        resolved: &Result<(String, goose::model::ModelConfig), String>,
+        resolved: &Result<(String, crate::model::ModelConfig), String>,
         mode_state: &SessionModeState,
         goose_session: &Session,
     ) -> (
@@ -1187,7 +1186,7 @@ impl GooseAcpAgent {
 
     async fn handle_tool_request(
         &self,
-        tool_request: &goose::conversation::message::ToolRequest,
+        tool_request: &crate::conversation::message::ToolRequest,
         session_id: &SessionId,
         session: &mut GooseAcpSession,
         cx: &ConnectionTo<Client>,
@@ -1235,7 +1234,7 @@ impl GooseAcpAgent {
                 .map(|a| {
                     let s = serde_json::to_string(a).unwrap_or_default();
                     if s.len() > 300 {
-                        format!("{}…", goose::utils::safe_truncate(&s, 300))
+                        format!("{}…", crate::utils::safe_truncate(&s, 300))
                     } else {
                         s
                     }
@@ -1316,7 +1315,7 @@ impl GooseAcpAgent {
 
     async fn handle_tool_response(
         &self,
-        tool_response: &goose::conversation::message::ToolResponse,
+        tool_response: &crate::conversation::message::ToolResponse,
         session_id: &SessionId,
         session: &mut GooseAcpSession,
         cx: &ConnectionTo<Client>,
@@ -1539,7 +1538,7 @@ impl GooseAcpAgent {
             .map(|s| s.to_string());
 
         // Create the Thread — this IS the ACP session from the client's perspective.
-        let thread_metadata = goose::session::ThreadMetadata {
+        let thread_metadata = crate::session::ThreadMetadata {
             provider_id: requested_provider.clone(),
             mode: Some(self.goose_mode.to_string()),
             ..Default::default()
@@ -1665,7 +1664,7 @@ impl GooseAcpAgent {
             builder = builder.provider_name(provider);
         }
         if let Some(model) = model_name {
-            if let Ok(mc) = goose::model::ModelConfig::new(model) {
+            if let Ok(mc) = crate::model::ModelConfig::new(model) {
                 builder = builder.model_config(mc);
             }
         }
@@ -1820,7 +1819,7 @@ impl GooseAcpAgent {
         // so that handle_tool_response can extract file locations from the
         // matching request. No GooseAcpSession required.
         let mut replay_tool_requests =
-            HashMap::<String, goose::conversation::message::ToolRequest>::new();
+            HashMap::<String, crate::conversation::message::ToolRequest>::new();
 
         let t_replay = std::time::Instant::now();
         let mut replay_notifications: u32 = 0;
@@ -2090,7 +2089,7 @@ impl GooseAcpAgent {
             }
 
             match event {
-                Ok(goose::agents::AgentEvent::Message(message)) => {
+                Ok(crate::agents::AgentEvent::Message(message)) => {
                     self.thread_manager
                         .append_message(&thread_id, Some(&internal_session_id), &message)
                         .await
@@ -2217,7 +2216,7 @@ impl GooseAcpAgent {
         let provider_name = current_provider.get_name().to_string();
         let extensions =
             EnabledExtensionsState::for_session(&self.session_manager, &internal_id, &config).await;
-        let model_config = goose::model::ModelConfig::new(model_id)
+        let model_config = crate::model::ModelConfig::new(model_id)
             .map_err(|e| {
                 sacp::Error::invalid_params().data(format!("Invalid model config: {}", e))
             })?
@@ -2279,7 +2278,7 @@ impl GooseAcpAgent {
     async fn update_thread_metadata(
         &self,
         thread_id: &str,
-        f: impl FnOnce(&mut goose::session::ThreadMetadata),
+        f: impl FnOnce(&mut crate::session::ThreadMetadata),
     ) -> Result<(), sacp::Error> {
         self.thread_manager
             .update_metadata(thread_id, f)
@@ -2418,7 +2417,7 @@ impl GooseAcpAgent {
             current_model
         };
         let model = model_name.unwrap_or(&default_model);
-        let model_config = goose::model::ModelConfig::new(model)
+        let model_config = crate::model::ModelConfig::new(model)
             .map_err(|e| {
                 sacp::Error::invalid_params().data(format!("Invalid model config: {}", e))
             })?
@@ -2765,8 +2764,8 @@ impl GooseAcpAgent {
 
     #[custom_method(GetExtensionsRequest)]
     async fn on_get_extensions(&self) -> Result<GetExtensionsResponse, sacp::Error> {
-        let extensions = goose::config::extensions::get_all_extensions();
-        let warnings = goose::config::extensions::get_warnings();
+        let extensions = crate::config::extensions::get_all_extensions();
+        let warnings = crate::config::extensions::get_warnings();
         let extensions_json = extensions
             .into_iter()
             .map(|e| serde_json::to_value(&e))
@@ -2792,7 +2791,7 @@ impl GooseAcpAgent {
 
         let extensions = EnabledExtensionsState::extensions_or_default(
             Some(&session.extension_data),
-            goose::config::Config::global(),
+            crate::config::Config::global(),
         );
 
         let extensions_json = extensions
@@ -2838,9 +2837,9 @@ impl GooseAcpAgent {
             let provider_id = provider_id.clone();
             tokio::spawn(async move {
                 let result = async {
-                    let metadata = goose::providers::get_from_registry(&provider_id).await?;
+                    let metadata = crate::providers::get_from_registry(&provider_id).await?;
                     let model_config =
-                        goose::model::ModelConfig::new(&metadata.metadata().default_model)?
+                        crate::model::ModelConfig::new(&metadata.metadata().default_model)?
                             .with_canonical_limits(&provider_id);
                     let provider =
                         provider_factory(provider_id.clone(), model_config, Vec::new()).await?;
@@ -2894,7 +2893,7 @@ impl GooseAcpAgent {
         })?;
         let response = match config.get_param::<serde_json::Value>(&req.key) {
             Ok(value) => ReadConfigResponse { value },
-            Err(goose::config::ConfigError::NotFound(_)) => ReadConfigResponse {
+            Err(crate::config::ConfigError::NotFound(_)) => ReadConfigResponse {
                 value: serde_json::Value::Null,
             },
             Err(e) => return Err(sacp::Error::internal_error().data(e.to_string())),
@@ -3076,7 +3075,7 @@ impl GooseAcpAgent {
         &self,
         req: CreateSourceRequest,
     ) -> Result<CreateSourceResponse, sacp::Error> {
-        let source = goose::sources::create_source(
+        let source = crate::sources::create_source(
             req.source_type,
             &req.name,
             &req.description,
@@ -3092,7 +3091,7 @@ impl GooseAcpAgent {
         &self,
         req: ListSourcesRequest,
     ) -> Result<ListSourcesResponse, sacp::Error> {
-        let sources = goose::sources::list_sources(req.source_type, req.project_dir.as_deref())?;
+        let sources = crate::sources::list_sources(req.source_type, req.project_dir.as_deref())?;
         Ok(ListSourcesResponse { sources })
     }
 
@@ -3101,7 +3100,7 @@ impl GooseAcpAgent {
         &self,
         req: UpdateSourceRequest,
     ) -> Result<UpdateSourceResponse, sacp::Error> {
-        let source = goose::sources::update_source(
+        let source = crate::sources::update_source(
             req.source_type,
             &req.name,
             &req.description,
@@ -3117,7 +3116,7 @@ impl GooseAcpAgent {
         &self,
         req: DeleteSourceRequest,
     ) -> Result<EmptyResponse, sacp::Error> {
-        goose::sources::delete_source(
+        crate::sources::delete_source(
             req.source_type,
             &req.name,
             req.global,
@@ -3131,7 +3130,7 @@ impl GooseAcpAgent {
         &self,
         req: ExportSourceRequest,
     ) -> Result<ExportSourceResponse, sacp::Error> {
-        let (json, filename) = goose::sources::export_source(
+        let (json, filename) = crate::sources::export_source(
             req.source_type,
             &req.name,
             req.global,
@@ -3146,7 +3145,7 @@ impl GooseAcpAgent {
         req: ImportSourcesRequest,
     ) -> Result<ImportSourcesResponse, sacp::Error> {
         let sources =
-            goose::sources::import_sources(&req.data, req.global, req.project_dir.as_deref())?;
+            crate::sources::import_sources(&req.data, req.global, req.project_dir.as_deref())?;
         Ok(ImportSourcesResponse { sources })
     }
 
@@ -3156,7 +3155,7 @@ impl GooseAcpAgent {
         req: DictationTranscribeRequest,
     ) -> Result<DictationTranscribeResponse, sacp::Error> {
         use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-        let config = goose::config::Config::global();
+        let config = crate::config::Config::global();
 
         #[cfg(not(feature = "local-inference"))]
         if req.provider == "local" {
@@ -3245,7 +3244,7 @@ impl GooseAcpAgent {
         &self,
         _req: DictationConfigRequest,
     ) -> Result<DictationConfigResponse, sacp::Error> {
-        let config = goose::config::Config::global();
+        let config = crate::config::Config::global();
         let mut providers = std::collections::HashMap::new();
 
         for def in all_providers() {
@@ -3294,7 +3293,7 @@ impl GooseAcpAgent {
     ) -> Result<DictationModelsListResponse, sacp::Error> {
         #[cfg(feature = "local-inference")]
         {
-            use goose::download_manager::{get_download_manager, DownloadStatus};
+            use crate::download_manager::{get_download_manager, DownloadStatus};
 
             let manager = get_download_manager();
             let models = whisper::available_models()
@@ -3326,7 +3325,7 @@ impl GooseAcpAgent {
     ) -> Result<EmptyResponse, sacp::Error> {
         #[cfg(feature = "local-inference")]
         {
-            use goose::download_manager::get_download_manager;
+            use crate::download_manager::get_download_manager;
 
             let model = whisper::get_model(&_req.model_id)
                 .ok_or_else(|| sacp::Error::invalid_params().data("Unknown model id"))?;
@@ -3339,7 +3338,7 @@ impl GooseAcpAgent {
                     model.url.to_string(),
                     model.local_path(),
                     Some(Box::new(move || {
-                        let config = goose::config::Config::global();
+                        let config = crate::config::Config::global();
                         // Only auto-select this model if the user has no model
                         // currently selected. This prevents silently switching
                         // the active model mid-session when a user downloads an
@@ -3381,7 +3380,7 @@ impl GooseAcpAgent {
     ) -> Result<DictationModelDownloadProgressResponse, sacp::Error> {
         #[cfg(feature = "local-inference")]
         {
-            use goose::download_manager::get_download_manager;
+            use crate::download_manager::get_download_manager;
 
             let manager = get_download_manager();
             let progress =
@@ -3412,7 +3411,7 @@ impl GooseAcpAgent {
     ) -> Result<EmptyResponse, sacp::Error> {
         #[cfg(feature = "local-inference")]
         {
-            use goose::download_manager::get_download_manager;
+            use crate::download_manager::get_download_manager;
 
             let manager = get_download_manager();
             manager
@@ -3485,7 +3484,7 @@ impl GooseAcpAgent {
             }
         };
 
-        goose::config::Config::global()
+        crate::config::Config::global()
             .set_param(key, req.model_id)
             .map_err(|e| sacp::Error::internal_error().data(e.to_string()))?;
 
@@ -3875,18 +3874,18 @@ where
 }
 
 pub async fn run(builtins: Vec<String>) -> Result<()> {
-    register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
     info!("listening on stdio");
 
     let outgoing = tokio::io::stdout().compat_write();
     let incoming = tokio::io::stdin().compat();
 
-    let server =
-        crate::server_factory::AcpServer::new(crate::server_factory::AcpServerFactoryConfig {
+    let server = crate::acp::server_factory::AcpServer::new(
+        crate::acp::server_factory::AcpServerFactoryConfig {
             builtins,
             data_dir: Paths::data_dir(),
             config_dir: Paths::config_dir(),
-        });
+        },
+    );
     let agent = server.create_agent().await?;
     serve(agent, incoming, outgoing).await
 }
@@ -3894,7 +3893,7 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use goose::conversation::message::{ToolRequest, ToolResponse};
+    use crate::conversation::message::{ToolRequest, ToolResponse};
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
     use sacp::schema::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
@@ -4109,14 +4108,14 @@ print(\"hello, world\")
             description: "Mock".to_string(),
             default_model: "unused".to_string(),
             configured: true,
-            provider_type: goose::providers::base::ProviderType::Builtin,
+            provider_type: crate::providers::base::ProviderType::Builtin,
             config_keys: vec![],
             setup_steps: vec![],
             supports_refresh: true,
             refreshing: false,
             models: models
                 .into_iter()
-                .map(|id| goose::providers::inventory::InventoryModel {
+                .map(|id| crate::providers::inventory::InventoryModel {
                     name: id.clone(),
                     id,
                     family: None,
@@ -4287,7 +4286,7 @@ print(\"hello, world\")
             session_type: SessionType::Acp,
             created_at: Default::default(),
             updated_at: Default::default(),
-            extension_data: goose::session::ExtensionData::default(),
+            extension_data: crate::session::ExtensionData::default(),
             total_tokens,
             input_tokens,
             output_tokens,
