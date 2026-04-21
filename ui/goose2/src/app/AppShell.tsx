@@ -10,7 +10,6 @@ import { TopBar } from "./ui/TopBar";
 import { useChatStore } from "@/features/chat/stores/chatStore";
 import {
   type ChatSession,
-  hasSessionStarted,
   useChatSessionStore,
 } from "@/features/chat/stores/chatSessionStore";
 import { useAgentStore } from "@/features/agents/stores/agentStore";
@@ -18,14 +17,18 @@ import { useProjectStore } from "@/features/projects/stores/projectStore";
 import { findExistingDraft } from "@/features/chat/lib/newChat";
 import { DEFAULT_CHAT_TITLE } from "@/features/chat/lib/sessionTitle";
 import { useAppStartup } from "./hooks/useAppStartup";
+import { useHomeSessionStateSync } from "./hooks/useHomeSessionStateSync";
+import { loadStoredHomeSessionId } from "./lib/homeSessionStorage";
+import { resolveSupportedSessionModelPreference } from "./lib/resolveSupportedSessionModelPreference";
 import { AppShellContent } from "./ui/AppShellContent";
-import { acpPrepareSession } from "@/shared/api/acp";
+import { acpPrepareSession, acpSetModel } from "@/shared/api/acp";
 import {
   clearReplayBuffer,
   getAndDeleteReplayBuffer,
 } from "@/features/chat/hooks/replayBuffer";
 import { resolveSessionCwd } from "@/features/projects/lib/sessionCwdSelection";
 import { perfLog } from "@/shared/lib/perfLog";
+import { useProviderInventoryStore } from "@/features/providers/stores/providerInventoryStore";
 
 export type AppView =
   | "home"
@@ -40,34 +43,6 @@ const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 380;
 const SIDEBAR_SNAP_COLLAPSE_THRESHOLD = 100;
 const SIDEBAR_COLLAPSED_WIDTH = 48;
-const HOME_SESSION_STORAGE_KEY = "goose:home-session-id";
-
-function loadStoredHomeSessionId(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    return window.localStorage.getItem(HOME_SESSION_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function persistHomeSessionId(sessionId: string | null): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    if (sessionId) {
-      window.localStorage.setItem(HOME_SESSION_STORAGE_KEY, sessionId);
-      return;
-    }
-    window.localStorage.removeItem(HOME_SESSION_STORAGE_KEY);
-  } catch {
-    // localStorage may be unavailable
-  }
-}
-
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
@@ -90,6 +65,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const sessionStore = useChatSessionStore();
   const agentStore = useAgentStore();
   const projectStore = useProjectStore();
+  const providerInventoryEntries = useProviderInventoryStore((s) => s.entries);
 
   const pendingProjectCreatedRef = useRef<((projectId: string) => void) | null>(
     null,
@@ -173,37 +149,14 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     ? sessionStore.getSession(homeSessionId)
     : undefined;
 
-  useEffect(() => {
-    if (
-      !homeSessionId ||
-      !sessionStore.hasHydratedSessions ||
-      sessionStore.isLoading
-    ) {
-      return;
-    }
-    if (
-      !homeSession ||
-      homeSession.archivedAt ||
-      hasSessionStarted(
-        homeSession,
-        chatStore.messagesBySession[homeSession.id],
-      )
-    ) {
-      setHomeSessionId(null);
-    }
-  }, [
-    chatStore.messagesBySession,
-    homeSession,
-    homeSession?.archivedAt,
-    homeSession?.messageCount,
+  useHomeSessionStateSync({
     homeSessionId,
-    sessionStore.hasHydratedSessions,
-    sessionStore.isLoading,
-  ]);
-
-  useEffect(() => {
-    persistHomeSessionId(homeSessionId);
-  }, [homeSessionId]);
+    homeSession,
+    messagesBySession: chatStore.messagesBySession,
+    hasHydratedSessions: sessionStore.hasHydratedSessions,
+    isLoading: sessionStore.isLoading,
+    setHomeSessionId,
+  });
 
   const ensureHomeSession = useCallback(async () => {
     if (!sessionStore.hasHydratedSessions || sessionStore.isLoading) {
@@ -220,6 +173,11 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         !homeSession.archivedAt &&
         homeSession.messageCount === 0
       ) {
+        const sessionModelPreference =
+          await resolveSupportedSessionModelPreference(
+            agentStore.selectedProvider ?? "goose",
+            providerInventoryEntries,
+          );
         const project = homeSession.projectId
           ? (projectStore.projects.find(
               (candidate) => candidate.id === homeSession.projectId,
@@ -228,20 +186,42 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         const workingDir = await resolveSessionCwd(project);
         await acpPrepareSession(
           homeSession.id,
-          homeSession.providerId ?? agentStore.selectedProvider ?? "goose",
+          sessionModelPreference.providerId,
           workingDir,
           {
             personaId: homeSession.personaId,
           },
         );
+        const shouldClearHomeModel =
+          sessionModelPreference.providerId !== homeSession.providerId ||
+          !sessionModelPreference.modelId;
+        sessionStore.updateSession(homeSession.id, {
+          providerId: sessionModelPreference.providerId,
+          modelId: shouldClearHomeModel ? undefined : homeSession.modelId,
+          modelName: shouldClearHomeModel ? undefined : homeSession.modelName,
+        });
+        if (sessionModelPreference.modelId) {
+          await acpSetModel(homeSession.id, sessionModelPreference.modelId);
+          sessionStore.updateSession(homeSession.id, {
+            modelId: sessionModelPreference.modelId,
+            modelName: sessionModelPreference.modelName,
+          });
+        }
         return homeSession;
       }
 
       const workingDir = await resolveSessionCwd(null);
+      const sessionModelPreference =
+        await resolveSupportedSessionModelPreference(
+          agentStore.selectedProvider ?? "goose",
+          providerInventoryEntries,
+        );
       const session = await sessionStore.createSession({
         title: DEFAULT_CHAT_TITLE,
-        providerId: agentStore.selectedProvider ?? "goose",
+        providerId: sessionModelPreference.providerId,
         workingDir,
+        modelId: sessionModelPreference.modelId,
+        modelName: sessionModelPreference.modelName,
       });
       setHomeSessionId(session.id);
       return session;
@@ -258,6 +238,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   }, [
     agentStore.selectedProvider,
     homeSession,
+    providerInventoryEntries,
     projectStore.projects,
     sessionStore.hasHydratedSessions,
     sessionStore,
@@ -282,7 +263,12 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       const agentId = agentStore.activeAgentId ?? undefined;
       const providerId =
         project?.preferredProvider ?? agentStore.selectedProvider ?? "goose";
-      const modelId = project?.preferredModel ?? undefined;
+      const sessionModelPreference =
+        await resolveSupportedSessionModelPreference(
+          providerId,
+          providerInventoryEntries,
+          project?.preferredModel ?? undefined,
+        );
       const sessionState = useChatSessionStore.getState();
       const chatState = useChatStore.getState();
       const existingDraft = findExistingDraft({
@@ -311,10 +297,10 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         title,
         projectId: project?.id,
         agentId,
-        providerId,
+        providerId: sessionModelPreference.providerId,
         workingDir,
-        modelId,
-        modelName: modelId,
+        modelId: sessionModelPreference.modelId,
+        modelName: sessionModelPreference.modelName,
       });
       sessionStore.setActiveSession(session.id);
       setActiveView("chat");
@@ -328,6 +314,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       agentStore.activeAgentId,
       agentStore.selectedProvider,
       chatStore,
+      providerInventoryEntries,
       sessionStore,
     ],
   );
