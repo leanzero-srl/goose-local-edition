@@ -1,0 +1,199 @@
+# Release workflow for Goose 2 (Tauri desktop app).
+# Triggered by pushing a tag matching v2.*.
+#
+# Pipeline:
+#   1. Build CLI binaries for all platforms (reuses build-cli.yml)
+#   2. Bundle Goose 2 desktop app with code signing:
+#      - macOS: Apple codesign + notarization via keychain & APPLE_* env vars
+#      - Windows: Azure Trusted Signing (post-build)
+#      - Linux: unsigned (standard for Linux packages)
+#   3. Create a versioned GitHub Release with all artifacts
+on:
+  push:
+    paths-ignore:
+      - "documentation/**"
+    tags:
+      - "v2.*"
+
+name: "Release Goose 2"
+
+permissions:
+  id-token: write      # Sigstore OIDC signing + Azure OIDC (Windows signing)
+  contents: write      # Creating releases + actions/checkout
+  actions: read        # Downloading artifacts across workflow runs
+  attestations: write  # SLSA build provenance attestations
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------
+  # 1) Derive version from the tag
+  # ------------------------------------
+  prepare-version:
+    name: Prepare Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name: Extract version from tag
+        id: set-version
+        run: |
+          # Strip the leading "v" from the tag (e.g. v2.0.0 → 2.0.0)
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+
+  # ------------------------------------
+  # 2) Build CLI for all platforms
+  # ------------------------------------
+  build-cli:
+    needs: [prepare-version]
+    uses: ./.github/workflows/build-cli.yml
+    with:
+      version: ${{ needs.prepare-version.outputs.version }}
+
+  # ------------------------------------
+  # 3) Bundle Goose 2 desktop app
+  #    (macOS signed + notarized, Windows signed, Linux unsigned)
+  # ------------------------------------
+  bundle-goose2:
+    needs: [prepare-version, build-cli]
+    uses: ./.github/workflows/bundle-goose2.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    with:
+      version: ${{ needs.prepare-version.outputs.version }}
+      signing: true
+      windows-signing: true
+      environment: signing
+      cli-run-id: ${{ github.run_id }}
+    secrets: inherit
+
+  # ------------------------------------
+  # 4) Upload install script
+  # ------------------------------------
+  install-script:
+    name: Upload Install Script
+    runs-on: ubuntu-latest
+    needs: [build-cli]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: download_cli.sh
+          path: download_cli.sh
+
+  # ------------------------------------
+  # 5) Create GitHub Release
+  # ------------------------------------
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [prepare-version, build-cli, install-script, bundle-goose2]
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
+      attestations: write
+    steps:
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: goose-*
+          merge-multiple: true
+          path: release
+
+      - name: Download install script
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: download_cli.sh
+          path: release
+
+      - name: Download macOS ARM64
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-darwin-arm64
+          path: release
+
+      - name: Download macOS Intel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-darwin-x64
+          path: release
+
+      - name: Download Linux .deb
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-linux-x64-deb
+          path: release
+        continue-on-error: true
+
+      - name: Download Linux AppImage
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-linux-x64-appimage
+          path: release
+        continue-on-error: true
+
+      - name: Download Linux RPM
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-linux-x64-rpm
+          path: release
+        continue-on-error: true
+
+      - name: Download signed Windows NSIS installer
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-windows-x64-nsis-signed
+          path: release
+
+      - name: Download signed Windows MSI installer
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Goose2-windows-x64-msi-signed
+          path: release
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== All release artifacts ==="
+          find release -type f | sort
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            release/goose-*.tar.bz2
+            release/goose-*.tar.gz
+            release/goose-*.zip
+            release/*.dmg
+            release/*.exe
+            release/*.msi
+            release/*.deb
+            release/*.rpm
+            release/*.AppImage
+            release/download_cli.sh
+
+      # Create/update the versioned pre-release (e.g. v2.0.0)
+      - name: Release versioned
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: true
+          artifacts: |
+            release/goose-*.tar.bz2
+            release/goose-*.tar.gz
+            release/goose-*.zip
+            release/*.dmg
+            release/*.exe
+            release/*.msi
+            release/*.deb
+            release/*.rpm
+            release/*.AppImage
+            release/download_cli.sh
+          allowUpdates: true
+          omitBody: true
