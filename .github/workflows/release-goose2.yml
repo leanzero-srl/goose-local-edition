@@ -1,17 +1,5 @@
-# Release workflow for Goose 2 (Tauri desktop app).
-# Triggered by pushing a tag matching v2.*.
-#
-# Pipeline:
-#   1. Build CLI binaries for all platforms (reuses build-cli.yml)
-#   2. Bundle Goose 2 desktop app with code signing:
-#      - macOS: Apple codesign + notarization via keychain & APPLE_* env vars
-#      - Windows: Azure Trusted Signing (post-build)
-#      - Linux: unsigned (standard for Linux packages)
-#   3. Create a versioned GitHub Release with all artifacts
 on:
   push:
-    paths-ignore:
-      - "documentation/**"
     tags:
       - "v2.*"
 
