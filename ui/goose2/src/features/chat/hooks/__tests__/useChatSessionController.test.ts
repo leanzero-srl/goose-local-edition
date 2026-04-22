@@ -55,6 +55,7 @@ vi.mock("../useMessageQueue", () => ({
   useMessageQueue: () => ({
     queuedMessage: null,
     enqueue: vi.fn(),
+    dismiss: vi.fn(),
   }),
 }));
 
@@ -213,7 +214,6 @@ describe("useChatSessionController", () => {
       modelName: "Claude Sonnet 4",
     });
   });
-
   it("restores the previous stored model preference when setting a model fails", async () => {
     window.localStorage.setItem(
       "goose:preferredModelsByAgent",

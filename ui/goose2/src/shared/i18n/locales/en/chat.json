@@ -120,6 +120,9 @@
     "title": "Mention an agent",
     "filesTitle": "Files"
   },
+  "notifications": {
+    "compactionComplete": "Conversation compacted. Older context was summarized."
+  },
   "message": {
     "copied": "Copied",
     "defaultImageAlt": "Attached",
@@ -167,6 +170,7 @@
     "model": "Model",
     "allModels": "All models",
     "searchModels": "Search models...",
+    "settings": "Settings",
     "recommended": "Recommended",
     "noModelsAvailable": "No models available",
     "noSearchResults": "No matching models",

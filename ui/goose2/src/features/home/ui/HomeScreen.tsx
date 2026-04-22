@@ -104,6 +104,7 @@ function HomeComposer({
       }
       contextTokens={controller.tokenState.accumulatedTotal}
       contextLimit={controller.tokenState.contextLimit}
+      isContextUsageReady={controller.isContextUsageReady}
     />
   );
 }

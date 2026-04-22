@@ -111,7 +111,10 @@ export function ChatView({
 
           <ChatInput
             onSend={controller.handleSend}
-            disabled={controller.projectMetadataPending}
+            disabled={
+              controller.projectMetadataPending ||
+              controller.isCompactingContext
+            }
             queuedMessage={controller.queue.queuedMessage}
             onDismissQueue={controller.queue.dismiss}
             initialValue={controller.draftValue}
@@ -148,6 +151,11 @@ export function ChatView({
             }
             contextTokens={controller.tokenState.accumulatedTotal}
             contextLimit={controller.tokenState.contextLimit}
+            isContextUsageReady={controller.isContextUsageReady}
+            onCompactContext={controller.compactConversation}
+            canCompactContext={controller.canCompactContext}
+            isCompactingContext={controller.isCompactingContext}
+            supportsCompactionControls={controller.supportsCompactionControls}
           />
         </div>
 
