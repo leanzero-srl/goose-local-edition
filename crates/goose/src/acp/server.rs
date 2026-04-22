@@ -153,6 +153,24 @@ fn sid_short(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
+fn thread_session_meta(
+    message_count: i64,
+    metadata: &crate::session::ThreadMetadata,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "messageCount".to_string(),
+        serde_json::Value::Number(message_count.into()),
+    );
+    if let Some(ref pid) = metadata.project_id {
+        meta.insert(
+            "projectId".to_string(),
+            serde_json::Value::String(pid.clone()),
+        );
+    }
+    meta
+}
+
 fn extract_timeout_from_meta(meta: &Option<Meta>) -> Option<u64> {
     meta.as_ref()
         .and_then(|m| m.get("timeout"))
@@ -1539,9 +1557,17 @@ impl GooseAcpAgent {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let project_id = args
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("projectId"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         // Create the Thread — this IS the ACP session from the client's perspective.
         let thread_metadata = crate::session::ThreadMetadata {
             provider_id: requested_provider.clone(),
+            project_id,
             mode: Some(self.goose_mode.to_string()),
             ..Default::default()
         };
@@ -2544,11 +2570,7 @@ impl GooseAcpAgent {
                     .as_deref()
                     .map(std::path::PathBuf::from)
                     .unwrap_or_default();
-                let mut meta = serde_json::Map::new();
-                meta.insert(
-                    "messageCount".to_string(),
-                    serde_json::Value::Number(t.message_count.into()),
-                );
+                let meta = thread_session_meta(t.message_count, &t.metadata);
                 SessionInfo::new(SessionId::new(t.id), cwd)
                     .title(t.name)
                     .updated_at(t.updated_at.to_rfc3339())
@@ -2613,11 +2635,7 @@ impl GooseAcpAgent {
             },
         );
 
-        let mut meta = serde_json::Map::new();
-        meta.insert(
-            "messageCount".to_string(),
-            serde_json::Value::Number(new_thread.message_count.into()),
-        );
+        let meta = thread_session_meta(new_thread.message_count, &new_thread.metadata);
 
         let mut response = ForkSessionResponse::new(SessionId::new(new_thread_id))
             .modes(mode_state)
@@ -3047,6 +3065,19 @@ impl GooseAcpAgent {
         })
     }
 
+    #[custom_method(UpdateSessionProjectRequest)]
+    async fn on_update_session_project(
+        &self,
+        req: UpdateSessionProjectRequest,
+    ) -> Result<EmptyResponse, sacp::Error> {
+        let project_id = req.project_id;
+        self.update_thread_metadata(&req.session_id, move |meta| {
+            meta.project_id = project_id;
+        })
+        .await?;
+        Ok(EmptyResponse {})
+    }
+
     #[custom_method(ArchiveSessionRequest)]
     async fn on_archive_session(
         &self,
@@ -3189,7 +3220,7 @@ impl GooseAcpAgent {
             other => {
                 return Err(
                     sacp::Error::invalid_params().data(format!("Unsupported format: {other}"))
-                )
+                );
             }
         };
 
