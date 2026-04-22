@@ -72,8 +72,19 @@ struct Delta {
     role: Option<String>,
     tool_calls: Option<Vec<DeltaToolCall>>,
     reasoning_details: Option<Vec<Value>>,
-    #[serde(alias = "reasoning")]
+    reasoning: Option<String>,
     reasoning_content: Option<String>,
+}
+
+impl Delta {
+    /// Prefer `reasoning_content` (DeepSeek/OpenRouter) over `reasoning`
+    /// (vLLM); some servers (gpt-oss via vLLM) emit both. Skip empty values.
+    fn reasoning_text(&self) -> Option<&str> {
+        self.reasoning_content
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.reasoning.as_deref().filter(|s| !s.is_empty()))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -769,7 +780,7 @@ where
                 if let Some(details) = &chunk.choices[0].delta.reasoning_details {
                     accumulated_reasoning.extend(details.iter().cloned());
                 }
-                if let Some(rc) = &chunk.choices[0].delta.reasoning_content {
+                if let Some(rc) = chunk.choices[0].delta.reasoning_text() {
                     accumulated_reasoning_content.push_str(rc);
                 }
             }
@@ -811,7 +822,7 @@ where
                                     if let Some(details) = &tool_chunk.choices[0].delta.reasoning_details {
                                         accumulated_reasoning.extend(details.iter().cloned());
                                     }
-                                    if let Some(rc) = &tool_chunk.choices[0].delta.reasoning_content {
+                                    if let Some(rc) = tool_chunk.choices[0].delta.reasoning_text() {
                                         accumulated_reasoning_content.push_str(rc);
                                     }
                                     if let Some(delta_tool_calls) = &tool_chunk.choices[0].delta.tool_calls {
@@ -919,14 +930,12 @@ where
                     Some(msg),
                     usage,
                 )
-            } else if chunk.choices[0].delta.content.is_some() || chunk.choices[0].delta.reasoning_content.is_some() {
+            } else if chunk.choices[0].delta.content.is_some() || chunk.choices[0].delta.reasoning_text().is_some() {
                 let mut content = Vec::new();
 
-                if let Some(reasoning) = &chunk.choices[0].delta.reasoning_content {
-                    if !reasoning.is_empty() {
-                        let signature = last_signature.as_deref().unwrap_or("");
-                        content.push(MessageContent::thinking(reasoning, signature));
-                    }
+                if let Some(reasoning) = chunk.choices[0].delta.reasoning_text() {
+                    let signature = last_signature.as_deref().unwrap_or("");
+                    content.push(MessageContent::thinking(reasoning, signature));
                 }
 
                 let (text_content, thought_signature) = extract_content_and_signature(chunk.choices[0].delta.content.as_ref());
@@ -2342,5 +2351,70 @@ data: [DONE]"#;
         assert_eq!(result.input_tokens, Some(42));
         assert_eq!(result.output_tokens, Some(128));
         assert_eq!(result.total_tokens, Some(170));
+    }
+
+    // vLLM serving gpt-oss emits both `reasoning` and `reasoning_content`
+    // in the same payload; the non-streaming path handles it fine today.
+    #[test]
+    fn test_response_to_message_with_both_reasoning_fields() -> anyhow::Result<()> {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning": "thinking...",
+                    "reasoning_content": "thinking..."
+                }
+            }]
+        });
+
+        let message = response_to_message(&response)?;
+        assert_eq!(message.content.len(), 2);
+        if let MessageContent::Thinking(t) = &message.content[0] {
+            assert_eq!(t.thinking, "thinking...");
+        } else {
+            panic!("Expected Thinking content, got {:?}", message.content[0]);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_streaming_chunk_with_only_reasoning_content() -> anyhow::Result<()> {
+        let response_lines = "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"hi\"},\"finish_reason\":null}]}\ndata: [DONE]";
+        let lines: Vec<String> = response_lines.lines().map(|s| s.to_string()).collect();
+        let response_stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+        while let Some(result) = messages.next().await {
+            result?;
+        }
+        Ok(())
+    }
+
+    // Streaming counterpart: both fields in one delta must parse and yield
+    // thinking content, not fail with "duplicate field `reasoning_content`".
+    #[tokio::test]
+    async fn test_streaming_chunk_with_both_reasoning_fields() -> anyhow::Result<()> {
+        let response_lines = "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"thinking...\",\"reasoning_content\":\"thinking...\"},\"finish_reason\":null}]}\ndata: [DONE]";
+        let lines: Vec<String> = response_lines.lines().map(|s| s.to_string()).collect();
+        let response_stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+
+        let mut saw_thinking = false;
+        while let Some(result) = messages.next().await {
+            let (message, _usage) = result?;
+            if let Some(msg) = message {
+                for c in &msg.content {
+                    if let MessageContent::Thinking(t) = c {
+                        assert_eq!(t.thinking, "thinking...");
+                        saw_thinking = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            saw_thinking,
+            "expected thinking content from merged reasoning fields"
+        );
+        Ok(())
     }
 }
