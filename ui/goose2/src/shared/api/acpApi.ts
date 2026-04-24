@@ -142,7 +142,10 @@ export async function updateWorkingDir(
   workingDir: string,
 ): Promise<void> {
   const client = await getClient();
-  await client.extMethod("goose/working_dir/update", { sessionId, workingDir });
+  await client.extMethod("_goose/working_dir/update", {
+    sessionId,
+    workingDir,
+  });
 }
 
 export async function updateSessionProject(
