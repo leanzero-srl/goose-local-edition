@@ -39,6 +39,22 @@ export interface AcpCreateSessionOptions extends AcpPrepareSessionOptions {
 /** Discover ACP providers installed on the system. */
 export async function discoverAcpProviders(): Promise<AcpProvider[]> {
   const providers = await directAcp.listProviders();
+  return resolveProvidersCatalog(providers);
+}
+
+/**
+ * Derive ACP providers from already-fetched inventory entries,
+ * avoiding a duplicate `_goose/providers/list` RPC.
+ */
+export function discoverAcpProvidersFromEntries(
+  entries: Array<{ providerId: string; providerName: string }>,
+): AcpProvider[] {
+  return resolveProvidersCatalog(
+    directAcp.buildProviderListFromEntries(entries),
+  );
+}
+
+function resolveProvidersCatalog(providers: AcpProvider[]): AcpProvider[] {
   const seen = new Set<string>();
 
   return providers
