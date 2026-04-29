@@ -220,9 +220,10 @@
       "signInLabel": "Iniciar sesión en {{name}}",
       "status": {
         "checking": "Comprobando...",
+        "inProgress": "Configuración en curso",
         "setupFailed": "La configuración falló"
       },
-      "title": "Agentes"
+      "title": "Arneses de agentes"
     },
     "description": "Conecta agentes y modelos de IA para usar con Goose",
     "disconnect": "Desconectar",
@@ -251,10 +252,11 @@
           "oauthTerminal": "Ejecuta `goose configure` en tu terminal para terminar de iniciar sesión."
         }
       },
+      "checkingStatus": "Comprobando estado del proveedor...",
       "title": "Modelos"
     },
-    "restartButton": "Reiniciar ahora",
-    "restartMessage": "Reinicia para aplicar los cambios de credenciales.",
+    "loadingModels": "Cargando modelos...",
+    "modelRefreshWarning": "Credenciales guardadas. La actualización de modelos necesita atención: {{message}}",
     "saved": "Guardado",
     "showFewer": "Mostrar menos",
     "showMore": "Mostrar {{count}} proveedores más",
