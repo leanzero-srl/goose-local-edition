@@ -3743,6 +3743,9 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
         // The MatchDispatchFrom chain produces an ~85KB async state machine.
         // Box::pin moves it to the heap so it doesn't overflow the tokio worker stack.
         Box::pin(async move {
+            // InitializeRequest runs inline: it sets connection-scoped state
+            // (client fs/terminal capabilities) that later handlers read with
+            // defaults, so a pipelined NewSessionRequest must not race ahead of it.
             MatchDispatchFrom::new(message, &cx)
                 .if_request(
                     |req: InitializeRequest, responder: Responder<InitializeResponse>| async {
@@ -3758,7 +3761,13 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                 .await
                 .if_request(
                     |req: NewSessionRequest, responder: Responder<NewSessionResponse>| async {
-                        responder.respond_with_result(agent.on_new_session(&cx, req).await)
+                        let agent = agent.clone();
+                        let cx_clone = cx.clone();
+                        cx.spawn(async move {
+                            responder.respond_with_result(agent.on_new_session(&cx_clone, req).await)?;
+                            Ok(())
+                        })?;
+                        Ok(())
                     },
                 )
                 .await
@@ -3800,112 +3809,121 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                     },
                 )
                 .await
-                .if_notification(|notif: CancelNotification| async { agent.on_cancel(notif).await })
+                .if_notification(|notif: CancelNotification| async {
+                    let agent = agent.clone();
+                    agent.on_cancel(notif).await?;
+                    Ok(())
+                })
                 .await
                 // set_config_option (SACP 11) and legacy set_mode/set_model; custom _goose/* in otherwise.
                 .if_request({
                     let agent = agent.clone();
                     let cx = cx.clone();
                     |req: SetSessionConfigOptionRequest, responder: Responder<SetSessionConfigOptionResponse>| async move {
-                        let value_id = req.value.as_value_id()
-                            .ok_or_else(|| sacp::Error::invalid_params().data("Expected a value ID"))?
-                            .clone();
-                        let session_id = req.session_id.clone();
-                        let sid = sid_short(session_id.0.as_ref());
-                        let config_id = req.config_id.0.to_string();
-                        let t_handler = std::time::Instant::now();
-                        match config_id.as_ref() {
-                            "provider" => {
-                                match agent.update_provider(&session_id.0, &value_id.0, None, None, None).await {
-                                    Ok(_) => {}
-                                    Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
-                                }
-                            }
-                            "mode" => {
-                                match agent.on_set_mode(&session_id.0, &value_id.0).await {
-                                    Ok(_) => {}
-                                    Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
-                                }
-                            }
-                            "model" => {
-                                match agent.on_set_model(&session_id.0, &value_id.0).await {
-                                    Ok(_) => {}
-                                    Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
-                                }
-                            }
-                            other => {
-                                responder.respond_with_error(
-                                    sacp::Error::invalid_params().data(format!("Unsupported config option: {}", other))
-                                )?;
-                                return Ok(());
-                            }
-                        }
-                        // Respond immediately using the current provider inventory snapshot.
-                        let (notification, config_options) = agent.build_config_update(&session_id).await?;
-                        cx.send_notification(notification)?;
-                        responder.respond(SetSessionConfigOptionResponse::new(config_options))?;
-
-                        let maybe_refresh = if config_id == "provider" {
-                            let provider_id = value_id.0.to_string();
-                            agent
-                                .provider_inventory
-                                .plan_refresh(std::slice::from_ref(&provider_id))
-                                .await
-                                .ok()
-                                .filter(|plan| plan.started.iter().any(|id| id == &provider_id))
-                        } else {
-                            None
-                        };
-                        if maybe_refresh.is_some() {
-                            let agent_bg = agent.clone();
-                            let cx_bg = cx.clone();
-                            let session_id_bg = session_id.clone();
-                            tokio::spawn(async move {
-                                let refreshed = async {
-                                    let session_agent =
-                                        agent_bg.get_session_agent(&session_id_bg.0, None).await?;
-                                    let provider = session_agent
-                                        .provider()
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                                    let provider_name = provider.get_name().to_string();
-                                    let models = provider
-                                        .fetch_recommended_models()
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                                    agent_bg
-                                        .provider_inventory
-                                        .store_refreshed_models(&provider_name, &models)
-                                        .await?;
-                                    agent_bg
-                                        .build_config_update(&session_id_bg)
-                                        .await
-                                        .map_err(|e| anyhow::anyhow!(e.to_string()))
-                                }
-                                .await;
-
-                                match refreshed {
-                                    Ok((fresh_notification, _)) => {
-                                        let _ = cx_bg.send_notification(fresh_notification);
+                        let cx_spawn = cx.clone();
+                        cx.spawn(async move {
+                            let cx = cx_spawn;
+                            let value_id = req.value.as_value_id()
+                                .ok_or_else(|| sacp::Error::invalid_params().data("Expected a value ID"))?
+                                .clone();
+                            let session_id = req.session_id.clone();
+                            let sid = sid_short(session_id.0.as_ref());
+                            let config_id = req.config_id.0.to_string();
+                            let t_handler = std::time::Instant::now();
+                            match config_id.as_ref() {
+                                "provider" => {
+                                    match agent.update_provider(&session_id.0, &value_id.0, None, None, None).await {
+                                        Ok(_) => {}
+                                        Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
                                     }
-                                    Err(e) => {
-                                        if let Ok(session_agent) =
-                                            agent_bg.get_session_agent(&session_id_bg.0, None).await
-                                        {
-                                            if let Ok(provider) = session_agent.provider().await {
-                                                let provider_name = provider.get_name().to_string();
-                                                let _ = agent_bg
-                                                    .provider_inventory
-                                                    .store_refresh_error(&provider_name, e.to_string())
-                                                    .await;
+                                }
+                                "mode" => {
+                                    match agent.on_set_mode(&session_id.0, &value_id.0).await {
+                                        Ok(_) => {}
+                                        Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
+                                    }
+                                }
+                                "model" => {
+                                    match agent.on_set_model(&session_id.0, &value_id.0).await {
+                                        Ok(_) => {}
+                                        Err(e) => { responder.respond_with_error(e)?; return Ok(()); }
+                                    }
+                                }
+                                other => {
+                                    responder.respond_with_error(
+                                        sacp::Error::invalid_params().data(format!("Unsupported config option: {}", other))
+                                    )?;
+                                    return Ok(());
+                                }
+                            }
+                            // Respond immediately using the current provider inventory snapshot.
+                            let (notification, config_options) = agent.build_config_update(&session_id).await?;
+                            cx.send_notification(notification)?;
+                            responder.respond(SetSessionConfigOptionResponse::new(config_options))?;
+
+                            let maybe_refresh = if config_id == "provider" {
+                                let provider_id = value_id.0.to_string();
+                                agent
+                                    .provider_inventory
+                                    .plan_refresh(std::slice::from_ref(&provider_id))
+                                    .await
+                                    .ok()
+                                    .filter(|plan| plan.started.iter().any(|id| id == &provider_id))
+                            } else {
+                                None
+                            };
+                            if maybe_refresh.is_some() {
+                                let agent_bg = agent.clone();
+                                let cx_bg = cx.clone();
+                                let session_id_bg = session_id.clone();
+                                tokio::spawn(async move {
+                                    let refreshed = async {
+                                        let session_agent =
+                                            agent_bg.get_session_agent(&session_id_bg.0, None).await?;
+                                        let provider = session_agent
+                                            .provider()
+                                            .await
+                                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                                        let provider_name = provider.get_name().to_string();
+                                        let models = provider
+                                            .fetch_recommended_models()
+                                            .await
+                                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                                        agent_bg
+                                            .provider_inventory
+                                            .store_refreshed_models(&provider_name, &models)
+                                            .await?;
+                                        agent_bg
+                                            .build_config_update(&session_id_bg)
+                                            .await
+                                            .map_err(|e| anyhow::anyhow!(e.to_string()))
+                                    }
+                                    .await;
+
+                                    match refreshed {
+                                        Ok((fresh_notification, _)) => {
+                                            let _ = cx_bg.send_notification(fresh_notification);
+                                        }
+                                        Err(e) => {
+                                            if let Ok(session_agent) =
+                                                agent_bg.get_session_agent(&session_id_bg.0, None).await
+                                            {
+                                                if let Ok(provider) = session_agent.provider().await {
+                                                    let provider_name = provider.get_name().to_string();
+                                                    let _ = agent_bg
+                                                        .provider_inventory
+                                                        .store_refresh_error(&provider_name, e.to_string())
+                                                        .await;
+                                                }
                                             }
                                         }
                                     }
-                                }
-                            });
-                        }
+                                });
+                            }
 
-                        debug!(target: "perf", sid = %sid, ms = t_handler.elapsed().as_millis() as u64, config_id = %config_id, "perf: set_config_option done");
+                            debug!(target: "perf", sid = %sid, ms = t_handler.elapsed().as_millis() as u64, config_id = %config_id, "perf: set_config_option done");
+                            Ok(())
+                        })?;
                         Ok(())
                     }
                 })
@@ -3914,23 +3932,28 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                     let agent = agent.clone();
                     let cx = cx.clone();
                     |req: SetSessionModeRequest, responder: Responder<SetSessionModeResponse>| async move {
-                        let session_id = req.session_id.clone();
-                        let mode_id = req.mode_id.clone();
-                        match agent.on_set_mode(&session_id.0, &mode_id.0).await {
-                            Ok(resp) => {
-                                // Notify before responding so clients see the mode update before block_task unblocks.
-                                cx.send_notification(SessionNotification::new(
-                                    session_id,
-                                    SessionUpdate::CurrentModeUpdate(
-                                        CurrentModeUpdate::new(mode_id),
-                                    ),
-                                ))?;
-                                responder.respond(resp)?;
+                        let cx_spawn = cx.clone();
+                        cx.spawn(async move {
+                            let cx = cx_spawn;
+                            let session_id = req.session_id.clone();
+                            let mode_id = req.mode_id.clone();
+                            match agent.on_set_mode(&session_id.0, &mode_id.0).await {
+                                Ok(resp) => {
+                                    // Notify before responding so clients see the mode update before block_task unblocks.
+                                    cx.send_notification(SessionNotification::new(
+                                        session_id,
+                                        SessionUpdate::CurrentModeUpdate(
+                                            CurrentModeUpdate::new(mode_id),
+                                        ),
+                                    ))?;
+                                    responder.respond(resp)?;
+                                }
+                                Err(e) => {
+                                    responder.respond_with_error(e)?;
+                                }
                             }
-                            Err(e) => {
-                                responder.respond_with_error(e)?;
-                            }
-                        }
+                            Ok(())
+                        })?;
                         Ok(())
                     }
                 })
@@ -3939,30 +3962,45 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                     let agent = agent.clone();
                     let cx = cx.clone();
                     |req: SetSessionModelRequest, responder: Responder<SetSessionModelResponse>| async move {
-                        let session_id = req.session_id.clone();
-                        match agent.on_set_model(&session_id.0, &req.model_id.0).await {
-                            Ok(resp) => {
-                                let (notification, _) = agent.build_config_update(&session_id).await?;
-                                cx.send_notification(notification)?;
-                                responder.respond(resp)?;
+                        let cx_spawn = cx.clone();
+                        cx.spawn(async move {
+                            let cx = cx_spawn;
+                            let session_id = req.session_id.clone();
+                            match agent.on_set_model(&session_id.0, &req.model_id.0).await {
+                                Ok(resp) => {
+                                    let (notification, _) = agent.build_config_update(&session_id).await?;
+                                    cx.send_notification(notification)?;
+                                    responder.respond(resp)?;
+                                }
+                                Err(e) => responder.respond_with_error(e)?,
                             }
-                            Err(e) => responder.respond_with_error(e)?,
-                        }
+                            Ok(())
+                        })?;
                         Ok(())
                     }
                 })
                 .await
                 .if_request({
                     let agent = agent.clone();
+                    let cx = cx.clone();
                     |_req: ListSessionsRequest, responder: Responder<ListSessionsResponse>| async move {
-                        responder.respond(agent.on_list_sessions().await?)
+                        cx.spawn(async move {
+                            responder.respond(agent.on_list_sessions().await?)?;
+                            Ok(())
+                        })?;
+                        Ok(())
                     }
                 })
                 .await
                 .if_request({
                     let agent = agent.clone();
+                    let cx = cx.clone();
                     |req: CloseSessionRequest, responder: Responder<CloseSessionResponse>| async move {
-                        responder.respond(agent.on_close_session(&req.session_id.0).await?)
+                        cx.spawn(async move {
+                            responder.respond(agent.on_close_session(&req.session_id.0).await?)?;
+                            Ok(())
+                        })?;
+                        Ok(())
                     }
                 })
                 .await
@@ -3970,19 +4008,28 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                     let agent = agent.clone();
                     let cx = cx.clone();
                     |req: ForkSessionRequest, responder: Responder<ForkSessionResponse>| async move {
-                        responder.respond_with_result(agent.on_fork_session(&cx, req).await)
+                        let cx_spawn = cx.clone();
+                        cx.spawn(async move {
+                            responder.respond_with_result(agent.on_fork_session(&cx_spawn, req).await)?;
+                            Ok(())
+                        })?;
+                        Ok(())
                     }
                 })
                 .await
                 .otherwise({
                     let agent = agent.clone();
+                    let cx = cx.clone();
                     |message: Dispatch| async move {
                         match message {
                             Dispatch::Request(req, responder) => {
-                                match agent.handle_custom_request(&req.method, req.params).await {
-                                    Ok(json) => responder.respond(json)?,
-                                    Err(e) => responder.respond_with_error(e)?,
-                                }
+                                cx.spawn(async move {
+                                    match agent.handle_custom_request(&req.method, req.params).await {
+                                        Ok(json) => responder.respond(json)?,
+                                        Err(e) => responder.respond_with_error(e)?,
+                                    }
+                                    Ok(())
+                                })?;
                                 Ok(())
                             }
                             Dispatch::Response(result, router) => {
