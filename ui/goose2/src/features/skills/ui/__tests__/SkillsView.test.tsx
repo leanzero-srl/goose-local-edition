@@ -26,11 +26,9 @@ const mockSkills: SkillInfo[] = [
     instructions: "Refine spacing and visual rhythm...",
     path: "/path/layout/SKILL.md",
     fileLocation: "/path/layout/SKILL.md",
-    directoryPath: "/path/layout",
     sourceKind: "global" as const,
     sourceLabel: "Personal",
     projectLinks: [],
-    editable: true,
   },
   {
     id: "global:/path/code-review",
@@ -39,11 +37,9 @@ const mockSkills: SkillInfo[] = [
     instructions: "Review the code...",
     path: "/path/code-review",
     fileLocation: "/path/code-review/SKILL.md",
-    directoryPath: "/path/code-review",
     sourceKind: "global" as const,
     sourceLabel: "Personal",
     projectLinks: [],
-    editable: true,
   },
   {
     id: "project:/tmp/alpha/.goose/skills/test-writer",
@@ -52,7 +48,6 @@ const mockSkills: SkillInfo[] = [
     instructions: "Write tests...",
     path: "/tmp/alpha/.goose/skills/test-writer",
     fileLocation: "/tmp/alpha/.goose/skills/test-writer/SKILL.md",
-    directoryPath: "/tmp/alpha/.goose/skills/test-writer",
     sourceKind: "project" as const,
     sourceLabel: "alpha",
     projectLinks: [
@@ -62,7 +57,6 @@ const mockSkills: SkillInfo[] = [
         workingDir: "/tmp/alpha",
       },
     ],
-    editable: true,
   },
 ];
 
@@ -164,7 +158,6 @@ describe("SkillsView", () => {
         name: "beta-skill",
         path: "/tmp/beta/.goose/skills/beta-skill",
         fileLocation: "/tmp/beta/.goose/skills/beta-skill/SKILL.md",
-        directoryPath: "/tmp/beta/.goose/skills/beta-skill",
         sourceLabel: "beta",
         projectLinks: [
           {
@@ -199,7 +192,6 @@ describe("SkillsView", () => {
         name: "test-writer",
         path: "/tmp/goose/.agents/skills/test-writer",
         fileLocation: "/tmp/goose/.agents/skills/test-writer/SKILL.md",
-        directoryPath: "/tmp/goose/.agents/skills/test-writer",
         sourceLabel: "goose",
         projectLinks: [
           {
@@ -402,7 +394,6 @@ describe("SkillsView", () => {
         name: "test-writer",
         path: "/tmp/goose/.agents/skills/test-writer",
         fileLocation: "/tmp/goose/.agents/skills/test-writer/SKILL.md",
-        directoryPath: "/tmp/goose/.agents/skills/test-writer",
         sourceLabel: "goose",
         projectLinks: [
           {
@@ -418,7 +409,6 @@ describe("SkillsView", () => {
         name: "audit",
         path: "/tmp/goose-worktree/.agents/skills/audit",
         fileLocation: "/tmp/goose-worktree/.agents/skills/audit/SKILL.md",
-        directoryPath: "/tmp/goose-worktree/.agents/skills/audit",
         sourceLabel: "goose-worktree",
         projectLinks: [
           {
