@@ -224,6 +224,94 @@
       },
       "title": "Arneses de agentes"
     },
+    "custom": {
+      "actions": {
+        "addHeader": "Agregar encabezado",
+        "addModel": "Agregar modelo",
+        "back": "Atrás",
+        "create": "Crear proveedor",
+        "delete": "Eliminar",
+        "deleteProvider": "Eliminar {{name}}",
+        "deleting": "Eliminando...",
+        "editProvider": "Editar {{name}}",
+        "hideApiKey": "Ocultar clave API",
+        "removeHeader": "Eliminar encabezado",
+        "removeModel": "Eliminar {{model}}",
+        "save": "Guardar cambios",
+        "saving": "Guardando...",
+        "showApiKey": "Mostrar clave API"
+      },
+      "addButton": "Agregar proveedor personalizado",
+      "addTitle": "Agregar proveedor personalizado",
+      "confirmDelete": "Esto elimina {{name}} y cualquier clave API que le pertenezca.",
+      "confirmDeleteTitle": "¿Eliminar {{name}}?",
+      "description": "Conecta un endpoint de modelo compatible con OpenAI, Anthropic o local.",
+      "editTitle": "Editar proveedor personalizado",
+      "emptyHeaders": "No hay encabezados personalizados.",
+      "emptyModels": "Agrega al menos un modelo.",
+      "engines": {
+        "anthropic_compatible": "Compatible con Anthropic",
+        "ollama_compatible": "Compatible con Ollama",
+        "openai_compatible": "Compatible con OpenAI"
+      },
+      "errors": {
+        "deleteFailed": "No se pudo eliminar el proveedor personalizado.",
+        "loadFailed": "No se pudo cargar el proveedor personalizado.",
+        "saveFailed": "No se pudo guardar el proveedor personalizado.",
+        "templatesFailed": "No se pudieron cargar las plantillas de proveedores."
+      },
+      "fields": {
+        "apiKey": "Clave API",
+        "apiKeyEditPlaceholder": "Déjalo en blanco para conservar la clave guardada",
+        "apiKeyPlaceholder": "Pega tu clave API",
+        "apiUrl": "URL de API",
+        "apiUrlPlaceholder": "https://api.example.com/v1",
+        "basePath": "Ruta base",
+        "basePathPlaceholder": "/v1/chat/completions",
+        "displayName": "Nombre visible",
+        "displayNamePlaceholder": "Mi proveedor",
+        "engine": "Motor",
+        "headerKey": "Encabezado",
+        "headerValue": "Valor",
+        "headers": "Encabezados personalizados",
+        "models": "Modelos",
+        "modelsPlaceholder": "gpt-4.1, claude-3-5-sonnet",
+        "requiresAuth": "Requiere autenticación",
+        "requiresAuthDescription": "Guarda una clave API para las solicitudes a este proveedor.",
+        "supportsStreaming": "Admite streaming",
+        "supportsStreamingDescription": "Transmite respuestas mientras el modelo genera tokens."
+      },
+      "modelCount_one": "{{count}} modelo",
+      "modelCount_other": "{{count}} modelos",
+      "notConfigured": "No configurado",
+      "validation": {
+        "apiKeyRequired": "La clave API es obligatoria.",
+        "apiUrlInvalid": "Introduce una URL HTTP o HTTPS válida.",
+        "apiUrlRequired": "La URL de API es obligatoria.",
+        "displayNameRequired": "El nombre visible es obligatorio.",
+        "engineRequired": "Elige un motor de proveedor.",
+        "headerDuplicate": "Los nombres de encabezado deben ser únicos.",
+        "headerNameInvalid": "Los nombres de encabezado solo pueden contener caracteres HTTP token válidos.",
+        "headerNameRequired": "El nombre del encabezado es obligatorio.",
+        "headerValueRequired": "El valor del encabezado es obligatorio.",
+        "modelsRequired": "Agrega al menos un modelo."
+      },
+      "sections": {
+        "template": "Comenzar con plantilla"
+      },
+      "templates": {
+        "compatibility": {
+          "all": "Todos los tipos de compatibilidad"
+        },
+        "clear": "Borrar plantilla",
+        "empty": "Todavía no hay plantillas disponibles.",
+        "manual": "Totalmente personalizado",
+        "manualDescription": "Comienza con una configuración de proveedor en blanco.",
+        "searchPlaceholder": "Buscar plantillas",
+        "useTemplate": "Usar una plantilla",
+        "useTemplateDescription": "Comienza con valores predeterminados de endpoint y modelos para un proveedor conocido."
+      }
+    },
     "disconnect": "Desconectar",
     "models": {
       "description": "Necesitas al menos un proveedor de modelos para usar el agente Goose. Algunos agentes pueden traer sus propias conexiones de modelo.",
