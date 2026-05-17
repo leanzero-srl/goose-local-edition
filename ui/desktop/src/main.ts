@@ -723,6 +723,14 @@ const getServerSecret = (settings: Settings): string => {
   return GENERATED_SECRET;
 };
 
+const buildAcpWebSocketUrl = (baseUrl: string, token: string): string => {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/acp`;
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('token', token);
+  return url.toString();
+};
+
 let appConfig = {
   GOOSE_DEFAULT_PROVIDER: defaultProvider,
   GOOSE_DEFAULT_MODEL: defaultModel,
@@ -1622,6 +1630,19 @@ ipcMain.handle('get-goosed-host-port', async (event) => {
     return null;
   }
   return client.getConfig().baseUrl || null;
+});
+
+ipcMain.handle('get-acp-url', async (event) => {
+  const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
+  if (!windowId) {
+    return null;
+  }
+  const client = goosedClients.get(windowId);
+  const baseUrl = client?.getConfig().baseUrl;
+  if (!baseUrl) {
+    return null;
+  }
+  return buildAcpWebSocketUrl(baseUrl, getServerSecret(getSettings()));
 });
 
 // Handle menu bar icon visibility
