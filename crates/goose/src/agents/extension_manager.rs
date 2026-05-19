@@ -741,6 +741,7 @@ impl ExtensionManager {
         session_manager: Arc<crate::session::SessionManager>,
         client_name: String,
         capabilities: ExtensionManagerCapabilities,
+        use_login_shell_path: bool,
     ) -> Self {
         Self {
             extensions: Mutex::new(HashMap::new()),
@@ -748,6 +749,7 @@ impl ExtensionManager {
                 extension_manager: None,
                 session_manager,
                 session: None,
+                use_login_shell_path,
             },
             provider,
             tools_cache: Mutex::new(None),
@@ -767,6 +769,7 @@ impl ExtensionManager {
                 mcpui: false,
                 host_info: None,
             },
+            false,
         )
     }
 
