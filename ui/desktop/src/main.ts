@@ -810,7 +810,6 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
   const {
     baseUrl,
     workingDir,
-    process: goosedProcess,
     errorLog,
     stopErrorLogCollection,
     startupDiagnosticsPath,
@@ -1161,9 +1160,6 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
       windowPowerSaveBlockers.delete(windowId);
     }
 
-    if (goosedProcess && typeof goosedProcess === 'object' && 'kill' in goosedProcess) {
-      goosedProcess.kill();
-    }
   });
   return mainWindow;
 };
