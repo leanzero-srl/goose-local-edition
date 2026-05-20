@@ -602,6 +602,12 @@ export type ImportSessionRequest = {
     json: string;
 };
 
+export type InferenceMetadata = {
+    provider: string;
+    requestedModel: string;
+    resolvedModel?: string | null;
+};
+
 export type InspectJobResponse = {
     processStartTime?: string | null;
     runningDurationSeconds?: number | null;
@@ -746,13 +752,14 @@ export type MessageEvent = {
 };
 
 /**
- * Metadata for message visibility
+ * Metadata for message visibility and model inference details
  */
 export type MessageMetadata = {
     /**
      * Whether the message should be included in the agent's context window
      */
     agentVisible: boolean;
+    inference?: InferenceMetadata | null;
     /**
      * Whether the message should be visible to the user in the UI
      */
@@ -822,6 +829,10 @@ export type ModelInfo = {
      * Whether this model supports reasoning/thinking controls
      */
     reasoning?: boolean;
+    /**
+     * The underlying model resolved from provider metadata, when the configured model is an alias or endpoint.
+     */
+    resolved_model?: string | null;
     /**
      * Whether this model supports cache control
      */

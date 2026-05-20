@@ -539,6 +539,7 @@ impl DatabricksProvider {
 
         ModelInfo {
             name: info.name,
+            resolved_model: info.upstream_model_name,
             context_limit,
             input_token_cost: None,
             output_token_cost: None,
@@ -999,6 +1000,14 @@ mod tests {
         assert_eq!(info.name, "goose");
         assert_eq!(info.upstream_model_name.as_deref(), Some("claude-opus-4.6"));
         assert_eq!(info.reasoning, Some(true));
+
+        let model_info = DatabricksProvider::model_info_from_endpoint(info);
+        assert_eq!(model_info.name, "goose");
+        assert_eq!(
+            model_info.resolved_model.as_deref(),
+            Some("claude-opus-4.6")
+        );
+        assert!(model_info.reasoning);
     }
 
     #[test]

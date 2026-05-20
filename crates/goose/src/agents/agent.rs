@@ -34,8 +34,8 @@ use crate::context_mgmt::{
     check_if_compaction_needed, compact_messages, DEFAULT_COMPACTION_THRESHOLD,
 };
 use crate::conversation::message::{
-    ActionRequiredData, Message, MessageContent, ProviderMetadata, SystemNotificationType,
-    ToolRequest,
+    ActionRequiredData, InferenceMetadata, Message, MessageContent, ProviderMetadata,
+    SystemNotificationType, ToolRequest,
 };
 use crate::conversation::{debug_conversation_fix, fix_conversation, Conversation};
 use crate::mcp_utils::ToolResult;
@@ -1586,9 +1586,22 @@ impl Agent {
         self.reset_retry_attempts().await;
 
         let provider = self.provider().await?;
+        let provider_name = provider.get_name().to_string();
+        let requested_model = provider.get_model_config().model_name;
+        let inference = provider
+            .fetch_model_info(&requested_model)
+            .await
+            .ok()
+            .and_then(|model_info| model_info.resolved_model)
+            .map(|resolved_model| InferenceMetadata {
+                provider: provider_name,
+                requested_model,
+                resolved_model: Some(resolved_model),
+            });
         let session_manager = self.config.session_manager.clone();
         let session_id = session_config.id.clone();
         if !self.config.disable_session_naming {
+            let provider = provider.clone();
             let manager_for_spawn = session_manager.clone();
             let session_name_update_tx = self.config.session_name_update_tx.clone();
             tokio::spawn(async move {
@@ -1725,6 +1738,17 @@ impl Agent {
                                         surfaced_thinking_in_turn,
                                     )
                                     .await;
+
+                                let filtered_response = if let Some(inference) = inference.as_ref() {
+                                    filtered_response.with_inference(inference.clone())
+                                } else {
+                                    filtered_response
+                                };
+                                let response = if let Some(inference) = inference.as_ref() {
+                                    response.with_inference(inference.clone())
+                                } else {
+                                    response
+                                };
 
                                 surfaced_thinking_in_turn |= filtered_response.content.iter().any(
                                     |content| {
@@ -2233,6 +2257,16 @@ impl Agent {
                         }
                     }
                 }
+
+                let messages_to_add = if let Some(ref inference) = inference {
+                    Conversation::new_unvalidated(
+                        messages_to_add
+                            .into_iter()
+                            .map(|message| message.with_inference_if_assistant(inference.clone())),
+                    )
+                } else {
+                    messages_to_add
+                };
 
                 for msg in &messages_to_add {
                     session_manager.add_message(&session_config.id, msg).await?;
