@@ -4475,6 +4475,9 @@
   "switchModelModal.thinkingEffort": {
     "defaultMessage": "Thinking Effort"
   },
+  "switchModelModal.thinkingEffortOff": {
+    "defaultMessage": "Off - No extended thinking"
+  },
   "switchModelModal.thinkingLevel": {
     "defaultMessage": "Thinking Level"
   },

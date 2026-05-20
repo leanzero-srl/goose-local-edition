@@ -5,8 +5,8 @@ use crate::providers::base::{split_think_blocks, ProviderUsage, ThinkFilter, Usa
 use crate::providers::errors::ProviderError;
 use crate::providers::utils::{
     convert_image, detect_image_path, extract_reasoning_effort, is_openai_responses_model,
-    is_valid_function_name, load_image_file, safely_parse_json, sanitize_function_name,
-    ImageFormat,
+    is_valid_function_name, load_image_file, openai_reasoning_effort_for_thinking,
+    safely_parse_json, sanitize_function_name, ImageFormat,
 };
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
@@ -1239,8 +1239,17 @@ pub fn create_request_with_options(
         ));
     }
 
-    let (model_name, reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
+    let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
     let is_reasoning_model = is_openai_responses_model(&model_name);
+    let reasoning_effort = if is_reasoning_model {
+        model_config
+            .thinking_effort()
+            .map_or(legacy_reasoning_effort, |effort| {
+                openai_reasoning_effort_for_thinking(&model_name, effort)
+            })
+    } else {
+        None
+    };
 
     let system_message = json!({
         "role": if is_reasoning_model { "developer" } else { "system" },
@@ -1299,7 +1308,7 @@ pub fn create_request_with_options(
     if let Some(params) = &model_config.request_params {
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in params {
-                if !is_reserved_request_param_key(key) {
+                if key != "thinking_effort" && !is_reserved_request_param_key(key) {
                     obj.insert(key.clone(), value.clone());
                 }
             }
@@ -2070,8 +2079,7 @@ mod tests {
     fn test_create_request_omits_max_tokens_when_unset() -> anyhow::Result<()> {
         // Unknown models on OpenAI-compatible local providers (llama_swap,
         // lmstudio) have no canonical record and no GOOSE_MAX_TOKENS, so the
-        // request must not pin the legacy 4096 default — the server should
-        // pick its own ceiling. See issue #9007.
+        // request must not pin the legacy 4096 default. See issue #9007.
         let model_config = ModelConfig {
             model_name: "some-unknown-local-model".to_string(),
             context_limit: None,
@@ -2164,8 +2172,6 @@ mod tests {
 
     #[test]
     fn test_create_request_o1_default() -> anyhow::Result<()> {
-        // Without an explicit effort suffix the API picks its own default;
-        // we should omit reasoning_effort entirely but still use "developer" role.
         let model_config = ModelConfig {
             model_name: "o1".to_string(),
             context_limit: Some(4096),
@@ -2209,17 +2215,111 @@ mod tests {
     }
 
     #[test]
-    fn test_create_request_o3_custom_reasoning_effort() -> anyhow::Result<()> {
-        // Test custom reasoning effort for O3 model
+    fn test_create_request_o1_medium_effort() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), json!("medium"));
         let model_config = ModelConfig {
-            model_name: "o3-mini-high".to_string(),
+            model_name: "o1".to_string(),
             context_limit: Some(4096),
             temperature: None,
             max_tokens: Some(1024),
             toolshim: false,
             toolshim_model: None,
             fast_model_config: None,
-            request_params: None,
+            request_params: Some(params),
+            reasoning: None,
+        };
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert_eq!(obj.get("reasoning_effort"), Some(&json!("medium")));
+        assert!(obj.get("thinking_effort").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_o3_off_effort_preserves_none() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), json!("off"));
+        let model_config = ModelConfig {
+            model_name: "o3".to_string(),
+            context_limit: Some(4096),
+            temperature: None,
+            max_tokens: Some(1024),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: Some(params),
+            reasoning: None,
+        };
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert_eq!(obj.get("reasoning_effort"), Some(&json!("none")));
+        assert!(obj.get("thinking_effort").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_gpt5_pro_max_effort_uses_supported_level() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), json!("max"));
+        let model_config = ModelConfig {
+            model_name: "gpt-5.2-pro-2025-12-11".to_string(),
+            context_limit: Some(4096),
+            temperature: None,
+            max_tokens: Some(1024),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: Some(params),
+            reasoning: None,
+        };
+        let request = create_request(
+            &model_config,
+            "system",
+            &[],
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )?;
+        let obj = request.as_object().unwrap();
+
+        assert_eq!(obj.get("reasoning_effort"), Some(&json!("high")));
+        assert!(obj.get("thinking_effort").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_request_o3_custom_reasoning_effort() -> anyhow::Result<()> {
+        let mut params = std::collections::HashMap::new();
+        params.insert("thinking_effort".to_string(), json!("high"));
+        let model_config = ModelConfig {
+            model_name: "o3-mini".to_string(),
+            context_limit: Some(4096),
+            temperature: None,
+            max_tokens: Some(1024),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: Some(params),
             reasoning: None,
         };
         let request = create_request(
@@ -2246,6 +2346,7 @@ mod tests {
         for (key, value) in expected.as_object().unwrap() {
             assert_eq!(obj.get(key).unwrap(), value);
         }
+        assert!(obj.get("thinking_effort").is_none());
 
         Ok(())
     }

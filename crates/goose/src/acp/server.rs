@@ -1039,6 +1039,34 @@ async fn resolve_provider_and_model_from_config(
     Ok((provider_name, model_config))
 }
 
+fn with_preserved_session_request_params(
+    mut model_config: crate::model::ModelConfig,
+    current_model_config: Option<&crate::model::ModelConfig>,
+    request_params: Option<HashMap<String, serde_json::Value>>,
+) -> crate::model::ModelConfig {
+    let has_model_effort = model_config
+        .request_params
+        .as_ref()
+        .and_then(|params| params.get("thinking_effort"))
+        .is_some();
+    if !has_model_effort {
+        if let Some(thinking_effort) = current_model_config
+            .and_then(|config| config.request_params.as_ref())
+            .and_then(|params| params.get("thinking_effort"))
+            .cloned()
+        {
+            model_config = model_config.with_merged_request_params(HashMap::from([(
+                "thinking_effort".into(),
+                thinking_effort,
+            )]));
+        }
+    }
+    if let Some(request_params) = request_params {
+        model_config = model_config.with_merged_request_params(request_params);
+    }
+    model_config
+}
+
 /// Convenience wrapper: reads config from disk, then resolves provider + model.
 /// Cheap enough to call from `on_new_session` (file + registry reads, no network).
 async fn resolve_provider_and_model(
@@ -3223,11 +3251,14 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to get provider")?;
         let provider_name = current_provider.get_name().to_string();
+        let current_model_config = current_provider.get_model_config();
         let extensions =
             EnabledExtensionsState::for_session(&self.session_manager, session_id, &config).await;
         let model_config = crate::model::ModelConfig::new(model_id)
             .invalid_params_err_ctx("Invalid model config")?
             .with_canonical_limits(&provider_name);
+        let model_config =
+            with_preserved_session_request_params(model_config, Some(&current_model_config), None);
         let session = self
             .session_manager
             .get_session(session_id, false)
@@ -3333,7 +3364,8 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to get provider")?;
         let current_provider_name = current_provider.get_name();
-        let current_model = current_provider.get_model_config().model_name;
+        let current_model_config = current_provider.get_model_config();
+        let current_model = current_model_config.model_name.clone();
         let has_default_overrides =
             model_name.is_some() || context_limit.is_some() || request_params.is_some();
         let use_default_provider = provider_name == DEFAULT_PROVIDER_ID;
@@ -3357,11 +3389,15 @@ impl GooseAcpAgent {
             current_model
         };
         let model = model_name.unwrap_or(&default_model);
-        let model_config = crate::model::ModelConfig::new(model)
+        let mut model_config = crate::model::ModelConfig::new(model)
             .invalid_params_err_ctx("Invalid model config")?
             .with_canonical_limits(&resolved_provider_name)
-            .with_context_limit(context_limit)
-            .with_request_params(request_params);
+            .with_context_limit(context_limit);
+        model_config = with_preserved_session_request_params(
+            model_config,
+            (!is_changing_provider).then_some(&current_model_config),
+            request_params,
+        );
 
         let extensions =
             EnabledExtensionsState::for_session(&self.session_manager, session_id, &config).await;
