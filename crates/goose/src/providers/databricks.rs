@@ -19,7 +19,7 @@ use super::formats::databricks::create_request;
 use super::formats::openai_responses::create_responses_request;
 use super::oauth;
 use super::openai_compatible::{
-    handle_response_openai_compat, handle_status, map_http_error_to_provider_error,
+    handle_response_openai_compat, handle_status, map_http_error_to_provider_error, sanitize_url,
     stream_openai_compat, stream_responses_compat,
 };
 use super::retry::ProviderRetry;
@@ -775,10 +775,11 @@ impl Provider for DatabricksProvider {
                         .await?;
                     if !resp.status().is_success() {
                         let status = resp.status();
+                        let url = sanitize_url(resp.url().as_str());
                         let error_text = resp.text().await.unwrap_or_default();
 
                         let json_payload = serde_json::from_str::<Value>(&error_text).ok();
-                        return Err(map_http_error_to_provider_error(status, json_payload));
+                        return Err(map_http_error_to_provider_error(status, json_payload, &url));
                     }
                     Ok(resp)
                 })
@@ -794,9 +795,14 @@ impl Provider for DatabricksProvider {
                             .await?;
                         if !resp.status().is_success() {
                             let status = resp.status();
+                            let url = sanitize_url(resp.url().as_str());
                             let error_text = resp.text().await.unwrap_or_default();
                             let json_payload = serde_json::from_str::<Value>(&error_text).ok();
-                            return Err(map_http_error_to_provider_error(status, json_payload));
+                            return Err(map_http_error_to_provider_error(
+                                status,
+                                json_payload,
+                                &url,
+                            ));
                         }
                         Ok(resp)
                     })
