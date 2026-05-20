@@ -23,7 +23,7 @@ use goose::providers::create_with_default_model;
 use goose::providers::providers as get_providers;
 use goose::{
     agents::execute_commands, agents::ExtensionConfig, config::permission::PermissionLevel,
-    slash_commands,
+    slash_commands::recipe_slash_command,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -469,7 +469,7 @@ pub struct SlashCommandsQuery {
 pub async fn get_slash_commands(
     axum::extract::Query(query): axum::extract::Query<SlashCommandsQuery>,
 ) -> Result<Json<SlashCommandsResponse>, ErrorResponse> {
-    let mut commands: Vec<_> = slash_commands::list_commands()
+    let mut commands: Vec<_> = recipe_slash_command::list_commands()
         .iter()
         .map(|command| SlashCommand {
             command: command.command.clone(),
