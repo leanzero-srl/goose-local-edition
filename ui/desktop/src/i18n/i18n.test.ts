@@ -52,6 +52,16 @@ describe('getLocale', () => {
     expect(getLocale()).toEqual({ locale: 'en-GB', messageLocale: 'en' });
   });
 
+  it('returns Russian when navigator.languages contains ru', () => {
+    vi.stubGlobal('navigator', { languages: ['ru'] });
+    expect(getLocale()).toEqual({ locale: 'ru', messageLocale: 'ru' });
+  });
+
+  it('preserves Russian regional tag for formatting', () => {
+    vi.stubGlobal('navigator', { languages: ['ru-RU'] });
+    expect(getLocale()).toEqual({ locale: 'ru-RU', messageLocale: 'ru' });
+  });
+
   it('supports Turkish from navigator.languages', () => {
     vi.stubGlobal('navigator', { languages: ['tr-TR'] });
     expect(getLocale()).toEqual({ locale: 'tr-TR', messageLocale: 'tr' });
