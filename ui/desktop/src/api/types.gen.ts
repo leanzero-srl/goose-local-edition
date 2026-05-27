@@ -76,6 +76,16 @@ export type ChatRequest = {
     user_message: Message;
 };
 
+export type ChatTemplate = {
+    type: 'embedded';
+} | {
+    name: string;
+    type: 'builtin';
+} | {
+    template: string;
+    type: 'custom_inline';
+};
+
 export type CheckProviderRequest = {
     provider: string;
 };
@@ -863,6 +873,7 @@ export type ModelInfoResponse = {
 };
 
 export type ModelSettings = {
+    chat_template?: ChatTemplate;
     context_size?: number | null;
     enable_thinking?: boolean;
     flash_attention?: boolean | null;
@@ -880,16 +891,15 @@ export type ModelSettings = {
     n_batch?: number | null;
     n_gpu_layers?: number | null;
     n_threads?: number | null;
-    native_tool_calling?: boolean;
     presence_penalty?: number;
     repeat_last_n?: number;
     repeat_penalty?: number;
     sampling?: SamplingConfig;
-    use_jinja?: boolean;
+    tool_calling?: ToolCallingMode;
     use_mlock?: boolean;
     /**
      * Whether this model architecture supports vision input.
-     * Derived from the featured model table, not user-configurable.
+     * Derived from associated mmproj metadata, not user-configurable.
      */
     vision_capable?: boolean;
 };
@@ -1543,6 +1553,8 @@ export type ToolAnnotations = {
     readOnlyHint?: boolean;
     title?: string;
 };
+
+export type ToolCallingMode = 'auto' | 'force_native' | 'force_emulated';
 
 export type ToolConfirmationRequest = {
     arguments: JsonObject;
@@ -3240,6 +3252,22 @@ export type StartTetrateSetupResponses = {
 };
 
 export type StartTetrateSetupResponse = StartTetrateSetupResponses[keyof StartTetrateSetupResponses];
+
+export type ListBuiltinChatTemplatesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/local-inference/chat-templates/builtin';
+};
+
+export type ListBuiltinChatTemplatesResponses = {
+    /**
+     * llama.cpp built-in chat template names
+     */
+    200: Array<string>;
+};
+
+export type ListBuiltinChatTemplatesResponse = ListBuiltinChatTemplatesResponses[keyof ListBuiltinChatTemplatesResponses];
 
 export type DownloadHfModelData = {
     body: DownloadModelRequest;
