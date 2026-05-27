@@ -1993,6 +1993,29 @@
         }
       }
     },
+    "/local-inference/chat-templates/builtin": {
+      "get": {
+        "tags": [
+          "super::routes::local_inference"
+        ],
+        "operationId": "list_builtin_chat_templates",
+        "responses": {
+          "200": {
+            "description": "llama.cpp built-in chat template names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/local-inference/download": {
       "post": {
         "tags": [
@@ -4258,6 +4281,63 @@
           "user_message": {
             "$ref": "#/components/schemas/Message"
           }
+        }
+      },
+      "ChatTemplate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embedded"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "template",
+              "type"
+            ],
+            "properties": {
+              "template": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "custom_inline"
+                ]
+              }
+            }
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
         }
       },
       "CheckProviderRequest": {
@@ -6716,6 +6796,9 @@
       "ModelSettings": {
         "type": "object",
         "properties": {
+          "chat_template": {
+            "$ref": "#/components/schemas/ChatTemplate"
+          },
           "context_size": {
             "type": "integer",
             "format": "int32",
@@ -6766,9 +6849,6 @@
             "format": "int32",
             "nullable": true
           },
-          "native_tool_calling": {
-            "type": "boolean"
-          },
           "presence_penalty": {
             "type": "number",
             "format": "float"
@@ -6784,15 +6864,15 @@
           "sampling": {
             "$ref": "#/components/schemas/SamplingConfig"
           },
-          "use_jinja": {
-            "type": "boolean"
+          "tool_calling": {
+            "$ref": "#/components/schemas/ToolCallingMode"
           },
           "use_mlock": {
             "type": "boolean"
           },
           "vision_capable": {
             "type": "boolean",
-            "description": "Whether this model architecture supports vision input.\nDerived from the featured model table, not user-configurable."
+            "description": "Whether this model architecture supports vision input.\nDerived from associated mmproj metadata, not user-configurable."
           }
         }
       },
@@ -8796,6 +8876,14 @@
             "type": "string"
           }
         }
+      },
+      "ToolCallingMode": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "force_native",
+          "force_emulated"
+        ]
       },
       "ToolConfirmationRequest": {
         "type": "object",
