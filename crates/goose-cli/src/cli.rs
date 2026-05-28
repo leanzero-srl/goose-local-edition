@@ -986,6 +986,7 @@ enum Command {
     },
 
     /// Launch the goose terminal UI (TUI)
+    #[cfg(feature = "tui")]
     #[command(
         about = "Launch the goose terminal UI",
         long_about = "Launch the goose terminal UI (the @aaif/goose npm package).\n\
@@ -1291,6 +1292,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Skills { .. }) => "skills",
         Some(Command::Plugin { .. }) => "plugin",
         Some(Command::Term { .. }) => "term",
+        #[cfg(feature = "tui")]
         Some(Command::Tui { .. }) => "tui",
         #[cfg(feature = "local-inference")]
         Some(Command::LocalModels { .. }) => "local-models",
@@ -2154,6 +2156,7 @@ pub async fn cli() -> anyhow::Result<()> {
         Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
         Some(Command::Plugin { command }) => handle_plugin_subcommand(command),
         Some(Command::Term { command }) => handle_term_subcommand(command).await,
+        #[cfg(feature = "tui")]
         Some(Command::Tui { args }) => crate::commands::tui::handle_tui(args),
         #[cfg(feature = "local-inference")]
         Some(Command::LocalModels { command }) => handle_local_models_command(command).await,
