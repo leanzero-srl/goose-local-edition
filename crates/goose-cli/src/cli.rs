@@ -559,9 +559,13 @@ enum SessionCommand {
         )]
         relays: Vec<String>,
     },
-    #[command(about = "Import a session from JSON or an encrypted Nostr share link")]
+    #[command(
+        about = "Import a session from JSON, a Claude Code / Codex / Pi .jsonl, or an encrypted Nostr share link"
+    )]
     Import {
-        #[arg(help = "Path to a JSON session export, or a goose://sessions/nostr share link")]
+        #[arg(
+            help = "Path to a goose session export, a Claude Code, Codex, or Pi .jsonl transcript, or a goose://sessions/nostr share link"
+        )]
         input: String,
 
         #[arg(long = "nostr", help = "Treat input as an encrypted Nostr share link")]
