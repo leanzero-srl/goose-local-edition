@@ -4574,6 +4574,7 @@ dependencies = [
  "futures",
  "goose-acp-macros",
  "goose-mcp",
+ "goose-providers",
  "goose-sdk-types",
  "goose-test-support",
  "http 1.4.1",
@@ -4760,6 +4761,26 @@ dependencies = [
  "tracing-subscriber",
  "umya-spreadsheet",
  "url",
+]
+
+[[package]]
+name = "goose-providers"
+version = "1.37.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "once_cell",
+ "regex",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "test-case",
+ "thiserror 1.0.69",
+ "tracing",
+ "unicode-normalization",
+ "utoipa 4.2.3",
+ "uuid",
 ]
 
 [[package]]

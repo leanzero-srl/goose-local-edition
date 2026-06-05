@@ -122,6 +122,7 @@ strum = { workspace = true }
 once_cell = { workspace = true }
 etcetera = { workspace = true }
 fs-err = { version = "3.1", default-features = false }
+goose-providers = { path = "../goose-providers", default-features = false }
 goose-sdk-types = { path = "../goose-sdk-types" }
 rand = { workspace = true }
 utoipa = { workspace = true, features = ["chrono"] }
@@ -267,7 +268,7 @@ path = "src/bin/analyze_cli.rs"
 
 [[bin]]
 name = "build_canonical_models"
-path = "src/providers/canonical/build_canonical_models.rs"
+path = "src/bin/build_canonical_models.rs"
 
 [[bin]]
 name = "generate-acp-schema"
