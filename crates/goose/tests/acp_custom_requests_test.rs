@@ -2,6 +2,9 @@
 #[path = "acp_common_tests/mod.rs"]
 mod common_tests;
 
+use agent_client_protocol::schema::{
+    ContentBlock, PromptRequest, SessionUpdate, StopReason, TextContent,
+};
 use common_tests::fixtures::server::AcpServerConnection;
 use common_tests::fixtures::{
     run_test, send_custom, Connection, PermissionDecision, Session, SessionData,
@@ -15,6 +18,7 @@ use goose_test_support::{EnforceSessionId, IgnoreSessionId};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 
 use common_tests::fixtures::OpenAiFixture;
 
@@ -76,6 +80,88 @@ impl Provider for MockProvider {
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
         Ok(self.supported_models.clone())
     }
+}
+
+fn active_run_id_from_update(update: &SessionUpdate) -> Option<String> {
+    let SessionUpdate::SessionInfoUpdate(info) = update else {
+        return None;
+    };
+    info.meta
+        .as_ref()?
+        .get("goose")?
+        .get("activeRunId")?
+        .as_str()
+        .map(ToString::to_string)
+}
+
+fn queued_steer_message_ids(updates: &[SessionUpdate]) -> Vec<String> {
+    updates
+        .iter()
+        .filter_map(|update| {
+            let SessionUpdate::SessionInfoUpdate(info) = update else {
+                return None;
+            };
+            info.meta
+                .as_ref()?
+                .get("goose")?
+                .get("queuedSteer")?
+                .get("messageId")?
+                .as_str()
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
+fn steer_chunk_message_ids(updates: &[SessionUpdate]) -> Vec<String> {
+    updates
+        .iter()
+        .filter_map(|update| {
+            let SessionUpdate::UserMessageChunk(chunk) = update else {
+                return None;
+            };
+            let goose = chunk.meta.as_ref()?.get("goose")?;
+            goose.get("steer")?.as_bool().filter(|b| *b)?;
+            goose.get("messageId")?.as_str().map(ToString::to_string)
+        })
+        .collect()
+}
+
+fn steer_chunk_texts(updates: &[SessionUpdate]) -> Vec<String> {
+    updates
+        .iter()
+        .filter_map(|update| {
+            // A steered message is a user message injected mid-run, so it must
+            // arrive as a UserMessageChunk (matching the replay path), never an
+            // AgentMessageChunk.
+            let SessionUpdate::UserMessageChunk(chunk) = update else {
+                return None;
+            };
+            let ContentBlock::Text(text) = &chunk.content else {
+                return None;
+            };
+            let is_steer = chunk
+                .meta
+                .as_ref()
+                .and_then(|m| m.get("goose"))
+                .and_then(|g| g.get("steer"))
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false);
+            is_steer.then(|| text.text.clone())
+        })
+        .collect()
+}
+
+fn collect_agent_text(updates: &[SessionUpdate]) -> String {
+    updates
+        .iter()
+        .filter_map(|update| match update {
+            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
+                ContentBlock::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -269,6 +355,121 @@ fn test_custom_get_available_extensions() {
                 extension["type"] == "platform" && extension["name"] == "orchestrator"
             }),
             "hidden orchestrator platform extension should not be available"
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn test_steer_session_adds_input_to_active_prompt() {
+    write_acp_global_config(DEFAULT_ACP_TEST_CONFIG);
+    run_test(async move {
+        // Two-turn exchange: the first turn ends the turn with plain text. A
+        // steer queued before the turn ends keeps the loop alive (it flips
+        // `exit_chat` back to false), so a second provider request fires whose
+        // body must now contain the steered text.
+        let openai = OpenAiFixture::new(
+            vec![
+                (
+                    "start work".to_string(),
+                    include_str!("acp_test_data/openai_steer_first.txt"),
+                ),
+                (
+                    "steer while active".to_string(),
+                    include_str!("acp_test_data/openai_steer_second.txt"),
+                ),
+            ],
+            Arc::new(IgnoreSessionId),
+        )
+        .await;
+        let mut conn = AcpServerConnection::new(TestConnectionConfig::default(), openai).await;
+
+        let SessionData { session, .. } = conn.new_session().await.unwrap();
+        let session_id = session.session_id().0.to_string();
+        let acp_session_id = session.session_id().clone();
+
+        let mut prompt = Box::pin(
+            conn.cx()
+                .send_request(PromptRequest::new(
+                    acp_session_id,
+                    vec![ContentBlock::Text(TextContent::new("start work"))],
+                ))
+                .block_task(),
+        );
+        let mut steer_sent = false;
+        let mut steer_message_id: Option<String> = None;
+        let mut final_response = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+
+        while tokio::time::Instant::now() < deadline {
+            tokio::select! {
+                response = &mut prompt => {
+                    final_response = Some(response.unwrap());
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(10)), if !steer_sent => {
+                    let updates = session.session_updates();
+                    if let Some(run_id) = updates.iter().find_map(active_run_id_from_update) {
+                        let response = send_custom(
+                            conn.cx(),
+                            "_goose/unstable/session/steer",
+                            serde_json::json!({
+                                "sessionId": session_id,
+                                "expectedRunId": run_id,
+                                "prompt": [
+                                    { "type": "text", "text": "steer while active" }
+                                ]
+                            }),
+                        )
+                        .await
+                        .unwrap();
+                        assert_eq!(response["runId"], run_id);
+                        let mid = response["messageId"].as_str();
+                        assert!(
+                            mid.is_some_and(|id| !id.is_empty()),
+                            "steer response must return a messageId for correlation, got: {response:?}"
+                        );
+                        steer_message_id = mid.map(ToString::to_string);
+                        steer_sent = true;
+                    }
+                }
+            }
+        }
+
+        let response = final_response.expect("prompt did not complete");
+        assert_eq!(response.stop_reason, StopReason::EndTurn);
+        assert!(steer_sent, "test never observed an active run id");
+
+        let updates = session.session_updates();
+        let agent_text = collect_agent_text(&updates);
+        assert!(
+            agent_text.contains("saw steer"),
+            "expected provider to receive steered input, got: {agent_text:?}"
+        );
+
+        // The echoed steer prompt must be marked structurally so the client
+        // can locate the boundary without matching user-visible text.
+        let steer_chunks = steer_chunk_texts(&updates);
+        assert!(
+            steer_chunks
+                .iter()
+                .any(|t| t.contains("steer while active")),
+            "expected a chunk marked _meta.goose.steer with the steer text, got: {steer_chunks:?}"
+        );
+
+        // The queued steer must be announced (so a UI can show it as pending)
+        // and carry the same messageId returned by the steer response and later
+        // stamped on the picked-up UserMessageChunk.
+        let steer_message_id = steer_message_id.expect("steer response had no messageId");
+        let queued_ids = queued_steer_message_ids(&updates);
+        assert!(
+            queued_ids.contains(&steer_message_id),
+            "expected a queuedSteer SessionInfoUpdate with messageId {steer_message_id:?}, got: {queued_ids:?}"
+        );
+        let picked_up_ids = steer_chunk_message_ids(&updates);
+        assert!(
+            picked_up_ids.contains(&steer_message_id),
+            "picked-up steer chunk must carry the queued messageId {steer_message_id:?} for correlation, got: {picked_up_ids:?}"
         );
     });
 }

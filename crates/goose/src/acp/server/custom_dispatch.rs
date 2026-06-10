@@ -67,6 +67,14 @@ impl GooseAcpAgent {
         self.on_set_session_system_prompt(req).await
     }
 
+    #[custom_method(SteerSessionRequest)]
+    async fn dispatch_steer_session(
+        &self,
+        req: SteerSessionRequest,
+    ) -> Result<SteerSessionResponse, agent_client_protocol::Error> {
+        self.on_steer_session(req).await
+    }
+
     #[custom_method(DeleteSessionRequest)]
     async fn dispatch_delete_session(
         &self,

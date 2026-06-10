@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::McpServer;
+use agent_client_protocol::schema::{ContentBlock, McpServer};
 use agent_client_protocol::{JsonRpcRequest, JsonRpcResponse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,30 @@ pub struct SetSessionSystemPromptRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     pub text: String,
+}
+
+/// Add user input to the currently active prompt without starting a new prompt.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/session/steer",
+    response = SteerSessionResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerSessionRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub prompt: Vec<ContentBlock>,
+    pub expected_run_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerSessionResponse {
+    pub run_id: String,
+    /// Stable id of the queued steer message. The same id later appears as
+    /// `messageId` on the streamed `UserMessageChunk` (with `_meta.goose.steer`),
+    /// letting clients correlate a queued steer with its pickup.
+    pub message_id: String,
 }
 
 /// Delete a session.
