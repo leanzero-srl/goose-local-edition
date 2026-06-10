@@ -34,7 +34,6 @@ use crate::providers::inventory::{
     ProviderInventoryEntry, ProviderInventoryService, RefreshJobPlan, RefreshPlan,
     RefreshSkipReason,
 };
-use crate::session::session_manager::{SessionListCursor, SessionType};
 use crate::session::{
     EnabledExtensionsState, ExtensionData, ExtensionState, Session, SessionManager,
 };
@@ -50,7 +49,7 @@ use agent_client_protocol::schema::{
     McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse, PermissionOption,
     PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, ResourceLink, SessionCapabilities,
-    SessionCloseCapabilities, SessionConfigOption, SessionId, SessionInfo, SessionInfoUpdate,
+    SessionCloseCapabilities, SessionConfigOption, SessionId, SessionInfoUpdate,
     SessionListCapabilities, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse,
     SetSessionModelRequest, SetSessionModelResponse, StopReason, TextContent, TextResourceContents,
@@ -63,7 +62,6 @@ use agent_client_protocol::{
     Responder,
 };
 use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use fs_err as fs;
 use futures::future::BoxFuture;
 use futures::stream::{self, StreamExt};
@@ -71,8 +69,7 @@ use futures::FutureExt;
 use rmcp::model::{
     AnnotateAble, CallToolResult, RawContent, RawTextContent, ResourceContents, Role,
 };
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
@@ -89,6 +86,7 @@ mod dictation;
 mod dispatch;
 mod extensions;
 mod fork_session;
+mod list_sessions;
 mod load_session;
 mod manage_sessions;
 mod new_session;
@@ -108,10 +106,6 @@ pub type AcpProviderFactory = Arc<
         + Send
         + Sync,
 >;
-
-const SESSION_LIST_PAGE_SIZE: usize = 50;
-const ACP_SESSION_LIST_TYPES: [SessionType; 3] =
-    [SessionType::User, SessionType::Scheduled, SessionType::Acp];
 
 /// Convenience conversions from any `Display` error into an `agent_client_protocol::Error`.
 ///
@@ -226,94 +220,6 @@ pub(super) fn sid_short(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct SessionListCursorToken {
-    updated_at: chrono::DateTime<chrono::Utc>,
-    // Goose stores updated_at with second precision in common write paths, so the
-    // cursor needs the full (updated_at, id) sort key to avoid skipping tied rows.
-    session_id: String,
-    filter_hash: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionListCursorFilters {
-    cwd: Option<String>,
-    session_types: Vec<String>,
-    non_empty: bool,
-}
-
-fn invalid_session_list_cursor(message: &'static str) -> agent_client_protocol::Error {
-    agent_client_protocol::Error::invalid_params().data(message)
-}
-
-// bind cursors to the effective filters so they cannot be reused for a different list.
-fn session_list_filter_hash(
-    cwd: Option<&std::path::Path>,
-    session_types: &[SessionType],
-) -> Result<String, agent_client_protocol::Error> {
-    let mut session_type_names = session_types
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    session_type_names.sort();
-    let filters = SessionListCursorFilters {
-        cwd: cwd.map(|path| path.to_string_lossy().to_string()),
-        session_types: session_type_names,
-        non_empty: true,
-    };
-    let bytes =
-        serde_json::to_vec(&filters).internal_err_ctx("Failed to encode session list filters")?;
-    Ok(URL_SAFE_NO_PAD.encode(Sha256::digest(bytes)))
-}
-
-fn decode_session_list_cursor(
-    cursor: Option<&str>,
-    cwd: Option<&std::path::Path>,
-    session_types: &[SessionType],
-) -> Result<Option<SessionListCursor>, agent_client_protocol::Error> {
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-
-    let bytes = URL_SAFE_NO_PAD
-        .decode(cursor)
-        .map_err(|_| invalid_session_list_cursor("malformed session list cursor"))?;
-    let token: SessionListCursorToken = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid_session_list_cursor("malformed session list cursor"))?;
-
-    if token.session_id.is_empty() || token.filter_hash.is_empty() {
-        return Err(invalid_session_list_cursor("malformed session list cursor"));
-    }
-
-    let expected_filter_hash = session_list_filter_hash(cwd, session_types)?;
-    if token.filter_hash != expected_filter_hash {
-        return Err(invalid_session_list_cursor(
-            "session list cursor does not match filters",
-        ));
-    }
-
-    Ok(Some(SessionListCursor {
-        updated_at: token.updated_at,
-        session_id: token.session_id,
-    }))
-}
-
-fn encode_session_list_cursor(
-    cursor: &SessionListCursor,
-    cwd: Option<&std::path::Path>,
-    session_types: &[SessionType],
-) -> Result<String, agent_client_protocol::Error> {
-    let token = SessionListCursorToken {
-        updated_at: cursor.updated_at,
-        session_id: cursor.session_id.clone(),
-        filter_hash: session_list_filter_hash(cwd, session_types)?,
-    };
-    let bytes =
-        serde_json::to_vec(&token).internal_err_ctx("Failed to encode session list cursor")?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-
 pub(super) fn session_meta(session: &Session) -> serde_json::Map<String, serde_json::Value> {
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -360,10 +266,22 @@ pub(super) fn session_meta(session: &Session) -> serde_json::Map<String, serde_j
     meta
 }
 
-fn meta_string(meta: Option<&Meta>, key: &str) -> Option<String> {
-    meta.and_then(|m| m.get(key))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+fn meta_string(
+    meta: Option<&Meta>,
+    key: &str,
+) -> Result<Option<String>, agent_client_protocol::Error> {
+    let Some(value) = meta.and_then(|m| m.get(key)) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_str() else {
+        return Err(
+            agent_client_protocol::Error::invalid_params().data(format!("{key} must be a string"))
+        );
+    };
+    Ok(Some(value.to_string()))
 }
 
 fn spawn_session_name_update_notifier(
@@ -2765,55 +2683,6 @@ impl GooseAcpAgent {
         Ok(())
     }
 
-    async fn on_list_sessions(
-        &self,
-        req: ListSessionsRequest,
-    ) -> Result<ListSessionsResponse, agent_client_protocol::Error> {
-        if let Some(cwd) = req.cwd.as_deref() {
-            if !cwd.is_absolute() {
-                return Err(agent_client_protocol::Error::invalid_params()
-                    .data("cwd must be an absolute path"));
-            }
-        }
-
-        let cwd = req.cwd.as_deref();
-        let cursor =
-            decode_session_list_cursor(req.cursor.as_deref(), cwd, &ACP_SESSION_LIST_TYPES)?;
-
-        // ACP clients see their own (Acp) sessions plus legacy User/Scheduled ones.
-        let page = self
-            .session_manager
-            .list_nonempty_sessions_by_types_paged(
-                &ACP_SESSION_LIST_TYPES,
-                cwd,
-                cursor.as_ref(),
-                SESSION_LIST_PAGE_SIZE,
-            )
-            .await
-            .internal_err()?;
-        let session_infos: Vec<SessionInfo> = page
-            .sessions
-            .into_iter()
-            .map(|s| {
-                let meta = session_meta(&s);
-                let title = s.display_title();
-                let mut info = SessionInfo::new(SessionId::new(s.id), s.working_dir)
-                    .updated_at(s.updated_at.to_rfc3339())
-                    .meta(meta);
-                if let Some(t) = title {
-                    info = info.title(t);
-                }
-                info
-            })
-            .collect();
-        let next_cursor = page
-            .next_cursor
-            .as_ref()
-            .map(|cursor| encode_session_list_cursor(cursor, cwd, &ACP_SESSION_LIST_TYPES))
-            .transpose()?;
-        Ok(ListSessionsResponse::new(session_infos).next_cursor(next_cursor))
-    }
-
     async fn on_fork_session(
         &self,
         cx: &ConnectionTo<Client>,
@@ -2892,6 +2761,7 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
 mod tests {
     use super::*;
     use crate::conversation::message::{ToolRequest, ToolResponse};
+    use crate::session::session_manager::SessionType;
     use agent_client_protocol::schema::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
         PermissionOptionId, ResourceLink, SelectedPermissionOutcome,
