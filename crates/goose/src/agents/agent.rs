@@ -2143,10 +2143,14 @@ impl Agent {
                                                 request.metadata.as_ref(),
                                                 request.tool_meta.clone(),
                                             );
-                                        messages_to_add.push(request_msg);
                                         let final_response = request_to_response_map
                                             .remove(&request.id)
                                             .unwrap_or_else(|| Message::user().with_generated_id());
+                                        // Response placeholder is created before tools run, so clamp request to avoid inverted ordering.
+                                        if request_msg.created > final_response.created {
+                                            request_msg.created = final_response.created;
+                                        }
+                                        messages_to_add.push(request_msg);
                                         yield AgentEvent::Message(final_response.clone());
                                         messages_to_add.push(final_response);
                                     } else {
