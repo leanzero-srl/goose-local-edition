@@ -58,6 +58,7 @@ pub struct DelegateParams {
     pub model: Option<String>,
     pub temperature: Option<f32>,
     pub max_turns: Option<usize>,
+    pub context: Option<String>,
     pub working_dir: Option<String>,
     #[serde(default)]
     pub r#async: bool,
@@ -294,6 +295,14 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
     }
 
     sources
+}
+
+fn build_instructions_with_context(context: &str, instructions: &str) -> String {
+    let mut result = format!("# Reference Context\n\n{}", context);
+    if !instructions.is_empty() {
+        result.push_str(&format!("\n\n# Task Instructions\n\n{}", instructions));
+    }
+    result
 }
 
 fn build_subagent_instructions(session: Option<&crate::session::Session>) -> String {
@@ -551,6 +560,10 @@ impl SummonClient {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Maximum turns for this delegate. Overrides recipe settings.max_turns and GOOSE_SUBAGENT_MAX_TURNS."
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Reference context to inject into the delegate's system prompt. Use for background information, file contents, or constraints the delegate needs but that aren't part of the task instructions."
                 },
                 "working_dir": {
                     "type": "string",
@@ -1232,12 +1245,19 @@ impl SummonClient {
         session_id: &str,
         working_dir: &Path,
     ) -> Result<Recipe, String> {
-        if let Some(source_name) = &params.source {
+        let mut recipe = if let Some(source_name) = &params.source {
             self.build_source_recipe(source_name, params, session_id, working_dir)
-                .await
+                .await?
         } else {
-            self.build_adhoc_recipe(params)
+            self.build_adhoc_recipe(params)?
+        };
+
+        if let Some(ref context) = params.context {
+            let existing = recipe.instructions.unwrap_or_default();
+            recipe.instructions = Some(build_instructions_with_context(context, &existing));
         }
+
+        Ok(recipe)
     }
 
     fn build_adhoc_recipe(&self, params: &DelegateParams) -> Result<Recipe, String> {
@@ -2252,6 +2272,41 @@ You review code."#;
         assert_eq!(
             SummonClient::get_task_description(&make_params(None, None)),
             "Unknown task"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_injected_into_adhoc_recipe() {
+        let temp_dir = TempDir::new().unwrap();
+        let client = SummonClient::new(create_test_context()).unwrap();
+
+        let params = DelegateParams {
+            instructions: Some("do the task".to_string()),
+            context: Some("background info".to_string()),
+            ..Default::default()
+        };
+
+        let recipe = client
+            .build_delegate_recipe(&params, "test", temp_dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            recipe.instructions.as_deref(),
+            Some("# Reference Context\n\nbackground info")
+        );
+        assert_eq!(recipe.prompt.as_deref(), Some("do the task"));
+    }
+
+    #[test]
+    fn test_build_instructions_with_context_wraps_existing_instructions() {
+        assert_eq!(
+            build_instructions_with_context("background info", "Run deploy steps"),
+            "# Reference Context\n\nbackground info\n\n# Task Instructions\n\nRun deploy steps"
+        );
+        assert_eq!(
+            build_instructions_with_context("background info", ""),
+            "# Reference Context\n\nbackground info"
         );
     }
 
