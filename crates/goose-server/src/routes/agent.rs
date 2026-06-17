@@ -267,8 +267,14 @@ async fn start_agent(
     let recipe_extensions = original_recipe
         .as_ref()
         .and_then(|r| r.extensions.as_deref());
-    let extensions_to_use =
+    let has_extension_overrides = extension_overrides.is_some();
+    let mut extensions_to_use =
         resolve_extensions_for_new_session(recipe_extensions, extension_overrides);
+    if recipe_extensions.is_none() && !has_extension_overrides {
+        extensions_to_use.extend(goose::plugins::mcp_servers::enabled_plugin_mcp_servers(
+            Some(&PathBuf::from(&working_dir)),
+        ));
+    }
 
     let mut extension_data = session.extension_data.clone();
     let extensions_state = EnabledExtensionsState::new(extensions_to_use);

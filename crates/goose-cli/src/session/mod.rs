@@ -316,6 +316,7 @@ impl CliSession {
             env_keys: Vec::new(),
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
             timeout: Some(goose::config::DEFAULT_EXTENSION_TIMEOUT),
+            cwd: None,
             bundled: None,
             available_tools: Vec::new(),
         })
@@ -2346,6 +2347,7 @@ mod tests {
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
             timeout: Some(goose::config::DEFAULT_EXTENSION_TIMEOUT),
+            cwd: None,
             bundled: None,
             available_tools: vec![],
         }
@@ -2361,6 +2363,7 @@ mod tests {
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
             timeout: Some(goose::config::DEFAULT_EXTENSION_TIMEOUT),
+            cwd: None,
             bundled: None,
             available_tools: vec![],
         }
@@ -2376,6 +2379,7 @@ mod tests {
             env_keys: vec![],
             description: goose::config::DEFAULT_EXTENSION_DESCRIPTION.to_string(),
             timeout: Some(goose::config::DEFAULT_EXTENSION_TIMEOUT),
+            cwd: None,
             bundled: None,
             available_tools: vec![],
         }
