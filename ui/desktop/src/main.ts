@@ -381,6 +381,7 @@ if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
 // Apply single instance lock on Windows and Linux where it's needed for deep links
 // macOS uses the 'open-url' event instead
 let gotTheLock = true;
+let openUrlHandledLaunch = false;
 if (process.platform !== 'darwin') {
   gotTheLock = app.requestSingleInstanceLock();
 
@@ -430,7 +431,7 @@ if (process.platform !== 'darwin') {
         }
 
         // For non-bot URLs, continue with normal handling
-        handleProtocolUrl(protocolUrl);
+        handleProtocolUrl(protocolUrl, parsedUrl);
       }
 
       // Only focus existing windows for non-bot/recipe URLs
@@ -448,14 +449,30 @@ if (process.platform !== 'darwin') {
   // Handle protocol URLs on Windows and Linux startup
   const protocolUrl = process.argv.find((arg) => arg.startsWith('goose://'));
   if (protocolUrl) {
-    app.whenReady().then(() => {
-      handleProtocolUrl(protocolUrl);
+    app.whenReady().then(async () => {
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(protocolUrl);
+      } catch (error) {
+        log.warn('[Main] Ignoring invalid startup protocol URL:', errorMessage(error));
+        return;
+      }
+
+      openUrlHandledLaunch = true;
+      try {
+        await handleProtocolUrl(protocolUrl, parsedUrl);
+      } catch (error) {
+        log.error('[Main] Failed to handle startup protocol URL:', errorMessage(error));
+        if (BrowserWindow.getAllWindows().length === 0) {
+          const { dirPath } = parseArgs();
+          await createNewWindow(app, dirPath);
+        }
+      }
     });
   }
 }
 
 const pendingDeepLinks = new Map<number, string>(); // windowId -> deep link URL
-let openUrlHandledLaunch = false;
 
 function getResumeSessionId(parsedUrl: URL): string | null {
   try {
@@ -477,10 +494,9 @@ async function createResumeChatWindow(parsedUrl: URL, dir?: string): Promise<boo
   return true;
 }
 
-async function handleProtocolUrl(url: string) {
+async function handleProtocolUrl(url: string, parsedUrl: URL) {
   if (!url) return;
 
-  const parsedUrl = new URL(url);
   const recentDirs = loadRecentDirs();
   const openDir = recentDirs.length > 0 ? recentDirs[0] : null;
 
