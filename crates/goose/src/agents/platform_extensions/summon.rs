@@ -1587,10 +1587,9 @@ impl SummonClient {
         recipe: &Recipe,
         session: &crate::session::Session,
         provider_name: &str,
-    ) -> Result<crate::model::ModelConfig, anyhow::Error> {
+    ) -> Result<goose_providers::model::ModelConfig, anyhow::Error> {
         let mut model_config = session.model_config.clone().map(Ok).unwrap_or_else(|| {
-            crate::model::ModelConfig::new("default")
-                .map(|c| c.with_canonical_limits(provider_name))
+            crate::model_config::model_config_from_user_config(provider_name, "default")
         })?;
 
         let override_model = params
@@ -1612,7 +1611,7 @@ impl SummonClient {
                 // not model-specific from the parent.
                 let parent = model_config;
                 let mut cfg =
-                    crate::model::ModelConfig::new(&model)?.with_canonical_limits(provider_name);
+                    crate::model_config::model_config_from_user_config(provider_name, &model)?;
                 cfg.toolshim = parent.toolshim;
                 cfg.toolshim_model = parent.toolshim_model;
                 cfg.fast_model_config = parent.fast_model_config;
@@ -2555,7 +2554,7 @@ You review code."#;
     const OVERRIDE_MODEL: &str = "claude-opus-4-6";
     const PROVIDER: &str = "anthropic";
 
-    fn session_with(parent: crate::model::ModelConfig) -> crate::session::Session {
+    fn session_with(parent: goose_providers::model::ModelConfig) -> crate::session::Session {
         crate::session::Session {
             provider_name: Some(PROVIDER.to_string()),
             model_config: Some(parent),
@@ -2565,8 +2564,8 @@ You review code."#;
 
     fn resolve_with_override(
         model: Option<&str>,
-        parent: crate::model::ModelConfig,
-    ) -> crate::model::ModelConfig {
+        parent: goose_providers::model::ModelConfig,
+    ) -> goose_providers::model::ModelConfig {
         let client = SummonClient::new(create_test_context()).unwrap();
         let params = DelegateParams {
             model: model.map(String::from),
@@ -2577,8 +2576,8 @@ You review code."#;
             .expect("resolve_model_config")
     }
 
-    fn parent_config() -> crate::model::ModelConfig {
-        crate::model::ModelConfig::new(PARENT_MODEL)
+    fn parent_config() -> goose_providers::model::ModelConfig {
+        goose_providers::model::ModelConfig::new(PARENT_MODEL)
             .unwrap()
             .with_canonical_limits(PROVIDER)
     }
@@ -2593,7 +2592,7 @@ You review code."#;
         ]);
 
         let parent = parent_config();
-        let overridden = crate::model::ModelConfig::new(OVERRIDE_MODEL)
+        let overridden = goose_providers::model::ModelConfig::new(OVERRIDE_MODEL)
             .unwrap()
             .with_canonical_limits(PROVIDER);
         assert_ne!(parent.context_limit, overridden.context_limit);

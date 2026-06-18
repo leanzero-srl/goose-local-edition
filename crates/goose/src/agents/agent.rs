@@ -707,7 +707,7 @@ impl Agent {
                     .provider()
                     .await
                     .map(|p| p.get_model_config().context_limit())
-                    .unwrap_or(crate::model::DEFAULT_CONTEXT_LIMIT);
+                    .unwrap_or(goose_providers::model::DEFAULT_CONTEXT_LIMIT);
                 let compaction_threshold = Config::global()
                     .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
                     .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
@@ -2651,7 +2651,7 @@ impl Agent {
         &self,
         session_id: &str,
         provider_name: &str,
-        model_config: crate::model::ModelConfig,
+        model_config: goose_providers::model::ModelConfig,
     ) -> Result<()> {
         let session = self
             .config
@@ -2714,9 +2714,8 @@ impl Agent {
                     .get_goose_model()
                     .ok()
                     .ok_or_else(|| anyhow!("Could not configure agent: missing model"))?;
-                crate::model::ModelConfig::new(&model_name)
+                crate::model_config::model_config_from_user_config(&provider_name, &model_name)
                     .map_err(|e| anyhow!("Could not configure agent: invalid model {}", e))?
-                    .with_canonical_limits(&provider_name)
             }
         };
 
@@ -2758,9 +2757,11 @@ impl Agent {
                 .get_goose_model()
                 .ok()
                 .ok_or_else(|| anyhow!("Could not configure fallback provider: missing model"))?;
-            let fallback_model_config = crate::model::ModelConfig::new(&fallback_model_name)
-                .map_err(|e| anyhow!("Could not configure fallback provider: invalid model {}", e))?
-                .with_canonical_limits(&fallback_provider_name);
+            let fallback_model_config = crate::model_config::model_config_from_user_config(
+                &fallback_provider_name,
+                &fallback_model_name,
+            )
+            .map_err(|e| anyhow!("Could not configure fallback provider: invalid model {}", e))?;
 
             let fallback_provider = crate::providers::create_with_working_dir(
                 &fallback_provider_name,
@@ -3189,12 +3190,12 @@ mod tests {
         fn get_name(&self) -> &str {
             "test-action-required"
         }
-        fn get_model_config(&self) -> crate::model::ModelConfig {
-            crate::model::ModelConfig::new("test").unwrap()
+        fn get_model_config(&self) -> goose_providers::model::ModelConfig {
+            goose_providers::model::ModelConfig::new("test").unwrap()
         }
         async fn stream(
             &self,
-            _: &crate::model::ModelConfig,
+            _: &goose_providers::model::ModelConfig,
             _: &str,
             _: &str,
             _: &[crate::conversation::message::Message],
@@ -3376,7 +3377,7 @@ exit 0
     impl crate::providers::base::Provider for CountingTextProvider {
         async fn stream(
             &self,
-            _model_config: &crate::model::ModelConfig,
+            _model_config: &goose_providers::model::ModelConfig,
             _session_id: &str,
             _system_prompt: &str,
             _messages: &[Message],
@@ -3388,8 +3389,8 @@ exit 0
             Ok(stream_from_single_message(message, usage))
         }
 
-        fn get_model_config(&self) -> crate::model::ModelConfig {
-            crate::model::ModelConfig::new("mock-model").unwrap()
+        fn get_model_config(&self) -> goose_providers::model::ModelConfig {
+            goose_providers::model::ModelConfig::new("mock-model").unwrap()
         }
 
         fn get_name(&self) -> &str {
@@ -3405,7 +3406,7 @@ exit 0
     impl crate::providers::base::Provider for RefusingProvider {
         async fn stream(
             &self,
-            _model_config: &crate::model::ModelConfig,
+            _model_config: &goose_providers::model::ModelConfig,
             _session_id: &str,
             _system_prompt: &str,
             _messages: &[Message],
@@ -3420,8 +3421,8 @@ exit 0
             })))
         }
 
-        fn get_model_config(&self) -> crate::model::ModelConfig {
-            crate::model::ModelConfig::new("mock-model").unwrap()
+        fn get_model_config(&self) -> goose_providers::model::ModelConfig {
+            goose_providers::model::ModelConfig::new("mock-model").unwrap()
         }
 
         fn get_name(&self) -> &str {
