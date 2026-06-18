@@ -16,7 +16,7 @@ import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useNavigationContextSafe } from './Layout/NavigationContext';
 import { cn } from '../utils';
-import { useChatStream } from '../hooks/useChatStream';
+import { useChatSession } from '../hooks/useChatSession';
 import { useNavigation } from '../hooks/useNavigation';
 import { RecipeHeader } from './RecipeHeader';
 import { RecipeWarningModal } from './ui/RecipeWarningModal';
@@ -114,7 +114,7 @@ export default function BaseChat({
     tokenState,
     notifications: toolCallNotifications,
     onMessageUpdate,
-  } = useChatStream({
+  } = useChatSession({
     sessionId,
     onStreamFinish,
   });

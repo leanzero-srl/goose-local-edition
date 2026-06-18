@@ -30,12 +30,20 @@ import { showExtensionLoadResults } from '../utils/extensionErrorUtils';
 import { maybeHandlePlatformEvent } from '../utils/platform_events';
 import { useSessionEvents, type SessionEvent } from './useSessionEvents';
 import type { UseChatSessionParams, UseChatSessionResult } from './useChatSessionTypes';
+import { subscribeToAcpGooseSession, subscribeToAcpSession } from '../acp/chatNotifications';
+import {
+  cancelAcpPermissionRequestsForSession,
+  subscribeToAcpPermissionRequests,
+} from '../acp/permissionRequests';
+import { parseAcpCreditsExhaustedError, type AcpCreditsExhaustedError } from '../acp/errors';
+import { acpCancelPrompt, acpPromptSession } from '../acp/prompt';
+import {
+  createAcpSessionNotificationAdapter,
+  type AcpChatStateChange,
+  type AcpSessionNotificationAdapter,
+} from '../acp/sessionNotificationAdapter';
 
 const resultsCache = new Map<string, { messages: Message[]; session: Session }>();
-
-export function clearSessionCache(sessionId: string): void {
-  resultsCache.delete(sessionId);
-}
 
 interface StreamState {
   messages: Message[];
@@ -54,6 +62,7 @@ type StreamAction =
   | { type: 'SET_TOKEN_STATE'; payload: TokenState }
   | { type: 'ADD_NOTIFICATION'; payload: NotificationEvent }
   | { type: 'CLEAR_NOTIFICATIONS' }
+  | { type: 'APPLY_ACP_CHAT_STATE_CHANGE'; payload: AcpChatStateChange }
   | {
       type: 'SESSION_LOADED';
       payload: {
@@ -107,6 +116,24 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
 
     case 'CLEAR_NOTIFICATIONS':
       return { ...state, notifications: [] };
+
+    case 'APPLY_ACP_CHAT_STATE_CHANGE': {
+      const update = action.payload;
+      switch (update.type) {
+        case 'messages':
+          return { ...state, messages: update.messages };
+        case 'tokenState':
+          return { ...state, tokenState: { ...state.tokenState, ...update.tokenState } };
+        case 'sessionInfo':
+          return update.name
+            ? {
+                ...state,
+                session: state.session ? { ...state.session, name: update.name } : undefined,
+              }
+            : state;
+      }
+      return state;
+    }
 
     case 'SESSION_LOADED':
       return {
@@ -199,6 +226,23 @@ function pushMessage(currentMessages: Message[], incomingMsg: Message): Message[
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function createAcpCreditsExhaustedMessage(error: AcpCreditsExhaustedError): Message {
+  return {
+    id: uuidv7(),
+    role: 'assistant',
+    created: Math.floor(Date.now() / 1000),
+    content: [
+      {
+        type: 'systemNotification',
+        notificationType: 'creditsExhausted',
+        msg: error.message,
+        ...(error.url ? { data: { top_up_url: error.url } } : {}),
+      },
+    ],
+    metadata: { userVisible: true, agentVisible: false },
+  };
 }
 
 const REDUCED_MOTION_BATCH_INTERVAL = 1000;
@@ -386,7 +430,7 @@ const i18n = defineMessages({
   },
 });
 
-export function useChatStream({
+export function useAcpChatSession({
   sessionId,
   onStreamFinish,
   onSessionLoaded,
@@ -413,6 +457,44 @@ export function useChatStream({
   const stateRef = useRef(state);
   stateRef.current = state;
   const doReattachRef = useRef<((requestId: string, messages: Message[]) => void) | null>(null);
+  const acpAdapterRef = useRef<AcpSessionNotificationAdapter>(
+    createAcpSessionNotificationAdapter()
+  );
+
+  const dispatchAcpChatStateChanges = useCallback((chatStateChanges: AcpChatStateChange[]) => {
+    for (const chatStateChange of chatStateChanges) {
+      dispatch({ type: 'APPLY_ACP_CHAT_STATE_CHANGE', payload: chatStateChange });
+    }
+  }, []);
+
+  useEffect(() => {
+    const messages = state.session?.id === sessionId ? state.messages : [];
+    acpAdapterRef.current = createAcpSessionNotificationAdapter(messages);
+  }, [sessionId, state.messages, state.session?.id]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    const unsubscribeAcp = subscribeToAcpSession(sessionId, (notification) => {
+      dispatchAcpChatStateChanges(acpAdapterRef.current.apply(notification));
+    });
+    const unsubscribeGoose = subscribeToAcpGooseSession(sessionId, (notification) => {
+      dispatchAcpChatStateChanges(acpAdapterRef.current.applyGoose(notification));
+    });
+    const unsubscribePermissionRequests = subscribeToAcpPermissionRequests(sessionId, (request) => {
+      dispatchAcpChatStateChanges(acpAdapterRef.current.applyPermissionRequest(request));
+      dispatch({ type: 'SET_CHAT_STATE', payload: ChatState.WaitingForUserInput });
+    });
+
+    return () => {
+      unsubscribeAcp();
+      unsubscribeGoose();
+      unsubscribePermissionRequests();
+      cancelAcpPermissionRequestsForSession(sessionId);
+    };
+  }, [dispatchAcpChatStateChanges, sessionId]);
 
   useEffect(() => {
     return () => {
@@ -704,6 +786,37 @@ export function useChatStream({
     [addListener, onFinish, reloadConversation]
   );
 
+  const submitToAcpSession = useCallback(
+    async (targetSessionId: string, userMessage: Message) => {
+      activeRequestSessionIdRef.current = targetSessionId;
+
+      try {
+        await acpPromptSession(targetSessionId, userMessage);
+        onFinish();
+      } catch (error) {
+        const creditsExhaustedError = parseAcpCreditsExhaustedError(error);
+        if (creditsExhaustedError) {
+          dispatch({
+            type: 'SET_MESSAGES',
+            payload: [
+              ...stateRef.current.messages,
+              createAcpCreditsExhaustedMessage(creditsExhaustedError),
+            ],
+          });
+          onFinish();
+          return;
+        }
+
+        onFinish('Submit error: ' + errorMessage(error));
+      } finally {
+        if (activeRequestSessionIdRef.current === targetSessionId) {
+          activeRequestSessionIdRef.current = null;
+        }
+      }
+    },
+    [onFinish]
+  );
+
   // Load session on mount or sessionId change
   useEffect(() => {
     if (!sessionId) return;
@@ -919,9 +1032,9 @@ export function useChatStream({
 
       dispatch({ type: 'START_STREAMING' });
 
-      await submitToSession(sessionId, newMessage, currentMessages);
+      await submitToAcpSession(sessionId, newMessage);
     },
-    [sessionId, submitToSession]
+    [sessionId, submitToAcpSession]
   );
 
   const submitElicitationResponse = useCallback(
@@ -1014,6 +1127,11 @@ export function useChatStream({
         body: { request_id: requestId },
       }).catch((e) => {
         console.warn('Failed to cancel request:', e);
+      });
+    } else if (requestSessionId) {
+      cancelAcpPermissionRequestsForSession(requestSessionId);
+      acpCancelPrompt(requestSessionId).catch((e) => {
+        console.warn('Failed to cancel ACP prompt:', e);
       });
     }
 
