@@ -5,7 +5,6 @@ import { AppEvents } from '../constants/events';
 import { ChatState } from '../types/chatState';
 
 import {
-  getSession,
   Message,
   resumeAgent,
   Session,
@@ -35,6 +34,7 @@ interface StreamState {
   chatState: ChatState;
   sessionLoadError: string | undefined;
   tokenState: TokenState;
+  notifications: NotificationEvent[];
 }
 
 type StreamAction =
@@ -64,6 +64,7 @@ const initialState: StreamState = {
   chatState: ChatState.Idle,
   sessionLoadError: undefined,
   tokenState: initialTokenState,
+  notifications: [],
 };
 
 function streamReducer(state: StreamState, action: StreamAction): StreamState {
@@ -89,6 +90,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
         session: action.payload.session,
         messages: action.payload.messages,
         tokenState: action.payload.tokenState,
+        notifications: action.payload.notifications,
         chatState: action.payload.chatState,
         sessionLoadError: action.payload.sessionLoadError,
       };
@@ -99,6 +101,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
         messages: [],
         session: undefined,
         sessionLoadError: undefined,
+        notifications: [],
         chatState: ChatState.LoadingConversation,
       };
 
@@ -106,6 +109,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
       return {
         ...state,
         chatState: ChatState.Streaming,
+        notifications: [],
       };
 
     case 'STREAM_ERROR':
@@ -125,6 +129,10 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
     default:
       return state;
   }
+}
+
+function isClearCommand(message: string): boolean {
+  return message.trim() === '/clear';
 }
 
 function createAcpCreditsExhaustedMessage(error: AcpCreditsExhaustedError): Message {
@@ -163,8 +171,6 @@ export function useAcpChatSession({
   const intl = useIntl();
   const [state, dispatch] = useReducer(streamReducer, initialState);
 
-  const namePollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Ref to access latest state in callbacks (avoids stale closures)
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -185,21 +191,31 @@ export function useAcpChatSession({
   }, [sessionId]);
 
   useEffect(() => {
-    return () => {
-      if (namePollingRef.current) {
-        clearTimeout(namePollingRef.current);
-        namePollingRef.current = null;
+    const handleSessionRenamed = (event: Event) => {
+      const { sessionId: renamedSessionId, newName } = (
+        event as CustomEvent<{ sessionId: string; newName: string }>
+      ).detail;
+
+      if (renamedSessionId !== sessionId) {
+        return;
       }
+
+      const currentSession = stateRef.current.session;
+      if (!currentSession || currentSession.name === newName) {
+        return;
+      }
+
+      const updatedSession = { ...currentSession, name: newName };
+      acpChatSessionStore.setSessionMetadata(sessionId, updatedSession);
+      dispatch({ type: 'SET_SESSION', payload: updatedSession });
     };
+
+    window.addEventListener(AppEvents.SESSION_RENAMED, handleSessionRenamed);
+    return () => window.removeEventListener(AppEvents.SESSION_RENAMED, handleSessionRenamed);
   }, [sessionId]);
 
   const onFinish = useCallback(
     async (error?: string): Promise<void> => {
-      if (namePollingRef.current) {
-        clearTimeout(namePollingRef.current);
-        namePollingRef.current = null;
-      }
-
       acpChatSessionStore.setSessionLoadError(sessionId, error);
       acpChatSessionStore.setChatState(sessionId, ChatState.Idle);
       dispatch({ type: 'STREAM_FINISH', payload: error });
@@ -224,35 +240,6 @@ export function useAcpChatSession({
       const isNewSession = sessionId && sessionId.match(/^\d{8}_\d{6}$/);
       if (isNewSession) {
         window.dispatchEvent(new CustomEvent(AppEvents.MESSAGE_STREAM_FINISHED));
-      }
-
-      // Refresh session name after each reply for the first 3 user messages
-      if (!error && sessionId) {
-        const currentState = stateRef.current;
-        const userMessageCount = currentState.messages.filter((m) => m.role === 'user').length;
-
-        if (userMessageCount <= 3) {
-          try {
-            const response = await getSession({
-              path: { session_id: sessionId },
-              throwOnError: true,
-            });
-            if (response.data?.name) {
-              const updatedSession = currentState.session
-                ? { ...currentState.session, name: response.data.name }
-                : undefined;
-              acpChatSessionStore.setSessionMetadata(sessionId, updatedSession);
-              dispatch({ type: 'SET_SESSION', payload: updatedSession });
-              window.dispatchEvent(
-                new CustomEvent(AppEvents.SESSION_RENAMED, {
-                  detail: { sessionId, newName: response.data.name },
-                })
-              );
-            }
-          } catch (refreshError) {
-            console.warn('Failed to refresh session name:', refreshError);
-          }
-        }
       }
 
       onStreamFinish();
@@ -393,6 +380,7 @@ export function useAcpChatSession({
 
       const hasExistingMessages = currentState.messages.length > 0;
       const hasNewMessage = userMessage.trim().length > 0 || images.length > 0;
+      const clearsConversation = hasNewMessage && isClearCommand(userMessage);
 
       if (!hasNewMessage && !hasExistingMessages) {
         return;
@@ -401,57 +389,18 @@ export function useAcpChatSession({
       // Emit session-created event for first message in a new session
       if (!hasExistingMessages && hasNewMessage) {
         window.dispatchEvent(new CustomEvent(AppEvents.SESSION_CREATED));
-
-        const pollForName = async (attempts = 0) => {
-          if (attempts >= 20) return;
-
-          try {
-            const response = await getSession({
-              path: { session_id: sessionId },
-              throwOnError: true,
-            });
-            const currentState = stateRef.current;
-            const currentName = currentState.session?.name;
-            const newName = response.data?.name;
-
-            if (newName && newName !== currentName) {
-              const updatedSession = currentState.session
-                ? { ...currentState.session, name: newName }
-                : undefined;
-              acpChatSessionStore.setSessionMetadata(sessionId, updatedSession);
-              dispatch({ type: 'SET_SESSION', payload: updatedSession });
-              window.dispatchEvent(
-                new CustomEvent(AppEvents.SESSION_RENAMED, {
-                  detail: { sessionId, newName },
-                })
-              );
-              return;
-            }
-          } catch {
-            // Silently continue polling
-          }
-
-          const latestState = stateRef.current;
-          if (
-            latestState.chatState === ChatState.Streaming ||
-            latestState.chatState === ChatState.Thinking ||
-            latestState.chatState === ChatState.Compacting
-          ) {
-            namePollingRef.current = setTimeout(() => pollForName(attempts + 1), 500);
-          }
-        };
-
-        namePollingRef.current = setTimeout(() => pollForName(0), 1000);
       }
 
       const newMessage = hasNewMessage
         ? createUserMessage(userMessage, images)
         : currentState.messages[currentState.messages.length - 1];
-      const currentMessages = hasNewMessage
-        ? [...currentState.messages, newMessage]
-        : [...currentState.messages];
+      const currentMessages = clearsConversation
+        ? []
+        : hasNewMessage
+          ? [...currentState.messages, newMessage]
+          : [...currentState.messages];
 
-      if (hasNewMessage) {
+      if (clearsConversation || hasNewMessage) {
         acpChatSessionStore.setMessages(sessionId, currentMessages);
         dispatch({ type: 'SET_MESSAGES', payload: currentMessages });
       }
@@ -622,7 +571,16 @@ export function useAcpChatSession({
   const maybe_cached_messages = state.session ? state.messages : cached?.messages || [];
   const maybe_cached_session = state.session ?? cached?.session;
 
-  const notificationsMap = useMemo(() => new Map<string, NotificationEvent[]>(), []);
+  const notificationsMap = useMemo(() => {
+    return state.notifications.reduce((map, notification) => {
+      const key = notification.request_id;
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(notification);
+      return map;
+    }, new Map<string, NotificationEvent[]>());
+  }, [state.notifications]);
 
   return {
     sessionLoadError: state.sessionLoadError,
