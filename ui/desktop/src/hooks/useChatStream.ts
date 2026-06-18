@@ -929,7 +929,7 @@ export function useChatStream({
       const currentState = stateRef.current;
 
       if (!currentState.session || currentState.chatState === ChatState.LoadingConversation) {
-        return;
+        return true;
       }
 
       // An elicitation response unblocks an in-flight tool call on the original
@@ -947,8 +947,10 @@ export function useChatStream({
           },
           throwOnError: true,
         });
+        return true;
       } catch (error) {
         onFinish('Submit error: ' + errorMessage(error));
+        return true;
       }
     },
     [sessionId, onFinish]
@@ -1141,6 +1143,7 @@ export function useChatStream({
     setRecipeUserParams,
     tokenState: state.tokenState,
     notifications: notificationsMap,
+    pauseQueueOnStop: false,
     onMessageUpdate,
   };
 }
