@@ -192,8 +192,8 @@ export function useAcpChatSession({
 
   useEffect(() => {
     const handleSessionRenamed = (event: Event) => {
-      const { sessionId: renamedSessionId, newName } = (
-        event as CustomEvent<{ sessionId: string; newName: string }>
+      const { sessionId: renamedSessionId, newName, userInitiated } = (
+        event as CustomEvent<{ sessionId: string; newName: string; userInitiated?: boolean }>
       ).detail;
 
       if (renamedSessionId !== sessionId) {
@@ -201,11 +201,15 @@ export function useAcpChatSession({
       }
 
       const currentSession = stateRef.current.session;
-      if (!currentSession || currentSession.name === newName) {
+      if (!currentSession || (currentSession.name === newName && !userInitiated)) {
         return;
       }
 
-      const updatedSession = { ...currentSession, name: newName };
+      const updatedSession = {
+        ...currentSession,
+        name: newName,
+        ...(userInitiated && { user_set_name: true }),
+      };
       acpChatSessionStore.setSessionMetadata(sessionId, updatedSession);
       dispatch({ type: 'SET_SESSION', payload: updatedSession });
     };
@@ -567,6 +571,19 @@ export function useAcpChatSession({
     [sessionId]
   );
 
+  const updateSession = useCallback(
+    (updater: (session: Session) => Session) => {
+      const cached = acpChatSessionStore.getSnapshot(sessionId);
+      const currentSession = stateRef.current.session ?? cached?.session;
+      if (!currentSession) return;
+
+      const nextSession = updater(currentSession);
+      acpChatSessionStore.setSessionMetadata(sessionId, nextSession);
+      dispatch({ type: 'SET_SESSION', payload: nextSession });
+    },
+    [sessionId]
+  );
+
   const cached = acpChatSessionStore.getSnapshot(sessionId);
   const maybe_cached_messages = state.session ? state.messages : cached?.messages || [];
   const maybe_cached_session = state.session ?? cached?.session;
@@ -588,6 +605,7 @@ export function useAcpChatSession({
     session: maybe_cached_session,
     chatState: state.chatState,
     setChatState,
+    updateSession,
     handleSubmit,
     submitElicitationResponse,
     stopStreaming,
