@@ -168,6 +168,11 @@ pub async fn collect_stream(
     }
 }
 
+pub fn stream_from_single_message(message: Message, usage: ProviderUsage) -> MessageStream {
+    let stream = futures::stream::once(async move { Ok((Some(message), Some(usage))) });
+    Box::pin(stream)
+}
+
 /// Base trait for AI providers (OpenAI, Anthropic, etc)
 #[async_trait]
 pub trait Provider: Send + Sync {

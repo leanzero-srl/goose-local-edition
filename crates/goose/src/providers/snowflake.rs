@@ -10,13 +10,14 @@ use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetad
 use super::formats::snowflake::{create_request, get_usage, response_to_message};
 use super::openai_compatible::{map_http_error_to_provider_error, sanitize_url};
 use super::retry::ProviderRetry;
-use super::utils::{get_model, RequestLog};
+use super::utils::get_model;
 use crate::config::ConfigError;
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
 
 use futures::future::BoxFuture;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 const SNOWFLAKE_PROVIDER_NAME: &str = "snowflake";
@@ -356,7 +357,7 @@ impl Provider for SnowflakeProvider {
         };
         let payload = create_request(model_config, system, messages, tools)?;
 
-        let mut log = RequestLog::start(&self.model, &payload)?;
+        let mut log = start_log(&self.model, &payload)?;
 
         let response = self
             .with_retry(|| async {

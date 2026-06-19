@@ -5,7 +5,6 @@ use super::base::{
 };
 use super::openai_compatible::handle_status;
 use super::retry::{ProviderRetry, RetryConfig};
-use super::utils::RequestLog;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
 use crate::providers::formats::ollama::{create_request, response_to_streaming_message_ollama};
@@ -17,6 +16,7 @@ use futures::TryStreamExt;
 use goose_providers::errors::ProviderError;
 use goose_providers::images::ImageFormat;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt, RequestLogHandle};
 use reqwest::Response;
 use rmcp::model::Tool;
 use serde_json::{json, Value};
@@ -307,7 +307,7 @@ impl Provider for OllamaProvider {
             true,
         )?;
         apply_ollama_options(&mut payload, model_config);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -431,7 +431,10 @@ fn with_line_timeout(
 /// preventing duplicate content from being emitted to the UI.
 /// Timeout is applied at the raw SSE line level via with_line_timeout so that
 /// buffering inside response_to_streaming_message_ollama does not cause false stalls.
-fn stream_ollama(response: Response, mut log: RequestLog) -> Result<MessageStream, ProviderError> {
+fn stream_ollama(
+    response: Response,
+    mut log: Option<Box<dyn RequestLogHandle>>,
+) -> Result<MessageStream, ProviderError> {
     let stream = response.bytes_stream().map_err(std::io::Error::other);
 
     Ok(Box::pin(try_stream! {

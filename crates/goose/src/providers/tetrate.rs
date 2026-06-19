@@ -5,7 +5,6 @@ use super::openai_compatible::{
     stream_openai_compat,
 };
 use super::retry::ProviderRetry;
-use super::utils::RequestLog;
 use crate::config::signup_tetrate::TETRATE_DEFAULT_MODEL;
 use crate::conversation::message::Message;
 use anyhow::Result;
@@ -16,6 +15,7 @@ use goose_providers::images::ImageFormat;
 
 use goose_providers::formats::openai::create_request;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 use serde_json::Value;
 
@@ -148,7 +148,7 @@ impl Provider for TetrateProvider {
             true,
         )?;
 
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {

@@ -8,12 +8,12 @@ use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
 use super::openai_compatible::{handle_status, stream_openai_compat};
 use super::retry::ProviderRetry;
-use super::utils::RequestLog;
 use crate::conversation::message::Message;
 use crate::providers::formats::openrouter as openrouter_format;
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::create_request;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 pub const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
@@ -289,7 +289,7 @@ impl Provider for OpenRouterProvider {
             obj.insert("transforms".to_string(), json!(["middle-out"]));
         }
 
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {

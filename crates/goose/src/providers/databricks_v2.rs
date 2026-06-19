@@ -22,7 +22,6 @@ use super::databricks_auth::{DatabricksAuth, DatabricksAuthProvider};
 use super::formats::{anthropic, openai_responses};
 use super::openai_compatible::{handle_status, stream_openai_compat, stream_responses_compat};
 use super::retry::ProviderRetry;
-use super::utils::RequestLog;
 use crate::config::ConfigError;
 use crate::conversation::message::Message;
 use crate::providers::retry::{
@@ -31,6 +30,7 @@ use crate::providers::retry::{
 };
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 const DATABRICKS_V2_PROVIDER_NAME: &str = "databricks_v2";
@@ -231,7 +231,7 @@ impl DatabricksV2Provider {
         let mut payload =
             openai_responses::create_responses_request(model_config, system, messages, tools)?;
         payload["stream"] = Value::Bool(true);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -268,7 +268,7 @@ impl DatabricksV2Provider {
         if payload.get("max_tokens").is_none() {
             payload["max_tokens"] = Value::from(model_config.max_output_tokens());
         }
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -300,7 +300,7 @@ impl DatabricksV2Provider {
     ) -> Result<MessageStream, ProviderError> {
         let mut payload = anthropic::create_request(model_config, system, messages, tools)?;
         payload["stream"] = Value::Bool(true);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {

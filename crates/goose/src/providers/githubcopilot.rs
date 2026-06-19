@@ -30,7 +30,7 @@ use super::base::{
 use super::formats::openai_responses::create_responses_request;
 use super::openai_compatible::handle_response_openai_compat;
 use super::retry::ProviderRetry;
-use super::utils::{get_model, RequestLog};
+use super::utils::get_model;
 use goose_providers::formats::openai::{create_request, get_usage, response_to_message};
 
 use crate::config::{Config, ConfigError};
@@ -40,6 +40,7 @@ use crate::providers::base::{ConfigKey, MessageStream};
 use futures::future::BoxFuture;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::{RawContent, Tool};
 use std::ops::Deref;
 
@@ -403,7 +404,7 @@ impl GithubCopilotProvider {
             .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
         payload["stream"] = serde_json::Value::Bool(true);
 
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -451,7 +452,7 @@ impl GithubCopilotProvider {
                 &ImageFormat::OpenAi,
                 true,
             )?;
-            let mut log = RequestLog::start(model_config, &payload)?;
+            let mut log = start_log(model_config, &payload)?;
 
             let response = self
                 .with_retry(|| async {
@@ -487,7 +488,7 @@ impl GithubCopilotProvider {
                 &ImageFormat::OpenAi,
                 false,
             )?;
-            let mut log = RequestLog::start(model_config, &payload)?;
+            let mut log = start_log(model_config, &payload)?;
 
             let response = self
                 .with_retry(|| async {

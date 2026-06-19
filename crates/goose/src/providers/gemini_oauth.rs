@@ -8,11 +8,11 @@ use crate::providers::formats::google::{create_request, response_to_streaming_me
 use crate::providers::google::GOOGLE_DOC_URL;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 
 const GEMINI_OAUTH_DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 const GEMINI_OAUTH_DEFAULT_FAST_MODEL: &str = "gemini-2.5-flash-lite";
 use crate::providers::retry::ProviderRetry;
-use crate::providers::utils::RequestLog;
 use crate::session_context::SESSION_ID_HEADER;
 use anyhow::{anyhow, Result};
 use async_stream::try_stream;
@@ -995,7 +995,7 @@ impl Provider for GeminiOAuthProvider {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         let payload = create_request(model_config, system, messages, tools)?;
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {

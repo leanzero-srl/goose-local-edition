@@ -12,7 +12,6 @@ pub const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
 use crate::config::base::ConfigValue;
 use crate::config::ExtensionConfig;
-use goose_providers::conversation::message::Message;
 use goose_providers::model::ModelConfig;
 use utoipa::ToSchema;
 
@@ -262,11 +261,6 @@ pub trait ProviderDef: Send + Sync {
         // Non-subprocess providers can rely on the default because cwd is irrelevant.
         Self::from_env(model, extensions)
     }
-}
-
-pub fn stream_from_single_message(message: Message, usage: ProviderUsage) -> MessageStream {
-    let stream = futures::stream::once(async move { Ok((Some(message), Some(usage))) });
-    Box::pin(stream)
 }
 
 #[cfg(test)]

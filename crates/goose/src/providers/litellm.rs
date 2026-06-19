@@ -14,9 +14,10 @@ use super::base::{
 };
 use super::openai_compatible::handle_response_openai_compat;
 use super::retry::ProviderRetry;
-use super::utils::{get_model, RequestLog};
+use super::utils::get_model;
 use crate::conversation::message::Message;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 const LITELLM_PROVIDER_NAME: &str = "litellm";
@@ -249,7 +250,7 @@ impl Provider for LiteLLMProvider {
         let message = goose_providers::formats::openai::response_to_message(&response)?;
         let usage = goose_providers::formats::openai::get_usage(&response);
         let response_model = get_model(&response);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
         log.write(&response, Some(&usage))?;
         let provider_usage = ProviderUsage::new(response_model, usage);
         Ok(super::base::stream_from_single_message(

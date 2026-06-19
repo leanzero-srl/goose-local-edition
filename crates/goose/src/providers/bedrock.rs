@@ -5,7 +5,6 @@ use super::formats::openai_responses::create_responses_request;
 use super::openai_compatible::{handle_status, stream_responses_compat};
 use super::retry::{ProviderRetry, RetryConfig};
 use crate::conversation::message::Message;
-use crate::providers::utils::RequestLog;
 use crate::session_context::SESSION_ID_HEADER;
 use anyhow::Result;
 use async_stream::try_stream;
@@ -21,6 +20,7 @@ use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::formats::openai::extract_reasoning_effort;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, Tool};
 use serde_json::Value;
@@ -526,7 +526,7 @@ impl BedrockProvider {
             "messages": messages,
             "tools": tools
         });
-        let mut log = RequestLog::start(&self.model, &debug_payload)?;
+        let mut log = start_log(&self.model, &debug_payload)?;
         log.write(
             &serde_json::to_value(&message).unwrap_or_default(),
             Some(&usage),
@@ -775,7 +775,7 @@ impl Provider for BedrockProvider {
                 create_responses_request(&normalized_config, system, messages, tools)?;
             payload["model"] = Value::String(bedrock_model_id.clone());
             payload["stream"] = Value::Bool(true);
-            let mut log = RequestLog::start(model_config, &payload)?;
+            let mut log = start_log(model_config, &payload).map_err(anyhow::Error::from)?;
 
             let response = self
                 .with_retry(|| self.post_mantle_streaming(session_id_opt, &payload))
@@ -810,7 +810,7 @@ impl Provider for BedrockProvider {
             "messages": messages,
             "tools": tools
         });
-        let mut log = RequestLog::start(&self.model, &debug_payload)?;
+        let mut log = start_log(&self.model, &debug_payload)?;
 
         let mut event_stream = response.stream;
 

@@ -10,7 +10,7 @@ use tokio::process::Command;
 use super::base::{
     stream_from_single_message, ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
 };
-use super::utils::{filter_extensions_from_system_prompt, RequestLog};
+use super::utils::filter_extensions_from_system_prompt;
 use crate::config::base::CursorAgentCommand;
 use crate::config::search_path::SearchPaths;
 use crate::conversation::message::{Message, MessageContent};
@@ -19,6 +19,7 @@ use futures::future::BoxFuture;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 const CURSOR_AGENT_PROVIDER_NAME: &str = "cursor-agent";
@@ -352,7 +353,7 @@ impl Provider for CursorAgentProvider {
             "usage": usage
         });
 
-        let mut log = RequestLog::start(&self.model, &payload)?;
+        let mut log = start_log(&self.model, &payload)?;
         log.write(&response, Some(&usage))?;
 
         let provider_usage = ProviderUsage::new(model_config.model_name.clone(), usage);

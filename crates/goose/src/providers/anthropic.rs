@@ -3,6 +3,7 @@ use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use goose_providers::errors::ProviderError;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::io;
@@ -20,7 +21,6 @@ use super::openai_compatible::map_http_error_to_provider_error;
 use super::retry::ProviderRetry;
 use crate::config::declarative_providers::DeclarativeProviderConfig;
 use crate::conversation::message::Message;
-use crate::providers::utils::RequestLog;
 use futures::future::BoxFuture;
 use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
@@ -330,7 +330,7 @@ impl Provider for AnthropicProvider {
             .insert("stream".to_string(), Value::Bool(true));
 
         let conditional_headers = self.get_conditional_headers();
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -362,6 +362,7 @@ impl Provider for AnthropicProvider {
         }))
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
