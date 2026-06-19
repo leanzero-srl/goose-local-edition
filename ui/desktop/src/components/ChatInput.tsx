@@ -16,6 +16,7 @@ import { cn } from '../utils';
 import { AlertType, useAlerts } from './alerts';
 import { useConfig } from './ConfigContext';
 import { useModelAndProvider } from './ModelAndProviderContext';
+import { USE_ACP_CHAT } from '../acpChatFeatureFlag';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { toastError } from '../toasts';
 import MentionPopover, { DisplayItemWithMatch } from './MentionPopover';
@@ -37,6 +38,7 @@ import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { defineMessages, useIntl } from '../i18n';
 import TurndownService from 'turndown';
+import type { NextChatExtensionDraft } from '../utils/nextChatExtensions';
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -190,13 +192,15 @@ interface ChatInputProps {
   initialPrompt?: string;
   toolCount: number;
   append?: (message: Message) => void;
-  onWorkingDirChange?: (newDir: string) => void;
+  onWorkingDirChange?: (newDir: string) => Promise<void> | void;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   sessionModel?: string | null;
   sessionProvider?: string | null;
   sessionLoaded?: boolean;
   workingDir?: string | null;
   latestInference?: Message['metadata']['inference'] | null;
+  nextChatExtensionDraft?: NextChatExtensionDraft;
+  onNextChatExtensionDraftChange?: (draft: NextChatExtensionDraft) => void;
 }
 
 export default function ChatInput({
@@ -230,6 +234,8 @@ export default function ChatInput({
   sessionLoaded,
   workingDir,
   latestInference,
+  nextChatExtensionDraft,
+  onNextChatExtensionDraftChange,
 }: ChatInputProps) {
   const [_value, setValue] = useState(initialValue);
   const [displayValue, setDisplayValue] = useState(initialValue); // For immediate visual feedback
@@ -1602,14 +1608,14 @@ export default function ChatInput({
             className=""
             sessionId={sessionId ?? undefined}
             workingDir={currentWorkingDir}
-            onWorkingDirChange={(newDir) => {
+            onWorkingDirChange={async (newDir) => {
+              await onWorkingDirChange?.(newDir);
               setWorkingDirOverride(newDir);
-              if (onWorkingDirChange) {
-                onWorkingDirChange(newDir);
-              }
             }}
-            onRestartStart={() => setChatState?.(ChatState.RestartingAgent)}
-            onRestartEnd={() => setChatState?.(ChatState.Idle)}
+            onRestartStart={
+              USE_ACP_CHAT ? undefined : () => setChatState?.(ChatState.RestartingAgent)
+            }
+            onRestartEnd={USE_ACP_CHAT ? undefined : () => setChatState?.(ChatState.Idle)}
           />
         )}
 
@@ -1637,7 +1643,11 @@ export default function ChatInput({
             />
 
             {/* Right: extension selector */}
-            <BottomMenuExtensionSelection sessionId={sessionId} />
+            <BottomMenuExtensionSelection
+              sessionId={sessionId}
+              nextChatExtensionDraft={nextChatExtensionDraft}
+              onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
+            />
 
             {/* Right: diagnostics */}
             {sessionId && (
