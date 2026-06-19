@@ -34,12 +34,8 @@ function session(id: string, conversation: Message[] = []): Session {
     extension_data: {},
     source: 'test',
     conversation,
-    input_tokens: 1,
-    output_tokens: 2,
-    total_tokens: 3,
-    accumulated_input_tokens: 4,
-    accumulated_output_tokens: 5,
-    accumulated_total_tokens: 9,
+    usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+    accumulated_usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 },
   } as Session;
 }
 
@@ -161,12 +157,12 @@ describe('acpChatSessionStore', () => {
     expect(snapshot.session?.id).toBe(currentSessionId);
     expect(snapshot.messages).toEqual([initialMessage]);
     expect(snapshot.tokenState).toMatchObject({
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      accumulatedInputTokens: 0,
-      accumulatedOutputTokens: 0,
-      accumulatedTotalTokens: 0,
+      inputTokens: 1,
+      outputTokens: 2,
+      totalTokens: 3,
+      accumulatedInputTokens: 4,
+      accumulatedOutputTokens: 5,
+      accumulatedTotalTokens: 9,
     });
     expect(snapshot.chatState).toBe(ChatState.Idle);
     expect(snapshot.sessionLoadError).toBeUndefined();
