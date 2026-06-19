@@ -1,3 +1,4 @@
+use super::api_client::TlsConfig;
 use anyhow::Result;
 use futures::future::BoxFuture;
 pub use goose_providers::conversation::token_usage::{
@@ -245,6 +246,7 @@ pub trait ProviderDef: Send + Sync {
     fn from_env(
         model: ModelConfig,
         extensions: Vec<ExtensionConfig>,
+        tls_config: Option<TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>>
     where
         Self: Sized;
@@ -253,13 +255,14 @@ pub trait ProviderDef: Send + Sync {
         model: ModelConfig,
         extensions: Vec<ExtensionConfig>,
         _working_dir: PathBuf,
+        tls_config: Option<TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>>
     where
         Self: Sized,
     {
         // ACP subprocess providers must override this so session cwd is preserved.
         // Non-subprocess providers can rely on the default because cwd is irrelevant.
-        Self::from_env(model, extensions)
+        Self::from_env(model, extensions, tls_config)
     }
 }
 

@@ -202,6 +202,8 @@ pub struct GithubCopilotProvider {
     client_id: String,
     #[serde(skip)]
     name: String,
+    #[serde(skip)]
+    tls_config: Option<crate::providers::api_client::TlsConfig>,
 }
 
 impl GithubCopilotProvider {
@@ -229,7 +231,10 @@ impl GithubCopilotProvider {
         })
     }
 
-    pub async fn from_env(model: ModelConfig) -> Result<Self> {
+    pub async fn from_env(
+        model: ModelConfig,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> Result<Self> {
         let config = Config::global();
         let host = normalize_host(
             &config
@@ -254,6 +259,7 @@ impl GithubCopilotProvider {
             urls,
             client_id,
             name: GITHUB_COPILOT_PROVIDER_NAME.to_string(),
+            tls_config,
         })
     }
 
@@ -273,7 +279,8 @@ impl GithubCopilotProvider {
         }
         let initiator = if is_user_initiated { "user" } else { "agent" };
         headers.insert("X-Initiator", initiator.parse().unwrap());
-        let api_client = ApiClient::new(endpoint.clone(), auth)?.with_headers(headers)?;
+        let api_client = ApiClient::new_with_tls(endpoint.clone(), auth, self.tls_config.clone())?
+            .with_headers(headers)?;
 
         api_client
             .response_post(session_id, path, payload)
@@ -546,8 +553,9 @@ impl ProviderDef for GithubCopilotProvider {
     fn from_env(
         model: ModelConfig,
         _extensions: Vec<crate::config::ExtensionConfig>,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(Self::from_env(model))
+        Box::pin(Self::from_env(model, tls_config))
     }
 }
 

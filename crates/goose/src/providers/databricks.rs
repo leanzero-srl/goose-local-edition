@@ -97,7 +97,10 @@ impl DatabricksProvider {
         super::oauth::cleanup_oauth_cache()
     }
 
-    pub async fn from_env(model: ModelConfig) -> Result<Self> {
+    pub async fn from_env(
+        model: ModelConfig,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> Result<Self> {
         let config = crate::config::Config::global();
 
         let mut host: Result<String, ConfigError> = config.get_param("DATABRICKS_HOST");
@@ -131,10 +134,11 @@ impl DatabricksProvider {
             token_cache: token_cache.clone(),
         }));
 
-        let api_client = ApiClient::with_timeout(
+        let api_client = ApiClient::with_timeout_and_tls(
             host.clone(),
             auth_method,
             Duration::from_secs(DEFAULT_PROVIDER_TIMEOUT_SECS),
+            tls_config.clone(),
         )?;
 
         let mut provider = Self {
@@ -187,33 +191,6 @@ impl DatabricksProvider {
             backoff_multiplier,
             max_interval_ms,
         )
-    }
-
-    pub fn from_params(host: String, api_key: String, model: ModelConfig) -> Result<Self> {
-        let token_cache = Arc::new(Mutex::new(Some(api_key.clone())));
-        let auth = DatabricksAuth::token(api_key);
-        let auth_method = AuthMethod::Custom(Box::new(DatabricksAuthProvider {
-            auth: auth.clone(),
-            token_cache: token_cache.clone(),
-        }));
-
-        let api_client = ApiClient::with_timeout(
-            host.clone(),
-            auth_method,
-            Duration::from_secs(DEFAULT_PROVIDER_TIMEOUT_SECS),
-        )?;
-
-        Ok(Self {
-            api_client,
-            host,
-            auth,
-            model,
-            image_format: ImageFormat::OpenAi,
-            retry_config: RetryConfig::default(),
-            name: DATABRICKS_PROVIDER_NAME.to_string(),
-            token_cache,
-            instance_id: Self::resolve_instance_id(),
-        })
     }
 
     fn resolve_instance_id() -> Option<String> {
@@ -569,8 +546,9 @@ impl ProviderDef for DatabricksProvider {
     fn from_env(
         model: ModelConfig,
         _extensions: Vec<crate::config::ExtensionConfig>,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(Self::from_env(model))
+        Box::pin(Self::from_env(model, tls_config))
     }
 }
 
