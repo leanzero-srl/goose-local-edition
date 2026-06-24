@@ -2262,7 +2262,15 @@ impl Agent {
                                     .collect();
 
                                 for request in frontend_requests.iter().chain(remaining_requests.iter()) {
-                                    if request.tool_call.is_ok() {
+                                    if let Err(err) = &request.tool_call {
+                                        let err_msg = err.message.to_string();
+                                        error!("Tool call could not be parsed: {}", err_msg);
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(err_msg)
+                                        );
+                                        exit_chat = true;
+                                        break;
+                                    } else {
                                         let mut request_msg = Message::assistant()
                                             .with_id(format!("msg_{}", Uuid::new_v4()));
 
@@ -2289,18 +2297,6 @@ impl Agent {
                                         messages_to_add.push(request_msg);
                                         yield AgentEvent::Message(final_response.clone());
                                         messages_to_add.push(final_response);
-                                    } else {
-                                        error!(
-                                            "Tool call could not be parsed: {}",
-                                            request.tool_call.as_ref().unwrap_err(),
-                                        );
-                                        yield AgentEvent::Message(
-                                            Message::assistant().with_text(
-                                                "A tool call could not be parsed — the response may have been truncated. Try breaking the task into smaller steps or resending your message."
-                                            )
-                                        );
-                                        exit_chat = true;
-                                        break;
                                     }
                                 }
 
