@@ -1900,6 +1900,7 @@ export default function ChatInput({
             setMentionPopover((prev) => ({ ...prev, selectedIndex: index }))
           }
           workingDir={currentWorkingDir}
+          sessionId={sessionId}
         />
       </div>
     </div>
