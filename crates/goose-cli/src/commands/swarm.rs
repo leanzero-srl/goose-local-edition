@@ -1714,7 +1714,9 @@ impl GooseAgentDispatcher {
         let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code.\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
             (split by file / module / feature), AT LEAST {worker_count}, with NON-OVERLAPPING files and NO ordering dependency \
-            so no worker sits idle. Only add a dependency when one subtask genuinely needs another's output.\n\
+            so no worker sits idle. Only add a dependency when one subtask genuinely needs another's output. \
+            AVOID deep chains and chokepoints: keep the dependency depth <= 2, and if shared types/data-models are needed, \
+            put them in ONE tiny early subtask so dependents unblock fast — do NOT make most subtasks depend on a single big one.\n\
             For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
@@ -1943,6 +1945,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 let transient = s.contains("Model is unloaded")
                     || s.contains("Server error")
                     || s.contains("model_not_found")
+                    || s.contains("Invalid model identifier")
+                    || s.contains("is not loaded")
                     || s.contains("connection");
                 eprintln!(
                     "  {} {} on {} ({:.1}s){}",
