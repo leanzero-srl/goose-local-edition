@@ -45,6 +45,9 @@ fn default_planner() -> String {
 fn default_instances() -> u32 {
     1
 }
+fn default_host() -> Option<String> {
+    None
+}
 fn default_worker_max_turns() -> u32 {
     40
 }
@@ -83,6 +86,9 @@ pub struct SwarmDevice {
     /// spins up extra instances unless you raise this.
     #[serde(default = "default_instances")]
     pub instances: u32,
+    /// Physical host (lms ps DEVICE column). Informational/display only — routing is by model_id.
+    #[serde(default = "default_host")]
+    pub host: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -133,6 +139,7 @@ impl Default for SwarmConfig {
                     weight: 2,
                     enabled: true,
                     instances: 1,
+                    host: None,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
@@ -140,6 +147,7 @@ impl Default for SwarmConfig {
                     weight: 1,
                     enabled: true,
                     instances: 1,
+                    host: None,
                 },
             ],
             worker_max_turns: default_worker_max_turns(),
@@ -236,6 +244,13 @@ pub enum PoolCommand {
     Disable { id: String },
     /// Probe the live fleet (lms ps + the endpoint's model ids).
     Probe,
+    /// Import every model loaded across the fleet (parses `lms ps`) as pool entries.
+    Import {
+        #[arg(long, default_value_t = 1)]
+        weight: u32,
+        #[arg(long)]
+        disabled: bool,
+    },
 }
 
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
@@ -317,11 +332,18 @@ fn show_pool(cfg: &SwarmConfig) {
             style("disabled").red().bold()
         };
         println!(
-            "  {state}  {:<10} weight {}  ×{} inst  {}",
+            "  {state}  {:<10} weight {}  ×{} inst  {}{}",
             style(&d.id).bold(),
             style(d.weight).cyan().bold(),
             style(d.instances).cyan(),
-            style(&d.model_id).dim()
+            style(&d.model_id).dim(),
+            style(
+                d.host
+                    .as_deref()
+                    .map(|h| format!("  @{h}"))
+                    .unwrap_or_default()
+            )
+            .dim()
         );
     }
 }
@@ -347,6 +369,7 @@ fn pool_menu() -> Result<()> {
             .item("max-research", "Max research questions", "")
             .item("mcp", "Toggle worker MCP extensions", "context7 / web-search / doc-processor")
             .item("probe", "Probe the live fleet", "lms ps + endpoint models")
+            .item("import", "Import loaded models from fleet", "lms ps -> pool entries")
             .item("save", "Save & exit", "")
             .item("quit", "Quit without saving", "")
             .interact()?;
@@ -370,6 +393,7 @@ fn pool_menu() -> Result<()> {
                     weight,
                     enabled: true,
                     instances,
+                    host: None,
                 });
             }
             "weight" => {
@@ -480,6 +504,14 @@ fn pool_menu() -> Result<()> {
                 }
             }
             "probe" => probe_fleet(),
+            "import" => match probe_lms_processes() {
+                Ok(procs) if !procs.is_empty() => {
+                    let summary = import_processes(&mut cfg, &procs, 1, true);
+                    print_import_summary(&summary);
+                }
+                Ok(_) => println!("  {}", style("(no models loaded on the fleet)").yellow()),
+                Err(e) => println!("  (lms ps failed: {e})"),
+            },
             "save" => {
                 save_config(&cfg)?;
                 cliclack::outro(style("pool saved").green())?;
@@ -518,6 +550,11 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
             probe_fleet();
             return Ok(());
         }
+        PoolCommand::Import { weight, disabled } => {
+            let procs = probe_lms_processes()?;
+            let summary = import_processes(&mut cfg, &procs, weight, !disabled);
+            print_import_summary(&summary);
+        }
         PoolCommand::Add {
             id,
             model_id,
@@ -531,6 +568,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 weight: weight.max(1),
                 enabled: true,
                 instances: instances.max(1),
+                host: None,
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -603,6 +641,245 @@ fn ensure_loaded(model_id: &str, instances: u32) {
         let _ = ProcCommand::new("lms")
             .args(["load", model_id, "-y", "--ttl", "3600"])
             .output();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fleet import — parse `lms ps` and add every loaded model (one per machine, or several) to the pool
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+struct LmsProcess {
+    identifier: String,
+    status: String,
+    device: Option<String>,
+}
+
+/// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
+/// (so "29.53 GB" stays one field) and reads DEVICE by its header column index. Errs if no header.
+fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
+    let ansi = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+    let gap = regex::Regex::new(r"\s{2,}").unwrap();
+    let clean = ansi.replace_all(raw, "");
+    let lines: Vec<&str> = clean.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| l.contains("IDENTIFIER") && l.contains("DEVICE"))
+        .ok_or_else(|| anyhow!("lms ps: header (IDENTIFIER/DEVICE) not found"))?;
+    let cols: Vec<&str> = lines[header].split_whitespace().collect();
+    let device_idx = cols.iter().position(|c| *c == "DEVICE").unwrap_or(6);
+    let status_idx = cols.iter().position(|c| *c == "STATUS").unwrap_or(2);
+    let mut out = Vec::new();
+    for line in &lines[header + 1..] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let f: Vec<String> = gap
+            .split(line.trim())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if f.is_empty() {
+            continue;
+        }
+        out.push(LmsProcess {
+            identifier: f[0].clone(),
+            status: f.get(status_idx).cloned().unwrap_or_default(),
+            device: f.get(device_idx).cloned().filter(|s| !s.is_empty()),
+        });
+    }
+    Ok(out)
+}
+
+fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
+    let out = ProcCommand::new("lms")
+        .arg("ps")
+        .output()
+        .map_err(|e| anyhow!("lms ps failed: {e}"))?;
+    parse_lms_ps(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn short_model(identifier: &str) -> String {
+    identifier
+        .rsplit('/')
+        .next()
+        .unwrap_or(identifier)
+        .to_lowercase()
+        .chars()
+        .take(28)
+        .collect()
+}
+
+fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
+    let dev = device
+        .map(|d| d.split('.').next().unwrap_or(d).to_lowercase())
+        .unwrap_or_default();
+    let base = if dev.is_empty() {
+        short_model(identifier)
+    } else {
+        format!("{dev}-{}", short_model(identifier))
+    };
+    let mut id = base.clone();
+    let mut n = 2;
+    while cfg.devices.iter().any(|d| d.id == id) {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    id
+}
+
+struct ImportSummary {
+    added: Vec<SwarmDevice>,
+    skipped_existing: Vec<String>,
+    /// (model_id, kept_device, dropped_device) — same identifier loaded on two hosts.
+    skipped_collision: Vec<(String, String, String)>,
+}
+
+/// Add loaded models as pool entries. Dedup by identifier first (the SAME identifier on two hosts
+/// cannot be routed by LM Link → keep the first, flag the rest), then skip identifiers already pooled.
+fn import_processes(
+    cfg: &mut SwarmConfig,
+    procs: &[LmsProcess],
+    default_weight: u32,
+    enabled: bool,
+) -> ImportSummary {
+    let mut summary = ImportSummary {
+        added: Vec::new(),
+        skipped_existing: Vec::new(),
+        skipped_collision: Vec::new(),
+    };
+    let mut kept: HashMap<String, String> = HashMap::new();
+    for p in procs {
+        let dev_label = p.device.clone().unwrap_or_else(|| "?".to_string());
+        if let Some(prev) = kept.get(&p.identifier) {
+            summary
+                .skipped_collision
+                .push((p.identifier.clone(), prev.clone(), dev_label));
+            continue;
+        }
+        kept.insert(p.identifier.clone(), dev_label);
+        if cfg.devices.iter().any(|d| d.model_id == p.identifier) {
+            summary.skipped_existing.push(p.identifier.clone());
+            continue;
+        }
+        let dev = SwarmDevice {
+            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+            model_id: p.identifier.clone(),
+            weight: default_weight.max(1),
+            enabled,
+            instances: 1,
+            host: p.device.clone(),
+        };
+        cfg.devices.push(dev.clone());
+        summary.added.push(dev);
+    }
+    summary
+}
+
+fn print_import_summary(s: &ImportSummary) {
+    for d in &s.added {
+        println!(
+            "  {} {:<14} {}{}",
+            style("+ added").green().bold(),
+            style(&d.id).bold(),
+            style(&d.model_id).dim(),
+            d.host
+                .as_deref()
+                .map(|h| format!("  @{h}"))
+                .unwrap_or_default()
+        );
+    }
+    for m in &s.skipped_existing {
+        println!("  {} {} (already in pool)", style("· skip").dim(), m);
+    }
+    for (m, keep, drop) in &s.skipped_collision {
+        println!(
+            "  {} {} on {} — same model_id already taken by {} (LM Link can't distinguish)",
+            style("! collision").red().bold(),
+            m,
+            drop,
+            keep
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Captured verbatim from a real `lms ps` (5 models; the macbook 'Local' hosts two).
+    const FIXTURE: &str = "\nIDENTIFIER                                      MODEL                                           STATUS        SIZE        CONTEXT    PARALLEL    DEVICE                TTL     \nqwen/qwen3.6-27b                                qwen/qwen3.6-27b                                GENERATING    29.53 GB    262144     4           WorksMacStudio.lan    1h / 1h \nqwen/qwen3.6-35b-a3b                            qwen/qwen3.6-35b-a3b                            IDLE          29.09 GB    200000     4           Mac.lan                       \nqwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    IDLE          39.51 GB    128000     4           Local                         \nqwopus3.6-27b-coder-mlx                         qwopus3.6-27b-coder-mlx                         IDLE          28.60 GB    128000     4           Local                         \nqwopus3.6-35b-a3b-v1-mtp                        qwopus3.6-35b-a3b-v1-mtp                        IDLE          38.70 GB    262144     4           WorksMacStudio.lan    17m / 1h\n";
+
+    fn empty_cfg() -> SwarmConfig {
+        SwarmConfig {
+            devices: vec![],
+            ..SwarmConfig::default()
+        }
+    }
+
+    #[test]
+    fn parses_real_lms_ps_fixture() {
+        let procs = parse_lms_ps(FIXTURE).unwrap();
+        assert_eq!(procs.len(), 5);
+        assert_eq!(procs[0].identifier, "qwen/qwen3.6-27b");
+        assert_eq!(procs[0].status, "GENERATING");
+        assert_eq!(procs[0].device.as_deref(), Some("WorksMacStudio.lan"));
+        let local = procs
+            .iter()
+            .filter(|p| p.device.as_deref() == Some("Local"))
+            .count();
+        assert_eq!(local, 2, "the macbook (Local) hosts two distinct models");
+    }
+
+    #[test]
+    fn import_adds_all_distinct_models() {
+        let mut cfg = empty_cfg();
+        let procs = parse_lms_ps(FIXTURE).unwrap();
+        let s = import_processes(&mut cfg, &procs, 2, true);
+        assert_eq!(s.added.len(), 5);
+        assert!(s.skipped_existing.is_empty());
+        assert!(s.skipped_collision.is_empty());
+        assert_eq!(cfg.devices.len(), 5);
+        assert!(cfg.devices.iter().all(|d| d.weight == 2 && d.host.is_some()));
+    }
+
+    #[test]
+    fn import_skips_existing_and_flags_collision() {
+        let mut cfg = empty_cfg();
+        cfg.devices.push(SwarmDevice {
+            id: "x".into(),
+            model_id: "qwen/qwen3.6-27b".into(),
+            weight: 1,
+            enabled: true,
+            instances: 1,
+            host: None,
+        });
+        let procs = vec![
+            LmsProcess {
+                identifier: "qwen/qwen3.6-27b".into(),
+                status: "IDLE".into(),
+                device: Some("Mac.lan".into()),
+            },
+            LmsProcess {
+                identifier: "dup-model".into(),
+                status: "IDLE".into(),
+                device: Some("Mac.lan".into()),
+            },
+            LmsProcess {
+                identifier: "dup-model".into(),
+                status: "IDLE".into(),
+                device: Some("Local".into()),
+            },
+        ];
+        let s = import_processes(&mut cfg, &procs, 1, true);
+        assert_eq!(s.skipped_existing, vec!["qwen/qwen3.6-27b".to_string()]);
+        assert_eq!(s.added.len(), 1);
+        assert_eq!(s.skipped_collision.len(), 1);
+    }
+
+    #[test]
+    fn missing_header_errors() {
+        assert!(parse_lms_ps("no table here\njust text").is_err());
     }
 }
 
