@@ -32,6 +32,8 @@ cycles, unknown deps, and file-overlap among parallel-eligible tasks.
 Weight = max in-flight tasks routed to that device concurrently (coarse capacity proxy; EWMA auto-tune is M4).
 
 ## Roadmap
+_Status (2026-06-25): M1.0 ✅ (7/7 mock tests, clippy clean) · M1.1 ✅ · M1.2 ✅ fleet-validated (`goose swarm`: weighting {mac:3,macbook:1}, dep-gating, shared-context). Next: M1.3 pre-warm+retry, M2 pool menu, M3 worktree+reducer._
+
 - **M1.0 (GATE, medium):** scaffold `goose-swarm` + MockDispatcher concurrency tests — no double-claim,
   dep-gating, weighting (~Nx), re-dispatch on transient, file-overlap hold. GREEN before any device.
 - **M1.1 (medium):** `GooseAgentDispatcher` in goose-cli — inline the public drive sequence

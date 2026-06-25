@@ -948,6 +948,14 @@ enum Command {
         command: SchedulerCommand,
     },
 
+    /// Run a local multi-device swarm (goose-local-edition): plan on the smart model, then
+    /// dispatch subtasks across the LM Link device pool with a weighted work-queue scheduler.
+    #[command(about = "Run a local multi-device swarm over LM Studio LM Link")]
+    Swarm {
+        /// The task to plan and run across the swarm.
+        prompt: String,
+    },
+
     /// Manage gateways for external platform integrations (e.g., Telegram)
     #[command(
         about = "Manage gateways for external platform integrations",
@@ -1295,6 +1303,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         Some(Command::Run { .. }) => "run",
         Some(Command::Gateway { .. }) => "gateway",
         Some(Command::Schedule { .. }) => "schedule",
+        Some(Command::Swarm { .. }) => "swarm",
         #[cfg(feature = "update")]
         Some(Command::Update { .. }) => "update",
         Some(Command::Recipe { .. }) => "recipe",
@@ -2124,6 +2133,7 @@ pub async fn cli() -> anyhow::Result<()> {
         }
         Some(Command::Gateway { command }) => handle_gateway_command(command).await,
         Some(Command::Schedule { command }) => handle_schedule_command(command).await,
+        Some(Command::Swarm { prompt }) => crate::commands::swarm::run_swarm(prompt).await,
         #[cfg(feature = "update")]
         Some(Command::Update {
             canary,

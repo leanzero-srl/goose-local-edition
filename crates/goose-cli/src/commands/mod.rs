@@ -9,6 +9,7 @@ pub mod review;
 pub mod schedule;
 pub mod session;
 pub mod skills;
+pub mod swarm;
 pub mod term;
 #[cfg(feature = "tui")]
 pub mod tui;
