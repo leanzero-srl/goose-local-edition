@@ -89,6 +89,16 @@ To force compaction conclusively, set `GOOSE_AUTO_COMPACT_THRESHOLD=0.0001` on a
 - VERIFIED via a temporary debug print: the cap WORKS — the check saw `context_limit=3000` under `GOOSE_LOCAL_CONTEXT_CAP=3000` (`cap_env=Some("3000")`). The real limitation is CADENCE: this proactive check runs ONCE per `goose run`, at reply-START (conversation = just the initial user msg, `current_tokens=23`; `session.usage.total_tokens` is None there so it estimates from messages only), NOT per tool-call turn. So proactive auto-compaction never fires mid-run regardless of cap/threshold; only REACTIVE compaction on a true model-window `ContextLengthExceeded` (`agent.rs:2363`) fires in-loop. → FOLLOW-UP: add a PER-TURN proactive check in the reply loop so the capped lean window actually drives mid-run compaction. Compaction-safety itself is validated separately (test #2). Debug print removed after diagnosis.
 - Compaction-SAFETY itself was already validated (test #2 / captest3): tool-calling survives compaction on the hybrid. The cap is about *triggering* compaction at a lean size.
 
+## 3-WAY FAN-OUT over LM Link (the headline) — VALIDATED 2026-06-25
+Recipe `local-edition/recipes/swarm_v3.yaml`: planner 27B@workhorse fans 4 independent modules across THREE physical devices, each addressed by a DISTINCT model id on the one `:1234` endpoint:
+  - casing.py, rot13.py → `qwen/qwen3.6-35b-a3b` @ mac.lan
+  - palindrome.py → `qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx` @ macbook
+  - vowels.py → `qwopus3.6-35b-a3b-v1-mtp` @ workhorse
+- FIRST run (v3): mac.lan + macbook workers succeeded, but the workhorse worker hit **"Server error: Model is unloaded"** — JIT-loading the 38GB qwopus on workhorse WHILE it ran the 27B planner failed. 2/3 delivered; task incomplete. (Files: docs/runs/v3_out/.)
+- FIX: PRE-LOAD all worker models — `local-edition/scripts/preload-swarm.sh` (`lms load <id> -y --ttl 3600`). VERIFIED workhorse holds BOTH the 27B planner (29.5GB) + qwopus-35B worker (38.7GB) at once (~68GB; 27B loaded in 9s on top of qwopus).
+- RE-RUN (v3b, pre-warmed): all 3 devices delivered their modules in parallel; planner integrated `test_all.py`, self-corrected the test twice (verify→fix), → **"All tests passed!"** (4/4 modules). Files: docs/runs/v3_out2/. Log: docs/runs/swarm_v3b.log.
+- OPERATIONAL LESSON: pre-warm worker models before a swarm; remote JIT-load during active generation is unreliable. FOLLOW-UP: have the swarm pre-load its device pool and/or retry on "Model is unloaded".
+
 ## Open items / next
 - Difficulty-aware routing (planner tags hard→27B / bulk→35B) + typed plan (`response.json_schema`).
 - True 3-way fan-out: same model-id on multiple devices → LM Link "Preferred Device" picks one; need to verify how to target a specific device (distinct aliases per device, or delegate-level addressing).

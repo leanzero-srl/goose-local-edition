@@ -43,6 +43,13 @@ For deterministic per-device targeting when the SAME model exists on multiple de
 distinct alias/id (LM Link's "Preferred Device" otherwise picks one). 3-way fan-out of one model
 requires loading it on each target device.
 
+## Pre-load before a swarm (IMPORTANT)
+Remote JIT-loading a large model on a device that is already generating (e.g. loading a 38 GB worker
+on the workhorse while it runs the 27B planner) can fail with "Server error: Model is unloaded".
+PRE-WARM every model the swarm will use first — run `local-edition/scripts/preload-swarm.sh`, or
+`lms load <model-id> -y --ttl 3600` per model — then confirm with `lms ps` (every worker IDLE on its
+device). Verified: the workhorse holds the 27B planner + a 35B worker simultaneously (~68 GB).
+
 ## Wire the agent
 The agent uses the single endpoint and selects a device by model-id (Goose provider `lmstudio`):
 ```bash
