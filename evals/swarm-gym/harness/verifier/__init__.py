@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from ..brain.base import Brain
 from ..contracts import DimensionVerdict, Evidence, Finding, Verdict
-from . import cluster, deterministic
+from . import cluster, deterministic, diagnostics
 from . import judge as judge_mod
 
 
@@ -46,6 +46,10 @@ def verify(ev: Evidence, judge_brain: Optional[Brain]) -> Verdict:
     cluster_v, cluster_findings = cluster.assess(ev)
     dims["cluster"] = cluster_v
     findings += cluster_findings
+
+    diag_v, diag_findings, _by_model = diagnostics.assess(ev)
+    dims["diagnostics"] = diag_v
+    findings += diag_findings
 
     judge_model = None
     if judge_brain is not None:

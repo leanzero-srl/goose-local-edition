@@ -896,19 +896,20 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         user_prompt: &str,
         plan_schema: serde_json::Value,
+        worker_count: usize,
     ) -> Result<String> {
-        let system = "You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            Decompose into MANY small INDEPENDENT subtasks (split by file / module / feature) so multiple devices run in PARALLEL — \
-            when the task reasonably allows, produce at least 3-4 independent subtasks with NON-OVERLAPPING files and NO ordering dependency; \
-            only add a dependency when a subtask genuinely needs another's output. A wide independent set is the goal.\n\
+        let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
+            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
+            (split by file / module / feature) and aim for AT LEAST {worker_count} independent subtasks (one or more per worker; more is better) \
+            with NON-OVERLAPPING files and NO ordering dependency, so no worker sits idle. Only add a dependency when a subtask genuinely \
+            needs another's output; a wide independent set is the goal.\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
             model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
             files (paths it owns; non-overlapping across parallel subtasks).\n\
             UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
             that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
             files, writes and RUNS tests (e.g. python3), and reports PASS/FAIL; its files must NOT overlap the others (e.g. a test file).\n\
-            Also produce a short integration note. Then call the final_output tool with the plan."
-            .to_string();
+            Also produce a short integration note. Then call the final_output tool with the plan.");
         let response = Some(Response {
             json_schema: Some(plan_schema),
         });
@@ -1155,9 +1156,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns, worker_extensions).await?,
     );
 
-    eprintln!("planning on {} ...", cfg.planner_model);
+    eprintln!("planning on {} (targeting {} workers) ...", cfg.planner_model, devices.len());
     let plan_json = dispatcher
-        .plan(&cfg.planner_model, &opts.prompt, plan_schema())
+        .plan(&cfg.planner_model, &opts.prompt, plan_schema(), devices.len())
         .await?;
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;

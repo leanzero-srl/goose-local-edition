@@ -27,10 +27,13 @@ ARCHETYPES: Dict[str, str] = {
         "(include a build/run check and a test command). Keep it buildable in one shot."
     ),
     "minimal-spec": (
-        "Invent a NEW small app, but make `prompt` a TERSE one-liner a lazy user would type (few words, "
-        "lots unsaid). Put what a reasonable engineer would infer into `hidden_requirements` (the swarm "
-        "never sees these) — persistence, a CLI/entry point, input validation, a README, tests. Keep "
-        "`requirements` minimal. Add a few light `deterministic_checks` (build/run)."
+        "Invent a NEW small app whose `prompt` is a TERSE one-liner a lazy user would type (few words, "
+        "lots unsaid) AND that genuinely benefits from looking things up — library docs or web facts — so "
+        "the swarm must use its MCP tools. Set `expected_mcp` to the servers it should use (context7 for "
+        "library docs, web-search for facts). Put what a reasonable engineer would infer into "
+        "`hidden_requirements` (the swarm never sees these): persistence, a CLI/entry point, input "
+        "validation, a README, tests, and CORRECT use of anything looked up. Keep `requirements` minimal; "
+        "add a few light `deterministic_checks` (build/run + a tool_called check for the MCP tool)."
     ),
     "continue-existing": (
         "You are continuing work on an EXISTING app (its files are given). Invent a feature request that "
