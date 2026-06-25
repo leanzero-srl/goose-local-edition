@@ -99,6 +99,12 @@ Recipe `local-edition/recipes/swarm_v3.yaml`: planner 27B@workhorse fans 4 indep
 - RE-RUN (v3b, pre-warmed): all 3 devices delivered their modules in parallel; planner integrated `test_all.py`, self-corrected the test twice (verify→fix), → **"All tests passed!"** (4/4 modules). Files: docs/runs/v3_out2/. Log: docs/runs/swarm_v3b.log.
 - OPERATIONAL LESSON: pre-warm worker models before a swarm; remote JIT-load during active generation is unreliable. FOLLOW-UP: have the swarm pre-load its device pool and/or retry on "Model is unloaded".
 
+## SCHEDULER M1.1 + M1.2 — `goose swarm` runs the fleet (VALIDATED 2026-06-25)
+- M1.1 `GooseAgentDispatcher` (`crates/goose-cli/src/commands/swarm.rs`): inlines the PUBLIC Agent drive sequence — `providers::create("lmstudio")` → `AgentConfig::new` → `Agent::with_config` → `create_session` → `update_provider(ModelConfig per device)` → add developer extension → `apply_recipe_components` → `override_system_prompt` → drain `reply` stream; captures the `recipe__final_output` ToolRequest argument FROM the stream (no private `final_output_tool` access). Maps errors → Transient (re-dispatch) vs Terminal.
+- M1.2 `goose swarm "<prompt>"` (`cli.rs` Command::Swarm — the ONLY upstream-tracked edit; crate auto-joins via crates/*): planner(27B) → typed plan JSON → `Dag::from_planner_json` → `Scheduler::run` over the pool → report. **Compiled clean first try; clippy -D warnings clean.**
+- FLEET RUN (text task: 3 planet paragraphs + a summary depending on all 3; pool mac(w2)+macbook(w1), planner 27B@workhorse): plan = 4 subtasks. **All 4 done; dispatched_per_device {mac:3, macbook:1}** — the weight-2 device did 3x the weight-1 device's work; the summary ran AFTER its 3 deps (dep-gating) and combined their outputs (shared-context pass-down). Log: `docs/runs/swarm_m12.log`.
+- NOTE: `qwopus3.6-35b-a3b`@workhorse failed to PRE-LOAD ("LM Link connection closed" while workhorse held the 27B) → ran on the 2 healthy loaded workers (mac.lan + macbook). Reinforces M1.3 (pre-warm + retry) and M2 (pool menu). The scheduler's re-dispatch would have steered around it had it been in the pool.
+
 ## Open items / next
 - Difficulty-aware routing (planner tags hard→27B / bulk→35B) + typed plan (`response.json_schema`).
 - True 3-way fan-out: same model-id on multiple devices → LM Link "Preferred Device" picks one; need to verify how to target a specific device (distinct aliases per device, or delegate-level addressing).

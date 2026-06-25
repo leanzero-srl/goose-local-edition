@@ -4922,6 +4922,7 @@ dependencies = [
  "goose",
  "goose-mcp",
  "goose-providers",
+ "goose-swarm",
  "indicatif 0.18.4",
  "open",
  "rand 0.10.1",
@@ -5084,6 +5085,18 @@ dependencies = [
  "utoipa 4.2.3",
  "uuid",
  "winreg",
+]
+
+[[package]]
+name = "goose-swarm"
+version = "1.39.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
