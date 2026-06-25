@@ -83,6 +83,7 @@ use uuid::Uuid;
 mod agent_requests;
 pub use agent_requests::agent_request_schemas;
 mod agent_mentions;
+mod apps;
 mod config;
 mod custom_dispatch;
 mod diagnostics;
@@ -1004,6 +1005,7 @@ impl GooseAcpAgent {
     fn initial_session_extensions(
         &self,
         config: &Config,
+        project_root: &Path,
         mcp_servers: Vec<McpServer>,
         goose_extensions: Option<Vec<GooseExtension>>,
         recipe_extensions: Option<&[ExtensionConfig]>,
@@ -1023,6 +1025,11 @@ impl GooseAcpAgent {
             }
         } else if mcp_servers.is_empty() {
             for extension in get_enabled_extensions_with_config(config) {
+                push_or_replace_extension(&mut extensions, extension);
+            }
+            for extension in
+                crate::plugins::mcp_servers::enabled_plugin_mcp_servers(Some(project_root))
+            {
                 push_or_replace_extension(&mut extensions, extension);
             }
         } else {
@@ -1177,6 +1184,7 @@ impl GooseAcpAgent {
     ) -> Result<ExtensionData, agent_client_protocol::Error> {
         let extensions = self.initial_session_extensions(
             config,
+            &session.working_dir,
             mcp_servers,
             goose_extensions,
             recipe_extensions,
