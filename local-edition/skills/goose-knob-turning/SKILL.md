@@ -18,6 +18,15 @@ Pool config lives under the `swarm:` key in `~/.config/goose/config.yaml` (round
 - **planner_model** — the smart planner (default `qwen/qwen3.6-27b`). Set via the `pool` menu.
 - **worker_max_turns** (SwarmConfig, default 40) — raise if workers hit the cap before finishing.
 - **max_attempts** (SwarmConfig, default 3) — raise for flaky LM Link.
+- **worker_timeout_secs** (SwarmConfig, default 420) — per-task wall-clock cap; a worker exceeding it is treated as HUNG and re-routed to another device, so one stuck/loading model never stalls the whole run. Lower to fail-fast on a thrashy fleet (risks false-timeouts on genuinely slow tasks).
+
+### Parallelism knobs (this fork's planning pipeline — keep the fleet busy, not the 27B alone)
+- **research_planning** (off | on | auto, default **on**) — run the parallel research phase before planning; `auto` = amendments only. Per-run: `goose swarm run --research true|false`.
+- **research_scouts** (default **true**) — research method: parallel fixed-lens SCOUTS (codebase/libraries/architecture/edge-cases — no serial scoping call) vs the 27B scoping questions first.
+- **parallel_planning** (default **true**) — PLAN method: the 27B drafts a brief skeleton, then the whole fleet (incl. the 27B) writes every subtask's spec IN PARALLEL; falls back to solo `plan()` on any error.
+- **max_research_questions** (default 4) — caps research questions / scout lenses.
+- **dynamic_replan** / **max_replans** (default true / 2) — when ≥2 workers idle mid-run while a task is still in flight, the planner injects more independent work to fill the tail.
+- All of the above round-trip via the `goose swarm pool` menu + show.
 - **GOOSE_LOCAL_CONTEXT_CAP** (env) — effective context window cap; per-turn proactive compaction triggers off it mid-run.
 - **GOOSE_MAX_BACKGROUND_TASKS** (env) — goose's background-task cap (the swarm uses its own per-device semaphores, so this rarely matters).
 - **MCP worker extensions** — `goose swarm run --mcp <name>` or `SwarmConfig.worker_extensions` (`context7` | `web-search` | `doc-processor`); secrets come from env (`CONTEXT7_API_KEY`, `WEBSEARCH_BEARER`/`SERPER_KEY`/`GITHUB_TOKEN`, `DOCPROC_BEARER`), never config.
@@ -36,6 +45,9 @@ Pool config lives under the `swarm:` key in `~/.config/goose/config.yaml` (round
 - **Worker hits max-turns before finishing** (task output truncated / no final_output) → raise `worker_max_turns`.
 - **A hard subtask ran on a weak model** → the planner labels hard tasks `qwen/qwen3.6-27b`, but 27B is the planner, not a worker, so it falls back to a 35B. Add 27B to the worker pool (`pool add wh-27b qwen/qwen3.6-27b 1`) for true hard-task routing.
 - **No MCP calls when expected** (is_mcp tool calls absent) → confirm `--mcp <name>` + the secret env var is set; a failed extension connection is logged non-fatally.
+- **Run STALLS — one task never completes, fleet goes idle, no new events in the JSONL** → a hung/loading model. `worker_timeout_secs` re-routes it after the cap (look for `↻ … timed out, re-routing`). If it recurs the fleet is THRASHING models (RAM can't hold all loaded at once under the heavier parallel load) — load fewer models, pin TTLs (`lms load … --ttl 3600`), or lower per-device weights. "Invalid model identifier" / "is not loaded" 400s now count as transient → re-route.
+- **Planner works ALONE while other nodes idle during research/planning** → set `research_planning=on` + `research_scouts=true` (parallel scouts) + `parallel_planning=true` (fleet detailing). The only irreducibly-serial step is the lightweight 27B skeleton; phase banners (SCOUT/PLAN/EXECUTE) on stderr show which stage is which and why.
+- **Poor EXECUTE parallelism (a deep dependency chain / one chokepoint everything depends on)** → the architect prompt caps dependency depth at 2 and discourages chokepoints; a remaining chain is usually a genuine shared dependency (keep that subtask tiny so dependents unblock fast).
 
 ## Running the harness (the verifier + the upstream gate)
 ```bash
@@ -68,3 +80,4 @@ When the user reports "X is broken" in plain terms: (1) find the latest `<cwd>/.
 
 ## Changelog (append learnings)
 - 2026-06-25: Created. Pillars: scheduler crate + swarm.rs + structured JSONL/observability + MCP worker extensions + per-turn compaction. Known: preferred-model routing concentrates easy tasks on the 35B device whose model the planner names; add 27B as a worker for hard-task routing. Qwen3.6 is a reasoning model — give the harness brain ≥16K max_tokens (thinking lands in reasoning_content).
+- 2026-06-26: Parallelized the planning/research phases so the fleet works together instead of the 27B alone. Added: dynamic replanner (fills idle workers mid-run), parallel-lens SCOUTS (replace the serial scope call), parallel PLAN (27B skeleton + fleet detailing), phase banners (SCOUT/PLAN/EXECUTE), and a per-task worker_timeout_secs re-route. Fleet-verified: gen=2/3 concurrency, 7 subtasks detailed across all 4 models, a hung worker recovered via re-route, and the produced app passed its own 212 tests. Root cause of mid-run stalls: LM Studio JIT model-load/evict thrashing under heavier parallel load — re-route handles it; reduce loaded-model count if frequent.
