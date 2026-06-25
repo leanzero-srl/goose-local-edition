@@ -212,6 +212,34 @@ export const zReadResourceResponse_unstable = z.object({
     result: z.unknown().optional().default(null)
 });
 
+export const zAppsListRequest_unstable = z.object({
+    sessionId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zAppsListResponse_unstable = z.object({
+    apps: z.array(z.unknown()).optional().default([])
+});
+
+export const zAppsExportRequest_unstable = z.object({
+    name: z.string()
+});
+
+export const zAppsExportResponse_unstable = z.object({
+    html: z.string()
+});
+
+export const zAppsImportRequest_unstable = z.object({
+    html: z.string()
+});
+
+export const zAppsImportResponse_unstable = z.object({
+    name: z.string(),
+    message: z.string()
+});
+
 /**
  * Update the working directory for a session.
  */
@@ -2119,6 +2147,9 @@ export const zExtRequest = z.object({
             zGetToolsRequest_unstable,
             zGooseToolCallRequest_unstable,
             zReadResourceRequest_unstable,
+            zAppsListRequest_unstable,
+            zAppsExportRequest_unstable,
+            zAppsImportRequest_unstable,
             zUpdateWorkingDirRequest_unstable,
             zSetSessionSystemPromptRequest_unstable,
             zSteerSessionRequest_unstable,
@@ -2215,6 +2246,9 @@ export const zExtResponse = z.union([
                 zGetToolsResponse_unstable,
                 zGooseToolCallResponse_unstable,
                 zReadResourceResponse_unstable,
+                zAppsListResponse_unstable,
+                zAppsExportResponse_unstable,
+                zAppsImportResponse_unstable,
                 zSteerSessionResponse_unstable,
                 zDiagnosticsGetResponse_unstable,
                 zGetConfigExtensionsResponse_unstable,
