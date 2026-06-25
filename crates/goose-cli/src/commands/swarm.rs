@@ -1,31 +1,348 @@
-//! `goose swarm run` — local multi-device swarm (goose-local-edition).
+//! `goose swarm` — local multi-device swarm (goose-local-edition).
 //!
-//! The 27B planner emits a typed DAG; the goose-swarm weighted scheduler dispatches each task to a
-//! device's LM Link model via [`GooseAgentDispatcher`], which inlines Goose's public Agent drive
-//! sequence (no private APIs) and captures the typed `recipe__final_output` payload from the reply
-//! stream. M1.2: hard-coded 2-device pool; the cliclack `goose swarm pool` menu is M2.
+//! `goose swarm run "<task>"` plans on the smart model then dispatches subtasks across the LM Link
+//! device pool with the goose-swarm weighted work-queue scheduler. `goose swarm pool` manages the
+//! pool (devices, weights, enable/disable) via an interactive menu, persisted in the Goose config.
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use console::style;
 use futures::StreamExt;
 use goose::agents::{Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig};
 use goose::config::permission::PermissionManager;
-use goose::config::GooseMode;
+use goose::config::{Config, GooseMode};
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{Dag, DeviceCfg, DispatchError, DispatchRequest, Scheduler, TaskDispatcher};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::process::Command as ProcCommand;
 use std::sync::Arc;
 
-/// The public final-output tool name (stable across the agent loop). We read its argument from the
-/// reply stream instead of touching the private `Agent::final_output_tool` field.
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
+const SWARM_CONFIG_KEY: &str = "swarm";
 
-/// Drives a Goose Agent per task over one shared lmstudio provider; the device is selected by the
-/// per-task model id (LM Link routes it).
+// ---------------------------------------------------------------------------------------------
+// Pool config (persisted under the `swarm` key in ~/.config/goose/config.yaml)
+// ---------------------------------------------------------------------------------------------
+
+fn default_endpoint() -> String {
+    "http://localhost:1234".to_string()
+}
+fn default_planner() -> String {
+    "qwen/qwen3.6-27b".to_string()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SwarmDevice {
+    pub id: String,
+    pub model_id: String,
+    pub weight: u32,
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SwarmConfig {
+    #[serde(default = "default_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_planner")]
+    pub planner_model: String,
+    #[serde(default)]
+    pub devices: Vec<SwarmDevice>,
+}
+
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_endpoint(),
+            planner_model: default_planner(),
+            devices: vec![
+                SwarmDevice {
+                    id: "mac".to_string(),
+                    model_id: "qwen/qwen3.6-35b-a3b".to_string(),
+                    weight: 2,
+                    enabled: true,
+                },
+                SwarmDevice {
+                    id: "macbook".to_string(),
+                    model_id: "qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx".to_string(),
+                    weight: 1,
+                    enabled: true,
+                },
+            ],
+        }
+    }
+}
+
+fn load_config() -> SwarmConfig {
+    Config::global()
+        .get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
+        .unwrap_or_default()
+}
+
+fn save_config(cfg: &SwarmConfig) -> Result<()> {
+    Config::global()
+        .set_param(SWARM_CONFIG_KEY, cfg)
+        .map_err(|e| anyhow!("failed to save swarm config: {e}"))
+}
+
+// ---------------------------------------------------------------------------------------------
+// CLI surface
+// ---------------------------------------------------------------------------------------------
+
+#[derive(clap::Subcommand, Debug)]
+pub enum SwarmCommand {
+    /// Plan a task and run it across the swarm device pool.
+    Run {
+        /// The task to plan and run.
+        prompt: String,
+    },
+    /// View and manage the swarm device pool (interactive menu when no subcommand is given).
+    Pool {
+        #[command(subcommand)]
+        command: Option<PoolCommand>,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum PoolCommand {
+    /// Print the current pool.
+    Show,
+    /// Add a device.
+    Add {
+        id: String,
+        model_id: String,
+        #[arg(default_value_t = 1)]
+        weight: u32,
+    },
+    /// Remove a device by id.
+    Rm { id: String },
+    /// Set a device's weight.
+    Weight { id: String, weight: u32 },
+    /// Enable a device.
+    Enable { id: String },
+    /// Disable a device.
+    Disable { id: String },
+    /// Probe the live fleet (lms ps + the endpoint's model ids).
+    Probe,
+}
+
+pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
+    match cmd {
+        SwarmCommand::Run { prompt } => run_swarm(prompt).await,
+        SwarmCommand::Pool { command } => match command {
+            None => pool_menu(),
+            Some(pc) => pool_op(pc),
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pool management
+// ---------------------------------------------------------------------------------------------
+
+fn show_pool(cfg: &SwarmConfig) {
+    println!(
+        "\n{}  endpoint {}  planner {}",
+        style(" swarm pool ").on_cyan().black().bold(),
+        style(&cfg.endpoint).cyan(),
+        style(&cfg.planner_model).green()
+    );
+    if cfg.devices.is_empty() {
+        println!("  {}", style("(no devices — add one)").yellow());
+        return;
+    }
+    for d in &cfg.devices {
+        let state = if d.enabled {
+            style("enabled ").green().bold()
+        } else {
+            style("disabled").red().bold()
+        };
+        println!(
+            "  {state}  {:<10} weight {}  {}",
+            style(&d.id).bold(),
+            style(d.weight).cyan().bold(),
+            style(&d.model_id).dim()
+        );
+    }
+}
+
+fn pool_menu() -> Result<()> {
+    let mut cfg = load_config();
+    cliclack::intro(style(" goose swarm pool ").on_cyan().black())?;
+    loop {
+        show_pool(&cfg);
+        let action: &str = cliclack::select("Manage the device pool")
+            .item("add", "Add a device", "")
+            .item("weight", "Set a device weight", "")
+            .item("toggle", "Enable / disable a device", "")
+            .item("remove", "Remove a device", "")
+            .item("planner", "Set the planner model", "")
+            .item("probe", "Probe the live fleet", "lms ps + endpoint models")
+            .item("save", "Save & exit", "")
+            .item("quit", "Quit without saving", "")
+            .interact()?;
+        match action {
+            "add" => {
+                let id: String = cliclack::input("Device id (e.g. workhorse)").interact()?;
+                let model_id: String =
+                    cliclack::input("LM Link model id (must be unique)").interact()?;
+                let weight: String = cliclack::input("Weight (max concurrent tasks)")
+                    .default_input("1")
+                    .interact()?;
+                let weight: u32 = weight.trim().parse().unwrap_or(1).max(1);
+                cfg.devices.retain(|d| d.id != id);
+                cfg.devices.push(SwarmDevice {
+                    id,
+                    model_id,
+                    weight,
+                    enabled: true,
+                });
+            }
+            "weight" => {
+                if let Some(id) = pick_device(&cfg, "Set weight for which device?")? {
+                    let weight: String =
+                        cliclack::input(format!("New weight for {id}")).interact()?;
+                    let weight: u32 = weight.trim().parse().unwrap_or(1).max(1);
+                    if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                        d.weight = weight;
+                    }
+                }
+            }
+            "toggle" => {
+                if let Some(id) = pick_device(&cfg, "Enable/disable which device?")? {
+                    if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                        d.enabled = !d.enabled;
+                    }
+                }
+            }
+            "remove" => {
+                if let Some(id) = pick_device(&cfg, "Remove which device?")? {
+                    cfg.devices.retain(|d| d.id != id);
+                }
+            }
+            "planner" => {
+                let m: String = cliclack::input("Planner model id")
+                    .default_input(&cfg.planner_model)
+                    .interact()?;
+                cfg.planner_model = m;
+            }
+            "probe" => probe_fleet(),
+            "save" => {
+                save_config(&cfg)?;
+                cliclack::outro(style("pool saved").green())?;
+                break;
+            }
+            "quit" => {
+                cliclack::outro(style("not saved").yellow())?;
+                break;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn pick_device(cfg: &SwarmConfig, prompt: &str) -> Result<Option<String>> {
+    if cfg.devices.is_empty() {
+        println!("  {}", style("(no devices)").yellow());
+        return Ok(None);
+    }
+    let mut sel = cliclack::select(prompt.to_string());
+    for d in &cfg.devices {
+        sel = sel.item(d.id.clone(), &d.id, &d.model_id);
+    }
+    Ok(Some(sel.interact()?))
+}
+
+fn pool_op(pc: PoolCommand) -> Result<()> {
+    let mut cfg = load_config();
+    match pc {
+        PoolCommand::Show => {
+            show_pool(&cfg);
+            return Ok(());
+        }
+        PoolCommand::Probe => {
+            probe_fleet();
+            return Ok(());
+        }
+        PoolCommand::Add {
+            id,
+            model_id,
+            weight,
+        } => {
+            cfg.devices.retain(|d| d.id != id);
+            cfg.devices.push(SwarmDevice {
+                id,
+                model_id,
+                weight: weight.max(1),
+                enabled: true,
+            });
+        }
+        PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
+        PoolCommand::Weight { id, weight } => {
+            if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                d.weight = weight.max(1);
+            }
+        }
+        PoolCommand::Enable { id } => {
+            if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                d.enabled = true;
+            }
+        }
+        PoolCommand::Disable { id } => {
+            if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                d.enabled = false;
+            }
+        }
+    }
+    save_config(&cfg)?;
+    show_pool(&cfg);
+    Ok(())
+}
+
+fn probe_fleet() {
+    println!("\n{}", style("lms ps:").bold());
+    match ProcCommand::new("lms").arg("ps").output() {
+        Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
+        Err(e) => println!("  (lms ps failed: {e})"),
+    }
+    println!("{}", style("endpoint model ids:").bold());
+    match ProcCommand::new("curl")
+        .args(["-s", "--max-time", "6", "http://localhost:1234/v1/models"])
+        .output()
+    {
+        Ok(out) => {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
+                    for m in arr {
+                        if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
+                            println!("  {id}");
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => println!("  (curl failed: {e})"),
+    }
+}
+
+/// Best-effort: load a model on its device via `lms`. Used to pre-warm and to recover from a
+/// transient "Model is unloaded" before the scheduler re-dispatches.
+fn lms_load(model_id: &str) {
+    let _ = ProcCommand::new("lms")
+        .args(["load", model_id, "-y", "--ttl", "3600"])
+        .output();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
+// ---------------------------------------------------------------------------------------------
+
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
     session_manager: Arc<SessionManager>,
@@ -36,7 +353,6 @@ pub struct GooseAgentDispatcher {
 
 impl GooseAgentDispatcher {
     pub async fn new(working_dir: PathBuf, worker_max_turns: u32) -> Result<Self> {
-        // One lmstudio provider; per-task model is set via update_provider.
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
         std::fs::create_dir_all(&session_root)?;
@@ -51,8 +367,6 @@ impl GooseAgentDispatcher {
         })
     }
 
-    /// Run one isolated agent bound to `model_id`. Returns (joined assistant text, final_output JSON
-    /// if a response schema was set and the model called the final_output tool).
     async fn run_agent(
         &self,
         model_id: &str,
@@ -131,8 +445,9 @@ impl GooseAgentDispatcher {
                             MessageContent::ToolRequest(req) => {
                                 if let Ok(tc) = req.tool_call.as_ref() {
                                     if tc.name == FINAL_OUTPUT_TOOL {
-                                        final_output =
-                                            Some(serde_json::to_string(&tc.arguments).unwrap_or_default());
+                                        final_output = Some(
+                                            serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                                        );
                                     }
                                 }
                             }
@@ -149,7 +464,6 @@ impl GooseAgentDispatcher {
         Ok((texts.concat(), final_output))
     }
 
-    /// Run the planner on `planner_model` and return the typed plan JSON (the final_output payload).
     pub async fn plan(
         &self,
         planner_model: &str,
@@ -167,7 +481,13 @@ impl GooseAgentDispatcher {
             json_schema: Some(plan_schema),
         });
         let (_text, final_output) = self
-            .run_agent(planner_model, system, format!("Plan this task: {user_prompt}"), response, 15)
+            .run_agent(
+                planner_model,
+                system,
+                format!("Plan this task: {user_prompt}"),
+                response,
+                15,
+            )
             .await?;
         final_output.ok_or_else(|| anyhow!("planner did not produce a final_output plan"))
     }
@@ -190,7 +510,13 @@ impl TaskDispatcher for GooseAgentDispatcher {
              When finished, briefly state what you produced.\n\n{context_block}"
         );
         match self
-            .run_agent(&req.model_id, system_prompt, req.description.clone(), None, self.worker_max_turns)
+            .run_agent(
+                &req.model_id,
+                system_prompt,
+                req.description.clone(),
+                None,
+                self.worker_max_turns,
+            )
             .await
         {
             Ok((text, _)) => Ok(if text.trim().is_empty() {
@@ -205,6 +531,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     || s.contains("model_not_found")
                     || s.contains("connection")
                 {
+                    // M1.3: best-effort re-warm before the scheduler re-dispatches.
+                    if s.contains("Model is unloaded") || s.contains("connection") {
+                        lms_load(&req.model_id);
+                    }
                     Err(DispatchError::Transient(s))
                 } else {
                     Err(DispatchError::Terminal(s))
@@ -214,7 +544,6 @@ impl TaskDispatcher for GooseAgentDispatcher {
     }
 }
 
-/// The typed plan schema the planner must satisfy (mirrors local-edition/recipes/planner.yaml).
 fn plan_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -242,44 +571,50 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
-/// M1.2 hard-coded device pool (M2 reads/edits this via `goose swarm pool`). Weights reflect
-/// heterogeneous capacity; model ids must be unique (LM Link routes by id).
-fn default_pool() -> Vec<DeviceCfg> {
-    vec![
-        DeviceCfg {
-            id: "mac".to_string(),
-            model_id: "qwen/qwen3.6-35b-a3b".to_string(),
-            weight: 2,
-            enabled: true,
-        },
-        DeviceCfg {
-            id: "macbook".to_string(),
-            model_id: "qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx".to_string(),
-            weight: 1,
-            enabled: true,
-        },
-    ]
-}
-
 pub async fn run_swarm(prompt: String) -> Result<()> {
-    let working_dir = std::env::current_dir()?;
-    println!("\x1b[1mswarm\x1b[0m working dir: {}", working_dir.display());
+    let cfg = load_config();
+    let enabled: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.enabled).collect();
+    if enabled.is_empty() {
+        return Err(anyhow!(
+            "no enabled devices in the swarm pool — run `goose swarm pool` to add some"
+        ));
+    }
+    std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
 
-    let dispatcher = Arc::new(GooseAgentDispatcher::new(working_dir, 40).await?);
-    let devices = default_pool();
+    let working_dir = std::env::current_dir()?;
+    println!("{} working dir: {}", style("swarm").bold(), working_dir.display());
     println!(
-        "pool: {} device(s) — {}",
-        devices.len(),
-        devices
+        "pool: {}  planner {}",
+        enabled
             .iter()
             .map(|d| format!("{}(w{})", d.id, d.weight))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        style(&cfg.planner_model).green()
     );
 
-    println!("planning on qwen/qwen3.6-27b ...");
+    // M1.3: pre-warm the planner + all enabled worker models so remote JIT-load doesn't race.
+    println!("pre-warming models ...");
+    lms_load(&cfg.planner_model);
+    for d in &enabled {
+        lms_load(&d.model_id);
+    }
+
+    let devices: Vec<DeviceCfg> = enabled
+        .iter()
+        .map(|d| DeviceCfg {
+            id: d.id.clone(),
+            model_id: d.model_id.clone(),
+            weight: d.weight,
+            enabled: true,
+        })
+        .collect();
+
+    let dispatcher = Arc::new(GooseAgentDispatcher::new(working_dir, 40).await?);
+
+    println!("planning on {} ...", cfg.planner_model);
     let plan_json = dispatcher
-        .plan("qwen/qwen3.6-27b", &prompt, plan_schema())
+        .plan(&cfg.planner_model, &prompt, plan_schema())
         .await?;
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
@@ -290,10 +625,15 @@ pub async fn run_swarm(prompt: String) -> Result<()> {
         .run(dag, dispatcher as Arc<dyn TaskDispatcher>)
         .await?;
 
-    println!("\n\x1b[1m=== swarm report ===\x1b[0m");
+    println!("\n{}", style("=== swarm report ===").bold());
     println!("done   ({}): {}", report.done.len(), report.done.join(", "));
     if !report.failed.is_empty() {
-        println!("FAILED ({}): {}", report.failed.len(), report.failed.join(", "));
+        println!(
+            "{} ({}): {}",
+            style("FAILED").red().bold(),
+            report.failed.len(),
+            report.failed.join(", ")
+        );
     }
     println!("dispatched per device: {:?}", report.dispatched_per_device);
     for id in &report.done {
