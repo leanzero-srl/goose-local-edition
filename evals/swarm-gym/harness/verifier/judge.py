@@ -13,8 +13,11 @@ JUDGE_SYS = (
     "request. Judge three things and HUNT for real mistakes: (1) requirements — is each requirement "
     "actually met by the code (read it, don't assume); (2) code_quality — correctness, error handling, "
     "sensible structure (1-5); (3) bugs — off-by-ones, missing edge cases, race conditions, wrong "
-    "logic, dead code. Be concrete and cite file:line in evidence. Do not reward effort; reward "
-    "correctness. For a minimal-spec task, judge whether the swarm made reasonable engineering choices."
+    "logic, dead code, AND leftover mistakes (debug prints/breakpoints, TODOs, unimplemented stubs, "
+    "functions faked/hardcoded instead of actually implemented). Check each requirement is REALLY "
+    "implemented, not stubbed to pass a shallow test. Be concrete and cite file:line. Do not reward "
+    "effort; reward correctness. For a minimal-spec task, judge whether the swarm made reasonable "
+    "engineering choices for everything left unsaid."
 )
 
 SCHEMA = (

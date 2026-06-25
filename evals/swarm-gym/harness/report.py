@@ -47,6 +47,24 @@ def _html(s: Dict[str, Any]) -> str:
             f'{" — " + html.escape(f.get("fix_hint","")) if f.get("fix_hint") else ""}</li>'
             for f in v.get("findings", [])
         )
+        diag = (
+            v.get("dimensions", {})
+            .get("diagnostics", {})
+            .get("detail", {})
+            .get("by_model", {})
+        )
+        diag_rows = "".join(
+            f"<tr><td>{html.escape(m)}</td><td>{s.get('tasks',0)}</td><td>{s.get('tool_calls',0)}</td>"
+            f"<td>{s.get('failed',0)}</td><td>{s.get('mcp',0)}</td><td>{s.get('zero_tool_tasks',0)}</td></tr>"
+            for m, s in (diag.items() if isinstance(diag, dict) else [])
+        )
+        diag_html = (
+            '<table border=1 cellpadding=4 style="border-collapse:collapse;margin-top:6px">'
+            "<tr><th>model</th><th>tasks</th><th>tools</th><th>failed</th><th>mcp</th><th>zero-tool</th></tr>"
+            f"{diag_rows}</table>"
+            if diag_rows
+            else ""
+        )
         tweak = ""
         if "tweak" in t:
             tweak = (
@@ -58,7 +76,7 @@ def _html(s: Dict[str, Any]) -> str:
             f'<div style="border:2px solid #d0d7de;padding:14px;margin:12px 0">'
             f'<h3>Turn {t.get("turn")} · {html.escape(t.get("kind","open"))} {_badge(v.get("overall",""))}</h3>'
             f'<p><b>prompt:</b> {html.escape(str(t.get("prompt",""))[:500])}</p>'
-            f"<p>{dims}</p><ul>{finds}</ul>{tweak}</div>"
+            f"<p>{dims}</p>{diag_html}<ul>{finds}</ul>{tweak}</div>"
         )
     return (
         "<!doctype html><html><head><meta charset=utf-8>"
