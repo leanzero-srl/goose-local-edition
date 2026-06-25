@@ -1,0 +1,22 @@
+# Example Goose config for the local swarm.
+# Copy to ~/.config/goose/config.yaml. Set provider creds via env:
+#   export LMSTUDIO_HOST=http://localhost:1234
+#   export LMSTUDIO_API_KEY=lm-studio   # dummy; LM Studio ignores it
+#
+# The single LM Link endpoint (:1234) serves all fleet models by id and routes to the holder device.
+GOOSE_PROVIDER: lmstudio
+GOOSE_MODEL: qwen/qwen3.6-27b          # default/lead = the smart 27B (workhorse)
+
+extensions:
+  developer:
+    bundled: true
+    display_name: Developer
+    enabled: true
+    name: developer
+    timeout: 300
+    type: builtin
+
+# Swarm / subagent knobs:
+#   GOOSE_MAX_BACKGROUND_TASKS  parallel async delegates (default 5)
+#   GOOSE_SUBAGENT_MODEL        default worker model if a sub-recipe omits settings.goose_model
+#   GOOSE_PLANNER_PROVIDER / GOOSE_PLANNER_MODEL  dedicated planner model

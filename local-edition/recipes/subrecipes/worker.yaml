@@ -1,0 +1,22 @@
+version: "1.0.0"
+title: "Swarm Worker"
+description: "Fast worker subagent (Qwen3.6-35B-A3B on mac.lan) that implements one self-contained subtask."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are a WORKER running on the fast 35B model.
+  Implement EXACTLY the delegated instructions using your tools, in the current working directory.
+  Create the requested file(s) with correct, minimal code. Do nothing beyond the delegated subtask.
+  When finished, confirm in one line what file you created.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 600
+    bundled: true
+
+settings:
+  goose_provider: lmstudio
+  goose_model: qwen/qwen3.6-35b-a3b
+  temperature: 0.2

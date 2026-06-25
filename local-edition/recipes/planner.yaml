@@ -1,0 +1,54 @@
+version: "1.0.0"
+title: "Swarm Planner (typed plan)"
+description: "27B planner that emits a typed, schema-validated plan (no execution): independent subtasks tagged with difficulty + target model + ownership + deps."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are the PLANNER, running on the smart 27B model. Produce a PLAN ONLY — do NOT write code.
+  Decompose the task into the smallest set of subtasks. Maximize the set that is INDEPENDENT
+  (no shared files, no ordering dependency) so they can run in parallel.
+  For each subtask:
+    - id: short kebab-case identifier
+    - description: a precise, self-contained spec a worker can execute alone
+    - difficulty: "hard" if it needs strong reasoning / non-trivial algorithm / cross-file design; else "easy"
+    - model: "qwen/qwen3.6-27b" when difficulty is hard, "qwen/qwen3.6-35b-a3b" when easy
+    - depends_on: list of subtask ids that must finish first (empty list if independent)
+    - files: file paths this subtask owns (MUST NOT overlap with other parallel subtasks)
+  Also produce "integration": what the planner will do itself after workers finish (and how it will verify).
+  Then call the final_output tool with the plan.
+
+settings:
+  goose_provider: lmstudio
+  goose_model: qwen/qwen3.6-27b
+  temperature: 0.1
+
+parameters:
+  - key: task
+    input_type: string
+    requirement: required
+    description: "The coding task to plan."
+
+response:
+  json_schema:
+    type: object
+    additionalProperties: false
+    required: [subtasks, integration]
+    properties:
+      subtasks:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, description, difficulty, model, depends_on, files]
+          properties:
+            id: { type: string }
+            description: { type: string }
+            difficulty: { type: string, enum: [easy, hard] }
+            model: { type: string }
+            depends_on: { type: array, items: { type: string } }
+            files: { type: array, items: { type: string } }
+      integration: { type: string }
+
+prompt: |
+  Plan this task: {{ task }}
