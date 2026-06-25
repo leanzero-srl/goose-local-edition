@@ -77,6 +77,9 @@ fn default_research_scouts() -> bool {
 fn default_parallel_planning() -> bool {
     true
 }
+fn default_worker_timeout_secs() -> u64 {
+    420
+}
 
 /// When the swarm runs a parallel research phase before planning.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -154,6 +157,10 @@ pub struct SwarmConfig {
     /// (vs the 27B writing the whole plan alone). On by default — maximizes parallelism in the PLAN phase.
     #[serde(default = "default_parallel_planning")]
     pub parallel_planning: bool,
+    /// Per-task wall-clock cap (seconds): a worker exceeding this is treated as hung and re-routed
+    /// to another device, so one stuck model never stalls the whole run.
+    #[serde(default = "default_worker_timeout_secs")]
+    pub worker_timeout_secs: u64,
 }
 
 impl Default for SwarmConfig {
@@ -191,6 +198,7 @@ impl Default for SwarmConfig {
             max_replans: default_max_replans(),
             research_scouts: default_research_scouts(),
             parallel_planning: default_parallel_planning(),
+            worker_timeout_secs: default_worker_timeout_secs(),
         }
     }
 }
@@ -366,6 +374,10 @@ fn show_pool(cfg: &SwarmConfig) {
         } else {
             style("solo 27B").cyan()
         }
+    );
+    println!(
+        "  timeout    worker {}s (hung tasks re-route)",
+        style(cfg.worker_timeout_secs).cyan()
     );
     println!(
         "  replan     {}   max-rounds {}",
@@ -1313,6 +1325,8 @@ pub struct GooseAgentDispatcher {
     worker_extensions: Vec<ExtensionConfig>,
     /// The planner model (also used by the dynamic Replanner impl).
     planner_model: String,
+    /// Per-task wall-clock cap (seconds): a worker exceeding this is treated as hung and re-routed.
+    worker_timeout_secs: u64,
 }
 
 impl GooseAgentDispatcher {
@@ -1321,6 +1335,7 @@ impl GooseAgentDispatcher {
         worker_max_turns: u32,
         worker_extensions: Vec<ExtensionConfig>,
         planner_model: String,
+        worker_timeout_secs: u64,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -1337,6 +1352,7 @@ impl GooseAgentDispatcher {
             worker_max_turns,
             worker_extensions,
             planner_model,
+            worker_timeout_secs,
         })
     }
 
@@ -1770,12 +1786,20 @@ impl GooseAgentDispatcher {
                 };
                 let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
                     spec for the worker who will build it: exact function/class names and signatures, key logic, the \
-                    files it owns, edge cases to handle, and what its tests must check. Be concrete and self-contained. \
-                    Output ONLY the spec prose — do NOT write code files and do NOT restate the whole project."
+                    files it owns, edge cases to handle, and what its tests must check. Be concrete and self-contained, \
+                    and BRIEF — about 150 words, no preamble. Output ONLY the spec prose; do NOT write code files or \
+                    restate the whole project."
                     .to_string();
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{fb}");
-                let desc = match me.run_agent(&model, system, user, None, 8, &[]).await {
-                    Ok(o) if !o.text.trim().is_empty() => o.text,
+                // Bound each detailer so one slow model cannot drag out the PLAN phase — on
+                // timeout/empty/error we fall back to the architect's brief line (still a valid spec).
+                let desc = match tokio::time::timeout(
+                    std::time::Duration::from_secs(75),
+                    me.run_agent(&model, system, user, None, 6, &[]),
+                )
+                .await
+                {
+                    Ok(Ok(o)) if !o.text.trim().is_empty() => o.text,
                     _ => brief,
                 };
                 eprintln!(
@@ -1863,17 +1887,37 @@ impl TaskDispatcher for GooseAgentDispatcher {
             style(&req.task_id).bold(),
             req.device_id
         );
-        let outcome = self
-            .run_agent(
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(self.worker_timeout_secs),
+            self.run_agent(
                 &req.model_id,
                 system_prompt,
                 req.description.clone(),
                 None,
                 self.worker_max_turns,
                 &self.worker_extensions,
-            )
-            .await;
+            ),
+        )
+        .await;
         let secs = started.elapsed().as_secs_f64();
+        // A worker that exceeds the timeout is almost certainly hung/wedged — surface it as transient
+        // so the scheduler re-routes it to another device instead of stalling the whole run forever.
+        let outcome = match outcome {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!(
+                    "  {} {} on {} ({:.0}s) — timed out, re-routing",
+                    style("↻").red().bold(),
+                    style(&req.task_id).bold(),
+                    req.device_id,
+                    secs
+                );
+                return Err(DispatchError::Transient(format!(
+                    "worker timed out after {}s",
+                    self.worker_timeout_secs
+                )));
+            }
+        };
         match outcome {
             Ok(out) => {
                 eprintln!(
@@ -2155,6 +2199,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             worker_max_turns,
             worker_extensions,
             cfg.planner_model.clone(),
+            cfg.worker_timeout_secs,
         )
         .await?,
     );
