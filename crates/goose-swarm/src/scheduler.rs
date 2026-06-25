@@ -10,11 +10,14 @@
 
 use crate::context::SharedContext;
 use crate::dag::{Dag, TaskId, TaskState};
-use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher};
+use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
+use crate::event::{EventSink, NullSink, SwarmEvent};
 use anyhow::{bail, Result};
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 
 /// A pool device = one LM Link model id with a capacity weight.
@@ -27,7 +30,7 @@ pub struct DeviceCfg {
     pub enabled: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RunReport {
     pub done: Vec<TaskId>,
     pub failed: Vec<TaskId>,
@@ -35,6 +38,47 @@ pub struct RunReport {
     pub context_json: serde_json::Value,
     /// Total tasks dispatched per device id (counts re-dispatches) — observability + weighting checks.
     pub dispatched_per_device: HashMap<String, u32>,
+    /// Per-task outcome detail for verification (device, model, attempts, timing, session, tool calls).
+    pub tasks: Vec<TaskOutcome>,
+    /// Aggregates per device for cluster verification.
+    pub per_device: HashMap<String, DeviceSummary>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskOutcome {
+    pub task_id: TaskId,
+    /// `done` | `failed` | `incomplete`.
+    pub status: String,
+    /// Device of the final attempt.
+    pub device: Option<String>,
+    pub model: Option<String>,
+    pub attempts: u32,
+    pub attempt_history: Vec<AttemptRecord>,
+    /// Wall-clock of the final attempt.
+    pub elapsed_ms: Option<u64>,
+    pub session_id: Option<String>,
+    pub tool_calls: Vec<ToolCallRecord>,
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AttemptRecord {
+    pub device: Option<String>,
+    pub model: Option<String>,
+    /// `ok` | `transient` | `terminal`.
+    pub outcome: String,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct DeviceSummary {
+    pub dispatched: u32,
+    pub tool_calls: u32,
+    pub mcp_calls: u32,
+    pub retries: u32,
+    /// Sum of attempt durations on this device — NOT wall-clock (tasks overlap under concurrency).
+    pub busy_ms: u64,
 }
 
 struct DeviceRt {
@@ -78,6 +122,13 @@ struct State {
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
     max_attempts: u32,
+    sink: Arc<dyn EventSink>,
+    attempt_started_at: HashMap<TaskId, Instant>,
+    attempt_log: HashMap<TaskId, Vec<AttemptRecord>>,
+    task_session: HashMap<TaskId, Option<String>>,
+    task_tool_calls: HashMap<TaskId, Vec<ToolCallRecord>>,
+    /// (device_id, model_id) of each task's most recent attempt.
+    task_final_device: HashMap<TaskId, (String, String)>,
 }
 
 impl State {
@@ -158,10 +209,8 @@ impl State {
     }
 
     fn do_claim(&mut self, tid: TaskId, dev: usize, out: &mut Vec<Assignment>) {
-        let slice = {
-            let deps = self.dag.tasks[&tid].spec.deps.clone();
-            self.ctx.slice_for(&deps)
-        };
+        let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let slice = self.ctx.slice_for(&deps);
         let (files, description, attempt) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
             n.state = TaskState::Claimed;
@@ -170,12 +219,24 @@ impl State {
         for f in &files {
             self.held_files.insert(f.clone());
         }
-        self.held_by.insert(tid.clone(), files);
         self.devices[dev].in_flight += 1;
         self.claimed_device.insert(tid.clone(), dev);
         let device_id = self.devices[dev].cfg.id.clone();
         let model_id = self.devices[dev].cfg.model_id.clone();
         *self.dispatched_per_device.entry(device_id.clone()).or_default() += 1;
+        self.attempt_started_at.insert(tid.clone(), Instant::now());
+        self.task_final_device
+            .insert(tid.clone(), (device_id.clone(), model_id.clone()));
+        self.sink.emit(&SwarmEvent::TaskDispatched {
+            task_id: tid.clone(),
+            device: device_id.clone(),
+            model: model_id.clone(),
+            attempt,
+            deps,
+            owned_files: files.clone(),
+            context_slice_len: slice.len(),
+        });
+        self.held_by.insert(tid.clone(), files);
         out.push(Assignment {
             task_id: tid.clone(),
             request: DispatchRequest {
@@ -189,7 +250,7 @@ impl State {
         });
     }
 
-    fn complete(&mut self, tid: &str, res: Result<String, DispatchError>) {
+    fn complete(&mut self, tid: &str, res: Result<TaskRunOutput, DispatchError>) {
         let released_dev = self.claimed_device.remove(tid);
         let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
         if let Some(dev) = released_dev {
@@ -203,8 +264,37 @@ impl State {
             }
         }
 
+        let elapsed_ms = self
+            .attempt_started_at
+            .remove(tid)
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let (dev_id, model_id) = match self.task_final_device.get(tid).cloned() {
+            Some((d, m)) => (Some(d), Some(m)),
+            None => (None, None),
+        };
+
         match res {
-            Ok(output) => {
+            Ok(run) => {
+                let TaskRunOutput {
+                    output,
+                    session_id,
+                    tool_calls,
+                } = run;
+                self.task_session.insert(tid.to_string(), session_id.clone());
+                self.task_tool_calls
+                    .insert(tid.to_string(), tool_calls.clone());
+                self.attempt_log
+                    .entry(tid.to_string())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: dev_id.clone(),
+                        model: model_id.clone(),
+                        outcome: "ok".to_string(),
+                        error: None,
+                        elapsed_ms,
+                    });
+                let attempts = self.attempt_log[tid].len() as u32;
                 {
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.state = TaskState::Done;
@@ -212,6 +302,16 @@ impl State {
                     n.avoid_device = None;
                 }
                 self.ctx.merge(tid, output);
+                self.sink.emit(&SwarmEvent::TaskCompleted {
+                    task_id: tid.to_string(),
+                    status: "done".to_string(),
+                    device: dev_id,
+                    model: model_id,
+                    attempts,
+                    elapsed_ms,
+                    session_id,
+                    tool_calls,
+                });
                 let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
                 for d in dependents {
                     let nd = self.dag.tasks.get_mut(&d).unwrap();
@@ -225,7 +325,17 @@ impl State {
                     }
                 }
             }
-            Err(DispatchError::Transient(_)) => {
+            Err(DispatchError::Transient(msg)) => {
+                self.attempt_log
+                    .entry(tid.to_string())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: dev_id.clone(),
+                        model: model_id.clone(),
+                        outcome: "transient".to_string(),
+                        error: Some(msg.clone()),
+                        elapsed_ms,
+                    });
                 let exhausted = {
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
@@ -234,20 +344,60 @@ impl State {
                 if exhausted {
                     self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
                     self.fail_descendants(tid);
+                    let attempts = self.attempt_log[tid].len() as u32;
+                    self.sink.emit(&SwarmEvent::TaskCompleted {
+                        task_id: tid.to_string(),
+                        status: "failed".to_string(),
+                        device: dev_id,
+                        model: model_id,
+                        attempts,
+                        elapsed_ms,
+                        session_id: None,
+                        tool_calls: Vec::new(),
+                    });
                 } else {
-                    let n = self.dag.tasks.get_mut(tid).unwrap();
-                    n.avoid_device = released_dev_id;
-                    n.state = TaskState::Ready;
-                    let fan_out = n.fan_out;
-                    self.ready.push(Ranked {
-                        fan_out,
-                        id: tid.to_string(),
+                    {
+                        let n = self.dag.tasks.get_mut(tid).unwrap();
+                        n.avoid_device = released_dev_id.clone();
+                        n.state = TaskState::Ready;
+                        let fan_out = n.fan_out;
+                        self.ready.push(Ranked {
+                            fan_out,
+                            id: tid.to_string(),
+                        });
+                    }
+                    self.sink.emit(&SwarmEvent::TaskRetry {
+                        task_id: tid.to_string(),
+                        from_device: released_dev_id,
+                        error: msg,
+                        transient: true,
                     });
                 }
             }
-            Err(DispatchError::Terminal(_)) => {
+            Err(DispatchError::Terminal(msg)) => {
+                self.attempt_log
+                    .entry(tid.to_string())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: dev_id.clone(),
+                        model: model_id.clone(),
+                        outcome: "terminal".to_string(),
+                        error: Some(msg),
+                        elapsed_ms,
+                    });
                 self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
                 self.fail_descendants(tid);
+                let attempts = self.attempt_log[tid].len() as u32;
+                self.sink.emit(&SwarmEvent::TaskCompleted {
+                    task_id: tid.to_string(),
+                    status: "failed".to_string(),
+                    device: dev_id,
+                    model: model_id,
+                    attempts,
+                    elapsed_ms,
+                    session_id: None,
+                    tool_calls: Vec::new(),
+                });
             }
         }
     }
@@ -278,26 +428,74 @@ impl State {
         let mut done = Vec::new();
         let mut failed = Vec::new();
         let mut results = HashMap::new();
+        let mut tasks = Vec::new();
+        let mut per_device: HashMap<String, DeviceSummary> = HashMap::new();
         for (id, n) in &self.dag.tasks {
-            match n.state {
+            let status = match n.state {
                 TaskState::Done => {
                     done.push(id.clone());
                     if let Some(r) = &n.result {
                         results.insert(id.clone(), r.clone());
                     }
+                    "done"
                 }
-                TaskState::Failed => failed.push(id.clone()),
-                _ => {}
+                TaskState::Failed => {
+                    failed.push(id.clone());
+                    "failed"
+                }
+                _ => "incomplete",
+            };
+            let history = self.attempt_log.get(id).cloned().unwrap_or_default();
+            let elapsed_ms = history.last().map(|a| a.elapsed_ms);
+            let (device, model) = match self.task_final_device.get(id) {
+                Some((d, m)) => (Some(d.clone()), Some(m.clone())),
+                None => (None, None),
+            };
+            let session_id = self.task_session.get(id).cloned().flatten();
+            let tool_calls = self.task_tool_calls.get(id).cloned().unwrap_or_default();
+
+            for a in &history {
+                if let Some(d) = &a.device {
+                    let e = per_device.entry(d.clone()).or_default();
+                    e.busy_ms += a.elapsed_ms;
+                    if a.outcome == "transient" {
+                        e.retries += 1;
+                    }
+                }
             }
+            if let Some(d) = &device {
+                let e = per_device.entry(d.clone()).or_default();
+                e.tool_calls += tool_calls.len() as u32;
+                e.mcp_calls += tool_calls.iter().filter(|t| t.is_mcp).count() as u32;
+            }
+
+            tasks.push(TaskOutcome {
+                task_id: id.clone(),
+                status: status.to_string(),
+                device,
+                model,
+                attempts: history.len() as u32,
+                attempt_history: history,
+                elapsed_ms,
+                session_id,
+                tool_calls,
+                output: n.result.clone(),
+            });
+        }
+        for (d, c) in &self.dispatched_per_device {
+            per_device.entry(d.clone()).or_default().dispatched = *c;
         }
         done.sort();
         failed.sort();
+        tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
         RunReport {
             done,
             failed,
             results,
             context_json: self.ctx.to_json(),
             dispatched_per_device: self.dispatched_per_device.clone(),
+            tasks,
+            per_device,
         }
     }
 }
@@ -305,6 +503,7 @@ impl State {
 pub struct Scheduler {
     devices: Vec<DeviceCfg>,
     max_attempts: u32,
+    sink: Arc<dyn EventSink>,
 }
 
 impl Scheduler {
@@ -312,7 +511,14 @@ impl Scheduler {
         Self {
             devices,
             max_attempts,
+            sink: Arc::new(NullSink),
         }
+    }
+
+    /// Attach an event sink for structured observability (goose-cli writes JSONL through it).
+    pub fn with_sink(mut self, sink: Arc<dyn EventSink>) -> Self {
+        self.sink = sink;
+        self
     }
 
     /// Run the whole DAG to completion. Returns when every task is Done or Failed.
@@ -355,6 +561,12 @@ impl Scheduler {
             dispatched_per_device: HashMap::new(),
             ctx: SharedContext::new(),
             max_attempts: self.max_attempts,
+            sink: self.sink.clone(),
+            attempt_started_at: HashMap::new(),
+            attempt_log: HashMap::new(),
+            task_session: HashMap::new(),
+            task_tool_calls: HashMap::new(),
+            task_final_device: HashMap::new(),
         }));
         let notify = Arc::new(Notify::new());
 
@@ -385,13 +597,15 @@ impl Scheduler {
                 if !dispatched_now && s.total_in_flight() == 0 {
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
+                    let remaining = s
+                        .dag
+                        .tasks
+                        .values()
+                        .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+                        .count();
+                    s.sink.emit(&SwarmEvent::SchedulerStuck { remaining });
                     bail!(
-                        "scheduler stuck: {} task(s) cannot proceed (blocked by failed deps or file holds)",
-                        s.dag
-                            .tasks
-                            .values()
-                            .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
-                            .count()
+                        "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
                     );
                 }
             }
