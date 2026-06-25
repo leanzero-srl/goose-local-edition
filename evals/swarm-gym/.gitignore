@@ -1,0 +1,12 @@
+# Generated test apps (KEPT on disk as the substrate for amendment tests — never committed)
+apps/*
+!apps/.gitkeep
+# Per-run artifacts + the results ledger (KEPT on disk, never committed)
+runs/
+ledger.sqlite*
+ledger/
+# Python
+.venv/
+__pycache__/
+*.pyc
+.env

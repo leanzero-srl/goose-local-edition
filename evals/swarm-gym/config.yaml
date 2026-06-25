@@ -1,0 +1,27 @@
+# swarm-gym configuration. Secrets come from the environment / .env, never from this file.
+
+brain:
+  # "claude" (cloud, default judge) or "local" (LM Studio Qwen 27B). Per-role overrides allowed.
+  provider: claude
+  claude_model: claude-sonnet-4-6      # generation/vibe; bump judge to opus for hardest verification
+  judge_model: claude-opus-4-8         # the verifier — strongest by default
+  local_base_url: http://localhost:1234/v1
+  local_model: qwen/qwen3.6-27b
+
+swarm:
+  # The goose-local-edition binary that runs the swarm under test.
+  binary: ../../target/debug/goose
+  endpoint: http://localhost:1234
+  # MCP extensions to expose to workers during gym runs (need the matching env secrets set).
+  mcp: []                              # e.g. [context7]
+  run_timeout_secs: 1200
+
+session:
+  default_turns: 6                     # vibing-session turn budget (the brain may stop earlier)
+  # Personas the vibing policy can adopt (seeded per session for semi-reproducible variety).
+  personas: [demanding-pm, vague-user, perfectionist, feature-hungry, pragmatic]
+
+paths:
+  apps: apps
+  runs: runs
+  ledger: ledger
