@@ -74,6 +74,9 @@ fn default_max_replans() -> u32 {
 fn default_research_scouts() -> bool {
     true
 }
+fn default_parallel_planning() -> bool {
+    true
+}
 
 /// When the swarm runs a parallel research phase before planning.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -147,6 +150,10 @@ pub struct SwarmConfig {
     /// scoping questions first. On by default — maximizes parallelism during the research phase.
     #[serde(default = "default_research_scouts")]
     pub research_scouts: bool,
+    /// Parallel planning: the 27B drafts a skeleton, then the fleet details every subtask in parallel
+    /// (vs the 27B writing the whole plan alone). On by default — maximizes parallelism in the PLAN phase.
+    #[serde(default = "default_parallel_planning")]
+    pub parallel_planning: bool,
 }
 
 impl Default for SwarmConfig {
@@ -183,6 +190,7 @@ impl Default for SwarmConfig {
             dynamic_replan: default_dynamic_replan(),
             max_replans: default_max_replans(),
             research_scouts: default_research_scouts(),
+            parallel_planning: default_parallel_planning(),
         }
     }
 }
@@ -350,6 +358,16 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
+        "  planning   {}",
+        if cfg.parallel_planning {
+            style("parallel (skeleton + fleet detailing)")
+                .green()
+                .bold()
+        } else {
+            style("solo 27B").cyan()
+        }
+    );
+    println!(
         "  replan     {}   max-rounds {}",
         if cfg.dynamic_replan {
             style("on").green().bold()
@@ -419,6 +437,11 @@ fn pool_menu() -> Result<()> {
                 "scouts",
                 "Research method",
                 "parallel scouts vs serial scoping",
+            )
+            .item(
+                "planning",
+                "Planning method",
+                "parallel fleet detailing vs solo 27B",
             )
             .item("max-research", "Max research questions / lenses", "")
             .item(
@@ -557,6 +580,12 @@ fn pool_menu() -> Result<()> {
                 cfg.research_scouts =
                     cliclack::confirm("Use parallel fixed-lens scouts (no serial scoping call)?")
                         .initial_value(cfg.research_scouts)
+                        .interact()?;
+            }
+            "planning" => {
+                cfg.parallel_planning =
+                    cliclack::confirm("Parallel planning (27B skeleton + fleet detailing)?")
+                        .initial_value(cfg.parallel_planning)
                         .interact()?;
             }
             "max-research" => {
@@ -1648,6 +1677,124 @@ impl GooseAgentDispatcher {
         out
     }
 
+    /// Parallel planning: the 27B drafts a STRUCTURAL SKELETON (brief one-line descriptions) fast, then
+    /// the fleet writes every subtask's implementation-ready spec IN PARALLEL, and we assemble the final
+    /// plan deterministically. Returns the same plan JSON `plan()` would — callers fall back to `plan()`
+    /// on Err. The skeleton itself is a valid plan, so a total detailer failure degrades gracefully.
+    async fn parallel_plan(
+        self: &Arc<Self>,
+        planner_model: &str,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        plan_schema: serde_json::Value,
+        worker_count: usize,
+        research_findings: &str,
+    ) -> Result<String> {
+        let research_block = if research_findings.is_empty() {
+            String::new()
+        } else {
+            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
+        };
+        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code.\n\
+            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
+            (split by file / module / feature), AT LEAST {worker_count}, with NON-OVERLAPPING files and NO ordering dependency \
+            so no worker sits idle. Only add a dependency when one subtask genuinely needs another's output.\n\
+            For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
+            it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
+            depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
+            UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
+            difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the files, writes and RUNS tests, reports PASS/FAIL; \
+            its files must NOT overlap the others. Then call the final_output tool with the plan.");
+        let out = self
+            .run_agent(
+                planner_model,
+                system,
+                format!("{research_block}Plan this task: {user_prompt}"),
+                Some(Response {
+                    json_schema: Some(plan_schema),
+                }),
+                12,
+                &[],
+            )
+            .await?;
+        let skeleton = out
+            .final_output
+            .ok_or_else(|| anyhow!("architect produced no skeleton"))?;
+        let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
+        let items: Vec<(usize, String, String)> = v
+            .get("subtasks")
+            .and_then(|s| s.as_array())
+            .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
+            .iter()
+            .enumerate()
+            .map(|(i, st)| {
+                (
+                    i,
+                    st["id"].as_str().unwrap_or("").to_string(),
+                    st["description"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        if items.is_empty() {
+            return Err(anyhow!("skeleton had zero subtasks"));
+        }
+        eprintln!(
+            "  skeleton: {} subtask(s) → detailing IN PARALLEL across the fleet:",
+            items.len()
+        );
+        let wm = if worker_models.is_empty() {
+            vec![planner_model.to_string()]
+        } else {
+            worker_models
+        };
+        let goal = user_prompt.to_string();
+        let findings = research_findings.to_string();
+        let mut handles = Vec::new();
+        for (idx, id, brief) in items {
+            let me = self.clone();
+            let model = wm[idx % wm.len()].clone();
+            let goal = goal.clone();
+            let findings = findings.clone();
+            handles.push(tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                eprintln!(
+                    "  {} detail {} → {}",
+                    style("▸").cyan().bold(),
+                    style(&id).bold(),
+                    model
+                );
+                let fb = if findings.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\nResearch findings:\n{findings}")
+                };
+                let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
+                    spec for the worker who will build it: exact function/class names and signatures, key logic, the \
+                    files it owns, edge cases to handle, and what its tests must check. Be concrete and self-contained. \
+                    Output ONLY the spec prose — do NOT write code files and do NOT restate the whole project."
+                    .to_string();
+                let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{fb}");
+                let desc = match me.run_agent(&model, system, user, None, 8, &[]).await {
+                    Ok(o) if !o.text.trim().is_empty() => o.text,
+                    _ => brief,
+                };
+                eprintln!(
+                    "  {} detail {} ({:.0}s)",
+                    style("✓").green().bold(),
+                    style(&id).bold(),
+                    started.elapsed().as_secs_f64()
+                );
+                (idx, desc)
+            }));
+        }
+        for h in handles {
+            if let Ok((idx, desc)) = h.await {
+                v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
+            }
+        }
+        Ok(v.to_string())
+    }
+
     pub async fn plan(
         &self,
         planner_model: &str,
@@ -2097,24 +2244,58 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         );
     }
 
-    phase_banner(
-        "PLAN",
-        "27B builds the task DAG ALONE — workers idle while it reasons",
-    );
-    eprintln!(
-        "  planning on {} (targeting {} workers) ...",
-        cfg.planner_model,
-        devices.len()
-    );
-    let plan_json = dispatcher
-        .plan(
-            &cfg.planner_model,
-            &opts.prompt,
-            plan_schema(),
-            devices.len(),
-            &research_findings,
-        )
-        .await?;
+    let plan_json = if cfg.parallel_planning {
+        phase_banner(
+            "PLAN",
+            "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
+        );
+        eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
+        let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+        match dispatcher
+            .parallel_plan(
+                &cfg.planner_model,
+                wm,
+                &opts.prompt,
+                plan_schema(),
+                devices.len(),
+                &research_findings,
+            )
+            .await
+        {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("  parallel planning failed ({e}); falling back to the solo planner");
+                dispatcher
+                    .plan(
+                        &cfg.planner_model,
+                        &opts.prompt,
+                        plan_schema(),
+                        devices.len(),
+                        &research_findings,
+                    )
+                    .await?
+            }
+        }
+    } else {
+        phase_banner(
+            "PLAN",
+            "27B builds the task DAG ALONE — workers idle while it reasons",
+        );
+        eprintln!(
+            "  planning on {} (targeting {} workers) ...",
+            cfg.planner_model,
+            devices.len()
+        );
+        dispatcher
+            .plan(
+                &cfg.planner_model,
+                &opts.prompt,
+                plan_schema(),
+                devices.len(),
+                &research_findings,
+            )
+            .await?
+    };
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
     eprintln!("  plan: {} subtask(s)", dag.tasks.len());
