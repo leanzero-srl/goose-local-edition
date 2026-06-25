@@ -113,6 +113,10 @@ Recipe `local-edition/recipes/swarm_v3.yaml`: planner 27B@workhorse fans 4 indep
 - Live concurrency VIEW added to `goose swarm run`: each task prints `▸ run <task> → <device>` on start + `✓ <task> (Ns)` on finish — concurrent dispatch is now visible in the CLI. (Explains the "only one running" perception: LM Studio collapses 2 same-device requests into ONE `GENERATING` row, and short workers finish staggered; the planning phase is single-model.)
 - NOTE: 27B is the planner, not in the worker pool, so `integrate-verify`'s preferred-27B gracefully falls back to a 35B worker. Add 27B to the pool (or a dedicated hard-worker device) for true hard-task routing.
 
+## PER-TURN COMPACTION (task #10) — WORKS 2026-06-25
+Added a per-turn proactive compaction check in the `agent.rs` reply loop, right after `conversation.extend` (the adversarially-verified safe spot), guarded by `did_recovery_compact_this_iteration` + cancel + `exit_chat`; mirrors the reactive block but continues (no break). It calls `check_if_compaction_needed` which honors `GOOSE_LOCAL_CONTEXT_CAP`. Before, the proactive check ran ONLY once at reply-start, so the cap never bit mid-run.
+RUNTIME TEST: `goose run` with `GOOSE_LOCAL_CONTEXT_CAP=12000`, threshold 0.6, a 10-file growing task → 10 files created; **"Context near the cap — compacting to stay lean..."** printed; goose log shows compaction FIRED mid-run (≥1); NO loop; task completed (tool-calling survived). The cap now drives lean-context compaction during a session. clippy -D clean. Both single-agent `goose run` and swarm workers (agent.reply) benefit.
+
 ## Open items / next
 - Difficulty-aware routing (planner tags hard→27B / bulk→35B) + typed plan (`response.json_schema`).
 - True 3-way fan-out: same model-id on multiple devices → LM Link "Preferred Device" picks one; need to verify how to target a specific device (distinct aliases per device, or delegate-level addressing).
