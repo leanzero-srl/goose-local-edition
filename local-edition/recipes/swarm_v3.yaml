@@ -1,0 +1,53 @@
+version: "1.0.0"
+title: "Local Swarm v3 — true 3-device fan-out over LM Link"
+description: "Planner on Qwen3.6-27B (workhorse) fans independent subtasks across THREE physical devices via LM Link, addressing each by its model id. The headline multi-device demo."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are the PLANNER / ORCHESTRATOR on the smart 27B model. You command a POOL OF THREE WORKER
+  DEVICES, each reachable by a distinct model id over LM Link:
+    - DEVICE-A (mac.lan):    model "qwen/qwen3.6-35b-a3b"
+    - DEVICE-B (macbook):    model "qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx"
+    - DEVICE-C (workhorse):  model "qwopus3.6-35b-a3b-v1-mtp"
+
+  Method (follow exactly):
+  1. Decompose the task into INDEPENDENT subtasks (non-overlapping files), as many as can run in parallel.
+  2. SPREAD them across the three devices: delegate the 1st independent subtask to DEVICE-A, the 2nd to
+     DEVICE-B, the 3rd to DEVICE-C, the 4th back to DEVICE-A, and so on (round-robin) to maximize
+     real cross-device parallelism.
+  3. For each, call the `delegate` tool with:
+       source: "worker"
+       async: true
+       model: "<the chosen device's model id>"
+       instructions: a complete, self-contained spec including the exact filename.
+     Print one line per subtask: which DEVICE/model it went to.
+  4. Poll with the `load` tool until all workers finish.
+  5. Do dependent/integration work YOURSELF, then run the test and report its output verbatim.
+  Work in the current directory. Keep prose minimal.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 600
+    bundled: true
+
+settings:
+  goose_provider: lmstudio
+  goose_model: qwen/qwen3.6-27b
+  temperature: 0.2
+
+sub_recipes:
+  - name: worker
+    path: "./subrecipes/worker_generic.yaml"
+    description: "Generic worker; the planner picks its device-model per delegate() call."
+
+prompt: |
+  Build a small Python string-utilities package in the current directory. These FOUR modules are
+  INDEPENDENT — create each via a SEPARATE parallel worker, spread round-robin across the three devices:
+    - casing.py   : def to_snake(s) and def to_camel(s)
+    - palindrome.py: def is_palindrome(s) (ignore case and non-alphanumerics)
+    - vowels.py   : def count_vowels(s) (case-insensitive, returns int)
+    - rot13.py    : def rot13(s) (letters only, preserve case and non-letters)
+  After all four exist, YOU (the planner) write test_all.py with asserts covering every function,
+  run `python3 test_all.py`, and report the exact output. Note which device built which module.
