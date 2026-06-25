@@ -32,6 +32,8 @@ def run_swarm(
     for m in mcp:
         cmd += ["--mcp", m]
 
+    # timeout <= 0 means "no cap" — let the swarm finish when it finishes.
+    eff_timeout = timeout if timeout and timeout > 0 else None
     try:
         proc = subprocess.run(
             cmd,
@@ -39,7 +41,7 @@ def run_swarm(
             env=env,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=eff_timeout,
         )
         stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired as e:
