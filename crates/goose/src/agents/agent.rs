@@ -2619,6 +2619,70 @@ impl Agent {
                 }
                 conversation.extend(messages_to_add);
 
+                // local-edition: PER-TURN proactive compaction. Goose's built-in proactive check runs
+                // only once before the loop, so an effective-window cap (GOOSE_LOCAL_CONTEXT_CAP) never
+                // triggers mid-run. Re-check after each turn here. Placement verified safe: tool-pair
+                // summarization is already joined and session metrics were persisted synchronously above,
+                // so a fresh get_session reads the current token count. Mirrors the reactive block below
+                // but continues the loop (no break) since this is proactive, not error recovery.
+                if !did_recovery_compact_this_iteration
+                    && !exit_chat
+                    && !is_token_cancelled(&cancel_token)
+                {
+                    if let Ok(check_session) =
+                        session_manager.get_session(&session_config.id, false).await
+                    {
+                        let needs_proactive_compact = check_if_compaction_needed(
+                            self.provider().await?.as_ref(),
+                            &conversation,
+                            None,
+                            &check_session,
+                        )
+                        .await
+                        .unwrap_or(false);
+                        if needs_proactive_compact {
+                            yield AgentEvent::Message(Message::assistant().with_system_notification(
+                                SystemNotificationType::InlineMessage,
+                                "Context near the cap — compacting to stay lean...",
+                            ));
+                            yield AgentEvent::Message(Message::assistant().with_system_notification(
+                                SystemNotificationType::ThinkingMessage,
+                                COMPACTION_THINKING_TEXT,
+                            ));
+                            match compact_messages(
+                                self.provider().await?.as_ref(),
+                                &model_config,
+                                &session_config.id,
+                                &conversation,
+                                false,
+                            )
+                            .await
+                            {
+                                Ok((compacted_conversation, usage)) => {
+                                    session_manager
+                                        .replace_conversation(
+                                            &session_config.id,
+                                            &compacted_conversation,
+                                        )
+                                        .await?;
+                                    self.update_session_metrics(
+                                        &session_config.id,
+                                        session_config.schedule_id.clone(),
+                                        &usage,
+                                        true,
+                                    )
+                                    .await?;
+                                    conversation = compacted_conversation;
+                                    yield AgentEvent::HistoryReplaced(conversation.clone());
+                                }
+                                Err(e) => {
+                                    tracing::warn!("per-turn proactive compaction failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if exit_chat && self.has_pending_steers(&session_config.id).await {
                     exit_chat = false;
                 }
