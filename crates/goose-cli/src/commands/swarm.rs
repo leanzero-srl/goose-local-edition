@@ -1356,6 +1356,40 @@ impl GooseAgentDispatcher {
         })
     }
 
+    /// `run_agent` wrapped in a wall-clock timeout (`worker_timeout_secs`). Used for PLANNER-side
+    /// calls (architect / solo plan / scouts / research / replan) so an agent that hangs at the
+    /// protocol level cannot stall the run forever — every caller degrades on Err (fallback plan,
+    /// skip scout, empty research).
+    async fn run_agent_timed(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        extensions: &[ExtensionConfig],
+    ) -> Result<RunAgentOut> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(self.worker_timeout_secs),
+            self.run_agent(
+                model_id,
+                system_prompt,
+                user_text,
+                response,
+                max_turns,
+                extensions,
+            ),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => Err(anyhow!(
+                "agent timed out after {}s",
+                self.worker_timeout_secs
+            )),
+        }
+    }
+
     async fn run_agent(
         &self,
         model_id: &str,
@@ -1519,7 +1553,7 @@ impl GooseAgentDispatcher {
             json_schema: Some(research_schema()),
         });
         let out = match self
-            .run_agent(
+            .run_agent_timed(
                 planner_model,
                 system,
                 format!("Task: {user_prompt}"),
@@ -1598,7 +1632,7 @@ impl GooseAgentDispatcher {
                      (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
                 );
                 let findings = match me
-                    .run_agent(&model, system, q.question.clone(), None, 12, &exts)
+                    .run_agent_timed(&model, system, q.question.clone(), None, 12, &exts)
                     .await
                 {
                     Ok(o) => o.text,
@@ -1665,7 +1699,7 @@ impl GooseAgentDispatcher {
                     lens.title, lens.brief, lens.tool_hint
                 );
                 let findings = match me
-                    .run_agent(&model, system, format!("Task: {prompt}"), None, 12, &exts)
+                    .run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts)
                     .await
                 {
                     Ok(o) => o.text,
@@ -1724,7 +1758,7 @@ impl GooseAgentDispatcher {
             difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the files, writes and RUNS tests, reports PASS/FAIL; \
             its files must NOT overlap the others. Then call the final_output tool with the plan.");
         let out = self
-            .run_agent(
+            .run_agent_timed(
                 planner_model,
                 system,
                 format!("{research_block}Plan this task: {user_prompt}"),
@@ -1850,7 +1884,7 @@ impl GooseAgentDispatcher {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
         let out = self
-            .run_agent(
+            .run_agent_timed(
                 planner_model,
                 system,
                 format!("{research_block}Plan this task: {user_prompt}"),
@@ -2001,7 +2035,7 @@ impl Replanner for GooseAgentDispatcher {
             json_schema: Some(plan_schema()),
         });
         let out = match self
-            .run_agent(&self.planner_model, system, user, response, 10, &[])
+            .run_agent_timed(&self.planner_model, system, user, response, 10, &[])
             .await
         {
             Ok(o) => o,
