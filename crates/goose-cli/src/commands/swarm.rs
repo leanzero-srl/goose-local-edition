@@ -57,6 +57,20 @@ fn default_planner_also_works() -> bool {
 fn default_planner_weight() -> u32 {
     1
 }
+fn default_max_research() -> u32 {
+    4
+}
+
+/// When the swarm runs a parallel research phase before planning.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResearchPlanningMode {
+    Off,
+    On,
+    /// Research only when the working dir already has source files (an amendment).
+    #[default]
+    Auto,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SwarmDevice {
@@ -99,6 +113,12 @@ pub struct SwarmConfig {
     /// Effective context-window cap (GOOSE_LOCAL_CONTEXT_CAP) applied to every agent; None = off.
     #[serde(default)]
     pub context_cap: Option<u32>,
+    /// Parallel research-planning phase before plan(). Auto = only when the cwd has source files.
+    #[serde(default)]
+    pub research_planning: ResearchPlanningMode,
+    /// Hard cap on parallel research workers (bounds latency + curbs make-work).
+    #[serde(default = "default_max_research")]
+    pub max_research_questions: u32,
 }
 
 impl Default for SwarmConfig {
@@ -128,6 +148,8 @@ impl Default for SwarmConfig {
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
             context_cap: None,
+            research_planning: ResearchPlanningMode::Auto,
+            max_research_questions: default_max_research(),
         }
     }
 }
@@ -169,6 +191,9 @@ pub enum SwarmCommand {
         /// Enable an MCP worker extension for this run (repeatable): context7 | web-search | doc-processor.
         #[arg(long = "mcp")]
         mcp: Vec<String>,
+        /// Force the research-planning phase on/off for this run (overrides the configured mode).
+        #[arg(long = "research")]
+        research: Option<bool>,
     },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
@@ -185,6 +210,7 @@ pub struct RunOpts {
     pub no_log: bool,
     pub max_turns: Option<u32>,
     pub mcp: Vec<String>,
+    pub research: Option<bool>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -221,6 +247,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             no_log,
             max_turns,
             mcp,
+            research,
         } => {
             run_swarm(RunOpts {
                 prompt,
@@ -229,6 +256,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
                 no_log,
                 max_turns,
                 mcp,
+                research,
             })
             .await
         }
@@ -264,6 +292,11 @@ fn show_pool(cfg: &SwarmConfig) {
             Some(c) => style(c.to_string()).cyan(),
             None => style("off".to_string()).dim(),
         }
+    );
+    println!(
+        "  research   {:?}   max-questions {}",
+        cfg.research_planning,
+        style(cfg.max_research_questions).cyan()
     );
     println!(
         "  mcp        {}",
@@ -310,6 +343,8 @@ fn pool_menu() -> Result<()> {
             .item("max-turns", "Set worker max-turns", "")
             .item("max-attempts", "Set max dispatch attempts", "")
             .item("context-cap", "Set context-window cap", "GOOSE_LOCAL_CONTEXT_CAP")
+            .item("research", "Research-planning mode", "off / on / auto")
+            .item("max-research", "Max research questions", "")
             .item("mcp", "Toggle worker MCP extensions", "context7 / web-search / doc-processor")
             .item("probe", "Probe the live fleet", "lms ps + endpoint models")
             .item("save", "Save & exit", "")
@@ -413,6 +448,24 @@ fn pool_menu() -> Result<()> {
                     .interact()?;
                 let parsed: u32 = v.trim().parse().unwrap_or(0);
                 cfg.context_cap = if parsed == 0 { None } else { Some(parsed) };
+            }
+            "research" => {
+                let m: &str = cliclack::select("Research-planning mode")
+                    .item("off", "off", "")
+                    .item("on", "on", "")
+                    .item("auto", "auto", "on for amendments only")
+                    .interact()?;
+                cfg.research_planning = match m {
+                    "off" => ResearchPlanningMode::Off,
+                    "on" => ResearchPlanningMode::On,
+                    _ => ResearchPlanningMode::Auto,
+                };
+            }
+            "max-research" => {
+                let v: String = cliclack::input("Max research questions")
+                    .default_input(&cfg.max_research_questions.to_string())
+                    .interact()?;
+                cfg.max_research_questions = v.trim().parse().unwrap_or(4).clamp(1, 8);
             }
             "mcp" => {
                 let choice: &str = cliclack::select("Toggle which worker MCP extension?")
@@ -626,6 +679,56 @@ struct RunAgentOut {
     final_output: Option<String>,
     session_id: String,
     tool_calls: Vec<ToolCallRecord>,
+}
+
+#[derive(Clone)]
+struct ResearchQuestion {
+    id: String,
+    question: String,
+    kind: String,
+}
+
+struct ResearchFinding {
+    question: String,
+    kind: String,
+    findings: String,
+}
+
+/// True if the working dir already contains source (a marker file or a source-extension file within
+/// ~2 levels) — i.e. an amendment, which is what flips research-planning Auto to on.
+fn working_dir_has_sources(dir: &Path) -> bool {
+    const SRC_EXT: &[&str] = &[
+        "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "rb", "c", "cpp", "h", "hpp", "cs",
+        "swift", "kt",
+    ];
+    const MARKERS: &[&str] = &["Cargo.toml", "package.json", "pyproject.toml", "go.mod", "pom.xml"];
+    const SKIP: &[&str] = &[".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"];
+    fn walk(dir: &Path, depth: u32) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if depth == 0 || name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                if walk(&p, depth - 1) {
+                    return true;
+                }
+            } else if MARKERS.contains(&name.as_str())
+                || p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| SRC_EXT.contains(&e))
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dir, 2)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -891,12 +994,123 @@ impl GooseAgentDispatcher {
         })
     }
 
+    /// Ask the planner for a small set of INDEPENDENT research questions to resolve before planning.
+    /// Degrades to an empty list on any error (research is optional, never aborts the run).
+    async fn research_questions(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        max_q: u32,
+        is_amendment: bool,
+    ) -> Result<Vec<ResearchQuestion>> {
+        let codebase = if is_amendment {
+            " You MAY also include \"codebase\" questions to investigate the EXISTING code in the working dir."
+        } else {
+            ""
+        };
+        let system = format!(
+            "You scope a coding task BEFORE planning. Emit AT MOST {max_q} INDEPENDENT research questions whose \
+             answers would MATERIALLY change the plan: \"library_docs\" (look up a library's real API via its docs) \
+             or \"web\" (a fact to look up).{codebase} Ask ONLY what you cannot already answer; if the task is \
+             self-contained, return an EMPTY questions list. Do NOT invent make-work. Then call the final_output tool."
+        );
+        let response = Some(Response {
+            json_schema: Some(research_schema()),
+        });
+        let out = match self
+            .run_agent(planner_model, system, format!("Task: {user_prompt}"), response, 8, &[])
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let Some(fo) = out.final_output else {
+            return Ok(Vec::new());
+        };
+        #[derive(serde::Deserialize)]
+        struct Q {
+            id: String,
+            question: String,
+            kind: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Qs {
+            #[serde(default)]
+            questions: Vec<Q>,
+        }
+        let parsed: Qs = match serde_json::from_str(&fo) {
+            Ok(p) => p,
+            Err(_) => return Ok(Vec::new()),
+        };
+        Ok(parsed
+            .questions
+            .into_iter()
+            .take(max_q as usize)
+            .map(|q| ResearchQuestion {
+                id: q.id,
+                question: q.question,
+                kind: q.kind,
+            })
+            .collect())
+    }
+
+    /// Run the research questions IN PARALLEL across the fleet (round-robin over worker models), each
+    /// with the research MCP extensions. A failed research worker degrades to a note, never blocks.
+    async fn run_research(
+        self: &Arc<Self>,
+        questions: Vec<ResearchQuestion>,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_models: Vec<String>,
+    ) -> Vec<ResearchFinding> {
+        if worker_models.is_empty() {
+            return Vec::new();
+        }
+        let mut handles = Vec::new();
+        for (i, q) in questions.into_iter().enumerate() {
+            let me = self.clone();
+            let exts = research_extensions.clone();
+            let model = worker_models[i % worker_models.len()].clone();
+            handles.push(tokio::spawn(async move {
+                let tool_hint = match q.kind.as_str() {
+                    "library_docs" => "Use the context7 tools (resolve-library-id then get-library-docs).",
+                    "web" => "Use the web-search tool.",
+                    "codebase" => "Use shell/grep to inspect the existing code in the working directory.",
+                    _ => "Use whatever tools fit.",
+                };
+                let system = format!(
+                    "You are a RESEARCH worker. Answer EXACTLY the question below with a concise, factual summary \
+                     (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
+                );
+                let findings = match me
+                    .run_agent(&model, system, q.question.clone(), None, 12, &exts)
+                    .await
+                {
+                    Ok(o) => o.text,
+                    Err(e) => format!("(research failed: {e})"),
+                };
+                ResearchFinding {
+                    question: q.question,
+                    kind: q.kind,
+                    findings,
+                }
+            }));
+        }
+        let mut out = Vec::new();
+        for h in handles {
+            if let Ok(f) = h.await {
+                out.push(f);
+            }
+        }
+        out
+    }
+
     pub async fn plan(
         &self,
         planner_model: &str,
         user_prompt: &str,
         plan_schema: serde_json::Value,
         worker_count: usize,
+        research_findings: &str,
     ) -> Result<String> {
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
@@ -913,11 +1127,16 @@ impl GooseAgentDispatcher {
         let response = Some(Response {
             json_schema: Some(plan_schema),
         });
+        let research_block = if research_findings.is_empty() {
+            String::new()
+        } else {
+            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
+        };
         let out = self
             .run_agent(
                 planner_model,
                 system,
-                format!("Plan this task: {user_prompt}"),
+                format!("{research_block}Plan this task: {user_prompt}"),
                 response,
                 15,
                 &[],
@@ -1010,6 +1229,29 @@ impl TaskDispatcher for GooseAgentDispatcher {
             }
         }
     }
+}
+
+fn research_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["questions"],
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "question", "kind"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "question": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["library_docs", "web", "codebase"]}
+                    }
+                }
+            }
+        }
+    })
 }
 
 fn plan_schema() -> serde_json::Value {
@@ -1156,9 +1398,64 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns, worker_extensions).await?,
     );
 
+    // Parallel research-planning: scope independent research questions, run them across the fleet,
+    // feed the findings into the planner. Best-effort — never blocks the run.
+    let is_amendment = working_dir_has_sources(&working_dir);
+    let do_research = match opts.research {
+        Some(v) => v,
+        None => match cfg.research_planning {
+            ResearchPlanningMode::Off => false,
+            ResearchPlanningMode::On => true,
+            ResearchPlanningMode::Auto => is_amendment,
+        },
+    };
+    let mut research_findings = String::new();
+    if do_research {
+        eprintln!("research-planning: scoping questions on {} ...", cfg.planner_model);
+        let questions = dispatcher
+            .research_questions(
+                &cfg.planner_model,
+                &opts.prompt,
+                cfg.max_research_questions,
+                is_amendment,
+            )
+            .await
+            .unwrap_or_default();
+        sink.write_value(serde_json::json!({
+            "event": "research_planned",
+            "count": questions.len(),
+            "questions": questions.iter().map(|q| serde_json::json!({"id": q.id, "kind": q.kind, "question": q.question})).collect::<Vec<_>>(),
+        }));
+        if !questions.is_empty() {
+            eprintln!("research-planning: {} question(s) across the fleet ...", questions.len());
+            let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
+                ["context7", "web-search"]
+                    .into_iter()
+                    .filter_map(build_worker_extension)
+                    .collect(),
+            );
+            let worker_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+            let findings = dispatcher
+                .run_research(questions, research_exts, worker_models)
+                .await;
+            research_findings = findings
+                .iter()
+                .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            sink.write_value(serde_json::json!({"event": "research_completed", "findings": findings.len()}));
+        }
+    }
+
     eprintln!("planning on {} (targeting {} workers) ...", cfg.planner_model, devices.len());
     let plan_json = dispatcher
-        .plan(&cfg.planner_model, &opts.prompt, plan_schema(), devices.len())
+        .plan(
+            &cfg.planner_model,
+            &opts.prompt,
+            plan_schema(),
+            devices.len(),
+            &research_findings,
+        )
         .await?;
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
