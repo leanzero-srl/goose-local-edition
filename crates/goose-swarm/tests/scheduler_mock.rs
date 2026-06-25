@@ -3,7 +3,10 @@
 //! weighting, transient re-dispatch (to a different device), and file-overlap serialization.
 
 use async_trait::async_trait;
-use goose_swarm::{Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Scheduler, TaskDispatcher, TaskSpec};
+use goose_swarm::{
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Scheduler, TaskDispatcher,
+    TaskRunOutput, TaskSpec,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -75,7 +78,7 @@ struct MockDispatcher {
 
 #[async_trait]
 impl TaskDispatcher for MockDispatcher {
-    async fn run(&self, req: DispatchRequest) -> Result<String, DispatchError> {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         self.rec.lock().unwrap().on_start(&req);
         tokio::time::sleep(self.delay).await;
         let result = if self.terminal.contains(&req.task_id) {
@@ -83,7 +86,7 @@ impl TaskDispatcher for MockDispatcher {
         } else if self.fail_transient_first.contains(&req.task_id) && req.attempt == 0 {
             Err(DispatchError::Transient("Model is unloaded".into()))
         } else {
-            Ok(format!("output-of-{}", req.task_id))
+            Ok(format!("output-of-{}", req.task_id).into())
         };
         self.rec.lock().unwrap().on_end(&req);
         result

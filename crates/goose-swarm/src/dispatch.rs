@@ -3,6 +3,35 @@
 //! device's LM Link model id, while tests use a mock. This keeps the concurrency core testable.
 
 use async_trait::async_trait;
+use serde::Serialize;
+
+/// One tool call a task's agent made, captured by the dispatcher for observability.
+#[derive(Clone, Debug, Serialize)]
+pub struct ToolCallRecord {
+    pub name: String,
+    /// True if the tool came from an MCP extension (vs a builtin like `developer`).
+    pub is_mcp: bool,
+    /// Whether the tool response was ok; `None` if no response arrived (e.g. a max-turns cutoff).
+    pub ok: Option<bool>,
+}
+
+/// A successful dispatch's result: the task output plus observability (session id + tool calls).
+#[derive(Clone, Debug, Default)]
+pub struct TaskRunOutput {
+    pub output: String,
+    pub session_id: Option<String>,
+    pub tool_calls: Vec<ToolCallRecord>,
+}
+
+impl From<String> for TaskRunOutput {
+    fn from(output: String) -> Self {
+        Self {
+            output,
+            session_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+}
 
 /// One unit of work handed to a device.
 #[derive(Clone, Debug)]
@@ -42,7 +71,6 @@ impl std::error::Error for DispatchError {}
 
 #[async_trait]
 pub trait TaskDispatcher: Send + Sync {
-    /// Run one task on its assigned device. Returns the task's final output (e.g. the typed
-    /// `final_output` payload) on success.
-    async fn run(&self, req: DispatchRequest) -> Result<String, DispatchError>;
+    /// Run one task on its assigned device. Returns the task's output plus observability on success.
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError>;
 }

@@ -16,11 +16,17 @@ use goose::providers::base::Provider;
 use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
-use goose_swarm::{Dag, DeviceCfg, DispatchError, DispatchRequest, Scheduler, TaskDispatcher};
+use goose_swarm::{
+    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, NullSink, Scheduler, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, ToolCallRecord,
+};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 const SWARM_CONFIG_KEY: &str = "swarm";
@@ -38,6 +44,12 @@ fn default_planner() -> String {
 
 fn default_instances() -> u32 {
     1
+}
+fn default_worker_max_turns() -> u32 {
+    40
+}
+fn default_max_attempts() -> u32 {
+    3
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -61,6 +73,12 @@ pub struct SwarmConfig {
     pub planner_model: String,
     #[serde(default)]
     pub devices: Vec<SwarmDevice>,
+    /// Max turns per worker agent (knob: raise if workers hit the cap before finishing).
+    #[serde(default = "default_worker_max_turns")]
+    pub worker_max_turns: u32,
+    /// Max dispatch attempts per task before it fails (knob: raise for flaky LM Link).
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
 }
 
 impl Default for SwarmConfig {
@@ -84,6 +102,8 @@ impl Default for SwarmConfig {
                     instances: 1,
                 },
             ],
+            worker_max_turns: default_worker_max_turns(),
+            max_attempts: default_max_attempts(),
         }
     }
 }
@@ -110,12 +130,33 @@ pub enum SwarmCommand {
     Run {
         /// The task to plan and run.
         prompt: String,
+        /// Final report format: `text` (default) or `json` (the enriched RunReport to stdout).
+        #[arg(long = "output-format", default_value = "text")]
+        output_format: String,
+        /// Path for the structured JSONL event log (default: <cwd>/.swarm/run-<id>.jsonl).
+        #[arg(long = "log-file")]
+        log_file: Option<PathBuf>,
+        /// Disable the JSONL event log.
+        #[arg(long = "no-log")]
+        no_log: bool,
+        /// Override per-worker max turns (default: the pool's worker_max_turns).
+        #[arg(long = "max-turns")]
+        max_turns: Option<u32>,
     },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
         #[command(subcommand)]
         command: Option<PoolCommand>,
     },
+}
+
+/// Options for a `goose swarm run`.
+pub struct RunOpts {
+    pub prompt: String,
+    pub output_format: String,
+    pub log_file: Option<PathBuf>,
+    pub no_log: bool,
+    pub max_turns: Option<u32>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -145,7 +186,22 @@ pub enum PoolCommand {
 
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
     match cmd {
-        SwarmCommand::Run { prompt } => run_swarm(prompt).await,
+        SwarmCommand::Run {
+            prompt,
+            output_format,
+            log_file,
+            no_log,
+            max_turns,
+        } => {
+            run_swarm(RunOpts {
+                prompt,
+                output_format,
+                log_file,
+                no_log,
+                max_turns,
+            })
+            .await
+        }
         SwarmCommand::Pool { command } => match command {
             None => pool_menu(),
             Some(pc) => pool_op(pc),
@@ -159,10 +215,12 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
 
 fn show_pool(cfg: &SwarmConfig) {
     println!(
-        "\n{}  endpoint {}  planner {}",
+        "\n{}  endpoint {}  planner {}  max-turns {}  max-attempts {}",
         style(" swarm pool ").on_cyan().black().bold(),
         style(&cfg.endpoint).cyan(),
-        style(&cfg.planner_model).green()
+        style(&cfg.planner_model).green(),
+        style(cfg.worker_max_turns).cyan(),
+        style(cfg.max_attempts).cyan()
     );
     if cfg.devices.is_empty() {
         println!("  {}", style("(no devices — add one)").yellow());
@@ -387,6 +445,81 @@ fn ensure_loaded(model_id: &str, instances: u32) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Structured observability — JSONL event log + per-run capture
+// ---------------------------------------------------------------------------------------------
+
+/// A tool is from an MCP extension (vs a goose builtin) if it is namespaced `{ext}__{tool}` and the
+/// prefix is not a known builtin/platform namespace.
+fn is_mcp_tool(name: &str) -> bool {
+    name.contains("__")
+        && !name.starts_with("developer__")
+        && !name.starts_with("recipe__")
+        && !name.starts_with("platform__")
+}
+
+/// Per-run JSONL event sink. All writes go through one locked, line-flushed writer; a monotonic
+/// `seq` gives a total order even though scheduler events and CLI-native events interleave.
+struct JsonlSink {
+    writer: Mutex<std::io::BufWriter<std::fs::File>>,
+    run_id: String,
+    seq: AtomicU64,
+}
+
+impl JsonlSink {
+    fn new(path: &Path, run_id: String) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            writer: Mutex::new(std::io::BufWriter::new(file)),
+            run_id,
+            seq: AtomicU64::new(0),
+        })
+    }
+
+    fn write_line(&self, mut value: serde_json::Value) {
+        let seq = self.seq.fetch_add(1, Ordering::SeqCst);
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "ts".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+            obj.insert("run_id".to_string(), serde_json::json!(self.run_id));
+            obj.insert("seq".to_string(), serde_json::json!(seq));
+        }
+        if let Ok(mut w) = self.writer.lock() {
+            let _ = serde_json::to_writer(&mut *w, &value);
+            let _ = w.write_all(b"\n");
+            let _ = w.flush();
+        }
+    }
+}
+
+impl EventSink for JsonlSink {
+    fn emit(&self, event: &SwarmEvent) {
+        if let Ok(value) = serde_json::to_value(event) {
+            self.write_line(value);
+        }
+    }
+    fn write_value(&self, value: serde_json::Value) {
+        self.write_line(value);
+    }
+}
+
+/// What `run_agent` returns: streamed text, the typed final_output (if any), the session id for
+/// trace lookup, and the tool calls the agent made.
+struct RunAgentOut {
+    text: String,
+    final_output: Option<String>,
+    session_id: String,
+    tool_calls: Vec<ToolCallRecord>,
+}
+
+// ---------------------------------------------------------------------------------------------
 // Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
 // ---------------------------------------------------------------------------------------------
 
@@ -403,7 +536,9 @@ impl GooseAgentDispatcher {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
         std::fs::create_dir_all(&session_root)?;
-        let session_manager = Arc::new(SessionManager::new(session_root.clone()));
+        // Use the global session store so each worker's full trace is fetchable by its logged
+        // session_id (Hidden type keeps them out of normal listings).
+        let session_manager = Arc::new(SessionManager::instance());
         let permission_manager = Arc::new(PermissionManager::new(session_root));
         Ok(Self {
             provider,
@@ -421,7 +556,7 @@ impl GooseAgentDispatcher {
         user_text: String,
         response: Option<Response>,
         max_turns: u32,
-    ) -> Result<(String, Option<String>)> {
+    ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -483,6 +618,8 @@ impl GooseAgentDispatcher {
 
         let mut texts: Vec<String> = Vec::new();
         let mut final_output: Option<String> = None;
+        let mut pending: HashMap<String, (String, bool)> = HashMap::new();
+        let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         while let Some(ev) = stream.next().await {
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
@@ -491,11 +628,28 @@ impl GooseAgentDispatcher {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::ToolRequest(req) => {
                                 if let Ok(tc) = req.tool_call.as_ref() {
-                                    if tc.name == FINAL_OUTPUT_TOOL {
+                                    let name = tc.name.to_string();
+                                    if name == FINAL_OUTPUT_TOOL {
                                         final_output = Some(
                                             serde_json::to_string(&tc.arguments).unwrap_or_default(),
                                         );
                                     }
+                                    let mcp = is_mcp_tool(&name);
+                                    pending.insert(req.id.clone(), (name, mcp));
+                                }
+                            }
+                            MessageContent::ToolResponse(resp) => {
+                                if let Some((name, is_mcp)) = pending.remove(&resp.id) {
+                                    let ok = resp
+                                        .tool_result
+                                        .as_ref()
+                                        .map(|r| !r.is_error.unwrap_or(false))
+                                        .unwrap_or(false);
+                                    tool_calls.push(ToolCallRecord {
+                                        name,
+                                        is_mcp,
+                                        ok: Some(ok),
+                                    });
                                 }
                             }
                             _ => {}
@@ -506,9 +660,22 @@ impl GooseAgentDispatcher {
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
         }
+        // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
+        for (_id, (name, is_mcp)) in pending {
+            tool_calls.push(ToolCallRecord {
+                name,
+                is_mcp,
+                ok: None,
+            });
+        }
 
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
-        Ok((texts.concat(), final_output))
+        Ok(RunAgentOut {
+            text: texts.concat(),
+            final_output,
+            session_id,
+            tool_calls,
+        })
     }
 
     pub async fn plan(
@@ -530,7 +697,7 @@ impl GooseAgentDispatcher {
         let response = Some(Response {
             json_schema: Some(plan_schema),
         });
-        let (_text, final_output) = self
+        let out = self
             .run_agent(
                 planner_model,
                 system,
@@ -539,13 +706,14 @@ impl GooseAgentDispatcher {
                 15,
             )
             .await?;
-        final_output.ok_or_else(|| anyhow!("planner did not produce a final_output plan"))
+        out.final_output
+            .ok_or_else(|| anyhow!("planner did not produce a final_output plan"))
     }
 }
 
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
-    async fn run(&self, req: DispatchRequest) -> Result<String, DispatchError> {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         let context_block = if req.context_slice.is_empty() {
             String::new()
         } else {
@@ -579,7 +747,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
             .await;
         let secs = started.elapsed().as_secs_f64();
         match outcome {
-            Ok((text, _)) => {
+            Ok(out) => {
                 eprintln!(
                     "  {} {} on {} ({:.1}s)",
                     style("✓").green().bold(),
@@ -587,10 +755,15 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     req.device_id,
                     secs
                 );
-                Ok(if text.trim().is_empty() {
+                let output = if out.text.trim().is_empty() {
                     format!("(task {} completed)", req.task_id)
                 } else {
-                    text
+                    out.text
+                };
+                Ok(TaskRunOutput {
+                    output,
+                    session_id: Some(out.session_id),
+                    tool_calls: out.tool_calls,
                 })
             }
             Err(e) => {
@@ -648,7 +821,7 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
-pub async fn run_swarm(prompt: String) -> Result<()> {
+pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let cfg = load_config();
     let enabled: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.enabled).collect();
     if enabled.is_empty() {
@@ -658,9 +831,36 @@ pub async fn run_swarm(prompt: String) -> Result<()> {
     }
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
 
+    let json = opts.output_format == "json";
     let working_dir = std::env::current_dir()?;
-    println!("{} working dir: {}", style("swarm").bold(), working_dir.display());
-    println!(
+    let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
+
+    let run_id = format!("swarm-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S%3f"));
+    let log_path: Option<PathBuf> = if opts.no_log {
+        None
+    } else {
+        Some(opts.log_file.clone().unwrap_or_else(|| {
+            working_dir.join(".swarm").join(format!("run-{run_id}.jsonl"))
+        }))
+    };
+    let sink: Arc<dyn EventSink> = match &log_path {
+        Some(p) => match JsonlSink::new(p, run_id.clone()) {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                eprintln!("(swarm log disabled: {e})");
+                Arc::new(NullSink)
+            }
+        },
+        None => Arc::new(NullSink),
+    };
+
+    // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
+    eprintln!(
+        "{} working dir: {}",
+        style("swarm").bold(),
+        working_dir.display()
+    );
+    eprintln!(
         "pool: {}  planner {}",
         enabled
             .iter()
@@ -669,9 +869,25 @@ pub async fn run_swarm(prompt: String) -> Result<()> {
             .join(", "),
         style(&cfg.planner_model).green()
     );
+    if let Some(p) = &log_path {
+        eprintln!("log: {}", p.display());
+    }
+
+    sink.write_value(serde_json::json!({
+        "event": "run_started",
+        "prompt": opts.prompt,
+        "planner_model": cfg.planner_model,
+        "endpoint": cfg.endpoint,
+        "working_dir": working_dir.display().to_string(),
+        "max_turns": worker_max_turns,
+        "max_attempts": cfg.max_attempts,
+        "pool": enabled.iter().map(|d| serde_json::json!({
+            "id": d.id, "model_id": d.model_id, "weight": d.weight, "instances": d.instances,
+        })).collect::<Vec<_>>(),
+    }));
 
     // M1.3: pre-warm the planner + all enabled worker models so remote JIT-load doesn't race.
-    println!("pre-warming models (idempotent) ...");
+    eprintln!("pre-warming models (idempotent) ...");
     ensure_loaded(&cfg.planner_model, 1);
     for d in &enabled {
         ensure_loaded(&d.model_id, d.instances);
@@ -687,38 +903,66 @@ pub async fn run_swarm(prompt: String) -> Result<()> {
         })
         .collect();
 
-    let dispatcher = Arc::new(GooseAgentDispatcher::new(working_dir, 40).await?);
+    let dispatcher =
+        Arc::new(GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns).await?);
 
-    println!("planning on {} ...", cfg.planner_model);
+    eprintln!("planning on {} ...", cfg.planner_model);
     let plan_json = dispatcher
-        .plan(&cfg.planner_model, &prompt, plan_schema())
+        .plan(&cfg.planner_model, &opts.prompt, plan_schema())
         .await?;
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
-    println!("plan: {} subtask(s). dispatching ...", dag.tasks.len());
+    eprintln!("plan: {} subtask(s). dispatching ...", dag.tasks.len());
 
-    let scheduler = Scheduler::new(devices, 3);
+    sink.write_value(serde_json::json!({
+        "event": "plan_loaded",
+        "task_count": dag.tasks.len(),
+        "tasks": dag.tasks.values().map(|n| serde_json::json!({
+            "id": n.spec.id,
+            "deps": n.spec.deps,
+            "files": n.spec.owned_files,
+            "difficulty": format!("{:?}", n.spec.difficulty).to_lowercase(),
+            "model": n.spec.preferred_model,
+        })).collect::<Vec<_>>(),
+        "raw_plan_json": plan_json,
+    }));
+
+    let scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
     let report = scheduler
         .run(dag, dispatcher as Arc<dyn TaskDispatcher>)
         .await?;
 
-    println!("\n{}", style("=== swarm report ===").bold());
-    println!("done   ({}): {}", report.done.len(), report.done.join(", "));
-    if !report.failed.is_empty() {
+    let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
+    sink.write_value(serde_json::json!({
+        "event": "run_finished",
+        "report": report_value,
+    }));
+
+    if json {
         println!(
-            "{} ({}): {}",
-            style("FAILED").red().bold(),
-            report.failed.len(),
-            report.failed.join(", ")
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
         );
-    }
-    println!("dispatched per device: {:?}", report.dispatched_per_device);
-    for id in &report.done {
-        if let Some(r) = report.results.get(id) {
-            let snippet: String = r.chars().take(280).collect();
-            println!("\n--- {id} ---\n{snippet}");
+    } else {
+        println!("\n{}", style("=== swarm report ===").bold());
+        println!("done   ({}): {}", report.done.len(), report.done.join(", "));
+        if !report.failed.is_empty() {
+            println!(
+                "{} ({}): {}",
+                style("FAILED").red().bold(),
+                report.failed.len(),
+                report.failed.join(", ")
+            );
+        }
+        println!("dispatched per device: {:?}", report.dispatched_per_device);
+        for id in &report.done {
+            if let Some(r) = report.results.get(id) {
+                let snippet: String = r.chars().take(280).collect();
+                println!("\n--- {id} ---\n{snippet}");
+            }
         }
     }
+
     if report.failed.is_empty() {
         Ok(())
     } else {

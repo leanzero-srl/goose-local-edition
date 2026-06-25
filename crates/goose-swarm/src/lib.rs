@@ -8,9 +8,11 @@
 pub mod context;
 pub mod dag;
 pub mod dispatch;
+pub mod event;
 pub mod scheduler;
 
 pub use context::SharedContext;
 pub use dag::{Dag, Difficulty, Node, TaskId, TaskSpec, TaskState};
-pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher};
-pub use scheduler::{DeviceCfg, RunReport, Scheduler};
+pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
+pub use event::{EventSink, NullSink, SwarmEvent};
+pub use scheduler::{AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome};
