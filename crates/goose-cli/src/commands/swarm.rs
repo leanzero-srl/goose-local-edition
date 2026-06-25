@@ -36,12 +36,21 @@ fn default_planner() -> String {
     "qwen/qwen3.6-27b".to_string()
 }
 
+fn default_instances() -> u32 {
+    1
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SwarmDevice {
     pub id: String,
     pub model_id: String,
+    /// Max concurrent tasks routed to this device (one model instance serves several via LM Studio's PARALLEL).
     pub weight: u32,
     pub enabled: bool,
+    /// How many instances of this model goose may load on the device. Default 1 — goose never
+    /// spins up extra instances unless you raise this.
+    #[serde(default = "default_instances")]
+    pub instances: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -65,12 +74,14 @@ impl Default for SwarmConfig {
                     model_id: "qwen/qwen3.6-35b-a3b".to_string(),
                     weight: 2,
                     enabled: true,
+                    instances: 1,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
                     model_id: "qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx".to_string(),
                     weight: 1,
                     enabled: true,
+                    instances: 1,
                 },
             ],
         }
@@ -117,6 +128,8 @@ pub enum PoolCommand {
         model_id: String,
         #[arg(default_value_t = 1)]
         weight: u32,
+        #[arg(default_value_t = 1)]
+        instances: u32,
     },
     /// Remove a device by id.
     Rm { id: String },
@@ -162,9 +175,10 @@ fn show_pool(cfg: &SwarmConfig) {
             style("disabled").red().bold()
         };
         println!(
-            "  {state}  {:<10} weight {}  {}",
+            "  {state}  {:<10} weight {}  ×{} inst  {}",
             style(&d.id).bold(),
             style(d.weight).cyan().bold(),
+            style(d.instances).cyan(),
             style(&d.model_id).dim()
         );
     }
@@ -178,6 +192,7 @@ fn pool_menu() -> Result<()> {
         let action: &str = cliclack::select("Manage the device pool")
             .item("add", "Add a device", "")
             .item("weight", "Set a device weight", "")
+            .item("instances", "Set device instance count", "copies to load")
             .item("toggle", "Enable / disable a device", "")
             .item("remove", "Remove a device", "")
             .item("planner", "Set the planner model", "")
@@ -194,12 +209,17 @@ fn pool_menu() -> Result<()> {
                     .default_input("1")
                     .interact()?;
                 let weight: u32 = weight.trim().parse().unwrap_or(1).max(1);
+                let instances: String = cliclack::input("Instances to load on this device")
+                    .default_input("1")
+                    .interact()?;
+                let instances: u32 = instances.trim().parse().unwrap_or(1).max(1);
                 cfg.devices.retain(|d| d.id != id);
                 cfg.devices.push(SwarmDevice {
                     id,
                     model_id,
                     weight,
                     enabled: true,
+                    instances,
                 });
             }
             "weight" => {
@@ -209,6 +229,15 @@ fn pool_menu() -> Result<()> {
                     let weight: u32 = weight.trim().parse().unwrap_or(1).max(1);
                     if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
                         d.weight = weight;
+                    }
+                }
+            }
+            "instances" => {
+                if let Some(id) = pick_device(&cfg, "Set instances for which device?")? {
+                    let n: String = cliclack::input(format!("Instances for {id}")).interact()?;
+                    let n: u32 = n.trim().parse().unwrap_or(1).max(1);
+                    if let Some(d) = cfg.devices.iter_mut().find(|d| d.id == id) {
+                        d.instances = n;
                     }
                 }
             }
@@ -273,6 +302,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
             id,
             model_id,
             weight,
+            instances,
         } => {
             cfg.devices.retain(|d| d.id != id);
             cfg.devices.push(SwarmDevice {
@@ -280,6 +310,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 model_id,
                 weight: weight.max(1),
                 enabled: true,
+                instances: instances.max(1),
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -331,12 +362,28 @@ fn probe_fleet() {
     }
 }
 
-/// Best-effort: load a model on its device via `lms`. Used to pre-warm and to recover from a
-/// transient "Model is unloaded" before the scheduler re-dispatches.
-fn lms_load(model_id: &str) {
-    let _ = ProcCommand::new("lms")
-        .args(["load", model_id, "-y", "--ttl", "3600"])
-        .output();
+/// Count currently-loaded instances of a model across the fleet (`lms ps`).
+fn loaded_instance_count(model_id: &str) -> usize {
+    match ProcCommand::new("lms").arg("ps").output() {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| l.contains(model_id))
+            .count(),
+        Err(_) => 0,
+    }
+}
+
+/// Ensure up to `instances` copies of a model are loaded — and NEVER more than already present, so
+/// repeated runs / pre-warms don't stack duplicate instances (the cause of "3 instances on one box").
+/// Default `instances` is 1, so goose never spins up extras unless the user raises it.
+fn ensure_loaded(model_id: &str, instances: u32) {
+    let want = instances.max(1) as usize;
+    let have = loaded_instance_count(model_id);
+    for _ in have..want {
+        let _ = ProcCommand::new("lms")
+            .args(["load", model_id, "-y", "--ttl", "3600"])
+            .output();
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -561,9 +608,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     if transient { " — will retry" } else { "" }
                 );
                 if transient {
-                    // M1.3: best-effort re-warm before the scheduler re-dispatches.
+                    // M1.3: best-effort re-warm (idempotent) before the scheduler re-dispatches.
                     if s.contains("Model is unloaded") || s.contains("connection") {
-                        lms_load(&req.model_id);
+                        ensure_loaded(&req.model_id, 1);
                     }
                     Err(DispatchError::Transient(s))
                 } else {
@@ -624,10 +671,10 @@ pub async fn run_swarm(prompt: String) -> Result<()> {
     );
 
     // M1.3: pre-warm the planner + all enabled worker models so remote JIT-load doesn't race.
-    println!("pre-warming models ...");
-    lms_load(&cfg.planner_model);
+    println!("pre-warming models (idempotent) ...");
+    ensure_loaded(&cfg.planner_model, 1);
     for d in &enabled {
-        lms_load(&d.model_id);
+        ensure_loaded(&d.model_id, d.instances);
     }
 
     let devices: Vec<DeviceCfg> = enabled
