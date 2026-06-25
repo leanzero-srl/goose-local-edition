@@ -474,8 +474,11 @@ impl GooseAgentDispatcher {
             Decompose the task into the smallest set of subtasks; maximize the INDEPENDENT set (no shared files, no ordering dependency).\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
             model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
-            files (paths it owns; non-overlapping across parallel subtasks). Also produce an integration note.\n\
-            Then call the final_output tool with the plan."
+            files (paths it owns; non-overlapping across parallel subtasks).\n\
+            UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
+            that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
+            files, writes and RUNS tests (e.g. python3), and reports PASS/FAIL; its files must NOT overlap the others (e.g. a test file).\n\
+            Also produce a short integration note. Then call the final_output tool with the plan."
             .to_string();
         let response = Some(Response {
             json_schema: Some(plan_schema),
@@ -509,7 +512,16 @@ impl TaskDispatcher for GooseAgentDispatcher {
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
              When finished, briefly state what you produced.\n\n{context_block}"
         );
-        match self
+        // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
+        // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
+        let started = std::time::Instant::now();
+        eprintln!(
+            "  {} {} → {}",
+            style("▸ run").cyan().bold(),
+            style(&req.task_id).bold(),
+            req.device_id
+        );
+        let outcome = self
             .run_agent(
                 &req.model_id,
                 system_prompt,
@@ -517,20 +529,38 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 None,
                 self.worker_max_turns,
             )
-            .await
-        {
-            Ok((text, _)) => Ok(if text.trim().is_empty() {
-                format!("(task {} completed)", req.task_id)
-            } else {
-                text
-            }),
+            .await;
+        let secs = started.elapsed().as_secs_f64();
+        match outcome {
+            Ok((text, _)) => {
+                eprintln!(
+                    "  {} {} on {} ({:.1}s)",
+                    style("✓").green().bold(),
+                    style(&req.task_id).bold(),
+                    req.device_id,
+                    secs
+                );
+                Ok(if text.trim().is_empty() {
+                    format!("(task {} completed)", req.task_id)
+                } else {
+                    text
+                })
+            }
             Err(e) => {
                 let s = e.to_string();
-                if s.contains("Model is unloaded")
+                let transient = s.contains("Model is unloaded")
                     || s.contains("Server error")
                     || s.contains("model_not_found")
-                    || s.contains("connection")
-                {
+                    || s.contains("connection");
+                eprintln!(
+                    "  {} {} on {} ({:.1}s){}",
+                    style(if transient { "↻" } else { "✗" }).red().bold(),
+                    style(&req.task_id).bold(),
+                    req.device_id,
+                    secs,
+                    if transient { " — will retry" } else { "" }
+                );
+                if transient {
                     // M1.3: best-effort re-warm before the scheduler re-dispatches.
                     if s.contains("Model is unloaded") || s.contains("connection") {
                         lms_load(&req.model_id);

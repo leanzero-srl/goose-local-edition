@@ -105,6 +105,14 @@ Recipe `local-edition/recipes/swarm_v3.yaml`: planner 27B@workhorse fans 4 indep
 - FLEET RUN (text task: 3 planet paragraphs + a summary depending on all 3; pool mac(w2)+macbook(w1), planner 27B@workhorse): plan = 4 subtasks. **All 4 done; dispatched_per_device {mac:3, macbook:1}** — the weight-2 device did 3x the weight-1 device's work; the summary ran AFTER its 3 deps (dep-gating) and combined their outputs (shared-context pass-down). Log: `docs/runs/swarm_m12.log`.
 - NOTE: `qwopus3.6-35b-a3b`@workhorse failed to PRE-LOAD ("LM Link connection closed" while workhorse held the 27B) → ran on the 2 healthy loaded workers (mac.lan + macbook). Reinforces M1.3 (pre-warm + retry) and M2 (pool menu). The scheduler's re-dispatch would have steered around it had it been in the pool.
 
+## SCHEDULER M2.0 + M1.3 + reducer + live view — full code swarm VERIFIED (2026-06-25)
+- M2.0 `goose swarm pool`: cliclack interactive menu + non-interactive subcommands (show/add/rm/weight/enable/disable/probe), persisted under the `swarm` key in config.yaml; `goose swarm run` reads the pool from config. clippy -D clean. Pool CRUD ops validated.
+- M1.3: pre-warm planner + enabled workers (`lms load`) at run start; dispatcher re-warms on a transient "Model is unloaded"/connection error before the scheduler re-dispatches.
+- REDUCER (task #9) via the plan: the planner now ALWAYS adds a final `integrate-verify` subtask (depends on all others; integrates + writes/RUNS tests).
+- **FULL CODE SWARM VERIFIED**: task = lru/greet/slug (independent) + integrate-verify; pool mac(w2)+macbook(w1), planner 27B@workhorse. Result: all 4 done; `dispatched {mac:3, macbook:1}`; **all 4 files (lru/greet/slug/test_all.py) in the ONE shared working dir** (file-sharing across agents confirmed); the swarm-produced `test_all.py` (82 lines, 21 tests) **PASSES 21/0** → the swarm produced working, verified code end-to-end. Log: `docs/runs/swarm_code.log`.
+- Live concurrency VIEW added to `goose swarm run`: each task prints `▸ run <task> → <device>` on start + `✓ <task> (Ns)` on finish — concurrent dispatch is now visible in the CLI. (Explains the "only one running" perception: LM Studio collapses 2 same-device requests into ONE `GENERATING` row, and short workers finish staggered; the planning phase is single-model.)
+- NOTE: 27B is the planner, not in the worker pool, so `integrate-verify`'s preferred-27B gracefully falls back to a 35B worker. Add 27B to the pool (or a dedicated hard-worker device) for true hard-task routing.
+
 ## Open items / next
 - Difficulty-aware routing (planner tags hard→27B / bulk→35B) + typed plan (`response.json_schema`).
 - True 3-way fan-out: same model-id on multiple devices → LM Link "Preferred Device" picks one; need to verify how to target a specific device (distinct aliases per device, or delegate-level addressing).
