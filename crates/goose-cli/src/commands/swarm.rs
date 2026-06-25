@@ -96,6 +96,9 @@ pub struct SwarmConfig {
     /// Worker weight for the planner model when it pitches in (default 1 — it's the dense, slower model).
     #[serde(default = "default_planner_weight")]
     pub planner_weight: u32,
+    /// Effective context-window cap (GOOSE_LOCAL_CONTEXT_CAP) applied to every agent; None = off.
+    #[serde(default)]
+    pub context_cap: Option<u32>,
 }
 
 impl Default for SwarmConfig {
@@ -124,6 +127,7 @@ impl Default for SwarmConfig {
             worker_extensions: Vec::new(),
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
+            context_cap: None,
         }
     }
 }
@@ -240,13 +244,34 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
 // ---------------------------------------------------------------------------------------------
 
 fn show_pool(cfg: &SwarmConfig) {
+    println!("\n{}", style(" swarm pool ").on_cyan().black().bold());
+    println!("  endpoint   {}", style(&cfg.endpoint).cyan());
     println!(
-        "\n{}  endpoint {}  planner {}  max-turns {}  max-attempts {}",
-        style(" swarm pool ").on_cyan().black().bold(),
-        style(&cfg.endpoint).cyan(),
+        "  planner    {}   also-works {} (w{})",
         style(&cfg.planner_model).green(),
+        if cfg.planner_also_works {
+            style("on").green().bold()
+        } else {
+            style("off").red().bold()
+        },
+        cfg.planner_weight
+    );
+    println!(
+        "  limits     worker-max-turns {}   max-attempts {}   context-cap {}",
         style(cfg.worker_max_turns).cyan(),
-        style(cfg.max_attempts).cyan()
+        style(cfg.max_attempts).cyan(),
+        match cfg.context_cap {
+            Some(c) => style(c.to_string()).cyan(),
+            None => style("off".to_string()).dim(),
+        }
+    );
+    println!(
+        "  mcp        {}",
+        if cfg.worker_extensions.is_empty() {
+            style("none".to_string()).dim()
+        } else {
+            style(cfg.worker_extensions.join(", ")).cyan()
+        }
     );
     if cfg.devices.is_empty() {
         println!("  {}", style("(no devices — add one)").yellow());
@@ -280,6 +305,12 @@ fn pool_menu() -> Result<()> {
             .item("toggle", "Enable / disable a device", "")
             .item("remove", "Remove a device", "")
             .item("planner", "Set the planner model", "")
+            .item("planner-worker", "Planner-also-works on/off + weight", "")
+            .item("endpoint", "Set the LM Link endpoint", "")
+            .item("max-turns", "Set worker max-turns", "")
+            .item("max-attempts", "Set max dispatch attempts", "")
+            .item("context-cap", "Set context-window cap", "GOOSE_LOCAL_CONTEXT_CAP")
+            .item("mcp", "Toggle worker MCP extensions", "context7 / web-search / doc-processor")
             .item("probe", "Probe the live fleet", "lms ps + endpoint models")
             .item("save", "Save & exit", "")
             .item("quit", "Quit without saving", "")
@@ -342,6 +373,58 @@ fn pool_menu() -> Result<()> {
                     .default_input(&cfg.planner_model)
                     .interact()?;
                 cfg.planner_model = m;
+            }
+            "planner-worker" => {
+                cfg.planner_also_works = cliclack::confirm("Planner also works as a worker?")
+                    .initial_value(cfg.planner_also_works)
+                    .interact()?;
+                if cfg.planner_also_works {
+                    let w: String = cliclack::input("Planner worker weight")
+                        .default_input(&cfg.planner_weight.to_string())
+                        .interact()?;
+                    cfg.planner_weight = w.trim().parse().unwrap_or(1).max(1);
+                }
+            }
+            "endpoint" => {
+                let e: String = cliclack::input("LM Link endpoint")
+                    .default_input(&cfg.endpoint)
+                    .interact()?;
+                cfg.endpoint = e;
+            }
+            "max-turns" => {
+                let v: String = cliclack::input("Worker max-turns")
+                    .default_input(&cfg.worker_max_turns.to_string())
+                    .interact()?;
+                cfg.worker_max_turns = v.trim().parse().unwrap_or(40).max(1);
+            }
+            "max-attempts" => {
+                let v: String = cliclack::input("Max dispatch attempts")
+                    .default_input(&cfg.max_attempts.to_string())
+                    .interact()?;
+                cfg.max_attempts = v.trim().parse().unwrap_or(3).max(1);
+            }
+            "context-cap" => {
+                let cur = cfg
+                    .context_cap
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let v: String = cliclack::input("Context cap tokens (0 = off)")
+                    .default_input(&cur)
+                    .interact()?;
+                let parsed: u32 = v.trim().parse().unwrap_or(0);
+                cfg.context_cap = if parsed == 0 { None } else { Some(parsed) };
+            }
+            "mcp" => {
+                let choice: &str = cliclack::select("Toggle which worker MCP extension?")
+                    .item("context7", "context7", "")
+                    .item("web-search", "web-search", "")
+                    .item("doc-processor", "doc-processor", "")
+                    .interact()?;
+                if let Some(pos) = cfg.worker_extensions.iter().position(|x| x == choice) {
+                    cfg.worker_extensions.remove(pos);
+                } else {
+                    cfg.worker_extensions.push(choice.to_string());
+                }
             }
             "probe" => probe_fleet(),
             "save" => {
@@ -964,6 +1047,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         ));
     }
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
+    if let Some(cap) = cfg.context_cap {
+        std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
+    }
 
     let json = opts.output_format == "json";
     let working_dir = std::env::current_dir()?;
