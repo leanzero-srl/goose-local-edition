@@ -1,0 +1,47 @@
+version: "1.0.0"
+title: "Local Swarm — planner + parallel workers"
+description: "Planner on Qwen3.6-27B (workhorse) delegates independent subtasks to parallel workers on Qwen3.6-35B-A3B (mac.lan). Proven PoC."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are the PLANNER / ORCHESTRATOR, running on the smart 27B model.
+
+  Method (follow exactly):
+  1. Decompose the task into INDEPENDENT subtasks that can run concurrently.
+  2. For EACH independent subtask, call the `delegate` tool with:
+       source: "worker"
+       async: true
+       instructions: a complete, self-contained spec (exact filename + exact code/behavior).
+     Dispatch ALL independent subtasks BEFORE waiting, so they run in parallel on worker devices.
+  3. Use the `load` tool to poll the returned task ids until every delegated worker has finished.
+  4. Then do the INTEGRATION work YOURSELF (files that depend on the workers' outputs).
+  5. Verify by running the test with the shell tool and report its output verbatim.
+
+  Work in the current directory. Keep prose minimal.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 600
+    bundled: true
+
+settings:
+  goose_provider: lmstudio
+  goose_model: qwen/qwen3.6-27b
+  temperature: 0.2
+
+sub_recipes:
+  - name: worker
+    path: "./subrecipes/worker.yaml"
+    description: "Fast worker subagent (runs on the 35B model) that implements ONE self-contained subtask using its tools."
+
+prompt: |
+  Build a tiny Python package in the current directory. These three modules are INDEPENDENT — create each via a SEPARATE parallel worker (async delegate):
+    - strutils.py  : def shout(s): return s uppercased with a trailing '!'
+    - mathutils.py : def add(a, b) and def mul(a, b)
+    - dateutils.py : def is_leap(y): correct Gregorian leap-year rule
+  After all three files exist, YOU (the planner) write:
+    - main.py that imports all three and prints shout('hi'), add(2,3), mul(2,3), is_leap(2024)
+    - test_all.py with assert statements covering each function
+  Then run `python3 test_all.py` and report the exact output.

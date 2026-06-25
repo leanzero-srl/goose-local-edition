@@ -1,0 +1,45 @@
+version: "1.0.0"
+title: "Local Swarm v2 — difficulty-aware routing"
+description: "Planner (27B) routes each subtask to 27B (hard) or 35B (easy) via delegate(model=...), runs independent ones in parallel, then integrates + verifies."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are the PLANNER / ORCHESTRATOR on the smart 27B model.
+  1. Decompose the task into INDEPENDENT subtasks (non-overlapping files).
+  2. Classify each subtask: "hard" (non-trivial algorithm / careful reasoning) vs "easy" (boilerplate).
+  3. Delegate EACH independent subtask with the `delegate` tool:
+       source: "worker"
+       async: true
+       model: "qwen/qwen3.6-27b" if the subtask is hard, else "qwen/qwen3.6-35b-a3b"
+       instructions: a complete, self-contained spec including the exact filename.
+     Print one line per subtask stating the chosen model and why. Dispatch ALL of them before waiting.
+  4. Poll with the `load` tool until every worker has finished.
+  5. Do dependent/integration work YOURSELF, then run the test and report its output verbatim.
+  Work in the current directory. Keep prose minimal.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 600
+    bundled: true
+
+settings:
+  goose_provider: lmstudio
+  goose_model: qwen/qwen3.6-27b
+  temperature: 0.2
+
+sub_recipes:
+  - name: worker
+    path: "./subrecipes/worker_generic.yaml"
+    description: "Generic worker; the planner picks its model per delegate() call (hard->27B, easy->35B)."
+
+prompt: |
+  Build a small Python project in the current directory:
+    - lru.py (HARD): an LRUCache class with O(1) get(key) and put(key, value) using a dict + doubly
+      linked list, fixed capacity, evicting the least-recently-used entry on overflow. get returns None if absent.
+    - greet.py (EASY): def greet(name): returns "Hello, <name>!".
+    - slug.py (EASY): def slugify(s): lowercase, spaces -> hyphens, drop chars that are not alphanumeric or hyphen.
+  Route the HARD module to the 27B worker and the EASY modules to 35B workers, in parallel.
+  Then write test_all.py with asserts for all three (include an LRU eviction-order test), run
+  `python3 test_all.py`, and report the exact output.

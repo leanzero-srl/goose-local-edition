@@ -1,0 +1,20 @@
+version: "1.0.0"
+title: "Swarm Worker (model chosen by planner)"
+description: "Generic worker; the planner selects the model per delegate() call for difficulty-aware routing."
+author:
+  contact: local-swarm-agent
+
+instructions: |
+  You are a WORKER. Implement EXACTLY the delegated instructions using your tools, in the current
+  working directory. Write minimal, correct code. Do nothing beyond the delegated subtask.
+  Confirm in one line what file you created.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 600
+    bundled: true
+
+settings:
+  goose_provider: lmstudio
+  temperature: 0.2
