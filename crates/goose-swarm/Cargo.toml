@@ -1,0 +1,17 @@
+[package]
+name = "goose-swarm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Weighted work-queue swarm scheduler for goose-local-edition (LM Studio / LM Link): DAG locking queue, per-device weights, work-stealing, shared context. Model-agnostic via the TaskDispatcher trait."
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
