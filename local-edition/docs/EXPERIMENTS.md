@@ -117,6 +117,15 @@ Recipe `local-edition/recipes/swarm_v3.yaml`: planner 27B@workhorse fans 4 indep
 Added a per-turn proactive compaction check in the `agent.rs` reply loop, right after `conversation.extend` (the adversarially-verified safe spot), guarded by `did_recovery_compact_this_iteration` + cancel + `exit_chat`; mirrors the reactive block but continues (no break). It calls `check_if_compaction_needed` which honors `GOOSE_LOCAL_CONTEXT_CAP`. Before, the proactive check ran ONLY once at reply-start, so the cap never bit mid-run.
 RUNTIME TEST: `goose run` with `GOOSE_LOCAL_CONTEXT_CAP=12000`, threshold 0.6, a 10-file growing task → 10 files created; **"Context near the cap — compacting to stay lean..."** printed; goose log shows compaction FIRED mid-run (≥1); NO loop; task completed (tool-calling survived). The cap now drives lean-context compaction during a session. clippy -D clean. Both single-agent `goose run` and swarm workers (agent.reply) benefit.
 
+## 3-DEVICE SWARM via `goose swarm run` — VERIFIED 2026-06-25
+Pool: mac(qwen35b, w2) + macbook(holo3, w1) + workhorse(qwopus, w2); planner 27B@workhorse. Task: 6 independent utility modules + integrate-verify.
+- Live view: **5 tasks dispatched concurrently across all 3 devices** at start (mac 2, macbook 1, workhorse 2 — honoring weights); **work-stealing** (macbook pulled temp-convert right after gcd finished); **dep-gating** (integrate-verify only after all 6 modules done).
+- All 7 done; `dispatched {mac:3, workhorse:2, macbook:2}`; all 6 modules + `test_utils.py` in the shared cwd; the swarm-produced test suite → **OVERALL: ALL PASS**. Definitive 3-machine parallelism + verified output. Log: `docs/runs/swarm_3dev.log`.
+
+## Status: the swarm is feature-complete + validated
+Done: scheduler core (7/7 mock tests) · GooseAgentDispatcher · `goose swarm run` · `goose swarm pool` menu (weights + instances) · idempotent pre-warm (no duplicate instances) · reducer (integrate-verify) · per-turn compaction (cap bites mid-run) · live concurrency view. Fleet-validated 2-device + 3-device, output passes its own tests.
+DEFERRED (task #8, git-worktree write-isolation): assessed LOWER value / HIGHER risk right now — the scheduler's file-overlap locks + the planner's non-overlapping file ownership already prevent concurrent-edit corruption, and the shared-dir model is what makes integrate-verify see all modules (worktrees would isolate files and BREAK that flow unless a merge step is added). Recommend deferring until there's a concrete need for tasks that genuinely edit overlapping files. Other future: M2.1 crash-resume, EWMA weight auto-tune, add 27B as a hard-task worker for difficulty routing.
+
 ## Open items / next
 - Difficulty-aware routing (planner tags hard→27B / bulk→35B) + typed plan (`response.json_schema`).
 - True 3-way fan-out: same model-id on multiple devices → LM Link "Preferred Device" picks one; need to verify how to target a specific device (distinct aliases per device, or delegate-level addressing).
