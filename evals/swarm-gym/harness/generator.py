@@ -112,36 +112,65 @@ def move_to_taskspec(move: dict, base: TaskSpec, turn: int) -> TaskSpec:
     )
 
 
+_REQ_KINDS = {"functional", "quality", "constraint", "regression"}
+_CHK_TYPES = {"file_exists", "file_contains", "file_matches", "command_succeeds", "tool_called"}
+_CHK_KEYS = {"type", "name", "path", "regex", "command", "tool"}
+
+
 def _to_taskspec(data, archetype, slug, workspace, persona, seed, turn) -> TaskSpec:
+    if not isinstance(data, dict):
+        data = {}
+    mcp = data.get("expected_mcp") or []
     return TaskSpec(
         task_id=f"{slug}-t{turn}",
         archetype=archetype,
         app_slug=slug,
         workspace=str(workspace),
-        prompt=data.get("prompt", ""),
-        language=data.get("language", "python"),
-        expected_mcp=data.get("expected_mcp", []) or [],
-        requirements=[Requirement(**_req(r)) for r in data.get("requirements", []) or []],
-        hidden_requirements=[Requirement(**_req(r)) for r in data.get("hidden_requirements", []) or []],
-        deterministic_checks=[
-            DeterministicCheck(**_chk(c)) for c in data.get("deterministic_checks", []) or []
-        ],
+        prompt=str(data.get("prompt", "")),
+        language=str(data.get("language", "python")),
+        expected_mcp=[str(m) for m in mcp if isinstance(m, (str, int))],
+        requirements=_reqs(data.get("requirements")),
+        hidden_requirements=_reqs(data.get("hidden_requirements")),
+        deterministic_checks=_checks(data.get("deterministic_checks")),
         turn=turn,
         persona=persona,
         seed=seed,
     )
 
 
-def _req(r: dict) -> dict:
-    return {
-        "id": str(r.get("id", "R?")),
-        "text": str(r.get("text", "")),
-        "kind": r.get("kind", "functional"),
-        "weight": int(r.get("weight", 1) or 1),
-        "check_hint": r.get("check_hint"),
-    }
+def _reqs(items) -> List[Requirement]:
+    """Tolerate imperfect brain JSON: items may be dicts, plain strings, or junk."""
+    out: List[Requirement] = []
+    for r in items or []:
+        if isinstance(r, str):
+            r = {"text": r}
+        if not isinstance(r, dict):
+            continue
+        kind = r.get("kind", "functional")
+        if kind not in _REQ_KINDS:
+            kind = "functional"
+        try:
+            out.append(
+                Requirement(
+                    id=str(r.get("id", f"R{len(out) + 1}")),
+                    text=str(r.get("text", "")),
+                    kind=kind,
+                    weight=int(r.get("weight", 1) or 1),
+                    check_hint=r.get("check_hint"),
+                )
+            )
+        except Exception:
+            pass
+    return out
 
 
-def _chk(c: dict) -> dict:
-    allowed = {"type", "name", "path", "regex", "command", "tool"}
-    return {k: v for k, v in c.items() if k in allowed}
+def _checks(items) -> List[DeterministicCheck]:
+    out: List[DeterministicCheck] = []
+    for c in items or []:
+        if not isinstance(c, dict) or c.get("type") not in _CHK_TYPES:
+            continue
+        try:
+            out.append(DeterministicCheck(**{k: v for k, v in c.items() if k in _CHK_KEYS}))
+        except Exception:
+            pass
+    return out

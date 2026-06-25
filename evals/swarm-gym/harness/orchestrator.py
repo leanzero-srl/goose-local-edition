@@ -98,18 +98,22 @@ def run_session(
     last_verdict = None
     for turn in range(1, turns + 1):
         if turn > 1:
-            move = generator.next_move(
-                gen_brain,
-                task,
-                last_verdict.model_dump() if last_verdict else {},
-                _tree(Path(task.workspace)),
-                persona,
-                turn,
-            )
-            if move.get("done"):
+            try:
+                move = generator.next_move(
+                    gen_brain,
+                    task,
+                    last_verdict.model_dump() if last_verdict else {},
+                    _tree(Path(task.workspace)),
+                    persona,
+                    turn,
+                )
+            except Exception as e:
+                _log(f"next_move failed ({e}); ending session early")
+                break
+            if not isinstance(move, dict) or move.get("done"):
                 break
             task = generator.move_to_taskspec(move, task, turn)
-            kind = move.get("kind", "feature")
+            kind = str(move.get("kind", "feature"))
         else:
             kind = "open"
 
