@@ -8,7 +8,9 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use console::style;
 use futures::StreamExt;
-use goose::agents::{Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig};
+use goose::agents::{
+    Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig,
+};
 use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
 use goose::conversation::message::{Message, MessageContent};
@@ -68,6 +70,9 @@ fn default_dynamic_replan() -> bool {
 }
 fn default_max_replans() -> u32 {
     2
+}
+fn default_research_scouts() -> bool {
+    true
 }
 
 /// When the swarm runs a parallel research phase before planning.
@@ -138,6 +143,10 @@ pub struct SwarmConfig {
     /// Max dynamic-replan rounds per run (bounds latency + make-work).
     #[serde(default = "default_max_replans")]
     pub max_replans: u32,
+    /// Use parallel fixed-lens SCOUTS for research (no serial scoping call) instead of the planner
+    /// scoping questions first. On by default — maximizes parallelism during the research phase.
+    #[serde(default = "default_research_scouts")]
+    pub research_scouts: bool,
 }
 
 impl Default for SwarmConfig {
@@ -173,6 +182,7 @@ impl Default for SwarmConfig {
             max_research_questions: default_max_research(),
             dynamic_replan: default_dynamic_replan(),
             max_replans: default_max_replans(),
+            research_scouts: default_research_scouts(),
         }
     }
 }
@@ -330,9 +340,14 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
-        "  research   {:?}   max-questions {}",
+        "  research   {:?}   max-questions {}   mode {}",
         cfg.research_planning,
-        style(cfg.max_research_questions).cyan()
+        style(cfg.max_research_questions).cyan(),
+        if cfg.research_scouts {
+            style("scouts(parallel)").green().bold()
+        } else {
+            style("questions").cyan()
+        }
     );
     println!(
         "  replan     {}   max-rounds {}",
@@ -394,14 +409,35 @@ fn pool_menu() -> Result<()> {
             .item("endpoint", "Set the LM Link endpoint", "")
             .item("max-turns", "Set worker max-turns", "")
             .item("max-attempts", "Set max dispatch attempts", "")
-            .item("context-cap", "Set context-window cap", "GOOSE_LOCAL_CONTEXT_CAP")
+            .item(
+                "context-cap",
+                "Set context-window cap",
+                "GOOSE_LOCAL_CONTEXT_CAP",
+            )
             .item("research", "Research-planning mode", "off / on / auto")
-            .item("max-research", "Max research questions", "")
-            .item("replan", "Dynamic replan on/off", "fill idle workers mid-run")
+            .item(
+                "scouts",
+                "Research method",
+                "parallel scouts vs serial scoping",
+            )
+            .item("max-research", "Max research questions / lenses", "")
+            .item(
+                "replan",
+                "Dynamic replan on/off",
+                "fill idle workers mid-run",
+            )
             .item("max-replans", "Max replan rounds", "")
-            .item("mcp", "Toggle worker MCP extensions", "context7 / web-search / doc-processor")
+            .item(
+                "mcp",
+                "Toggle worker MCP extensions",
+                "context7 / web-search / doc-processor",
+            )
             .item("probe", "Probe the live fleet", "lms ps + endpoint models")
-            .item("import", "Import loaded models from fleet", "lms ps -> pool entries")
+            .item(
+                "import",
+                "Import loaded models from fleet",
+                "lms ps -> pool entries",
+            )
             .item("save", "Save & exit", "")
             .item("quit", "Quit without saving", "")
             .interact()?;
@@ -517,8 +553,14 @@ fn pool_menu() -> Result<()> {
                     _ => ResearchPlanningMode::Auto,
                 };
             }
+            "scouts" => {
+                cfg.research_scouts =
+                    cliclack::confirm("Use parallel fixed-lens scouts (no serial scoping call)?")
+                        .initial_value(cfg.research_scouts)
+                        .interact()?;
+            }
             "max-research" => {
-                let v: String = cliclack::input("Max research questions")
+                let v: String = cliclack::input("Max research questions / scout lenses")
                     .default_input(&cfg.max_research_questions.to_string())
                     .interact()?;
                 cfg.max_research_questions = v.trim().parse().unwrap_or(4).clamp(1, 8);
@@ -851,6 +893,28 @@ fn print_import_summary(s: &ImportSummary) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn scout_lenses_select_correctly() {
+        // greenfield drops the amendment-only `codebase` lens.
+        let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
+        assert_eq!(g, vec!["libraries", "architecture", "edge-cases"]);
+        // amendments include codebase, and it is first so a low clamp keeps it.
+        let a: Vec<&str> = select_lenses(true, 4).iter().map(|l| l.id).collect();
+        assert_eq!(
+            a,
+            vec!["codebase", "libraries", "architecture", "edge-cases"]
+        );
+        assert_eq!(
+            select_lenses(true, 2)
+                .iter()
+                .map(|l| l.id)
+                .collect::<Vec<_>>(),
+            vec!["codebase", "libraries"]
+        );
+        // max clamps up to at least 1 even if 0 is passed.
+        assert_eq!(select_lenses(false, 0).len(), 1);
+    }
+
     // Captured verbatim from a real `lms ps` (5 models; the macbook 'Local' hosts two).
     const FIXTURE: &str = "\nIDENTIFIER                                      MODEL                                           STATUS        SIZE        CONTEXT    PARALLEL    DEVICE                TTL     \nqwen/qwen3.6-27b                                qwen/qwen3.6-27b                                GENERATING    29.53 GB    262144     4           WorksMacStudio.lan    1h / 1h \nqwen/qwen3.6-35b-a3b                            qwen/qwen3.6-35b-a3b                            IDLE          29.09 GB    200000     4           Mac.lan                       \nqwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    qwen3.6-35b-a3b-mtp-holo3-qwopus-qx86-hi-mlx    IDLE          39.51 GB    128000     4           Local                         \nqwopus3.6-27b-coder-mlx                         qwopus3.6-27b-coder-mlx                         IDLE          28.60 GB    128000     4           Local                         \nqwopus3.6-35b-a3b-v1-mtp                        qwopus3.6-35b-a3b-v1-mtp                        IDLE          38.70 GB    262144     4           WorksMacStudio.lan    17m / 1h\n";
 
@@ -884,7 +948,10 @@ mod tests {
         assert!(s.skipped_existing.is_empty());
         assert!(s.skipped_collision.is_empty());
         assert_eq!(cfg.devices.len(), 5);
-        assert!(cfg.devices.iter().all(|d| d.weight == 2 && d.host.is_some()));
+        assert!(cfg
+            .devices
+            .iter()
+            .all(|d| d.weight == 2 && d.host.is_some()));
     }
 
     #[test]
@@ -1015,6 +1082,56 @@ struct ResearchFinding {
     findings: String,
 }
 
+/// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
+/// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
+struct ScoutLens {
+    id: &'static str,
+    title: &'static str,
+    brief: &'static str,
+    tool_hint: &'static str,
+    amendment_only: bool,
+}
+
+const SCOUT_LENSES: &[ScoutLens] = &[
+    ScoutLens {
+        id: "codebase",
+        title: "Existing codebase",
+        brief: "Investigate the EXISTING code in the working directory: structure, key files, conventions, and exactly where the requested change must hook in.",
+        tool_hint: "Use the developer shell tools (ls, grep, cat) to read the existing code.",
+        amendment_only: true,
+    },
+    ScoutLens {
+        id: "libraries",
+        title: "Libraries & APIs",
+        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
+        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
+        amendment_only: false,
+    },
+    ScoutLens {
+        id: "architecture",
+        title: "Architecture & data model",
+        brief: "Propose the module/file breakdown, the data model/types, and how the pieces fit — a skeleton the planner can decompose from.",
+        tool_hint: "Reason from the task; use web-search only to confirm conventions.",
+        amendment_only: false,
+    },
+    ScoutLens {
+        id: "edge-cases",
+        title: "Edge cases & testing",
+        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
+        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
+        amendment_only: false,
+    },
+];
+
+/// The lenses to run for this task: drop amendment-only lenses on greenfield, then clamp to `max`.
+fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
+    SCOUT_LENSES
+        .iter()
+        .filter(|l| !l.amendment_only || is_amendment)
+        .take(max.max(1) as usize)
+        .collect()
+}
+
 /// True if the working dir already contains source (a marker file or a source-extension file within
 /// ~2 levels) — i.e. an amendment, which is what flips research-planning Auto to on.
 fn working_dir_has_sources(dir: &Path) -> bool {
@@ -1022,8 +1139,21 @@ fn working_dir_has_sources(dir: &Path) -> bool {
         "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "rb", "c", "cpp", "h", "hpp", "cs",
         "swift", "kt",
     ];
-    const MARKERS: &[&str] = &["Cargo.toml", "package.json", "pyproject.toml", "go.mod", "pom.xml"];
-    const SKIP: &[&str] = &[".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"];
+    const MARKERS: &[&str] = &[
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+    ];
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        ".venv",
+        ".swarm",
+        "__pycache__",
+    ];
     fn walk(dir: &Path, depth: u32) -> bool {
         let Ok(rd) = std::fs::read_dir(dir) else {
             return false;
@@ -1272,7 +1402,8 @@ impl GooseAgentDispatcher {
                                     let name = tc.name.to_string();
                                     if name == FINAL_OUTPUT_TOOL {
                                         final_output = Some(
-                                            serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                                            serde_json::to_string(&tc.arguments)
+                                                .unwrap_or_default(),
                                         );
                                     }
                                     let mcp = is_mcp_tool(&name);
@@ -1343,7 +1474,14 @@ impl GooseAgentDispatcher {
             json_schema: Some(research_schema()),
         });
         let out = match self
-            .run_agent(planner_model, system, format!("Task: {user_prompt}"), response, 8, &[])
+            .run_agent(
+                planner_model,
+                system,
+                format!("Task: {user_prompt}"),
+                response,
+                8,
+                &[],
+            )
             .await
         {
             Ok(o) => o,
@@ -1430,6 +1568,73 @@ impl GooseAgentDispatcher {
                 ResearchFinding {
                     question: q.question,
                     kind: q.kind,
+                    findings,
+                }
+            }));
+        }
+        let mut out = Vec::new();
+        for h in handles {
+            if let Ok(f) = h.await {
+                out.push(f);
+            }
+        }
+        out
+    }
+
+    /// Fan out fixed-lens SCOUTS IN PARALLEL across the fleet — each self-directs its lens with no
+    /// serial scoping call. Returns the same `ResearchFinding` shape as `run_research` so the planner
+    /// and the findings-join are unchanged.
+    async fn run_scouts(
+        self: &Arc<Self>,
+        user_prompt: &str,
+        is_amendment: bool,
+        max_lenses: u32,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_models: Vec<String>,
+    ) -> Vec<ResearchFinding> {
+        if worker_models.is_empty() {
+            return Vec::new();
+        }
+        let mut handles = Vec::new();
+        for (i, lens) in select_lenses(is_amendment, max_lenses)
+            .into_iter()
+            .enumerate()
+        {
+            let me = self.clone();
+            let exts = research_extensions.clone();
+            let model = worker_models[i % worker_models.len()].clone();
+            let prompt = user_prompt.to_string();
+            handles.push(tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                eprintln!(
+                    "  {} scout {} → {}",
+                    style("▸").cyan().bold(),
+                    style(lens.id).bold(),
+                    model
+                );
+                let system = format!(
+                    "You are a SCOUT investigating ONE aspect of a coding task to inform the planner. \
+                     Your lens is \"{}\": {} {} Return a CONCISE, factual brief (key facts, API names, \
+                     short snippets, file refs, and a suggested breakdown for your lens). Do NOT write or \
+                     modify any project files, and do NOT produce the full plan.",
+                    lens.title, lens.brief, lens.tool_hint
+                );
+                let findings = match me
+                    .run_agent(&model, system, format!("Task: {prompt}"), None, 12, &exts)
+                    .await
+                {
+                    Ok(o) => o.text,
+                    Err(e) => format!("(scout failed: {e})"),
+                };
+                eprintln!(
+                    "  {} scout {} ({:.0}s)",
+                    style("✓").green().bold(),
+                    style(lens.id).bold(),
+                    started.elapsed().as_secs_f64()
+                );
+                ResearchFinding {
+                    question: lens.title.to_string(),
+                    kind: lens.id.to_string(),
                     findings,
                 }
             }));
@@ -1704,7 +1909,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         None
     } else {
         Some(opts.log_file.clone().unwrap_or_else(|| {
-            working_dir.join(".swarm").join(format!("run-{run_id}.jsonl"))
+            working_dir
+                .join(".swarm")
+                .join(format!("run-{run_id}.jsonl"))
         }))
     };
     let sink: Arc<dyn EventSink> = match &log_path {
@@ -1818,51 +2025,87 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     };
     let mut research_findings = String::new();
     if do_research {
-        phase_banner(
-            "RESEARCH",
-            "27B scopes questions ALONE, then the fleet researches them IN PARALLEL",
+        let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
+            ["context7", "web-search"]
+                .into_iter()
+                .filter_map(build_worker_extension)
+                .collect(),
         );
-        eprintln!("  scoping research questions on {} ...", cfg.planner_model);
-        let questions = dispatcher
-            .research_questions(
-                &cfg.planner_model,
-                &opts.prompt,
-                cfg.max_research_questions,
-                is_amendment,
-            )
-            .await
-            .unwrap_or_default();
-        sink.write_value(serde_json::json!({
-            "event": "research_planned",
-            "count": questions.len(),
-            "questions": questions.iter().map(|q| serde_json::json!({"id": q.id, "kind": q.kind, "question": q.question})).collect::<Vec<_>>(),
-        }));
-        if !questions.is_empty() {
-            eprintln!("  {} research question(s) → running across the fleet:", questions.len());
-            let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
-                ["context7", "web-search"]
-                    .into_iter()
-                    .filter_map(build_worker_extension)
-                    .collect(),
+        let worker_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+        let findings = if cfg.research_scouts {
+            phase_banner(
+                "SCOUT",
+                "fixed-lens scouts investigate IN PARALLEL across the fleet — no serial scoping",
             );
-            let worker_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-            let findings = dispatcher
-                .run_research(questions, research_exts, worker_models)
-                .await;
-            research_findings = findings
+            let lenses: Vec<&str> = select_lenses(is_amendment, cfg.max_research_questions)
                 .iter()
-                .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            sink.write_value(serde_json::json!({"event": "research_completed", "findings": findings.len()}));
-        }
+                .map(|l| l.id)
+                .collect();
+            eprintln!(
+                "  {} lens scout(s) → running across the fleet:",
+                lenses.len()
+            );
+            sink.write_value(serde_json::json!({"event": "scouts_planned", "lenses": lenses}));
+            dispatcher
+                .run_scouts(
+                    &opts.prompt,
+                    is_amendment,
+                    cfg.max_research_questions,
+                    research_exts,
+                    worker_models,
+                )
+                .await
+        } else {
+            phase_banner(
+                "RESEARCH",
+                "27B scopes questions ALONE, then the fleet researches them IN PARALLEL",
+            );
+            eprintln!("  scoping research questions on {} ...", cfg.planner_model);
+            let questions = dispatcher
+                .research_questions(
+                    &cfg.planner_model,
+                    &opts.prompt,
+                    cfg.max_research_questions,
+                    is_amendment,
+                )
+                .await
+                .unwrap_or_default();
+            sink.write_value(serde_json::json!({
+                "event": "research_planned",
+                "count": questions.len(),
+                "questions": questions.iter().map(|q| serde_json::json!({"id": q.id, "kind": q.kind, "question": q.question})).collect::<Vec<_>>(),
+            }));
+            if questions.is_empty() {
+                Vec::new()
+            } else {
+                eprintln!(
+                    "  {} research question(s) → running across the fleet:",
+                    questions.len()
+                );
+                dispatcher
+                    .run_research(questions, research_exts, worker_models)
+                    .await
+            }
+        };
+        research_findings = findings
+            .iter()
+            .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        sink.write_value(
+            serde_json::json!({"event": "research_completed", "findings": findings.len()}),
+        );
     }
 
     phase_banner(
         "PLAN",
         "27B builds the task DAG ALONE — workers idle while it reasons",
     );
-    eprintln!("  planning on {} (targeting {} workers) ...", cfg.planner_model, devices.len());
+    eprintln!(
+        "  planning on {} (targeting {} workers) ...",
+        cfg.planner_model,
+        devices.len()
+    );
     let plan_json = dispatcher
         .plan(
             &cfg.planner_model,
@@ -1901,7 +2144,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
     }
     let report = scheduler
-        .run(dag, dispatcher as Arc<dyn TaskDispatcher>, opts.prompt.clone())
+        .run(
+            dag,
+            dispatcher as Arc<dyn TaskDispatcher>,
+            opts.prompt.clone(),
+        )
         .await?;
 
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
