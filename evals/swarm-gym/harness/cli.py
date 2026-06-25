@@ -65,10 +65,13 @@ def main(argv: Optional[list] = None) -> None:
     elif args.cmd == "loop":
         for i in range(args.n):
             a = ARCHES[i % len(ARCHES)]
-            s = orchestrator.run_session(
-                cfg, root, a, None, 1000 + i, turns, not args.no_judge, args.tweak
-            )
-            print(f"[{i + 1}/{args.n}] {s['session_id']} -> {s['overall']} ({s['turns']} turns)")
+            try:
+                s = orchestrator.run_session(
+                    cfg, root, a, None, 1000 + i, turns, not args.no_judge, args.tweak
+                )
+                print(f"[{i + 1}/{args.n}] {s['session_id']} -> {s['overall']} ({s['turns']} turns)")
+            except Exception as e:
+                print(f"[{i + 1}/{args.n}] {a} session FAILED: {e}")
 
 
 if __name__ == "__main__":
