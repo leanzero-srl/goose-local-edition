@@ -952,8 +952,8 @@ enum Command {
     /// dispatch subtasks across the LM Link device pool with a weighted work-queue scheduler.
     #[command(about = "Run a local multi-device swarm over LM Studio LM Link")]
     Swarm {
-        /// The task to plan and run across the swarm.
-        prompt: String,
+        #[command(subcommand)]
+        command: crate::commands::swarm::SwarmCommand,
     },
 
     /// Manage gateways for external platform integrations (e.g., Telegram)
@@ -2133,7 +2133,7 @@ pub async fn cli() -> anyhow::Result<()> {
         }
         Some(Command::Gateway { command }) => handle_gateway_command(command).await,
         Some(Command::Schedule { command }) => handle_schedule_command(command).await,
-        Some(Command::Swarm { prompt }) => crate::commands::swarm::run_swarm(prompt).await,
+        Some(Command::Swarm { command }) => crate::commands::swarm::handle_swarm(command).await,
         #[cfg(feature = "update")]
         Some(Command::Update {
             canary,
