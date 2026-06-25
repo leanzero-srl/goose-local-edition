@@ -75,9 +75,10 @@ fn default_max_replans() -> u32 {
 #[serde(rename_all = "lowercase")]
 pub enum ResearchPlanningMode {
     Off,
+    /// Always run the parallel research phase before planning (keeps the fleet busy during planning).
+    #[default]
     On,
     /// Research only when the working dir already has source files (an amendment).
-    #[default]
     Auto,
 }
 
@@ -168,7 +169,7 @@ impl Default for SwarmConfig {
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
             context_cap: None,
-            research_planning: ResearchPlanningMode::Auto,
+            research_planning: ResearchPlanningMode::On,
             max_research_questions: default_max_research(),
             dynamic_replan: default_dynamic_replan(),
             max_replans: default_max_replans(),
@@ -1395,6 +1396,14 @@ impl GooseAgentDispatcher {
             let exts = research_extensions.clone();
             let model = worker_models[i % worker_models.len()].clone();
             handles.push(tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                eprintln!(
+                    "  {} research {} ({}) → {}",
+                    style("▸").cyan().bold(),
+                    style(&q.id).bold(),
+                    q.kind,
+                    model
+                );
                 let tool_hint = match q.kind.as_str() {
                     "library_docs" => "Use the context7 tools (resolve-library-id then get-library-docs).",
                     "web" => "Use the web-search tool.",
@@ -1412,6 +1421,12 @@ impl GooseAgentDispatcher {
                     Ok(o) => o.text,
                     Err(e) => format!("(research failed: {e})"),
                 };
+                eprintln!(
+                    "  {} research {} ({:.0}s)",
+                    style("✓").green().bold(),
+                    style(&q.id).bold(),
+                    started.elapsed().as_secs_f64()
+                );
                 ResearchFinding {
                     question: q.question,
                     kind: q.kind,
@@ -1656,6 +1671,17 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
+/// A clear, solid-color phase header on stderr so a watcher understands what stage the run is in and
+/// why the fleet is busy or the planner is reasoning alone.
+fn phase_banner(label: &str, why: &str) {
+    eprintln!(
+        "\n{} {}  {}",
+        style("▶").cyan().bold(),
+        style(format!(" {label} ")).on_cyan().black().bold(),
+        style(why).dim()
+    );
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let cfg = load_config();
     let enabled: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.enabled).collect();
@@ -1792,7 +1818,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     };
     let mut research_findings = String::new();
     if do_research {
-        eprintln!("research-planning: scoping questions on {} ...", cfg.planner_model);
+        phase_banner(
+            "RESEARCH",
+            "27B scopes questions ALONE, then the fleet researches them IN PARALLEL",
+        );
+        eprintln!("  scoping research questions on {} ...", cfg.planner_model);
         let questions = dispatcher
             .research_questions(
                 &cfg.planner_model,
@@ -1808,7 +1838,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             "questions": questions.iter().map(|q| serde_json::json!({"id": q.id, "kind": q.kind, "question": q.question})).collect::<Vec<_>>(),
         }));
         if !questions.is_empty() {
-            eprintln!("research-planning: {} question(s) across the fleet ...", questions.len());
+            eprintln!("  {} research question(s) → running across the fleet:", questions.len());
             let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
                 ["context7", "web-search"]
                     .into_iter()
@@ -1828,7 +1858,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         }
     }
 
-    eprintln!("planning on {} (targeting {} workers) ...", cfg.planner_model, devices.len());
+    phase_banner(
+        "PLAN",
+        "27B builds the task DAG ALONE — workers idle while it reasons",
+    );
+    eprintln!("  planning on {} (targeting {} workers) ...", cfg.planner_model, devices.len());
     let plan_json = dispatcher
         .plan(
             &cfg.planner_model,
@@ -1840,7 +1874,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .await?;
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
-    eprintln!("plan: {} subtask(s). dispatching ...", dag.tasks.len());
+    eprintln!("  plan: {} subtask(s)", dag.tasks.len());
 
     sink.write_value(serde_json::json!({
         "event": "plan_loaded",
@@ -1855,6 +1889,10 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         "raw_plan_json": plan_json,
     }));
 
+    phase_banner(
+        "EXECUTE",
+        "subtasks run IN PARALLEL across the fleet; dynamic replan fills idle workers",
+    );
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
     if replan_on && cfg.max_replans > 0 {
