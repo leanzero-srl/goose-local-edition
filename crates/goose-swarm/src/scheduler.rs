@@ -12,6 +12,7 @@ use crate::context::SharedContext;
 use crate::dag::{Dag, TaskId, TaskState};
 use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 use crate::event::{EventSink, NullSink, SwarmEvent};
+use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -129,6 +130,9 @@ struct State {
     task_tool_calls: HashMap<TaskId, Vec<ToolCallRecord>>,
     /// (device_id, model_id) of each task's most recent attempt.
     task_final_device: HashMap<TaskId, (String, String)>,
+    /// The user goal (passed to the replanner) + how many replan rounds have run.
+    goal: String,
+    replans_done: u32,
 }
 
 impl State {
@@ -141,6 +145,40 @@ impl State {
 
     fn total_in_flight(&self) -> u32 {
         self.devices.iter().map(|d| d.in_flight).sum()
+    }
+
+    /// Free worker slots across enabled devices (how much parallel work could start right now).
+    fn idle_capacity(&self) -> u32 {
+        self.devices
+            .iter()
+            .filter(|d| d.cfg.enabled)
+            .map(|d| d.cfg.weight.saturating_sub(d.in_flight))
+            .sum()
+    }
+
+    fn make_replan_context(&self) -> ReplanContext {
+        let mut completed = Vec::new();
+        let mut failed = Vec::new();
+        let mut incomplete = Vec::new();
+        for (id, n) in &self.dag.tasks {
+            match n.state {
+                TaskState::Done => completed.push((
+                    id.clone(),
+                    n.result.clone().unwrap_or_default().chars().take(400).collect(),
+                )),
+                TaskState::Failed => failed.push(id.clone()),
+                _ => incomplete.push(id.clone()),
+            }
+        }
+        ReplanContext {
+            goal: self.goal.clone(),
+            existing_ids: self.dag.tasks.keys().cloned().collect(),
+            completed,
+            failed,
+            incomplete,
+            idle_capacity: self.idle_capacity(),
+            round: self.replans_done.saturating_sub(1),
+        }
     }
 
     fn files_conflict(&self, tid: &str) -> bool {
@@ -511,6 +549,8 @@ pub struct Scheduler {
     devices: Vec<DeviceCfg>,
     max_attempts: u32,
     sink: Arc<dyn EventSink>,
+    replanner: Option<Arc<dyn Replanner>>,
+    max_replans: u32,
 }
 
 impl Scheduler {
@@ -519,6 +559,8 @@ impl Scheduler {
             devices,
             max_attempts,
             sink: Arc::new(NullSink),
+            replanner: None,
+            max_replans: 0,
         }
     }
 
@@ -528,8 +570,22 @@ impl Scheduler {
         self
     }
 
-    /// Run the whole DAG to completion. Returns when every task is Done or Failed.
-    pub async fn run(&self, dag: Dag, dispatcher: Arc<dyn TaskDispatcher>) -> Result<RunReport> {
+    /// Attach a dynamic replanner: when workers go idle mid-run (>=2 free slots while a task is still
+    /// in flight) it is asked for more parallel work, up to `max_replans` rounds. Off by default.
+    pub fn with_replanner(mut self, replanner: Arc<dyn Replanner>, max_replans: u32) -> Self {
+        self.replanner = Some(replanner);
+        self.max_replans = max_replans;
+        self
+    }
+
+    /// Run the whole DAG to completion. Returns when every task is Done or Failed. `goal` is the user
+    /// prompt, used only by the dynamic replanner (ignored when none is attached).
+    pub async fn run(
+        &self,
+        dag: Dag,
+        dispatcher: Arc<dyn TaskDispatcher>,
+        goal: String,
+    ) -> Result<RunReport> {
         if !self.devices.iter().any(|d| d.enabled) {
             bail!("no enabled devices in the pool");
         }
@@ -574,6 +630,8 @@ impl Scheduler {
             task_session: HashMap::new(),
             task_tool_calls: HashMap::new(),
             task_final_device: HashMap::new(),
+            goal,
+            replans_done: 0,
         }));
         let notify = Arc::new(Notify::new());
 
@@ -614,6 +672,74 @@ impl Scheduler {
                     bail!(
                         "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
                     );
+                }
+            }
+            // Dynamic replan: workers idle while a task is still in flight (e.g. a slow tail) — ask the
+            // planner for more parallel work to fill them. Gated on in_flight > 0, so it is mutually
+            // exclusive with the stuck-bail above (which needs in_flight == 0). The state lock is
+            // released across the async planner call; completions fire meanwhile and splice_specs
+            // re-validates against the now-current DAG.
+            if self.replanner.is_some() {
+                let ctx = {
+                    let mut s = state.lock().await;
+                    if !dispatched_now
+                        && s.total_in_flight() > 0
+                        && s.ready.is_empty()
+                        && s.idle_capacity() >= 2
+                        && s.replans_done < self.max_replans
+                    {
+                        s.replans_done += 1;
+                        Some(s.make_replan_context())
+                    } else {
+                        None
+                    }
+                };
+                if let Some(ctx) = ctx {
+                    let round = ctx.round;
+                    let specs = self
+                        .replanner
+                        .as_ref()
+                        .unwrap()
+                        .replan(ctx)
+                        .await
+                        .unwrap_or_default();
+                    let mut s = state.lock().await;
+                    if s.all_terminal() {
+                        return Ok(s.build_report());
+                    }
+                    if specs.is_empty() {
+                        s.sink.emit(&SwarmEvent::Replanned {
+                            round,
+                            added: Vec::new(),
+                            stopped: true,
+                        });
+                        s.replans_done = self.max_replans;
+                    } else {
+                        match s.dag.splice_specs(specs) {
+                            Ok(new_ready) => {
+                                let added = new_ready.clone();
+                                for id in new_ready {
+                                    let fan_out = s.dag.tasks[&id].fan_out;
+                                    s.ready.push(Ranked { fan_out, id });
+                                }
+                                s.sink.emit(&SwarmEvent::Replanned {
+                                    round,
+                                    added,
+                                    stopped: false,
+                                });
+                                drop(s);
+                                continue;
+                            }
+                            Err(_) => {
+                                s.sink.emit(&SwarmEvent::Replanned {
+                                    round,
+                                    added: Vec::new(),
+                                    stopped: true,
+                                });
+                                s.replans_done = self.max_replans;
+                            }
+                        }
+                    }
                 }
             }
             // A completion (or nothing yet) — wake and re-evaluate. tokio::Notify stores one permit,

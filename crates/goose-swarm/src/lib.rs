@@ -9,10 +9,12 @@ pub mod context;
 pub mod dag;
 pub mod dispatch;
 pub mod event;
+pub mod replan;
 pub mod scheduler;
 
 pub use context::SharedContext;
-pub use dag::{Dag, Difficulty, Node, TaskId, TaskSpec, TaskState};
+pub use dag::{specs_from_plan_json, Dag, Difficulty, Node, TaskId, TaskSpec, TaskState};
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 pub use event::{EventSink, NullSink, SwarmEvent};
+pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome};

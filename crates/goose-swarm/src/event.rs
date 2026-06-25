@@ -36,6 +36,13 @@ pub enum SwarmEvent {
     SchedulerStuck {
         remaining: usize,
     },
+    /// A dynamic replan round: `added` are the spliced task ids; `stopped` means the replanner
+    /// declined (empty/invalid) and no further replans will run.
+    Replanned {
+        round: u32,
+        added: Vec<String>,
+        stopped: bool,
+    },
 }
 
 pub trait EventSink: Send + Sync {

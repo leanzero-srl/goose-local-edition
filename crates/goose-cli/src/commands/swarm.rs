@@ -17,8 +17,8 @@ use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{
-    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, NullSink, Scheduler, SwarmEvent,
-    TaskDispatcher, TaskRunOutput, ToolCallRecord,
+    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, NullSink, ReplanContext, Replanner,
+    Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,6 +62,12 @@ fn default_planner_weight() -> u32 {
 }
 fn default_max_research() -> u32 {
     4
+}
+fn default_dynamic_replan() -> bool {
+    true
+}
+fn default_max_replans() -> u32 {
+    2
 }
 
 /// When the swarm runs a parallel research phase before planning.
@@ -125,6 +131,12 @@ pub struct SwarmConfig {
     /// Hard cap on parallel research workers (bounds latency + curbs make-work).
     #[serde(default = "default_max_research")]
     pub max_research_questions: u32,
+    /// When workers idle mid-run, let the planner inject more parallel work to fill the tail.
+    #[serde(default = "default_dynamic_replan")]
+    pub dynamic_replan: bool,
+    /// Max dynamic-replan rounds per run (bounds latency + make-work).
+    #[serde(default = "default_max_replans")]
+    pub max_replans: u32,
 }
 
 impl Default for SwarmConfig {
@@ -158,6 +170,8 @@ impl Default for SwarmConfig {
             context_cap: None,
             research_planning: ResearchPlanningMode::Auto,
             max_research_questions: default_max_research(),
+            dynamic_replan: default_dynamic_replan(),
+            max_replans: default_max_replans(),
         }
     }
 }
@@ -202,6 +216,9 @@ pub enum SwarmCommand {
         /// Force the research-planning phase on/off for this run (overrides the configured mode).
         #[arg(long = "research")]
         research: Option<bool>,
+        /// Force dynamic replanning on/off for this run (overrides the configured setting).
+        #[arg(long = "dynamic-replan")]
+        dynamic_replan: Option<bool>,
     },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
@@ -219,6 +236,7 @@ pub struct RunOpts {
     pub max_turns: Option<u32>,
     pub mcp: Vec<String>,
     pub research: Option<bool>,
+    pub dynamic_replan: Option<bool>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -263,6 +281,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             max_turns,
             mcp,
             research,
+            dynamic_replan,
         } => {
             run_swarm(RunOpts {
                 prompt,
@@ -272,6 +291,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
                 max_turns,
                 mcp,
                 research,
+                dynamic_replan,
             })
             .await
         }
@@ -312,6 +332,15 @@ fn show_pool(cfg: &SwarmConfig) {
         "  research   {:?}   max-questions {}",
         cfg.research_planning,
         style(cfg.max_research_questions).cyan()
+    );
+    println!(
+        "  replan     {}   max-rounds {}",
+        if cfg.dynamic_replan {
+            style("on").green().bold()
+        } else {
+            style("off").red().bold()
+        },
+        style(cfg.max_replans).cyan()
     );
     println!(
         "  mcp        {}",
@@ -367,6 +396,8 @@ fn pool_menu() -> Result<()> {
             .item("context-cap", "Set context-window cap", "GOOSE_LOCAL_CONTEXT_CAP")
             .item("research", "Research-planning mode", "off / on / auto")
             .item("max-research", "Max research questions", "")
+            .item("replan", "Dynamic replan on/off", "fill idle workers mid-run")
+            .item("max-replans", "Max replan rounds", "")
             .item("mcp", "Toggle worker MCP extensions", "context7 / web-search / doc-processor")
             .item("probe", "Probe the live fleet", "lms ps + endpoint models")
             .item("import", "Import loaded models from fleet", "lms ps -> pool entries")
@@ -490,6 +521,18 @@ fn pool_menu() -> Result<()> {
                     .default_input(&cfg.max_research_questions.to_string())
                     .interact()?;
                 cfg.max_research_questions = v.trim().parse().unwrap_or(4).clamp(1, 8);
+            }
+            "replan" => {
+                cfg.dynamic_replan =
+                    cliclack::confirm("Dynamic replanning (fill idle workers mid-run)?")
+                        .initial_value(cfg.dynamic_replan)
+                        .interact()?;
+            }
+            "max-replans" => {
+                let v: String = cliclack::input("Max replan rounds")
+                    .default_input(&cfg.max_replans.to_string())
+                    .interact()?;
+                cfg.max_replans = v.trim().parse().unwrap_or(2).clamp(0, 6);
             }
             "mcp" => {
                 let choice: &str = cliclack::select("Toggle which worker MCP extension?")
@@ -1108,6 +1151,8 @@ pub struct GooseAgentDispatcher {
     worker_max_turns: u32,
     /// MCP extensions added to each WORKER agent (not the planner). Built from env at run start.
     worker_extensions: Vec<ExtensionConfig>,
+    /// The planner model (also used by the dynamic Replanner impl).
+    planner_model: String,
 }
 
 impl GooseAgentDispatcher {
@@ -1115,6 +1160,7 @@ impl GooseAgentDispatcher {
         working_dir: PathBuf,
         worker_max_turns: u32,
         worker_extensions: Vec<ExtensionConfig>,
+        planner_model: String,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -1130,6 +1176,7 @@ impl GooseAgentDispatcher {
             working_dir,
             worker_max_turns,
             worker_extensions,
+            planner_model,
         })
     }
 
@@ -1508,6 +1555,57 @@ impl TaskDispatcher for GooseAgentDispatcher {
     }
 }
 
+#[async_trait]
+impl Replanner for GooseAgentDispatcher {
+    async fn replan(&self, ctx: ReplanContext) -> Result<Vec<TaskSpec>> {
+        let done = ctx
+            .completed
+            .iter()
+            .map(|(id, out)| format!("- {id}: {}", out.chars().take(160).collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cap = ctx.idle_capacity.max(1);
+        let system = format!(
+            "You are the PLANNER continuing an in-progress local AI swarm. {cap} worker(s) just went IDLE while \
+             other tasks finish and the goal is not fully done. Propose UP TO {cap} NEW INDEPENDENT subtasks that \
+             add REAL value NOW (more tests, edge-case coverage, validation, docs, hardening) on the COMPLETED \
+             work — they run in parallel on the idle workers. If nothing useful remains, return an EMPTY subtasks \
+             list (do NOT invent make-work). Rules: every id MUST be new (never reuse an existing id); depends_on \
+             may reference DONE ids but NEVER a failed id; files must not overlap work still in progress. Give \
+             id/description/difficulty/model/depends_on/files, then call the final_output tool."
+        );
+        let user = format!(
+            "Goal: {}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
+            ctx.goal,
+            ctx.existing_ids.join(", "),
+            done,
+            ctx.failed.join(", "),
+            ctx.incomplete.join(", "),
+        );
+        let response = Some(Response {
+            json_schema: Some(plan_schema()),
+        });
+        let out = match self
+            .run_agent(&self.planner_model, system, user, response, 10, &[])
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let Some(fo) = out.final_output else {
+            return Ok(Vec::new());
+        };
+        let mut specs = match goose_swarm::specs_from_plan_json(&fo) {
+            Ok(s) => s,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let existing: std::collections::HashSet<&str> =
+            ctx.existing_ids.iter().map(|s| s.as_str()).collect();
+        specs.retain(|s| !existing.contains(s.id.as_str()));
+        Ok(specs)
+    }
+}
+
 fn research_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -1672,7 +1770,13 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     }
 
     let dispatcher = Arc::new(
-        GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns, worker_extensions).await?,
+        GooseAgentDispatcher::new(
+            working_dir.clone(),
+            worker_max_turns,
+            worker_extensions,
+            cfg.planner_model.clone(),
+        )
+        .await?,
     );
 
     // Parallel research-planning: scope independent research questions, run them across the fleet,
@@ -1751,9 +1855,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         "raw_plan_json": plan_json,
     }));
 
-    let scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
+    let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
+    let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
+    if replan_on && cfg.max_replans > 0 {
+        eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
+        scheduler =
+            scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
+    }
     let report = scheduler
-        .run(dag, dispatcher as Arc<dyn TaskDispatcher>)
+        .run(dag, dispatcher as Arc<dyn TaskDispatcher>, opts.prompt.clone())
         .await?;
 
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);

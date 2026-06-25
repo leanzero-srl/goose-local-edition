@@ -139,40 +139,163 @@ impl Dag {
     /// Build from the planner recipe's JSON output:
     /// `{ "subtasks": [ {id, description, difficulty?, model?, depends_on?, files?} ], "integration"? }`
     pub fn from_planner_json(json: &str) -> Result<Self> {
-        #[derive(Deserialize)]
-        struct PlanJson {
-            subtasks: Vec<PlanTask>,
-        }
-        #[derive(Deserialize)]
-        struct PlanTask {
-            id: String,
-            #[serde(default)]
-            description: String,
-            #[serde(default)]
-            difficulty: Option<String>,
-            #[serde(default)]
-            model: Option<String>,
-            #[serde(default)]
-            depends_on: Vec<String>,
-            #[serde(default)]
-            files: Vec<String>,
-        }
-        let plan: PlanJson = serde_json::from_str(json)?;
-        let specs = plan
-            .subtasks
-            .into_iter()
-            .map(|t| TaskSpec {
-                id: t.id,
-                description: t.description,
-                difficulty: match t.difficulty.as_deref() {
-                    Some("hard") => Difficulty::Hard,
-                    _ => Difficulty::Easy,
-                },
-                preferred_model: t.model,
-                owned_files: t.files,
-                deps: t.depends_on,
-            })
-            .collect();
-        Dag::from_specs(specs)
+        Dag::from_specs(specs_from_plan_json(json)?)
     }
+
+    /// Splice additional specs into a LIVE dag at an idle point (the dynamic replanner). Validated
+    /// exactly like `from_specs` so the safety net is identical: rejects ids that collide with
+    /// existing tasks, deps on unknown OR failed tasks, intra-batch dup ids, and any cycle. On ANY
+    /// error the dag is left UNCHANGED (validation runs before mutation). Returns the ids that became
+    /// Ready (deps already Done) so the caller can enqueue them; Pending ones unlock via `complete`.
+    pub fn splice_specs(&mut self, specs: Vec<TaskSpec>) -> Result<Vec<TaskId>> {
+        // --- validate, mutate nothing ---
+        let mut batch_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for s in &specs {
+            if !batch_ids.insert(s.id.as_str()) {
+                bail!("duplicate id `{}` within replan batch", s.id);
+            }
+            if self.tasks.contains_key(&s.id) {
+                bail!("replan id `{}` collides with an existing task", s.id);
+            }
+        }
+        for s in &specs {
+            for d in &s.deps {
+                if !self.tasks.contains_key(d) && !batch_ids.contains(d.as_str()) {
+                    bail!("replan task `{}` depends on unknown task `{}`", s.id, d);
+                }
+                if let Some(n) = self.tasks.get(d) {
+                    if n.state == TaskState::Failed {
+                        bail!("replan task `{}` depends on failed task `{}`", s.id, d);
+                    }
+                }
+            }
+        }
+        // cycle check over the union of existing + new edges (Kahn), before committing.
+        {
+            let mut indeg: HashMap<String, usize> = HashMap::new();
+            let mut deps_of: HashMap<String, Vec<String>> = HashMap::new();
+            for id in self.tasks.keys() {
+                indeg.entry(id.clone()).or_insert(0);
+            }
+            for s in &specs {
+                indeg.entry(s.id.clone()).or_insert(0);
+            }
+            for (id, n) in &self.tasks {
+                for d in &n.spec.deps {
+                    *indeg.get_mut(id).unwrap() += 1;
+                    deps_of.entry(d.clone()).or_default().push(id.clone());
+                }
+            }
+            for s in &specs {
+                for d in &s.deps {
+                    *indeg.get_mut(&s.id).unwrap() += 1;
+                    deps_of.entry(d.clone()).or_default().push(s.id.clone());
+                }
+            }
+            let mut q: VecDeque<String> = indeg
+                .iter()
+                .filter(|(_, d)| **d == 0)
+                .map(|(k, _)| k.clone())
+                .collect();
+            let mut removed = 0usize;
+            while let Some(id) = q.pop_front() {
+                removed += 1;
+                if let Some(ds) = deps_of.get(&id) {
+                    for dd in ds {
+                        let e = indeg.get_mut(dd).unwrap();
+                        *e -= 1;
+                        if *e == 0 {
+                            q.push_back(dd.clone());
+                        }
+                    }
+                }
+            }
+            if removed != indeg.len() {
+                bail!("replan would create a dependency cycle");
+            }
+        }
+
+        // --- commit (insert nodes, then wire reverse edges so all targets exist) ---
+        let mut newly_ready = Vec::new();
+        let mut wiring: Vec<(String, Vec<String>)> = Vec::new();
+        for s in specs {
+            // a dep already Done does not count toward indegree (it will never re-fire `complete`).
+            let indeg_remaining = s
+                .deps
+                .iter()
+                .filter(|d| {
+                    self.tasks
+                        .get(d.as_str())
+                        .map(|n| n.state != TaskState::Done)
+                        .unwrap_or(true)
+                })
+                .count();
+            let state = if indeg_remaining == 0 {
+                newly_ready.push(s.id.clone());
+                TaskState::Ready
+            } else {
+                TaskState::Pending
+            };
+            wiring.push((s.id.clone(), s.deps.clone()));
+            self.tasks.insert(
+                s.id.clone(),
+                Node {
+                    indegree_remaining: indeg_remaining,
+                    fan_out: 0,
+                    state,
+                    attempts: 0,
+                    result: None,
+                    avoid_device: None,
+                    spec: s,
+                },
+            );
+        }
+        for (id, deps) in wiring {
+            for d in deps {
+                self.dependents.entry(d.clone()).or_default().push(id.clone());
+                if let Some(n) = self.tasks.get_mut(&d) {
+                    n.fan_out += 1;
+                }
+            }
+        }
+        Ok(newly_ready)
+    }
+}
+
+/// Parse the planner's `{ "subtasks": [...] }` JSON into specs (shared by the initial plan + replans).
+pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
+    #[derive(Deserialize)]
+    struct PlanJson {
+        subtasks: Vec<PlanTask>,
+    }
+    #[derive(Deserialize)]
+    struct PlanTask {
+        id: String,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        difficulty: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        depends_on: Vec<String>,
+        #[serde(default)]
+        files: Vec<String>,
+    }
+    let plan: PlanJson = serde_json::from_str(json)?;
+    Ok(plan
+        .subtasks
+        .into_iter()
+        .map(|t| TaskSpec {
+            id: t.id,
+            description: t.description,
+            difficulty: match t.difficulty.as_deref() {
+                Some("hard") => Difficulty::Hard,
+                _ => Difficulty::Easy,
+            },
+            preferred_model: t.model,
+            owned_files: t.files,
+            deps: t.depends_on,
+        })
+        .collect())
 }
