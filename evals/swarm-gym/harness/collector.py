@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .contracts import Evidence, FileEntry, RunResult, TaskSpec
+from .contracts import Evidence, FileEntry, RunResult, TaskOutcome, TaskSpec, ToolCall
 
 SESSIONS_DB = Path.home() / ".local/share/goose/sessions/sessions.db"
 SKIP_PARTS = {".swarm", "__pycache__", ".git", "node_modules", ".venv", "target"}
@@ -23,6 +23,11 @@ def collect(task: TaskSpec, run: RunResult) -> Evidence:
             except Exception:
                 pass
 
+    # On a timeout/crash the final JSON report never prints (run.tasks empty), but the JSONL event
+    # log captured every task — rebuild the per-task data from it so verification still works.
+    if not run.tasks and events:
+        _backfill_from_events(run, events)
+
     traces: List[Dict] = []
     for t in run.tasks:
         if t.session_id:
@@ -33,6 +38,50 @@ def collect(task: TaskSpec, run: RunResult) -> Evidence:
 
     files = _snapshot_files(Path(task.workspace))
     return Evidence(task=task, run=run, events=events, session_traces=traces, files=files)
+
+
+def _backfill_from_events(run: RunResult, events: List[Dict]) -> None:
+    tasks: List[TaskOutcome] = []
+    done: List[str] = []
+    failed: List[str] = []
+    per_device: Dict[str, Dict] = {}
+    for e in events:
+        if e.get("event") != "task_completed":
+            continue
+        tcs = [
+            ToolCall(name=t.get("name", ""), is_mcp=bool(t.get("is_mcp")), ok=t.get("ok"))
+            for t in (e.get("tool_calls") or [])
+        ]
+        status = e.get("status", "done")
+        tid = e.get("task_id", "")
+        tasks.append(
+            TaskOutcome(
+                task_id=tid,
+                status=status,
+                device=e.get("device"),
+                model=e.get("model"),
+                attempts=int(e.get("attempts", 0) or 0),
+                elapsed_ms=e.get("elapsed_ms"),
+                session_id=e.get("session_id"),
+                tool_calls=tcs,
+            )
+        )
+        (done if status == "done" else failed).append(tid)
+        dev = e.get("device")
+        if dev:
+            d = per_device.setdefault(
+                dev, {"dispatched": 0, "tool_calls": 0, "mcp_calls": 0, "retries": 0}
+            )
+            d["dispatched"] += 1
+            d["tool_calls"] += len(tcs)
+            d["mcp_calls"] += sum(1 for t in tcs if t.is_mcp)
+    run.tasks = tasks
+    if not run.done:
+        run.done = done
+    if not run.failed:
+        run.failed = failed
+    if not run.per_device:
+        run.per_device = per_device
 
 
 def _fetch_trace(session_id: str) -> Optional[Dict]:

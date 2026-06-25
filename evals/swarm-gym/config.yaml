@@ -14,7 +14,7 @@ swarm:
   endpoint: http://localhost:1234
   # MCP extensions to expose to workers during gym runs (need the matching env secrets set).
   mcp: []                              # e.g. [context7]
-  run_timeout_secs: 1200
+  run_timeout_secs: 1800
 
 session:
   default_turns: 6                     # vibing-session turn budget (the brain may stop earlier)
