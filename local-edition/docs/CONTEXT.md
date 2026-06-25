@@ -57,7 +57,12 @@ Both point to the same answer: keep context **small and high-signal**.
 - ✅ Threshold env is honored; effective `context_limit` is ~1M (YaRN, probed) so normal sessions never
   compact → the **window cap is required** to get lean context + sane compaction triggering.
 
-## Next (implementation)
-- Implement the effective-window cap (set explicit `context_limit` from a configured cap, or
-  `min(configured, probed)` in the provider) — first context change touching fork core.
+## Implemented / next
+- DONE: effective-window cap `GOOSE_LOCAL_CONTEXT_CAP` = `min(configured, probed)`, in the provider
+  (`openai.rs::get_context_limit`) AND `check_if_compaction_needed`. VERIFIED the check sees the
+  capped limit (debug print: `context_limit=3000`). Additive; no-op when unset.
+- KEY FOLLOW-UP: Goose checks PROACTIVE auto-compaction only ONCE per `goose run` (at reply-start,
+  before the tool-call loop grows context), so the cap doesn't drive mid-run compaction yet. Add a
+  PER-TURN proactive check in the reply loop (`agent.rs`, around the tool-call iteration) gated by
+  `check_if_compaction_needed`. Only reactive compaction (true model-window overflow) fires in-loop today.
 - Then add the Aider-style repo-map (genuine new value; Goose has none).

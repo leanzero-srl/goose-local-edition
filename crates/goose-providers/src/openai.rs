@@ -247,6 +247,21 @@ impl OpenAiProviderBuilder {
 }
 
 impl OpenAiProvider {
+    /// local-edition: optional HARD cap on the effective context window via the
+    /// `GOOSE_LOCAL_CONTEXT_CAP` env var. Quality-first context for hybrid local models
+    /// (Gated DeltaNet / Qwen3.6) keeps the working window lean — linear-attention recall
+    /// degrades on bloated context and prefill is costly — so we cap below the model's
+    /// native (often YaRN-extended ~1M) limit. No-op when the var is unset or 0.
+    fn apply_local_context_cap(&self, limit: usize) -> usize {
+        match std::env::var("GOOSE_LOCAL_CONTEXT_CAP")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+        {
+            Some(cap) if cap > 0 => limit.min(cap),
+            _ => limit,
+        }
+    }
+
     #[doc(hidden)]
     pub fn new(api_client: ApiClient) -> Self {
         Self {
@@ -528,7 +543,7 @@ impl Provider for OpenAiProvider {
     /// by a short timeout so a hung endpoint can't stall the caller.
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
         if let Some(limit) = model_config.context_limit {
-            return Ok(limit);
+            return Ok(self.apply_local_context_cap(limit));
         }
 
         if let Some(cached) = self
@@ -537,7 +552,7 @@ impl Provider for OpenAiProvider {
             .ok()
             .and_then(|cache| cache.get(&model_config.model_name).copied())
         {
-            return Ok(cached.unwrap_or_else(|| model_config.context_limit()));
+            return Ok(self.apply_local_context_cap(cached.unwrap_or_else(|| model_config.context_limit())));
         }
 
         const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -553,7 +568,7 @@ impl Provider for OpenAiProvider {
             cache.insert(model_config.model_name.clone(), probed);
         }
 
-        Ok(probed.unwrap_or_else(|| model_config.context_limit()))
+        Ok(self.apply_local_context_cap(probed.unwrap_or_else(|| model_config.context_limit())))
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
