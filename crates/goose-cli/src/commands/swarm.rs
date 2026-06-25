@@ -79,6 +79,10 @@ pub struct SwarmConfig {
     /// Max dispatch attempts per task before it fails (knob: raise for flaky LM Link).
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
+    /// MCP extensions (by builder name) every worker gets: "context7" | "web-search" | "doc-processor".
+    /// Secrets are read from the environment at runtime, never stored here.
+    #[serde(default)]
+    pub worker_extensions: Vec<String>,
 }
 
 impl Default for SwarmConfig {
@@ -104,6 +108,7 @@ impl Default for SwarmConfig {
             ],
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
+            worker_extensions: Vec::new(),
         }
     }
 }
@@ -142,6 +147,9 @@ pub enum SwarmCommand {
         /// Override per-worker max turns (default: the pool's worker_max_turns).
         #[arg(long = "max-turns")]
         max_turns: Option<u32>,
+        /// Enable an MCP worker extension for this run (repeatable): context7 | web-search | doc-processor.
+        #[arg(long = "mcp")]
+        mcp: Vec<String>,
     },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
@@ -157,6 +165,7 @@ pub struct RunOpts {
     pub log_file: Option<PathBuf>,
     pub no_log: bool,
     pub max_turns: Option<u32>,
+    pub mcp: Vec<String>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -192,6 +201,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             log_file,
             no_log,
             max_turns,
+            mcp,
         } => {
             run_swarm(RunOpts {
                 prompt,
@@ -199,6 +209,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
                 log_file,
                 no_log,
                 max_turns,
+                mcp,
             })
             .await
         }
@@ -520,6 +531,94 @@ struct RunAgentOut {
 }
 
 // ---------------------------------------------------------------------------------------------
+// MCP worker extensions — built at runtime from env vars (no secrets stored on disk)
+// ---------------------------------------------------------------------------------------------
+
+/// Build a worker MCP extension by name, reading secrets from the environment. Returns None (with a
+/// note) if a required secret env var is missing, so the run proceeds without that extension.
+fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
+    match name {
+        "context7" => {
+            let key = std::env::var("CONTEXT7_API_KEY").ok().or_else(|| {
+                eprintln!("(skipping context7: set CONTEXT7_API_KEY)");
+                None
+            })?;
+            Some(ExtensionConfig::Stdio {
+                name: "context7".to_string(),
+                description: "Upstash Context7 library docs".to_string(),
+                cmd: "npx".to_string(),
+                args: vec![
+                    "-y".to_string(),
+                    "@upstash/context7-mcp".to_string(),
+                    "--api-key".to_string(),
+                    key,
+                ],
+                envs: Default::default(),
+                env_keys: vec![],
+                timeout: Some(120),
+                cwd: None,
+                bundled: None,
+                available_tools: vec![],
+            })
+        }
+        "web-search" => {
+            let bearer = std::env::var("WEBSEARCH_BEARER").ok().or_else(|| {
+                eprintln!("(skipping web-search: set WEBSEARCH_BEARER)");
+                None
+            })?;
+            let mut headers = HashMap::new();
+            headers.insert("Authorization".to_string(), format!("Bearer {bearer}"));
+            if let Ok(k) = std::env::var("SERPER_KEY") {
+                headers.insert("X-Serper-Key".to_string(), k);
+            }
+            if let Ok(k) = std::env::var("GITHUB_TOKEN") {
+                headers.insert("X-GitHub-Token".to_string(), k);
+            }
+            Some(ExtensionConfig::StreamableHttp {
+                name: "web-search".to_string(),
+                description: "Web search + GitHub".to_string(),
+                uri: std::env::var("WEBSEARCH_URI").unwrap_or_else(|_| {
+                    "https://worksmacstudio.tailfc4700.ts.net:8443/mcp".to_string()
+                }),
+                envs: Default::default(),
+                env_keys: vec![],
+                headers,
+                timeout: Some(120),
+                socket: None,
+                bundled: None,
+                available_tools: vec![],
+            })
+        }
+        "doc-processor" => {
+            let bearer = std::env::var("DOCPROC_BEARER").ok().or_else(|| {
+                eprintln!("(skipping doc-processor: set DOCPROC_BEARER)");
+                None
+            })?;
+            let mut headers = HashMap::new();
+            headers.insert("Authorization".to_string(), format!("Bearer {bearer}"));
+            Some(ExtensionConfig::StreamableHttp {
+                name: "doc-processor".to_string(),
+                description: "Document processor".to_string(),
+                uri: std::env::var("DOCPROC_URI").unwrap_or_else(|_| {
+                    "https://worksmacstudio.tailfc4700.ts.net:10000/mcp".to_string()
+                }),
+                envs: Default::default(),
+                env_keys: vec![],
+                headers,
+                timeout: Some(120),
+                socket: None,
+                bundled: None,
+                available_tools: vec![],
+            })
+        }
+        other => {
+            eprintln!("(unknown worker extension: {other})");
+            None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
 // ---------------------------------------------------------------------------------------------
 
@@ -529,10 +628,16 @@ pub struct GooseAgentDispatcher {
     permission_manager: Arc<PermissionManager>,
     working_dir: PathBuf,
     worker_max_turns: u32,
+    /// MCP extensions added to each WORKER agent (not the planner). Built from env at run start.
+    worker_extensions: Vec<ExtensionConfig>,
 }
 
 impl GooseAgentDispatcher {
-    pub async fn new(working_dir: PathBuf, worker_max_turns: u32) -> Result<Self> {
+    pub async fn new(
+        working_dir: PathBuf,
+        worker_max_turns: u32,
+        worker_extensions: Vec<ExtensionConfig>,
+    ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
         std::fs::create_dir_all(&session_root)?;
@@ -546,6 +651,7 @@ impl GooseAgentDispatcher {
             permission_manager,
             working_dir,
             worker_max_turns,
+            worker_extensions,
         })
     }
 
@@ -556,6 +662,7 @@ impl GooseAgentDispatcher {
         user_text: String,
         response: Option<Response>,
         max_turns: u32,
+        extensions: &[ExtensionConfig],
     ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
@@ -599,6 +706,14 @@ impl GooseAgentDispatcher {
             )
             .await
             .map_err(|e| anyhow!("add developer extension: {e}"))?;
+
+        // Worker MCP extensions (none for the planner). A failed connection is non-fatal so a down
+        // server doesn't kill the task.
+        for ext in extensions {
+            if let Err(e) = agent.add_extension(ext.clone(), &session_id).await {
+                eprintln!("(worker extension add failed: {e})");
+            }
+        }
 
         agent.apply_recipe_components(response, true).await;
         agent.override_system_prompt(system_prompt).await;
@@ -704,6 +819,7 @@ impl GooseAgentDispatcher {
                 format!("Plan this task: {user_prompt}"),
                 response,
                 15,
+                &[],
             )
             .await?;
         out.final_output
@@ -743,6 +859,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 req.description.clone(),
                 None,
                 self.worker_max_turns,
+                &self.worker_extensions,
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
@@ -903,8 +1020,21 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         })
         .collect();
 
-    let dispatcher =
-        Arc::new(GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns).await?);
+    let mut ext_names = cfg.worker_extensions.clone();
+    ext_names.extend(opts.mcp.iter().cloned());
+    ext_names.sort();
+    ext_names.dedup();
+    let worker_extensions: Vec<ExtensionConfig> = ext_names
+        .iter()
+        .filter_map(|n| build_worker_extension(n))
+        .collect();
+    if !worker_extensions.is_empty() {
+        eprintln!("worker MCP extensions: {}", ext_names.join(", "));
+    }
+
+    let dispatcher = Arc::new(
+        GooseAgentDispatcher::new(working_dir.clone(), worker_max_turns, worker_extensions).await?,
+    );
 
     eprintln!("planning on {} ...", cfg.planner_model);
     let plan_json = dispatcher
