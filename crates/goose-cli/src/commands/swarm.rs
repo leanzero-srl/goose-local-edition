@@ -51,6 +51,12 @@ fn default_worker_max_turns() -> u32 {
 fn default_max_attempts() -> u32 {
     3
 }
+fn default_planner_also_works() -> bool {
+    true
+}
+fn default_planner_weight() -> u32 {
+    1
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SwarmDevice {
@@ -83,6 +89,13 @@ pub struct SwarmConfig {
     /// Secrets are read from the environment at runtime, never stored here.
     #[serde(default)]
     pub worker_extensions: Vec<String>,
+    /// After planning, also use the planner model as a WORKER so the smartest model isn't idle
+    /// (and hard subtasks can route to it). Default true.
+    #[serde(default = "default_planner_also_works")]
+    pub planner_also_works: bool,
+    /// Worker weight for the planner model when it pitches in (default 1 — it's the dense, slower model).
+    #[serde(default = "default_planner_weight")]
+    pub planner_weight: u32,
 }
 
 impl Default for SwarmConfig {
@@ -109,6 +122,8 @@ impl Default for SwarmConfig {
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
             worker_extensions: Vec::new(),
+            planner_also_works: default_planner_also_works(),
+            planner_weight: default_planner_weight(),
         }
     }
 }
@@ -800,7 +815,9 @@ impl GooseAgentDispatcher {
         plan_schema: serde_json::Value,
     ) -> Result<String> {
         let system = "You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            Decompose the task into the smallest set of subtasks; maximize the INDEPENDENT set (no shared files, no ordering dependency).\n\
+            Decompose into MANY small INDEPENDENT subtasks (split by file / module / feature) so multiple devices run in PARALLEL — \
+            when the task reasonably allows, produce at least 3-4 independent subtasks with NON-OVERLAPPING files and NO ordering dependency; \
+            only add a dependency when a subtask genuinely needs another's output. A wide independent set is the goal.\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
             model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
             files (paths it owns; non-overlapping across parallel subtasks).\n\
@@ -1010,7 +1027,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         ensure_loaded(&d.model_id, d.instances);
     }
 
-    let devices: Vec<DeviceCfg> = enabled
+    let mut devices: Vec<DeviceCfg> = enabled
         .iter()
         .map(|d| DeviceCfg {
             id: d.id.clone(),
@@ -1019,6 +1036,22 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             enabled: true,
         })
         .collect();
+    // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
+    // (and hard subtasks can route to it). Skip if it's already a worker device.
+    if cfg.planner_also_works && !devices.iter().any(|d| d.model_id == cfg.planner_model) {
+        let w = cfg.planner_weight.max(1);
+        devices.push(DeviceCfg {
+            id: "planner".to_string(),
+            model_id: cfg.planner_model.clone(),
+            weight: w,
+            enabled: true,
+        });
+        eprintln!(
+            "planner also working: {} (weight {})",
+            style(&cfg.planner_model).green(),
+            w
+        );
+    }
 
     let mut ext_names = cfg.worker_extensions.clone();
     ext_names.extend(opts.mcp.iter().cloned());

@@ -172,12 +172,19 @@ impl State {
             .collect();
         // If avoiding the failed device leaves nothing, fall back to any free device.
         let pool = if allowed.is_empty() { free } else { allowed };
-        if let Some(pm) = &n.spec.preferred_model {
-            if let Some(&i) = pool.iter().find(|&&i| &self.devices[i].cfg.model_id == pm) {
-                return Some(i);
-            }
-        }
-        pool.into_iter().min_by_key(|&i| self.devices[i].in_flight)
+        // Spread work across the fleet: the LEAST-LOADED device wins, so idle nodes get work before
+        // any node doubles up; ties break toward the planner's preferred model, then by index for
+        // determinism. (Honoring preferred_model first would pile every same-model task on one device
+        // and leave the rest of the fleet idle — the opposite of what a swarm is for.)
+        let pm = n.spec.preferred_model.as_deref();
+        pool.into_iter().min_by_key(|&i| {
+            let d = &self.devices[i];
+            let prefers_rank = match pm {
+                Some(m) if m == d.cfg.model_id => 0,
+                _ => 1,
+            };
+            (d.in_flight, prefers_rank, i)
+        })
     }
 
     /// Claim as many ready tasks as can be placed right now (respecting weights + file holds).

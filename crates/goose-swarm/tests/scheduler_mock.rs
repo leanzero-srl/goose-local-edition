@@ -190,6 +190,50 @@ async fn transient_redispatches_to_a_different_device() {
 }
 
 #[tokio::test]
+async fn spreads_independent_tasks_across_idle_devices() {
+    // 9 independent tasks, three weight-1 devices, no preferred model: spread routing must use ALL
+    // three devices (the first pass claims one task per idle device), not pile onto the first.
+    let specs: Vec<_> = (0..9).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)], 3);
+    let report = sched.run(dag, mock(&rec, 30)).await.unwrap();
+    assert_eq!(report.done.len(), 9);
+    let r = rec.lock().unwrap();
+    for d in ["a", "b", "c"] {
+        assert!(
+            r.total_per_device.get(d).copied().unwrap_or(0) >= 1,
+            "device {d} must receive work under spread routing"
+        );
+    }
+    let active = ["a", "b", "c"]
+        .iter()
+        .filter(|d| r.peak_per_device.get(**d).copied().unwrap_or(0) >= 1)
+        .count();
+    assert_eq!(active, 3, "all three devices must run concurrently, not just one");
+}
+
+#[tokio::test]
+async fn preferred_model_breaks_ties_but_does_not_concentrate() {
+    // Two independent tasks both preferring device `a`'s model, with `a` and `b` each weight 2.
+    // Spread must place the second on `b` (idle) rather than doubling up on `a`.
+    let mut s1 = spec("p1", &[], &[]);
+    s1.preferred_model = Some("m-a".to_string());
+    let mut s2 = spec("p2", &[], &[]);
+    s2.preferred_model = Some("m-a".to_string());
+    let dag = Dag::from_specs(vec![s1, s2]).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2), dev("b", "m-b", 2)], 3);
+    let report = sched.run(dag, mock(&rec, 40)).await.unwrap();
+    assert_eq!(report.done.len(), 2);
+    let r = rec.lock().unwrap();
+    assert!(
+        r.total_per_device.get("b").copied().unwrap_or(0) >= 1,
+        "the second same-model task must spread to the idle device, not pile on the preferred one"
+    );
+}
+
+#[tokio::test]
 async fn file_overlap_serializes() {
     let specs = vec![
         spec("a", &[], &["shared.rs"]),
