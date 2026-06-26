@@ -1069,18 +1069,29 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             host: p.device.clone(),
         })
         .collect();
-    // Planner: keep the configured planner if it is resident; else pick a strong-looking resident
-    // model (27b / dense / coder), else the first one. (Finer role classification is deferred.)
+    // Planner: keep the configured planner if it is resident; else pick the strong resident model on the
+    // FASTEST host (highest speed_weight). The architect-skeleton call is the serial bottleneck of the
+    // PLAN phase, so it must run on the quickest node — not an arbitrary first-resident (often the
+    // slowest). speed_weight keys are matched against device+identifier (some identifiers omit the host).
+    let host_speed = |p: &&LmsProcess| -> u32 {
+        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), p.identifier).to_lowercase();
+        cfg.speed_weights
+            .iter()
+            .find(|(pat, _)| hay.contains(pat.as_str()))
+            .map(|(_, w)| *w)
+            .unwrap_or(1)
+    };
     let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
         Some(cfg.planner_model.clone())
     } else {
         resident
             .iter()
-            .find(|p| {
+            .filter(|p| {
                 let n = p.identifier.to_lowercase();
                 n.contains("27b") || n.contains("dense") || n.contains("coder")
             })
-            .or_else(|| resident.first())
+            .max_by_key(|p| host_speed(p))
+            .or_else(|| resident.iter().max_by_key(|p| host_speed(p)))
             .map(|p| p.identifier.clone())
     };
     (pool, planner)
