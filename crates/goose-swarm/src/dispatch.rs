@@ -46,6 +46,11 @@ pub struct DispatchRequest {
     pub context_slice: String,
     /// 0-based attempt number (incremented on re-dispatch).
     pub attempt: u32,
+    /// The EXACT files this task must create/own (plan paths). The worker is told to write only these.
+    pub owned_files: Vec<String>,
+    /// The full project file manifest (every task's owned files) so the worker uses the agreed layout
+    /// for imports and never invents a divergent location.
+    pub all_files: Vec<String>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);

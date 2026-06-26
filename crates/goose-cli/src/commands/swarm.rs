@@ -2387,6 +2387,44 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 req.context_slice
             )
         };
+        // Hand the worker the AGREED layout: the full file manifest (so imports match where modules
+        // actually live) and its OWN exact paths (so it never writes a divergent copy to the cwd root).
+        // Gated on the manifest, not owned_files — integrate-verify owns nothing but most needs the map.
+        let layout_block = if req.all_files.is_empty() {
+            String::new()
+        } else {
+            let cwd = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            let manifest = req
+                .all_files
+                .iter()
+                .map(|f| format!("  {f}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let owned_part = if req.owned_files.is_empty() {
+                "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
+                 above actually exists on disk and the tests cover each module; if any is missing, that \
+                 is a failure to report.\n\n"
+                    .to_string()
+            } else {
+                let owned = req
+                    .owned_files
+                    .iter()
+                    .map(|f| format!("  {cwd}/{f}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "YOU OWN — create/write EXACTLY these ABSOLUTE paths (run `mkdir -p` for parent dirs \
+                     first), and write NOTHING outside them:\n{owned}\n\n"
+                )
+            };
+            format!(
+                "## PROJECT FILE LAYOUT — the agreed plan\n\
+                 Every module lives at EXACTLY these paths; import from here, NEVER invent another \
+                 location or write a second copy at the project root:\n{manifest}\n{owned_part}"
+            )
+        };
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
@@ -2417,7 +2455,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
              SIBLING directories — they are unrelated projects. If the directory is empty, that is \
              expected for a new project: just create your files, do not go looking elsewhere.\n\
-             \n{context_block}"
+             \n{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.

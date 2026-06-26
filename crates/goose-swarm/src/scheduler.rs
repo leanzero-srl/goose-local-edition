@@ -323,6 +323,15 @@ impl State {
             owned_files: files.clone(),
             context_slice_len: slice.len(),
         });
+        let owned_files = files.clone();
+        let mut all_files: Vec<String> = self
+            .dag
+            .tasks
+            .values()
+            .flat_map(|n| n.spec.owned_files.iter().cloned())
+            .collect();
+        all_files.sort();
+        all_files.dedup();
         self.held_by.insert(tid.clone(), files);
         out.push(Assignment {
             task_id: tid.clone(),
@@ -333,6 +342,8 @@ impl State {
                 model_id,
                 context_slice: slice,
                 attempt,
+                owned_files,
+                all_files,
             },
         });
     }
