@@ -169,6 +169,10 @@ pub struct SwarmConfig {
     /// stall to recover from fast (fallback to solo plan / skip / empty).
     #[serde(default = "default_planner_timeout_secs")]
     pub planner_timeout_secs: u64,
+    /// May the swarm run `lms load` to spin up models? Default FALSE — use only already-resident
+    /// models and never auto-load. Turn on (pool menu) to let the swarm pre-warm + JIT re-warm.
+    #[serde(default)]
+    pub allow_model_load: bool,
 }
 
 impl Default for SwarmConfig {
@@ -208,6 +212,7 @@ impl Default for SwarmConfig {
             parallel_planning: default_parallel_planning(),
             worker_timeout_secs: default_worker_timeout_secs(),
             planner_timeout_secs: default_planner_timeout_secs(),
+            allow_model_load: false,
         }
     }
 }
@@ -390,6 +395,16 @@ fn show_pool(cfg: &SwarmConfig) {
         style(cfg.planner_timeout_secs).cyan()
     );
     println!(
+        "  models     load {}",
+        if cfg.allow_model_load {
+            style("ON (swarm may lms-load / pre-warm)").green().bold()
+        } else {
+            style("OFF (resident models only — no auto spin-up)")
+                .yellow()
+                .bold()
+        }
+    );
+    println!(
         "  replan     {}   max-rounds {}",
         if cfg.dynamic_replan {
             style("on").green().bold()
@@ -464,6 +479,11 @@ fn pool_menu() -> Result<()> {
                 "planning",
                 "Planning method",
                 "parallel fleet detailing vs solo 27B",
+            )
+            .item(
+                "model-load",
+                "Allow model loading",
+                "let the swarm lms-load / pre-warm (off = resident only)",
             )
             .item("max-research", "Max research questions / lenses", "")
             .item(
@@ -609,6 +629,13 @@ fn pool_menu() -> Result<()> {
                     cliclack::confirm("Parallel planning (27B skeleton + fleet detailing)?")
                         .initial_value(cfg.parallel_planning)
                         .interact()?;
+            }
+            "model-load" => {
+                cfg.allow_model_load = cliclack::confirm(
+                    "Allow the swarm to load models (lms load / pre-warm)? Off = use only resident models",
+                )
+                .initial_value(cfg.allow_model_load)
+                .interact()?;
             }
             "max-research" => {
                 let v: String = cliclack::input("Max research questions / scout lenses")
@@ -845,6 +872,59 @@ fn short_model(identifier: &str) -> String {
         .chars()
         .take(28)
         .collect()
+}
+
+/// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
+/// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
+/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
+/// or bails). Weights are inherited from a matching configured device by model_id; else default 1.
+fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<String>) {
+    let procs = match probe_lms_processes() {
+        Ok(p) => p,
+        Err(_) => return (Vec::new(), None),
+    };
+    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
+    let mut seen = std::collections::HashSet::new();
+    let mut resident: Vec<&LmsProcess> = Vec::new();
+    for p in &procs {
+        if !p.identifier.is_empty() && seen.insert(p.identifier.clone()) {
+            resident.push(p);
+        }
+    }
+    if resident.is_empty() {
+        return (Vec::new(), None);
+    }
+    let pool: Vec<SwarmDevice> = resident
+        .iter()
+        .map(|p| SwarmDevice {
+            id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
+            model_id: p.identifier.clone(),
+            weight: cfg
+                .devices
+                .iter()
+                .find(|d| d.model_id == p.identifier)
+                .map(|d| d.weight)
+                .unwrap_or(1),
+            enabled: true,
+            instances: 1,
+            host: p.device.clone(),
+        })
+        .collect();
+    // Planner: keep the configured planner if it is resident; else pick a strong-looking resident
+    // model (27b / dense / coder), else the first one. (Finer role classification is deferred.)
+    let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
+        Some(cfg.planner_model.clone())
+    } else {
+        resident
+            .iter()
+            .find(|p| {
+                let n = p.identifier.to_lowercase();
+                n.contains("27b") || n.contains("dense") || n.contains("coder")
+            })
+            .or_else(|| resident.first())
+            .map(|p| p.identifier.clone())
+    };
+    (pool, planner)
 }
 
 fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
@@ -1339,6 +1419,8 @@ pub struct GooseAgentDispatcher {
     worker_timeout_secs: u64,
     /// Shorter wall-clock cap (seconds) for planner-side calls via `run_agent_timed`.
     planner_timeout_secs: u64,
+    /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
+    allow_model_load: bool,
 }
 
 impl GooseAgentDispatcher {
@@ -1349,6 +1431,7 @@ impl GooseAgentDispatcher {
         planner_model: String,
         worker_timeout_secs: u64,
         planner_timeout_secs: u64,
+        allow_model_load: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -1367,6 +1450,7 @@ impl GooseAgentDispatcher {
             planner_model,
             worker_timeout_secs,
             planner_timeout_secs,
+            allow_model_load,
         })
     }
 
@@ -2005,8 +2089,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     if transient { " — will retry" } else { "" }
                 );
                 if transient {
-                    // M1.3: best-effort re-warm (idempotent) before the scheduler re-dispatches.
-                    if s.contains("Model is unloaded") || s.contains("connection") {
+                    // Best-effort re-warm before re-dispatch — only if model loading is allowed.
+                    if self.allow_model_load
+                        && (s.contains("Model is unloaded") || s.contains("connection"))
+                    {
                         ensure_loaded(&req.model_id, 1);
                     }
                     Err(DispatchError::Transient(s))
@@ -2131,13 +2217,38 @@ fn phase_banner(label: &str, why: &str) {
 }
 
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
-    let cfg = load_config();
-    let enabled: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.enabled).collect();
-    if enabled.is_empty() {
+    let mut cfg = load_config();
+    // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
+    // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
+    // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
+    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg);
+    let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
+        if let Some(p) = fleet_planner {
+            cfg.planner_model = p;
+        }
+        eprintln!(
+            "{}",
+            style(format!(
+                "auto-pool: {} resident model(s) from the fleet — using what's loaded, not spinning up anything",
+                fleet_pool.len()
+            ))
+            .green()
+            .bold()
+        );
+        fleet_pool
+    } else if cfg.allow_model_load {
+        eprintln!(
+            "{}",
+            style("fleet has no models loaded — bootstrapping the configured pool (allow_model_load=on)")
+                .yellow()
+        );
+        cfg.devices.iter().filter(|d| d.enabled).cloned().collect()
+    } else {
         return Err(anyhow!(
-            "no enabled devices in the swarm pool — run `goose swarm pool` to add some"
+            "No models are loaded on the fleet (`lms ps` is empty or unavailable) and model loading is off.\n\
+             Load your models in LM Studio, or enable loading via `goose swarm pool` (model-load)."
         ));
-    }
+    };
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     if let Some(cap) = cfg.context_cap {
         std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
@@ -2200,11 +2311,20 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         })).collect::<Vec<_>>(),
     }));
 
-    // M1.3: pre-warm the planner + all enabled worker models so remote JIT-load doesn't race.
-    eprintln!("pre-warming models (idempotent) ...");
-    ensure_loaded(&cfg.planner_model, 1);
-    for d in &enabled {
-        ensure_loaded(&d.model_id, d.instances);
+    // Optionally pre-warm the planner + enabled worker models so remote JIT-load doesn't race.
+    // Gated by allow_model_load — OFF by default, so the swarm never spins up models on its own.
+    if cfg.allow_model_load {
+        eprintln!("pre-warming models (idempotent) ...");
+        ensure_loaded(&cfg.planner_model, 1);
+        for d in &enabled {
+            ensure_loaded(&d.model_id, d.instances);
+        }
+    } else {
+        eprintln!(
+            "{}",
+            style("model loading off (allow_model_load=off) — using only resident models; enable via `goose swarm pool`")
+                .yellow()
+        );
     }
 
     let mut devices: Vec<DeviceCfg> = enabled
@@ -2253,6 +2373,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             cfg.planner_model.clone(),
             cfg.worker_timeout_secs,
             cfg.planner_timeout_secs,
+            cfg.allow_model_load,
         )
         .await?,
     );
