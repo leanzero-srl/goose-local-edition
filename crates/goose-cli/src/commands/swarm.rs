@@ -2104,11 +2104,15 @@ impl GooseAgentDispatcher {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
         let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code.\n\
-            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
-            (split by file / module / feature), AT LEAST {worker_count}, with NON-OVERLAPPING files and NO ordering dependency \
-            so no worker sits idle. Only add a dependency when one subtask genuinely needs another's output. \
-            AVOID deep chains and chokepoints: keep the dependency depth <= 2, and if shared types/data-models are needed, \
-            put them in ONE tiny early subtask so dependents unblock fast — do NOT make most subtasks depend on a single big one.\n\
+            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks. \
+            Aim for noticeably MORE than {worker_count} subtasks when the task has natural units: ONE subtask per module / \
+            command / file is ideal. A thin plan of a few big monolith tasks leaves nodes idle and is WRONG — split aggressively. \
+            Use NON-OVERLAPPING files and minimal ordering so no worker sits idle; only add a dependency when a subtask genuinely \
+            needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
+            needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
+            DECIDE THE COMPLETE DIRECTORY LAYOUT FIRST, then give every subtask EXACT file paths consistent with it: all package \
+            modules under one package dir, all tests under tests/. Two subtasks must NEVER disagree on where a file lives or how a \
+            module is imported.\n\
             For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
