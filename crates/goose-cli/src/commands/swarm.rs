@@ -225,6 +225,11 @@ pub struct SwarmConfig {
     /// cannot monopolize a node and idle the fleet behind the scout barrier.
     #[serde(default = "default_scout_budget_secs")]
     pub scout_budget_secs: u64,
+    /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
+    /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
+    /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
+    #[serde(default)]
+    pub homogeneous_models: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -277,6 +282,7 @@ impl Default for SwarmConfig {
             repeat_penalty: None,
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
+            homogeneous_models: false,
         }
     }
 }
@@ -460,6 +466,16 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
+        "  identical  {}",
+        if cfg.homogeneous_models {
+            style("yes — split aggressively (same tokenizer)")
+                .green()
+                .bold()
+        } else {
+            style("no").dim()
+        }
+    );
+    println!(
         "  skeletons  {}",
         if cfg.best_of_n_skeletons > 1 {
             style(format!(
@@ -586,6 +602,11 @@ fn pool_menu() -> Result<()> {
                 "planning",
                 "Planning method",
                 "parallel fleet detailing vs solo 27B",
+            )
+            .item(
+                "homogeneous",
+                "Identical models",
+                "same tokenizer -> split aggressively",
             )
             .item(
                 "best-of-n",
@@ -741,6 +762,13 @@ fn pool_menu() -> Result<()> {
                     cliclack::confirm("Parallel planning (27B skeleton + fleet detailing)?")
                         .initial_value(cfg.parallel_planning)
                         .interact()?;
+            }
+            "homogeneous" => {
+                cfg.homogeneous_models = cliclack::confirm(
+                    "All worker models identical (same tokenizer)? Enables aggressive splitting",
+                )
+                .initial_value(cfg.homogeneous_models)
+                .interact()?;
             }
             "best-of-n" => {
                 let v: String =
@@ -2097,13 +2125,21 @@ impl GooseAgentDispatcher {
         worker_count: usize,
         research_findings: &str,
         best_of_n: usize,
+        homogeneous: bool,
     ) -> Result<String> {
+        let homo_hint = if homogeneous {
+            "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
+             independently on different nodes mesh consistently (same naming priors, same conventions). \
+             Split AGGRESSIVELY into many fine independent subtasks — do NOT fear interface divergence. "
+        } else {
+            ""
+        };
         let research_block = if research_findings.is_empty() {
             String::new()
         } else {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
-        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code.\n\
+        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code. {homo_hint}\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks. \
             Aim for noticeably MORE than {worker_count} subtasks when the task has natural units: ONE subtask per module / \
             command / file is ideal. A thin plan of a few big monolith tasks leaves nodes idle and is WRONG — split aggressively. \
@@ -2845,6 +2881,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 devices.len(),
                 &research_findings,
                 opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons),
+                cfg.homogeneous_models,
             )
             .await
         {
