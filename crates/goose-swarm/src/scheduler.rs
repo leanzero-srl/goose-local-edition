@@ -232,7 +232,15 @@ impl State {
                 Some(m) if m == d.cfg.model_id => 0,
                 _ => 1,
             };
-            (d.in_flight, prefers_rank, i)
+            // Break equal-load ties by the device's TOTAL dispatch count so work ROTATES across the
+            // fleet over the run. Without this the lowest-index device wins every tie and the
+            // last-indexed device is starved whenever fewer tasks are ready than there are devices.
+            let dispatched = self
+                .dispatched_per_device
+                .get(&d.cfg.id)
+                .copied()
+                .unwrap_or(0);
+            (d.in_flight, prefers_rank, dispatched, i)
         })
     }
 
