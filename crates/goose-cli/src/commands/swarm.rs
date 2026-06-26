@@ -92,11 +92,6 @@ fn default_planner_timeout_secs() -> u64 {
 fn default_best_of_n_skeletons() -> usize {
     1
 }
-/// Map a configured timeout (seconds) to a Duration. 0 means "disabled" — an effectively-infinite cap
-/// (30 days), so the timer never fires and a genuine hang would need a manual Ctrl-C.
-fn timeout_dur(secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(if secs == 0 { 2_592_000 } else { secs })
-}
 
 /// Imposed sampling parameters for the local models — the lever for steadying weak models (lower
 /// temperature for more deterministic tool-calling, etc.). `temperature` is a first-class ModelConfig
@@ -489,7 +484,7 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
-        "  timeout    worker {}s · planner {}s (hung calls re-route / fall back)",
+        "  idle-cap   worker {}s · planner {}s (NO-PROGRESS window, not wall-clock; a stalled stream re-routes / falls back)",
         style(cfg.worker_timeout_secs).cyan(),
         style(cfg.planner_timeout_secs).cyan()
     );
@@ -1722,27 +1717,21 @@ impl GooseAgentDispatcher {
         max_turns: u32,
         extensions: &[ExtensionConfig],
     ) -> Result<RunAgentOut> {
-        match tokio::time::timeout(
-            timeout_dur(self.planner_timeout_secs),
-            self.run_agent(
-                model_id,
-                system_prompt,
-                user_text,
-                response,
-                max_turns,
-                extensions,
-            ),
+        // Idle-based, not wall-clock: planner_timeout_secs is a NO-PROGRESS window. A slow but
+        // progressing architect / detailer / scout runs to completion; only a stalled stream aborts.
+        self.run_agent(
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            max_turns,
+            extensions,
+            self.planner_timeout_secs,
         )
         .await
-        {
-            Ok(r) => r,
-            Err(_) => Err(anyhow!(
-                "planner agent timed out after {}s",
-                self.planner_timeout_secs
-            )),
-        }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_agent(
         &self,
         model_id: &str,
@@ -1751,6 +1740,7 @@ impl GooseAgentDispatcher {
         response: Option<Response>,
         max_turns: u32,
         extensions: &[ExtensionConfig],
+        idle_secs: u64,
     ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
@@ -1842,7 +1832,20 @@ impl GooseAgentDispatcher {
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
-        while let Some(ev) = stream.next().await {
+        // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
+        // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
+        // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
+        let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        loop {
+            let ev = match tokio::time::timeout(idle, stream.next()).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => break,
+                Err(_) => {
+                    return Err(anyhow!(
+                        "agent stalled — no progress for {idle_secs}s (no token/tool activity)"
+                    ))
+                }
+            };
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
                     for content in &msg.content {
@@ -2306,7 +2309,7 @@ impl GooseAgentDispatcher {
                 // timeout/empty/error we fall back to the architect's brief line (still a valid spec).
                 let desc = match tokio::time::timeout(
                     std::time::Duration::from_secs(75),
-                    me.run_agent(&model, system, user, None, 6, &[]),
+                    me.run_agent(&model, system, user, None, 6, &[], 0),
                 )
                 .await
                 {
@@ -2401,7 +2404,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
              only the part you need.\n\
              - Run Python with `python3`, never bare `python`.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
-             - Prefer writing a whole file in ONE `write` over many small `edit`s.\n\
+             - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
+             it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
+             round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n\
              - If a test or command fails unexpectedly, RE-READ the relevant file with `cat` BEFORE \
              forming any theory. Do NOT speculate about bytecode/.pyc/caching/compilation — check reality.\n\
              - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
@@ -2423,37 +2428,22 @@ impl TaskDispatcher for GooseAgentDispatcher {
             style(&req.task_id).bold(),
             req.device_id
         );
-        let outcome = tokio::time::timeout(
-            timeout_dur(self.worker_timeout_secs),
-            self.run_agent(
+        // Idle-based, not wall-clock: run_agent's watchdog aborts only if NO agent event arrives for
+        // worker_timeout_secs (a genuinely stalled stream). A slow-but-PROGRESSING local model emits an
+        // event every turn and runs to completion no matter the total time — wall-clock would wrongly
+        // kill an honest 885s task. A stall surfaces as transient below → the scheduler re-routes it.
+        let outcome = self
+            .run_agent(
                 &req.model_id,
                 system_prompt,
                 req.description.clone(),
                 None,
                 self.worker_max_turns,
                 &self.worker_extensions,
-            ),
-        )
-        .await;
+                self.worker_timeout_secs,
+            )
+            .await;
         let secs = started.elapsed().as_secs_f64();
-        // A worker that exceeds the timeout is almost certainly hung/wedged — surface it as transient
-        // so the scheduler re-routes it to another device instead of stalling the whole run forever.
-        let outcome = match outcome {
-            Ok(r) => r,
-            Err(_) => {
-                eprintln!(
-                    "  {} {} on {} ({:.0}s) — timed out, re-routing",
-                    style("↻").red().bold(),
-                    style(&req.task_id).bold(),
-                    req.device_id,
-                    secs
-                );
-                return Err(DispatchError::Transient(format!(
-                    "worker timed out after {}s",
-                    self.worker_timeout_secs
-                )));
-            }
-        };
         match outcome {
             Ok(out) => {
                 eprintln!(
@@ -2476,7 +2466,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
             }
             Err(e) => {
                 let s = e.to_string();
-                let transient = s.contains("Model is unloaded")
+                let transient = s.contains("stalled")
+                    || s.contains("Model is unloaded")
                     || s.contains("Server error")
                     || s.contains("model_not_found")
                     || s.contains("Invalid model identifier")
