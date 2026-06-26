@@ -78,15 +78,24 @@ fn default_parallel_planning() -> bool {
     true
 }
 fn default_worker_timeout_secs() -> u64 {
-    420
+    // A generous HANG failsafe — only a genuine infinite stall should ever reach it (slow local models
+    // are expected; this must never trip on mere slowness). On trip, the task re-routes to another
+    // device. 0 = disabled (no timer; a true hang then needs a manual Ctrl-C).
+    900
 }
 fn default_planner_timeout_secs() -> u64 {
-    // 150s proved too short on a slow local fleet — it killed scouts (130-150s+) and skeleton drafts
-    // mid-work. 360s leaves headroom for legitimate planning while still bounding a true stream-stall.
-    360
+    // Generous HANG failsafe for planner-side calls (architect / scouts / research / replan). 150s and
+    // 360s both risked killing legitimately-slow work on local hardware; 900s only catches a true
+    // infinite stall (best-of-N already fans the skeleton across devices). 0 = disabled.
+    900
 }
 fn default_best_of_n_skeletons() -> usize {
     1
+}
+/// Map a configured timeout (seconds) to a Duration. 0 means "disabled" — an effectively-infinite cap
+/// (30 days), so the timer never fires and a genuine hang would need a manual Ctrl-C.
+fn timeout_dur(secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(if secs == 0 { 2_592_000 } else { secs })
 }
 
 /// When the swarm runs a parallel research phase before planning.
@@ -1613,7 +1622,7 @@ impl GooseAgentDispatcher {
         extensions: &[ExtensionConfig],
     ) -> Result<RunAgentOut> {
         match tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs),
+            timeout_dur(self.planner_timeout_secs),
             self.run_agent(
                 model_id,
                 system_prompt,
@@ -2238,7 +2247,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
             req.device_id
         );
         let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(self.worker_timeout_secs),
+            timeout_dur(self.worker_timeout_secs),
             self.run_agent(
                 &req.model_id,
                 system_prompt,
