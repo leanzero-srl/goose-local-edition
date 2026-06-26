@@ -2432,8 +2432,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .collect::<Vec<_>>()
                     .join("\n");
                 format!(
-                    "YOU OWN — create/write EXACTLY these ABSOLUTE paths (run `mkdir -p` for parent dirs \
-                     first), and write NOTHING outside them:\n{owned}\n\n"
+                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. If a \
+                     parent directory is missing, create it ONCE with a single `mkdir -p`, then write the \
+                     files — NEVER run `mkdir` more than once (repeating it just wastes turns):\n{owned}\n\n"
                 )
             };
             format!(
