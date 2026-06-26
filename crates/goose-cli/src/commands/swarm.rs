@@ -83,6 +83,9 @@ fn default_worker_timeout_secs() -> u64 {
 fn default_planner_timeout_secs() -> u64 {
     150
 }
+fn default_best_of_n_skeletons() -> usize {
+    1
+}
 
 /// When the swarm runs a parallel research phase before planning.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -173,6 +176,11 @@ pub struct SwarmConfig {
     /// models and never auto-load. Turn on (pool menu) to let the swarm pre-warm + JIT re-warm.
     #[serde(default)]
     pub allow_model_load: bool,
+    /// How many SKELETON candidates to draft in parallel and pick the structurally-best from (1 = the
+    /// single-draft default, no change). >1 is a plan-quality experiment — latency-neutral, the fleet
+    /// drafts in parallel and a pure-Rust scorer (no LLM) picks the widest valid plan.
+    #[serde(default = "default_best_of_n_skeletons")]
+    pub best_of_n_skeletons: usize,
 }
 
 impl Default for SwarmConfig {
@@ -213,6 +221,7 @@ impl Default for SwarmConfig {
             worker_timeout_secs: default_worker_timeout_secs(),
             planner_timeout_secs: default_planner_timeout_secs(),
             allow_model_load: false,
+            best_of_n_skeletons: default_best_of_n_skeletons(),
         }
     }
 }
@@ -260,6 +269,9 @@ pub enum SwarmCommand {
         /// Force dynamic replanning on/off for this run (overrides the configured setting).
         #[arg(long = "dynamic-replan")]
         dynamic_replan: Option<bool>,
+        /// Draft N plan skeletons in parallel and pick the best (overrides config; 1 = off).
+        #[arg(long = "best-of-n")]
+        best_of_n: Option<usize>,
     },
     /// View and manage the swarm device pool (interactive menu when no subcommand is given).
     Pool {
@@ -278,6 +290,7 @@ pub struct RunOpts {
     pub mcp: Vec<String>,
     pub research: Option<bool>,
     pub dynamic_replan: Option<bool>,
+    pub best_of_n: Option<usize>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -323,6 +336,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             mcp,
             research,
             dynamic_replan,
+            best_of_n,
         } => {
             run_swarm(RunOpts {
                 prompt,
@@ -333,6 +347,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
                 mcp,
                 research,
                 dynamic_replan,
+                best_of_n,
             })
             .await
         }
@@ -387,6 +402,19 @@ fn show_pool(cfg: &SwarmConfig) {
                 .bold()
         } else {
             style("solo 27B").cyan()
+        }
+    );
+    println!(
+        "  skeletons  {}",
+        if cfg.best_of_n_skeletons > 1 {
+            style(format!(
+                "best-of-{} (parallel draft + structural score)",
+                cfg.best_of_n_skeletons
+            ))
+            .green()
+            .bold()
+        } else {
+            style("single".to_string()).dim()
         }
     );
     println!(
@@ -479,6 +507,11 @@ fn pool_menu() -> Result<()> {
                 "planning",
                 "Planning method",
                 "parallel fleet detailing vs solo 27B",
+            )
+            .item(
+                "best-of-n",
+                "Best-of-N skeletons",
+                "draft N plans in parallel, pick the best (1 = off)",
             )
             .item(
                 "model-load",
@@ -629,6 +662,13 @@ fn pool_menu() -> Result<()> {
                     cliclack::confirm("Parallel planning (27B skeleton + fleet detailing)?")
                         .initial_value(cfg.parallel_planning)
                         .interact()?;
+            }
+            "best-of-n" => {
+                let v: String =
+                    cliclack::input("How many skeleton candidates to draft in parallel (1 = off)")
+                        .default_input(&cfg.best_of_n_skeletons.to_string())
+                        .interact()?;
+                cfg.best_of_n_skeletons = v.trim().parse().unwrap_or(1).clamp(1, 5);
             }
             "model-load" => {
                 cfg.allow_model_load = cliclack::confirm(
@@ -1025,6 +1065,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn score_skeleton_prefers_wider_flatter_plan() {
+        let wc = 3;
+        let wide = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["a.py"]},
+                {"id":"b","depends_on":[],"files":["b.py"]},
+                {"id":"c","depends_on":[],"files":["c.py"]},
+                {"id":"integrate-verify","depends_on":["a","b","c"],"files":["t.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        let deep = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["a.py"]},
+                {"id":"b","depends_on":["a"],"files":["b.py"]},
+                {"id":"c","depends_on":["b"],"files":["c.py"]},
+                {"id":"integrate-verify","depends_on":["a","b","c"],"files":["t.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        let sw = score_skeleton(&wide, wc).unwrap();
+        let sd = score_skeleton(&deep, wc).unwrap();
+        assert!(sw > sd, "wider/flatter should win: wide={sw} deep={sd}");
+        // a dep on an unknown task is not a valid DAG -> None (so it can never be picked).
+        let bad = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[{"id":"x","depends_on":["nope"],"files":["x.py"]}]}"#,
+        )
+        .unwrap();
+        assert!(score_skeleton(&bad, wc).is_none());
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -1261,6 +1333,77 @@ fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
         .filter(|l| !l.amendment_only || is_amendment)
         .take(max.max(1) as usize)
         .collect()
+}
+
+/// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
+/// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
+/// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
+/// rewards independent (zero-dep) parallel subtasks + adequate count, penalizes deep dependency chains,
+/// overlapping files, and chokepoints (one task most others depend on).
+fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
+    goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
+    let wc = worker_count.max(1) as i64;
+    let n = specs.len() as i64;
+    if n == 0 {
+        return None;
+    }
+    // Parallel width: independent (zero-dep) subtasks, excluding the integrate-verify sink.
+    let independent = specs
+        .iter()
+        .filter(|s| s.deps.is_empty() && s.id != "integrate-verify")
+        .count() as i64;
+    let indep_score = independent.min(wc) * 10;
+    // Longest dependency chain (DAG validated above, so acyclic) — penalize depth beyond 2.
+    let deps_of: std::collections::HashMap<&str, &[String]> = specs
+        .iter()
+        .map(|s| (s.id.as_str(), s.deps.as_slice()))
+        .collect();
+    let mut depth: std::collections::HashMap<&str, i64> =
+        deps_of.keys().map(|k| (*k, 0i64)).collect();
+    for _ in 0..specs.len() {
+        let mut changed = false;
+        for (id, ds) in &deps_of {
+            let d = ds
+                .iter()
+                .filter_map(|x| depth.get(x.as_str()).copied())
+                .max()
+                .map(|m| m + 1)
+                .unwrap_or(0);
+            if d > depth[id] {
+                depth.insert(id, d);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let max_depth = depth.values().copied().max().unwrap_or(0);
+    let depth_pen = (max_depth - 2).max(0) * 5;
+    // File overlap: files claimed by >1 subtask (scheduler serializes them — a quality, not validity, hit).
+    let mut files: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for s in specs {
+        for f in &s.owned_files {
+            *files.entry(f.as_str()).or_insert(0) += 1;
+        }
+    }
+    let overlap_pen = files.values().filter(|&&c| c > 1).count() as i64 * 3;
+    // Chokepoint: the most-depended-on task. Penalize when it exceeds ~half the fleet width.
+    let mut fan_in: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for s in specs {
+        for d in &s.deps {
+            *fan_in.entry(d.as_str()).or_insert(0) += 1;
+        }
+    }
+    let max_fan_in = fan_in.values().copied().max().unwrap_or(0);
+    let choke_pen = if max_fan_in > (wc / 2).max(1) {
+        max_fan_in * 2
+    } else {
+        0
+    };
+    // Size sanity: want at least worker_count subtasks to fill the fleet.
+    let size_score = if n >= wc { 5 } else { -(wc - n) * 2 };
+    Some(indep_score + size_score - depth_pen - overlap_pen - choke_pen)
 }
 
 /// True if the working dir already contains source (a marker file or a source-extension file within
@@ -1829,6 +1972,7 @@ impl GooseAgentDispatcher {
     /// the fleet writes every subtask's implementation-ready spec IN PARALLEL, and we assemble the final
     /// plan deterministically. Returns the same plan JSON `plan()` would — callers fall back to `plan()`
     /// on Err. The skeleton itself is a valid plan, so a total detailer failure degrades gracefully.
+    #[allow(clippy::too_many_arguments)]
     async fn parallel_plan(
         self: &Arc<Self>,
         planner_model: &str,
@@ -1837,6 +1981,7 @@ impl GooseAgentDispatcher {
         plan_schema: serde_json::Value,
         worker_count: usize,
         research_findings: &str,
+        best_of_n: usize,
     ) -> Result<String> {
         let research_block = if research_findings.is_empty() {
             String::new()
@@ -1855,21 +2000,90 @@ impl GooseAgentDispatcher {
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
             difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the files, writes and RUNS tests, reports PASS/FAIL; \
             its files must NOT overlap the others. Then call the final_output tool with the plan.");
-        let out = self
-            .run_agent_timed(
-                planner_model,
-                system,
-                format!("{research_block}Plan this task: {user_prompt}"),
-                Some(Response {
-                    json_schema: Some(plan_schema),
-                }),
-                12,
-                &[],
-            )
-            .await?;
-        let skeleton = out
-            .final_output
-            .ok_or_else(|| anyhow!("architect produced no skeleton"))?;
+        let user_msg = format!("{research_block}Plan this task: {user_prompt}");
+        // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
+        // the fleet workers round-robin.
+        let draft_models: Vec<String> = std::iter::once(planner_model.to_string())
+            .chain(worker_models.iter().cloned())
+            .collect();
+        let n = best_of_n.max(1);
+        if n > 1 {
+            eprintln!(
+                "  drafting {} skeleton candidate(s) IN PARALLEL, picking the structurally-best (deterministic, no LLM judge)",
+                n
+            );
+        }
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let me = self.clone();
+            let model = draft_models[i % draft_models.len()].clone();
+            let sys = system.clone();
+            let um = user_msg.clone();
+            let schema = plan_schema.clone();
+            handles.push(tokio::spawn(async move {
+                me.run_agent_timed(
+                    &model,
+                    sys,
+                    um,
+                    Some(Response {
+                        json_schema: Some(schema),
+                    }),
+                    12,
+                    &[],
+                )
+                .await
+                .ok()
+                .and_then(|o| o.final_output)
+            }));
+        }
+        let mut candidates: Vec<String> = Vec::new();
+        for h in handles {
+            if let Ok(Some(j)) = h.await {
+                candidates.push(j);
+            }
+        }
+        // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
+        // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
+        // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
+        let skeleton = if n == 1 {
+            candidates
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("architect produced no skeleton"))?
+        } else {
+            let mut best: Option<(i64, String)> = None;
+            for (i, c) in candidates.into_iter().enumerate() {
+                let specs = match goose_swarm::specs_from_plan_json(&c) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        eprintln!("  · candidate {i}: invalid JSON — skipped");
+                        continue;
+                    }
+                };
+                match score_skeleton(&specs, worker_count) {
+                    Some(score) => {
+                        eprintln!(
+                            "  · candidate {i}: score {score} ({} subtasks)",
+                            specs.len()
+                        );
+                        if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
+                            best = Some((score, c));
+                        }
+                    }
+                    None => eprintln!("  · candidate {i}: invalid DAG — skipped"),
+                }
+            }
+            match best {
+                Some((score, json)) => {
+                    eprintln!(
+                        "  {} picked best skeleton (score {score})",
+                        style("✓").green().bold()
+                    );
+                    json
+                }
+                None => return Err(anyhow!("no valid skeleton among {n} candidates")),
+            }
+        };
         let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
         let items: Vec<(usize, String, String)> = v
             .get("subtasks")
@@ -2478,6 +2692,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 plan_schema(),
                 devices.len(),
                 &research_findings,
+                opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons),
             )
             .await
         {
