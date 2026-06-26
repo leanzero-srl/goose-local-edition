@@ -81,7 +81,9 @@ fn default_worker_timeout_secs() -> u64 {
     420
 }
 fn default_planner_timeout_secs() -> u64 {
-    150
+    // 150s proved too short on a slow local fleet — it killed scouts (130-150s+) and skeleton drafts
+    // mid-work. 360s leaves headroom for legitimate planning while still bounding a true stream-stall.
+    360
 }
 fn default_best_of_n_skeletons() -> usize {
     1
