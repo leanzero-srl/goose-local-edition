@@ -2073,7 +2073,10 @@ impl GooseAgentDispatcher {
                      message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`. \
                      Keep it LEAN: never dump full docs/help()/pydoc text into your context; for \
                      standard-library modules just name the relevant APIs in one line. A few hundred words \
-                     is plenty — large context is very slow on local models.",
+                     is plenty — large context is very slow on local models. \
+                     STAY in the current working directory: for a NEW/empty project there is nothing on \
+                     disk to investigate, so reason from the task itself; NEVER `ls`/`cat` parent or \
+                     sibling directories — they are unrelated projects. Finish FAST.",
                     lens.title, lens.brief, lens.tool_hint
                 );
                 let findings = match tokio::time::timeout(
@@ -2139,7 +2142,9 @@ impl GooseAgentDispatcher {
         } else {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
-        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code. {homo_hint}\n\
+        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code. \
+            You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
+            explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks. \
             Aim for noticeably MORE than {worker_count} subtasks when the task has natural units: ONE subtask per module / \
             command / file is ideal. A thin plan of a few big monolith tasks leaves nodes idle and is WRONG — split aggressively. \
@@ -2397,6 +2402,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - If a test or command fails unexpectedly, RE-READ the relevant file with `cat` BEFORE \
              forming any theory. Do NOT speculate about bytecode/.pyc/caching/compilation — check reality.\n\
              - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
+             - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
+             SIBLING directories — they are unrelated projects. If the directory is empty, that is \
+             expected for a new project: just create your files, do not go looking elsewhere.\n\
              \n{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
