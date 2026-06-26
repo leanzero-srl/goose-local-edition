@@ -225,6 +225,10 @@ pub struct SwarmConfig {
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
     #[serde(default)]
     pub homogeneous_models: bool,
+    /// Per-host throughput weights (device-id SUBSTRING -> weight; higher = faster host gets a larger
+    /// share of tasks). E.g. {"worksmacstudio":3,"mihai":2,"gabee":1}. Empty = equal split.
+    #[serde(default)]
+    pub speed_weights: std::collections::HashMap<String, u32>,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -278,6 +282,7 @@ impl Default for SwarmConfig {
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
             homogeneous_models: false,
+            speed_weights: std::collections::HashMap::new(),
         }
     }
 }
@@ -470,6 +475,18 @@ fn show_pool(cfg: &SwarmConfig) {
             style("no").dim()
         }
     );
+    if !cfg.speed_weights.is_empty() {
+        let mut sw: Vec<String> = cfg
+            .speed_weights
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        sw.sort();
+        println!(
+            "  speed-wt   {}",
+            style(format!("{} (faster host → more tasks)", sw.join(" "))).green()
+        );
+    }
     println!(
         "  skeletons  {}",
         if cfg.best_of_n_skeletons > 1 {
@@ -2767,6 +2784,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         );
     }
 
+    // Map a device id to its configured speed_weight (substring match against the `speed_weights` map,
+    // e.g. {"worksmacstudio":3,"mihai":2,"gabee":1}); default 1 = equal share.
+    let speed_weight_for = |id: &str| -> u32 {
+        cfg.speed_weights
+            .iter()
+            .find(|(pat, _)| id.contains(pat.as_str()))
+            .map(|(_, w)| (*w).max(1))
+            .unwrap_or(1)
+    };
     let mut devices: Vec<DeviceCfg> = enabled
         .iter()
         .map(|d| DeviceCfg {
@@ -2774,6 +2800,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             model_id: d.model_id.clone(),
             weight: d.weight,
             enabled: true,
+            speed_weight: speed_weight_for(&d.id),
         })
         .collect();
     // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
@@ -2785,6 +2812,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             model_id: cfg.planner_model.clone(),
             weight: w,
             enabled: true,
+            speed_weight: speed_weight_for(&cfg.planner_model),
         });
         eprintln!(
             "planner also working: {} (weight {})",

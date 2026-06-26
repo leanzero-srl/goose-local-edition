@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, ReplanContext, Replanner, Scheduler,
-    TaskDispatcher, TaskRunOutput, TaskSpec,
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, ReplanContext, Replanner,
+    Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,11 +44,20 @@ impl Recorder {
             .entry(req.task_id.clone())
             .or_default()
             .push(req.device_id.clone());
-        *self.total_per_device.entry(req.device_id.clone()).or_default() += 1;
-        let c = self.cur_per_device.entry(req.device_id.clone()).or_default();
+        *self
+            .total_per_device
+            .entry(req.device_id.clone())
+            .or_default() += 1;
+        let c = self
+            .cur_per_device
+            .entry(req.device_id.clone())
+            .or_default();
         *c += 1;
         let cur = *c;
-        let p = self.peak_per_device.entry(req.device_id.clone()).or_default();
+        let p = self
+            .peak_per_device
+            .entry(req.device_id.clone())
+            .or_default();
         if cur > *p {
             *p = cur;
         }
@@ -117,6 +126,7 @@ fn dev(id: &str, model: &str, weight: u32) -> DeviceCfg {
         model_id: model.to_string(),
         weight,
         enabled: true,
+        speed_weight: 1,
     }
 }
 
@@ -141,21 +151,35 @@ async fn no_double_claim_and_all_done() {
     assert!(report.failed.is_empty());
     let r = rec.lock().unwrap();
     for i in 0..12 {
-        assert_eq!(r.runs[&format!("t{i}")], 1, "task t{i} dispatched exactly once (no double-claim)");
+        assert_eq!(
+            r.runs[&format!("t{i}")],
+            1,
+            "task t{i} dispatched exactly once (no double-claim)"
+        );
     }
 }
 
 #[tokio::test]
 async fn dependent_waits_for_dependency() {
-    let specs = vec![spec("a", &[], &[]), spec("b", &["a"], &[]), spec("c", &["b"], &[])];
+    let specs = vec![
+        spec("a", &[], &[]),
+        spec("b", &["a"], &[]),
+        spec("c", &["b"], &[]),
+    ];
     let dag = Dag::from_specs(specs).unwrap();
     let rec = Arc::new(Mutex::new(Recorder::default()));
     let sched = Scheduler::new(vec![dev("d1", "m-1", 3), dev("d2", "m-2", 3)], 3);
     let report = sched.run(dag, mock(&rec, 20), String::new()).await.unwrap();
     assert_eq!(report.done.len(), 3);
     let r = rec.lock().unwrap();
-    assert!(r.first_start_seq["b"] > r.end_seq["a"], "b started before a finished");
-    assert!(r.first_start_seq["c"] > r.end_seq["b"], "c started before b finished");
+    assert!(
+        r.first_start_seq["b"] > r.end_seq["a"],
+        "b started before a finished"
+    );
+    assert!(
+        r.first_start_seq["c"] > r.end_seq["b"],
+        "c started before b finished"
+    );
 }
 
 #[tokio::test]
@@ -168,7 +192,10 @@ async fn weighting_caps_in_flight_per_device() {
     assert_eq!(report.done.len(), 24);
     let r = rec.lock().unwrap();
     assert!(r.peak_per_device["big"] <= 3, "big never exceeds weight 3");
-    assert!(r.peak_per_device.get("small").copied().unwrap_or(0) <= 1, "small never exceeds weight 1");
+    assert!(
+        r.peak_per_device.get("small").copied().unwrap_or(0) <= 1,
+        "small never exceeds weight 1"
+    );
     assert_eq!(r.peak_per_device["big"], 3, "big saturates to its weight");
     assert!(
         r.total_per_device["big"] > r.total_per_device["small"],
@@ -193,9 +220,15 @@ async fn transient_redispatches_to_a_different_device() {
     let report = sched.run(dag, disp, String::new()).await.unwrap();
     assert_eq!(report.done, vec!["x".to_string()], "x eventually succeeds");
     let r = rec.lock().unwrap();
-    assert_eq!(r.runs["x"], 2, "x ran twice: one transient failure + one success");
+    assert_eq!(
+        r.runs["x"], 2,
+        "x ran twice: one transient failure + one success"
+    );
     let devs = &r.run_devices["x"];
-    assert_ne!(devs[0], devs[1], "re-dispatch steered to a different device");
+    assert_ne!(
+        devs[0], devs[1],
+        "re-dispatch steered to a different device"
+    );
 }
 
 #[tokio::test]
@@ -205,7 +238,10 @@ async fn spreads_independent_tasks_across_idle_devices() {
     let specs: Vec<_> = (0..9).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
     let dag = Dag::from_specs(specs).unwrap();
     let rec = Arc::new(Mutex::new(Recorder::default()));
-    let sched = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)], 3);
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    );
     let report = sched.run(dag, mock(&rec, 30), String::new()).await.unwrap();
     assert_eq!(report.done.len(), 9);
     let r = rec.lock().unwrap();
@@ -219,7 +255,10 @@ async fn spreads_independent_tasks_across_idle_devices() {
         .iter()
         .filter(|d| r.peak_per_device.get(**d).copied().unwrap_or(0) >= 1)
         .count();
-    assert_eq!(active, 3, "all three devices must run concurrently, not just one");
+    assert_eq!(
+        active, 3,
+        "all three devices must run concurrently, not just one"
+    );
 }
 
 #[tokio::test]
@@ -282,9 +321,16 @@ async fn terminal_failure_fails_descendants_without_deadlock() {
     });
     let sched = Scheduler::new(vec![dev("d1", "m-1", 2)], 3);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
-    assert_eq!(report.done, vec!["d".to_string()], "independent task still completes");
+    assert_eq!(
+        report.done,
+        vec!["d".to_string()],
+        "independent task still completes"
+    );
     let failed: HashSet<_> = report.failed.iter().cloned().collect();
-    assert_eq!(failed, HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()]));
+    assert_eq!(
+        failed,
+        HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+    );
 }
 
 struct MockReplanner {
@@ -300,7 +346,11 @@ impl Replanner for MockReplanner {
     }
 }
 
-fn slow_dispatcher(rec: &Arc<Mutex<Recorder>>, delay_ms: u64, slow: &[&str]) -> Arc<MockDispatcher> {
+fn slow_dispatcher(
+    rec: &Arc<Mutex<Recorder>>,
+    delay_ms: u64,
+    slow: &[&str],
+) -> Arc<MockDispatcher> {
     Arc::new(MockDispatcher {
         rec: rec.clone(),
         delay: Duration::from_millis(delay_ms),
@@ -317,11 +367,17 @@ async fn idle_triggers_replan_and_fills_nodes() {
     let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let replanner = Arc::new(MockReplanner {
-        rounds: Mutex::new(VecDeque::from(vec![vec![spec("b", &[], &[]), spec("c", &[], &[])]])),
+        rounds: Mutex::new(VecDeque::from(vec![vec![
+            spec("b", &[], &[]),
+            spec("c", &[], &[]),
+        ]])),
         calls: calls.clone(),
     });
-    let sched = Scheduler::new(vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)], 3)
-        .with_replanner(replanner, 3);
+    let sched = Scheduler::new(
+        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
+        3,
+    )
+    .with_replanner(replanner, 3);
     let report = sched
         .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "goal".into())
         .await
@@ -332,7 +388,10 @@ async fn idle_triggers_replan_and_fills_nodes() {
         "replan-added tasks must run: done={:?}",
         report.done
     );
-    assert!(calls.load(Ordering::SeqCst) >= 1, "the replanner was invoked while nodes idled");
+    assert!(
+        calls.load(Ordering::SeqCst) >= 1,
+        "the replanner was invoked while nodes idled"
+    );
 }
 
 #[tokio::test]
@@ -344,13 +403,20 @@ async fn empty_replan_stops_cleanly() {
         rounds: Mutex::new(VecDeque::new()), // always empty -> stop, no spin
         calls: calls.clone(),
     });
-    let sched = Scheduler::new(vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)], 3)
-        .with_replanner(replanner, 3);
+    let sched = Scheduler::new(
+        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
+        3,
+    )
+    .with_replanner(replanner, 3);
     let report = sched
         .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "g".into())
         .await
         .unwrap();
-    assert_eq!(report.done.len(), 2, "an empty replan adds nothing and ends cleanly");
+    assert_eq!(
+        report.done.len(),
+        2,
+        "an empty replan adds nothing and ends cleanly"
+    );
 }
 
 #[tokio::test]
@@ -367,13 +433,23 @@ async fn replan_respects_max_replans() {
         ])),
         calls: calls.clone(),
     });
-    let sched = Scheduler::new(vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)], 3)
-        .with_replanner(replanner, 2);
+    let sched = Scheduler::new(
+        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
+        3,
+    )
+    .with_replanner(replanner, 2);
     let report = sched
-        .run(dag, slow_dispatcher(&rec, 25, &["slow", "r1", "r2", "r3"]), "g".into())
+        .run(
+            dag,
+            slow_dispatcher(&rec, 25, &["slow", "r1", "r2", "r3"]),
+            "g".into(),
+        )
         .await
         .unwrap();
-    assert!(calls.load(Ordering::SeqCst) <= 2, "replan rounds must not exceed max_replans");
+    assert!(
+        calls.load(Ordering::SeqCst) <= 2,
+        "replan rounds must not exceed max_replans"
+    );
     assert!(
         !report.done.contains(&"r3".to_string()),
         "r3 must never be requested once the cap is hit"
@@ -383,5 +459,8 @@ async fn replan_respects_max_replans() {
 #[tokio::test]
 async fn cycle_is_rejected_at_load() {
     let specs = vec![spec("a", &["b"], &[]), spec("b", &["a"], &[])];
-    assert!(Dag::from_specs(specs).is_err(), "a dependency cycle must be rejected");
+    assert!(
+        Dag::from_specs(specs).is_err(),
+        "a dependency cycle must be rejected"
+    );
 }
