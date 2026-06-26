@@ -2395,6 +2395,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - Keep tool OUTPUT SMALL: NEVER dump full `help()`/pydoc or whole large files into the chat — \
              use `head`, `grep`, or read only the specific lines/symbols you need. Large context is very \
              slow on local models and degrades quality.\n\
+             - If a tool result says it was too large and was saved to a `goose_mcp_responses` temp file, \
+             do NOT `cat` that temp file — reading it just re-truncates into ANOTHER temp file and you will \
+             loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
+             only the part you need.\n\
              - Run Python with `python3`, never bare `python`.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
              - Prefer writing a whole file in ONE `write` over many small `edit`s.\n\
@@ -2651,11 +2655,13 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     if let Some(cap) = cfg.context_cap {
         std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
     }
-    // Hard-cap any single tool result fed back to the weak model (default 8000 chars ~2K tokens) — the
-    // biggest lever against context-bloat prefill stalls (a 44KB pydoc dump idled the fleet for 10 min).
-    // Over-cap content spills to a temp file the model can grep/head. Respects an explicit env override.
+    // Hard-cap any single tool result fed back to the weak model. Over-cap content spills to a temp file
+    // ("response was larger… stored in /…/goose_mcp_responses/…"). CAUTION: set this ABOVE a normal source
+    // file / pytest run — at 8000 a routine `cat store.py` (8.6KB) tripped the spill, the worker then catted
+    // the temp file which ALSO re-tripped it, looping until the 900s timeout. 30000 (~7.5K tokens) clears
+    // ordinary reads while still bounding a pathological dump. Respects an explicit env override.
     if std::env::var("GOOSE_MAX_TOOL_RESPONSE_SIZE").is_err() {
-        let tcap = cfg.max_tool_response_chars.unwrap_or(8000);
+        let tcap = cfg.max_tool_response_chars.unwrap_or(30000);
         std::env::set_var("GOOSE_MAX_TOOL_RESPONSE_SIZE", tcap.to_string());
     }
 
