@@ -2437,10 +2437,31 @@ impl TaskDispatcher for GooseAgentDispatcher {
                      files — NEVER run `mkdir` more than once (repeating it just wastes turns):\n{owned}\n\n"
                 )
             };
+            // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
+            // EDITING it) so the worker need not re-`cat` it. Integration/wire-into-existing-file tasks
+            // otherwise over-read the whole project; handing them the file up front cuts the dominant tail.
+            let mut existing_block = String::new();
+            for f in &req.owned_files {
+                let p = std::path::Path::new(&cwd).join(f);
+                if let Ok(content) = std::fs::read_to_string(&p) {
+                    if !content.trim().is_empty() {
+                        let capped: String = content.chars().take(12000).collect();
+                        let note = if content.chars().count() > 12000 {
+                            " [truncated — head only; cat the rest only if needed]"
+                        } else {
+                            ""
+                        };
+                        existing_block.push_str(&format!(
+                            "## CURRENT content of {f}{note} — you are EDITING this file; do NOT `cat` it \
+                             again, edit it from here:\n```\n{capped}\n```\n\n"
+                        ));
+                    }
+                }
+            }
             format!(
                 "## PROJECT FILE LAYOUT — the agreed plan\n\
                  Every module lives at EXACTLY these paths; import from here, NEVER invent another \
-                 location or write a second copy at the project root:\n{manifest}\n{owned_part}"
+                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}"
             )
         };
         let system_prompt = format!(
