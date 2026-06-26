@@ -217,6 +217,18 @@ pub struct SwarmConfig {
     pub min_p: Option<f32>,
     #[serde(default)]
     pub repeat_penalty: Option<f32>,
+    /// Hard cap (chars) on any single tool result fed back to a worker (None = swarm default 8000).
+    /// The big lever against context-bloat prefill stalls on local models.
+    #[serde(default)]
+    pub max_tool_response_chars: Option<u32>,
+    /// Per-SCOUT wall-clock budget (seconds) — a research scout exceeding this returns partial so it
+    /// cannot monopolize a node and idle the fleet behind the scout barrier.
+    #[serde(default = "default_scout_budget_secs")]
+    pub scout_budget_secs: u64,
+}
+
+fn default_scout_budget_secs() -> u64 {
+    120
 }
 
 impl Default for SwarmConfig {
@@ -263,6 +275,8 @@ impl Default for SwarmConfig {
             top_k: None,
             min_p: None,
             repeat_penalty: None,
+            max_tool_response_chars: None,
+            scout_budget_secs: default_scout_budget_secs(),
         }
     }
 }
@@ -2000,6 +2014,7 @@ impl GooseAgentDispatcher {
         max_lenses: u32,
         research_extensions: Arc<Vec<ExtensionConfig>>,
         worker_models: Vec<String>,
+        scout_budget: u64,
     ) -> Vec<ResearchFinding> {
         if worker_models.is_empty() {
             return Vec::new();
@@ -2033,12 +2048,18 @@ impl GooseAgentDispatcher {
                      is plenty — large context is very slow on local models.",
                     lens.title, lens.brief, lens.tool_hint
                 );
-                let findings = match me
-                    .run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts)
-                    .await
+                let findings = match tokio::time::timeout(
+                    std::time::Duration::from_secs(scout_budget),
+                    me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts),
+                )
+                .await
                 {
-                    Ok(o) => o.text,
-                    Err(e) => format!("(scout failed: {e})"),
+                    Ok(Ok(o)) => o.text,
+                    Ok(Err(e)) => format!("(scout failed: {e})"),
+                    Err(_) => format!(
+                        "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
+                        lens.id, scout_budget
+                    ),
                 };
                 eprintln!(
                     "  {} scout {} ({:.0}s)",
@@ -2579,6 +2600,13 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     if let Some(cap) = cfg.context_cap {
         std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
     }
+    // Hard-cap any single tool result fed back to the weak model (default 8000 chars ~2K tokens) — the
+    // biggest lever against context-bloat prefill stalls (a 44KB pydoc dump idled the fleet for 10 min).
+    // Over-cap content spills to a temp file the model can grep/head. Respects an explicit env override.
+    if std::env::var("GOOSE_MAX_TOOL_RESPONSE_SIZE").is_err() {
+        let tcap = cfg.max_tool_response_chars.unwrap_or(8000);
+        std::env::set_var("GOOSE_MAX_TOOL_RESPONSE_SIZE", tcap.to_string());
+    }
 
     let json = opts.output_format == "json";
     let working_dir = std::env::current_dir()?;
@@ -2752,6 +2780,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     cfg.max_research_questions,
                     research_exts,
                     worker_models,
+                    cfg.scout_budget_secs,
                 )
                 .await
         } else {
