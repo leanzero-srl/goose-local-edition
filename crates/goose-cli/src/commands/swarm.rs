@@ -80,6 +80,9 @@ fn default_parallel_planning() -> bool {
 fn default_worker_timeout_secs() -> u64 {
     420
 }
+fn default_planner_timeout_secs() -> u64 {
+    150
+}
 
 /// When the swarm runs a parallel research phase before planning.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -161,6 +164,11 @@ pub struct SwarmConfig {
     /// to another device, so one stuck model never stalls the whole run.
     #[serde(default = "default_worker_timeout_secs")]
     pub worker_timeout_secs: u64,
+    /// Wall-clock cap (seconds) for PLANNER-side agent calls (architect / solo plan / scouts /
+    /// research / replan). Shorter than worker tasks — these should be quick, so a longer hang is a
+    /// stall to recover from fast (fallback to solo plan / skip / empty).
+    #[serde(default = "default_planner_timeout_secs")]
+    pub planner_timeout_secs: u64,
 }
 
 impl Default for SwarmConfig {
@@ -199,6 +207,7 @@ impl Default for SwarmConfig {
             research_scouts: default_research_scouts(),
             parallel_planning: default_parallel_planning(),
             worker_timeout_secs: default_worker_timeout_secs(),
+            planner_timeout_secs: default_planner_timeout_secs(),
         }
     }
 }
@@ -376,8 +385,9 @@ fn show_pool(cfg: &SwarmConfig) {
         }
     );
     println!(
-        "  timeout    worker {}s (hung tasks re-route)",
-        style(cfg.worker_timeout_secs).cyan()
+        "  timeout    worker {}s · planner {}s (hung calls re-route / fall back)",
+        style(cfg.worker_timeout_secs).cyan(),
+        style(cfg.planner_timeout_secs).cyan()
     );
     println!(
         "  replan     {}   max-rounds {}",
@@ -1327,6 +1337,8 @@ pub struct GooseAgentDispatcher {
     planner_model: String,
     /// Per-task wall-clock cap (seconds): a worker exceeding this is treated as hung and re-routed.
     worker_timeout_secs: u64,
+    /// Shorter wall-clock cap (seconds) for planner-side calls via `run_agent_timed`.
+    planner_timeout_secs: u64,
 }
 
 impl GooseAgentDispatcher {
@@ -1336,6 +1348,7 @@ impl GooseAgentDispatcher {
         worker_extensions: Vec<ExtensionConfig>,
         planner_model: String,
         worker_timeout_secs: u64,
+        planner_timeout_secs: u64,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -1353,6 +1366,7 @@ impl GooseAgentDispatcher {
             worker_extensions,
             planner_model,
             worker_timeout_secs,
+            planner_timeout_secs,
         })
     }
 
@@ -1370,7 +1384,7 @@ impl GooseAgentDispatcher {
         extensions: &[ExtensionConfig],
     ) -> Result<RunAgentOut> {
         match tokio::time::timeout(
-            std::time::Duration::from_secs(self.worker_timeout_secs),
+            std::time::Duration::from_secs(self.planner_timeout_secs),
             self.run_agent(
                 model_id,
                 system_prompt,
@@ -1384,8 +1398,8 @@ impl GooseAgentDispatcher {
         {
             Ok(r) => r,
             Err(_) => Err(anyhow!(
-                "agent timed out after {}s",
-                self.worker_timeout_secs
+                "planner agent timed out after {}s",
+                self.planner_timeout_secs
             )),
         }
     }
@@ -2238,6 +2252,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             worker_extensions,
             cfg.planner_model.clone(),
             cfg.worker_timeout_secs,
+            cfg.planner_timeout_secs,
         )
         .await?,
     );
