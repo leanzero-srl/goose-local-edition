@@ -2401,6 +2401,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - If a test or command fails unexpectedly, RE-READ the relevant file with `cat` BEFORE \
              forming any theory. Do NOT speculate about bytecode/.pyc/caching/compilation — check reality.\n\
              - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
+             - If your task TESTS or BUILDS ON another module, `cat` that module's ACTUAL file for its \
+             exact API, signatures, and behaviour (e.g. the precise SM-2 / formula constants) before \
+             writing code — do NOT guess from the dependency summary; independent guesses DIVERGE and the \
+             tests then disagree with the implementation.\n\
              - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
              SIBLING directories — they are unrelated projects. If the directory is empty, that is \
              expected for a new project: just create your files, do not go looking elsewhere.\n\

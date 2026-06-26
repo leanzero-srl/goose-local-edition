@@ -24,12 +24,13 @@ impl SharedContext {
     }
 
     /// The relevant slice for a task about to run: the outputs of its dependencies, in dep order.
-    /// CAPPED per-dependency and overall — a high-fan-in task (e.g. integrate-verify, which depends on
-    /// every other task) would otherwise prefill an enormous context and stream-stall on a local model.
-    /// The actual files are on disk; the summaries are just orientation.
+    /// A LOOSE backstop cap only — generous enough that a normal task sees its dependencies' full
+    /// output (so identical models can agree on unspecified behaviour), while a pathological high-fan-in
+    /// task (e.g. integrate-verify on a huge plan) can't prefill an unbounded context. Details live on
+    /// disk; workers are told to read the actual files for exact APIs.
     pub fn slice_for(&self, deps: &[TaskId]) -> String {
-        const PER_DEP: usize = 600;
-        const TOTAL: usize = 5000;
+        const PER_DEP: usize = 4000;
+        const TOTAL: usize = 20000;
         let mut parts = Vec::new();
         let mut total = 0usize;
         for d in deps {
