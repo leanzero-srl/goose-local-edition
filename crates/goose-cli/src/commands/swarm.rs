@@ -103,7 +103,7 @@ fn timeout_dur(secs: u64) -> std::time::Duration {
 /// field; `top_p`/`top_k`/`min_p`/`repeat_penalty` are merged into the request body (LM Studio accepts
 /// them). All None = use the model/server defaults (no change).
 #[derive(Clone, Default)]
-struct SamplingParams {
+pub struct SamplingParams {
     temperature: Option<f32>,
     top_p: Option<f32>,
     top_k: Option<i32>,
@@ -1634,6 +1634,7 @@ pub struct GooseAgentDispatcher {
 }
 
 impl GooseAgentDispatcher {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
         worker_max_turns: u32,
