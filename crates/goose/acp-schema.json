@@ -1180,6 +1180,141 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/diagnostics/get"
     },
+    "ListPromptsRequest_unstable": {
+      "type": "object",
+      "description": "List all available Goose prompt templates.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/list"
+    },
+    "ListPromptsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "prompts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PromptTemplateEntry"
+          }
+        }
+      },
+      "required": [
+        "prompts"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/list"
+    },
+    "PromptTemplateEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "defaultContent": {
+          "type": "string"
+        },
+        "userContent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isCustomized": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "defaultContent",
+        "isCustomized"
+      ],
+      "description": "Information about a prompt template, including its default content and customization status."
+    },
+    "GetPromptRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "Read a Goose prompt template.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/get"
+    },
+    "GetPromptResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "defaultContent": {
+          "type": "string"
+        },
+        "isCustomized": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "content",
+        "defaultContent",
+        "isCustomized"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/get"
+    },
+    "SavePromptRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "content"
+      ],
+      "description": "Save a custom Goose prompt template.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/save"
+    },
+    "PromptOperationResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "x-side": "agent"
+    },
+    "ResetPromptRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "Reset a Goose prompt template to its default content.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/config/prompts/reset"
+    },
     "DeleteSessionRequest": {
       "type": "object",
       "properties": {
@@ -5409,6 +5544,42 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ListPromptsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/prompts/list",
+                  "title": "ListPromptsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/GetPromptRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/prompts/get",
+                  "title": "GetPromptRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/SavePromptRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/prompts/save",
+                  "title": "SavePromptRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ResetPromptRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/config/prompts/reset",
+                  "title": "ResetPromptRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/DeleteSessionRequest"
                     }
                   ],
@@ -6199,6 +6370,30 @@
                         }
                       ],
                       "title": "DiagnosticsGetResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ListPromptsResponse_unstable"
+                        }
+                      ],
+                      "title": "ListPromptsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/GetPromptResponse_unstable"
+                        }
+                      ],
+                      "title": "GetPromptResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/PromptOperationResponse_unstable"
+                        }
+                      ],
+                      "title": "PromptOperationResponse_unstable"
                     },
                     {
                       "allOf": [

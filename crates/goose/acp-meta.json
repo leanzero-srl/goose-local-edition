@@ -66,6 +66,26 @@
       "responseType": "DiagnosticsGetResponse_unstable"
     },
     {
+      "method": "_goose/unstable/config/prompts/list",
+      "requestType": "ListPromptsRequest_unstable",
+      "responseType": "ListPromptsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/config/prompts/get",
+      "requestType": "GetPromptRequest_unstable",
+      "responseType": "GetPromptResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/config/prompts/save",
+      "requestType": "SavePromptRequest_unstable",
+      "responseType": "PromptOperationResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/config/prompts/reset",
+      "requestType": "ResetPromptRequest_unstable",
+      "responseType": "PromptOperationResponse_unstable"
+    },
+    {
       "method": "session/delete",
       "requestType": "DeleteSessionRequest",
       "responseType": "EmptyResponse"
