@@ -2458,6 +2458,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
              loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
              only the part you need.\n\
              - Run Python with `python3`, never bare `python`.\n\
+             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
+             (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
              - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
              it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
