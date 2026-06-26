@@ -2151,19 +2151,18 @@ impl GooseAgentDispatcher {
             Use NON-OVERLAPPING files and minimal ordering so no worker sits idle; only add a dependency when a subtask genuinely \
             needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
             needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
-            DECIDE THE COMPLETE DIRECTORY LAYOUT FIRST, then give every subtask EXACT file paths consistent with it: all package \
-            modules under one package dir, all tests under tests/. Two subtasks must NEVER disagree on where a file lives or how a \
-            module is imported.\n\
+            DECIDE THE LAYOUT FIRST and pick ONE convention, applied to EVERY file — do NOT mix: EITHER a single package \
+            directory `pkgname/` that holds ALL modules AND the cli (imports like `from pkgname.models import X`), with tests \
+            under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
+            in a package while its modules sit at the root. Every subtask's `files` and every import MUST match the one chosen \
+            layout exactly.\n\
             For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
-            difficulty \"hard\": it integrates the files, then VERIFIES FOR REAL — (1) RUN the test suite with \
-            `python3 -m pytest` (NOT py_compile or a syntax check) and fix failures until green; (2) RUN the actual program \
-            end-to-end (invoke the CLI with real arguments, exercising EVERY command AND any flags/options like a custom path) \
-            to confirm it truly works, since passing tests do NOT prove untested flags work; (3) check the workspace for \
-            stray/unexpected files (scratch, notes, *.md briefs, plan.json, a literal ':memory:' file) and delete them. \
-            Report PASS/FAIL honestly. Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
+            difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `python3 -m pytest` \
+            (NOT py_compile), fixes failures until GREEN, then runs the program's main command ONCE to confirm it starts, and \
+            reports PASS/FAIL honestly. Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
         let user_msg = format!("{research_block}Plan this task: {user_prompt}");
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
