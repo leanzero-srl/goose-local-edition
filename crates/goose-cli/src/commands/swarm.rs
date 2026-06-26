@@ -2024,8 +2024,10 @@ impl GooseAgentDispatcher {
                 let system = format!(
                     "You are a SCOUT investigating ONE aspect of a coding task to inform the planner. \
                      Your lens is \"{}\": {} {} Return a CONCISE, factual brief (key facts, API names, \
-                     short snippets, file refs, and a suggested breakdown for your lens). Do NOT write or \
-                     modify any project files, and do NOT produce the full plan.",
+                     short snippets, file refs, and a suggested breakdown for your lens) as your TEXT \
+                     RESPONSE ONLY. You have NO write task: do NOT create, write, or edit ANY file \
+                     (no .md brief, no notes, no scratch) — read-only investigation, then report in your \
+                     message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`.",
                     lens.title, lens.brief, lens.tool_hint
                 );
                 let findings = match me
@@ -2087,8 +2089,12 @@ impl GooseAgentDispatcher {
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
-            difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the files, writes and RUNS tests, reports PASS/FAIL; \
-            its files must NOT overlap the others. Then call the final_output tool with the plan.");
+            difficulty \"hard\": it integrates the files, then VERIFIES FOR REAL — (1) RUN the test suite with \
+            `python3 -m pytest` (NOT py_compile or a syntax check) and fix failures until green; (2) RUN the actual program \
+            end-to-end (invoke the CLI with real arguments, exercising EVERY command AND any flags/options like a custom path) \
+            to confirm it truly works, since passing tests do NOT prove untested flags work; (3) check the workspace for \
+            stray/unexpected files (scratch, notes, *.md briefs, plan.json, a literal ':memory:' file) and delete them. \
+            Report PASS/FAIL honestly. Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
         let user_msg = format!("{research_block}Plan this task: {user_prompt}");
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
@@ -2313,7 +2319,18 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
-             When finished, briefly state what you produced.\n\n{context_block}"
+             When finished, briefly state what you produced.\n\
+             \n\
+             TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
+             - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool, and \
+             `read_image` is ONLY for images (png/jpeg/gif/webp) — never call it on source/text files.\n\
+             - Run Python with `python3`, never bare `python`.\n\
+             - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
+             - Prefer writing a whole file in ONE `write` over many small `edit`s.\n\
+             - If a test or command fails unexpectedly, RE-READ the relevant file with `cat` BEFORE \
+             forming any theory. Do NOT speculate about bytecode/.pyc/caching/compilation — check reality.\n\
+             - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
+             \n{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -2876,12 +2893,38 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     } else {
         println!("\n{}", style("=== swarm report ===").bold());
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
-        if !report.failed.is_empty() {
+        let core_failed: Vec<&String> = report
+            .failed
+            .iter()
+            .filter(|id| !report.bonus.contains(*id))
+            .collect();
+        let bonus_failed: Vec<&String> = report
+            .failed
+            .iter()
+            .filter(|id| report.bonus.contains(*id))
+            .collect();
+        if !core_failed.is_empty() {
             println!(
                 "{} ({}): {}",
                 style("FAILED").red().bold(),
-                report.failed.len(),
-                report.failed.join(", ")
+                core_failed.len(),
+                core_failed
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if !bonus_failed.is_empty() {
+            println!(
+                "{} ({}): {}  (opportunistic — did NOT fail the run)",
+                style("bonus skipped").yellow(),
+                bonus_failed.len(),
+                bonus_failed
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         println!("dispatched per device: {:?}", report.dispatched_per_device);
@@ -2893,9 +2936,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         }
     }
 
-    if report.failed.is_empty() {
+    // Run success is judged on the CORE plan only — a failed opportunistic/replanner (bonus) task
+    // must not fail an otherwise-complete run.
+    let core_failed = report
+        .failed
+        .iter()
+        .filter(|id| !report.bonus.contains(*id))
+        .count();
+    if core_failed == 0 {
         Ok(())
     } else {
-        Err(anyhow!("{} subtask(s) failed", report.failed.len()))
+        Err(anyhow!("{} core subtask(s) failed", core_failed))
     }
 }
