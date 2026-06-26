@@ -9,7 +9,7 @@
 //! (unlocking the DAG), merge output into the shared context, and free device capacity.
 
 use crate::context::SharedContext;
-use crate::dag::{Dag, TaskId, TaskState};
+use crate::dag::{Dag, Difficulty, TaskId, TaskState};
 use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
@@ -139,6 +139,9 @@ struct State {
     replans_done: u32,
     /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
     bonus_ids: HashSet<TaskId>,
+    /// Observed per-device speed: device index -> (total completed ms, count). Used to route the
+    /// hardest tasks (incl. integrate-verify) to the proven-fastest node on an identical-model fleet.
+    device_speed: HashMap<usize, (u64, u32)>,
 }
 
 impl State {
@@ -226,21 +229,34 @@ impl State {
         // determinism. (Honoring preferred_model first would pile every same-model task on one device
         // and leave the rest of the fleet idle — the opposite of what a swarm is for.)
         let pm = n.spec.preferred_model.as_deref();
+        // A HARD task (the heaviest work, incl. integrate-verify) prefers the proven-FASTEST free node:
+        // identical models differ only in host speed, so the critical path shrinks if the big tasks land
+        // on the quickest node. Load (in_flight) stays primary, so this never over-concentrates.
+        let hard = matches!(n.spec.difficulty, Difficulty::Hard);
         pool.into_iter().min_by_key(|&i| {
             let d = &self.devices[i];
             let prefers_rank = match pm {
                 Some(m) if m == d.cfg.model_id => 0,
                 _ => 1,
             };
-            // Break equal-load ties by the device's TOTAL dispatch count so work ROTATES across the
-            // fleet over the run. Without this the lowest-index device wins every tie and the
-            // last-indexed device is starved whenever fewer tasks are ready than there are devices.
+            // Speed proxy: average observed ms/task on this device (lower = faster). Unknown devices
+            // sort last among ties for hard tasks (they still win on lower load). Easy tasks ignore it.
+            let speed = if hard {
+                self.device_speed
+                    .get(&i)
+                    .map(|(t, c)| t / (*c).max(1) as u64)
+                    .unwrap_or(u64::MAX)
+            } else {
+                0
+            };
+            // Break remaining ties by TOTAL dispatch count so work ROTATES (else the lowest-index
+            // device wins every tie and the last-indexed device is starved when work is thin).
             let dispatched = self
                 .dispatched_per_device
                 .get(&d.cfg.id)
                 .copied()
                 .unwrap_or(0);
-            (d.in_flight, prefers_rank, dispatched, i)
+            (d.in_flight, speed, prefers_rank, dispatched, i)
         })
     }
 
@@ -347,6 +363,12 @@ impl State {
 
         match res {
             Ok(run) => {
+                // Record this device's throughput (successful completions only) for speed-aware routing.
+                if let Some(dev) = released_dev {
+                    let e = self.device_speed.entry(dev).or_insert((0, 0));
+                    e.0 += elapsed_ms;
+                    e.1 += 1;
+                }
                 let TaskRunOutput {
                     output,
                     session_id,
@@ -666,6 +688,7 @@ impl Scheduler {
             goal,
             replans_done: 0,
             bonus_ids: HashSet::new(),
+            device_speed: HashMap::new(),
         }));
         let notify = Arc::new(Notify::new());
 

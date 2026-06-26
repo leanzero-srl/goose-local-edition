@@ -3012,6 +3012,29 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             );
         }
         println!("dispatched per device: {:?}", report.dispatched_per_device);
+        // Observed node speed (avg ms/task) — hard tasks are routed to the fastest free node.
+        let mut speeds: Vec<(String, u64)> = report
+            .per_device
+            .iter()
+            .filter(|(_, s)| s.dispatched > 0)
+            .map(|(d, s)| (d.clone(), s.busy_ms / s.dispatched as u64))
+            .collect();
+        speeds.sort_by_key(|(_, ms)| *ms);
+        if !speeds.is_empty() {
+            let line = speeds
+                .iter()
+                .enumerate()
+                .map(|(i, (d, ms))| {
+                    if i == 0 {
+                        format!("{d} {ms}ms (fastest)")
+                    } else {
+                        format!("{d} {ms}ms")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("node speed (avg ms/task): {line}");
+        }
         for id in &report.done {
             if let Some(r) = report.results.get(id) {
                 let snippet: String = r.chars().take(280).collect();
