@@ -10,7 +10,9 @@
 
 use crate::context::SharedContext;
 use crate::dag::{Dag, TaskId, TaskState};
-use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
+use crate::dispatch::{
+    DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
+};
 use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
@@ -35,6 +37,8 @@ pub struct DeviceCfg {
 pub struct RunReport {
     pub done: Vec<TaskId>,
     pub failed: Vec<TaskId>,
+    /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
+    pub bonus: Vec<TaskId>,
     pub results: HashMap<TaskId, String>,
     pub context_json: serde_json::Value,
     /// Total tasks dispatched per device id (counts re-dispatches) — observability + weighting checks.
@@ -133,6 +137,8 @@ struct State {
     /// The user goal (passed to the replanner) + how many replan rounds have run.
     goal: String,
     replans_done: u32,
+    /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
+    bonus_ids: HashSet<TaskId>,
 }
 
 impl State {
@@ -164,7 +170,12 @@ impl State {
             match n.state {
                 TaskState::Done => completed.push((
                     id.clone(),
-                    n.result.clone().unwrap_or_default().chars().take(400).collect(),
+                    n.result
+                        .clone()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(400)
+                        .collect(),
                 )),
                 TaskState::Failed => failed.push(id.clone()),
                 _ => incomplete.push(id.clone()),
@@ -259,7 +270,11 @@ impl State {
         let (files, description, attempt) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
             n.state = TaskState::Claimed;
-            (n.spec.owned_files.clone(), n.spec.description.clone(), n.attempts)
+            (
+                n.spec.owned_files.clone(),
+                n.spec.description.clone(),
+                n.attempts,
+            )
         };
         for f in &files {
             self.held_files.insert(f.clone());
@@ -268,7 +283,10 @@ impl State {
         self.claimed_device.insert(tid.clone(), dev);
         let device_id = self.devices[dev].cfg.id.clone();
         let model_id = self.devices[dev].cfg.model_id.clone();
-        *self.dispatched_per_device.entry(device_id.clone()).or_default() += 1;
+        *self
+            .dispatched_per_device
+            .entry(device_id.clone())
+            .or_default() += 1;
         self.attempt_started_at.insert(tid.clone(), Instant::now());
         self.task_final_device
             .insert(tid.clone(), (device_id.clone(), model_id.clone()));
@@ -326,7 +344,8 @@ impl State {
                     session_id,
                     tool_calls,
                 } = run;
-                self.task_session.insert(tid.to_string(), session_id.clone());
+                self.task_session
+                    .insert(tid.to_string(), session_id.clone());
                 self.task_tool_calls
                     .insert(tid.to_string(), tool_calls.clone());
                 self.attempt_log
@@ -533,9 +552,12 @@ impl State {
         done.sort();
         failed.sort();
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
+        let mut bonus: Vec<TaskId> = self.bonus_ids.iter().cloned().collect();
+        bonus.sort();
         RunReport {
             done,
             failed,
+            bonus,
             results,
             context_json: self.ctx.to_json(),
             dispatched_per_device: self.dispatched_per_device.clone(),
@@ -596,7 +618,10 @@ impl Scheduler {
                 bail!("duplicate model_id `{}` across enabled devices — LM Link cannot distinguish them", d.model_id);
             }
             if d.weight == 0 {
-                bail!("device `{}` has weight 0 (enabled) — disable it instead", d.id);
+                bail!(
+                    "device `{}` has weight 0 (enabled) — disable it instead",
+                    d.id
+                );
             }
         }
 
@@ -632,6 +657,7 @@ impl Scheduler {
             task_final_device: HashMap::new(),
             goal,
             replans_done: 0,
+            bonus_ids: HashSet::new(),
         }));
         let notify = Arc::new(Notify::new());
 
@@ -715,8 +741,13 @@ impl Scheduler {
                         });
                         s.replans_done = self.max_replans;
                     } else {
+                        // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
+                        // bonus failure cannot fail an otherwise-complete run (run success = core plan).
+                        let spliced_ids: Vec<TaskId> =
+                            specs.iter().map(|sp| sp.id.clone()).collect();
                         match s.dag.splice_specs(specs) {
                             Ok(new_ready) => {
+                                s.bonus_ids.extend(spliced_ids);
                                 let added = new_ready.clone();
                                 for id in new_ready {
                                     let fan_out = s.dag.tasks[&id].fan_out;
