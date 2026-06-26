@@ -2027,7 +2027,10 @@ impl GooseAgentDispatcher {
                      short snippets, file refs, and a suggested breakdown for your lens) as your TEXT \
                      RESPONSE ONLY. You have NO write task: do NOT create, write, or edit ANY file \
                      (no .md brief, no notes, no scratch) — read-only investigation, then report in your \
-                     message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`.",
+                     message. Do NOT produce the full plan. To read text use `cat`; `python3` not `python`. \
+                     Keep it LEAN: never dump full docs/help()/pydoc text into your context; for \
+                     standard-library modules just name the relevant APIs in one line. A few hundred words \
+                     is plenty — large context is very slow on local models.",
                     lens.title, lens.brief, lens.tool_hint
                 );
                 let findings = match me
@@ -2324,6 +2327,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
              TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
              - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool, and \
              `read_image` is ONLY for images (png/jpeg/gif/webp) — never call it on source/text files.\n\
+             - Keep tool OUTPUT SMALL: NEVER dump full `help()`/pydoc or whole large files into the chat — \
+             use `head`, `grep`, or read only the specific lines/symbols you need. Large context is very \
+             slow on local models and degrades quality.\n\
              - Run Python with `python3`, never bare `python`.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
              - Prefer writing a whole file in ONE `write` over many small `edit`s.\n\
