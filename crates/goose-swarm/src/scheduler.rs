@@ -31,6 +31,10 @@ pub struct DeviceCfg {
     /// Max concurrent in-flight tasks routed to this device.
     pub weight: u32,
     pub enabled: bool,
+    /// Relative throughput (higher = faster host → a LARGER share of the total tasks; the slowest host
+    /// gets proportionally fewer). Default 1 = equal. On an identical-model fleet this is the lever for
+    /// skewing load toward the quicker machines instead of splitting evenly.
+    pub speed_weight: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,34 +233,39 @@ impl State {
         // determinism. (Honoring preferred_model first would pile every same-model task on one device
         // and leave the rest of the fleet idle — the opposite of what a swarm is for.)
         let pm = n.spec.preferred_model.as_deref();
-        // A HARD task (the heaviest work, incl. integrate-verify) prefers the proven-FASTEST free node:
-        // identical models differ only in host speed, so the critical path shrinks if the big tasks land
-        // on the quickest node. Load (in_flight) stays primary, so this never over-concentrates.
+        // A HARD task (the heaviest work, incl. integrate-verify) prefers the FASTEST free node: identical
+        // models differ only in host speed, so the critical path shrinks if the big tasks land on the
+        // quickest node. Load (in_flight) stays primary, so this never over-concentrates.
         let hard = matches!(n.spec.difficulty, Difficulty::Hard);
         pool.into_iter().min_by_key(|&i| {
             let d = &self.devices[i];
+            let sw = d.cfg.speed_weight.max(1) as u64;
             let prefers_rank = match pm {
                 Some(m) if m == d.cfg.model_id => 0,
                 _ => 1,
             };
-            // Speed proxy: average observed ms/task on this device (lower = faster). Unknown devices
-            // sort last among ties for hard tasks (they still win on lower load). Easy tasks ignore it.
+            // Hard-task speed: real observed avg ms/task if known (lower = faster). If not yet observed,
+            // SEED from the configured speed_weight so the heaviest task lands on the known-fastest host
+            // from the very first dispatch (higher speed_weight -> smaller key -> preferred).
             let speed = if hard {
                 self.device_speed
                     .get(&i)
                     .map(|(t, c)| t / (*c).max(1) as u64)
-                    .unwrap_or(u64::MAX)
+                    .unwrap_or(u64::MAX - sw)
             } else {
                 0
             };
-            // Break remaining ties by TOTAL dispatch count so work ROTATES (else the lowest-index
-            // device wins every tie and the last-indexed device is starved when work is thin).
-            let dispatched = self
+            // SPEED-WEIGHTED share of the load: normalize the dispatch count by speed_weight so a faster
+            // host accumulates proportionally MORE tasks before it is "even" (≈ ratio of speed_weights),
+            // while the slowest host gets far fewer. Also rotates work so no host is starved.
+            let weighted_load = self
                 .dispatched_per_device
                 .get(&d.cfg.id)
                 .copied()
-                .unwrap_or(0);
-            (d.in_flight, speed, prefers_rank, dispatched, i)
+                .unwrap_or(0) as u64
+                * 1000
+                / sw;
+            (d.in_flight, speed, prefers_rank, weighted_load, i)
         })
     }
 
