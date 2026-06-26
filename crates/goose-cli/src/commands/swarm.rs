@@ -98,6 +98,19 @@ fn timeout_dur(secs: u64) -> std::time::Duration {
     std::time::Duration::from_secs(if secs == 0 { 2_592_000 } else { secs })
 }
 
+/// Imposed sampling parameters for the local models — the lever for steadying weak models (lower
+/// temperature for more deterministic tool-calling, etc.). `temperature` is a first-class ModelConfig
+/// field; `top_p`/`top_k`/`min_p`/`repeat_penalty` are merged into the request body (LM Studio accepts
+/// them). All None = use the model/server defaults (no change).
+#[derive(Clone, Default)]
+struct SamplingParams {
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    top_k: Option<i32>,
+    min_p: Option<f32>,
+    repeat_penalty: Option<f32>,
+}
+
 /// When the swarm runs a parallel research phase before planning.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -192,6 +205,18 @@ pub struct SwarmConfig {
     /// drafts in parallel and a pure-Rust scorer (no LLM) picks the widest valid plan.
     #[serde(default = "default_best_of_n_skeletons")]
     pub best_of_n_skeletons: usize,
+    /// Imposed sampling parameters for the local models (None = server/model default). Tuned to steady
+    /// weak models — e.g. a low temperature for deterministic tool-calling.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
+    pub min_p: Option<f32>,
+    #[serde(default)]
+    pub repeat_penalty: Option<f32>,
 }
 
 impl Default for SwarmConfig {
@@ -233,6 +258,11 @@ impl Default for SwarmConfig {
             planner_timeout_secs: default_planner_timeout_secs(),
             allow_model_load: false,
             best_of_n_skeletons: default_best_of_n_skeletons(),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            min_p: None,
+            repeat_penalty: None,
         }
     }
 }
@@ -443,6 +473,30 @@ fn show_pool(cfg: &SwarmConfig) {
                 .bold()
         }
     );
+    {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(v) = cfg.temperature {
+            parts.push(format!("temp={v}"));
+        }
+        if let Some(v) = cfg.top_p {
+            parts.push(format!("top_p={v}"));
+        }
+        if let Some(v) = cfg.top_k {
+            parts.push(format!("top_k={v}"));
+        }
+        if let Some(v) = cfg.min_p {
+            parts.push(format!("min_p={v}"));
+        }
+        if let Some(v) = cfg.repeat_penalty {
+            parts.push(format!("rep={v}"));
+        }
+        let s = if parts.is_empty() {
+            style("model defaults".to_string()).dim()
+        } else {
+            style(parts.join(" ")).cyan().bold()
+        };
+        println!("  sampling   {s}");
+    }
     println!(
         "  replan     {}   max-rounds {}",
         if cfg.dynamic_replan {
@@ -1575,6 +1629,8 @@ pub struct GooseAgentDispatcher {
     planner_timeout_secs: u64,
     /// Whether the swarm may `lms load` a model (gates the transient re-warm on dispatch errors).
     allow_model_load: bool,
+    /// Imposed sampling parameters applied to every model call (steadies weak local models).
+    sampling: SamplingParams,
 }
 
 impl GooseAgentDispatcher {
@@ -1586,6 +1642,7 @@ impl GooseAgentDispatcher {
         worker_timeout_secs: u64,
         planner_timeout_secs: u64,
         allow_model_load: bool,
+        sampling: SamplingParams,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -1605,6 +1662,7 @@ impl GooseAgentDispatcher {
             worker_timeout_secs,
             planner_timeout_secs,
             allow_model_load,
+            sampling,
         })
     }
 
@@ -1672,8 +1730,27 @@ impl GooseAgentDispatcher {
             .await?;
         let session_id = session.id.clone();
 
-        let model_config =
+        let mut model_config =
             goose::model_config::model_config_from_user_config("lmstudio", model_id)?;
+        if let Some(t) = self.sampling.temperature {
+            model_config = model_config.with_temperature(Some(t));
+        }
+        let mut extra = std::collections::HashMap::new();
+        if let Some(v) = self.sampling.top_p {
+            extra.insert("top_p".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = self.sampling.top_k {
+            extra.insert("top_k".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = self.sampling.min_p {
+            extra.insert("min_p".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = self.sampling.repeat_penalty {
+            extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
+        }
+        if !extra.is_empty() {
+            model_config = model_config.with_merged_request_params(extra);
+        }
         agent
             .update_provider(self.provider.clone(), model_config, &session_id)
             .await
@@ -2599,6 +2676,13 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             cfg.worker_timeout_secs,
             cfg.planner_timeout_secs,
             cfg.allow_model_load,
+            SamplingParams {
+                temperature: cfg.temperature,
+                top_p: cfg.top_p,
+                top_k: cfg.top_k,
+                min_p: cfg.min_p,
+                repeat_penalty: cfg.repeat_penalty,
+            },
         )
         .await?,
     );
