@@ -2197,6 +2197,10 @@ impl GooseAgentDispatcher {
             subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
             needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
             needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
+            DELIVER ONLY THE APP: decompose the program's actual FUNCTIONALITY — its logic modules, the runnable entry point, and its \
+            tests, nothing else. Do NOT add project-scaffolding subtasks: NO CI/workflow config, LICENSE, README/docs, \
+            pyproject/setup/packaging, .gitignore, or pre-commit hooks — UNLESS the request explicitly asks for them. They are not the \
+            deliverable, they waste the slow fleet, and the weak model tends to claim such a file done without ever writing it.\n\
             DECIDE THE LAYOUT FIRST and pick ONE convention, applied to EVERY file — do NOT mix: EITHER a single package \
             directory `pkgname/` that holds ALL modules AND the cli (imports like `from pkgname.models import X`), with tests \
             under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
