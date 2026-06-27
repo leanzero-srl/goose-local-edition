@@ -1,0 +1,292 @@
+{
+ "apps": [
+  {
+   "name": "glyph-fold",
+   "tier": "max-detail",
+   "category": "Text & language processing",
+   "spec": "A Unicode confusable-detection CLI using only `unicodedata`. Commands: `normalize TEXT --form {NFC,NFD,NFKC,NFKD}` (default NFKC) outputs normalized text; `skeleton TEXT` computes a canonical confusable skeleton by stripping combining marks, casefolding, and mapping a hardcoded table of >=40 common confusables (Cyrillic/Greek lookalikes, fullwidth forms, digit lookalikes) to ASCII; `compare A B` reports whether two strings share a skeleton (are confusable) and prints both; `scan --file F [--json]` flags lines containing mixed-script tokens (e.g. Latin+Cyrillic) via per-char script inference from `unicodedata.name()`, printing line number, token, and scripts found, treating ASCII digits/punctuation as script-neutral; `inspect TEXT [--json]` prints a per-char table (char, codepoint, name, category, is-ASCII-confusable). A `--map FILE` merges extra 'from to' mappings over the built-in table. `scan` exits non-zero when any spoofing risk is found. Deterministic, UTF-8 safe.",
+   "novelty": "A homoglyph/confusable spoofing detector and normalizer built on unicodedata \u2014 flags lookalike-character attacks (Cyrillic 'a' in 'paypal') and computes a canonical 'skeleton' for confusability comparison."
+  },
+  {
+   "name": "kwic-weave",
+   "tier": "max-detail",
+   "category": "Text & language processing",
+   "spec": "A concordance and collocation CLI for plain-text corpora (files or stdin, aggregating across multiple inputs). Commands: `kwic WORD --file F [--window N=5] [--ignore-case] [--regex] [--whole-word]` prints each occurrence as a keyword-in-context line with right-aligned left context and left-aligned right context so keywords form a vertical column, plus source line number; `freq --file F [--top N] [--min-count C] [--stop FILE]` prints a ranked token-frequency table; `collocate WORD --file F --measure {pmi,loglik,raw}` ranks window co-occurring words by an association score (implement pointwise mutual information and log-likelihood from raw counts by hand); `ngrams --n N --file F` prints top repeated N-grams. Tokenization is documented and identical across subcommands (lowercasing optional, punctuation split off). `--json` for freq/collocate/ngrams. Deterministic with alphabetical tie-breaking; math via stdlib `math` only.",
+   "novelty": "A keyword-in-context concordancer with from-scratch collocation statistics (PMI and log-likelihood) \u2014 surfaces which words a search term truly attracts, not just raw bigram counts."
+  },
+  {
+   "name": "tongue-id",
+   "tier": "minimal",
+   "category": "Text & language processing",
+   "spec": "A CLI that identifies languages from raw text via character-n-gram profiles, no libraries. `train --label LANG FILE... --model model.json` ingests samples per language and updates a human-readable JSON model. `guess TEXT` (or `--file F`) prints a ranked table of languages with a confidence score each. `profile FILE` prints a text's top n-grams. `explain TEXT` prints the handful of n-grams that most pushed the winning language. The builder must decide and document: the n-gram order(s) and text normalization (casefolding, boundary markers, digit/punctuation stripping), and the scoring method (e.g. rank-distance vs cosine vs log-probability) plus how ties/out-of-vocabulary inputs are reported. UTF-8 clean, deterministic.",
+   "novelty": "A from-scratch character-n-gram language identifier you train on your own labeled samples \u2014 an offline, explainable 'what language is this' that shows the n-grams that swung the decision."
+  },
+  {
+   "name": "major-key",
+   "tier": "amendment",
+   "category": "Text & language processing",
+   "spec": "BASE: a CLI implementing the mnemonic major system (0=s/z,1=t/d,2=n,3=m,4=r,5=l,6=ch/j/sh,7=k/g,8=f/v,9=p/b; vowels and w/h/y are free fillers). `encode NUMBER --dict FILE` generates candidate mnemonic words/phrases whose consonant sounds spell the digits, ranked by shortness/commonness; `consonants WORD` shows the digit sequence a word reduces to (documenting silent/double-letter and digraph rules like 'ck'=7, 'th'); `chunk NUMBER --size K` splits a long number into K-digit groups, one mnemonic per group. `--json` and deterministic ranking. AMENDMENT (add later, behavior-changing): a `decode` subcommand running the system in reverse over free-form prose \u2014 reduce every word to digits and reconstruct the hidden number, with `--strict` rejecting ambiguous/unmapped clusters and `--loose` skipping filler words; generalize the single-word reducer into a phrase pipeline and add round-trip verification that decode(encode(n))==n.",
+   "novelty": "A mnemonic major-system encoder turning numbers into pronounceable words via digit-to-consonant-sound mapping, with a planned reverse-decoder that recovers numbers from arbitrary prose."
+  },
+  {
+   "name": "keyweld",
+   "tier": "max-detail",
+   "category": "Structured-data transformation",
+   "spec": "A CLI joining two delimited files: `keyweld LEFT.csv RIGHT.csv --on KEY[,KEY] --how {inner,left,right,outer,anti,semi}` (or `--left-on`/`--right-on` for differently named keys). semi keeps left rows with a match (left columns only); anti keeps left rows with no match. Features: `--lsuffix`/`--rsuffix` disambiguate overlapping non-key columns; `--indicator` adds a both/left_only/right_only column; `--validate {one_to_one,one_to_many,many_to_one}` checks key cardinality and exits non-zero on the offending key; `--na` fills unmatched outer cells; `--numeric-keys` and `--ci` control key coercion/case. Build a hash index on the smaller side and stream the other; preserve left column order then right non-key columns; `--delim`/`--out`; print a one-line stderr summary (matched/left_only/right_only) unless `--quiet`.",
+   "novelty": "A genuine relational join engine for two flat files with the semantics database folks expect \u2014 anti/semi joins, indicator column, cardinality assertions \u2014 not a naive lookup merge."
+  },
+  {
+   "name": "sift-ql",
+   "tier": "minimal",
+   "category": "Structured-data transformation",
+   "spec": "A CLI running a small SQL-like query against a CSV or NDJSON file: `sift-ql DATA.csv \"select name, age where age > 30 and city ~ 'ber' order by age desc limit 5\"`. Supports a `select` projection (columns or `*`), optional `where` combining conditions with `and`/`or` over `= != < <= > >= ~` (`~` = substring/regex contains), optional `order by COL [asc|desc]`, and optional `limit N`. Write the tokenizer, parser, and row evaluator by hand (never `eval` user input). The builder decides and documents value-comparison semantics (when a field is numeric vs string, how quoted literals coerce). Output result rows in the input format or as a table. A malformed query fails with a readable error, not a traceback.",
+   "novelty": "A tiny hand-written SQL-ish query language over flat files \u2014 a real tokenizer/parser/evaluator, leaving comparison-and-coercion semantics for the builder to infer."
+  },
+  {
+   "name": "transmute-grid",
+   "tier": "amendment",
+   "category": "Structured-data transformation",
+   "spec": "BASE: `transmute-grid --in data.csv --out data.ndjson` converts tabular/record data between csv, tsv, ndjson (newline-delimited objects), and json (single array), auto-detecting by extension. Column-surgery flags applied in order: `--select A,B,C` (keep+reorder), `--drop X,Y`, `--rename OLD=NEW[,...]`, `--cast COL:int|float|bool|str[,...]` (so JSON/NDJSON emit real typed values). CSV<->NDJSON<->JSON round-trips column names; `--delim` overrides; missing named columns are an error; `--in -`/`--out -` with `--from`/`--to` support stdin/stdout. AMENDMENT (add later): a repeatable `--compute NEWCOL='<expr>'` flag adding derived columns via a tiny hand-written (no `eval`) expression language over column names supporting `+ - * /`, string concat `++`, literals, and functions upper()/lower()/len()/round(x,n)/coalesce(a,b); computes run after select/rename but before cast, and an unknown-column reference is a clear error.",
+   "novelty": "A format-transcoding reshaper across CSV/TSV/NDJSON/JSON with column surgery, designed to later grow a safe hand-parsed expression engine for derived columns."
+  },
+  {
+   "name": "commit-loom",
+   "tier": "max-detail",
+   "category": "Developer tooling",
+   "spec": "A CLI consuming commit subjects (one per line from a file/stdin; each line a bare subject or `<hash>\\t<subject>`) in Conventional Commits grammar `type(scope)!: description`. Commands: `lint <file>` validates each line and prints `LINE:N <reason>` for violations (missing colon, unknown type, empty description), exit non-zero on any; `bump <file> --from X.Y.Z` infers the next version (a `!` or `BREAKING CHANGE:` => major, any `feat` => minor, any `fix`/`perf` => patch, else none) and prints `X.Y.Z -> A.B.C` with the reason; `changelog <file> --from X.Y.Z [--date YYYY-MM-DD]` groups commits into Markdown sections (feat->Features, fix->Bug Fixes, perf->Performance, etc.) with bold `**scope:** description` and a trailing BREAKING CHANGES block; `stats <file>` prints aligned counts by type and scope. Recognized types: feat,fix,perf,docs,style,refactor,test,build,ci,chore,revert. Case-insensitive on type, whitespace-tolerant, deterministic; `--json` on bump/stats.",
+   "novelty": "Fuses conventional-commit parsing, semver inference, and Keep-a-Changelog generation into one deterministic engine driven purely off a flat commit list \u2014 no git, no network."
+  },
+  {
+   "name": "dep-strata",
+   "tier": "max-detail",
+   "category": "Developer tooling",
+   "spec": "A directed-graph analyzer for dependency manifests. Input is an edges file (`A -> B` per line, `#` comments) meaning A depends on B, or `--json` adjacency. Commands: `topo <file>` (Kahn's algorithm with alphabetical tie-breaking; on a cycle exit non-zero and print one concrete cycle path); `cycles <file>` (list elementary cycles or report acyclic); `scc <file>` (Tarjan strongly-connected components, one per line sorted by size then name); `chain <file>` (longest dependency chain on the condensed DAG and its length); `impact <file> <node>` (reverse-reachable dependents = blast radius, plus forward dependencies, with counts); `roots`/`leaves`/`orphans <file>`; `dot <file>` (Graphviz DOT coloring cycle nodes). Handle self-loops and duplicate edges; all outputs deterministic and sorted; `--json` on the analytical subcommands.",
+   "novelty": "A dependency-graph analyzer past topo-sort into SCC layering, longest-chain depth, and transitive blast-radius \u2014 turning a plain edge list into structural insight."
+  },
+  {
+   "name": "spdx-augur",
+   "tier": "minimal",
+   "category": "Developer tooling",
+   "spec": "A license detector. Given a directory, locate likely license text (files named LICENSE/COPYING/LICENCE with any extension, plus `SPDX-License-Identifier:` headers in source) and identify the SPDX license. Embed normalized token signatures for at least MIT, Apache-2.0, GPL-3.0-only, BSD-3-Clause, BSD-2-Clause, ISC, MPL-2.0, Unlicense. Normalize candidate text (lowercase, strip punctuation/years/copyright-holder names/whitespace), score similarity against each fingerprint, and report the best SPDX id with a confidence value and the source file. Commands: `detect <dir>` and `detect <dir> --json`. The builder decides and documents how confidence is scaled and how to reconcile a short SPDX header against full-text evidence when they disagree. On a directory with no license, clearly report 'unknown'.",
+   "novelty": "Identifies a project's license by fuzzy-fingerprinting the actual license text against embedded SPDX templates instead of trusting a filename \u2014 a content-based license oracle."
+  },
+  {
+   "name": "import-marshal",
+   "tier": "amendment",
+   "category": "Developer tooling",
+   "spec": "BASE: a Python import sorter. Parse the import block of a `.py` file via `ast` (imports before the first non-import top-level statement), classify each module into standard library (matched against an embedded stdlib name set, e.g. `sys.stdlib_module_names` plus a fallback), third-party, or local (modules under a `--src` root or relative `from .x import y`). Within each group sort case-insensitively, dedupe, split combined `import a, b` into separate lines, and separate the three groups by one blank line. `sort <file>` prints the rewritten block; `--check` exits non-zero if not already sorted; `--diff` prints a unified diff of old vs new. Idempotent; preserves `# noqa`/trailing comments on their line. AMENDMENT (add later, behavior-changing): a `cycle-scan <dir>` mode building the intra-package import graph across all local modules and detecting circular imports; when enabled, `sort`/`check` on a file participating in a cycle must additionally emit a `CYCLE:` warning and, under `--check`, exit non-zero even if its imports are otherwise sorted \u2014 so the verdict now depends on cross-file graph state.",
+   "novelty": "A Python import normalizer that classifies stdlib vs third-party vs local without importing anything, later upgraded to a cross-file circular-import detector that changes its verdict."
+  },
+  {
+   "name": "egyptian-fraction-forge",
+   "tier": "max-detail",
+   "category": "Mathematics & numerics",
+   "spec": "A CLI decomposing a positive rational p/q into distinct unit fractions, using `fractions.Fraction` throughout. `decompose P/Q --method {greedy,splitting,golomb,shortest}`: greedy = Fibonacci-Sylvester (subtract 1/ceil(q/r)); splitting uses 1/n=1/(n+1)+1/(n(n+1)); golomb uses modular inverse; shortest does bounded iterative-deepening search for the fewest terms (`--max-terms K`, pruning when the remainder can't be covered). Every result prints as `1/a + 1/b + ...` with strictly increasing denominators and is auto-verified to sum exactly to the input (print VERIFIED or a mismatch error). `--stats` reports term count and largest-denominator bit-length; `compare P/Q` runs all methods into a table of term-count and max-denominator; `recompose \"1/a + 1/b + ...\"` parses and reduces an Egyptian sum (error on non-unit numerators or repeated denominators). Accept P/Q, a bare integer, or a decimal (exact Fraction); emit an integer part plus fractional sum for improper fractions; exit non-zero on parse/verification failure.",
+   "novelty": "Egyptian (distinct unit) fraction decomposition with several competing classical algorithms and a true shortest-decomposition search \u2014 a corner of number theory almost nobody ships as a CLI."
+  },
+  {
+   "name": "zeckendorf-codec",
+   "tier": "minimal",
+   "category": "Mathematics & numerics",
+   "spec": "A CLI for the Fibonacci number system. It converts a non-negative integer to its Zeckendorf representation (unique sum of non-consecutive Fibonacci numbers) and back, printing both the chosen Fibonacci terms and a binary-like digit string over Fibonacci place values, and produces the self-delimiting Fibonacci code (Zeckendorf bits reversed with an appended terminating 1). It also converts a Fibonacci-coded or Zeckendorf digit string back to an integer, validating that no two consecutive 1s appear (reject and explain otherwise), and adds two integers while showing the work in Zeckendorf form (add, then renormalize the result to a valid non-consecutive representation). Keep the command surface minimal and infer sensible formatting/defaults where the brief is loose. Stdlib only.",
+   "novelty": "Treats the Fibonacci numeral system (Zeckendorf representation + Fibonacci coding) as a real base you can convert and compute in \u2014 a non-positional number system almost no calculator touches."
+  },
+  {
+   "name": "stern-brocot-pilot",
+   "tier": "minimal",
+   "category": "Mathematics & numerics",
+   "spec": "A CLI navigating the Stern-Brocot tree of positive rationals via `fractions.Fraction` and integer mediant arithmetic. `path P/Q` prints the unique Left/Right turn sequence (compact run-length word like `L2 R1 L3`) locating reduced P/Q from the root mediant between 0/1 and 1/0; `at LRLLR...` walks a turn-word from the root and prints the rational it lands on; `approx X --depth N` descends toward a target real (decimal or P/Q), reporting the best rational reachable within N turns and the absolute error. It can also report the immediate tree neighbors of a fraction. Always show fractions in lowest terms; reject non-positive or non-rational input gracefully.",
+   "novelty": "Turns the Stern-Brocot tree into a navigable rational-number GPS with L/R path words and best-approximation search \u2014 an elegant structure rarely exposed as a tool."
+  },
+  {
+   "name": "cipher-sleuth",
+   "tier": "max-detail",
+   "category": "classical-crypto",
+   "spec": "A CLI analyzing and attacking classical ciphertext (from a file or `--text`). `ioc <file>` prints the Index of Coincidence (case-folded letters only) to 4 decimals and labels it monoalphabetic/polyalphabetic/near-random by standard bands; `freq <file>` prints a 26-row letter/count/percent table with a '#'-bar scaled so the top letter = 40 chars; `kasiski <file> [--min N=3]` finds repeated substrings, lists gap distances, and ranks candidate key lengths by how many gaps each divides; `chi <file> --shift K` scores a Caesar shift against a hardcoded English frequency table via chi-squared; `solve-caesar <file>` ranks all 26 shifts and prints the top 3 with decrypted previews; `solve-vigenere <file> [--keylen N]` splits ciphertext into N cosets (from `--keylen` or the best Kasiski candidate), chi-squared-cracks each coset, and prints the recovered key and full plaintext. Exit non-zero on empty/no-letter input.",
+   "novelty": "Not a cipher encoder \u2014 a statistical cryptanalysis bench that fingerprints and auto-cracks unknown classical ciphertext using IoC, Kasiski, and chi-squared."
+  },
+  {
+   "name": "checkdigit-mint",
+   "tier": "max-detail",
+   "category": "checksums",
+   "spec": "A CLI covering check-digit schemes via `--scheme {luhn,isbn10,isbn13,iban,verhoeff,damm}`. `gen --scheme S <payload>` appends a correct check digit (isbn10 may emit 'X'; iban moves the 4 leading chars to the end, converts letters A=10..Z=35, and computes the mod-97 checksum, emitting the full IBAN); `check --scheme S <full>` prints VALID/INVALID and exits 0/1; `explain --scheme S <full>` prints the per-character weighting/step table (Luhn doubling, Verhoeff d/p/inv lookups) so the math is auditable; `fix --scheme S <full>` assumes one error and reports likely corrections by scanning single-digit substitutions and adjacent transpositions, printing each that becomes valid as `position i: X->Y` or `swap i,i+1`. Implement Verhoeff with the full d[10][10]/p[8][10]/inv[10] tables and Damm with a 10x10 anti-symmetric quasigroup. Reject illegal payload characters (except IBAN letters and isbn10 'X'); include `schemes` to list all with one-line descriptions.",
+   "novelty": "A unified check-digit foundry spanning six real-world schemes including the obscure Verhoeff and Damm dihedral-group algorithms, plus single-error localization."
+  },
+  {
+   "name": "wireworld-foundry",
+   "tier": "max-detail",
+   "category": "cellular automata / circuit simulation",
+   "spec": "A CLI simulating the Wireworld cellular automaton over an ASCII grid (space=empty, `#`=conductor, `@`=electron head, `~`=tail). Transition per step on the Moore-8 neighborhood: head->tail; tail->conductor; conductor->head iff exactly 1 or 2 neighbors are heads; empty stays empty. Commands: `step --in circuit.txt` prints the grid after one tick; `run --in circuit.txt --steps N [--frames]` prints the final grid (or every tick with `--- tick N ---` headers); `--render plain|braille` (braille packs 2x4 cells into Unicode dots); `period --in circuit.txt --max M` runs until the exact configuration repeats and reports the period and lead-in, or 'no period within M'; `clock --n K` emits a ready-made K-cell ring-oscillator circuit to pipe into `run`. Validate input (unknown chars -> error with line/col) and preserve grid dimensions exactly. Organize as grid-IO, stepping-engine, and CLI/period-detector modules.",
+   "novelty": "A full Wireworld CA that ingests a hand-drawn ASCII circuit, steps electrons through conductors, auto-detects oscillation periods, and can emit a clock generator \u2014 a logic-circuit toy, not a generic life clone."
+  },
+  {
+   "name": "chaos-fern",
+   "tier": "minimal",
+   "category": "fractals / iterated function systems",
+   "spec": "A CLI rendering fractals via the chaos game over an Iterated Function System (a list of affine maps `(a b c d e f, p)` with `x'=a*x+b*y+e`, `y'=c*x+d*y+f`, chosen by probability `p`). Starting from a point, repeatedly pick a map by probability, apply it, and plot visited points. `chaos-fern fern --iter 200000` renders Barnsley's fern; ship at least the fern and a Sierpinski triangle as built-in named systems and accept `--from-file ifs.txt` (six coefficients plus a weight per line). Two decisions are left to the builder: map the continuous point cloud onto a character grid that auto-fits the bounding box and clearly resembles the target shape, and convey point density via a shading ramp from accumulated per-cell hit counts. Support `--seed` and `--width`/`--height`.",
+   "novelty": "The chaos game over arbitrary affine IFS maps (Barnsley fern, Sierpinski) rendered as density-shaded ASCII \u2014 genuinely generative fractal art from a 4-line math spec."
+  },
+  {
+   "name": "antic-turmite",
+   "tier": "amendment",
+   "category": "cellular automata / agent simulation",
+   "spec": "BASE: a CLI simulating Langton's ant on a toroidal grid of 0/1 cells (on white turn right/flip/forward; on black turn left/flip/forward). `run --w 80 --h 40 --steps N --seed S` runs from the center and prints the final grid (`#` black, space white) plus the ant position; `--frames K` prints every K steps. It detects the emergent 'highway' (the eventual ~104-step repeating diagonal) and reports the step periodic movement begins. Build as grid, ant/stepping, and CLI modules. AMENDMENT (add later, behavior-changing): generalize to programmable turmites driven by a state-transition table file (`<state> <cellcolor> -> <newcolor> <turn:L|R|U|N> <newstate>` over arbitrary colors/states, so Langton's ant is one 2-color/1-state table). Add `turmite run --rules table.txt ...`, render each color with a distinct vivid glyph/hue, and add `--heatmap` emitting a visit-count map shaded by how many times each cell was stepped on.",
+   "novelty": "Langton's ant generalized into programmable turmites \u2014 2D Turing machines whose user state table produces wildly different emergent highways and spirals, plus a visit-count heatmap."
+  },
+  {
+   "name": "logfunnel",
+   "tier": "max-detail",
+   "category": "Files & system utilities",
+   "spec": "A CLI running a stage-pipeline DSL over log lines (stdin or files), stages separated by `|`, e.g. `match status~^5 | extract '<ip> - - [<ts>] \"<method> <path>\" <status> <bytes>' | bucket ts by 5m | group status | agg count,sum:bytes | sort -count | top 10 | bars`. Implement a tokenizer/parser compiling the query into an ordered stage list, then stages: `match FIELD~REGEX`/`FIELD=VALUE` (and negated `!~`); `extract '<template>'` where `<name>` placeholders capture fields and literal text between them must match; `bucket FIELD by DURATION` (s/m/h, floor parsed timestamps); `group FIELD[,FIELD]`; `agg` with count/sum:F/avg:F/min:F/max:F/p50:F/p95:F; `sort +/-KEY`; `top N`; and a terminal renderer `bars` or default table. `run -q '<query>' [files...]`; `--explain` prints the compiled plan without running; lines failing `extract` increment a dropped-counter reported on stderr; `--tsv` forces tab output. Keep lexer, compiler, executor, reducers, and renderer separate; stream until an aggregating stage forces buffering.",
+   "novelty": "A tiny composable pipeline DSL for log lines (filter | parse | bucket | aggregate | topN) \u2014 a query language, not a fixed grep/sort one-shot."
+  },
+  {
+   "name": "fsdrift",
+   "tier": "max-detail",
+   "category": "Files & system utilities",
+   "spec": "A CLI capturing and diffing directory-tree manifests. `snapshot <dir> -o manifest.tsv` walks the tree (honoring repeatable `--exclude GLOB` and `--follow-symlinks`) writing one TSV line per file: relpath, size, mtime, sha256 (streamed in chunks so large files don't load into memory), octal mode. `diff OLD NEW` classifies every file into exactly one of ADDED, REMOVED, MODIFIED (same path, different hash), TOUCHED (same path/hash, different mtime/mode), or MOVED (a removed and an added path sharing a hash, paired and reported `old -> new`), plus DUP-MOVED when one old hash maps to several new paths; output grouped by category with glyph prefixes, a summary count table, and total bytes added/removed. `--format {text,json,csv}`, repeatable `--only CATEGORY`. `verify <dir> <manifest>` re-walks a live directory and reports drift without writing. Exit non-zero when any non-TOUCHED drift exists; move detection is O(n) via hash-bucket maps.",
+   "novelty": "Content-hash directory snapshots whose diff detects true renames/moves (same hash, new path) and touch-only changes, instead of dumb path-by-path comparison."
+  },
+  {
+   "name": "byte-oracle",
+   "tier": "minimal",
+   "category": "Files & system utilities",
+   "spec": "A CLI sniffing true file type from content, not extension. `byte-oracle <path...>` reads the first kilobyte of each file, matches a built-in magic-signature table (PNG, JPEG, GIF, PDF, GZIP, ZIP, ELF, Mach-O, PE/EXE, WAV, MP3, OGG, SQLite, class files, UTF BOMs, etc.), and prints `path: detected-type (confidence)`, flagging when detection disagrees with the filename extension. Two requirements are left for the builder to design well: disambiguating ZIP-based containers (a .docx/.jar/.apk is structurally a ZIP \u2014 decide how deep to peek and how to report the refined verdict) and classifying files with no known signature (decide a text-vs-binary heuristic and label). Support `--recurse DIR` and a summary line tallying misnamed files. Output is plain, columnar, scriptable.",
+   "novelty": "Identifies real file type from leading magic bytes and calls out extension-vs-content mismatches, including ZIP-container formats (docx/jar/apk)."
+  },
+  {
+   "name": "linetidy",
+   "tier": "amendment",
+   "category": "Files & system utilities",
+   "spec": "BASE: `linetidy <path...>` normalizes text-file whitespace in place \u2014 strip trailing spaces/tabs, convert line endings to `--eol {lf,crlf}` (default lf), ensure exactly one final newline, optionally `--tabs N` (expand/convert), and collapse runs over `--max-blank K` to K. It recurses directories, skips binary files (NUL-byte heuristic), supports `--ext` filtering, rewrites atomically (temp file + replace), leaves unchanged files untouched, and prints a per-file changed-line summary plus a final tally. AMENDMENT (add later, behavior-changing): a `--check` mode that analyzes identically but mutates nothing \u2014 instead printing a difflib-style unified diff (@@ hunks) of the exact edits it WOULD make, a 'N files would change' summary, and exiting non-zero if any file is non-compliant (gating CI); the amendment also adds gitignore-style include/exclude from a `.linetidyignore` file and a `--quiet` flag printing only noncompliant paths.",
+   "novelty": "A whitespace/line-ending normalizer whose amendment turns it into a non-mutating CI lint gate emitting a unified-diff of would-be fixes."
+  },
+  {
+   "name": "regex-thread-tracer",
+   "tier": "max-detail",
+   "category": "Parsers, interpreters & little languages",
+   "spec": "A CLI implementing a regex subset from scratch via Thompson construction + NFA simulation (linear time, never Python's `re`). Syntax: literals, `.`, `*`, `+`, `?`, alternation `|`, groups `( )`, classes `[a-z0-9]` with ranges and leading-`^` negation, and escapes `\\d \\w \\s \\.`. Parse the pattern (recursive descent over a tokenizer) to an AST, compile to an NFA of numbered states with epsilon/labeled transitions. `match <pattern> <string>` prints MATCH/NO-MATCH and, on match, the leftmost-longest matched span; `compile <pattern>` pretty-prints every state, its transitions, and start/accept states; `trace <pattern> <string>` prints, per consumed character, the active state set (epsilon-closure) before and after the step so threads spawning/dying are visible. Default is unanchored search; `--anchored` requires full-string match; support `^`/`$` anchors. On invalid syntax print a precise error with the offending position and exit non-zero; `--count` reports state/transition totals.",
+   "novelty": "A from-scratch regex engine on Thompson NFA construction with simultaneous-thread simulation (no backtracking) that visually traces the live state-set per input character."
+  },
+  {
+   "name": "truth-forge",
+   "tier": "max-detail",
+   "category": "Parsers, interpreters & little languages",
+   "spec": "A CLI parsing and analyzing boolean expressions (variables a-z; operators `~`/`!` NOT, `&` AND, `|` OR, `^` XOR, `>` implies; precedence NOT>AND>XOR>OR>implies). Build a recursive-descent parser to an AST. `eval \"a & (b | c)\" a=1 b=0 c=1` prints the boolean result; `table \"<expr>\"` prints the full truth table (one column per sorted variable plus result, binary-counting order, aligned header); `minimize \"<expr>\"` runs Quine-McCluskey \u2014 derive minterms, merge by Hamming-distance-1, find prime implicants, solve the chart (essential primes then greedy cover) and print a minimal sum-of-products like `a&c | b`, handling always-false/true explicitly; `classify \"<expr>\"` reports TAUTOLOGY/CONTRADICTION/CONTINGENT; `equiv \"<e1>\" \"<e2>\"` reports logical equivalence over the union of variables. `--vars a,b,c,d` forces a variable superset/ordering. Precise parse errors with position; exit non-zero on malformed input; cap variable count (e.g. 10).",
+   "novelty": "Parses boolean algebra, generates truth tables, AND minimizes to a minimal sum-of-products via Quine-McCluskey with prime-implicant selection \u2014 a genuine logic-synthesis tool."
+  },
+  {
+   "name": "spell-ledger",
+   "tier": "minimal",
+   "category": "Parsers, interpreters & little languages",
+   "spec": "A CLI converting numbers to spelled-out English across modes. `say 1234567` -> `one million two hundred thirty-four thousand five hundred sixty-seven`; `ordinal 21` -> `twenty-first`; `fraction 3/4` -> `three quarters` (with `1/4`->`one quarter`, `5/8`->`five eighths`); `money 19.95 USD` -> `nineteen dollars and ninety-five cents`. Handle zero, negatives (`negative ...`), and magnitudes to at least the billions. Two decisions are left to the builder: the exact hyphenation and 'and' conventions (e.g. whether 115 is `one hundred fifteen` or `...and fifteen`, how compound tens join), and how fraction mode names denominators (regular `nths` vs special-cased halves/quarters/thirds). Read the number from an argument or stdin, validate input (reject non-numeric or malformed fractions), and exit non-zero on invalid input.",
+   "novelty": "A number-to-words transform engine beyond cardinals \u2014 ordinals, spelled fractions, and spoken currency \u2014 making the builder design the grammar of English number words."
+  },
+  {
+   "name": "pebble-vm",
+   "tier": "amendment",
+   "category": "Parsers, interpreters & little languages",
+   "spec": "BASE: `pebble-vm`, a stack VM plus assembler. Assembly is one instruction per line with `;` comments: `PUSH n`, `ADD`,`SUB`,`MUL`,`DIV`,`MOD`, `DUP`,`SWAP`,`DROP`,`OVER`, `PRINT`, `JMP label`, `JZ label`, `JNZ label`, `HALT`, and `name:` labels. The assembler is two-pass (pass one records label addresses, pass two emits flat bytecode with resolved targets). `run prog.asm` assembles and executes; `asm prog.asm -o prog.pvm` writes serialized bytecode (e.g. JSON); `disasm prog.pvm` reconstructs readable assembly; `run prog.pvm` runs pre-assembled bytecode; `--trace` prints the PC, current instruction, and full stack each step. Detect stack underflow, division by zero, unknown opcodes, and undefined/duplicate labels with line-numbered errors; exit non-zero on any. AMENDMENT (add later): add `CALL label`/`RET` backed by a separate return-address stack, and assembly-time `MACRO name ... ENDMACRO` definitions textually expanded at each call site (handling labels inside macros so repeated expansions don't collide); keep all base commands working and make `--trace` also show the return stack.",
+   "novelty": "A complete tiny stack machine with a two-pass label-resolving assembler, bytecode (de)serialization, and a stepping tracer \u2014 then grown into a callable language with subroutines and assembly-time macros."
+  },
+  {
+   "name": "golden-hours",
+   "tier": "max-detail",
+   "category": "Timezone overlap / meeting-window finder",
+   "spec": "A CLI finding windows where people across timezones are simultaneously inside working hours. Each participant is a UTC offset in hours (integer or fractional like +5.5, -8) plus a local work window (default 09:00-17:00, may cross midnight). `overlap --me +2 --them +5.5 --them -8 [--work 9-17]` prints every contiguous window where ALL are working, shown in UTC and each participant's local time; `--quorum N` relaxes to 'at least N available', listing windows ranked by count-free; `grid` renders a 24-column ASCII chart, one row per participant marking working hours, plus a summary row scoring each UTC hour by availability with the best hour(s) highlighted; `--slot 90` reports the earliest UTC start of a contiguous block of that many minutes meeting the quorum. Handle fractional offsets, midnight-wrapping windows, and zero overlap (print the closest near-miss). 30-minute granularity; pure minute-of-day arithmetic modulo 1440, no zoneinfo, no network.",
+   "novelty": "Computes multi-party working-hour OVERLAP windows with quorum and an ASCII availability grid, all from raw UTC offsets so it needs zero tz database."
+  },
+  {
+   "name": "robo-arbiter",
+   "tier": "max-detail",
+   "category": "Networking & protocol formatting (offline)",
+   "spec": "A CLI evaluating a robots.txt file per Google/REP matching rules. Parse the file into user-agent groups, attaching consecutive Allow/Disallow/Crawl-delay lines to the preceding User-agent line(s) and merging multiple User-agent lines sharing one block. `check <file> <user-agent> <path>` selects the most specific group (case-insensitive longest UA token match, falling back to `*`), then applies longest-match-wins among rules whose patterns support `*` (any run) and `$` (end anchor); an equal-length Allow/Disallow tie resolves to Allow; print ALLOWED/DISALLOWED, the deciding rule, exit 0/1. `explain <file> <ua> <path>` lists every matched rule with its match length and why the winner won; `crawl-delay <file> <ua>` returns the effective delay; `sitemaps <file>` lists Sitemap directives; `lint <file>` warns on rules before any User-agent, unknown directives, empty Disallow, and malformed patterns. Percent-decode path and patterns consistently; `--json` and `--default allow|disallow` supported.",
+   "novelty": "A faithful robots.txt rule-matching engine implementing longest-match / most-specific precedence and *$ wildcard semantics with group merging \u2014 a simulator, not a downloader."
+  },
+  {
+   "name": "url-distiller",
+   "tier": "minimal",
+   "category": "Networking & protocol formatting (offline)",
+   "spec": "A URL normalizer using `urllib.parse`. `distill <url>` outputs a canonical form: lowercase scheme and host, strip the scheme's default port, resolve dot-segments (./ and ../) in the path, uppercase percent-encoding hex and decode unreserved characters, drop empty query/fragment, and produce stable query ordering. `compare <url-a> <url-b>` distills both and reports EQUIVALENT or DIFFERENT, printing a component-by-component diff (scheme/host/port/path/query/fragment) for the parts that disagree, exit 0 when equivalent. `--json` available. Two requirements are left for the builder to reason about and document: how a trailing slash on the path affects equivalence, and whether query parameters are order-significant and how repeated keys are handled \u2014 pick sensible defaults and expose them as flags if useful.",
+   "novelty": "Treats URL canonicalization as an equivalence question \u2014 distill two messy URLs to a normal form and tell whether they are the same resource, surfacing exactly what differs."
+  },
+  {
+   "name": "query-weaver",
+   "tier": "amendment",
+   "category": "Networking & protocol formatting (offline)",
+   "spec": "BASE: an application/x-www-form-urlencoded codec. `decode <querystring>` parses a query string (leading '?' tolerated) into an ordered list of key/value pairs, handling '+'-as-space vs %20, percent-decoding, empty values, and repeated keys, output as JSON (array of [key,value] pairs preserving order/duplicates). `encode <json>` takes JSON pairs/object and produces a query string with proper percent-encoding and a `--space plus|percent` option. Round-trip stable; `--json`. AMENDMENT (add later, behavior-changing): a `--nested` mode interpreting bracket notation \u2014 `a[b][c]=1` builds nested objects and `a[]=1`/`a[0]=x` build arrays \u2014 so `decode --nested` returns a nested JSON tree and `encode --nested` serializes a nested document back into bracketed keys; add `--array-format bracket|index|repeat` controlling array emission and document collision behavior when a key is used as both scalar and container.",
+   "novelty": "A query-string codec whose amendment teaches it nested bracket structure (a[b][]=1) \u2014 turning a flat key/value codec into a JSON tree (de)serializer, the genuinely hard part of form encoding."
+  },
+  {
+   "name": "benford-auditor",
+   "tier": "max-detail",
+   "category": "Analysis & reporting",
+   "spec": "A CLI auditing numbers against Benford's Law. `analyze data.csv --column amount` reads a named CSV column (or a whitespace/newline number stream from stdin/.txt), strips sign and decimals, drops zeros and anything below `--min-abs T`. It computes the first-digit (1-9) observed frequency vs expected log10(1+1/d); `--second-digit` switches to the second-digit (0-9) distribution. It prints a chi-square statistic with degrees of freedom against the 0.05 critical value (PASS/FAIL), computes Nigrini's Mean Absolute Deviation bucketed into the standard conformity bands, and renders a side-by-side ASCII bar chart of observed vs expected percent per digit in fixed-width columns. `--ignore-sign` and `--min-abs` control filtering (print count used vs skipped); `--json` emits per-digit observed/expected/diff plus verdicts. Exit non-zero when judged non-conforming. Ship critical-value and expected-frequency tables as constants.",
+   "novelty": "Forensic digit-distribution fraud check (Benford's Law) with chi-square plus Nigrini MAD conformity bands \u2014 a real auditing technique almost never seen as a tiny CLI."
+  },
+  {
+   "name": "cadence-miner",
+   "tier": "minimal",
+   "category": "Analysis & reporting",
+   "spec": "A CLI finding temporal patterns in a stream of timestamps. `cadence-miner events.log` reads one timestamp per line and reports the cadence of events. It detects and parses the common timestamp shape itself (ISO-8601, `YYYY-MM-DD HH:MM:SS`, epoch seconds, and `[DD/Mon/YYYY:HH:MM:SS]`-style log stamps are all plausible), sorts the parsed instants, and derives inter-arrival gaps. From those it surfaces a meaningful dominant period/interval and calls out burst windows where events cluster far above the typical rate, alongside gap statistics (count, min, median, max). Text report by default; `--json` for the same figures. The format-detection strategy and the exact definitions of 'dominant period' and 'burst' are left to the implementer to design and document sensibly.",
+   "novelty": "Infers the hidden rhythm of an event log \u2014 dominant period and burst windows from raw timestamps \u2014 without the user telling it the timestamp format."
+  },
+  {
+   "name": "cadence",
+   "tier": "minimal",
+   "category": "Recurring-event RRULE-lite expander",
+   "spec": "A CLI parsing a compact human recurrence phrase and expanding it into concrete dates. Example phrases: `every 2 weeks on mon,wed`, `monthly on the 3rd friday`, `every weekday`, `yearly on 02-29`, `every month on the -1 day` (last day). `expand \"<phrase>\" --from 2026-06-27 [--count 10 | --until 2026-12-31]`. Support FREQ daily/weekly/monthly/yearly, an interval (`every N ...`), by-weekday lists, by-month-day, nth-weekday-of-month (negative indices = from end, `-1 friday` = last Friday), and a count OR until terminator (whichever comes first). The builder infers sensible behavior for the loose parts: output rendering (date per line), how nth/negative weekday works, and what to do when a target day overflows a short month (e.g. monthly-on-31 in February). Never emit a date before --from; deterministic; stdlib `datetime` only, no network.",
+   "novelty": "Expands a compact human recurrence phrase (not raw iCal RRULE) including nth-weekday and last-day rules \u2014 the ambiguous parsing and month-overflow handling force real design inference."
+  },
+  {
+   "name": "week-warden",
+   "tier": "minimal",
+   "category": "ISO-week + date arithmetic",
+   "spec": "A CLI for ISO-8601 week math. `of 2026-06-27` converts a calendar date to its ISO year-week-weekday (you choose a clear format such as 2026-W26-6); `date 2026-W26-3` reverses it to the calendar date; `add 2026-W26 +10` and `sub 2026-W30 4` do week arithmetic rolling correctly across year boundaries (some ISO years have 53 weeks); `weeks 2026` reports whether a year is 52- or 53-week and prints the date span of its first and last ISO weeks; `span 2026-W10 2026-W22` prints the count of weeks between two ISO weeks. The exact output rendering and how weekday 1..7 maps to day names are intentionally loose \u2014 pick and apply a consistent convention. Use `date.isocalendar()`/`fromisocalendar()` but verify the 53-week logic. Stdlib only.",
+   "novelty": "A focused ISO-8601 week toolkit doing week-level arithmetic and correctly handling the 53-week-year edge case \u2014 rendering format and weekday numbering left ambiguous on purpose."
+  },
+  {
+   "name": "mastermind-duel",
+   "tier": "max-detail",
+   "category": "Puzzles, board games & logic",
+   "spec": "An interactive Mastermind engine with code length P (default 4), color count C (default 6), and `--no-duplicates`. Black/white pegs are computed exactly (blacks = right color right slot; whites = right color wrong slot, with correct multiset accounting for repeats). `make --seed S` \u2014 the computer picks a secret, the human types guesses (e.g. 'RYGB' or '1234'), the engine replies with peg counts until solved or a turn cap; `break` \u2014 the computer guesses the human's secret via Knuth's minimax (optimal opener, then each round keep only codes consistent with all feedback and pick the guess minimizing the worst-case remaining-candidate count), the human enters peg feedback; `auto --games N` \u2014 non-interactive self-play over N random secrets reporting the distribution of guesses-to-solve, average, and max. Validate human input (length, legal colors, duplicate rule) and re-prompt via a custom prompt (never crash on bad input). `--colors RYGBOP` sets the alphabet; `--reveal` in make prints the secret on giving up; exit 0 on normal completion.",
+   "novelty": "A two-sided Mastermind engine implementing Knuth's five-guess minimax solver plus exact black/white peg scoring with correct duplicate handling."
+  },
+  {
+   "name": "lights-out-oracle",
+   "tier": "minimal",
+   "category": "Puzzles, board games & logic",
+   "spec": "A CLI reading a rectangular board of 0s and 1s from stdin (1 = light on), where pressing a cell toggles itself and its orthogonal neighbours, and printing a same-shaped grid of presses that turns every light off. Solve it as a linear system over GF(2): build the toggle matrix for the board's dimensions, Gaussian-eliminate over GF(2), and report a press pattern; if the configuration is unsolvable, print a clear 'unsolvable' message and exit non-zero. The board need not be square. When the system is underdetermined more than one valid press pattern exists \u2014 the builder must choose and document a sensible canonical answer (and may also report how many solutions exist). Stdlib only.",
+   "novelty": "Solving Lights Out is a clean linear-algebra-over-GF(2) problem (Gaussian elimination on the toggle matrix), which the builder must discover rather than brute-force."
+  },
+  {
+   "name": "cryptarithm-cracker",
+   "tier": "minimal",
+   "category": "Puzzles, board games & logic",
+   "spec": "A CLI solving cryptarithm puzzles given as an equation string such as 'SEND + MORE = MONEY' or 'BASE + BALL = GAMES', where each distinct letter maps to a distinct digit and the equation must hold. Parse the expression (support '+' addition across two or more addends and a single '='), enforce that no multi-letter word's leading letter is zero, search digit assignments efficiently (prune via column carries or ordered backtracking rather than blindly permuting all 10!), and print the solved substitution and the numeric equation. How to handle a puzzle with more than one valid assignment, and whether to support bases other than 10, are intentionally left to the builder to design and document. Stdlib only.",
+   "novelty": "Cryptarithmetic (verbal arithmetic) solving is a constraint/permutation problem with a leading-zero subtlety, distinct from any grid or board clone."
+  },
+  {
+   "name": "peg-jump-atlas",
+   "tier": "amendment",
+   "category": "Puzzles, board games & logic",
+   "spec": "BASE: solve English peg solitaire on the standard 33-hole cross board (center starts empty). A peg jumps orthogonally over an adjacent peg into an empty hole, removing the jumped peg; the goal is a single peg in the center. Implement DFS with backtracking that finds a winning sequence and prints the move list in board coordinates (e.g. 'd2 -> d4'), plus a `--show` flag printing the board after each jump. Support `solve` (find one solution) and `verify FILE` (replay a given move list and confirm it ends with a single center peg). Include symmetry/dead-state pruning so the search finishes quickly. AMENDMENT (add later): read an arbitrary board shape from a file (a mask of holes/pegs/empties), and add a `complement` command that, given a start position, reports whether a chosen single-peg END position is reachable and counts how many distinct final single-peg positions are achievable \u2014 turning the fixed-goal solver into a reachability analyzer over user-defined boards.",
+   "novelty": "Peg solitaire solving is a satisfying DFS-with-pruning search over jump sequences, and the amendment (arbitrary board shapes + complement-problem reachability) reshapes the core search rather than bolting on UI."
+  },
+  {
+   "name": "hamming-anvil",
+   "tier": "amendment",
+   "category": "error-correcting-codes",
+   "spec": "BASE: a CLI for Hamming(7,4) single-error-correcting codes. `encode <bits|--text S>` splits input into 4-bit nibbles and emits 7-bit codewords with parity at positions 1,2,4 (1-indexed), space-separated; `decode <codewords>` recomputes the syndrome per block, reports any single-bit error position, silently corrects it, and reconstructs the original bits/text; `flip <codeword> --pos P` flips bit P to manufacture an error and `inject <codewords> [--rate R|--seed S]` randomly flips at most one bit per block; `syndrome <codeword>` prints the three parity checks and the computed error position (0 = clean). Show a per-block table of data bits, parity bits, syndrome, and action taken. AMENDMENT (add later, behavior-changing): an extended SECDED mode `--secded` appending an overall 8th parity bit; in this mode `decode` must distinguish no error, a corrected single-bit error, and a detected-but-uncorrectable double-bit error (report 'DED: uncorrectable' and refuse to emit guessed data) using the Hamming syndrome plus overall parity. encode/flip/inject respect the 8-bit block width when --secded is set.",
+   "novelty": "A hands-on Hamming(7,4) workbench with deliberate bit-flip injection and live single-error correction, designed to later grow extended SECDED double-error detection."
+  },
+  {
+   "name": "morse-metronome",
+   "tier": "minimal",
+   "category": "encoding",
+   "spec": "A CLI converting between text and Morse and visualizing its rhythm. `encode <text>` outputs International Morse (dots/dashes, letters space-separated, words by ' / '); `decode <morse>` reverses it; `cadence <text> [--wpm N=20]` renders the transmission as a timing track \u2014 expand each symbol into element units (dot=1, dash=3, intra-character gap=1, inter-character gap=3, inter-word gap=7) per the PARIS standard, draw an ASCII waveform with keyed-on units as a high line and gaps as a low line, and print the total transmission time in seconds from `unit_ms = 1200/wpm`; `table` lists the letter/digit/punctuation map. Two points are left for the builder to resolve well: how prosigns/unknown characters are handled, and exactly how word spacing appears in both the text and waveform views. Stdlib only.",
+   "novelty": "Couples a Morse codec with real WPM cadence rendering \u2014 turning text into an on/off timing track drawn as an ASCII waveform using the PARIS timing standard, not just dot-dash text."
+  }
+ ],
+ "used": []
+}
