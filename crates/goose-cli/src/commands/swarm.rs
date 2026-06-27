@@ -2196,6 +2196,10 @@ impl GooseAgentDispatcher {
             under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
             in a package while its modules sit at the root. Every subtask's `files` and every import MUST match the one chosen \
             layout exactly.\n\
+            AMENDMENT — if the manifest below already lists project files, you are EDITING an existing app: every subtask that \
+            changes existing behavior MUST own the EXACT existing path (e.g. `src/notes/models.py`), and imports MUST match the \
+            real modules. NEVER invent a new filename (e.g. `note.py`) for a module that already exists (e.g. `models.py`) — that \
+            file will never be written and the task fails. Create NEW files ONLY for genuinely new modules or tests.\n\
             If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
             writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
             AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
