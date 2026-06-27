@@ -2652,10 +2652,23 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .map(|f| format!("  {cwd}/{f}"))
                     .collect::<Vec<_>>()
                     .join("\n");
+                // Multi-file tasks fail by writing the first owned file, forgetting the rest, then
+                // claiming done — the completion guard retries but the worker repeats it. Call it out.
+                let multi_note = if req.owned_files.len() > 1 {
+                    format!(
+                        "\nYOU OWN {n} FILES — you MUST write EVERY one. The classic multi-file failure is \
+                         writing the first and forgetting the rest, then claiming done: this task is NOT \
+                         complete until ALL {n} paths above exist and are non-empty. Write them one after \
+                         another and verify each is on disk before you finish.",
+                        n = req.owned_files.len()
+                    )
+                } else {
+                    String::new()
+                };
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}\n\
+                     just wastes turns):\n{owned}{multi_note}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
                      the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
