@@ -2535,6 +2535,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
              (a worker just burned 13 reads on 6 test files and wrote nothing). Read ONE specific SOURCE \
              file only if you must call its exact API. Trust the manifest + dependency context; verify by \
              RUNNING (pytest), not by re-reading.\n\
+             - STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
+             re-run pytest more than ~2 times and do NOT keep tweaking an UNSPECIFIED detail (e.g. whether \
+             multiple filters use AND vs OR): pick the sensible default, note it in one line, and STOP — a \
+             worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
+             already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
+             one.\n\
              \n{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
