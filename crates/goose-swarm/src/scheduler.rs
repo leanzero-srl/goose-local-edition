@@ -1020,9 +1020,17 @@ impl Scheduler {
                     });
                 }
             }
-            // A completion (or nothing yet) — wake and re-evaluate. tokio::Notify stores one permit,
-            // so a completion that fires before this await is not lost.
-            notify.notified().await;
+            // Wake on a completion, or — when a judge is attached — at least every 30s, so it can
+            // inspect a worker that crosses the min-age threshold BETWEEN completions (a lone stuck
+            // worker produces no completion to wake on). tokio::Notify stores one permit, so a
+            // completion that fires before this await is not lost. With no judge this is an
+            // effectively-infinite wait: byte-identical to before.
+            let tick = if self.judge.is_some() {
+                std::time::Duration::from_secs(30)
+            } else {
+                std::time::Duration::from_secs(86_400)
+            };
+            let _ = tokio::time::timeout(tick, notify.notified()).await;
         }
     }
 }
