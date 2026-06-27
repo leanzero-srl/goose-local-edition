@@ -141,7 +141,9 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             verdict: Verdict::BrokenCode,
             confidence: 1.0,
             hint: format!(
-                "{path} does not compile ({snippet}). Rewrite it so it parses and imports cleanly."
+                "{path} does not compile ({snippet}). Fix the syntax so it parses and imports cleanly \
+                 — if you are unsure how, write a SMALLER, SIMPLER version that compiles and covers the \
+                 core of the spec; a working subset beats a broken whole."
             ),
         });
     }
@@ -150,7 +152,10 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             verdict: Verdict::OverReading,
             confidence: 0.9,
             hint: "You have produced no file yet. STOP reading/deliberating — you already have the \
-                   spec, the file layout, and the injected dependency APIs. WRITE your owned file(s) now."
+                   spec, the file layout, and the injected dependency APIs. WRITE your owned file(s) now. \
+                   If the task feels large or hard, write the SIMPLEST version that satisfies the spec \
+                   FIRST (a small working file), then refine it — a minimal working file beats endless \
+                   planning, and you can always improve it once it exists."
                 .to_string(),
         });
     }
@@ -168,9 +173,9 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             verdict: Verdict::Looping,
             confidence: 0.9,
             hint: "Your owned file(s) are written but unchanged for minutes while you keep running — \
-                   you are stuck re-reading or re-verifying, not making progress. If they satisfy the \
-                   spec, finish and report done NOW; if an owned file is still missing or empty, write \
-                   it immediately."
+                   you are stuck re-reading or re-verifying, not making progress. If a test or check is \
+                   failing, make the SIMPLEST change that works (a stub, a narrower implementation) rather \
+                   than perfecting it, then finish. If the file already satisfies the spec, report done NOW."
                 .to_string(),
         });
     }
