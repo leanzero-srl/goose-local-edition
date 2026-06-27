@@ -2496,8 +2496,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
                      just wastes turns):\n{owned}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
-                     `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`cat` to 'understand the \
-                     API' or look for tests: on a fresh module there is NOTHING on disk to find, tests are a \
+                     `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
+                     the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
+                     LAYOUT above IS the complete structure (there is nothing on disk to discover), tests are a \
                      SEPARATE subtask, and the API of EVERY dependency you import is ALREADY injected below \
                      under 'API of …' — read it THERE, NEVER `cat` the module. Cat-ing files whose APIs are \
                      already injected only bloats your context until you LOOP — repeating 'let me write the \
