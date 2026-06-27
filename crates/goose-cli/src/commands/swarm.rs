@@ -2495,10 +2495,45 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     }
                 }
             }
+            // Inject the CURRENT content of the task's DEPENDENCY source files (already-built modules it
+            // imports from) so cli/integration tasks need not `cat` them — a cli-edit-delete task over-read
+            // 16 deps and paralysed at 82 msgs / 0 writes. Only files that EXIST on disk (i.e. completed
+            // deps); skip owned files (already injected above), test files, and non-`.py`. Capped per-file
+            // and total to bound context on slow local models.
+            let owned_set: std::collections::HashSet<&String> = req.owned_files.iter().collect();
+            let mut dep_block = String::new();
+            let mut dep_budget: usize = 14000;
+            for f in &req.all_files {
+                if dep_budget == 0 {
+                    break;
+                }
+                if owned_set.contains(f) || !f.ends_with(".py") {
+                    continue;
+                }
+                let base = std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if base.starts_with("test_") || base.ends_with("_test.py") || base == "conftest.py"
+                {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(std::path::Path::new(&cwd).join(f)) {
+                    let trimmed = content.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let capped: String = trimmed.chars().take(dep_budget.min(3500)).collect();
+                    dep_budget = dep_budget.saturating_sub(capped.chars().count());
+                    dep_block.push_str(&format!(
+                        "## API of {f} (a dependency you import — use it from here, do NOT `cat` it):\n```\n{capped}\n```\n\n"
+                    ));
+                }
+            }
             format!(
                 "## PROJECT FILE LAYOUT — the agreed plan\n\
                  Every module lives at EXACTLY these paths; import from here, NEVER invent another \
-                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}"
+                 location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
         let system_prompt = format!(
