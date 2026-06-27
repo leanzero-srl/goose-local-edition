@@ -2517,6 +2517,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
              loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
              only the part you need.\n\
              - Run Python with `python3`, never bare `python`.\n\
+             - Testing a Click CLI: construct `CliRunner()` with NO arguments — the `mix_stderr` kwarg was \
+             REMOVED in Click 8.2+, so `CliRunner(mix_stderr=False)` raises `TypeError` and breaks the whole \
+             test file. stdout+stderr are already combined in `result.output`. (Your Click knowledge may be \
+             out of date — when an import/TypeError says an argument was removed, drop it, do not fight it.)\n\
              - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
              (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
