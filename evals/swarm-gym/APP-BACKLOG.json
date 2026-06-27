@@ -288,5 +288,7 @@
    "novelty": "Couples a Morse codec with real WPM cadence rendering \u2014 turning text into an on/off timing track drawn as an ASCII waveform using the PARIS timing standard, not just dot-dash text."
   }
  ],
- "used": []
+ "used": [
+  "glyph-fold"
+ ]
 }
