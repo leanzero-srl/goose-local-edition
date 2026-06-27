@@ -2488,7 +2488,13 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns); go straight to writing the files:\n{owned}\n\n"
+                     just wastes turns):\n{owned}\n\
+                     WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
+                     `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`cat` to 'understand the \
+                     API' or look for tests: on a fresh module there is NOTHING on disk to find, and tests are \
+                     a SEPARATE subtask. Implement from the spec, THEN run `python3 -m pytest` to check. A turn \
+                     that ends without every owned file written and non-empty FAILS and is retried — exploring \
+                     instead of writing is the #1 way workers burn their whole budget and produce nothing.\n\n"
                 )
             };
             // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
