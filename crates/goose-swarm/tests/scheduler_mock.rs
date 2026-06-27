@@ -592,3 +592,36 @@ async fn judge_respects_intervention_cap() {
     );
     assert!(hints.lock().unwrap().is_empty(), "no re-dispatch hint");
 }
+
+/// Under weight-1 with every node busy there is NO idle device for the judge — but the deterministic
+/// verdicts need no model, so the judge must still fire. A single-device pool running its one task is
+/// fully saturated; the judge should still inspect + kill it (regression guard for judge-dark-saturation).
+#[tokio::test]
+async fn judge_fires_when_fleet_is_saturated() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "stuck".to_string(),
+        delay: Duration::from_millis(20),
+    });
+    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
+    let judge = Arc::new(KillJudge {
+        target: "stuck".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+    };
+    // ONE device, weight 1: running its single task leaves NO idle device for the judge.
+    let sched = Scheduler::new(vec![dev("only", "m-only", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(report.done.contains(&"stuck".to_string()));
+    assert_eq!(
+        runs.lock().unwrap()[&"stuck".to_string()],
+        2,
+        "no idle device, yet the judge still fired + re-dispatched the stuck worker"
+    );
+}
