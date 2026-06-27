@@ -1069,17 +1069,26 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             host: p.device.clone(),
         })
         .collect();
-    // Planner: keep the configured planner if it is resident; else pick the strong resident model on the
-    // FASTEST host (highest speed_weight). The architect-skeleton call is the serial bottleneck of the
-    // PLAN phase, so it must run on the quickest node — not an arbitrary first-resident (often the
-    // slowest). speed_weight keys are matched against device+identifier (some identifiers omit the host).
-    let host_speed = |p: &&LmsProcess| -> u32 {
-        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), p.identifier).to_lowercase();
-        cfg.speed_weights
+    // Planner: keep the configured planner if it is resident; else pick the best resident model for the
+    // hardest job (the architect skeleton). QUALITY outranks speed here: a low-quant model (q5/q4/q3/q2)
+    // fails the structured skeleton, so prefer a NOT-low-quant model FIRST, then the fastest host
+    // (highest speed_weight). speed_weight keys match device+identifier (some identifiers omit the host).
+    let planner_rank = |p: &&LmsProcess| -> (u8, u32) {
+        let ident = p.identifier.to_lowercase();
+        let quant_ok = u8::from(
+            !(ident.contains("q2_")
+                || ident.contains("q3_")
+                || ident.contains("q4_")
+                || ident.contains("q5")),
+        );
+        let hay = format!("{} {}", p.device.as_deref().unwrap_or(""), ident);
+        let speed = cfg
+            .speed_weights
             .iter()
             .find(|(pat, _)| hay.contains(pat.as_str()))
             .map(|(_, w)| *w)
-            .unwrap_or(1)
+            .unwrap_or(1);
+        (quant_ok, speed)
     };
     let planner = if resident.iter().any(|p| p.identifier == cfg.planner_model) {
         Some(cfg.planner_model.clone())
@@ -1090,8 +1099,8 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
                 let n = p.identifier.to_lowercase();
                 n.contains("27b") || n.contains("dense") || n.contains("coder")
             })
-            .max_by_key(|p| host_speed(p))
-            .or_else(|| resident.iter().max_by_key(|p| host_speed(p)))
+            .max_by_key(|p| planner_rank(p))
+            .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
             .map(|p| p.identifier.clone())
     };
     (pool, planner)
