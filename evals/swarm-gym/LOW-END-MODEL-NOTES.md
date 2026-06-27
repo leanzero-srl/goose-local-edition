@@ -94,3 +94,8 @@ Still open (lap 4): replanner over-analyze (6 pytest 0-writes deciding bonus tas
 ## Lap 5 validation (2026-06-27)
 - **hallucination-completion-guard VALIDATED on pwcheck** — fired 2× (retried 2 zero-write tasks that had claimed done); final 79 tests green, CLI rates passwords correctly (123=Very Weak 8/100, Xk9#mLp2qR=Weak 45/100). mkdir=0, architect-CLI-entry (pwcheck/__main__) all held.
 - Replanner ADDS VALUE here: it injected unicode edge-case tests that exposed 4 real scoring gaps, then integrate-verify reconciled them to green — the replanner converged (not a runaway). Kept apps/pwcheck.
+
+## Lap 5 max-detail (habit-tracker) — 2026-06-27
+- **hallucination-completion-guard fired 5x on one thick (18-subtask) run** — caught 5 separate zero-write tasks that claimed done; without bc990fe0 each would have been a silently-missing file. Strongest validation yet.
+- **cli-command-over-read -> paralysis**: cli-edit-delete cat 16 dependency files for the API and hit 82 msgs / 0 writes (recovered on retry). Fix: inject-dep-content (350fca46) injects existing dependency .py content (cap 3500/file, 14000 total) into cli/integration tasks so they need not cat deps. Validate on next amendment (cli task should show 0/low dep-cats).
+- **replanner-keeps-injecting**: on a thick run the replanner kept adding bonus test tasks (test-completion-rate, test-persistence-export, readme), extending it ~1h15min; the slow cli-stats blocked cli-entrypoint so the __main__ entry never built. Kept modules (47 green). Candidate: cap replanner rounds, or gate the entrypoint task above bonus tests.
