@@ -295,6 +295,7 @@
   "major-key",
   "keyweld",
   "sift-ql",
-  "transmute-grid"
+  "transmute-grid",
+  "commit-loom"
  ]
 }
