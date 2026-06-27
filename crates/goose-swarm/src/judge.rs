@@ -145,7 +145,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             ),
         });
     }
-    if !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(300) {
+    if !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
             confidence: 0.9,
