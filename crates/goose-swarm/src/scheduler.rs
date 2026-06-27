@@ -588,7 +588,7 @@ impl State {
         attempt: u32,
         outcome: JudgeOutcome,
         cfg: &JudgeConfig,
-    ) {
+    ) -> bool {
         let (device, model) = match self.task_final_device.get(tid) {
             Some((d, m)) => (Some(d.clone()), Some(m.clone())),
             None => (None, None),
@@ -613,7 +613,7 @@ impl State {
             action: if act { "re_dispatch" } else { "observed" }.to_string(),
         });
         if !act {
-            return;
+            return false;
         }
         if let Some(h) = self.abort_handles.remove(tid) {
             h.abort();
@@ -653,6 +653,7 @@ impl State {
             fan_out,
             id: tid.to_string(),
         });
+        true
     }
 
     /// A failed task can never produce output, so its (transitive) dependents can never run —
@@ -1011,12 +1012,18 @@ impl Scheduler {
                     let cfg = self.judge_cfg;
                     tokio::spawn(async move {
                         let outcome = judge.judge(req).await;
-                        {
+                        let intervened = {
                             let mut s = st.lock().await;
-                            s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
+                            let r = s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
                             s.judge_running = false;
+                            r
+                        };
+                        // Only wake the loop when the judge actually intervened (the re-dispatched task
+                        // needs to be picked up). An "observed" verdict changes nothing — notifying here
+                        // would immediately respawn a judge and busy-loop; the 30s tick re-evaluates.
+                        if intervened {
+                            nt.notify_one();
                         }
-                        nt.notify_one();
                     });
                 }
             }
