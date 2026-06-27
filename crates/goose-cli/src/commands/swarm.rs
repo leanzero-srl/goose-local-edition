@@ -2586,6 +2586,34 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let secs = started.elapsed().as_secs_f64();
         match outcome {
             Ok(out) => {
+                // Hallucinated-completion guard: a worker can call final_output ("done") WITHOUT ever
+                // writing its owned file — a test-archive task did exactly this (0 writes, the file never
+                // appeared, yet the task was marked done). Verify every owned file now exists and is
+                // non-empty; if not, RETRY the task (Transient) instead of silently accepting the lie.
+                if !req.owned_files.is_empty() {
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let missing: Vec<String> = req
+                        .owned_files
+                        .iter()
+                        .filter(|f| cwd.join(f).metadata().map(|m| m.len() == 0).unwrap_or(true))
+                        .cloned()
+                        .collect();
+                    if !missing.is_empty() {
+                        eprintln!(
+                            "  {} {} on {} ({:.1}s) — claimed done but never wrote: {}",
+                            style("✗").red().bold(),
+                            style(&req.task_id).bold(),
+                            req.device_id,
+                            secs,
+                            missing.join(", ")
+                        );
+                        return Err(DispatchError::Transient(format!(
+                            "task {} returned without writing its owned file(s): {}",
+                            req.task_id,
+                            missing.join(", ")
+                        )));
+                    }
+                }
                 eprintln!(
                     "  {} {} on {} ({:.1}s)",
                     style("✓").green().bold(),
