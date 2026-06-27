@@ -43,6 +43,16 @@ pub enum SwarmEvent {
         added: Vec<String>,
         stopped: bool,
     },
+    /// The idle-model judge inspected an in-flight worker. `action` is "observed" (logged only) or
+    /// "re_dispatch" (the worker was killed and its task re-queued with `hint`).
+    JudgeVerdict {
+        task_id: String,
+        device: String,
+        verdict: String,
+        confidence: f32,
+        hint: String,
+        action: String,
+    },
 }
 
 pub trait EventSink: Send + Sync {

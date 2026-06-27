@@ -19,8 +19,9 @@ use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{
-    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, NullSink, ReplanContext, Replanner,
-    Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
+    deterministic_verdict, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, Judge,
+    JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, ReplanContext, Replanner,
+    Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -2461,6 +2462,140 @@ impl GooseAgentDispatcher {
     }
 }
 
+/// Syntax-check a Python file without polluting `__pycache__` (ast.parse, not py_compile). Returns the
+/// last error line on a SyntaxError, `None` if it parses.
+async fn py_syntax_error(path: &Path) -> Option<String> {
+    let out = tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg("import ast,sys; ast.parse(open(sys.argv[1]).read())")
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() {
+        None
+    } else {
+        Some(
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("syntax error")
+                .trim()
+                .to_string(),
+        )
+    }
+}
+
+/// Parse the idle-model judge's one-line `VERDICT|hint` reply. Conservative: anything that is not a
+/// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
+fn parse_judge_reply(s: &str) -> JudgeOutcome {
+    let upper = s.to_uppercase();
+    let verdict = if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
+        Verdict::BrokenCode
+    } else if upper.contains("LOOPING") {
+        Verdict::Looping
+    } else if upper.contains("SPEC_DRIFT") || upper.contains("SPEC DRIFT") {
+        Verdict::SpecDrift
+    } else {
+        return JudgeOutcome::ok();
+    };
+    let hint = s
+        .split('|')
+        .nth(1)
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string());
+    JudgeOutcome {
+        verdict,
+        confidence: 0.8,
+        hint,
+    }
+}
+
+#[async_trait]
+impl Judge for GooseAgentDispatcher {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        let cfg = JudgeConfig::default();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let mut file_contents: Vec<(String, String)> = Vec::new();
+        let mut compile_errors: Vec<(String, String)> = Vec::new();
+        let mut any_owned_written = false;
+        let mut newest_mtime: Option<std::time::SystemTime> = None;
+        for f in &req.owned_files {
+            let path = cwd.join(f);
+            if let Ok(meta) = path.metadata() {
+                if meta.len() > 0 {
+                    any_owned_written = true;
+                }
+                if let Ok(mt) = meta.modified() {
+                    newest_mtime = Some(match newest_mtime {
+                        Some(n) if n > mt => n,
+                        _ => mt,
+                    });
+                }
+            }
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if f.ends_with(".py") && !contents.trim().is_empty() {
+                    if let Some(err) = py_syntax_error(&path).await {
+                        compile_errors.push((f.clone(), err));
+                    }
+                }
+                file_contents.push((f.clone(), contents));
+            }
+        }
+        let secs_since_last_write = newest_mtime
+            .and_then(|mt| mt.elapsed().ok())
+            .map(|d| d.as_secs());
+        let input = JudgeInput {
+            task_id: req.task_id.clone(),
+            description: req.description.clone(),
+            owned_files: req.owned_files.clone(),
+            file_contents,
+            compile_errors,
+            elapsed_secs: req.elapsed_secs,
+            any_owned_written,
+            secs_since_last_write,
+        };
+        // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
+        if let Some(out) = deterministic_verdict(&input, &cfg) {
+            return out;
+        }
+        // Phase 2: semantic review on the idle node — only when the worker has produced something to read.
+        if input.file_contents.is_empty() {
+            return JudgeOutcome::ok();
+        }
+        let files_block = input
+            .file_contents
+            .iter()
+            .map(|(p, c)| {
+                let body: String = c.chars().take(2000).collect();
+                format!("### {p}\n```\n{body}\n```")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let system = "You are a strict code REVIEWER supervising one worker on a shared multi-agent \
+            build. You are shown the worker's subtask spec and the file(s) it has produced so far. \
+            Decide whether the worker is on track. BE CONSERVATIVE: only flag a problem if you are SURE \
+            — a false alarm kills good work. Reply with EXACTLY one line `VERDICT|hint` where VERDICT is \
+            one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT and hint is a short corrective instruction (leave \
+            empty for OK). When unsure, answer `OK|`."
+            .to_string();
+        let user = format!(
+            "Subtask spec:\n{}\n\nFile(s) produced so far:\n{}\n\nYour one-line verdict:",
+            req.description, files_block
+        );
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0),
+        )
+        .await
+        {
+            Ok(Ok(o)) => parse_judge_reply(&o.text),
+            _ => JudgeOutcome::ok(),
+        }
+    }
+}
+
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
@@ -2663,11 +2798,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // worker_timeout_secs (a genuinely stalled stream). A slow-but-PROGRESSING local model emits an
         // event every turn and runs to completion no matter the total time — wall-clock would wrongly
         // kill an honest 885s task. A stall surfaces as transient below → the scheduler re-routes it.
+        // If the idle-model judge killed a prior attempt, lead with its corrective hint so this
+        // re-dispatch heeds it (e.g. "you were over-reading/looping — WRITE now").
+        let worker_user_text = match &req.prior_hint {
+            Some(h) => format!(
+                "SUPERVISOR NOTE — your previous attempt was stopped: {h}\n\nNow complete the task:\n{}",
+                req.description
+            ),
+            None => req.description.clone(),
+        };
         let outcome = self
             .run_agent(
                 &req.model_id,
                 system_prompt,
-                req.description.clone(),
+                worker_user_text,
                 None,
                 self.worker_max_turns,
                 &self.worker_extensions,
@@ -3224,6 +3368,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
         scheduler =
             scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
+    }
+    // Idle-model judge: a node that would sit idle while tasks run inspects a busy worker and may kill +
+    // re-dispatch a stuck one. On by default; GOOSE_SWARM_JUDGE=0 disables it.
+    let judge_on = std::env::var("GOOSE_SWARM_JUDGE")
+        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+        .unwrap_or(true);
+    if judge_on {
+        eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
+        scheduler = scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
     let report = scheduler
         .run(

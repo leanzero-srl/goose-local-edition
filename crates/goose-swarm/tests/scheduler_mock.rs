@@ -4,8 +4,9 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, ReplanContext, Replanner,
-    Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec,
+    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig, JudgeOutcome,
+    JudgeRequest, ReplanContext, Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec,
+    Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -463,4 +464,131 @@ async fn cycle_is_rejected_at_load() {
         Dag::from_specs(specs).is_err(),
         "a dependency cycle must be rejected"
     );
+}
+
+/// A dispatcher whose target task hangs on its first attempt (long enough to be judged + killed) and
+/// completes quickly on the re-dispatch. Records run counts and any hint the re-dispatch carried.
+struct JudgeTestDispatcher {
+    runs: Arc<Mutex<HashMap<String, u32>>>,
+    hints: Arc<Mutex<Vec<(String, String)>>>,
+    target: String,
+    delay: Duration,
+}
+
+#[async_trait]
+impl TaskDispatcher for JudgeTestDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        *self
+            .runs
+            .lock()
+            .unwrap()
+            .entry(req.task_id.clone())
+            .or_default() += 1;
+        if let Some(h) = &req.prior_hint {
+            self.hints
+                .lock()
+                .unwrap()
+                .push((req.task_id.clone(), h.clone()));
+        }
+        if req.task_id == self.target && req.attempt == 0 {
+            tokio::time::sleep(self.delay * 50).await; // long — the judge aborts this attempt
+        } else {
+            tokio::time::sleep(self.delay).await;
+        }
+        Ok(format!("out-{}", req.task_id).into())
+    }
+}
+
+/// A judge that flags one target task as looping (confident) and passes everything else.
+struct KillJudge {
+    target: String,
+}
+
+#[async_trait]
+impl Judge for KillJudge {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        if req.task_id == self.target {
+            JudgeOutcome {
+                verdict: Verdict::Looping,
+                confidence: 1.0,
+                hint: "STOP looping and WRITE the file now".to_string(),
+            }
+        } else {
+            JudgeOutcome::ok()
+        }
+    }
+}
+
+#[tokio::test]
+async fn judge_kills_and_redispatches_stuck_worker() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "stuck".to_string(),
+        delay: Duration::from_millis(20),
+    });
+    // One ready task on a 2-device pool: it runs on one node, leaving the other idle for the judge.
+    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
+    let judge = Arc::new(KillJudge {
+        target: "stuck".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(
+        report.done.contains(&"stuck".to_string()),
+        "the killed task is re-dispatched and eventually completes"
+    );
+    assert!(report.failed.is_empty(), "no task fails");
+    assert_eq!(
+        runs.lock().unwrap()[&"stuck".to_string()],
+        2,
+        "stuck task ran twice: killed once by the judge, then completed on re-dispatch"
+    );
+    let h = hints.lock().unwrap();
+    assert!(
+        h.iter().any(|(t, hint)| t == "stuck" && hint.contains("WRITE")),
+        "the re-dispatch carried the judge's corrective hint"
+    );
+}
+
+/// With the per-task intervention cap at 0, the judge may flag but must never kill — the worker runs
+/// to completion untouched. Guards against a weak judge looping a task forever.
+#[tokio::test]
+async fn judge_respects_intervention_cap() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "never-killed".to_string(),
+        delay: Duration::from_millis(20),
+    });
+    let dag = Dag::from_specs(vec![spec("never-killed", &[], &["a.py"])]).unwrap();
+    let judge = Arc::new(KillJudge {
+        target: "never-killed".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 0,
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(report.done.contains(&"never-killed".to_string()));
+    assert_eq!(
+        runs.lock().unwrap()[&"never-killed".to_string()],
+        1,
+        "intervention cap 0 -> the judge never kills; the task runs exactly once"
+    );
+    assert!(hints.lock().unwrap().is_empty(), "no re-dispatch hint");
 }
