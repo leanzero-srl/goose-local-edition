@@ -542,11 +542,16 @@ impl State {
     /// least `min_age_secs` old and under its intervention cap, to be judged on a currently-idle device.
     /// Returns the request + the attempt inspected, and marks a judge running (at most one at a time).
     fn pick_judge_target(&mut self, cfg: &JudgeConfig) -> Option<(JudgeRequest, u32)> {
+        // The LLM review wants an idle device; the deterministic checks (won't-compile / no-output /
+        // wrote-then-stale) need no model at all. Prefer an idle device's model for the review, but fall
+        // through with an empty model_id so the deterministic verdicts still fire when every node is busy
+        // (weight-1 fully saturated) — otherwise a stuck worker goes unjudged until worker_max_turns.
         let judge_model_id = self
             .devices
             .iter()
             .find(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)
-            .map(|d| d.cfg.model_id.clone())?;
+            .map(|d| d.cfg.model_id.clone())
+            .unwrap_or_default();
         let mut best: Option<(String, u64)> = None;
         for (tid, n) in &self.dag.tasks {
             if n.state != TaskState::Claimed {

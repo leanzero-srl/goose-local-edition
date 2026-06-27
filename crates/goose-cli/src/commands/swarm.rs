@@ -2580,6 +2580,12 @@ impl Judge for GooseAgentDispatcher {
         if let Some(out) = deterministic_verdict(&input, &cfg) {
             return out;
         }
+        // No idle device was free for the model review (fleet saturated — weight-1 with every node busy).
+        // The cheap deterministic checks above already ran without a model; skip the LLM review rather than
+        // queue it behind a busy worker. This is what lets the judge still catch a stuck worker mid-fan-out.
+        if req.judge_model_id.trim().is_empty() {
+            return JudgeOutcome::ok();
+        }
         // Phase 2: semantic review on the idle node — only when the worker has produced something to read.
         if input.file_contents.is_empty() {
             return JudgeOutcome::ok();
