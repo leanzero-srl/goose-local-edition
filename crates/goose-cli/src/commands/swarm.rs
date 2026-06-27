@@ -977,6 +977,9 @@ struct LmsProcess {
     identifier: String,
     status: String,
     device: Option<String>,
+    /// LM Studio's PARALLEL column — how many requests this model instance serves at once. The swarm
+    /// uses it as the device weight so dispatch concurrency tracks the user's LM Studio concurrency.
+    parallel: Option<u32>,
 }
 
 /// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
@@ -993,6 +996,7 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
     let cols: Vec<&str> = lines[header].split_whitespace().collect();
     let device_idx = cols.iter().position(|c| *c == "DEVICE").unwrap_or(6);
     let status_idx = cols.iter().position(|c| *c == "STATUS").unwrap_or(2);
+    let parallel_idx = cols.iter().position(|c| *c == "PARALLEL");
     let mut out = Vec::new();
     for line in &lines[header + 1..] {
         if line.trim().is_empty() {
@@ -1010,6 +1014,9 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
             identifier: f[0].clone(),
             status: f.get(status_idx).cloned().unwrap_or_default(),
             device: f.get(device_idx).cloned().filter(|s| !s.is_empty()),
+            parallel: parallel_idx
+                .and_then(|i| f.get(i))
+                .and_then(|s| s.parse::<u32>().ok()),
         });
     }
     Ok(out)
@@ -1059,15 +1066,17 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
         .map(|p| SwarmDevice {
             id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
             model_id: p.identifier.clone(),
-            // Default auto-pool concurrency to 2 (one LM Studio model instance serves several requests in
-            // PARALLEL) so a node isn't idle while one slow task runs — the dominant wall-clock cost. A
-            // configured device's explicit weight still wins. Revert to 1 if the local inference OOMs/hangs.
+            // Weight = an explicit configured override for this model_id (user wins), else LM Studio's
+            // PARALLEL for this instance so swarm dispatch concurrency tracks the user's LM Studio
+            // concurrency setting (set PARALLEL=1 there and a node runs one task at a time), else 1.
             weight: cfg
                 .devices
                 .iter()
                 .find(|d| d.model_id == p.identifier)
                 .map(|d| d.weight)
-                .unwrap_or(2),
+                .or(p.parallel)
+                .unwrap_or(1)
+                .max(1),
             enabled: true,
             instances: 1,
             host: p.device.clone(),
@@ -1278,6 +1287,7 @@ mod tests {
         assert_eq!(procs[0].identifier, "qwen/qwen3.6-27b");
         assert_eq!(procs[0].status, "GENERATING");
         assert_eq!(procs[0].device.as_deref(), Some("WorksMacStudio.lan"));
+        assert_eq!(procs[0].parallel, Some(4), "reads the PARALLEL column as the device weight source");
         let local = procs
             .iter()
             .filter(|p| p.device.as_deref() == Some("Local"))
@@ -1316,16 +1326,19 @@ mod tests {
                 identifier: "qwen/qwen3.6-27b".into(),
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
+                parallel: None,
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
+                parallel: None,
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Local".into()),
+                parallel: None,
             },
         ];
         let s = import_processes(&mut cfg, &procs, 1, true);
