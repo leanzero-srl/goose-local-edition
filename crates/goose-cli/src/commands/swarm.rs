@@ -2231,18 +2231,26 @@ impl GooseAgentDispatcher {
             let um = user_msg.clone();
             let schema = plan_schema.clone();
             handles.push(tokio::spawn(async move {
-                me.run_agent_timed(
-                    &model,
-                    sys,
-                    um,
-                    Some(Response {
-                        json_schema: Some(schema),
-                    }),
-                    12,
-                    &[],
+                // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
+                // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
+                // without ever going idle, hanging the whole run before execute starts. On timeout the
+                // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(480),
+                    me.run_agent_timed(
+                        &model,
+                        sys,
+                        um,
+                        Some(Response {
+                            json_schema: Some(schema),
+                        }),
+                        12,
+                        &[],
+                    ),
                 )
                 .await
                 .ok()
+                .and_then(|r| r.ok())
                 .and_then(|o| o.final_output)
             }));
         }
