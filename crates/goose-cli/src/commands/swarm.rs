@@ -2491,10 +2491,14 @@ impl TaskDispatcher for GooseAgentDispatcher {
                      just wastes turns):\n{owned}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`cat` to 'understand the \
-                     API' or look for tests: on a fresh module there is NOTHING on disk to find, and tests are \
-                     a SEPARATE subtask. Implement from the spec, THEN run `python3 -m pytest` to check. A turn \
-                     that ends without every owned file written and non-empty FAILS and is retried — exploring \
-                     instead of writing is the #1 way workers burn their whole budget and produce nothing.\n\n"
+                     API' or look for tests: on a fresh module there is NOTHING on disk to find, tests are a \
+                     SEPARATE subtask, and the API of EVERY dependency you import is ALREADY injected below \
+                     under 'API of …' — read it THERE, NEVER `cat` the module. Cat-ing files whose APIs are \
+                     already injected only bloats your context until you LOOP — repeating 'let me write the \
+                     file' over and over without ever emitting the write. Implement from the spec + injected \
+                     APIs, THEN run `python3 -m pytest` to check. A turn that ends without every owned file \
+                     written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
+                     #1 way workers burn their whole budget and produce nothing.\n\n"
                 )
             };
             // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
