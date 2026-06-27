@@ -2312,6 +2312,28 @@ impl GooseAgentDispatcher {
             }
         };
         let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
+        // Deterministically ensure a final integrate-verify sink: the weak architect sometimes OMITS it
+        // despite the prompt, and without it nothing smoke-runs the program end-to-end — so a broken entry
+        // point (Click `ctx.obj` None, argparse `dest=` on a positional, a bad import) SHIPS green because
+        // unit tests bypass the CLI. Inject one depending on every other subtask if it is missing.
+        if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+            let has_iv = arr
+                .iter()
+                .any(|s| s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify"));
+            if !has_iv && arr.len() > 1 {
+                let ids: Vec<serde_json::Value> =
+                    arr.iter().filter_map(|s| s.get("id").cloned()).collect();
+                arr.push(serde_json::json!({
+                    "id": "integrate-verify",
+                    "description": "Integrate every module and VERIFY the whole program works end-to-end: run the test suite, then ACTUALLY RUN the entry point (python3 -m <package> --help AND one real command with real arguments from the shell) and FIX any runtime crash — a green test suite does NOT prove the CLI runs.",
+                    "depends_on": ids,
+                    "files": [],
+                    "difficulty": "hard",
+                    "model": "qwen/qwen3.6-27b"
+                }));
+                eprintln!("  · injected missing integrate-verify sink (architect omitted it)");
+            }
+        }
         let items: Vec<(usize, String, String)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
