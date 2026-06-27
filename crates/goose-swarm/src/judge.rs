@@ -154,5 +154,77 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                 .to_string(),
         });
     }
+    // Finalize-spin: the worker DID produce its owned file(s) but has not touched them in a long
+    // time while still running — it is stuck re-reading or re-verifying instead of reporting done.
+    // The over-read check above can't see this (a file exists), so catch it here. Excludes the
+    // integrate-verify sink, which legitimately edits OTHER modules' files for a long stretch and so
+    // can leave its own file untouched while still doing real work.
+    if input.any_owned_written
+        && input.task_id != "integrate-verify"
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        && input.secs_since_last_write.is_some_and(|s| s >= 420)
+    {
+        return Some(JudgeOutcome {
+            verdict: Verdict::Looping,
+            confidence: 0.9,
+            hint: "Your owned file(s) are written but unchanged for minutes while you keep running — \
+                   you are stuck re-reading or re-verifying, not making progress. If they satisfy the \
+                   spec, finish and report done NOW; if an owned file is still missing or empty, write \
+                   it immediately."
+                .to_string(),
+        });
+    }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk(task_id: &str, written: bool, last_write: Option<u64>, elapsed: u64) -> JudgeInput {
+        JudgeInput {
+            task_id: task_id.to_string(),
+            description: "spec".to_string(),
+            owned_files: vec!["m.py".to_string()],
+            file_contents: if written {
+                vec![("m.py".to_string(), "x = 1\n".to_string())]
+            } else {
+                vec![]
+            },
+            compile_errors: vec![],
+            elapsed_secs: elapsed,
+            any_owned_written: written,
+            secs_since_last_write: last_write,
+        }
+    }
+
+    #[test]
+    fn finalize_spin_fires_when_owned_file_goes_stale() {
+        let v = deterministic_verdict(&mk("scan-module", true, Some(500), 700), &JudgeConfig::default());
+        assert_eq!(v.map(|o| o.verdict), Some(Verdict::Looping));
+    }
+
+    #[test]
+    fn finalize_spin_excludes_integrate_verify() {
+        let v = deterministic_verdict(&mk("integrate-verify", true, Some(500), 700), &JudgeConfig::default());
+        assert!(v.is_none(), "the verify sink edits other files; must not be finalize-spin-killed");
+    }
+
+    #[test]
+    fn finalize_spin_quiet_when_recently_written() {
+        let v = deterministic_verdict(&mk("scan-module", true, Some(60), 700), &JudgeConfig::default());
+        assert!(v.is_none(), "a worker that wrote recently is making progress");
+    }
+
+    #[test]
+    fn over_read_fires_with_no_output_on_old_attempt() {
+        let v = deterministic_verdict(&mk("scan-module", false, None, 500), &JudgeConfig::default());
+        assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
+    }
+
+    #[test]
+    fn healthy_young_worker_is_quiet() {
+        let v = deterministic_verdict(&mk("scan-module", true, Some(30), 100), &JudgeConfig::default());
+        assert!(v.is_none());
+    }
 }
