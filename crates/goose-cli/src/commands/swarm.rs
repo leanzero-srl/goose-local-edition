@@ -2505,9 +2505,12 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
         .map(|h| h.trim().to_string())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string());
+    // ADVISORY confidence (below the intervention threshold): the weak 27B judge mis-flagged valid,
+    // mid-write code as BROKEN once, so its semantic verdicts are LOGGED (observed) but never kill.
+    // Actual interventions come only from the reliable deterministic signals (py_compile, no-output).
     JudgeOutcome {
         verdict,
-        confidence: 0.8,
+        confidence: 0.5,
         hint,
     }
 }
@@ -2574,11 +2577,12 @@ impl Judge for GooseAgentDispatcher {
             .collect::<Vec<_>>()
             .join("\n\n");
         let system = "You are a strict code REVIEWER supervising one worker on a shared multi-agent \
-            build. You are shown the worker's subtask spec and the file(s) it has produced so far. \
-            Decide whether the worker is on track. BE CONSERVATIVE: only flag a problem if you are SURE \
-            — a false alarm kills good work. Reply with EXACTLY one line `VERDICT|hint` where VERDICT is \
-            one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT and hint is a short corrective instruction (leave \
-            empty for OK). When unsure, answer `OK|`."
+            build. You are shown the worker's subtask spec and the file(s) it has produced SO FAR. The \
+            files are very likely MID-WRITE and INCOMPLETE — that is NORMAL and is NOT a problem: never \
+            flag merely-unfinished code. Only flag if the work is clearly going wrong (obviously looping, \
+            or code that cannot possibly satisfy the spec). BE CONSERVATIVE: a false alarm wastes work. \
+            Reply with EXACTLY one line `VERDICT|hint` where VERDICT is one of OK, BROKEN_CODE, LOOPING, \
+            SPEC_DRIFT and hint is a short corrective instruction (empty for OK). When unsure, answer `OK|`."
             .to_string();
         let user = format!(
             "Subtask spec:\n{}\n\nFile(s) produced so far:\n{}\n\nYour one-line verdict:",
