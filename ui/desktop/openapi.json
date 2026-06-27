@@ -791,39 +791,6 @@
         }
       }
     },
-    "/config/permissions": {
-      "post": {
-        "tags": [
-          "super::routes::config_management"
-        ],
-        "operationId": "upsert_permissions",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpsertPermissionsQuery"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Permission update completed",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          }
-        }
-      }
-    },
     "/config/prompts": {
       "get": {
         "tags": [
@@ -1236,33 +1203,6 @@
           },
           "500": {
             "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/config/providers/{name}/oauth": {
-      "post": {
-        "tags": [
-          "super::routes::config_management"
-        ],
-        "operationId": "configure_provider_oauth",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "description": "Provider name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OAuth configuration completed"
-          },
-          "400": {
-            "description": "OAuth configuration failed"
           }
         }
       }
@@ -1699,26 +1639,6 @@
           },
           "504": {
             "description": "Request timeout"
-          }
-        }
-      }
-    },
-    "/features": {
-      "get": {
-        "tags": [
-          "super::routes::features"
-        ],
-        "operationId": "get_features",
-        "responses": {
-          "200": {
-            "description": "Compile-time feature flags",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeaturesResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -2894,50 +2814,6 @@
         }
       }
     },
-    "/sessions/import/nostr": {
-      "post": {
-        "tags": [
-          "Session Management"
-        ],
-        "operationId": "import_session_nostr",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportSessionNostrRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Nostr shared session imported successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Session"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request - Invalid Nostr share link"
-          },
-          "401": {
-            "description": "Unauthorized - Invalid or missing API key"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        },
-        "security": [
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/sessions/{id}/cancel": {
       "post": {
         "tags": [
@@ -3258,61 +3134,6 @@
         ]
       }
     },
-    "/sessions/{session_id}/share/nostr": {
-      "post": {
-        "tags": [
-          "Session Management"
-        ],
-        "operationId": "share_session_nostr",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "description": "Unique identifier for the session",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ShareSessionNostrRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Session shared to Nostr successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ShareSessionNostrResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - Invalid or missing API key"
-          },
-          "404": {
-            "description": "Session not found"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        },
-        "security": [
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/sessions/{session_id}/user_recipe_values": {
       "put": {
         "tags": [
@@ -3441,27 +3262,6 @@
         "responses": {
           "202": {
             "description": "Event accepted for processing"
-          }
-        }
-      }
-    },
-    "/tunnel/status": {
-      "get": {
-        "tags": [
-          "super::routes::tunnel"
-        ],
-        "summary": "Get tunnel info",
-        "operationId": "get_tunnel_status",
-        "responses": {
-          "200": {
-            "description": "Tunnel info",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TunnelInfo"
-                }
-              }
-            }
           }
         }
       }
@@ -5085,21 +4885,6 @@
           }
         }
       },
-      "FeaturesResponse": {
-        "type": "object",
-        "required": [
-          "features"
-        ],
-        "properties": {
-          "features": {
-            "type": "object",
-            "description": "Map of feature name to enabled status",
-            "additionalProperties": {
-              "type": "boolean"
-            }
-          }
-        }
-      },
       "ForkRequest": {
         "type": "object",
         "required": [
@@ -5439,17 +5224,6 @@
             "type": "string"
           },
           "mimeType": {
-            "type": "string"
-          }
-        }
-      },
-      "ImportSessionNostrRequest": {
-        "type": "object",
-        "required": [
-          "deeplink"
-        ],
-        "properties": {
-          "deeplink": {
             "type": "string"
           }
         }
@@ -7980,43 +7754,6 @@
           }
         }
       },
-      "ShareSessionNostrRequest": {
-        "type": "object",
-        "properties": {
-          "relays": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "ShareSessionNostrResponse": {
-        "type": "object",
-        "required": [
-          "deeplink",
-          "nevent",
-          "eventId",
-          "relays"
-        ],
-        "properties": {
-          "deeplink": {
-            "type": "string"
-          },
-          "eventId": {
-            "type": "string"
-          },
-          "nevent": {
-            "type": "string"
-          },
-          "relays": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
       "SlashCommand": {
         "type": "object",
         "required": [
@@ -8545,21 +8282,6 @@
           }
         }
       },
-      "ToolPermission": {
-        "type": "object",
-        "required": [
-          "tool_name",
-          "permission"
-        ],
-        "properties": {
-          "permission": {
-            "$ref": "#/components/schemas/PermissionLevel"
-          },
-          "tool_name": {
-            "type": "string"
-          }
-        }
-      },
       "ToolRequest": {
         "type": "object",
         "required": [
@@ -8631,39 +8353,6 @@
             "description": "Transcribed text from the audio"
           }
         }
-      },
-      "TunnelInfo": {
-        "type": "object",
-        "required": [
-          "state",
-          "url",
-          "hostname",
-          "secret"
-        ],
-        "properties": {
-          "hostname": {
-            "type": "string"
-          },
-          "secret": {
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/TunnelState"
-          },
-          "url": {
-            "type": "string"
-          }
-        }
-      },
-      "TunnelState": {
-        "type": "string",
-        "enum": [
-          "idle",
-          "starting",
-          "running",
-          "error",
-          "disabled"
-        ]
       },
       "UiMetadata": {
         "type": "object",
@@ -8882,20 +8571,6 @@
             "type": "string"
           },
           "value": {}
-        }
-      },
-      "UpsertPermissionsQuery": {
-        "type": "object",
-        "required": [
-          "tool_permissions"
-        ],
-        "properties": {
-          "tool_permissions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolPermission"
-            }
-          }
         }
       },
       "Usage": {

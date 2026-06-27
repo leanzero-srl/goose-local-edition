@@ -539,15 +539,6 @@ export type ExtensionResponse = {
     warnings?: Array<string>;
 };
 
-export type FeaturesResponse = {
-    /**
-     * Map of feature name to enabled status
-     */
-    features: {
-        [key: string]: boolean;
-    };
-};
-
 export type ForkRequest = {
     copy: boolean;
     timestamp?: number | null;
@@ -646,10 +637,6 @@ export type ImageContent = {
     };
     data: string;
     mimeType: string;
-};
-
-export type ImportSessionNostrRequest = {
-    deeplink: string;
 };
 
 export type InferenceMetadata = {
@@ -1448,17 +1435,6 @@ export type SetupResponse = {
     success: boolean;
 };
 
-export type ShareSessionNostrRequest = {
-    relays?: Array<string>;
-};
-
-export type ShareSessionNostrResponse = {
-    deeplink: string;
-    eventId: string;
-    nevent: string;
-    relays: Array<string>;
-};
-
 export type SlashCommand = {
     command: string;
     command_type: CommandType;
@@ -1629,11 +1605,6 @@ export type ToolInfo = {
     permission?: PermissionLevel | null;
 };
 
-export type ToolPermission = {
-    permission: PermissionLevel;
-    tool_name: string;
-};
-
 export type ToolRequest = {
     _meta?: {
         [key: string]: unknown;
@@ -1675,15 +1646,6 @@ export type TranscribeResponse = {
      */
     text: string;
 };
-
-export type TunnelInfo = {
-    hostname: string;
-    secret: string;
-    state: TunnelState;
-    url: string;
-};
-
-export type TunnelState = 'idle' | 'starting' | 'running' | 'error' | 'disabled';
 
 /**
  * UI-specific metadata for MCP resources
@@ -1769,10 +1731,6 @@ export type UpsertConfigQuery = {
     is_secret: boolean;
     key: string;
     value: unknown;
-};
-
-export type UpsertPermissionsQuery = {
-    tool_permissions: Array<ToolPermission>;
 };
 
 /**
@@ -2426,29 +2384,6 @@ export type RemoveExtensionResponses = {
 
 export type RemoveExtensionResponse = RemoveExtensionResponses[keyof RemoveExtensionResponses];
 
-export type UpsertPermissionsData = {
-    body: UpsertPermissionsQuery;
-    path?: never;
-    query?: never;
-    url: '/config/permissions';
-};
-
-export type UpsertPermissionsErrors = {
-    /**
-     * Invalid request
-     */
-    400: unknown;
-};
-
-export type UpsertPermissionsResponses = {
-    /**
-     * Permission update completed
-     */
-    200: string;
-};
-
-export type UpsertPermissionsResponse = UpsertPermissionsResponses[keyof UpsertPermissionsResponses];
-
 export type GetPromptsData = {
     body?: never;
     path?: never;
@@ -2783,32 +2718,6 @@ export type GetProviderModelsResponses = {
 };
 
 export type GetProviderModelsResponse = GetProviderModelsResponses[keyof GetProviderModelsResponses];
-
-export type ConfigureProviderOauthData = {
-    body?: never;
-    path: {
-        /**
-         * Provider name
-         */
-        name: string;
-    };
-    query?: never;
-    url: '/config/providers/{name}/oauth';
-};
-
-export type ConfigureProviderOauthErrors = {
-    /**
-     * OAuth configuration failed
-     */
-    400: unknown;
-};
-
-export type ConfigureProviderOauthResponses = {
-    /**
-     * OAuth configuration completed
-     */
-    200: unknown;
-};
 
 export type ReadConfigData = {
     body: ConfigKeyQuery;
@@ -3149,22 +3058,6 @@ export type TranscribeDictationResponses = {
 };
 
 export type TranscribeDictationResponse = TranscribeDictationResponses[keyof TranscribeDictationResponses];
-
-export type GetFeaturesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/features';
-};
-
-export type GetFeaturesResponses = {
-    /**
-     * Compile-time feature flags
-     */
-    200: FeaturesResponse;
-};
-
-export type GetFeaturesResponse = GetFeaturesResponses[keyof GetFeaturesResponses];
 
 export type StartNanogptSetupData = {
     body?: never;
@@ -4060,37 +3953,6 @@ export type UnpauseScheduleResponses = {
 
 export type UnpauseScheduleResponse = UnpauseScheduleResponses[keyof UnpauseScheduleResponses];
 
-export type ImportSessionNostrData = {
-    body: ImportSessionNostrRequest;
-    path?: never;
-    query?: never;
-    url: '/sessions/import/nostr';
-};
-
-export type ImportSessionNostrErrors = {
-    /**
-     * Bad request - Invalid Nostr share link
-     */
-    400: unknown;
-    /**
-     * Unauthorized - Invalid or missing API key
-     */
-    401: unknown;
-    /**
-     * Internal server error
-     */
-    500: unknown;
-};
-
-export type ImportSessionNostrResponses = {
-    /**
-     * Nostr shared session imported successfully
-     */
-    200: Session;
-};
-
-export type ImportSessionNostrResponse = ImportSessionNostrResponses[keyof ImportSessionNostrResponses];
-
 export type SessionCancelData = {
     body: CancelRequest;
     path: {
@@ -4328,42 +4190,6 @@ export type UpdateSessionNameResponses = {
     200: unknown;
 };
 
-export type ShareSessionNostrData = {
-    body: ShareSessionNostrRequest;
-    path: {
-        /**
-         * Unique identifier for the session
-         */
-        session_id: string;
-    };
-    query?: never;
-    url: '/sessions/{session_id}/share/nostr';
-};
-
-export type ShareSessionNostrErrors = {
-    /**
-     * Unauthorized - Invalid or missing API key
-     */
-    401: unknown;
-    /**
-     * Session not found
-     */
-    404: unknown;
-    /**
-     * Internal server error
-     */
-    500: unknown;
-};
-
-export type ShareSessionNostrResponses = {
-    /**
-     * Session shared to Nostr successfully
-     */
-    200: ShareSessionNostrResponse;
-};
-
-export type ShareSessionNostrResponse2 = ShareSessionNostrResponses[keyof ShareSessionNostrResponses];
-
 export type UpdateSessionUserRecipeValuesData = {
     body: UpdateSessionUserRecipeValuesRequest;
     path: {
@@ -4447,19 +4273,3 @@ export type SendTelemetryEventResponses = {
      */
     202: unknown;
 };
-
-export type GetTunnelStatusData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/tunnel/status';
-};
-
-export type GetTunnelStatusResponses = {
-    /**
-     * Tunnel info
-     */
-    200: TunnelInfo;
-};
-
-export type GetTunnelStatusResponse = GetTunnelStatusResponses[keyof GetTunnelStatusResponses];
