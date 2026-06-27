@@ -469,9 +469,13 @@ impl State {
                         elapsed_ms,
                     });
                 let exhausted = {
+                    // Judge kills advance n.attempts (for the epoch guard) but are SUPERVISORY, not task
+                    // failures — and the judge can be wrong (a borderline over-read). Don't let a judge
+                    // intervention burn the transient-retry budget: exclude it from the exhaustion count.
+                    let judge_kills = self.interventions.get(tid).copied().unwrap_or(0);
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
-                    n.attempts >= self.max_attempts
+                    n.attempts.saturating_sub(judge_kills) >= self.max_attempts
                 };
                 if exhausted {
                     self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
