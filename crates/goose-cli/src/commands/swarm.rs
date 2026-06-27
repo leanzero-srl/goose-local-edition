@@ -1058,12 +1058,15 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
         .map(|p| SwarmDevice {
             id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
             model_id: p.identifier.clone(),
+            // Default auto-pool concurrency to 2 (one LM Studio model instance serves several requests in
+            // PARALLEL) so a node isn't idle while one slow task runs — the dominant wall-clock cost. A
+            // configured device's explicit weight still wins. Revert to 1 if the local inference OOMs/hangs.
             weight: cfg
                 .devices
                 .iter()
                 .find(|d| d.model_id == p.identifier)
                 .map(|d| d.weight)
-                .unwrap_or(1),
+                .unwrap_or(2),
             enabled: true,
             instances: 1,
             host: p.device.clone(),
@@ -2185,10 +2188,12 @@ impl GooseAgentDispatcher {
         let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
-            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks. \
-            Aim for noticeably MORE than {worker_count} subtasks when the task has natural units: ONE subtask per module / \
-            command / file is ideal. A thin plan of a few big monolith tasks leaves nodes idle and is WRONG — split aggressively. \
-            Use NON-OVERLAPPING files and minimal ordering so no worker sits idle; only add a dependency when a subtask genuinely \
+            There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
+            aim for about 2x to 3x {worker_count} total (e.g. ~6-9 for a 3-device fleet), NOT one per command/function. GROUP \
+            several related commands or functions into ONE module subtask, and related tests into ONE test subtask. These models \
+            are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
+            parallelism past the fleet width — a handful of well-scoped subtasks finishes far sooner than 18 micro-ones. Still keep \
+            subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
             needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
             needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
             DECIDE THE LAYOUT FIRST and pick ONE convention, applied to EVERY file — do NOT mix: EITHER a single package \
