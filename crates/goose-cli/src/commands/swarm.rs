@@ -2467,8 +2467,14 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 .join("\n");
             let owned_part = if req.owned_files.is_empty() {
                 "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
-                 above actually exists on disk and the tests cover each module; if any is missing, that \
-                 is a failure to report.\n\n"
+                 above actually exists on disk and the tests cover each module. CRITICAL: a green pytest \
+                 suite does NOT prove the program works — unit tests usually call functions directly and \
+                 NEVER invoke the CLI/entry point, so a broken argparse, a bad import, or a crashing \
+                 `main()` passes every test yet fails on every real invocation. You MUST actually RUN the \
+                 program end-to-end: invoke its entry point (e.g. `python3 -m <package> --help`, then one \
+                 real command from the spec with real arguments) and confirm it prints sane output and does \
+                 NOT raise. If the entry point crashes, FIX the offending file — a program whose CLI cannot \
+                 run is a FAILURE no matter how many unit tests pass. Report any missing file or runtime crash.\n\n"
                     .to_string()
             } else {
                 // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
