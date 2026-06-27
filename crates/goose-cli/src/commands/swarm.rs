@@ -2201,8 +2201,11 @@ impl GooseAgentDispatcher {
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
             difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `python3 -m pytest` \
-            (NOT py_compile), fixes failures until GREEN, then runs the program's main command ONCE to confirm it starts, and \
-            reports PASS/FAIL honestly. Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
+            (NOT py_compile) and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
+            change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
+            existing test to assert the new correct output. Do not stall — make the whole suite pass. Then runs the program's \
+            main command ONCE to confirm it starts, and reports PASS/FAIL honestly. Its own files must NOT overlap the others. \
+            Then call the final_output tool with the plan.");
         let user_msg = format!("{research_block}Plan this task: {user_prompt}");
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
@@ -2388,7 +2391,9 @@ impl GooseAgentDispatcher {
             files (paths it owns; non-overlapping across parallel subtasks).\n\
             UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
             that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
-            files, writes and RUNS tests (e.g. python3), and reports PASS/FAIL; its files must NOT overlap the others (e.g. a test file).\n\
+            files, RUNS `python3 -m pytest`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
+            fails because the change intentionally altered behavior (EDIT that existing test to assert the new output; do not \
+            stall). Reports PASS/FAIL; its files must NOT overlap the others.\n\
             Also produce a short integration note. Then call the final_output tool with the plan.");
         let response = Some(Response {
             json_schema: Some(plan_schema),
