@@ -2521,9 +2521,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
              SIBLING directories — they are unrelated projects. If the directory is empty, that is \
              expected for a new project: just create your files, do not go looking elsewhere.\n\
-             - NEVER read the swarm's OWN run artifacts that may sit in this directory: `out.json`, any \
-             `*out.json`, `*progress*.log`, or the `.swarm/` folder. They are run logs, NOT project files \
-             — cat-ing them tells you nothing and wastes turns; ignore them completely.\n\
+             - NEVER read the swarm's/harness's OWN artifacts that may sit in this directory or its parent: \
+             `out.json`, any `*out.json`, `*progress*.log`, `plan.json`, `prompt.txt`, or the `.swarm/` \
+             folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
+             you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
+             completely and also do NOT create a `plan.json`.\n\
              - DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs/outputs \
              above — that is enough to start. Read AT MOST the ONE file you will edit (for an amendment), \
              then ACT. Do NOT re-read the whole project to 'understand it first'; if you catch yourself \
