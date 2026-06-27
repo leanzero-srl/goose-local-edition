@@ -90,3 +90,7 @@ Structural + quality fixes SHIPPED + validated (all local-edition), each from a 
 - **idle-timeout**: now validated 7× (storage-archive-persist 683s, test-archive 900s, roller-module 1049s, cli-archive 1047s all completed instead of dying on wall-clock).
 Kept apps this lap: pwgen, dice, contacts (8-cmd CLI), mdtoc (library), split (8-cmd runnable CLI), note-amend-{pin,tags,archive}.
 Still open (lap 4): replanner over-analyze (6 pytest 0-writes deciding bonus tasks); test-task-over-read (test tasks cat source for the API — candidate: inject dep content into test tasks); parallelism/concurrency (1 slow critical-path task idles 2 nodes); spec-coverage divergence (architect builds `add --tags`+`list --tag` instead of literal `tag`/`untag` subcommands); slow 27B generation (10-17 min/task) — idle-timeout covers it but wall-clock per amendment is ~1h.
+
+## Lap 5 validation (2026-06-27)
+- **hallucination-completion-guard VALIDATED on pwcheck** — fired 2× (retried 2 zero-write tasks that had claimed done); final 79 tests green, CLI rates passwords correctly (123=Very Weak 8/100, Xk9#mLp2qR=Weak 45/100). mkdir=0, architect-CLI-entry (pwcheck/__main__) all held.
+- Replanner ADDS VALUE here: it injected unicode edge-case tests that exposed 4 real scoring gaps, then integrate-verify reconciled them to green — the replanner converged (not a runaway). Kept apps/pwcheck.
