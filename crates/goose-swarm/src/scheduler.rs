@@ -14,6 +14,7 @@ use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
+use crate::judge::{Judge, JudgeConfig, JudgeOutcome, JudgeRequest};
 use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -146,6 +147,13 @@ struct State {
     /// Observed per-device speed: device index -> (total completed ms, count). Used to route the
     /// hardest tasks (incl. integrate-verify) to the proven-fastest node on an identical-model fleet.
     device_speed: HashMap<usize, (u64, u32)>,
+    /// Judge support — empty/false unless a judge is attached. `abort_handles` lets the judge kill a
+    /// stuck worker's future; `prior_hints` carries the judge's corrective note onto the re-dispatch;
+    /// `interventions` caps kills per task; `judge_running` keeps at most one judge in flight at a time.
+    abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
+    prior_hints: HashMap<TaskId, String>,
+    interventions: HashMap<TaskId, u32>,
+    judge_running: bool,
 }
 
 impl State {
@@ -342,6 +350,7 @@ impl State {
         all_files.sort();
         all_files.dedup();
         self.held_by.insert(tid.clone(), files);
+        let prior_hint = self.prior_hints.remove(&tid);
         out.push(Assignment {
             task_id: tid.clone(),
             request: DispatchRequest {
@@ -353,11 +362,20 @@ impl State {
                 attempt,
                 owned_files,
                 all_files,
+                prior_hint,
             },
         });
     }
 
-    fn complete(&mut self, tid: &str, res: Result<TaskRunOutput, DispatchError>) {
+    fn complete(&mut self, tid: &str, attempt: u32, res: Result<TaskRunOutput, DispatchError>) {
+        // Ignore a completion from an attempt the judge already superseded (killed + re-dispatched):
+        // its device and file holds were released when the judge intervened, so this stale future must
+        // not touch the newer attempt's bookkeeping. `attempts` advances on every kill/retry, so a
+        // mismatch uniquely identifies a dead attempt.
+        if self.dag.tasks.get(tid).map(|n| n.attempts) != Some(attempt) {
+            return;
+        }
+        self.abort_handles.remove(tid);
         let released_dev = self.claimed_device.remove(tid);
         let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
         if let Some(dev) = released_dev {
@@ -516,6 +534,127 @@ impl State {
         }
     }
 
+    /// Choose an in-flight worker for the judge to inspect: the longest-running Claimed task that is at
+    /// least `min_age_secs` old and under its intervention cap, to be judged on a currently-idle device.
+    /// Returns the request + the attempt inspected, and marks a judge running (at most one at a time).
+    fn pick_judge_target(&mut self, cfg: &JudgeConfig) -> Option<(JudgeRequest, u32)> {
+        let judge_model_id = self
+            .devices
+            .iter()
+            .find(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)
+            .map(|d| d.cfg.model_id.clone())?;
+        let mut best: Option<(String, u64)> = None;
+        for (tid, n) in &self.dag.tasks {
+            if n.state != TaskState::Claimed {
+                continue;
+            }
+            if self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task {
+                continue;
+            }
+            let elapsed = self
+                .attempt_started_at
+                .get(tid)
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0);
+            if elapsed < cfg.min_age_secs {
+                continue;
+            }
+            if best.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
+                best = Some((tid.clone(), elapsed));
+            }
+        }
+        let (tid, elapsed) = best?;
+        let n = &self.dag.tasks[&tid];
+        let req = JudgeRequest {
+            task_id: tid.clone(),
+            description: n.spec.description.clone(),
+            owned_files: n.spec.owned_files.clone(),
+            elapsed_secs: elapsed,
+            judge_model_id,
+        };
+        let attempt = n.attempts;
+        self.judge_running = true;
+        Some((req, attempt))
+    }
+
+    /// Apply a judge verdict. Always emits a `JudgeVerdict` event. If the verdict is an actionable
+    /// problem, the inspected attempt is still the live one, the judge is confident enough, and the
+    /// per-task intervention cap is not yet hit, the worker is killed and its task re-queued with the
+    /// hint — otherwise the verdict is logged only (`observed`). The judge being a weak model is the
+    /// reason these guards are strict.
+    fn apply_judge_outcome(
+        &mut self,
+        tid: &str,
+        attempt: u32,
+        outcome: JudgeOutcome,
+        cfg: &JudgeConfig,
+    ) {
+        let (device, model) = match self.task_final_device.get(tid) {
+            Some((d, m)) => (Some(d.clone()), Some(m.clone())),
+            None => (None, None),
+        };
+        let still_live = self
+            .dag
+            .tasks
+            .get(tid)
+            .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
+            .unwrap_or(false);
+        let interv = self.interventions.get(tid).copied().unwrap_or(0);
+        let act = outcome.verdict.is_problem()
+            && still_live
+            && outcome.confidence >= cfg.intervene_confidence
+            && interv < cfg.max_interventions_per_task;
+        self.sink.emit(&SwarmEvent::JudgeVerdict {
+            task_id: tid.to_string(),
+            device: device.clone().unwrap_or_default(),
+            verdict: outcome.verdict.as_str().to_string(),
+            confidence: outcome.confidence,
+            hint: outcome.hint.clone(),
+            action: if act { "re_dispatch" } else { "observed" }.to_string(),
+        });
+        if !act {
+            return;
+        }
+        if let Some(h) = self.abort_handles.remove(tid) {
+            h.abort();
+        }
+        let released_dev = self.claimed_device.remove(tid);
+        let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
+        if let Some(dev) = released_dev {
+            if self.devices[dev].in_flight > 0 {
+                self.devices[dev].in_flight -= 1;
+            }
+        }
+        if let Some(files) = self.held_by.remove(tid) {
+            for f in files {
+                self.held_files.remove(&f);
+            }
+        }
+        self.attempt_started_at.remove(tid);
+        *self.interventions.entry(tid.to_string()).or_default() += 1;
+        self.prior_hints.insert(tid.to_string(), outcome.hint);
+        self.attempt_log
+            .entry(tid.to_string())
+            .or_default()
+            .push(AttemptRecord {
+                device,
+                model,
+                outcome: "judge_killed".to_string(),
+                error: Some(outcome.verdict.as_str().to_string()),
+                elapsed_ms: 0,
+            });
+        // Advance the attempt epoch so the killed future's completion is ignored, then re-queue.
+        let n = self.dag.tasks.get_mut(tid).unwrap();
+        n.attempts += 1;
+        n.avoid_device = released_dev_id;
+        n.state = TaskState::Ready;
+        let fan_out = n.fan_out;
+        self.ready.push(Ranked {
+            fan_out,
+            id: tid.to_string(),
+        });
+    }
+
     /// A failed task can never produce output, so its (transitive) dependents can never run —
     /// mark them Failed so the run terminates instead of deadlocking on blocked tasks.
     fn fail_descendants(&mut self, tid: &str) {
@@ -623,6 +762,8 @@ pub struct Scheduler {
     sink: Arc<dyn EventSink>,
     replanner: Option<Arc<dyn Replanner>>,
     max_replans: u32,
+    judge: Option<Arc<dyn Judge>>,
+    judge_cfg: JudgeConfig,
 }
 
 impl Scheduler {
@@ -633,7 +774,18 @@ impl Scheduler {
             sink: Arc::new(NullSink),
             replanner: None,
             max_replans: 0,
+            judge: None,
+            judge_cfg: JudgeConfig::default(),
         }
+    }
+
+    /// Attach an idle-model judge: when a node would otherwise sit idle while tasks are still in
+    /// flight, it inspects a busy worker and may kill + re-dispatch one that is looping, over-reading,
+    /// or producing broken code. OFF by default — with no judge attached the scheduler is unchanged.
+    pub fn with_judge(mut self, judge: Arc<dyn Judge>, cfg: JudgeConfig) -> Self {
+        self.judge = Some(judge);
+        self.judge_cfg = cfg;
+        self
     }
 
     /// Attach an event sink for structured observability (goose-cli writes JSONL through it).
@@ -709,6 +861,10 @@ impl Scheduler {
             replans_done: 0,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
+            abort_handles: HashMap::new(),
+            prior_hints: HashMap::new(),
+            interventions: HashMap::new(),
+            judge_running: false,
         }));
         let notify = Arc::new(Notify::new());
 
@@ -717,18 +873,29 @@ impl Scheduler {
             let dispatched_now = !assignments.is_empty();
             for a in assignments {
                 let dispatcher = dispatcher.clone();
-                let state = state.clone();
+                let task_state = state.clone();
                 let notify = notify.clone();
                 let task_id = a.task_id.clone();
+                let attempt = a.request.attempt;
                 let request = a.request;
-                tokio::spawn(async move {
+                let done_id = task_id.clone();
+                let jh = tokio::spawn(async move {
                     let res = dispatcher.run(request).await;
                     {
-                        let mut s = state.lock().await;
-                        s.complete(&task_id, res);
+                        let mut s = task_state.lock().await;
+                        s.complete(&done_id, attempt, res);
                     }
                     notify.notify_one();
                 });
+                // Register the abort handle only when a judge is attached, so it can kill this attempt.
+                // No judge -> the map stays empty and the default path is byte-identical to before.
+                if self.judge.is_some() {
+                    state
+                        .lock()
+                        .await
+                        .abort_handles
+                        .insert(task_id, jh.abort_handle());
+                }
             }
 
             {
@@ -822,6 +989,35 @@ impl Scheduler {
                             }
                         }
                     }
+                }
+            }
+            // Idle-model judge: when a node would otherwise sit idle while tasks are still in flight,
+            // inspect the longest-running worker and possibly kill + re-dispatch a stuck one. At most one
+            // judge runs at a time; the whole block is skipped when no judge is attached.
+            if let Some(judge) = &self.judge {
+                let target = {
+                    let mut s = state.lock().await;
+                    if s.judge_running || s.total_in_flight() == 0 {
+                        None
+                    } else {
+                        s.pick_judge_target(&self.judge_cfg)
+                    }
+                };
+                if let Some((req, attempt)) = target {
+                    let tid = req.task_id.clone();
+                    let judge = judge.clone();
+                    let st = state.clone();
+                    let nt = notify.clone();
+                    let cfg = self.judge_cfg;
+                    tokio::spawn(async move {
+                        let outcome = judge.judge(req).await;
+                        {
+                            let mut s = st.lock().await;
+                            s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
+                            s.judge_running = false;
+                        }
+                        nt.notify_one();
+                    });
                 }
             }
             // A completion (or nothing yet) — wake and re-evaluate. tokio::Notify stores one permit,

@@ -51,6 +51,9 @@ pub struct DispatchRequest {
     /// The full project file manifest (every task's owned files) so the worker uses the agreed layout
     /// for imports and never invents a divergent location.
     pub all_files: Vec<String>,
+    /// A corrective hint from the idle-model judge when this is a re-dispatch after the judge killed a
+    /// prior attempt (e.g. "you were looping/over-reading — WRITE now"). `None` on a normal attempt.
+    pub prior_hint: Option<String>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
