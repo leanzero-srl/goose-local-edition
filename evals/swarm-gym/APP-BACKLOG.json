@@ -291,6 +291,7 @@
  "used": [
   "glyph-fold",
   "kwic-weave",
-  "tongue-id"
+  "tongue-id",
+  "major-key"
  ]
 }
