@@ -105,7 +105,10 @@ impl Default for JudgeConfig {
         Self {
             min_age_secs: 90,
             intervene_confidence: 0.8,
-            max_interventions_per_task: 1,
+            // Allow the judge to help a struggling task more than once: a hard task often needs a
+            // second round of "simplify your approach" guidance before it lands. Total work is still
+            // bounded by max_attempts; the 420s thresholds prevent rapid re-killing.
+            max_interventions_per_task: 2,
         }
     }
 }
