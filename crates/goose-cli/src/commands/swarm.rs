@@ -2529,8 +2529,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs/outputs \
              above — that is enough to start. Read AT MOST the ONE file you will edit (for an amendment), \
              then ACT. Do NOT re-read the whole project to 'understand it first'; if you catch yourself \
-             reading many files or thinking 'let me first read everything', STOP and write/edit now. \
-             Trust the manifest + dependency context; verify by RUNNING (pytest), not by re-reading.\n\
+             reading many files or thinking 'let me first read everything / understand the codebase', STOP \
+             and write/edit now. NEVER read the project's TEST files (`test_*.py`/`*_test.py`) — they are \
+             not your dependencies and tell you nothing you need; reading the test suite is wasted turns \
+             (a worker just burned 13 reads on 6 test files and wrote nothing). Read ONE specific SOURCE \
+             file only if you must call its exact API. Trust the manifest + dependency context; verify by \
+             RUNNING (pytest), not by re-reading.\n\
              \n{layout_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
