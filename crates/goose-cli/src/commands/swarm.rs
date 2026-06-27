@@ -2454,6 +2454,14 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  is a failure to report.\n\n"
                     .to_string()
             } else {
+                // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
+                // have spammed `mkdir` 27x on a nested path and paralysed the task (0 writes). Deterministic
+                // beats nudging.
+                for f in &req.owned_files {
+                    if let Some(parent) = std::path::Path::new(&cwd).join(f).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                }
                 let owned = req
                     .owned_files
                     .iter()
@@ -2461,9 +2469,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .collect::<Vec<_>>()
                     .join("\n");
                 format!(
-                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. If a \
-                     parent directory is missing, create it ONCE with a single `mkdir -p`, then write the \
-                     files — NEVER run `mkdir` more than once (repeating it just wastes turns):\n{owned}\n\n"
+                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
+                     parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
+                     just wastes turns); go straight to writing the files:\n{owned}\n\n"
                 )
             };
             // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
