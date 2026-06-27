@@ -2196,6 +2196,10 @@ impl GooseAgentDispatcher {
             under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
             in a package while its modules sit at the root. Every subtask's `files` and every import MUST match the one chosen \
             layout exactly.\n\
+            If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
+            writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
+            AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
+            omit the entry point.\n\
             For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
