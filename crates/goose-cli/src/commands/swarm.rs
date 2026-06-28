@@ -2766,7 +2766,18 @@ impl Judge for GooseAgentDispatcher {
         )
         .await
         {
-            Ok(Ok(o)) => parse_judge_reply(&o.text),
+            Ok(Ok(o)) => {
+                // Research log: record EVERY semantic review (including the OK ones) so the judge's
+                // behaviour can actually be studied — when it ran and what it concluded. A semantic OK is
+                // otherwise indistinguishable from a deterministic OK in the verdict event.
+                let log = cwd.join(".swarm").join("semantic_reviews.log");
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+                    use std::io::Write;
+                    let reply: String = o.text.replace('\n', " ").chars().take(240).collect();
+                    let _ = writeln!(f, "{}\t{}s\t{}", req.task_id, req.elapsed_secs, reply);
+                }
+                parse_judge_reply(&o.text)
+            }
             _ => JudgeOutcome::ok(),
         }
     }
