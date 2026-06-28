@@ -1825,9 +1825,10 @@ impl GooseAgentDispatcher {
 
         let mut model_config =
             goose::model_config::model_config_from_user_config("lmstudio", model_id)?;
-        if let Some(t) = self.sampling.temperature {
-            model_config = model_config.with_temperature(Some(t));
-        }
+        // Follow LM Studio's own temperature: pass the sampling temperature through verbatim, which is
+        // None unless the swarm config explicitly sets one. None clears any inherited GOOSE_TEMPERATURE
+        // default so the request omits temperature entirely and the LM Studio per-model setting applies.
+        model_config = model_config.with_temperature(self.sampling.temperature);
         let mut extra = std::collections::HashMap::new();
         if let Some(v) = self.sampling.top_p {
             extra.insert("top_p".to_string(), serde_json::json!(v));
