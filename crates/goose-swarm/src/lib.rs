@@ -18,7 +18,8 @@ pub use dag::{specs_from_plan_json, Dag, Difficulty, Node, TaskId, TaskSpec, Tas
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
-    deterministic_verdict, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, Verdict,
+    deterministic_verdict, ChildSpec, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    Verdict,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome};

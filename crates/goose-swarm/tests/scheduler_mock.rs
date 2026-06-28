@@ -4,9 +4,9 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig, JudgeOutcome,
-    JudgeRequest, ReplanContext, Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec,
-    Verdict,
+    ChildSpec, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig,
+    JudgeOutcome, JudgeRequest, ReplanContext, Replanner, Scheduler, TaskDispatcher, TaskRunOutput,
+    TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -674,5 +674,105 @@ async fn judge_terminal_fails_worker_stuck_at_cap() {
         runs.lock().unwrap()[&"doomed".to_string()],
         2,
         "re-dispatched once (kill at cap-0), then terminal-failed on the still-flagged retry"
+    );
+}
+
+/// Records the ORDER tasks FINISH in, so the test can prove a dependent ran only after ALL split children.
+struct SplitTestDispatcher {
+    order: Arc<Mutex<Vec<String>>>,
+    delay: Duration,
+}
+
+#[async_trait]
+impl TaskDispatcher for SplitTestDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        // `big` runs long so the judge has time to split it (its future is then aborted). `big-b` is a
+        // deliberately SLOW child: a correctly re-pointed dependent MUST wait for it, so if the dependent
+        // finishes before `big-b` then the re-point/indegree logic dropped a child — caught by the order
+        // assertion below (this is what makes the test catch the subtle indegree bug, not just deadlock).
+        let mult = match req.task_id.as_str() {
+            "big" => 50,
+            "big-b" => 8,
+            _ => 1,
+        };
+        tokio::time::sleep(self.delay * mult).await;
+        self.order.lock().unwrap().push(req.task_id.clone());
+        Ok(format!("out-{}", req.task_id).into())
+    }
+}
+
+/// A judge that SPLITS the target into two file-partitioned children, passing everything else.
+struct SplitJudge {
+    target: String,
+}
+
+#[async_trait]
+impl Judge for SplitJudge {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        if req.task_id == self.target {
+            JudgeOutcome::split(vec![
+                ChildSpec {
+                    id: "big-a".to_string(),
+                    files: vec!["a.py".to_string()],
+                    depends_on: vec![],
+                },
+                ChildSpec {
+                    id: "big-b".to_string(),
+                    files: vec!["b.py".to_string()],
+                    depends_on: vec![],
+                },
+            ])
+        } else {
+            JudgeOutcome::ok()
+        }
+    }
+}
+
+/// M3 task-splitting: the judge SPLITS a too-big task into file-partitioned children, and the original's
+/// dependent must be re-pointed onto ALL children — waiting for the whole split, never running early
+/// (indegree dropped a child) and never deadlocking (indegree stuck too high).
+#[tokio::test]
+async fn judge_splits_task_and_dependent_waits_for_all_children() {
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(SplitTestDispatcher {
+        order: order.clone(),
+        delay: Duration::from_millis(20),
+    });
+    // `big` owns two files; `verify` depends on it. The judge partitions `big` into big-a (a.py) + big-b (b.py).
+    let dag = Dag::from_specs(vec![
+        spec("big", &[], &["a.py", "b.py"]),
+        spec("verify", &["big"], &["v.py"]),
+    ])
+    .unwrap();
+    let judge = Arc::new(SplitJudge {
+        target: "big".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(report.failed.is_empty(), "no task fails: {:?}", report.failed);
+    for child in ["big-a", "big-b", "verify"] {
+        assert!(
+            report.done.contains(&child.to_string()),
+            "{child} completed; done = {:?}",
+            report.done
+        );
+    }
+    let order = order.lock().unwrap();
+    let ia = order.iter().position(|t| t == "big-a").expect("big-a ran");
+    let ib = order.iter().position(|t| t == "big-b").expect("big-b ran");
+    let iv = order.iter().position(|t| t == "verify").expect("verify ran");
+    assert!(
+        iv > ia && iv > ib,
+        "the dependent finished AFTER both split children — dependents were re-pointed onto the WHOLE \
+         split with correct indegree (completion order = {:?})",
+        *order
     );
 }
