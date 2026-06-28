@@ -46,6 +46,9 @@ pub struct Node {
     pub result: Option<String>,
     /// On a transient re-dispatch, steer away from the device that just failed this task.
     pub avoid_device: Option<String>,
+    /// M5: set once an idle node has correctness-pre-reviewed this task's output (so it is reviewed at
+    /// most once). Only meaningful for Done tasks; false for everything not yet pre-reviewed.
+    pub pre_reviewed: bool,
 }
 
 #[derive(Debug)]
@@ -77,6 +80,7 @@ impl Dag {
                     attempts: 0,
                     result: None,
                     avoid_device: None,
+                    pre_reviewed: false,
                     spec,
                 },
             );
@@ -246,6 +250,7 @@ impl Dag {
                     attempts: 0,
                     result: None,
                     avoid_device: None,
+                    pre_reviewed: false,
                     spec: s,
                 },
             );

@@ -226,6 +226,33 @@ pub trait Judge: Send + Sync {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome;
 }
 
+/// What the scheduler hands an idle-node PRE-REVIEWER (M5): a COMPLETED task to correctness-check while a
+/// node would otherwise idle. The implementation runs the task's tests + exercises its primary feature on
+/// a golden input and persists findings where integrate-verify will read them.
+pub struct PreReviewRequest {
+    pub task_id: TaskId,
+    pub description: String,
+    pub owned_files: Vec<String>,
+    pub goal: String,
+    /// LM Link model id of the idle device to run the review on.
+    pub reviewer_model_id: String,
+}
+
+/// Outcome of a pre-review. Findings are persisted by the implementation (for integrate-verify to consume);
+/// `had_findings` lets the scheduler log whether a defect was flagged.
+pub struct PreReviewOutput {
+    pub had_findings: bool,
+    pub summary: String,
+}
+
+/// Runs on an idle node when NO in-flight worker needs judging: correctness-checks a COMPLETED task's
+/// output — the deepest review finding is that passing tests hide a wrong default-path, so this exercises
+/// the REAL feature — and records findings for integrate-verify. Opt-in like the judge (off by default).
+#[async_trait]
+pub trait PreReviewer: Send + Sync {
+    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput;
+}
+
 /// A verdict derivable from cheap, unambiguous signals alone — no model required. The scheduler trusts
 /// this even without (or before) the LLM judge: code that won't compile and a worker that has read a
 /// lot while writing nothing are not judgment calls.
