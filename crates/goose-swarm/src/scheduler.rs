@@ -655,7 +655,17 @@ impl State {
             .get(tid)
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
+        // SPLIT is an action on healthy-but-too-big work, handled separately below — keep it out of the
+        // kill/re-dispatch path (which is for misbehaving workers).
+        let is_split = still_live
+            && outcome.verdict == crate::judge::Verdict::Split
+            && outcome.confidence >= cfg.intervene_confidence
+            && outcome
+                .proposed_split
+                .as_ref()
+                .is_some_and(|c| !c.is_empty());
         let actionable = outcome.verdict.is_problem()
+            && outcome.verdict != crate::judge::Verdict::Split
             && still_live
             && outcome.confidence >= cfg.intervene_confidence;
         // The judge's three actions: observe (log only), re_dispatch (kill + retry with a hint, while
@@ -668,7 +678,9 @@ impl State {
             && interv >= cfg.max_interventions_per_task
             && elapsed >= cfg.terminal_min_secs;
         let redispatch = actionable && interv < cfg.max_interventions_per_task;
-        let action = if terminal {
+        let action = if is_split {
+            "split"
+        } else if terminal {
             "failed"
         } else if redispatch {
             "re_dispatch"
@@ -683,6 +695,12 @@ impl State {
             hint: outcome.hint.clone(),
             action: action.to_string(),
         });
+        if is_split {
+            // proposed_split is present + non-empty here; apply_split validates the partition and returns
+            // false (no-op, worker keeps running) if it is malformed — a bad proposal never corrupts the DAG.
+            let children = outcome.proposed_split.clone().unwrap_or_default();
+            return self.apply_split(tid, &children);
+        }
         if terminal {
             if let Some(h) = self.abort_handles.remove(tid) {
                 h.abort();
@@ -764,6 +782,134 @@ impl State {
             fan_out,
             id: tid.to_string(),
         });
+        true
+    }
+
+    /// M3 task-splitting: replace a too-big task with the judge's proposed children that PARTITION its
+    /// owned files. Returns true if a VALID split was applied (worker aborted, children injected, the
+    /// original's dependents re-pointed onto ALL children); false if the proposal is malformed — the caller
+    /// then takes no action and the worker keeps running, so a bad proposal can never corrupt the DAG.
+    fn apply_split(&mut self, tid: &str, children: &[crate::judge::ChildSpec]) -> bool {
+        // ---- validate the partition against the original (no mutation yet) ----
+        let (orig_files, orig_deps, orig_diff, orig_model) = match self.dag.tasks.get(tid) {
+            Some(n) => (
+                n.spec
+                    .owned_files
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<String>>(),
+                n.spec.deps.clone(),
+                n.spec.difficulty,
+                n.spec.preferred_model.clone(),
+            ),
+            None => return false,
+        };
+        if children.len() < 2 {
+            return false; // need >= 2 parts to be worth splitting
+        }
+        let mut child_ids = std::collections::HashSet::new();
+        for c in children {
+            if !child_ids.insert(c.id.as_str()) || self.dag.tasks.contains_key(&c.id) {
+                return false; // duplicate child id, or collides with an existing task
+            }
+        }
+        // every child file belongs to the original, children are pairwise-disjoint, and together they
+        // cover ALL of the original's files (a true partition).
+        let mut union = std::collections::BTreeSet::new();
+        for c in children {
+            if c.files.is_empty() {
+                return false;
+            }
+            for f in &c.files {
+                if !orig_files.contains(f) || !union.insert(f.clone()) {
+                    return false; // foreign file or overlap between children
+                }
+            }
+        }
+        if union != orig_files {
+            return false; // does not cover the original's files
+        }
+        // child sibling deps may only reference sibling child ids.
+        if children
+            .iter()
+            .any(|c| c.depends_on.iter().any(|d| !child_ids.contains(d.as_str())))
+        {
+            return false;
+        }
+        // ---- abort + release the original worker (mirror the kill/re-dispatch cleanup) ----
+        if let Some(h) = self.abort_handles.remove(tid) {
+            h.abort();
+        }
+        if let Some(dev) = self.claimed_device.remove(tid) {
+            if self.devices[dev].in_flight > 0 {
+                self.devices[dev].in_flight -= 1;
+            }
+        }
+        if let Some(files) = self.held_by.remove(tid) {
+            for f in files {
+                self.held_files.remove(&f);
+            }
+        }
+        self.attempt_started_at.remove(tid);
+        // ---- build + insert the children (deps = original's external deps + sibling deps) ----
+        let child_id_list: Vec<TaskId> = children.iter().map(|c| c.id.clone()).collect();
+        let specs: Vec<crate::dag::TaskSpec> = children
+            .iter()
+            .map(|c| {
+                let mut deps = orig_deps.clone();
+                deps.extend(c.depends_on.iter().cloned());
+                crate::dag::TaskSpec {
+                    id: c.id.clone(),
+                    description: format!("(split of {tid}) {}", c.id),
+                    difficulty: orig_diff,
+                    preferred_model: orig_model.clone(),
+                    owned_files: c.files.clone(),
+                    deps,
+                }
+            })
+            .collect();
+        let newly_ready = match self.dag.splice_specs(specs) {
+            Ok(r) => r,
+            Err(_) => {
+                // cycle/collision: abort the split. The worker is already gone, so fail the task cleanly.
+                if let Some(n) = self.dag.tasks.get_mut(tid) {
+                    n.state = TaskState::Failed;
+                }
+                self.fail_descendants(tid);
+                return true;
+            }
+        };
+        // ---- re-point every dependent of the original onto ALL children ----
+        let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
+        for d in &dependents {
+            if let Some(n) = self.dag.tasks.get_mut(d) {
+                n.spec.deps.retain(|x| x != tid);
+                n.spec.deps.extend(child_id_list.iter().cloned());
+                // the original counted as ONE unmet dependency; it is now N unmet children -> net +(N-1).
+                n.indegree_remaining += child_id_list.len() - 1;
+            }
+            for cid in &child_id_list {
+                self.dag
+                    .dependents
+                    .entry(cid.clone())
+                    .or_default()
+                    .push(d.clone());
+                if let Some(cn) = self.dag.tasks.get_mut(cid) {
+                    cn.fan_out += 1;
+                }
+            }
+        }
+        self.dag.dependents.remove(tid);
+        // ---- mark the original Done (no cascade) + advance its epoch so a late completion is ignored ----
+        if let Some(n) = self.dag.tasks.get_mut(tid) {
+            n.attempts += 1;
+            n.state = TaskState::Done;
+        }
+        // ---- enqueue the children that are immediately ready ----
+        for id in newly_ready {
+            let fan_out = self.dag.tasks[&id].fan_out;
+            self.ready.push(Ranked { fan_out, id });
+        }
         true
     }
 
