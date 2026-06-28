@@ -301,6 +301,7 @@
   "spdx-augur",
   "import-marshal",
   "egyptian-fraction-forge",
-  "zeckendorf-codec"
+  "zeckendorf-codec",
+  "stern-brocot-pilot"
  ]
 }
