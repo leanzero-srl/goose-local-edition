@@ -302,6 +302,7 @@
   "import-marshal",
   "egyptian-fraction-forge",
   "zeckendorf-codec",
-  "stern-brocot-pilot"
+  "stern-brocot-pilot",
+  "cipher-sleuth"
  ]
 }
