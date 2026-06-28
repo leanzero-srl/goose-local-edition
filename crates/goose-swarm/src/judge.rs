@@ -149,6 +149,9 @@ pub struct JudgeConfig {
     /// A PRODUCTIVE task (writing, not over-reading) that has run at least this long is a candidate to be
     /// SPLIT into smaller file-partitioned subtasks instead of being left to crawl. 0 disables splitting.
     pub split_threshold_secs: u64,
+    /// Master gate for task-splitting (M3): when false, `is_split_candidate` never fires and the judge
+    /// never proposes a Verdict::Split, regardless of the threshold. Default false until proven live.
+    pub split_enabled: bool,
 }
 
 impl Default for JudgeConfig {
@@ -163,6 +166,10 @@ impl Default for JudgeConfig {
             over_read_tool_calls: 16,
             terminal_min_secs: 90,
             split_threshold_secs: 900,
+            // Off by default: task-splitting (M3) stays dark until a live run proves the DAG mutation +
+            // LLM partition safe end-to-end (M4). The scheduler logic + detection are in place and tested;
+            // this is the single master switch that lets a real run produce a Verdict::Split.
+            split_enabled: false,
         }
     }
 }
@@ -173,7 +180,8 @@ impl Default for JudgeConfig {
 /// over-read/looping paths — a thrashing worker is re-dispatched, not split; splitting is for work that is
 /// genuinely TOO BIG for one worker, not misbehaving.
 pub fn is_split_candidate(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
-    cfg.split_threshold_secs > 0
+    cfg.split_enabled
+        && cfg.split_threshold_secs > 0
         && input.elapsed_secs >= cfg.split_threshold_secs
         && input.any_owned_written
         && input.owned_files.len() >= 2
@@ -372,7 +380,11 @@ mod tests {
 
     #[test]
     fn split_candidate_only_for_big_productive_multifile_tasks() {
-        let cfg = JudgeConfig::default(); // split_threshold_secs = 900
+        // split_threshold_secs = 900; enable the master gate so the detector can fire in this unit test.
+        let cfg = JudgeConfig {
+            split_enabled: true,
+            ..JudgeConfig::default()
+        };
         // Long, producing, owns 2 files, not over-reading, never split -> SPLIT candidate.
         let mut big = mk("core", true, Some(10), 1000);
         big.owned_files = vec!["a.py".to_string(), "b.py".to_string()];

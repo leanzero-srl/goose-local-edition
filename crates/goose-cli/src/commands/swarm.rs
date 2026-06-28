@@ -19,7 +19,8 @@ use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{
-    deterministic_verdict, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, Judge,
+    deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
+    DispatchRequest, EventSink, Judge,
     JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, ReplanContext, Replanner,
     Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
@@ -2715,6 +2716,44 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     }
 }
 
+impl GooseAgentDispatcher {
+    /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
+    /// Returns the parsed children (the scheduler re-validates the partition before applying), or None if
+    /// the reply can't be parsed into >= 2 children — the judge then falls back to its normal review.
+    async fn propose_split(&self, req: &JudgeRequest) -> Option<Vec<ChildSpec>> {
+        let owns = req.owned_files.join(", ");
+        let system = "You split an over-long coding subtask into smaller INDEPENDENT pieces so several \
+            workers can finish it in parallel. You are given the files the task owns. Partition those files \
+            into 2 to 4 child subtasks. RULES: every file goes in EXACTLY ONE child; together the children \
+            cover ALL the listed files; introduce NO new files. Prefer fully independent children (empty \
+            depends_on); add a dependency only if one file genuinely cannot be written before another. Reply \
+            with ONLY a JSON array and no prose: \
+            [{\"id\":\"short-kebab-id\",\"files\":[\"path\"],\"depends_on\":[]}]."
+            .to_string();
+        let user = format!(
+            "GOAL: {goal}\nThe subtask \"{desc}\" owns these files and is taking too long for one worker:\n  \
+             {owns}\nPartition them now as a JSON array.",
+            goal = req.goal,
+            desc = req.description,
+        );
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)?;
+        // Extract the JSON array even if the model wrapped it in prose. `get` (not slice indexing) returns
+        // None on an inverted/invalid range, so a reply with no array just falls through to the review.
+        let start = text.find('[')?;
+        let end = text.rfind(']')?;
+        let json = text.get(start..=end)?;
+        let children: Vec<ChildSpec> = serde_json::from_str(json).ok()?;
+        (children.len() >= 2).then_some(children)
+    }
+}
+
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
@@ -2786,6 +2825,15 @@ impl Judge for GooseAgentDispatcher {
         // queue it behind a busy worker. This is what lets the judge still catch a stuck worker mid-fan-out.
         if req.judge_model_id.trim().is_empty() {
             return JudgeOutcome::ok();
+        }
+        // M3 (gated by split_enabled): a too-big PRODUCING task — ask this idle node to PARTITION its files
+        // into independent children instead of letting it crawl. The scheduler RE-VALIDATES the partition
+        // before applying, so a malformed proposal is harmless; on any parse failure we fall through to the
+        // normal semantic review and the worker keeps running.
+        if is_split_candidate(&input, &cfg) {
+            if let Some(children) = self.propose_split(&req).await {
+                return JudgeOutcome::split(children);
+            }
         }
         // Phase 2: SEMANTIC review on the idle node. Reached only after the deterministic checks pass —
         // this is where the (weak) model adds JUDGEMENT the cheap signals can't: given the goal and what
