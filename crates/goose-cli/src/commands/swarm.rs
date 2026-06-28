@@ -1249,6 +1249,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_judge_reply_handles_qwen_formats() {
+        // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
+        for ok in [
+            "VERDICT|CONFIDENCE|OK|HIGH",
+            "VERDICT|OK|LOW|",
+            "VERDICT|CONFIDENCE|HIGH|OK",
+            "VERDICT|LOW|",
+            "VERDICT|HIGH|OK|done",
+        ] {
+            assert_eq!(parse_judge_reply(ok).verdict, Verdict::Ok, "should be OK: {ok}");
+        }
+        // A real catch with NO verdict keyword — just HIGH + a corrective hint — must become actionable
+        // (this is the qwen format that was silently dropped before).
+        let caught = parse_judge_reply(
+            "VERDICT|HIGH|STOP retrying failing commands — write rules.py directly with a parser",
+        );
+        assert_ne!(caught.verdict, Verdict::Ok, "keyword-less HIGH+hint must act");
+        assert!(caught.confidence >= 0.8);
+        assert!(
+            caught.hint.contains("rules.py"),
+            "hint must be the correction, not an echoed label"
+        );
+        // Explicit keyword still classifies, and the hint skips echoed labels.
+        let oread = parse_judge_reply("VERDICT|CONFIDENCE|OVER_READING|HIGH|write the file now");
+        assert_eq!(oread.verdict, Verdict::OverReading);
+        assert_eq!(oread.hint, "write the file now");
+        // HIGH but no real correction -> stays OK (a vague reply can never kill a healthy worker).
+        assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -2557,15 +2588,6 @@ async fn py_syntax_error(path: &Path) -> Option<String> {
 /// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
 fn parse_judge_reply(s: &str) -> JudgeOutcome {
     let upper = s.to_uppercase();
-    let verdict = if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
-        Verdict::BrokenCode
-    } else if upper.contains("LOOPING") {
-        Verdict::Looping
-    } else if upper.contains("SPEC_DRIFT") || upper.contains("SPEC DRIFT") {
-        Verdict::SpecDrift
-    } else {
-        return JudgeOutcome::ok();
-    };
     // The correction is the LAST pipe-segment that is real free text — not a field LABEL, verdict word, or
     // confidence token. qwen-class models often echo the labels (e.g. `VERDICT|CONFIDENCE|BROKEN_CODE|HIGH|
     // <fix>`), so naive "segment after the verdict" grabs a label; taking the last non-token segment is
@@ -2574,25 +2596,49 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
         matches!(
             seg.to_uppercase().trim(),
             "VERDICT" | "CONFIDENCE" | "CONF" | "HINT" | "OK" | "BROKEN_CODE" | "BROKEN CODE"
-                | "LOOPING" | "SPEC_DRIFT" | "SPEC DRIFT" | "HIGH" | "LOW"
+                | "LOOPING" | "OVER_READING" | "OVER READING" | "SPEC_DRIFT" | "SPEC DRIFT" | "HIGH"
+                | "LOW"
         )
     };
     let hint = s
         .split('|')
         .map(|h| h.trim())
-        .rfind(|h| !h.is_empty() && !is_token(h))
-        .map(|h| h.to_string())
-        .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string());
+        .rfind(|h| !h.is_empty() && !is_token(h));
     // Confidence gates AGENCY: the judge acts (kill + re-dispatch with the correction) only when it marks
-    // the verdict HIGH; an unsure/LOW verdict is logged (observed) but never kills. This lets the model's
-    // own intelligence drive interventions while keeping a vague reply harmless. TUNABLE: drop the HIGH
-    // mapping below intervene_confidence (0.8) to revert to advisory-only if it mis-fires live; raise the
-    // agency further (or raise the cap) as the model proves it judges well.
+    // the verdict HIGH; an unsure/LOW verdict is logged (observed) but never kills. TUNABLE: drop the HIGH
+    // mapping below intervene_confidence (0.8) to revert to advisory-only if it mis-fires live.
     let confidence = if upper.contains("HIGH") { 0.85 } else { 0.5 };
+    let verdict = if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
+        Verdict::BrokenCode
+    } else if upper.contains("LOOPING") {
+        Verdict::Looping
+    } else if upper.contains("OVER_READING") || upper.contains("OVER READING") {
+        Verdict::OverReading
+    } else if upper.contains("SPEC_DRIFT") || upper.contains("SPEC DRIFT") {
+        Verdict::SpecDrift
+    } else {
+        // No explicit verdict keyword. qwen-class models routinely express a real problem as just
+        // `VERDICT|HIGH|<corrective hint>` with no keyword — dropping that would make the semantic judge
+        // inert on this fleet. Treat it as an actionable problem ONLY when the model did NOT call it OK,
+        // marked HIGH confidence, AND gave a substantive correction; anything else reads as healthy so a
+        // vague reply still can't kill a good worker. (Recoverable if wrong: a re-dispatch with a hint,
+        // capped per task — revert via the HIGH mapping above if false-positives show up live.)
+        let said_ok = s
+            .split('|')
+            .any(|p| p.trim().eq_ignore_ascii_case("ok"));
+        let substantive = hint.map(|h| h.len() >= 16).unwrap_or(false);
+        if !said_ok && upper.contains("HIGH") && substantive {
+            Verdict::SpecDrift
+        } else {
+            return JudgeOutcome::ok();
+        }
+    };
     JudgeOutcome {
         verdict,
         confidence,
-        hint,
+        hint: hint
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string()),
     }
 }
 
