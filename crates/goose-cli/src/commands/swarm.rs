@@ -2398,7 +2398,10 @@ impl GooseAgentDispatcher {
             PRIMARY/default command on a concrete example and CHECKS THE OUTPUT IS ACTUALLY CORRECT — not merely that it starts \
             or exits 0. A green test suite does NOT prove correctness: a real failure mode is the DEFAULT code path producing \
             WRONG output (e.g. wrong constants/parameters) while every test passes. So exercise the default path with a known \
-            input, sanity-check the result against what the spec implies, and fix it if it is wrong. Reports PASS/FAIL honestly. \
+            input, sanity-check the result against what the spec implies, and fix it if it is wrong. ALSO confirm the \
+            spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
+            module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
+            FAILURE: wire it. Reports PASS/FAIL honestly. \
             Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
         let user_msg = format!("{research_block}Plan this task: {user_prompt}");
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
