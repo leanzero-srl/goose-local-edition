@@ -2566,16 +2566,21 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     } else {
         return JudgeOutcome::ok();
     };
-    // The correction is the first segment after the verdict that is real text — not the HIGH/LOW token
-    // (the model may emit `VERDICT|CONFIDENCE|hint` or the older `VERDICT|hint`).
+    // The correction is the LAST pipe-segment that is real free text — not a field LABEL, verdict word, or
+    // confidence token. qwen-class models often echo the labels (e.g. `VERDICT|CONFIDENCE|BROKEN_CODE|HIGH|
+    // <fix>`), so naive "segment after the verdict" grabs a label; taking the last non-token segment is
+    // robust to both that and the terse `VERDICT|CONFIDENCE|hint` / `VERDICT|hint` forms.
+    let is_token = |seg: &str| {
+        matches!(
+            seg.to_uppercase().trim(),
+            "VERDICT" | "CONFIDENCE" | "CONF" | "HINT" | "OK" | "BROKEN_CODE" | "BROKEN CODE"
+                | "LOOPING" | "SPEC_DRIFT" | "SPEC DRIFT" | "HIGH" | "LOW"
+        )
+    };
     let hint = s
         .split('|')
-        .skip(1)
         .map(|h| h.trim())
-        .find(|h| {
-            let u = h.to_uppercase();
-            !h.is_empty() && u != "HIGH" && u != "LOW"
-        })
+        .rfind(|h| !h.is_empty() && !is_token(h))
         .map(|h| h.to_string())
         .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string());
     // Confidence gates AGENCY: the judge acts (kill + re-dispatch with the correction) only when it marks
