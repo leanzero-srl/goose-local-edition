@@ -2378,8 +2378,11 @@ impl GooseAgentDispatcher {
             (NOT py_compile) and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
             change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
             existing test to assert the new correct output. Do not stall — make the whole suite pass. Then runs the program's \
-            main command ONCE to confirm it starts, and reports PASS/FAIL honestly. Its own files must NOT overlap the others. \
-            Then call the final_output tool with the plan.");
+            PRIMARY/default command on a concrete example and CHECKS THE OUTPUT IS ACTUALLY CORRECT — not merely that it starts \
+            or exits 0. A green test suite does NOT prove correctness: a real failure mode is the DEFAULT code path producing \
+            WRONG output (e.g. wrong constants/parameters) while every test passes. So exercise the default path with a known \
+            input, sanity-check the result against what the spec implies, and fix it if it is wrong. Reports PASS/FAIL honestly. \
+            Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
         let user_msg = format!("{research_block}Plan this task: {user_prompt}");
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
