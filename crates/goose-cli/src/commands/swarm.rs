@@ -2646,6 +2646,7 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
         hint: hint
             .map(|h| h.to_string())
             .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string()),
+        proposed_split: None,
     }
 }
 
@@ -2707,6 +2708,9 @@ impl Judge for GooseAgentDispatcher {
             any_owned_written,
             secs_since_last_write,
             worker_tool_calls,
+            // split_count is tracked by the scheduler (M3 step 2); 0 here until that wiring lands, which
+            // is harmless: step 1 only adds the detection helper + types, no Split verdict is produced yet.
+            split_count: 0,
         };
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {

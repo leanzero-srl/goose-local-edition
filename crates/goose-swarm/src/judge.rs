@@ -10,7 +10,7 @@
 
 use crate::TaskId;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// What the judge concluded about an in-flight worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -26,6 +26,10 @@ pub enum Verdict {
     BrokenCode,
     /// The work is drifting from the subtask spec.
     SpecDrift,
+    /// The task is too big/slow for ONE worker — split it into smaller file-partitioned subtasks. This is
+    /// an ACTION on healthy-but-too-large work (carries `JudgeOutcome.proposed_split`), not a worker-in-
+    /// trouble signal like the others.
+    Split,
 }
 
 impl Verdict {
@@ -36,6 +40,7 @@ impl Verdict {
             Verdict::Looping => "looping",
             Verdict::BrokenCode => "broken_code",
             Verdict::SpecDrift => "spec_drift",
+            Verdict::Split => "split",
         }
     }
 
@@ -49,6 +54,7 @@ impl Verdict {
 /// worker's owned files on disk and its live session before invoking the judge; the deterministic
 /// pre-checks (`compile_errors`, `reads`/`writes`) are filled in here so both the deterministic verdict
 /// and the LLM judge work from the same evidence.
+#[derive(Clone)]
 pub struct JudgeInput {
     pub task_id: TaskId,
     /// The subtask spec the worker is meant to satisfy.
@@ -73,6 +79,20 @@ pub struct JudgeInput {
     /// elapsed-time fallback. `None` when no activity heartbeat is available (then only time-based checks
     /// apply).
     pub worker_tool_calls: Option<u32>,
+    /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
+    /// recursively shattered; a task that has already been split is never split again.
+    pub split_count: u32,
+}
+
+/// One child subtask proposed when the judge SPLITS a too-big task. It owns a DISJOINT SUBSET of the
+/// original task's files; the union of all children covers the original's files. `depends_on` references
+/// sibling child ids only (the children inherit the original task's external dependencies).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChildSpec {
+    pub id: String,
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 /// A judge's conclusion about one worker.
@@ -83,6 +103,8 @@ pub struct JudgeOutcome {
     pub confidence: f32,
     /// A one-line corrective hint, prepended to the task on re-dispatch.
     pub hint: String,
+    /// Set only when `verdict == Split`: the child subtasks that partition the too-big task's files.
+    pub proposed_split: Option<Vec<ChildSpec>>,
 }
 
 impl JudgeOutcome {
@@ -91,6 +113,17 @@ impl JudgeOutcome {
             verdict: Verdict::Ok,
             confidence: 1.0,
             hint: String::new(),
+            proposed_split: None,
+        }
+    }
+
+    /// A SPLIT conclusion: replace the too-big task with these file-partitioned children.
+    pub fn split(children: Vec<ChildSpec>) -> Self {
+        Self {
+            verdict: Verdict::Split,
+            confidence: 0.9,
+            hint: String::new(),
+            proposed_split: Some(children),
         }
     }
 }
@@ -113,6 +146,9 @@ pub struct JudgeConfig {
     /// spin a node to worker_max_turns) — but only once its final attempt has run at least this long, so
     /// a momentary flag on a just-started final attempt can't cut a task that might still be getting going.
     pub terminal_min_secs: u64,
+    /// A PRODUCTIVE task (writing, not over-reading) that has run at least this long is a candidate to be
+    /// SPLIT into smaller file-partitioned subtasks instead of being left to crawl. 0 disables splitting.
+    pub split_threshold_secs: u64,
 }
 
 impl Default for JudgeConfig {
@@ -126,8 +162,25 @@ impl Default for JudgeConfig {
             max_interventions_per_task: 2,
             over_read_tool_calls: 16,
             terminal_min_secs: 90,
+            split_threshold_secs: 900,
         }
     }
+}
+
+/// Deterministic SPLIT detection: a task is a split candidate when it has been PRODUCING (an owned file is
+/// written and the worker is NOT over-reading) for at least `split_threshold_secs`, owns >= 2 files (so it
+/// can actually be partitioned), and has not been split before. This is deliberately distinct from the
+/// over-read/looping paths — a thrashing worker is re-dispatched, not split; splitting is for work that is
+/// genuinely TOO BIG for one worker, not misbehaving.
+pub fn is_split_candidate(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
+    cfg.split_threshold_secs > 0
+        && input.elapsed_secs >= cfg.split_threshold_secs
+        && input.any_owned_written
+        && input.owned_files.len() >= 2
+        && input.split_count == 0
+        && input
+            .worker_tool_calls
+            .is_none_or(|n| n < cfg.over_read_tool_calls)
 }
 
 /// What the scheduler hands the judge: which in-flight worker to inspect and the spec it is meant to
@@ -175,6 +228,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                  — if you are unsure how, write a SMALLER, SIMPLER version that compiles and covers the \
                  core of the spec; a working subset beats a broken whole."
             ),
+            proposed_split: None,
         });
     }
     // Behavioral over-read: the worker has TAKEN many actions (tool calls) yet produced no owned file.
@@ -198,6 +252,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    that satisfies the spec first (a small working file), then refine. A minimal working \
                    file beats endless exploration."
                 .to_string(),
+            proposed_split: None,
         });
     }
     if !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
@@ -210,6 +265,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    FIRST (a small working file), then refine it — a minimal working file beats endless \
                    planning, and you can always improve it once it exists."
                 .to_string(),
+            proposed_split: None,
         });
     }
     // Finalize-spin: the worker DID produce its owned file(s) but has not touched them in a long
@@ -230,6 +286,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    failing, make the SIMPLEST change that works (a stub, a narrower implementation) rather \
                    than perfecting it, then finish. If the file already satisfies the spec, report done NOW."
                 .to_string(),
+            proposed_split: None,
         });
     }
     None
@@ -254,6 +311,7 @@ mod tests {
             any_owned_written: written,
             secs_since_last_write: last_write,
             worker_tool_calls: None,
+            split_count: 0,
         }
     }
 
@@ -310,5 +368,30 @@ mod tests {
         let mut i = mk("core-tree", false, None, 200);
         i.worker_tool_calls = Some(4);
         assert!(deterministic_verdict(&i, &JudgeConfig::default()).is_none());
+    }
+
+    #[test]
+    fn split_candidate_only_for_big_productive_multifile_tasks() {
+        let cfg = JudgeConfig::default(); // split_threshold_secs = 900
+        // Long, producing, owns 2 files, not over-reading, never split -> SPLIT candidate.
+        let mut big = mk("core", true, Some(10), 1000);
+        big.owned_files = vec!["a.py".to_string(), "b.py".to_string()];
+        big.worker_tool_calls = Some(5);
+        assert!(is_split_candidate(&big, &cfg));
+        // Same but only ONE owned file -> not splittable.
+        let one = mk("core", true, Some(10), 1000); // owned_files = ["m.py"]
+        assert!(!is_split_candidate(&one, &cfg));
+        // Long + multi-file but OVER-READING (thrashing) -> re-dispatch path, not split.
+        let mut thrash = big.clone();
+        thrash.worker_tool_calls = Some(cfg.over_read_tool_calls + 1);
+        assert!(!is_split_candidate(&thrash, &cfg));
+        // Already split once -> never split again.
+        let mut again = big.clone();
+        again.split_count = 1;
+        assert!(!is_split_candidate(&again, &cfg));
+        // Not yet old enough -> not a candidate.
+        let mut young = big.clone();
+        young.elapsed_secs = 300;
+        assert!(!is_split_candidate(&young, &cfg));
     }
 }

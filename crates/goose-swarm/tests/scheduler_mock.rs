@@ -515,6 +515,7 @@ impl Judge for KillJudge {
                 verdict: Verdict::Looping,
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
+                proposed_split: None,
             }
         } else {
             JudgeOutcome::ok()
