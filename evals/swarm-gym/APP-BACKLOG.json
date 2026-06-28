@@ -297,6 +297,7 @@
   "sift-ql",
   "transmute-grid",
   "commit-loom",
-  "dep-strata"
+  "dep-strata",
+  "spdx-augur"
  ]
 }
