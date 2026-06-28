@@ -311,6 +311,7 @@
   "logfunnel",
   "fsdrift",
   "byte-oracle",
-  "linetidy"
+  "linetidy",
+  "regex-thread-tracer"
  ]
 }
