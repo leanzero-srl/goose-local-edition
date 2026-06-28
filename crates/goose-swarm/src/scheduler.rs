@@ -14,7 +14,7 @@ use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
-use crate::judge::{Judge, JudgeConfig, JudgeOutcome, JudgeRequest};
+use crate::judge::{Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer};
 use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -631,6 +631,39 @@ impl State {
         Some((req, attempt))
     }
 
+    /// M5: pick a COMPLETED-but-unreviewed task (that owns files) for an idle-node correctness pre-review,
+    /// claiming the single idle-job slot. Returns the request, or None if no idle device is free, nothing
+    /// is reviewable, or the slot is taken. Marks the task pre_reviewed up front so it is picked at most
+    /// once even while the review is in flight.
+    fn pick_prereview_request(&mut self) -> Option<PreReviewRequest> {
+        let reviewer_model_id = self
+            .devices
+            .iter()
+            .find(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)
+            .map(|d| d.cfg.model_id.clone())?;
+        let tid = self
+            .dag
+            .tasks
+            .iter()
+            .find(|(_, n)| {
+                n.state == TaskState::Done && !n.pre_reviewed && !n.spec.owned_files.is_empty()
+            })
+            .map(|(id, _)| id.clone())?;
+        let (description, owned_files) = {
+            let n = &self.dag.tasks[&tid];
+            (n.spec.description.clone(), n.spec.owned_files.clone())
+        };
+        self.dag.tasks.get_mut(&tid).unwrap().pre_reviewed = true;
+        self.judge_running = true;
+        Some(PreReviewRequest {
+            task_id: tid,
+            description,
+            owned_files,
+            goal: self.goal.clone(),
+            reviewer_model_id,
+        })
+    }
+
     /// Apply a judge verdict. Always emits a `JudgeVerdict` event. If the verdict is an actionable
     /// problem, the inspected attempt is still the live one, the judge is confident enough, and the
     /// per-task intervention cap is not yet hit, the worker is killed and its task re-queued with the
@@ -1032,6 +1065,7 @@ pub struct Scheduler {
     max_replans: u32,
     judge: Option<Arc<dyn Judge>>,
     judge_cfg: JudgeConfig,
+    pre_reviewer: Option<Arc<dyn PreReviewer>>,
 }
 
 impl Scheduler {
@@ -1044,6 +1078,7 @@ impl Scheduler {
             max_replans: 0,
             judge: None,
             judge_cfg: JudgeConfig::default(),
+            pre_reviewer: None,
         }
     }
 
@@ -1053,6 +1088,14 @@ impl Scheduler {
     pub fn with_judge(mut self, judge: Arc<dyn Judge>, cfg: JudgeConfig) -> Self {
         self.judge = Some(judge);
         self.judge_cfg = cfg;
+        self
+    }
+
+    /// Attach an idle-node PRE-REVIEWER (M5): when a node would otherwise idle and NO in-flight worker
+    /// needs judging, it correctness-checks a COMPLETED-but-unreviewed task's output and records findings
+    /// for integrate-verify. OFF by default — with none attached the scheduler is unchanged.
+    pub fn with_pre_reviewer(mut self, pre_reviewer: Arc<dyn PreReviewer>) -> Self {
+        self.pre_reviewer = Some(pre_reviewer);
         self
     }
 
@@ -1295,13 +1338,35 @@ impl Scheduler {
                     });
                 }
             }
+            // M5: when no in-flight worker needed judging, put the idle node on a correctness PRE-REVIEW of
+            // a completed-but-unreviewed task (findings feed integrate-verify). Shares the single idle-job
+            // slot with the judge via judge_running, so at most one idle job runs at a time. Off unless a
+            // pre-reviewer is attached; pick_prereview_request returns None when the slot is taken.
+            if let Some(pr) = &self.pre_reviewer {
+                let req = {
+                    let mut s = state.lock().await;
+                    if s.judge_running {
+                        None
+                    } else {
+                        s.pick_prereview_request()
+                    }
+                };
+                if let Some(req) = req {
+                    let pr = pr.clone();
+                    let st = state.clone();
+                    tokio::spawn(async move {
+                        let _ = pr.pre_review(req).await;
+                        st.lock().await.judge_running = false;
+                    });
+                }
+            }
             // Wake on a completion, or — when a judge is attached — at least every 15s, so it can
             // inspect a worker that crosses a threshold BETWEEN completions (a lone stuck worker produces
             // no completion to wake on). A short tick means the behavioral over-read signal (many actions,
             // zero output) and the terminal-fail decision act within ~15s of tripping, not minutes.
             // tokio::Notify stores one permit, so a completion that fires before this await is not lost.
             // With no judge this is an effectively-infinite wait: byte-identical to before.
-            let tick = if self.judge.is_some() {
+            let tick = if self.judge.is_some() || self.pre_reviewer.is_some() {
                 std::time::Duration::from_secs(15)
             } else {
                 std::time::Duration::from_secs(86_400)

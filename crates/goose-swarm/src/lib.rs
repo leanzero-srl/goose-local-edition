@@ -19,7 +19,7 @@ pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
-    JudgeOutcome, JudgeRequest, Verdict,
+    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome};

@@ -5,8 +5,8 @@
 use async_trait::async_trait;
 use goose_swarm::{
     ChildSpec, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, ReplanContext, Replanner, Scheduler, TaskDispatcher, TaskRunOutput,
-    TaskSpec, Verdict,
+    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext,
+    Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -776,5 +776,58 @@ async fn judge_splits_task_and_dependent_waits_for_all_children() {
         "the dependent finished AFTER both split children — dependents were re-pointed onto the WHOLE \
          split with correct indegree (completion order = {:?})",
         *order
+    );
+}
+
+/// Records which completed tasks an idle node pre-reviewed (M5).
+struct RecordingPreReviewer {
+    reviewed: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl PreReviewer for RecordingPreReviewer {
+    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
+        self.reviewed.lock().unwrap().push(req.task_id.clone());
+        PreReviewOutput {
+            had_findings: false,
+            summary: String::new(),
+        }
+    }
+}
+
+/// M5 no-idle: with no in-flight worker to judge, an idle node correctness-pre-reviews a COMPLETED task.
+/// `verify` is the slow target so that, while it runs, the other node is free to review the done `core`.
+#[tokio::test]
+async fn idle_node_pre_reviews_completed_task() {
+    let reviewed = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: Arc::new(Mutex::new(HashMap::new())),
+        hints: Arc::new(Mutex::new(Vec::new())),
+        target: "verify".to_string(), // verify runs long -> idle window to review the done `core`
+        delay: Duration::from_millis(20),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![
+        spec("core", &[], &["a.py"]),
+        spec("verify", &["core"], &["v.py"]),
+    ])
+    .unwrap();
+    let pr = Arc::new(RecordingPreReviewer {
+        reviewed: reviewed.clone(),
+    });
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_pre_reviewer(pr);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(report.failed.is_empty(), "no task fails: {:?}", report.failed);
+    assert!(
+        report.done.contains(&"core".to_string()) && report.done.contains(&"verify".to_string()),
+        "both tasks complete: {:?}",
+        report.done
+    );
+    assert!(
+        reviewed.lock().unwrap().contains(&"core".to_string()),
+        "the idle node pre-reviewed the completed task `core`; reviewed = {:?}",
+        reviewed.lock().unwrap()
     );
 }
