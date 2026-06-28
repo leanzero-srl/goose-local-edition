@@ -1250,6 +1250,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_confidence_extracts_score_and_uncertainties() {
+        assert_eq!(
+            parse_confidence("72|missing error handling; no CLI test").unwrap(),
+            (72, "missing error handling; no CLI test".to_string())
+        );
+        assert_eq!(parse_confidence("SCORE: 85 | parser edge cases").unwrap().0, 85);
+        assert_eq!(parse_confidence("100").unwrap(), (100, String::new()));
+        // a stray "out of 100" must not be read as the score — first integer wins.
+        assert_eq!(parse_confidence("I rate it 40 out of 100|risky").unwrap().0, 40);
+        // clamp + no-digit guard.
+        assert_eq!(parse_confidence("130|over").unwrap().0, 100);
+        assert!(parse_confidence("no digits here").is_none());
+    }
+
+    #[test]
     fn parse_judge_reply_handles_qwen_formats() {
         // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
         for ok in [
@@ -2437,11 +2452,14 @@ impl GooseAgentDispatcher {
         // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
         // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
         // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
-        let skeleton = if n == 1 {
-            candidates
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("architect produced no skeleton"))?
+        let (skeleton, agreement_conf): (String, Option<u8>) = if n == 1 {
+            (
+                candidates
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow!("architect produced no skeleton"))?,
+                None,
+            )
         } else {
             let mut best: Option<(i64, String)> = None;
             let mut valid_specs: Vec<Vec<goose_swarm::TaskSpec>> = Vec::new();
@@ -2477,11 +2495,40 @@ impl GooseAgentDispatcher {
                         "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
                         style("✓").green().bold()
                     );
-                    json
+                    (json, Some(conf))
                 }
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
             }
         };
+        // M6 step2: a SEPARATE, deliberately harsh self-rating of the chosen plan. Verbalized confidence is
+        // systematically overconfident, so it is the SECONDARY signal (0.3) behind the calibrated
+        // cross-draft agreement (0.7). One extra planner call, only on the best-of-N path (the opt-in
+        // plan-quality experiment) so single-draft runs keep their old latency exactly.
+        if n > 1 {
+            let verbalized = self
+                .verbalized_confidence(planner_model, user_prompt, &skeleton)
+                .await;
+            let final_conf = match (agreement_conf, verbalized.as_ref()) {
+                (Some(a), Some((v, _))) => ((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8,
+                (Some(a), None) => a,
+                (None, Some((v, _))) => *v,
+                (None, None) => 60,
+            };
+            if let Some((v, unc)) = &verbalized {
+                eprintln!(
+                    "  plan self-confidence {v}/100 (verbalized, discounted){}",
+                    if unc.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — uncertainties: {unc}")
+                    }
+                );
+            }
+            eprintln!(
+                "  {} final plan confidence {final_conf}/100",
+                style("◆").cyan()
+            );
+        }
         let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
         // Deterministically ensure a final integrate-verify sink: the weak architect sometimes OMITS it
         // despite the prompt, and without it nothing smoke-runs the program end-to-end — so a broken entry
@@ -2752,6 +2799,54 @@ impl GooseAgentDispatcher {
         let children: Vec<ChildSpec> = serde_json::from_str(json).ok()?;
         (children.len() >= 2).then_some(children)
     }
+
+    /// M6 step2: a deliberately HARSH self-rating of the chosen plan. Verbalized confidence is systematically
+    /// overconfident, so the prompt pushes the model to subtract for anything unverified; the caller weights
+    /// this BELOW the calibrated cross-draft agreement. Returns (0–100, semicolon-joined uncertainties) or
+    /// None on call/parse failure.
+    async fn verbalized_confidence(
+        &self,
+        model: &str,
+        goal: &str,
+        plan_json: &str,
+    ) -> Option<(u8, String)> {
+        let system = "You critique a software PLAN's completeness and correctness. You are KNOWN to be \
+            OVERCONFIDENT — be brutally harsh and SUBTRACT for anything unverified, vague, or likely to break \
+            at integration. Reply with EXACTLY one line `SCORE|uncertainties`: SCORE is 0-100 (confidence \
+            that the plan, executed well, yields a COMPLETE and CORRECT program); uncertainties = the 1-3 \
+            biggest risks, semicolon-separated (empty if none)."
+            .to_string();
+        let plan: String = plan_json.chars().take(2500).collect();
+        let user =
+            format!("GOAL: {goal}\n\nPLAN (subtask skeleton JSON):\n{plan}\n\nYour one-line score:");
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)?;
+        parse_confidence(&text)
+    }
+}
+
+/// Parse the harsh self-rating reply `SCORE|uncertainties` (M6 step2). Tolerant: the score is the first
+/// integer found on the first digit-bearing line (clamped 0–100); uncertainties is whatever follows `|`.
+fn parse_confidence(reply: &str) -> Option<(u8, String)> {
+    let line = reply
+        .trim()
+        .lines()
+        .find(|l| l.chars().any(|c| c.is_ascii_digit()))?;
+    let (score_part, unc) = match line.split_once('|') {
+        Some((a, b)) => (a, b.trim().to_string()),
+        None => (line, String::new()),
+    };
+    let first_num = score_part
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())?;
+    let n: u32 = first_num.parse().ok()?;
+    Some((n.min(100) as u8, unc))
 }
 
 #[async_trait]
