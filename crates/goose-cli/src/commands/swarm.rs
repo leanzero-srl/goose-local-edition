@@ -2853,7 +2853,14 @@ fn parse_confidence(reply: &str) -> Option<(u8, String)> {
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        let cfg = JudgeConfig::default();
+        // M3: split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime
+        // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
+        let cfg = JudgeConfig {
+            split_enabled: std::env::var("GOOSE_SWARM_SPLIT")
+                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                .unwrap_or(false),
+            ..JudgeConfig::default()
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let mut file_contents: Vec<(String, String)> = Vec::new();
         let mut compile_errors: Vec<(String, String)> = Vec::new();
