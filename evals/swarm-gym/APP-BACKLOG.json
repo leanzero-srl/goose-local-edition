@@ -304,6 +304,7 @@
   "zeckendorf-codec",
   "stern-brocot-pilot",
   "cipher-sleuth",
-  "checkdigit-mint"
+  "checkdigit-mint",
+  "wireworld-foundry"
  ]
 }
