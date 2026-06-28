@@ -310,6 +310,7 @@
   "antic-turmite",
   "logfunnel",
   "fsdrift",
-  "byte-oracle"
+  "byte-oracle",
+  "linetidy"
  ]
 }
