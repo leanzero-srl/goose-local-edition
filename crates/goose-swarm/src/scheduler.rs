@@ -579,15 +579,50 @@ impl State {
             }
         }
         let (tid, elapsed) = best.or(best_terminal)?;
-        let n = &self.dag.tasks[&tid];
+        let (description, owned_files, attempt) = {
+            let n = &self.dag.tasks[&tid];
+            (
+                n.spec.description.clone(),
+                n.spec.owned_files.clone(),
+                n.attempts,
+            )
+        };
+        // High-level run state for the semantic judge: completed tasks (with a brief of what each
+        // produced), the tasks still in flight / pending, and the failed ones. Lets it judge this worker
+        // against the whole build — catch it re-doing finished work, depending on a failed task, or
+        // diverging from the shape the rest of the run already set.
+        let mut done = Vec::new();
+        let mut remaining = Vec::new();
+        let mut failed = Vec::new();
+        for (id, node) in &self.dag.tasks {
+            if id == &tid {
+                continue;
+            }
+            match node.state {
+                TaskState::Done => done.push((
+                    id.clone(),
+                    node.result
+                        .clone()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(200)
+                        .collect(),
+                )),
+                TaskState::Failed => failed.push(id.clone()),
+                _ => remaining.push(id.clone()),
+            }
+        }
         let req = JudgeRequest {
             task_id: tid.clone(),
-            description: n.spec.description.clone(),
-            owned_files: n.spec.owned_files.clone(),
+            description,
+            owned_files,
             elapsed_secs: elapsed,
             judge_model_id,
+            goal: self.goal.clone(),
+            done,
+            remaining,
+            failed,
         };
-        let attempt = n.attempts;
         self.judge_running = true;
         Some((req, attempt))
     }

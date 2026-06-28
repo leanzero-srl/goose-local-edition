@@ -1904,7 +1904,7 @@ impl GooseAgentDispatcher {
             dir.join(format!("{k}.json"))
         });
         if let Some(p) = &activity_file {
-            let _ = std::fs::write(p, "{\"tool_calls\":0}");
+            let _ = std::fs::write(p, "{\"tool_calls\":0,\"errors\":0,\"recent\":[],\"last_text\":\"\"}");
         }
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
@@ -1960,7 +1960,32 @@ impl GooseAgentDispatcher {
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
             if let Some(p) = &activity_file {
-                let _ = std::fs::write(p, format!("{{\"tool_calls\":{}}}", tool_calls.len()));
+                // A digest of what the worker is actually DOING — the judge reads this as the worker's
+                // live "log": how many actions, how many ERRORED, the last few tool calls, and the worker's
+                // most recent reasoning. This is what lets the semantic judge see a worker re-running a
+                // failing test, looping on the same error, or exploring without producing.
+                let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
+                let recent: Vec<String> = tool_calls
+                    .iter()
+                    .rev()
+                    .take(6)
+                    .rev()
+                    .map(|t| format!("{} {}", t.name, if t.ok == Some(false) { "ERR" } else { "ok" }))
+                    .collect();
+                let lt = texts.last().cloned().unwrap_or_default();
+                let n = lt.chars().count();
+                let last_text: String = if n > 400 {
+                    lt.chars().skip(n - 400).collect()
+                } else {
+                    lt
+                };
+                let digest = serde_json::json!({
+                    "tool_calls": tool_calls.len(),
+                    "errors": errors,
+                    "recent": recent,
+                    "last_text": last_text,
+                });
+                let _ = std::fs::write(p, digest.to_string());
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
@@ -2526,8 +2551,9 @@ async fn py_syntax_error(path: &Path) -> Option<String> {
     }
 }
 
-/// Parse the idle-model judge's one-line `VERDICT|hint` reply. Conservative: anything that is not a
+/// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
 /// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
+/// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
 fn parse_judge_reply(s: &str) -> JudgeOutcome {
     let upper = s.to_uppercase();
     let verdict = if upper.contains("BROKEN_CODE") || upper.contains("BROKEN CODE") {
@@ -2539,18 +2565,27 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     } else {
         return JudgeOutcome::ok();
     };
+    // The correction is the first segment after the verdict that is real text — not the HIGH/LOW token
+    // (the model may emit `VERDICT|CONFIDENCE|hint` or the older `VERDICT|hint`).
     let hint = s
         .split('|')
-        .nth(1)
-        .map(|h| h.trim().to_string())
-        .filter(|h| !h.is_empty())
+        .skip(1)
+        .map(|h| h.trim())
+        .find(|h| {
+            let u = h.to_uppercase();
+            !h.is_empty() && u != "HIGH" && u != "LOW"
+        })
+        .map(|h| h.to_string())
         .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string());
-    // ADVISORY confidence (below the intervention threshold): the weak 27B judge mis-flagged valid,
-    // mid-write code as BROKEN once, so its semantic verdicts are LOGGED (observed) but never kill.
-    // Actual interventions come only from the reliable deterministic signals (py_compile, no-output).
+    // Confidence gates AGENCY: the judge acts (kill + re-dispatch with the correction) only when it marks
+    // the verdict HIGH; an unsure/LOW verdict is logged (observed) but never kills. This lets the model's
+    // own intelligence drive interventions while keeping a vague reply harmless. TUNABLE: drop the HIGH
+    // mapping below intervene_confidence (0.8) to revert to advisory-only if it mis-fires live; raise the
+    // agency further (or raise the cap) as the model proves it judges well.
+    let confidence = if upper.contains("HIGH") { 0.85 } else { 0.5 };
     JudgeOutcome {
         verdict,
-        confidence: 0.5,
+        confidence,
         hint,
     }
 }
@@ -2589,18 +2624,20 @@ impl Judge for GooseAgentDispatcher {
         let secs_since_last_write = newest_mtime
             .and_then(|mt| mt.elapsed().ok())
             .map(|d| d.as_secs());
-        // Behavioral signal: how many actions the live worker has taken this attempt (written each turn
-        // to .swarm/activity/<task_id>.json). Lets the deterministic verdict catch a thrashing worker
-        // (many actions, zero output) immediately rather than waiting on the elapsed-time fallback.
-        let worker_tool_calls = std::fs::read_to_string(
+        // The worker's live activity digest (.swarm/activity/<task_id>.json): action count, error count,
+        // recent tool calls, and last reasoning. tool_calls feeds the deterministic over-read check; the
+        // whole digest is the worker's "log" that the semantic review reads below.
+        let digest = std::fs::read_to_string(
             cwd.join(".swarm")
                 .join("activity")
                 .join(format!("{}.json", req.task_id)),
         )
         .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("tool_calls").and_then(|n| n.as_u64()))
-        .map(|n| n as u32);
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        let worker_tool_calls = digest
+            .as_ref()
+            .and_then(|v| v.get("tool_calls").and_then(|n| n.as_u64()))
+            .map(|n| n as u32);
         let input = JudgeInput {
             task_id: req.task_id.clone(),
             description: req.description.clone(),
@@ -2622,30 +2659,106 @@ impl Judge for GooseAgentDispatcher {
         if req.judge_model_id.trim().is_empty() {
             return JudgeOutcome::ok();
         }
-        // Phase 2: semantic review on the idle node — only when the worker has produced something to read.
-        if input.file_contents.is_empty() {
-            return JudgeOutcome::ok();
+        // Phase 2: SEMANTIC review on the idle node. Reached only after the deterministic checks pass —
+        // this is where the (weak) model adds JUDGEMENT the cheap signals can't: given the goal and what
+        // the rest of the run has already done, is this worker on a healthy path, or is it broken /
+        // looping on an error / drifting / re-doing finished work? It reads the worker's files-so-far,
+        // its live activity log, AND the high-level run state, then passes or returns a correction.
+        let acts = input.worker_tool_calls.unwrap_or(0);
+        if input.file_contents.is_empty() && acts < 4 {
+            return JudgeOutcome::ok(); // nothing meaningful to assess yet
         }
-        let files_block = input
-            .file_contents
-            .iter()
-            .map(|(p, c)| {
-                let body: String = c.chars().take(2000).collect();
-                format!("### {p}\n```\n{body}\n```")
+        let files_block = if input.file_contents.is_empty() {
+            "(no file written yet)".to_string()
+        } else {
+            input
+                .file_contents
+                .iter()
+                .map(|(p, c)| {
+                    let body: String = c.chars().take(1800).collect();
+                    format!("### {p}\n```\n{body}\n```")
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
+        // The worker's live "log": what it has been doing and whether its actions are erroring.
+        let trace_block = digest
+            .as_ref()
+            .map(|d| {
+                let errors = d.get("errors").and_then(|n| n.as_u64()).unwrap_or(0);
+                let recent: Vec<String> = d
+                    .get("recent")
+                    .and_then(|r| r.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let last = d.get("last_text").and_then(|t| t.as_str()).unwrap_or("");
+                format!(
+                    "actions taken: {acts} ({errors} errored)\nrecent actions: {}\nworker's last reasoning: {}",
+                    if recent.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        recent.join(", ")
+                    },
+                    if last.is_empty() { "(none)" } else { last }
+                )
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let system = "You are a strict code REVIEWER supervising one worker on a shared multi-agent \
-            build. You are shown the worker's subtask spec and the file(s) it has produced SO FAR. The \
-            files are very likely MID-WRITE and INCOMPLETE — that is NORMAL and is NOT a problem: never \
-            flag merely-unfinished code. Only flag if the work is clearly going wrong (obviously looping, \
-            or code that cannot possibly satisfy the spec). BE CONSERVATIVE: a false alarm wastes work. \
-            Reply with EXACTLY one line `VERDICT|hint` where VERDICT is one of OK, BROKEN_CODE, LOOPING, \
-            SPEC_DRIFT and hint is a short corrective instruction (empty for OK). When unsure, answer `OK|`."
+            .unwrap_or_else(|| format!("actions taken: {acts}"));
+        // High-level state of the rest of the run — so the judge reviews this worker in context.
+        let done_block = if req.done.is_empty() {
+            "    (none yet)".to_string()
+        } else {
+            req.done
+                .iter()
+                .map(|(id, brief)| format!("    - {id}: {}", brief.replace('\n', " ")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let remaining_str = if req.remaining.is_empty() {
+            "(none)".to_string()
+        } else {
+            req.remaining.join(", ")
+        };
+        let failed_str = if req.failed.is_empty() {
+            "(none)".to_string()
+        } else {
+            req.failed.join(", ")
+        };
+        let owns_str = if req.owned_files.is_empty() {
+            "(works across the whole layout)".to_string()
+        } else {
+            req.owned_files.join(", ")
+        };
+        let system = "You are the SUPERVISOR of one worker on a shared multi-agent code build, running on \
+            a spare node. You are given the overall GOAL, the high-level state of the whole run (what is \
+            already done, still running, and failed), the worker's own SUBTASK spec, the file(s) it has \
+            produced so far, and its live ACTIVITY LOG (recent actions, how many errored, its last \
+            reasoning). Use ALL of it plus your own judgement to decide ONE thing: is this worker on a \
+            healthy path to finish its subtask and move the goal forward, or has it gone wrong? Mid-write, \
+            incomplete code is NORMAL — never flag merely-unfinished work. Flag ONLY a clear problem you \
+            can SEE evidence for: code that cannot satisfy the spec, repeating the same failing \
+            action/error, exploring without producing, re-doing a task already DONE, or depending on a \
+            FAILED task. Give a concrete CORRECTION the worker can act on. BE CONSERVATIVE — a wrong kill \
+            wastes real work, so when unsure say OK. Reply with EXACTLY one line `VERDICT|CONFIDENCE|hint`: \
+            VERDICT one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT; CONFIDENCE one of HIGH or LOW (HIGH only \
+            when you are sure and can point to the evidence); hint = a short, concrete correction (empty \
+            for OK)."
             .to_string();
         let user = format!(
-            "Subtask spec:\n{}\n\nFile(s) produced so far:\n{}\n\nYour one-line verdict:",
-            req.description, files_block
+            "GOAL: {goal}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}\n\n\
+             THIS WORKER's subtask: {desc}\n  owns files: {owns}\n\nFiles produced so far:\n{files}\n\n\
+             Worker activity log:\n{trace}\n\nYour one-line verdict:",
+            goal = req.goal,
+            done = done_block,
+            rem = remaining_str,
+            fail = failed_str,
+            desc = req.description,
+            owns = owns_str,
+            files = files_block,
+            trace = trace_block,
         );
         match tokio::time::timeout(
             std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),

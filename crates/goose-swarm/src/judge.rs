@@ -141,6 +141,16 @@ pub struct JudgeRequest {
     /// The LM Link model id of a currently-idle device — the judge runs here so it never contends with
     /// the busy workers it is supervising.
     pub judge_model_id: String,
+    /// The overall run goal — so the semantic judge can ask "does this worker's output move the GOAL
+    /// forward?" rather than reviewing one file in a vacuum.
+    pub goal: String,
+    /// High-level state of the rest of the run: completed tasks with a brief of what each produced, the
+    /// tasks still in flight / pending, and the tasks that have failed. Lets the judge see the big picture
+    /// — spot a worker re-doing finished work, depending on something that failed, or drifting from a
+    /// shape the rest of the run already established.
+    pub done: Vec<(TaskId, String)>,
+    pub remaining: Vec<TaskId>,
+    pub failed: Vec<TaskId>,
 }
 
 /// Inspects one in-flight worker and returns a verdict. Implemented in goose-cli by gathering evidence
