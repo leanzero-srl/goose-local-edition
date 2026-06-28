@@ -299,6 +299,7 @@
   "commit-loom",
   "dep-strata",
   "spdx-augur",
-  "import-marshal"
+  "import-marshal",
+  "egyptian-fraction-forge"
  ]
 }
