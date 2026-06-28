@@ -2862,6 +2862,12 @@ impl Judge for GooseAgentDispatcher {
             split_enabled: std::env::var("GOOSE_SWARM_SPLIT")
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                 .unwrap_or(false),
+            // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
+            // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
+            split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| JudgeConfig::default().split_threshold_secs),
             ..JudgeConfig::default()
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
