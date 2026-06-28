@@ -3146,7 +3146,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 .collect::<Vec<_>>()
                 .join("\n");
             let owned_part = if req.owned_files.is_empty() {
-                "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
+                let mut s = "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
                  above actually exists on disk and the tests cover each module. CRITICAL: a green pytest \
                  suite does NOT prove the program works — unit tests usually call functions directly and \
                  NEVER invoke the CLI/entry point, so a broken argparse, a bad import, or a crashing \
@@ -3155,7 +3155,34 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  real command from the spec with real arguments) and confirm it prints sane output and does \
                  NOT raise. If the entry point crashes, FIX the offending file — a program whose CLI cannot \
                  run is a FAILURE no matter how many unit tests pass. Report any missing file or runtime crash.\n\n"
-                    .to_string()
+                    .to_string();
+                // M5: surface idle-node PRE-REVIEW findings so integrate-verify CONFIRMS and FIXES the
+                // flagged defects (wrong default-path output, a spec deliverable built but not wired) —
+                // not merely makes the suite green.
+                let pdir = std::path::Path::new(&cwd).join(".swarm").join("prereview");
+                if let Ok(entries) = std::fs::read_dir(&pdir) {
+                    let mut findings = String::new();
+                    for e in entries.flatten() {
+                        if let Some(v) = std::fs::read_to_string(e.path())
+                            .ok()
+                            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                        {
+                            if let (Some(t), Some(f)) = (
+                                v.get("task_id").and_then(|x| x.as_str()),
+                                v.get("findings").and_then(|x| x.as_str()),
+                            ) {
+                                findings.push_str(&format!("- {t}: {f}\n"));
+                            }
+                        }
+                    }
+                    if !findings.is_empty() {
+                        s.push_str(&format!(
+                            "## Pre-review findings — an idle reviewer flagged likely defects in completed \
+                             work; CONFIRM each against the spec and FIX it before you finish:\n{findings}\n"
+                        ));
+                    }
+                }
+                s
             } else {
                 // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
                 // have spammed `mkdir` 27x on a nested path and paralysed the task (0 writes). Deterministic
