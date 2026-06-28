@@ -2990,11 +2990,14 @@ impl Replanner for GooseAgentDispatcher {
         let system = format!(
             "You are the PLANNER continuing an in-progress local AI swarm. {cap} worker(s) just went IDLE while \
              other tasks finish and the goal is not fully done. Propose UP TO {cap} NEW INDEPENDENT subtasks that \
-             add REAL value NOW (more tests, edge-case coverage, validation, docs, hardening) on the COMPLETED \
-             work — they run in parallel on the idle workers. If nothing useful remains, return an EMPTY subtasks \
-             list (do NOT invent make-work). Rules: every id MUST be new (never reuse an existing id); depends_on \
-             may reference DONE ids but NEVER a failed id; files must not overlap work still in progress. Give \
-             id/description/difficulty/model/depends_on/files, then call the final_output tool."
+             add REAL value NOW — more tests, edge-case coverage, input validation, error handling, or hardening \
+             on the COMPLETED work — they run in parallel on the idle workers. FUNCTIONALITY, TESTS, and \
+             VALIDATION ONLY: do NOT propose README/docs, CI/workflow, packaging, LICENSE, or any \
+             project-scaffolding subtask — they waste the run's tail for zero functional value. If nothing useful \
+             remains, return an EMPTY subtasks list (do NOT invent make-work). Rules: every id MUST be new (never \
+             reuse an existing id); depends_on may reference DONE ids but NEVER a failed id; files must not overlap \
+             work still in progress. Give id/description/difficulty/model/depends_on/files, then call the \
+             final_output tool."
         );
         let user = format!(
             "Goal: {}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
