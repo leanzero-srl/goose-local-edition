@@ -303,6 +303,7 @@
   "egyptian-fraction-forge",
   "zeckendorf-codec",
   "stern-brocot-pilot",
-  "cipher-sleuth"
+  "cipher-sleuth",
+  "checkdigit-mint"
  ]
 }
