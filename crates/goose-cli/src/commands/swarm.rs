@@ -2290,6 +2290,13 @@ impl GooseAgentDispatcher {
             subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
             needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
             needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
+            MODULAR ARCHITECTURE (hard rule) — keep FILES small and single-responsibility. A subtask may (and for any non-trivial \
+            module SHOULD) own SEVERAL small files, ONE concern each (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a \
+            models subtask owns `user.py`+`account.py`), NOT one big catch-all file. NEVER assign a single monolithic file that does \
+            many unrelated things — split by responsibility. This keeps subtask COUNT low (good for the slow fleet) while the \
+            architecture stays modular and readable. Put any logic used by more than one subtask in the ONE early shared subtask and \
+            have the others IMPORT it — NEVER let two subtasks each implement the same thing; duplicate implementations of one \
+            algorithm are a real defect (two copies drift apart and one silently goes wrong).\n\
             DELIVER ONLY THE APP: decompose the program's actual FUNCTIONALITY — its logic modules, the runnable entry point, and its \
             tests, nothing else. Do NOT add project-scaffolding subtasks: NO CI/workflow config, LICENSE, README/docs, \
             pyproject/setup/packaging, .gitignore, or pre-commit hooks — UNLESS the request explicitly asks for them. They are not the \
@@ -2983,6 +2990,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
             "You are a WORKER on a local AI swarm. Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
              When finished, briefly state what you produced.\n\
+             SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
+             several files, write each one focused and short; NEVER cram everything into one big monolithic file (a 300+-line \
+             do-everything file is wrong — split it by responsibility into the files you own). REUSE the modules whose API is \
+             injected below: IMPORT and call them, do NOT re-implement their logic — re-coding an algorithm another module already \
+             provides produces two copies that drift and one silently breaks.\n\
              \n\
              TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
              - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool, and \
