@@ -709,7 +709,9 @@ struct SplitJudge {
 #[async_trait]
 impl Judge for SplitJudge {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        if req.task_id == self.target {
+        // Mirror the real cap: only split a task that has never been split (split_count threaded from the
+        // scheduler's generation map). A child of this split carries split_count >= 1 and is left alone.
+        if req.task_id == self.target && req.split_count == 0 {
             JudgeOutcome::split(vec![
                 ChildSpec {
                     id: "big-a".to_string(),

@@ -212,6 +212,10 @@ pub struct JudgeRequest {
     pub done: Vec<(TaskId, String)>,
     pub remaining: Vec<TaskId>,
     pub failed: Vec<TaskId>,
+    /// How many times THIS task has already been split (its split generation). The judge caps splitting at
+    /// once, so a child born from a split (split_count >= 1) is never split again — preventing runaway
+    /// shattering. The scheduler tracks this and the goose-cli judge feeds it into `is_split_candidate`.
+    pub split_count: u32,
 }
 
 /// Inspects one in-flight worker and returns a verdict. Implemented in goose-cli by gathering evidence

@@ -153,6 +153,9 @@ struct State {
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
     prior_hints: HashMap<TaskId, String>,
     interventions: HashMap<TaskId, u32>,
+    /// Split generation per task: 0 for original tasks, parent+1 for children injected by a split. Feeds
+    /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
+    split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
 }
 
@@ -622,6 +625,7 @@ impl State {
             done,
             remaining,
             failed,
+            split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
         };
         self.judge_running = true;
         Some((req, attempt))
@@ -900,6 +904,12 @@ impl State {
             }
         }
         self.dag.dependents.remove(tid);
+        // ---- record each child's split generation = parent + 1, so the cap (split once) holds: a child
+        // that itself runs long carries split_count >= 1 and is never split again. ----
+        let parent_gen = self.split_generation.get(tid).copied().unwrap_or(0);
+        for cid in &child_id_list {
+            self.split_generation.insert(cid.clone(), parent_gen + 1);
+        }
         // ---- mark the original Done (no cascade) + advance its epoch so a late completion is ignored ----
         if let Some(n) = self.dag.tasks.get_mut(tid) {
             n.attempts += 1;
@@ -1122,6 +1132,7 @@ impl Scheduler {
             abort_handles: HashMap::new(),
             prior_hints: HashMap::new(),
             interventions: HashMap::new(),
+            split_generation: HashMap::new(),
             judge_running: false,
         }));
         let notify = Arc::new(Notify::new());

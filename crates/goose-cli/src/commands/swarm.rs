@@ -2907,9 +2907,9 @@ impl Judge for GooseAgentDispatcher {
             any_owned_written,
             secs_since_last_write,
             worker_tool_calls,
-            // split_count is tracked by the scheduler (M3 step 2); 0 here until that wiring lands, which
-            // is harmless: step 1 only adds the detection helper + types, no Split verdict is produced yet.
-            split_count: 0,
+            // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
+            // split carries split_count >= 1 and is never re-split).
+            split_count: req.split_count,
         };
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {
