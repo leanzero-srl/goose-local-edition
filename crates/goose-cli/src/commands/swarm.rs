@@ -1522,6 +1522,62 @@ fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
         .collect()
 }
 
+/// M6 plan confidence via SELF-CONSISTENCY: how much the N drafted skeleton candidates AGREE on shape.
+/// Verbalized self-confidence is overconfident, but agreement across independent drafts is a calibrated
+/// signal — when the drafts diverge, the model doesn't really know how to decompose this (a cue to
+/// research more before committing). Pure-Rust, 0–100, plus a one-line reason.
+fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
+    if candidates.len() < 2 {
+        return (60, "single draft — no cross-check".to_string());
+    }
+    // Subtask-count agreement (tight spread = high).
+    let counts: Vec<usize> = candidates.iter().map(Vec::len).collect();
+    let spread = counts.iter().max().unwrap() - counts.iter().min().unwrap();
+    let count_score: u32 = match spread {
+        0 => 40,
+        1 => 28,
+        2..=3 => 14,
+        _ => 0,
+    };
+    // Owned-file-set agreement: mean pairwise Jaccard across candidates.
+    let file_sets: Vec<std::collections::BTreeSet<&str>> = candidates
+        .iter()
+        .map(|c| {
+            c.iter()
+                .flat_map(|t| t.owned_files.iter().map(String::as_str))
+                .collect()
+        })
+        .collect();
+    let mut jsum = 0.0f64;
+    let mut jn = 0u32;
+    for (a, sa) in file_sets.iter().enumerate() {
+        for sb in &file_sets[a + 1..] {
+            let inter = sa.intersection(sb).count();
+            let uni = sa.union(sb).count().max(1);
+            jsum += inter as f64 / uni as f64;
+            jn += 1;
+        }
+    }
+    let jacc = if jn > 0 { jsum / f64::from(jn) } else { 0.0 };
+    let file_score = (jacc * 45.0) as u32;
+    // Independent-task-count agreement (the parallel shape the planner settled on).
+    let indeps: Vec<usize> = candidates
+        .iter()
+        .map(|c| c.iter().filter(|t| t.deps.is_empty()).count())
+        .collect();
+    let indep_spread = indeps.iter().max().unwrap() - indeps.iter().min().unwrap();
+    let indep_score: u32 = u32::from(indep_spread <= 1) * 15;
+    let conf = (count_score + file_score + indep_score).min(100) as u8;
+    (
+        conf,
+        format!(
+            "{} drafts agree: count spread {spread}, file-overlap {:.0}%",
+            candidates.len(),
+            jacc * 100.0
+        ),
+    )
+}
+
 /// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
 /// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
 /// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
@@ -2384,6 +2440,7 @@ impl GooseAgentDispatcher {
                 .ok_or_else(|| anyhow!("architect produced no skeleton"))?
         } else {
             let mut best: Option<(i64, String)> = None;
+            let mut valid_specs: Vec<Vec<goose_swarm::TaskSpec>> = Vec::new();
             for (i, c) in candidates.into_iter().enumerate() {
                 let specs = match goose_swarm::specs_from_plan_json(&c) {
                     Ok(s) => s,
@@ -2398,6 +2455,7 @@ impl GooseAgentDispatcher {
                             "  · candidate {i}: score {score} ({} subtasks)",
                             specs.len()
                         );
+                        valid_specs.push(specs);
                         if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
                             best = Some((score, c));
                         }
@@ -2407,8 +2465,12 @@ impl GooseAgentDispatcher {
             }
             match best {
                 Some((score, json)) => {
+                    // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where
+                    // verbalized confidence is overconfident). Low agreement = the model doesn't really know
+                    // how to decompose this — a signal to research more before committing (M6 step 3).
+                    let (conf, reason) = plan_agreement(&valid_specs);
                     eprintln!(
-                        "  {} picked best skeleton (score {score})",
+                        "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
                         style("✓").green().bold()
                     );
                     json
