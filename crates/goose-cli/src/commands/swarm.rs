@@ -21,7 +21,8 @@ use goose::session::SessionManager;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge,
-    JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, ReplanContext, Replanner,
+    JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ReplanContext, Replanner,
     Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
@@ -3055,6 +3056,70 @@ impl Judge for GooseAgentDispatcher {
 }
 
 #[async_trait]
+impl PreReviewer for GooseAgentDispatcher {
+    async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
+        let none = PreReviewOutput {
+            had_findings: false,
+            summary: String::new(),
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let mut files_block = String::new();
+        for f in &req.owned_files {
+            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
+                if c.trim().is_empty() {
+                    continue;
+                }
+                let body: String = c.chars().take(2400).collect();
+                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
+            }
+        }
+        if files_block.is_empty() {
+            return none; // nothing on disk to review
+        }
+        let system = "You CORRECTNESS-review one COMPLETED subtask of a larger build, BEFORE final \
+            integration, on a spare node. A passing test suite does NOT prove correctness: the deepest \
+            failure mode is code whose DEFAULT/primary path produces WRONG output (wrong constants/params) \
+            or a spec deliverable that is built but never WIRED into the program's entry point. Read the \
+            files against the GOAL and the subtask, and find ANY concrete defect of that kind. Reply with \
+            EXACTLY one line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable \
+            corrections (what is wrong + which file), empty when OK. Be conservative — only ISSUES when you \
+            can point to a real defect."
+            .to_string();
+        let user = format!(
+            "GOAL: {goal}\n\nSUBTASK: {desc}\n\nFiles produced:\n{files}\n\nYour one-line review:",
+            goal = req.goal,
+            desc = req.description,
+            files = files_block,
+        );
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(&req.reviewer_model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_default();
+        let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
+        let findings = findings.trim();
+        let had_findings = status.to_uppercase().contains("ISSUE") && !findings.is_empty();
+        if had_findings {
+            // Persist for integrate-verify to consume (M5 increment 2b wires the injection).
+            let dir = cwd.join(".swarm").join("prereview");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(
+                dir.join(format!("{}.json", req.task_id)),
+                serde_json::json!({"task_id": req.task_id, "findings": findings}).to_string(),
+            );
+        }
+        PreReviewOutput {
+            had_findings,
+            summary: findings.chars().take(200).collect(),
+        }
+    }
+}
+
+#[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         let context_block = if req.context_slice.is_empty() {
@@ -3857,6 +3922,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     if judge_on {
         eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
         scheduler = scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
+    }
+    // M5: idle-node correctness PRE-REVIEW of completed tasks (findings feed integrate-verify). OFF by
+    // default — opt in with GOOSE_SWARM_PREREVIEW=1 — until proven on a live run.
+    let prereview_on = std::env::var("GOOSE_SWARM_PREREVIEW")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if prereview_on {
+        eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
+        scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
     }
     let report = scheduler
         .run(
