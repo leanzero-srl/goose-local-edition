@@ -300,6 +300,7 @@
   "dep-strata",
   "spdx-augur",
   "import-marshal",
-  "egyptian-fraction-forge"
+  "egyptian-fraction-forge",
+  "zeckendorf-codec"
  ]
 }
