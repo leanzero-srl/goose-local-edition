@@ -473,6 +473,9 @@ struct JudgeTestDispatcher {
     hints: Arc<Mutex<Vec<(String, String)>>>,
     target: String,
     delay: Duration,
+    // When true the target sleeps long on EVERY attempt (simulating a worker that never recovers), so a
+    // cap-exhausted attempt stays alive long enough for the judge's terminal-fail to act on it.
+    slow_all: bool,
 }
 
 #[async_trait]
@@ -490,7 +493,7 @@ impl TaskDispatcher for JudgeTestDispatcher {
                 .unwrap()
                 .push((req.task_id.clone(), h.clone()));
         }
-        if req.task_id == self.target && req.attempt == 0 {
+        if req.task_id == self.target && (req.attempt == 0 || self.slow_all) {
             tokio::time::sleep(self.delay * 50).await; // long — the judge aborts this attempt
         } else {
             tokio::time::sleep(self.delay).await;
@@ -528,6 +531,7 @@ async fn judge_kills_and_redispatches_stuck_worker() {
         hints: hints.clone(),
         target: "stuck".to_string(),
         delay: Duration::from_millis(20),
+        slow_all: false,
     });
     // One ready task on a 2-device pool: it runs on one node, leaving the other idle for the judge.
     let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
@@ -538,6 +542,7 @@ async fn judge_kills_and_redispatches_stuck_worker() {
         min_age_secs: 0,
         intervene_confidence: 0.5,
         max_interventions_per_task: 1,
+        ..JudgeConfig::default()
     };
     let sched =
         Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
@@ -571,6 +576,7 @@ async fn judge_respects_intervention_cap() {
         hints: hints.clone(),
         target: "never-killed".to_string(),
         delay: Duration::from_millis(20),
+        slow_all: false,
     });
     let dag = Dag::from_specs(vec![spec("never-killed", &[], &["a.py"])]).unwrap();
     let judge = Arc::new(KillJudge {
@@ -580,6 +586,7 @@ async fn judge_respects_intervention_cap() {
         min_age_secs: 0,
         intervene_confidence: 0.5,
         max_interventions_per_task: 0,
+        ..JudgeConfig::default()
     };
     let sched =
         Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
@@ -605,6 +612,7 @@ async fn judge_fires_when_fleet_is_saturated() {
         hints: hints.clone(),
         target: "stuck".to_string(),
         delay: Duration::from_millis(20),
+        slow_all: false,
     });
     let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
     let judge = Arc::new(KillJudge {
@@ -614,6 +622,7 @@ async fn judge_fires_when_fleet_is_saturated() {
         min_age_secs: 0,
         intervene_confidence: 0.5,
         max_interventions_per_task: 1,
+        ..JudgeConfig::default()
     };
     // ONE device, weight 1: running its single task leaves NO idle device for the judge.
     let sched = Scheduler::new(vec![dev("only", "m-only", 1)], 3).with_judge(judge, cfg);
@@ -623,5 +632,46 @@ async fn judge_fires_when_fleet_is_saturated() {
         runs.lock().unwrap()[&"stuck".to_string()],
         2,
         "no idle device, yet the judge still fired + re-dispatched the stuck worker"
+    );
+}
+
+/// A worker that exhausts its re-dispatch cap and is STILL flagged must be terminal-failed, not left to
+/// spin a node to worker_max_turns. The judge's third action: give up cleanly so the run terminates.
+/// `terminal_min_secs: 0` lets the final attempt be failed immediately; `slow_all` keeps that attempt
+/// alive so the judge acts on it rather than it self-completing.
+#[tokio::test]
+async fn judge_terminal_fails_worker_stuck_at_cap() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "doomed".to_string(),
+        delay: Duration::from_millis(20),
+        slow_all: true,
+    });
+    let dag = Dag::from_specs(vec![spec("doomed", &[], &["a.py"])]).unwrap();
+    let judge = Arc::new(KillJudge {
+        target: "doomed".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        terminal_min_secs: 0,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(
+        report.failed.contains(&"doomed".to_string()),
+        "a still-flagged worker at its cap is terminal-failed, not left to spin"
+    );
+    assert!(!report.done.contains(&"doomed".to_string()));
+    assert_eq!(
+        runs.lock().unwrap()[&"doomed".to_string()],
+        2,
+        "re-dispatched once (kill at cap-0), then terminal-failed on the still-flagged retry"
     );
 }

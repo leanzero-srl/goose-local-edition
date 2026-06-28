@@ -552,12 +552,15 @@ impl State {
             .find(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)
             .map(|d| d.cfg.model_id.clone())
             .unwrap_or_default();
+        // Two pools: `best` = under-cap tasks (normal judging — re-dispatch on a problem); `best_terminal`
+        // = cap-exhausted tasks, surfaced ONLY so the judge can make a terminal decision (a task already
+        // re-dispatched to its cap that is STILL broken should be failed, not left to spin a node to
+        // worker_max_turns). Under-cap judging is always preferred so a cap-exhausted-but-fine task can
+        // never starve a genuinely-stuck one of the single judge slot.
         let mut best: Option<(String, u64)> = None;
+        let mut best_terminal: Option<(String, u64)> = None;
         for (tid, n) in &self.dag.tasks {
             if n.state != TaskState::Claimed {
-                continue;
-            }
-            if self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task {
                 continue;
             }
             let elapsed = self
@@ -568,11 +571,14 @@ impl State {
             if elapsed < cfg.min_age_secs {
                 continue;
             }
-            if best.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
-                best = Some((tid.clone(), elapsed));
+            let at_cap =
+                self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task;
+            let slot = if at_cap { &mut best_terminal } else { &mut best };
+            if slot.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
+                *slot = Some((tid.clone(), elapsed));
             }
         }
-        let (tid, elapsed) = best?;
+        let (tid, elapsed) = best.or(best_terminal)?;
         let n = &self.dag.tasks[&tid];
         let req = JudgeRequest {
             task_id: tid.clone(),
@@ -609,19 +615,80 @@ impl State {
             .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
             .unwrap_or(false);
         let interv = self.interventions.get(tid).copied().unwrap_or(0);
-        let act = outcome.verdict.is_problem()
+        let elapsed = self
+            .attempt_started_at
+            .get(tid)
+            .map(|t| t.elapsed().as_secs())
+            .unwrap_or(0);
+        let actionable = outcome.verdict.is_problem()
             && still_live
-            && outcome.confidence >= cfg.intervene_confidence
-            && interv < cfg.max_interventions_per_task;
+            && outcome.confidence >= cfg.intervene_confidence;
+        // The judge's three actions: observe (log only), re_dispatch (kill + retry with a hint, while
+        // under the cap), or fail (cap exhausted and STILL broken — cut it loose so a doomed task can't
+        // spin a node to worker_max_turns and so the run terminates instead of hanging on a dead worker).
+        // Terminal-fail requires a positive cap that has been used up AND a final attempt that has run a
+        // meaningful while, so a brief flag on a just-(re)started attempt never fails a task prematurely.
+        let terminal = actionable
+            && cfg.max_interventions_per_task > 0
+            && interv >= cfg.max_interventions_per_task
+            && elapsed >= cfg.terminal_min_secs;
+        let redispatch = actionable && interv < cfg.max_interventions_per_task;
+        let action = if terminal {
+            "failed"
+        } else if redispatch {
+            "re_dispatch"
+        } else {
+            "observed"
+        };
         self.sink.emit(&SwarmEvent::JudgeVerdict {
             task_id: tid.to_string(),
             device: device.clone().unwrap_or_default(),
             verdict: outcome.verdict.as_str().to_string(),
             confidence: outcome.confidence,
             hint: outcome.hint.clone(),
-            action: if act { "re_dispatch" } else { "observed" }.to_string(),
+            action: action.to_string(),
         });
-        if !act {
+        if terminal {
+            if let Some(h) = self.abort_handles.remove(tid) {
+                h.abort();
+            }
+            if let Some(dev) = self.claimed_device.remove(tid) {
+                if self.devices[dev].in_flight > 0 {
+                    self.devices[dev].in_flight -= 1;
+                }
+            }
+            if let Some(files) = self.held_by.remove(tid) {
+                for f in files {
+                    self.held_files.remove(&f);
+                }
+            }
+            self.attempt_started_at.remove(tid);
+            self.attempt_log
+                .entry(tid.to_string())
+                .or_default()
+                .push(AttemptRecord {
+                    device: device.clone(),
+                    model: model.clone(),
+                    outcome: "judge_failed".to_string(),
+                    error: Some(outcome.verdict.as_str().to_string()),
+                    elapsed_ms: 0,
+                });
+            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+            self.fail_descendants(tid);
+            let attempts = self.attempt_log[tid].len() as u32;
+            self.sink.emit(&SwarmEvent::TaskCompleted {
+                task_id: tid.to_string(),
+                status: "failed".to_string(),
+                device,
+                model,
+                attempts,
+                elapsed_ms: 0,
+                session_id: None,
+                tool_calls: Vec::new(),
+            });
+            return true;
+        }
+        if !redispatch {
             return false;
         }
         if let Some(h) = self.abort_handles.remove(tid) {
@@ -1036,13 +1103,14 @@ impl Scheduler {
                     });
                 }
             }
-            // Wake on a completion, or — when a judge is attached — at least every 30s, so it can
-            // inspect a worker that crosses the min-age threshold BETWEEN completions (a lone stuck
-            // worker produces no completion to wake on). tokio::Notify stores one permit, so a
-            // completion that fires before this await is not lost. With no judge this is an
-            // effectively-infinite wait: byte-identical to before.
+            // Wake on a completion, or — when a judge is attached — at least every 15s, so it can
+            // inspect a worker that crosses a threshold BETWEEN completions (a lone stuck worker produces
+            // no completion to wake on). A short tick means the behavioral over-read signal (many actions,
+            // zero output) and the terminal-fail decision act within ~15s of tripping, not minutes.
+            // tokio::Notify stores one permit, so a completion that fires before this await is not lost.
+            // With no judge this is an effectively-infinite wait: byte-identical to before.
             let tick = if self.judge.is_some() {
-                std::time::Duration::from_secs(30)
+                std::time::Duration::from_secs(15)
             } else {
                 std::time::Duration::from_secs(86_400)
             };

@@ -67,6 +67,12 @@ pub struct JudgeInput {
     /// large value (or `None`) on an old attempt means the worker is reading/looping, not producing —
     /// over-reading and a think-loop both surface here as a lack of output.
     pub secs_since_last_write: Option<u64>,
+    /// How many tool calls (actions) the live worker has taken so far this attempt, if known. A
+    /// behavioral progress signal independent of wall-clock: a worker that has taken MANY actions while
+    /// writing NOTHING is thrashing (exploring/re-reading), and that is catchable far sooner than the
+    /// elapsed-time fallback. `None` when no activity heartbeat is available (then only time-based checks
+    /// apply).
+    pub worker_tool_calls: Option<u32>,
 }
 
 /// A judge's conclusion about one worker.
@@ -98,6 +104,15 @@ pub struct JudgeConfig {
     pub intervene_confidence: f32,
     /// Cap on kill+re-dispatch interventions per task, so the judge can never loop a task forever.
     pub max_interventions_per_task: u32,
+    /// Behavioral over-read trip: this many tool calls (actions) with NO owned file written means the
+    /// worker is thrashing, regardless of the clock. A healthy worker — even a slow one composing a big
+    /// file — writes within a handful of actions; this catches the "many actions, zero output" worker
+    /// minutes before the elapsed-time fallback would.
+    pub over_read_tool_calls: u32,
+    /// A task that has exhausted its re-dispatch cap AND is still flagged is terminal-failed (not left to
+    /// spin a node to worker_max_turns) — but only once its final attempt has run at least this long, so
+    /// a momentary flag on a just-started final attempt can't cut a task that might still be getting going.
+    pub terminal_min_secs: u64,
 }
 
 impl Default for JudgeConfig {
@@ -109,6 +124,8 @@ impl Default for JudgeConfig {
             // second round of "simplify your approach" guidance before it lands. Total work is still
             // bounded by max_attempts; the 420s thresholds prevent rapid re-killing.
             max_interventions_per_task: 2,
+            over_read_tool_calls: 16,
+            terminal_min_secs: 90,
         }
     }
 }
@@ -148,6 +165,29 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                  — if you are unsure how, write a SMALLER, SIMPLER version that compiles and covers the \
                  core of the spec; a working subset beats a broken whole."
             ),
+        });
+    }
+    // Behavioral over-read: the worker has TAKEN many actions (tool calls) yet produced no owned file.
+    // This is thrashing — exploring/listing/re-reading instead of writing — and it is visible from the
+    // worker's ACTIVITY long before the elapsed-time fallback below would trip. A healthy worker, even a
+    // slow one composing a large file, makes only a handful of tool calls before its file appears; a
+    // worker on its Nth action with nothing written is over-reading and should be redirected NOW, not in
+    // several more minutes. A small min-age guard keeps a fast startup burst from being misread.
+    if !input.any_owned_written
+        && input.elapsed_secs >= cfg.min_age_secs
+        && input
+            .worker_tool_calls
+            .is_some_and(|n| n >= cfg.over_read_tool_calls)
+    {
+        return Some(JudgeOutcome {
+            verdict: Verdict::OverReading,
+            confidence: 0.9,
+            hint: "You have taken many actions but written no file yet — you are exploring/re-reading \
+                   instead of producing. STOP investigating: you already have the spec, the file layout, \
+                   and the injected dependency APIs. WRITE your owned file(s) NOW — the SIMPLEST version \
+                   that satisfies the spec first (a small working file), then refine. A minimal working \
+                   file beats endless exploration."
+                .to_string(),
         });
     }
     if !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
@@ -203,6 +243,7 @@ mod tests {
             elapsed_secs: elapsed,
             any_owned_written: written,
             secs_since_last_write: last_write,
+            worker_tool_calls: None,
         }
     }
 
@@ -234,5 +275,30 @@ mod tests {
     fn healthy_young_worker_is_quiet() {
         let v = deterministic_verdict(&mk("scan-module", true, Some(30), 100), &JudgeConfig::default());
         assert!(v.is_none());
+    }
+
+    #[test]
+    fn behavioral_over_read_fires_early_on_many_actions_no_output() {
+        // 0 writes + 16 tool calls past min-age → over-read caught at 150s, NOT the 420s fallback.
+        let mut i = mk("core-tree", false, None, 150);
+        i.worker_tool_calls = Some(16);
+        let v = deterministic_verdict(&i, &JudgeConfig::default());
+        assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
+    }
+
+    #[test]
+    fn behavioral_over_read_quiet_while_writing() {
+        // A worker that HAS written its file is making progress — many tool calls are fine, no kill.
+        let mut i = mk("core-tree", true, Some(20), 300);
+        i.worker_tool_calls = Some(40);
+        assert!(deterministic_verdict(&i, &JudgeConfig::default()).is_none());
+    }
+
+    #[test]
+    fn behavioral_over_read_quiet_for_slow_single_generation() {
+        // Slow but healthy: few tool calls (one long generation), no file yet, under the time fallback.
+        let mut i = mk("core-tree", false, None, 200);
+        i.worker_tool_calls = Some(4);
+        assert!(deterministic_verdict(&i, &JudgeConfig::default()).is_none());
     }
 }

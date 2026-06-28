@@ -1781,6 +1781,7 @@ impl GooseAgentDispatcher {
             max_turns,
             extensions,
             self.planner_timeout_secs,
+            None,
         )
         .await
     }
@@ -1795,6 +1796,11 @@ impl GooseAgentDispatcher {
         max_turns: u32,
         extensions: &[ExtensionConfig],
         idle_secs: u64,
+        // When Some(task_id), emit a per-turn activity heartbeat to `.swarm/activity/<task_id>.json` so
+        // the idle-model judge can see how many actions this worker has taken — letting it catch a
+        // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
+        // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
+        activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
@@ -1886,6 +1892,20 @@ impl GooseAgentDispatcher {
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
+        // Per-turn activity heartbeat for the judge (worker calls only). Reset to 0 at the start of every
+        // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
+        // just means the judge falls back to its time-based checks.
+        let activity_file = activity_key.map(|k| {
+            let dir = std::env::current_dir()
+                .unwrap_or_else(|_| self.working_dir.clone())
+                .join(".swarm")
+                .join("activity");
+            let _ = std::fs::create_dir_all(&dir);
+            dir.join(format!("{k}.json"))
+        });
+        if let Some(p) = &activity_file {
+            let _ = std::fs::write(p, "{\"tool_calls\":0}");
+        }
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
@@ -1938,6 +1958,9 @@ impl GooseAgentDispatcher {
                 }
                 Ok(_) => {}
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
+            }
+            if let Some(p) = &activity_file {
+                let _ = std::fs::write(p, format!("{{\"tool_calls\":{}}}", tool_calls.len()));
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
@@ -2410,7 +2433,7 @@ impl GooseAgentDispatcher {
                 // timeout/empty/error we fall back to the architect's brief line (still a valid spec).
                 let desc = match tokio::time::timeout(
                     std::time::Duration::from_secs(75),
-                    me.run_agent(&model, system, user, None, 6, &[], 0),
+                    me.run_agent(&model, system, user, None, 6, &[], 0, None),
                 )
                 .await
                 {
@@ -2566,6 +2589,18 @@ impl Judge for GooseAgentDispatcher {
         let secs_since_last_write = newest_mtime
             .and_then(|mt| mt.elapsed().ok())
             .map(|d| d.as_secs());
+        // Behavioral signal: how many actions the live worker has taken this attempt (written each turn
+        // to .swarm/activity/<task_id>.json). Lets the deterministic verdict catch a thrashing worker
+        // (many actions, zero output) immediately rather than waiting on the elapsed-time fallback.
+        let worker_tool_calls = std::fs::read_to_string(
+            cwd.join(".swarm")
+                .join("activity")
+                .join(format!("{}.json", req.task_id)),
+        )
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("tool_calls").and_then(|n| n.as_u64()))
+        .map(|n| n as u32);
         let input = JudgeInput {
             task_id: req.task_id.clone(),
             description: req.description.clone(),
@@ -2575,6 +2610,7 @@ impl Judge for GooseAgentDispatcher {
             elapsed_secs: req.elapsed_secs,
             any_owned_written,
             secs_since_last_write,
+            worker_tool_calls,
         };
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {
@@ -2613,7 +2649,7 @@ impl Judge for GooseAgentDispatcher {
         );
         match tokio::time::timeout(
             std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
-            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0),
+            self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
         )
         .await
         {
@@ -2856,6 +2892,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 self.worker_max_turns,
                 &self.worker_extensions,
                 self.worker_timeout_secs,
+                Some(&req.task_id),
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
