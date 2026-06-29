@@ -2747,17 +2747,31 @@ impl GooseAgentDispatcher {
                 eprintln!("  · injected missing integrate-verify sink (architect omitted it)");
             }
         }
-        let items: Vec<(usize, String, String)> = v
+        let items: Vec<(usize, String, String, String)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
             .iter()
             .enumerate()
             .map(|(i, st)| {
+                // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
+                // verbatim. Without this the detailer invents a filename that contradicts the owned_files
+                // (e.g. spec says formula_parser.py while the plan owns parser.py); the worker follows the
+                // spec, never writes the owned file, and the task fails its owned-file check every attempt.
+                let files = st["files"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|f| f.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
                 (
                     i,
                     st["id"].as_str().unwrap_or("").to_string(),
                     st["description"].as_str().unwrap_or("").to_string(),
+                    files,
                 )
             })
             .collect();
@@ -2779,7 +2793,7 @@ impl GooseAgentDispatcher {
         // One detail call per device (work-stealing): a weight-1 node never has a second detail queued
         // behind the first. Each item grabs the next free node, so the fleet stays busy without
         // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
-        let results = fanout_over_fleet(wm, items, move |(idx, id, brief), model| {
+        let results = fanout_over_fleet(wm, items, move |(idx, id, brief, files), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -2798,11 +2812,22 @@ impl GooseAgentDispatcher {
                 };
                 let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
                     spec for the worker who will build it: exact function/class names and signatures, key logic, the \
-                    files it owns, edge cases to handle, and what its tests must check. Be concrete and self-contained, \
-                    and BRIEF — about 150 words, no preamble. Output ONLY the spec prose; do NOT write code files or \
-                    restate the whole project."
+                    files it owns, edge cases to handle, and what its tests must check. Use the EXACT file paths the \
+                    subtask owns (given below) verbatim — NEVER invent, rename, or pluralize a filename. Be concrete \
+                    and self-contained, and BRIEF — about 150 words, no preamble. Output ONLY the spec prose; do NOT \
+                    write code files or restate the whole project."
                     .to_string();
-                let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{fb}");
+                let files_line = if files.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n\nThis subtask owns EXACTLY these file(s): {files}\nYour spec MUST refer to the \
+                         worker's files by these EXACT paths — do NOT use a different name (e.g. do not write \
+                         formula_parser.py when the owned file is parser.py): a mismatched filename makes the \
+                         worker write the wrong file and the task FAILS its owned-file check on every attempt."
+                    )
+                };
+                let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
                 let desc = match tokio::time::timeout(
                     std::time::Duration::from_secs(75),
                     me.run_agent(&model, system, user, None, 6, &[], 0, None),
