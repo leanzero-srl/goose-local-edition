@@ -189,3 +189,15 @@ Do NOT tune the judge; keep watching A2 to confirm.
     the full stack, while the same regime FAILED (A1-2) / shipped broken (A1-3) without it. The v8 build
     hits its target consistently across two distinct draw classes (contract-drift cascade + no-dispatcher
     stall). The contract-stub-cleanup prompt fix also held (0 stray stubs this run).
+
+## New lesson (live, v8 A2 = 3/3, 2026-06-29) — full stack converts the multi-module DRAW->WIN, confirmed x3
+18. **A2 = 3-FOR-3: the full v8 stack converts the multi-module DRAW class into WINs across 3 distinct apps.**
+    A2-1 ledger (contract-drift class) WIN 8/6/8/8; A2-2 log-DSL (logfunnel no-dispatcher class) WIN 8/8/8/8;
+    A2-3 state-machine WIN 8/6/8/8 (RAN it: valid transition persists, invalid rejected with exit 1, graph
+    validation). ALL on the full stack (CONTRACTS + detailer-fix + smoke + review + done_gate), each VERIFIED
+    end-to-end (ran the app) + AST-review-clean (0 unwired) + 0 stray stubs. vs the multi-module A1 runs
+    WITHOUT contracts: A1-2 FAIL 2/0/5/2 (drift cascade) + A1-3 broken 3/5/5/4 (store unwired). The v8 build
+    does what it set out to: make a weak 27B fleet deliver WORKING multi-module apps. CAVEAT (repeated
+    honestly): A2 is max-detail vs A1's minimal, so spec detail also contributes — the cleanest isolation is
+    a contracts-OFF same-spec A2 run (good next experiment). But the failure MECHANISMS that sank A1-2/A1-3
+    (drift, unwiring, stub-pollution) were each observed PREVENTED on A2.
