@@ -1429,6 +1429,8 @@ mod tests {
         // dense size when there is no active marker.
         assert_eq!(model_active_params_b("qwen/qwen3.6-27b"), Some(27));
         assert_eq!(model_active_params_b("llama-3.1-8b-instruct"), Some(8));
+        // Mixtral-style NxMb -> the per-expert size M as the active proxy.
+        assert_eq!(model_active_params_b("mixtral-8x7b-instruct"), Some(7));
         assert_eq!(model_active_params_b("some-unsized-model"), None);
         // Weaker (fewer active params) -> bigger bump (ask sooner); strong -> no bump.
         assert_eq!(ask_floor_weak_bump(Some(27)), 5);
@@ -4727,7 +4729,20 @@ fn model_active_params_b(model_id: &str) -> Option<u32> {
             }
         }
     }
-    // 2) else the dense size "<N>b".
+    // 2) Mixtral-style "NxMb" dense-expert MoE: the per-expert size M is a rough ACTIVE proxy (only a couple
+    // of experts fire per token), so read M, not the N×M total.
+    for t in &tokens {
+        if let Some((_, rest)) = t.split_once('x') {
+            if let Some(num) = rest.strip_suffix('b') {
+                if let Ok(n) = num.parse::<u32>() {
+                    if (1..=2000).contains(&n) {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    // 3) else the dense size "<N>b".
     for t in &tokens {
         if let Some(num) = t.strip_suffix('b') {
             if let Ok(n) = num.parse::<u32>() {
@@ -5251,14 +5266,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let base_floor: Option<u8> = std::env::var("GOOSE_SWARM_ASK_FLOOR")
         .ok()
         .and_then(|v| v.trim().parse::<u8>().ok())
-        .filter(|f| *f > 0);
+        .filter(|f| *f > 0)
+        .map(|f| f.min(100)); // documented 1-100; clamp so the weak-bump can never dip below the literal floor
     // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
     // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
     // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
     // params is fuzzy); the bump is small + capped at 100.
     let ask_scale = base_floor.is_some()
         && std::env::var("GOOSE_SWARM_ASK_SCALE")
-            .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
             .unwrap_or(true);
     let ask_floor: Option<u8> = base_floor.map(|f| {
         if ask_scale {
