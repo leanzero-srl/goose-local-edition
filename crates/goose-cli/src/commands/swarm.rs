@@ -1404,6 +1404,18 @@ mod tests {
     }
 
     #[test]
+    fn frozen_interfaces_block_noop_when_empty() {
+        assert_eq!(frozen_interfaces_block(""), "");
+        assert_eq!(frozen_interfaces_block("   \n  "), "");
+        let block = frozen_interfaces_block("def add(a: int, b: int) -> int: ...");
+        assert!(block.contains("FROZEN MODULE INTERFACES"));
+        assert!(
+            block.contains("def add(a: int, b: int) -> int: ..."),
+            "the stub bundle must be embedded verbatim"
+        );
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -1933,6 +1945,10 @@ pub struct GooseAgentDispatcher {
     allow_model_load: bool,
     /// Imposed sampling parameters applied to every model call (steadies weak local models).
     sampling: SamplingParams,
+    /// Frozen module-interface contracts (signature-only stubs) injected into EVERY worker prompt to kill
+    /// cross-module drift. Empty until the GOOSE_SWARM_CONTRACTS stub pass populates it (stage 2b); set
+    /// once before the EXECUTE phase, then read by every worker. Empty -> the injection is a no-op.
+    contracts: std::sync::OnceLock<String>,
 }
 
 impl GooseAgentDispatcher {
@@ -1966,6 +1982,7 @@ impl GooseAgentDispatcher {
             planner_timeout_secs,
             allow_model_load,
             sampling,
+            contracts: std::sync::OnceLock::new(),
         })
     }
 
@@ -3527,6 +3544,22 @@ impl PreReviewer for GooseAgentDispatcher {
     }
 }
 
+/// Format the frozen module-interface contracts bundle for injection into a worker prompt. An empty (or
+/// whitespace) bundle yields an empty string, so the GOOSE_SWARM_CONTRACTS injection is a true no-op
+/// until the stub pass populates it. Pure — unit-tested without a model.
+fn frozen_interfaces_block(bundle: &str) -> String {
+    if bundle.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n## FROZEN MODULE INTERFACES — the agreed contract (build against these EXACTLY)\n\
+         These are the signature-only stubs every sibling module WILL expose. Import and call them with \
+         these EXACT names + signatures, and keep shared data shapes identical; do NOT invent a different \
+         signature or re-shape a shared value. A mismatch here is the #1 cause of passing-unit-tests but a \
+         broken end-to-end integration.\n{bundle}\n"
+    )
+}
+
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
@@ -3682,6 +3715,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
+        let contracts_on = std::env::var("GOOSE_SWARM_CONTRACTS")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+            .unwrap_or(false);
+        // GOOSE_SWARM_CONTRACTS: inject the frozen sibling-module interfaces so every parallel worker
+        // builds against ONE agreed contract (kills cross-module drift). No-op until the stub pass (2b)
+        // populates the bundle, so this is safe to ship ahead of the generator.
+        let contracts_block = if contracts_on {
+            self.contracts
+                .get()
+                .map(|b| frozen_interfaces_block(b))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
@@ -3743,7 +3790,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{layout_block}{context_block}"
+             \n{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
