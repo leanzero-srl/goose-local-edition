@@ -3165,7 +3165,21 @@ impl SmokeResult {
 /// Run the deterministic end-to-end smoke oracles on the produced tree at `root`. No-ops
 /// (`ran=false`) when there is no Python. A missing `python3`/`pytest` is inconclusive, never a
 /// failure; the findings are cross-module import errors and an entry point that fails or is absent.
-async fn run_smoke_gate(root: &Path) -> SmokeResult {
+async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
+    // The smoke oracles (pytest collect-only + `python3 -m <pkg>`) are Python-specific. On a non-Python
+    // target skip cleanly (ran=false) rather than run pytest against a TS/Rust/Go tree — which on a mixed
+    // tree (a stray .py) would push a bogus "no python entry point" finding and trigger a corrective
+    // re-dispatch telling the model to inject Python into a non-Python app. Python path below is unchanged.
+    if lang != TargetLang::Python {
+        return SmokeResult {
+            ran: false,
+            py_files: 0,
+            collect: None,
+            entry_package: None,
+            entry_ok: None,
+            findings: vec![],
+        };
+    }
     let py = collect_py_files(root);
     if py.is_empty() {
         return SmokeResult {
@@ -5108,7 +5122,8 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
     if smoke_on {
-        let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default()).await;
+        let smoke_lang = detect_language(&opts.prompt, &[]);
+        let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
         let smoke_value = serde_json::to_value(&smoke).unwrap_or(serde_json::Value::Null);
         sink.write_value(serde_json::json!({
             "event": "smoke",
@@ -5146,7 +5161,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     prior_hint: None,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
-                let after = run_smoke_gate(&std::env::current_dir().unwrap_or_default()).await;
+                let after = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
                 sink.write_value(serde_json::json!({
                     "event": "smoke_after_fix",
