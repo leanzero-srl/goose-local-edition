@@ -178,3 +178,14 @@ Do NOT tune the judge; keep watching A2 to confirm.
     so the detailed spec also contributes — a contracts-OFF same-spec run would isolate contracts. Still, the
     two draw-class failure mechanisms that sank A1-2/A1-3 (cross-module drift cascade; built-but-unwired) did
     NOT occur with the full stack — the strongest end-to-end evidence the v8 build targets the right thing.
+
+## New lesson (live, v8 A2-2 log-DSL WIN, 2026-06-29) — 2nd DRAW->WIN; the logfunnel class is tamed
+17. **The logfunnel STALL/no-dispatcher class is tamed (A2-2 log-pipeline DSL = WIN 8/8/8/8).** logfunnel in
+    the AB STALLED — stages built with NO dispatcher to wire them (lesson #5). A2-2 (full v8 stack) WORKS,
+    verified: RAN "filter ERROR | count" -> 2 and "filter ERROR | upper" -> ERROR X / ERROR Z (multi-stage,
+    correctly wired); 44 tests; SMOKE pass; AST review 0 unwired. The architect planned an explicit
+    runner-module (dispatcher); CONTRACTS froze the tokens/parser/stages interfaces so dependents wired
+    against them. With A2-1 (ledger WIN), A2 = WIN/WIN — both hard multi-module max-detail apps work under
+    the full stack, while the same regime FAILED (A1-2) / shipped broken (A1-3) without it. The v8 build
+    hits its target consistently across two distinct draw classes (contract-drift cascade + no-dispatcher
+    stall). The contract-stub-cleanup prompt fix also held (0 stray stubs this run).
