@@ -255,3 +255,22 @@ Do NOT tune the judge; keep watching A2 to confirm.
     smoke-skip dcf6a6b2e) target exactly this; RUST-1 (next, on the fixed binary) tests the full chain.
     Cross-language confirmation that VERIFY-don't-trust + RUN-the-real-entry is the load-bearing principle
     regardless of language — a green test suite never proves a non-Python CLI runs any more than a Python one.
+
+## New lesson (live, v8 inquisitive-swarm handshake PROVEN, 2026-06-29) — confidence-gated USER questions
+22. **INQUISITIVE SWARM validated LIVE — the harness-mediated Q&A closed loop works end-to-end.** The user's
+    ask: with local models, the swarm should ASK the user more, gated by the confidence meter (he calls it
+    "the single most important thing"), and — since this autonomous loop IMPERSONATES the human — the harness
+    answers and feeds it back. Built GOOSE_SWARM_ASK_FLOOR (commit cf573d811, after an adversarial review that
+    caught + fixed a proceed-on-default regression + a PTY-hang). LIVE PROOF (floor=100, vague spec "build a
+    tool to process logs"): swarm computed plan confidence 82/100 (best-of-2 cross-draft agreement — the M6
+    meter that was previously COMPUTED THEN DISCARDED, now the live trigger); the verbalized step returned
+    EMPTY uncertainties so the GENERIC-FALLBACK question fired (review-fix: below floor ALWAYS asks, never
+    proceed-on-default); it wrote .swarm/clarify-questions.json, emitted low_confidence_ask, and BLOCKED.
+    The HARNESS (this loop, AS the human) wrote .swarm/clarify-answers.json with a concrete answer (parse
+    syslog/JSON/nginx, never crash on a bad line, per-level summary + --json); within ~10s the swarm logged
+    "clarifications received — re-planning", emitted low_confidence_answered, folded the Q&A into the planner
+    findings, and RE-PLANNED — exactly ONCE (the `asked` flag bounds it), then proceeds to EXECUTE. The closed
+    Q&A loop through the harness is real, not a side-channel. Detached detection = stdin&&stdout both TTY else
+    file handshake (+ GOOSE_SWARM_ASK_FILE override) so a detached/eval run never hangs. Default-OFF
+    (unset/0) so every existing run is byte-identical. Next: a dedicated question GENERATOR (real
+    interrogatives from spec+plan, not split-the-uncertainty-string) + local-model-strength floor scaling.
