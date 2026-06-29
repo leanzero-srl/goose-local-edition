@@ -97,20 +97,27 @@ struct DeviceRt {
 }
 
 /// Ready-set ordering: higher fan-out first (unblock the most work), tie-break by id ascending for
-/// Releases the single idle-job slot (`judge_running`) when an idle-job task ends — INCLUDING on panic, so
-/// a panicking judge or pre-reviewer can never permanently wedge the slot and deadlock all future idle work.
-/// Drop is synchronous, so it spawns a tiny task to clear the flag under the async State lock (only if a
-/// runtime is still current — during shutdown the flag no longer matters).
+/// Releases ONE idle-job slot when an idle-job task ends — INCLUDING on panic, so a panicking judge or
+/// pre-reviewer can never leak a slot and starve future idle work. Always decrements `idle_jobs`; for a
+/// judge job it also clears `judge_running` so a panicked judge does not wedge the single-judge invariant.
+/// Drop is synchronous, so it spawns a tiny task to update the count under the async State lock (only if a
+/// runtime is still current — during shutdown the count no longer matters).
 struct IdleSlotGuard {
     state: Arc<Mutex<State>>,
+    is_judge: bool,
 }
 
 impl Drop for IdleSlotGuard {
     fn drop(&mut self) {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let st = self.state.clone();
+            let is_judge = self.is_judge;
             handle.spawn(async move {
-                st.lock().await.judge_running = false;
+                let mut s = st.lock().await;
+                s.idle_jobs = s.idle_jobs.saturating_sub(1);
+                if is_judge {
+                    s.judge_running = false;
+                }
             });
         }
     }
@@ -168,7 +175,10 @@ struct State {
     device_speed: HashMap<usize, (u64, u32)>,
     /// Judge support — empty/false unless a judge is attached. `abort_handles` lets the judge kill a
     /// stuck worker's future; `prior_hints` carries the judge's corrective note onto the re-dispatch;
-    /// `interventions` caps kills per task; `judge_running` keeps at most one judge in flight at a time.
+    /// `interventions` caps kills per task; `judge_running` keeps at most one judge in flight at a time
+    /// (never two judging the same worker); `idle_jobs` counts ALL running idle jobs (the judge + any
+    /// pre-reviews) so up to `idle_capacity()` run CONCURRENTLY — one per free node — instead of the old
+    /// single shared slot that let the judge starve pre-review and left a second idle node asleep.
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
     prior_hints: HashMap<TaskId, String>,
     interventions: HashMap<TaskId, u32>,
@@ -176,6 +186,7 @@ struct State {
     /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
     split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
+    idle_jobs: u32,
 }
 
 impl State {
@@ -493,7 +504,12 @@ impl State {
                     .push(AttemptRecord {
                         device: dev_id.clone(),
                         model: model_id.clone(),
-                        outcome: if is_content { "content_retry" } else { "transient" }.to_string(),
+                        outcome: if is_content {
+                            "content_retry"
+                        } else {
+                            "transient"
+                        }
+                        .to_string(),
                         error: Some(msg.clone()),
                         elapsed_ms,
                     });
@@ -608,7 +624,11 @@ impl State {
             }
             let at_cap =
                 self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task;
-            let slot = if at_cap { &mut best_terminal } else { &mut best };
+            let slot = if at_cap {
+                &mut best_terminal
+            } else {
+                &mut best
+            };
             if slot.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
                 *slot = Some((tid.clone(), elapsed));
             }
@@ -660,12 +680,14 @@ impl State {
             split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
         };
         self.judge_running = true;
+        self.idle_jobs += 1;
         Some((req, attempt))
     }
 
     /// M5: pick a COMPLETED-but-unreviewed task (that owns files) for an idle-node correctness pre-review,
-    /// claiming the single idle-job slot. Returns the request, or None if no idle device is free, nothing
-    /// is reviewable, or the slot is taken. Marks the task pre_reviewed up front so it is picked at most
+    /// claiming one idle-job slot (does NOT take the single-judge flag, so it runs concurrently with the
+    /// judge on a different free node). Returns the request, or None if no idle device is free, nothing is
+    /// reviewable, or all idle slots are taken. Marks the task pre_reviewed up front so it is picked at most
     /// once even while the review is in flight.
     fn pick_prereview_request(&mut self) -> Option<PreReviewRequest> {
         let reviewer_model_id = self
@@ -686,7 +708,7 @@ impl State {
             (n.spec.description.clone(), n.spec.owned_files.clone())
         };
         self.dag.tasks.get_mut(&tid).unwrap().pre_reviewed = true;
-        self.judge_running = true;
+        self.idle_jobs += 1;
         Some(PreReviewRequest {
             task_id: tid,
             description,
@@ -916,7 +938,10 @@ impl State {
         // Reject a self-dep or any cycle among siblings BEFORE aborting the worker. Otherwise such a
         // proposal passes here but fails splice_specs' Kahn check AFTER the abort, hitting the destructive
         // Err arm — which would cascade-FAIL a healthy worker and break the documented no-op contract.
-        if children.iter().any(|c| c.depends_on.iter().any(|d| d == &c.id)) {
+        if children
+            .iter()
+            .any(|c| c.depends_on.iter().any(|d| d == &c.id))
+        {
             return false;
         }
         {
@@ -1258,6 +1283,7 @@ impl Scheduler {
             interventions: HashMap::new(),
             split_generation: HashMap::new(),
             judge_running: false,
+            idle_jobs: 0,
         }));
         let notify = Arc::new(Notify::new());
 
@@ -1390,6 +1416,9 @@ impl Scheduler {
             if let Some(judge) = &self.judge {
                 let target = {
                     let mut s = state.lock().await;
+                    // The judge is NOT capacity-bounded: it must fire even on a SATURATED fleet to kill a
+                    // stuck worker and free a slot (that is unblocking, not idle-node work). It still counts
+                    // toward idle_jobs so pre-review (below) knows one slot is taken.
                     if s.judge_running || s.total_in_flight() == 0 {
                         None
                     } else {
@@ -1404,13 +1433,18 @@ impl Scheduler {
                     let cfg = self.judge_cfg;
                     tokio::spawn(async move {
                         // Backstop: if judge.judge() or apply_judge_outcome PANICS, this guard still releases
-                        // the idle slot on unwind (the explicit reset below is the hot-path primary).
-                        let _slot = IdleSlotGuard { state: st.clone() };
+                        // the idle slot AND clears judge_running on unwind (the explicit resets below are the
+                        // hot-path primary).
+                        let _slot = IdleSlotGuard {
+                            state: st.clone(),
+                            is_judge: true,
+                        };
                         let outcome = judge.judge(req).await;
                         let intervened = {
                             let mut s = st.lock().await;
                             let r = s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
                             s.judge_running = false;
+                            s.idle_jobs = s.idle_jobs.saturating_sub(1);
                             r
                         };
                         // Only wake the loop when the judge actually intervened (the re-dispatched task
@@ -1422,14 +1456,15 @@ impl Scheduler {
                     });
                 }
             }
-            // M5: when no in-flight worker needed judging, put the idle node on a correctness PRE-REVIEW of
-            // a completed-but-unreviewed task (findings feed integrate-verify). Shares the single idle-job
-            // slot with the judge via judge_running, so at most one idle job runs at a time. Off unless a
-            // pre-reviewer is attached; pick_prereview_request returns None when the slot is taken.
+            // M5: put any STILL-idle node (beyond the one the judge took) on a correctness PRE-REVIEW of a
+            // completed-but-unreviewed task (findings feed integrate-verify). Judge + pre-review now run
+            // CONCURRENTLY, bounded by idle_capacity() so each free node gets one idle job and none is
+            // oversubscribed; multiple pre-reviews can run at once (each on a distinct task, marked
+            // pre_reviewed up front). Off unless a pre-reviewer is attached; None when all idle slots taken.
             if let Some(pr) = &self.pre_reviewer {
                 let req = {
                     let mut s = state.lock().await;
-                    if s.judge_running {
+                    if s.idle_jobs >= s.idle_capacity() {
                         None
                     } else {
                         s.pick_prereview_request()
@@ -1439,11 +1474,15 @@ impl Scheduler {
                     let pr = pr.clone();
                     let st = state.clone();
                     tokio::spawn(async move {
-                        // Backstop: release the idle slot even if pre_review() panics (else it deadlocks
-                        // ALL future idle work, judge included). Explicit reset below is the hot path.
-                        let _slot = IdleSlotGuard { state: st.clone() };
+                        // Backstop: release the idle slot even if pre_review() panics (else it leaks a slot).
+                        // Explicit decrement below is the hot path; is_judge=false leaves judge_running alone.
+                        let _slot = IdleSlotGuard {
+                            state: st.clone(),
+                            is_judge: false,
+                        };
                         let _ = pr.pre_review(req).await;
-                        st.lock().await.judge_running = false;
+                        let mut s = st.lock().await;
+                        s.idle_jobs = s.idle_jobs.saturating_sub(1);
                     });
                 }
             }
