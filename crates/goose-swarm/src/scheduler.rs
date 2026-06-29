@@ -1432,9 +1432,11 @@ impl Scheduler {
                     let nt = notify.clone();
                     let cfg = self.judge_cfg;
                     tokio::spawn(async move {
-                        // Backstop: if judge.judge() or apply_judge_outcome PANICS, this guard still releases
-                        // the idle slot AND clears judge_running on unwind (the explicit resets below are the
-                        // hot-path primary).
+                        // The IdleSlotGuard is the SOLE releaser of the idle_jobs slot — decrement-ONCE on
+                        // BOTH normal and panic exit. A counter must not be double-decremented the way the
+                        // old idempotent bool harmlessly could (that undercounts and oversubscribes the
+                        // fleet). We still clear judge_running on the hot path so the next tick can re-judge
+                        // immediately; the guard also clears it as the panic backstop.
                         let _slot = IdleSlotGuard {
                             state: st.clone(),
                             is_judge: true,
@@ -1444,7 +1446,6 @@ impl Scheduler {
                             let mut s = st.lock().await;
                             let r = s.apply_judge_outcome(&tid, attempt, outcome, &cfg);
                             s.judge_running = false;
-                            s.idle_jobs = s.idle_jobs.saturating_sub(1);
                             r
                         };
                         // Only wake the loop when the judge actually intervened (the re-dispatched task
@@ -1474,15 +1475,14 @@ impl Scheduler {
                     let pr = pr.clone();
                     let st = state.clone();
                     tokio::spawn(async move {
-                        // Backstop: release the idle slot even if pre_review() panics (else it leaks a slot).
-                        // Explicit decrement below is the hot path; is_judge=false leaves judge_running alone.
+                        // The IdleSlotGuard is the SOLE releaser of this idle_jobs slot — decrement-ONCE on
+                        // both normal and panic exit (is_judge=false leaves judge_running untouched). Do NOT
+                        // also decrement explicitly here: that double-counts the slot and oversubscribes.
                         let _slot = IdleSlotGuard {
                             state: st.clone(),
                             is_judge: false,
                         };
                         let _ = pr.pre_review(req).await;
-                        let mut s = st.lock().await;
-                        s.idle_jobs = s.idle_jobs.saturating_sub(1);
                     });
                 }
             }
