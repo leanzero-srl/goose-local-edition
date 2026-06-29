@@ -3663,12 +3663,14 @@ impl PreReviewer for GooseAgentDispatcher {
     }
 }
 
-/// Embedded model-free AST wiring/drift reviewer (GOOSE_SWARM_REVIEW). Parses the produced Python tree
-/// and flags cross-module DRIFT (a from-import of a name the local module does not define) and
-/// BUILT-BUT-UNWIRED modules (a non-test logic module no non-test module imports — a duplicate-impl /
-/// dead-feature smell SMOKE cannot see because the app still runs via the duplicate). Validated: clean on
-/// a well-wired app, true-positive on a known-unwired tree, and it surfaced real dead/duplicate code in a
-/// "clean" example that a manual review missed.
+/// Embedded model-free AST wiring reviewer (GOOSE_SWARM_REVIEW). Parses the produced Python tree and
+/// flags BUILT-BUT-UNWIRED modules (a non-test logic module that no non-test module imports — a
+/// duplicate-impl / dead-feature smell SMOKE cannot see because the app still RUNS via the duplicate).
+/// Undefined-import drift is intentionally NOT checked here: SMOKE's collect-only catches real undefined
+/// imports with zero false positives (it actually runs the import), whereas a STATIC drift check
+/// false-positives on re-exports + star-imports (it flagged a re-exported RenderConfig in the clean
+/// mdhtml WIN). Validated: 0 findings on well-wired apps (chaos-fern, the mdhtml WIN), true-positive on a
+/// known-unwired tree, and it surfaced real dead/duplicate code in a "clean" example a manual review missed.
 const AST_REVIEW_SCRIPT: &str = r##"
 import ast, json, os, sys
 
@@ -3705,46 +3707,26 @@ def localmatch(name):
     return None
 
 
-defined = {}
-imports_of = {}
 imported_by_nontest = set()
-
 for mod, path in mods.items():
+    if is_test(mod):
+        continue
     try:
         tree = ast.parse(open(path, encoding="utf-8").read())
     except Exception:
         continue
-    dnames = set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            dnames.add(node.name)
-        elif isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Name):
-                    dnames.add(t.id)
-    defined[mod] = dnames
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             lm = localmatch(node.module)
             if lm:
-                for alias in node.names:
-                    imports_of.setdefault(mod, set()).add((lm, alias.name))
-                if not is_test(mod):
-                    imported_by_nontest.add(lm)
+                imported_by_nontest.add(lm)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 lm = localmatch(alias.name)
-                if lm and not is_test(mod):
+                if lm:
                     imported_by_nontest.add(lm)
 
 findings = []
-for mod, imps in imports_of.items():
-    for (lm, name) in imps:
-        if name != "*" and lm in defined and name not in defined[lm]:
-            findings.append(
-                "%s imports '%s' from local module '%s' which does not define it (cross-module drift)"
-                % (mod, name, lm)
-            )
 for mod in mods:
     if base(mod) in ("__init__", "__main__") or is_test(mod):
         continue
@@ -3789,7 +3771,7 @@ fn parse_ast_review(stdout: &str) -> AstReviewResult {
     }
 }
 
-/// Run the model-free AST wiring/drift review over the produced tree. No-op (`ran=false`) when there is
+/// Run the model-free AST wiring review over the produced tree. No-op (`ran=false`) when there is
 /// no Python or python3 is unavailable. Advisory — emits findings, never blocks the run.
 async fn run_ast_review(root: &Path) -> AstReviewResult {
     if collect_py_files(root).is_empty() {
@@ -4843,7 +4825,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         } else if review.findings.is_empty() {
             eprintln!(
                 "{}",
-                style("AST review: clean (no drift / unwired modules)").green()
+                style("AST review: clean (no unwired modules)").green()
             );
         } else {
             eprintln!(
