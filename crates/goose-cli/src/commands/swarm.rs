@@ -2435,9 +2435,11 @@ impl GooseAgentDispatcher {
             "A weak local model just drafted a plan for a coding task but its confidence is LOW ({conf}/100). \
              Ask the USER AT MOST {max_q} crisp, specific, INTERROGATIVE questions whose answers would most \
              change HOW the program is built — its scope, inputs/outputs, file formats, or acceptance criteria \
-             — NOT trivia or anything already pinned down by the task. Each question must be answerable in one \
-             sentence and end with '?'. If the task is genuinely self-contained and nothing would change the \
-             build, return an EMPTY questions list — do NOT invent make-work. Then call the final_output tool."
+             — NOT trivia or anything already pinned down by the task. Ask ONLY what the USER alone can decide \
+             — do NOT ask facts that can be looked up in docs or on the web (the swarm researches those itself). \
+             Each question must be answerable in one sentence and END WITH '?'. If the task is genuinely self- \
+             contained and nothing would change the build, return an EMPTY questions list — do NOT invent \
+             make-work. Then call the final_output tool."
         );
         let user = format!(
             "Task: {user_prompt}\n\nThe model's stated uncertainties: {unc}\n\nThe drafted plan (excerpt):\n{plan_excerpt}"
@@ -2468,7 +2470,10 @@ impl GooseAgentDispatcher {
             .questions
             .into_iter()
             .map(|q| q.trim().to_string())
-            .filter(|q| q.len() >= 8)
+            // Enforce the interrogative contract the prompt demands: a real question ends with '?'.
+            // Declarative junk (headers, statements) falls through to the next cascade tier instead of
+            // being surfaced to the user as a "question".
+            .filter(|q| q.chars().count() >= 8 && q.ends_with('?'))
             .take(max_q as usize)
             .collect()
     }
