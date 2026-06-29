@@ -3016,6 +3016,16 @@ impl GooseAgentDispatcher {
     }
 }
 
+/// Language-aware per-file syntax check, dispatched on extension. `.py` -> the Python ast.parse check
+/// verbatim (byte-identical); other languages have no cheap parse-only per-file check (tsc/rustc/etc. are
+/// project-level), so they skip cleanly (None) and rely on the language's own build/test step.
+async fn syntax_error(path: &Path) -> Option<String> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("py") => py_syntax_error(path).await,
+        _ => None,
+    }
+}
+
 /// Syntax-check a Python file without polluting `__pycache__` (ast.parse, not py_compile). Returns the
 /// last error line on a SyntaxError, `None` if it parses.
 async fn py_syntax_error(path: &Path) -> Option<String> {
@@ -3554,8 +3564,8 @@ impl Judge for GooseAgentDispatcher {
                 }
             }
             if let Ok(contents) = std::fs::read_to_string(&path) {
-                if f.ends_with(".py") && !contents.trim().is_empty() {
-                    if let Some(err) = py_syntax_error(&path).await {
+                if !contents.trim().is_empty() {
+                    if let Some(err) = syntax_error(&path).await {
                         compile_errors.push((f.clone(), err));
                     }
                 }
@@ -4484,12 +4494,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 if done_gate_on {
                     let cwd = std::env::current_dir().unwrap_or_default();
                     for f in &req.owned_files {
-                        if !f.ends_with(".py") {
-                            continue;
-                        }
                         let path = cwd.join(f);
                         if path.is_file() {
-                            if let Some(err) = py_syntax_error(&path).await {
+                            if let Some(err) = syntax_error(&path).await {
                                 eprintln!(
                                     "  {} {} on {}: syntax error in {f} — retry with the fix",
                                     style("✗").red().bold(),
