@@ -24,8 +24,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A1-3 | A1 minimal | a CLI task scheduler | (tbd) | — | pending | — | — | — |
 | A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,CONTRACTS,REVIEW,research | A2-1-ledger | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (1st multi-module WIN — CONTRACTS decoupled) |
 | A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | DONE | smoke+review CLEAN | 8/8/8/8 | WIN (2nd multi-module WIN — logfunnel class tamed) |
-| A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | RUNNING | — | — | — |
-| A3-1 | A3 feature | chaos-fern: add SVG/HTML export (Playwright) | (tbd) | — | pending | — | — | — |
+| A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (A2 = 3/3 — DRAW class converted) |
+| A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | RUNNING | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
 
@@ -156,7 +156,24 @@ in the AB).
 - A2 ARCHETYPE = WIN, WIN (ledger 8/6/8/8, log-DSL 8/8/8/8). Both hard multi-module max-detail apps WORK
   with the full stack, vs A1-2 FAIL + A1-3 broken (multi-module, no contracts). Consistent DRAW->WIN.
 
-### A2-3 — state-machine workflow engine (FULL spec)  (RUNNING)
-Full v8 stack. The AB state-machine class. Watch: contracts decoupling of states/transitions/machine, AST
-review (machine wired into cli), RUN it (load a spec, fire a valid event -> transitions, fire an invalid
-event -> rejected/InvalidTransition, guard blocks), smoke. Does A2 go 3-for-3?
+### A2-3 — state-machine workflow engine (FULL spec) — WIN (corr 8 / test 6 / qual 8 / spec 8)
+DONE on the full v8 stack. 5 done, 0 failed. fsm/ package (machine.py = State/Transition/Machine + step +
+validation; cli.py; __main__) + tests. Plan confidence 64/100 (lower — the FSM spec gave the architect less
+to lock onto; proceeded fine). CONTRACTS fired, 0 stray stubs, AST review CLEAN (6 modules, 0 unwired).
+SMOKE pass. 10 pytest pass.
+- RAN IT END-TO-END (turnstile machine): state -> locked; fire coin -> locked->unlocked, state PERSISTS to
+  unlocked across a fresh process; fire coin from unlocked (no transition) -> "Error: No transition from
+  'unlocked' on event 'coin'" with EXIT 1 (correctly REJECTED, proper non-zero exit — cleaner than A2-1's
+  ledger which exited 0 on rejection); fire push -> back to locked. Graph validation rejects unknown states.
+  A genuinely working FSM.
+- Score 8/6/8/8. A2 = WIN/WIN/WIN (ledger 8/6/8/8, log-DSL 8/8/8/8, fsm 8/6/8/8). All THREE hard multi-
+  module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
+  cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
+
+### A3-1 — chaos-fern: add --svg export (AMENDMENT + Playwright)  (RUNNING)
+First A3 (feature-add). Full v8 stack on a COPY of the chaos-fern example (6 modules + 5 test files). Tests
+the AMENDMENT flow + the detailer-owned-files fix on an EXISTING project + REGRESSION (keep ASCII default).
+When DONE: AST reviewer; RUN python3 -m chaos_fern fern --svg --out /tmp/fern.svg; then PLAYWRIGHT-verify —
+ToolSearch select:mcp__playwright__browser_navigate,...take_screenshot,...snapshot; open file:///tmp/fern.svg
+and screenshot/assert it renders a fern shape; confirm the existing ASCII render + 85 prior tests still pass
+(regression).
