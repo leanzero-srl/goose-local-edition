@@ -2808,7 +2808,13 @@ impl GooseAgentDispatcher {
             PRIMARY/default command on a concrete example and CHECKS THE OUTPUT IS ACTUALLY CORRECT — not merely that it starts \
             or exits 0. A green test suite does NOT prove correctness: a real failure mode is the DEFAULT code path producing \
             WRONG output (e.g. wrong constants/parameters) while every test passes. So exercise the default path with a known \
-            input, sanity-check the result against what the spec implies, and fix it if it is wrong. ALSO confirm the \
+            input, sanity-check the result against what the spec implies, and fix it if it is wrong. RUN the program \
+            through its BUILT, ADVERTISED entry point — if the language compiles, BUILD it first (e.g. `npm run build` \
+            for TypeScript, `cargo build` for Rust) and run the BUILT artifact (e.g. `node dist/cli.js`), NOT the source \
+            via tsx/ts-node — using the EXACT commands the spec advertises (the SAME subcommands and argument shapes shown \
+            in the goal; do NOT silently redesign the interface into flags). If a build step or a build config the entry \
+            needs (e.g. a tsconfig.json) is MISSING so the advertised entry will not build or run, that is a FAILURE — add it. \
+            ALSO confirm the \
             spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
             module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
             FAILURE: wire it. Reports PASS/FAIL honestly. \
@@ -2967,7 +2973,8 @@ impl GooseAgentDispatcher {
                 let ids: Vec<serde_json::Value> =
                     arr.iter().filter_map(|s| s.get("id").cloned()).collect();
                 let iv_desc = format!(
-                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite, then ACTUALLY RUN the entry point ({} AND one real command with real arguments from the shell) and FIX any runtime crash — a green test suite does NOT prove the CLI runs.",
+                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags) — confirming each produces correct output, and FIX any build error, missing build config (e.g. a tsconfig.json the build needs), or runtime crash. A green test suite does NOT prove the CLI runs, and running the source directly does NOT prove the BUILT/advertised entry works.",
+                    lang.test_cmd(),
                     lang.entry_run_example()
                 );
                 arr.push(serde_json::json!({
@@ -3109,7 +3116,11 @@ impl GooseAgentDispatcher {
             that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
             files, RUNS `{test_cmd}`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
             fails because the change intentionally altered behavior (EDIT that existing test to assert the new output; do not \
-            stall). Reports PASS/FAIL; its files must NOT overlap the others.\n\
+            stall). Then BUILD + RUN the program's ADVERTISED entry point (build first if it compiles — e.g. `npm run \
+            build` for TypeScript, `cargo build` for Rust — and run the BUILT artifact, NOT the source via tsx/ts-node) \
+            using the EXACT commands the SPEC advertises (the SAME subcommands and argument shapes; do NOT redesign the \
+            interface into flags), CHECK the output is correct, and ADD any missing build config the entry needs (e.g. \
+            tsconfig.json). Reports PASS/FAIL; its files must NOT overlap the others.\n\
             Also produce a short integration note. Then call the final_output tool with the plan.");
         let response = Some(Response {
             json_schema: Some(plan_schema),
@@ -4234,7 +4245,12 @@ impl TargetLang {
     fn entry_run_example(self) -> &'static str {
         match self {
             TargetLang::Python => "python3 -m <package> --help",
-            TargetLang::TypeScript => "npx tsx src/index.ts --help (or the package.json bin)",
+            TargetLang::TypeScript => {
+                "npm install && npm run build (or `npx tsc`), then run the BUILT entry — \
+                 `node <the package.json bin/main target, e.g. dist/cli.js> --help`. Do NOT run the .ts \
+                 source via tsx/ts-node: that bypasses the build and HIDES a missing tsconfig.json / no-dist \
+                 failure, so the advertised `node dist/...`/bin would be broken for the user."
+            }
             TargetLang::Rust => "cargo run -- --help",
             TargetLang::Go => "go run . --help",
             TargetLang::Other => "the program's runnable entry point with --help",
