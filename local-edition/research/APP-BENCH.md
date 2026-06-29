@@ -22,7 +22,7 @@ For every app:
 | APP1 | Python | greenfield CLI (moderate) | unit converter (length/weight/temp, --precision, list-units) | ~43.7min | **NO** | flaky hallucinated-completion (5/7 subtasks failed) + CLI spec-drift | files built + runs, but `convert 100 km mi` (the spec's own example) ERRORS — built bare-VALUE CLI, no `convert` subcommand; integrate-verify FAILED but didn't recover |
 | APP2 | TypeScript | greenfield CLI (moderate) | CSV column stats (mean/median/mode/stddev, --column, --json) | 66.9min | **PARTIAL** | missing tsconfig.json -> broken build (no dist); very slow | LOGIC CORRECT (mean/median/mode/pop-stddev right, --json works, missing-col -> exit 1, 12/12 vitest pass, runs via tsx) BUT `npm run build` (tsc) emits nothing -> advertised `node dist/cli.js`/bin fails. 7/7 subtasks "done" = false-green on the build |
 | APP3 | Rust | greenfield CLI (moderate) | word-frequency counter (--top, --min-length, ties alpha) | 28.1min | **YES (WIN)** | (none — 1 cosmetic warning) | FUNCTIONAL + CORRECT: `wordfreq f --top 3` -> the:3 cat:2 dog:1 (counts + alpha tie-break right), --min-length filters right, --help clean, builds (1 harmless unused-deref warning main.rs:25), 8/8 cargo test. 4/4 subtasks done. Rust delivered where Python failed + TS was partial |
-| APP4 | Python | multi-module + INQUISITIVE | habit tracker (add/done/streak/list, JSON) | — | IN FLIGHT | — | run_in_background bcqqtud2a, NEW binary f5cac6468, ASK_FLOOR=75 -> validates idle-fix (PreReview events) + advertised-entry prompts + inquisitive |
+| APP4 | Python | multi-module + INQUISITIVE | habit tracker (add/done/streak/list, JSON) | 46.8min | **YES (functional)** | run REPORTED fail (tests+integrate-verify) but app WORKS — false-NEGATIVE; very slow | FUNCTIONAL + CORRECT: add/done/streak/list work; streak gym=1 after done; REAL persistence ~/.habit.json {"gym":["2026-06-30"]} (ISO dates, survives across processes); store WIRED by the AST-review wire-fix (caught it built-but-unwired — review WIN). Did NOT ask (confidence>=75, ISO default sensible). Run "failed" on tests/integrate-verify despite the app being functional |
 
 ## Improvement log (empirical — build only what the failures justify, then re-test)
 (pending the first apps' data)
@@ -137,3 +137,25 @@ workflow flagged these); (c) more pre-review passes per task / deeper review (di
 the current fix (real value: caught a defect + observable), and treat full tail-idle-elimination as a separate,
 user-steered decision given the costs. NET: idle fix is a genuine improvement (concurrent + observable + caught a
 real bug), honestly PARTIAL on pure utilization.
+
+## APP4 DEEP ANALYSIS (2026-06-30) — FUNCTIONAL but run-failed (false-NEGATIVE) + slow; AST review WIN
+46.8min (way over target). run_finished done[cli-entry-point, store-module] FAILED[tests, integrate-verify].
+BUT the APP IS FUNCTIONAL + CORRECT: `habit add gym; habit done gym; habit streak gym` -> 1; `habit list` ->
+`gym: 1`; persists to ~/.habit.json as {"gym":["2026-06-30"]} (REAL persistence — survives a fresh process;
+ISO dates). All 4 subcommands work. So the swarm REPORTED FAILURE on a FUNCTIONAL app — a false-NEGATIVE
+(opposite of APP2's false-green). The tests/integrate-verify subtask failed (likely a unit-test assertion or
+integrate-verify flake) while the actual program works end-to-end.
+REVIEW WIN: the AST reviewer caught habit.store BUILT-BUT-UNWIRED (store.py written but cli.py never imported
+it -> no persistence) and the wire-fix CORRECTLY wired it (cli.py now `from habit import store` + calls
+store.cmd_add/done/streak/list). Without that, the app would have been a non-persisting shell. This is the
+model-free review + wire-fix doing EXACTLY the user's ask (catch a built-but-unwired functional defect).
+INQUISITIVE: did NOT ask (confidence>=75) — and chose ISO dates + a sensible ~/.habit.json by default, so the
+no-ask was correct (the spec was clear enough).
+TAKEAWAYS: (1) the run-status is NOT the same as functionality — a FUNCTIONAL app can be reported "failed"
+(tests/integrate-verify flake). Judging by RUNNING the app (not trusting run_finished) is essential, as the
+user insisted. (2) Python is SLOW + over target again (46.8min) — Python apps (APP1 43.7, APP4 46.8) run ~1.6x
+the Rust win (28.1) and far over 25min. (3) The AST review + wire-fix is a proven functional-defect catcher.
+BATCH SCORECARD so far: APP3 Rust = clean WIN (28min); APP4 Python = functional but run-failed + slow (47min);
+APP1 Python = FAIL (CLI drift); APP2 TS = PARTIAL (broken build). => 2 of 4 functional; ALL over 25min; Rust
+fastest+cleanest; Python functional-but-slow; the swarm's review caught real defects in 2 (cli-entry pre-review,
+store wire-fix). TIME is the systemic gap vs the 15-25min goal.
