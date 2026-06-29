@@ -111,14 +111,20 @@ over_reading verdict on elapsed-vs-difficulty. Gather evidence across A2 before 
 13. **A HARD LYNCHPIN task that exhausts its attempts CASCADES the whole run.** A1-2's formula-parser —
     which formula-evaluator, cli-entry, tests, and integrate-verify ALL depend on — failed after 3
     attempts, so fail_descendants tanked 5/7 subtasks; only the two leaf data modules survived. No
-    runnable app. SMOKE caught it deterministically ("no python3 -m entry point — unrunnable"). Two
-    sub-modes seen: (a) the worker WRITES a valid file (formula_parser.py, 385 lines, parses fine — so
-    this is NOT a syntax error; DONE_GATE correctly stayed silent) yet the TASK still fails — it never
-    reaches a clean final_output (max-turns / test-thrash on a genuinely hard module); (b) a judge
-    over_reading kill on the hard task burned attempt 0. -> STRATEGY: GOOSE_SWARM_CONTRACTS is the most
-    promising mitigation — a FROZEN lynchpin interface injected upfront lets the dependents build against
-    it EVEN IF the lynchpin task is rocky, decoupling the cascade (turn it ON for A2 and measure whether
-    the dependents complete despite a shaky parser). Reinforces lesson #5 (wire the entry) + the
-    keep-the-shared-task-tiny rule — but a formula parser is inherently big, so DECOUPLING (contracts),
-    not shrinking, is the lever. The SMOKE-autofix (new binary) would add a __main__ on the no-entry
-    finding but cannot conjure the missing evaluator — autofix patches wiring, not absent modules.
+    runnable app. SMOKE caught it deterministically ("no python3 -m entry point — unrunnable").
+    TRUE ROOT CAUSE (found by reading the run, corrects an earlier max-turns guess): the DETAILER wrote
+    a detailed spec saying "File owned: formula_parser.py" while the skeleton's owned_files was
+    [spreadsheet/parser.py] — the detailer was NEVER TOLD the owned files, so it invented a contradicting
+    filename. The worker followed the SPEC (formula_parser.py), so the assigned parser.py was never
+    written; the hallucinated-completion guard (owned file missing -> Transient) failed the task EVERY
+    attempt -> exhausted -> fail_descendants cascaded 5/7. (The 385-line formula_parser.py parsed fine, so
+    DONE_GATE correctly stayed silent — this was a wrong-FILENAME failure, not a syntax/quality one; the
+    judge over_reading kills were secondary.) -> PRIMARY FIX SHIPPED (7e81b3b6a): thread each subtask's
+    owned_files into the detailer prompt + instruct it to use those EXACT paths verbatim (never invent/
+    rename). Same class as the earlier DispatchRequest-gains-owned_files worker fix. Validate on the next
+    multi-module run: detailer spec uses the assigned paths, no missing-owned-file exhaustion.
+    -> SECONDARY mitigation: GOOSE_SWARM_CONTRACTS still helps decouple a genuinely-rocky lynchpin (frozen
+    interface lets dependents build even if the lynchpin task is shaky) — validate on A2. NB the
+    SMOKE-autofix patches WIRING (could add a __main__) but cannot conjure an absent module.
+    META-LESSON: read the logs to the ACTUAL file on disk vs the planned owned_files before blaming the
+    model's reasoning — a filename mismatch masquerades as a hard-task failure.

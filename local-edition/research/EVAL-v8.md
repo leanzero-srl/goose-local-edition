@@ -70,11 +70,14 @@ evaluator, NO cli.py, NO __main__.py, NO tests. Not a runnable spreadsheet.
   finding="no python3 -m <pkg> entry point (no package with __main__.py) — the app may be
   unrunnable". The deterministic no-entry / unrunnable verdict — exactly the BUILT-BUT-UNWIRED /
   NO-ENTRY draw class. (The scheduler also reported the 5 failures, so detection was doubly clear.)
-- ROOT CAUSE: formula-parser is the hard lynchpin everything depends on. Attempt 0 (gabee) was
-  judge-killed (over_reading — see the watch observation); attempts 1-2 PRODUCED formula_parser.py
-  (385 valid lines, parses — DONE_GATE correctly silent) but the TASK still failed (the worker wrote
-  the file yet did not reach a clean final_output — likely max-turns / test-thrash on a hard module).
-  3 real failed attempts -> exhausted -> fail_descendants tanked evaluator/cli/tests/integrate-verify.
+- ROOT CAUSE (corrected after reading the run — NOT max-turns): the DETAILER's spec said "File owned:
+  formula_parser.py" while the skeleton owned [spreadsheet/parser.py] — the detailer was never told the
+  owned files, so it invented a contradicting name. The worker followed the spec -> wrote
+  formula_parser.py -> the assigned parser.py was NEVER created (no parser.py on disk) -> the
+  missing-owned-files guard returned Transient every attempt -> 3 attempts exhausted ->
+  fail_descendants tanked evaluator/cli/tests/integrate-verify. The 385-line formula_parser.py parses
+  (DONE_GATE correctly silent); judge over_reading kills were secondary. FIXED in 7e81b3b6a (detailer
+  now gets owned_files + must use them verbatim).
 - vs AB qwopus mean 5.8/5.6/7.6/5.6 — WELL BELOW; a clear FAIL, the multi-module regime where qwopus
   draws/loses (logfunnel/fsdrift class). A1 "minimal spec" but it decomposed into a hard 7-subtask
   multi-module app, so it accidentally tests the draw class.
