@@ -106,3 +106,19 @@ already excludes judge kills from the transient-retry budget so it is bounded, b
 recurs on the A2 multi-module runs -> candidate tuning: raise the judge's min-age/over-reading patience for
 HARD-difficulty tasks (a hard task legitimately reads + reasons longer before producing), or gate the
 over_reading verdict on elapsed-vs-difficulty. Gather evidence across A2 before touching the judge.
+
+## New lesson (live, v8 A1-2 spreadsheet FAIL, 2026-06-29)
+13. **A HARD LYNCHPIN task that exhausts its attempts CASCADES the whole run.** A1-2's formula-parser —
+    which formula-evaluator, cli-entry, tests, and integrate-verify ALL depend on — failed after 3
+    attempts, so fail_descendants tanked 5/7 subtasks; only the two leaf data modules survived. No
+    runnable app. SMOKE caught it deterministically ("no python3 -m entry point — unrunnable"). Two
+    sub-modes seen: (a) the worker WRITES a valid file (formula_parser.py, 385 lines, parses fine — so
+    this is NOT a syntax error; DONE_GATE correctly stayed silent) yet the TASK still fails — it never
+    reaches a clean final_output (max-turns / test-thrash on a genuinely hard module); (b) a judge
+    over_reading kill on the hard task burned attempt 0. -> STRATEGY: GOOSE_SWARM_CONTRACTS is the most
+    promising mitigation — a FROZEN lynchpin interface injected upfront lets the dependents build against
+    it EVEN IF the lynchpin task is rocky, decoupling the cascade (turn it ON for A2 and measure whether
+    the dependents complete despite a shaky parser). Reinforces lesson #5 (wire the entry) + the
+    keep-the-shared-task-tiny rule — but a formula parser is inherently big, so DECOUPLING (contracts),
+    not shrinking, is the lever. The SMOKE-autofix (new binary) would add a __main__ on the no-entry
+    finding but cannot conjure the missing evaluator — autofix patches wiring, not absent modules.
