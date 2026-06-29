@@ -22,8 +22,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A1-2 | A1 minimal | a CLI spreadsheet with formulas | SMOKE,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-2-sheet | DONE | YES / caught FAIL | 2/0/5/2 | FAIL (no entry; 5/7 subtasks failed) |
 | A1-3 | A1 minimal | a CLI task scheduler | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-3-sched | DONE | smoke PASS but app BROKEN | 3/5/5/4 | RUNS-but-broken (store unwired -> no persistence; AST reviewer caught it) |
 | A1-3 | A1 minimal | a CLI task scheduler | (tbd) | — | pending | — | — | — |
-| A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | (tbd) | — | pending | — | — | — |
-| A2-2 | A2 max-detail | log-pipeline DSL (full spec) | (tbd) | — | pending | — | — | — |
+| A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,CONTRACTS,REVIEW,research | A2-1-ledger | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (1st multi-module WIN — CONTRACTS decoupled) |
+| A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | RUNNING | — | — | — |
 | A2-3 | A2 max-detail | state-machine workflow engine (full spec) | (tbd) | — | pending | — | — | — |
 | A3-1 | A3 feature | chaos-fern: add SVG/HTML export (Playwright) | (tbd) | — | pending | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
@@ -116,3 +116,31 @@ clean WIN — runs, rich 8-command CLI (add/list/run/start/status/enable/disable
   finding, fire ONE fix worker told to WIRE the module into the app (load store on start, save on add).
   That would have fixed A1-3's persistence. And A2-1 (CONTRACTS ON) tests whether a frozen store/runner
   interface makes the CLI worker IMPORT instead of inline.
+
+### A2-1 — double-entry ledger CLI (FULL spec) — WIN (corr 8 / test 6 / qual 8 / spec 8)
+DONE on the full v8 stack (CONTRACTS+REVIEW+SMOKE+autofix+DONE_GATE; binary 326a140be). All 6 subtasks
+done, 0 failed. THE HEADLINE RESULT: the FIRST multi-module app in the eval that WORKS end-to-end.
+- CONTRACTS WORKED (verified by reading the tree): the phase fired (banner + "frozen interfaces injected");
+  ledger-core (ledger.py) imported the EXACT frozen models interface (from .models import Account,
+  AccountType, JournalEntry; uses entry.is_balanced @property + JournalLine.debit/credit) — NO drift, NO
+  re-invention. cli.py's contract STUB was OVERWRITTEN to a real 108-line CLI (no surviving stubs). The
+  in-run REVIEW event = findings:[] (no unwired modules) — CONTRACTS prevented the A1-3-style unwiring.
+- RAN IT END-TO-END (the decisive test A1-3 failed): add-account cash asset + revenue income; post a
+  BALANCED entry (cash:100:0 | revenue:0:100) -> ok; post an UNBALANCED entry -> correctly REJECTED
+  ("Unbalanced journal entry"); trial-balance in a FRESH process via --file -> cash debit=100.0, revenue
+  credit=100.0 (debits==credits) — PERSISTENCE ROUND-TRIPS. A genuinely working double-entry ledger. 5
+  pytest pass (the 5 spec behaviors). SMOKE pass, AST review clean.
+- Score 8/6/8/8 vs AB qwopus mean 5.8/5.6/7.6/5.6 — well above. test 6 (5 tests cover the key behaviors
+  but thin). Minor nit: post exits 0 even when it rejects an unbalanced entry (should be non-zero); not a
+  correctness defect (it DOES reject).
+- HEADLINE: A1-2 (spreadsheet, NO contracts) FAILED 2/0/5/2 (drift cascade); A1-3 (scheduler, NO contracts)
+  broken 3/5/5/4 (store unwired -> no persistence); A2-1 (ledger, FULL stack WITH contracts) = 8/6/8/8
+  WORKING. The v8 stack converted the multi-module DRAW class into a WIN. HONEST CAVEAT: A2-1 is a
+  MAX-DETAIL spec (A2) while A1-2/A1-3 are MINIMAL (A1), so the detailed spec ALSO helps — not contracts
+  alone; a contracts-OFF same-spec run would isolate it. But the draw-class mechanisms (drift cascade,
+  unwiring) that sank A1-2/A1-3 demonstrably did NOT occur with the full stack — verified in the tree.
+
+### A2-2 — log-pipeline DSL (FULL spec)  (RUNNING)
+First run on the stub-cleanup + wire-fix binary (8af809359). The logfunnel DRAW class (lexer/parser/stages/
+dispatcher). Watch: "contracts: removed N stray stub file(s)" line, did stages get WIRED by a dispatcher
+(vs unwired like logfunnel), review_after_fix if the AST review finds unwired, smoke pass.
