@@ -28,7 +28,7 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | CUT (thrash) | n/a (cut) | 5/3/4/6 | PARTIAL: --svg WORKS but amendment RE-ARCHITECTED (abandoned dups, broken test); AST caught it; Playwright env-blocked |
 | A3-2 | A3 feature | byte-oracle: add --json output | full v8 stack (amendment, edit-in-place instr) | A3-2-byteoracle-json | CUT (wire-fix loop) | smoke PASS (entry --help ok) | 4/5/4/5 | PARTIAL/FAIL: --json written to STRAY ROOT cli.py (wrong path) so `-m byte_oracle --json` errors; AST caught stray; wire-fix flailed on pre-existing detector dup |
 | A3-3 | A3 feature | byte-oracle: add --count | full v8 stack (amendment, NEW binary f9e89b782, NO instr) | A3-3-byteoracle-count | DONE | smoke PASS | 7/6/7/7 | WIN — VALIDATES f9e89b782: --count in the REAL cli.py in place, NO stray, works via -m |
-| TS-1 | agnostic | LANG=TypeScript todo CLI (greenfield) | architect de-Python (6881ae6d9), CONTRACTS off | TS-1-todo | RUNNING | — | — | — |
+| TS-1 | agnostic | LANG=TypeScript todo CLI (greenfield) | architect de-Python ONLY (6881ae6d9), CONTRACTS off | TS-1-todo | CUT (iv thrash 13x) | 30 vitest PASS | 4/6/5/5 | real working TS LOGIC, but CLI entry crashes (new URL on a path); integrate-verify thrashed on the OLD-binary Python prompt -> never ran the TS entry -> bug shipped (validates worker de-Python need) |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
 
@@ -172,6 +172,28 @@ SMOKE pass. 10 pytest pass.
 - Score 8/6/8/8. A2 = WIN/WIN/WIN (ledger 8/6/8/8, log-DSL 8/8/8/8, fsm 8/6/8/8). All THREE hard multi-
   module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
   cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
+
+### TS-1 — LANG=TypeScript todo CLI (FIRST non-Python run; architect de-Python only) — 4/6/5/5, CUT
+The first language-named experiment + the first real proof the de-Python works. Ran on binary 6881ae6d9
+(architect de-Python ONLY — the worker/planner/gate fixes came AFTER this launched), CONTRACTS off.
+- ARCHITECT de-Python WORKS: it planned a correct, idiomatic TypeScript project — `src/{cli,commands,store,
+  errors,types,validation}.ts`, vitest tests, `tsconfig.json`, `vitest.config.ts`, `package.json` (scripts
+  build:tsc / test:vitest, bin ./dist/cli.js). ZERO `.py` files. The workers wrote real `.ts`.
+- THE LOGIC WORKS: `npm install` clean, `npx vitest run` -> 30 tests PASS across 3 files. The command/store/
+  validation/errors modules are correct.
+- BUT THE CLI ENTRY CRASHES (false-green, same class as A3-2): `npx tsx src/cli.ts add "x"` -> Node
+  `ERR_INVALID_URL`. Root cause cli.ts:95 — the main-guard does `new URL(process.argv[1])` on a plain
+  filesystem PATH (should be a path-string compare or pathToFileURL). The program can't actually be run;
+  the 30 unit tests bypass the CLI entry so they pass anyway.
+- WHY IT SHIPPED BROKEN: integrate-verify is the v8 gate DESIGNED to catch exactly this (RUN the real
+  entry). But on this OLD binary the integrate-verify WORKER still got the Python prompt (run `pytest`),
+  fought it on a TS project, and was judge-re-dispatched 13 TIMES without ever running the TS entry -> the
+  broken main-guard never got caught. I CUT it at 13 dispatches.
+- Score 4/6/5/5. NET: a clean END-TO-END validation of the de-Python chain — the architect step ALONE
+  produces correct TS, and TS-1 demonstrates concretely WHY the worker + integrate-verify de-Python (shipped
+  after, binary dcf6a6b2e) are needed: without them the verify gate can't run a non-Python entry, so a
+  runnable-entry bug escapes. RUST-1 (next, on the fixed binary) tests whether the full chain yields a
+  runnable program. Minor blemish: tests split across `test/` AND `tests/` dirs (both work).
 
 ### A3-3 — byte-oracle: add --count (AMENDMENT, NEW binary f9e89b782, NO instruction) — WIN (corr 7 / test 6 / qual 7 / spec 7)
 THE VALIDATION RUN for the f9e89b782 amendment EXACT-path rule, on a clean copy, with NO per-run edit-in-place

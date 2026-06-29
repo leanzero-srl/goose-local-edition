@@ -240,3 +240,18 @@ Do NOT tune the judge; keep watching A2 to confirm.
     NET: amendments are the hard regime — TWO distinct failure modes now (re-architecture A3-1; wrong-path
     A3-2); greenfield is solid (A1-1, A2 x3). The deterministic gates each PARTIALLY helped (AST flagged the
     stray) but none alone catches a wrong-path feature whose tests falsely pass.
+
+## New lesson (live, v8 TS-1 first non-Python run, 2026-06-29) — de-Python chain validated end-to-end
+21. **FIRST non-Python run (TS-1, TypeScript todo CLI) validates the de-Python work AND shows ALL of it is
+    needed, not just the architect.** On the architect-only binary: the architect planned correct TypeScript
+    (src/*.ts modules + vitest + tsconfig + package.json, ZERO .py) and the workers wrote real TS whose logic
+    passes 30 vitest tests — strong proof the de-Python architect works. BUT (a) the CLI ENTRY crashed at
+    runtime (`new URL(process.argv[1])` on a plain path -> Node ERR_INVALID_URL; FALSE-GREEN — the unit tests
+    bypass the entry, exactly the A3-2 class), and (b) integrate-verify THRASHED 13x because the still-Python
+    WORKER prompt told it to run `pytest` on a TS project. So the very gate meant to catch an entry crash (RUN
+    the real entry) couldn't, and the bug shipped. LESSON: de-Pythoning the architect is necessary but NOT
+    sufficient — the WORKER prompt + integrate-verify + gates must be language-aware too, or the verify layer
+    is BLIND on non-Python and false-green escapes. The shipped fixes (worker 75682ae7c, planner 12cd6a744,
+    smoke-skip dcf6a6b2e) target exactly this; RUST-1 (next, on the fixed binary) tests the full chain.
+    Cross-language confirmation that VERIFY-don't-trust + RUN-the-real-entry is the load-bearing principle
+    regardless of language — a green test suite never proves a non-Python CLI runs any more than a Python one.
