@@ -21,6 +21,8 @@ For every app:
 |----|------|-----------|------|------|-------------|--------------|-------|
 | APP1 | Python | greenfield CLI (moderate) | unit converter (length/weight/temp, --precision, list-units) | ~43.7min | **NO** | flaky hallucinated-completion (5/7 subtasks failed) + CLI spec-drift | files built + runs, but `convert 100 km mi` (the spec's own example) ERRORS — built bare-VALUE CLI, no `convert` subcommand; integrate-verify FAILED but didn't recover |
 | APP2 | TypeScript | greenfield CLI (moderate) | CSV column stats (mean/median/mode/stddev, --column, --json) | 66.9min | **PARTIAL** | missing tsconfig.json -> broken build (no dist); very slow | LOGIC CORRECT (mean/median/mode/pop-stddev right, --json works, missing-col -> exit 1, 12/12 vitest pass, runs via tsx) BUT `npm run build` (tsc) emits nothing -> advertised `node dist/cli.js`/bin fails. 7/7 subtasks "done" = false-green on the build |
+| APP3 | Rust | greenfield CLI (moderate) | word-frequency counter (--top, --min-length, ties alpha) | 28.1min | **YES (WIN)** | (none — 1 cosmetic warning) | FUNCTIONAL + CORRECT: `wordfreq f --top 3` -> the:3 cat:2 dog:1 (counts + alpha tie-break right), --min-length filters right, --help clean, builds (1 harmless unused-deref warning main.rs:25), 8/8 cargo test. 4/4 subtasks done. Rust delivered where Python failed + TS was partial |
+| APP4 | Python | multi-module + INQUISITIVE | habit tracker (add/done/streak/list, JSON) | — | IN FLIGHT | — | run_in_background bcqqtud2a, NEW binary f5cac6468, ASK_FLOOR=75 -> validates idle-fix (PreReview events) + advertised-entry prompts + inquisitive |
 
 ## Improvement log (empirical — build only what the failures justify, then re-test)
 (pending the first apps' data)
@@ -98,3 +100,18 @@ C. **TIME: TS on the 27B is SLOW** (66.9min; one test task alone 18.5min). Data 
    — the TS test phase is a long pole; a future improvement may need to cap/split heavy test tasks or speed
    the build-verify. Note, don't build yet.
 This REINFORCES the spec-example/advertised-entry verification as THE top improvement (now grounded by 2 apps).
+
+## APP3 — FUNCTIONAL WIN (Rust, 28.1min) — the first deliverable app
+4/4 subtasks done, 0 failed, 28.1min (just over the 25min target but the CLOSEST + the only WIN so far).
+BUILD: cargo build OK (1 cosmetic warning: an unused leading deref `*freq.entry(..).or_insert(1)` at
+main.rs:25 — harmless, the and_modify/or_insert still does the count). RUN+CORRECT: `wordfreq f --top 3`
+-> `the: 3 / cat: 2 / dog: 1` (counts right; ties at count 1 broken ALPHABETICALLY -> dog before mat/on/sat
+-- correct); `--min-length 4` correctly prints nothing (no word >=4 chars); `--help` clean (clap). 8/8 cargo
+test. WHY RUST WON where Python (APP1) FAILED + TS (APP2) was PARTIAL: (1) Rust COMPILES — a broken build
+can't ship green (vs APP2's tsx-bypass + APP1's flaky no-build); cargo build IS the entry verification.
+(2) clap derives a correct, conventional CLI from the arg struct -> no CLI-interface drift (vs APP1's
+hand-rolled click flags diverging from the spec). (3) Strong typing + the CONTRACTS feature kept the 3
+modules coherent. KEY TAKEAWAY: the languages with a COMPILE + a derive-based CLI (Rust/clap) are far more
+likely to ship a functional, spec-matching app on a weak 27B than Python (hand-rolled CLI, no compile). This
+strengthens the advertised-entry/build-verify improvement (37cfd95fc): forcing a real BUILD + advertised-entry
+run is exactly what Python/TS lack and Rust gets for free.
