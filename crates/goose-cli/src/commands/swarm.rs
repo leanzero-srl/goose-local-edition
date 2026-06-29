@@ -1423,6 +1423,22 @@ mod tests {
     }
 
     #[test]
+    fn model_active_params_and_weak_bump() {
+        // MoE active marker wins over the dense total (a3b = 3B active, weaker than the 35B total).
+        assert_eq!(model_active_params_b("qwen/qwen3.6-35b-a3b"), Some(3));
+        // dense size when there is no active marker.
+        assert_eq!(model_active_params_b("qwen/qwen3.6-27b"), Some(27));
+        assert_eq!(model_active_params_b("llama-3.1-8b-instruct"), Some(8));
+        assert_eq!(model_active_params_b("some-unsized-model"), None);
+        // Weaker (fewer active params) -> bigger bump (ask sooner); strong -> no bump.
+        assert_eq!(ask_floor_weak_bump(Some(27)), 5);
+        assert_eq!(ask_floor_weak_bump(Some(3)), 15); // a3b MoE
+        assert_eq!(ask_floor_weak_bump(Some(70)), 0); // strong
+        assert_eq!(ask_floor_weak_bump(None), 5);
+        assert!(ask_floor_weak_bump(Some(3)) > ask_floor_weak_bump(Some(27)));
+    }
+
+    #[test]
     fn detect_language_defaults_python_and_honors_cues() {
         // No cue -> Python (the validated baseline default).
         assert_eq!(detect_language("a CLI markdown to HTML renderer", &[]), TargetLang::Python);
@@ -4693,6 +4709,49 @@ impl Replanner for GooseAgentDispatcher {
     }
 }
 
+/// Parse the ACTIVE parameter count (in billions) from a model id, for GOOSE_SWARM_ASK floor scaling. A MoE
+/// id like `qwen3.6-35b-a3b` exposes ~3B ACTIVE (weaker than a 27B dense despite 35 total), so the `a<N>b`
+/// active marker WINS over the leading dense `<N>b` size. Returns None if unparseable. HEURISTIC — fuzzy.
+fn model_active_params_b(model_id: &str) -> Option<u32> {
+    let id = model_id.to_lowercase();
+    let tokens: Vec<&str> = id.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    // 1) MoE active marker "a<N>b" takes precedence (the real compute size).
+    for t in &tokens {
+        if let Some(rest) = t.strip_prefix('a') {
+            if let Some(num) = rest.strip_suffix('b') {
+                if let Ok(n) = num.parse::<u32>() {
+                    if (1..=2000).contains(&n) {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    // 2) else the dense size "<N>b".
+    for t in &tokens {
+        if let Some(num) = t.strip_suffix('b') {
+            if let Ok(n) = num.parse::<u32>() {
+                if (1..=2000).contains(&n) {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// How much to RAISE the ask floor for a planner of `active_b` billion active params — weaker -> ask sooner.
+/// HEURISTIC; small + bounded. None (unknown) gets a mild bump.
+fn ask_floor_weak_bump(active_b: Option<u32>) -> u8 {
+    match active_b {
+        Some(n) if n >= 30 => 0,  // strong dense (e.g. 30B+)
+        Some(n) if n >= 13 => 5,  // mid (e.g. 13-27B)
+        Some(n) if n >= 7 => 10,  // small dense (7-12B)
+        Some(_) => 15,            // <7B active (e.g. an a3b MoE) -> ask much sooner
+        None => 5,                // unknown id -> mild bump
+    }
+}
+
 /// Schema for the GOOSE_SWARM_ASK clarifying-question generator: a flat list of interrogative strings.
 fn clarify_schema() -> serde_json::Value {
     serde_json::json!({
@@ -5189,10 +5248,33 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // models are weak, so asking beats guessing. Unset/0 = OFF = today's behavior exactly (eval/upstream
     // untouched). Setting it forces best_of_n>=2 so the calibrated cross-draft agreement signal is real
     // (it returns an inert neutral 60 for a single draft).
-    let ask_floor: Option<u8> = std::env::var("GOOSE_SWARM_ASK_FLOOR")
+    let base_floor: Option<u8> = std::env::var("GOOSE_SWARM_ASK_FLOOR")
         .ok()
         .and_then(|v| v.trim().parse::<u8>().ok())
         .filter(|f| *f > 0);
+    // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
+    // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
+    // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
+    // params is fuzzy); the bump is small + capped at 100.
+    let ask_scale = base_floor.is_some()
+        && std::env::var("GOOSE_SWARM_ASK_SCALE")
+            .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+            .unwrap_or(true);
+    let ask_floor: Option<u8> = base_floor.map(|f| {
+        if ask_scale {
+            let bump = ask_floor_weak_bump(model_active_params_b(&cfg.planner_model));
+            let eff = ((u16::from(f)) + u16::from(bump)).min(100) as u8;
+            if eff != f {
+                eprintln!(
+                    "  ask floor {f} -> {eff}/100 (+{bump} weak-planner bump for {})",
+                    cfg.planner_model
+                );
+            }
+            eff
+        } else {
+            f
+        }
+    });
     let ask_max_q: usize = std::env::var("GOOSE_SWARM_ASK_MAXQ")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())

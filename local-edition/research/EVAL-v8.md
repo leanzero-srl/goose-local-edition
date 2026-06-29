@@ -290,3 +290,10 @@ low_confidence_ask + BLOCKED. The HARNESS answered as the human (.swarm/clarify-
 answer) -> swarm logged "clarifications received — re-planning", emitted low_confidence_answered, folded the
 Q&A into planner findings, RE-PLANNED exactly once (asked flag), then -> EXECUTE. Closed Q&A loop validated
 end-to-end. See SWARM-LESSONS lesson 22.
+PLAN-SHAPING CONFIRMED: the re-planned run's subtask specs are saturated with EXACTLY my clarifications —
+syslog/nginx/JSON-lines parsing, malformed-line skip+count, per-level summary, --json/--level/--since flags
+(grep of the run jsonl: 2 syslog, 4 JSON-lines, 6 malformed, 4 per-level, --json/--level/--since each). So
+the answers genuinely RESHAPED the decomposition, not just triggered a re-plan. (The EXECUTE then FAILED on a
+flaky worker — parser-module claimed done without writing parser.py -> cascade to pipeline-cli/tests/iv; a
+known worker-flakiness issue UNRELATED to the inquisitive feature, so the final tool didn't build. The
+feature itself — ask + answer + re-plan-with-the-answers — is fully validated.)
