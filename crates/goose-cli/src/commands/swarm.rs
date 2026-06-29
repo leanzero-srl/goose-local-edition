@@ -1297,6 +1297,58 @@ mod tests {
     }
 
     #[test]
+    fn smoke_pytest_collect_interpretation() {
+        use CollectVerdict::*;
+        assert_eq!(interpret_pytest_collect(Some(0), "collected 12 items"), Ok);
+        // exit 5 = "no tests collected" — not an error.
+        assert_eq!(interpret_pytest_collect(Some(5), "no tests ran in 0.01s"), Ok);
+        // pytest not installed -> inconclusive, never a failure.
+        assert_eq!(
+            interpret_pytest_collect(Some(1), "ModuleNotFoundError: No module named pytest"),
+            PytestMissing
+        );
+        // a real collection error becomes a finding carrying the traceback tail.
+        match interpret_pytest_collect(
+            Some(2),
+            "ERROR collecting foo.py\nImportError: cannot import name 'bar' from 'baz'",
+        ) {
+            Errors(t) => assert!(t.contains("ImportError"), "tail must carry the error: {t}"),
+            other => panic!("expected Errors, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn smoke_entry_package_detection() {
+        // top-level package with __main__.py is runnable via `python3 -m pkg`.
+        assert_eq!(
+            entry_package_from_paths(&[
+                "chaos_fern/ifs.py".into(),
+                "chaos_fern/__main__.py".into()
+            ]),
+            Some("chaos_fern".to_string())
+        );
+        // a src/ layout is also detected.
+        assert_eq!(
+            entry_package_from_paths(&["src/byte_oracle/__main__.py".into()]),
+            Some("byte_oracle".to_string())
+        );
+        // a flat tree with no __main__.py package -> no `-m` entry point (a finding).
+        assert_eq!(
+            entry_package_from_paths(&["cli.py".into(), "models.py".into()]),
+            None
+        );
+        // a root-level __main__.py is NOT a `-m` package (needs a different invocation).
+        assert_eq!(entry_package_from_paths(&["__main__.py".into()]), None);
+    }
+
+    #[test]
+    fn smoke_tail_lines_keeps_last_nonblank_in_order() {
+        let s = "a\n\nb\nc\n\n";
+        assert_eq!(tail_lines(s, 2), "b\nc");
+        assert_eq!(tail_lines(s, 10), "a\nb\nc");
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -2707,6 +2759,223 @@ async fn py_syntax_error(path: &Path) -> Option<String> {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// GOOSE_SWARM_SMOKE — deterministic end-to-end smoke gate (Track A #1, off by default).
+//
+// After the scheduler finishes, the HARNESS (not the weak model) runs ground-truth oracles on the
+// produced tree: `pytest --collect-only -q` imports every module + test and surfaces the
+// cross-module ImportError that isolation-only unit tests miss, and `python3 -m <pkg> --help`
+// confirms the CLI entry point actually runs. Both need zero model intelligence and fire precisely
+// on the multi-module apps where a weak fleet only reports "it runs / PASS" without ever invoking
+// the binary. Findings are emitted to the run jsonl as a `smoke` event for the eval to read.
+// ---------------------------------------------------------------------------------------------
+
+/// Verdict of `pytest --collect-only`: the project imports cleanly, pytest is unavailable (so the
+/// check is inconclusive, NOT a failure), or there are real collection errors (the finding).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "detail")]
+enum CollectVerdict {
+    Ok,
+    PytestMissing,
+    Errors(String),
+}
+
+/// Interpret a `python3 -m pytest --collect-only -q` run from its exit code + combined output. Pure
+/// (no I/O) so it is unit-tested without spawning Python. Exit 5 ("no tests collected") is NOT an
+/// error; a missing pytest module makes the check inconclusive, never a failure.
+fn interpret_pytest_collect(code: Option<i32>, output: &str) -> CollectVerdict {
+    let low = output.to_lowercase();
+    if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
+        return CollectVerdict::PytestMissing;
+    }
+    match code {
+        Some(0) | Some(5) => CollectVerdict::Ok,
+        _ => {
+            let tail = tail_lines(output, 40);
+            CollectVerdict::Errors(if tail.is_empty() {
+                "pytest collection failed".to_string()
+            } else {
+                tail
+            })
+        }
+    }
+}
+
+/// The last `n` non-blank lines of `s`, in original order — captures a traceback tail for a hint.
+fn tail_lines(s: &str, n: usize) -> String {
+    let mut lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(n);
+    lines.drain(..start);
+    lines.join("\n")
+}
+
+/// The runnable package for `python3 -m <pkg>`: the shallowest top-level (`pkg/__main__.py`) or
+/// `src/`-layout (`src/pkg/__main__.py`) directory owning a `__main__.py`. `rel_paths` are `.py`
+/// paths relative to the project root. `None` means there is NO module entry point — itself a smoke
+/// finding (an unrunnable app), which is exactly the built-but-unwired failure class.
+fn entry_package_from_paths(rel_paths: &[String]) -> Option<String> {
+    let mut pkgs: Vec<String> = rel_paths
+        .iter()
+        .filter_map(|p| {
+            let p = p.replace('\\', "/");
+            let segs: Vec<&str> = p.split('/').collect();
+            let pkg = match segs.as_slice() {
+                [pkg, "__main__.py"] => pkg,
+                ["src", pkg, "__main__.py"] => pkg,
+                _ => return None,
+            };
+            (!pkg.starts_with('.')).then(|| pkg.to_string())
+        })
+        .collect();
+    pkgs.sort();
+    pkgs.dedup();
+    pkgs.into_iter().next()
+}
+
+/// Recursively collect `.py` files under `root` (to ~3 levels), skipping vendored/build/cache dirs.
+fn collect_py_files(root: &Path) -> Vec<PathBuf> {
+    const SKIP: &[&str] = &[".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"];
+    fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if depth == 0 || name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                walk(&p, depth - 1, out);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("py") {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, 3, &mut out);
+    out
+}
+
+/// Outcome of the smoke gate, serialized into the run jsonl `smoke` event.
+#[derive(Debug, Clone, Serialize)]
+struct SmokeResult {
+    ran: bool,
+    py_files: usize,
+    collect: Option<CollectVerdict>,
+    entry_package: Option<String>,
+    entry_ok: Option<bool>,
+    findings: Vec<String>,
+}
+
+impl SmokeResult {
+    fn passed(&self) -> bool {
+        self.ran && self.findings.is_empty()
+    }
+}
+
+/// Run the deterministic end-to-end smoke oracles on the produced tree at `root`. No-ops
+/// (`ran=false`) when there is no Python. A missing `python3`/`pytest` is inconclusive, never a
+/// failure; the findings are cross-module import errors and an entry point that fails or is absent.
+async fn run_smoke_gate(root: &Path) -> SmokeResult {
+    let py = collect_py_files(root);
+    if py.is_empty() {
+        return SmokeResult {
+            ran: false,
+            py_files: 0,
+            collect: None,
+            entry_package: None,
+            entry_ok: None,
+            findings: vec![],
+        };
+    }
+    let mut findings: Vec<String> = Vec::new();
+
+    // 1) collect-only — imports every module + test, surfacing cross-module ImportError.
+    let collect = match tokio::process::Command::new("python3")
+        .args(["-m", "pytest", "--collect-only", "-q"])
+        .current_dir(root)
+        .output()
+        .await
+    {
+        Ok(out) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let v = interpret_pytest_collect(out.status.code(), &combined);
+            if let CollectVerdict::Errors(ref t) = v {
+                findings.push(format!(
+                    "pytest --collect-only errors (cross-module import?):\n{t}"
+                ));
+            }
+            Some(v)
+        }
+        Err(_) => None, // python3 missing -> inconclusive, not a failure
+    };
+
+    // 2) entry point — `python3 -m <pkg> --help` must exit 0.
+    let rel: Vec<String> = py
+        .iter()
+        .filter_map(|p| {
+            p.strip_prefix(root)
+                .ok()
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+        })
+        .collect();
+    let entry_package = entry_package_from_paths(&rel);
+    let entry_ok = if let Some(ref pkg) = entry_package {
+        let existing = std::env::var("PYTHONPATH").unwrap_or_default();
+        let pythonpath = if existing.is_empty() {
+            "src".to_string()
+        } else {
+            format!("src:{existing}")
+        };
+        match tokio::process::Command::new("python3")
+            .args(["-m", pkg.as_str(), "--help"])
+            .current_dir(root)
+            .env("PYTHONPATH", pythonpath)
+            .output()
+            .await
+        {
+            Ok(out) => {
+                let ok = out.status.success();
+                if !ok {
+                    let combined = format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&out.stdout),
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    findings.push(format!(
+                        "`python3 -m {pkg} --help` failed (exit {}):\n{}",
+                        out.status.code().unwrap_or(-1),
+                        tail_lines(&combined, 40)
+                    ));
+                }
+                Some(ok)
+            }
+            Err(_) => None,
+        }
+    } else {
+        findings.push(
+            "no `python3 -m <pkg>` entry point (no package with __main__.py) — the app may be \
+             unrunnable"
+                .to_string(),
+        );
+        None
+    };
+
+    SmokeResult {
+        ran: true,
+        py_files: py.len(),
+        collect,
+        entry_package,
+        entry_ok,
+        findings,
+    }
+}
+
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
 /// clearly-flagged problem reads as OK, so a vague weak-model reply can never kill a healthy worker.
 /// CONFIDENCE gates agency — the judge acts (kill + correct) only on a verdict it marks HIGH.
@@ -4000,6 +4269,37 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             opts.prompt.clone(),
         )
         .await?;
+
+    // GOOSE_SWARM_SMOKE: deterministic end-to-end oracle on the produced tree (off by default —
+    // GOOSE_SWARM_SMOKE=1). Emits a `smoke` event the eval reads; does not alter the run's exit code.
+    let smoke_on = std::env::var("GOOSE_SWARM_SMOKE")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if smoke_on {
+        let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default()).await;
+        let smoke_value = serde_json::to_value(&smoke).unwrap_or(serde_json::Value::Null);
+        sink.write_value(serde_json::json!({
+            "event": "smoke",
+            "result": smoke_value,
+        }));
+        if !smoke.ran {
+            eprintln!("smoke gate: skipped (no python in the produced tree)");
+        } else if smoke.passed() {
+            eprintln!(
+                "{}",
+                style("smoke gate: PASS (collect-only + entry --help)").green()
+            );
+        } else {
+            eprintln!(
+                "{} ({} finding(s)):",
+                style("smoke gate: FAIL").red().bold(),
+                smoke.findings.len()
+            );
+            for f in &smoke.findings {
+                eprintln!("  - {f}");
+            }
+        }
+    }
 
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
     sink.write_value(serde_json::json!({
