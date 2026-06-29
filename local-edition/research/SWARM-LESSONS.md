@@ -82,3 +82,15 @@ test validates the direction: these exact swarm changes would have caught qwen's
 mode there (stall on too-big task, cross-module contract drift hidden by isolation tests, unwired entry) is
 exactly M3/M5/M7's target. The disjoint-app confound is removed: qwopus is genuinely better, and the swarm's
 next quality gains are in the multi-module-integration regime.
+
+## New lesson (live, v8 A1-1, 2026-06-29) — fan-out must respect per-device weight
+12. **Planning-phase fan-outs over-dispatched weight-1 nodes** (user observed +1 QUEUED on all 3 nodes):
+    the parallel PLAN-detailing spawned every subtask spec at once round-robin (idx % num_devices), so 6
+    subtasks on 3 nodes = 2 concurrent per node; LM Studio ran one and QUEUED one (the queued details
+    finished at 75s vs 36-43s for the first wave). EXECUTE was already correct (the scheduler honors
+    per-device weight); only the planning fan-out ignored it. -> STRATEGY (shipped 5f7fa599a):
+    fanout_over_fleet, a work-stealing helper capping in-flight to <=1 call per device, routed through the
+    detailer; a weight-1 node never has a second request queued behind the first. READ-THE-LOGS-FIRST held
+    again — the .swarm jsonl + progress.log named the detailing phase precisely (no guessing from the LM
+    Studio screenshot). Scouts / best-of-N / research-questions share the idiom and will adopt the helper
+    next; they only over-dispatch in the rarer items > nodes case (lenses/questions = 4 on a 3-node fleet).
