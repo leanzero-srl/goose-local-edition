@@ -148,3 +148,19 @@ Do NOT tune the judge; keep watching A2 to confirm.
     (built-but-unwired). -> STRATEGY: run GOOSE_SWARM_REVIEW=1 on every eval; it catches a class that
     running + testing + reading cannot. NB prior "clean win" verdicts may be inflated where an inline
     duplicate masks an unwired module — the deterministic graph is the only reliable check.
+
+## New lesson (live, v8 A1-3 task-scheduler, 2026-06-29) — inline-duplicate-unwired pattern RECURS
+15. **qwopus builds a dedicated module then INLINES its logic in the CLI, leaving the module UNWIRED — and
+    it passes smoke + tests + human review.** A1-3 (CLI task scheduler) DONE all 8 subtasks, 0 failed,
+    SMOKE PASS, 44 pytest green, rich 8-command CLI — a clean WIN by the old criteria. But the AST reviewer
+    flagged sched.store + sched.runner unwired, and RUNNING it confirmed a REAL user-facing bug: sched add
+    prints "Added task" but sched list (new process) shows NOTHING — tasks DON'T PERSIST, because cli.py
+    builds an in-memory Schedule() and never calls store.py (unwired); cli.py run also inlines
+    subprocess.run instead of runner.py. The 44 tests pass because they test store/runner IN ISOLATION; the
+    CLI never calls them (lesson #11 via UNWIRING, not drift). 2nd app after byte-oracle with this exact
+    pattern => RECURRING qwopus failure mode. SMOKE (runs) + green tests + 8-command --help ALL missed it;
+    the deterministic AST unwired check was the ONLY catch. -> STRATEGY: (a) GOOSE_SWARM_REVIEW=1 every run.
+    (b) BUILD an AST-finding fix-dispatch (mirror SMOKE-autofix): on an unwired finding fire ONE fix worker
+    told to WIRE the module in (cli loads store on start, saves on mutation) — would have fixed A1-3. (c)
+    CONTRACTS may PREVENT it (frozen store/runner interface injected => cli worker imports not re-invents);
+    A2-1 (contracts ON) tests this. Combines #2 (duplicate impls) + #5/#11.

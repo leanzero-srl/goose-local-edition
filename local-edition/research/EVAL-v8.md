@@ -20,7 +20,7 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 |---|------|------|--------------|-------------|--------|-------------|------------------|---------|
 | A1-1 | A1 minimal | a CLI markdown-to-HTML renderer | SMOKE,SPLIT,PREREVIEW,JUDGE,research | A1-1-mdhtml | DONE | YES / PASS | 9/9/9/9 | CLEAN WIN |
 | A1-2 | A1 minimal | a CLI spreadsheet with formulas | SMOKE,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-2-sheet | DONE | YES / caught FAIL | 2/0/5/2 | FAIL (no entry; 5/7 subtasks failed) |
-| A1-3 | A1 minimal | a CLI task scheduler | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-3-sched | RUNNING | — | — | — |
+| A1-3 | A1 minimal | a CLI task scheduler | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-3-sched | DONE | smoke PASS but app BROKEN | 3/5/5/4 | RUNS-but-broken (store unwired -> no persistence; AST reviewer caught it) |
 | A1-3 | A1 minimal | a CLI task scheduler | (tbd) | — | pending | — | — | — |
 | A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | (tbd) | — | pending | — | — | — |
 | A2-2 | A2 max-detail | log-pipeline DSL (full spec) | (tbd) | — | pending | — | — | — |
@@ -91,8 +91,28 @@ evaluator, NO cli.py, NO __main__.py, NO tests. Not a runnable spreadsheet.
   module)" failure is distinct from a syntax error (DONE_GATE) — a hard lynchpin task exhausting its
   attempts cascades the whole run. CONTRACTS' decoupling is the most promising mitigation; validate on A2.
 
-### A1-3 — a CLI task scheduler  (RUNNING)
-On the NEW 31f671a18 binary (SMOKE+autofix + SPLIT+PREREVIEW+DONE_GATE). Watching: does it stay
-cohesive (A1-3 is less lynchpin-heavy than the spreadsheet), does SMOKE pass, and if it smoke-FAILS
-does the corrective AUTOFIX fire (smoke_after_fix event) + resolve it — the first chance to validate
-the auto-fix end-to-end.
+### A1-3 — a CLI task scheduler — RUNS BUT BROKEN (corr 3 / test 5 / qual 5 / spec 4)
+DONE on 31f671a18 (SMOKE+autofix+SPLIT+PREREVIEW+DONE_GATE; REVIEW was NOT on in-run). All 8 subtasks
+done, 0 failed, NO filename drift (all 8 sched/ files correctly named), calm judge (12 verdicts, 0
+kills). SMOKE PASSED (entry sched, entry_ok, collect ok). 44 pytest pass. By the OLD criteria this is a
+clean WIN — runs, rich 8-command CLI (add/list/run/start/status/enable/disable/remove), tests green.
+- BUT IT IS BROKEN, and ONLY the AST reviewer found it. `python3 scratchpad/ast_review2.py` flagged
+  sched.runner + sched.store as UNWIRED (no non-test module imports them). RUNNING it confirmed a real
+  user-facing bug: `python3 -m sched add --name backup ...` prints "Added task <uuid>" but `python3 -m
+  sched list` (separate process) shows NOTHING — tasks DO NOT PERSIST. cli.py's add does
+  Schedule(); Task(...) in memory and never saves, because store.py (the persistence module) is unwired;
+  each invocation starts empty. Also cli.py's `run` inlines subprocess.run instead of using runner.py
+  (runner unwired/duplicated). A task scheduler whose tasks vanish between commands is non-functional.
+- THE DEEP POINT: SMOKE (runs) + 44 passing tests + an 8-command --help ALL gave A1-3 a clean bill; the
+  44 tests test store.py/runner.py IN ISOLATION (they pass) but the CLI never calls them (classic
+  lesson #11 "tests pass but the integrated feature is broken", here via UNWIRING not contract drift).
+  The deterministic AST unwired check was the ONLY signal that caught it. This is the strongest
+  validation in the run of the deterministic-gate + AST-reviewer thesis.
+- Score 3/5/5/4 (vs AB qwopus mean 5.8/5.6/7.6/5.6): corr 3 (headline persistence broken), test 5 (green
+  but miss the wired path), qual 5 (clean modules but 2 unwired duplicates — the inline-duplicate
+  pattern, lesson #2), spec 4 (rich CLI but the central persist/run are inline/absent). A DRAW/FAIL-class
+  result masquerading as a win — the multi-module regime again.
+- DIRECTLY MOTIVATES the next build: an AST-finding fix-dispatch (mirror SMOKE-autofix) — on an unwired
+  finding, fire ONE fix worker told to WIRE the module into the app (load store on start, save on add).
+  That would have fixed A1-3's persistence. And A2-1 (CONTRACTS ON) tests whether a frozen store/runner
+  interface makes the CLI worker IMPORT instead of inline.
