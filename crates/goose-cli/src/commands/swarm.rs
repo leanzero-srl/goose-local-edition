@@ -2647,6 +2647,11 @@ impl GooseAgentDispatcher {
         let lang_directive = lang.directive();
         let entry_clause = lang.entry_clause();
         let test_cmd = lang.test_cmd();
+        let no_compile = if lang == TargetLang::Python {
+            "(NOT py_compile) "
+        } else {
+            ""
+        };
         let system = format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
@@ -2688,7 +2693,7 @@ impl GooseAgentDispatcher {
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
             difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \
-            (NOT py_compile) and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
+            {no_compile}and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
             change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
             existing test to assert the new correct output. Do not stall — make the whole suite pass. Then runs the program's \
             PRIMARY/default command on a concrete example and CHECKS THE OUTPUT IS ACTUALLY CORRECT — not merely that it starts \
@@ -2843,9 +2848,13 @@ impl GooseAgentDispatcher {
             if !has_iv && arr.len() > 1 {
                 let ids: Vec<serde_json::Value> =
                     arr.iter().filter_map(|s| s.get("id").cloned()).collect();
+                let iv_desc = format!(
+                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite, then ACTUALLY RUN the entry point ({} AND one real command with real arguments from the shell) and FIX any runtime crash — a green test suite does NOT prove the CLI runs.",
+                    lang.entry_run_example()
+                );
                 arr.push(serde_json::json!({
                     "id": "integrate-verify",
-                    "description": "Integrate every module and VERIFY the whole program works end-to-end: run the test suite, then ACTUALLY RUN the entry point (python3 -m <package> --help AND one real command with real arguments from the shell) and FIX any runtime crash — a green test suite does NOT prove the CLI runs.",
+                    "description": iv_desc,
                     "depends_on": ids,
                     "files": [],
                     "difficulty": "hard",
@@ -2968,6 +2977,8 @@ impl GooseAgentDispatcher {
         worker_count: usize,
         research_findings: &str,
     ) -> Result<String> {
+        let lang = detect_language(user_prompt, &[]);
+        let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
             (split by file / module / feature) and aim for AT LEAST {worker_count} independent subtasks (one or more per worker; more is better) \
@@ -2978,7 +2989,7 @@ impl GooseAgentDispatcher {
             files (paths it owns; non-overlapping across parallel subtasks).\n\
             UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
             that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
-            files, RUNS `python3 -m pytest`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
+            files, RUNS `{test_cmd}`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
             fails because the change intentionally altered behavior (EDIT that existing test to assert the new output; do not \
             stall). Reports PASS/FAIL; its files must NOT overlap the others.\n\
             Also produce a short integration note. Then call the final_output tool with the plan.");
@@ -4070,6 +4081,18 @@ impl TargetLang {
             TargetLang::Rust => "cargo test",
             TargetLang::Go => "go test ./...",
             TargetLang::Other => "the project's standard test runner for the target language",
+        }
+    }
+
+    /// A concrete "run the built entry point" example for prompts (integrate-verify / worker). Python arm
+    /// is the original `python3 -m <package> --help` verbatim.
+    fn entry_run_example(self) -> &'static str {
+        match self {
+            TargetLang::Python => "python3 -m <package> --help",
+            TargetLang::TypeScript => "npx tsx src/index.ts --help (or the package.json bin)",
+            TargetLang::Rust => "cargo run -- --help",
+            TargetLang::Go => "go run . --help",
+            TargetLang::Other => "the program's runnable entry point with --help",
         }
     }
 
