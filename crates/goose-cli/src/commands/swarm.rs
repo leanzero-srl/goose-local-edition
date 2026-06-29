@@ -1348,6 +1348,61 @@ mod tests {
         assert_eq!(tail_lines(s, 10), "a\nb\nc");
     }
 
+    #[tokio::test]
+    async fn fanout_caps_one_call_per_device() {
+        use std::sync::atomic::AtomicUsize;
+        let devices = vec!["d0".to_string(), "d1".to_string(), "d2".to_string()];
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..9).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results = fanout_over_fleet(devices, items, move |i, dev| {
+            let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+            async move {
+                let cur = {
+                    let mut g = inf.lock().unwrap();
+                    let e = g.entry(dev.clone()).or_insert(0);
+                    *e += 1;
+                    *e
+                };
+                {
+                    let mut m = mpd.lock().unwrap();
+                    let e = m.entry(dev.clone()).or_insert(0);
+                    if cur > *e {
+                        *e = cur;
+                    }
+                }
+                let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                mtot.fetch_max(t, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                tot.fetch_sub(1, Ordering::SeqCst);
+                *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                i * 2
+            }
+        })
+        .await;
+        assert_eq!(results.len(), 9, "every item returns a result");
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(m <= 1, "device {dev} ran {m} concurrent calls; must be <= 1");
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 3,
+            "no more than 3 concurrent across a 3-device fleet"
+        );
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should use every device"
+        );
+    }
+
     #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
@@ -2636,13 +2691,15 @@ impl GooseAgentDispatcher {
         };
         let goal = user_prompt.to_string();
         let findings = research_findings.to_string();
-        let mut handles = Vec::new();
-        for (idx, id, brief) in items {
-            let me = self.clone();
-            let model = wm[idx % wm.len()].clone();
+        let me = self.clone();
+        // One detail call per device (work-stealing): a weight-1 node never has a second detail queued
+        // behind the first. Each item grabs the next free node, so the fleet stays busy without
+        // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
+        let results = fanout_over_fleet(wm, items, move |(idx, id, brief), model| {
+            let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
-            handles.push(tokio::spawn(async move {
+            async move {
                 let started = std::time::Instant::now();
                 eprintln!(
                     "  {} detail {} → {}",
@@ -2662,8 +2719,6 @@ impl GooseAgentDispatcher {
                     restate the whole project."
                     .to_string();
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{fb}");
-                // Bound each detailer so one slow model cannot drag out the PLAN phase — on
-                // timeout/empty/error we fall back to the architect's brief line (still a valid spec).
                 let desc = match tokio::time::timeout(
                     std::time::Duration::from_secs(75),
                     me.run_agent(&model, system, user, None, 6, &[], 0, None),
@@ -2680,12 +2735,11 @@ impl GooseAgentDispatcher {
                     started.elapsed().as_secs_f64()
                 );
                 (idx, desc)
-            }));
-        }
-        for h in handles {
-            if let Ok((idx, desc)) = h.await {
-                v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
             }
+        })
+        .await;
+        for (idx, desc) in results {
+            v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
         }
         Ok(v.to_string())
     }
@@ -2974,6 +3028,57 @@ async fn run_smoke_gate(root: &Path) -> SmokeResult {
         entry_ok,
         findings,
     }
+}
+
+/// Run `items` across the fleet with at most ONE call in flight PER DEVICE (work-stealing: each item
+/// grabs the next free device-model and returns it on completion). This bounds the planning-phase
+/// fan-outs (detailing, scouts, best-of-N, research) to the per-device capacity the EXECUTE scheduler
+/// already honors, so a weight-1 node never has a second request queued behind the first. Results come
+/// back in item order. `devices` is the list of distinct worker model-ids (one per node).
+async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
+where
+    T: Send + 'static,
+    R: Send + 'static,
+    F: Fn(T, String) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = R> + Send + 'static,
+{
+    use std::collections::VecDeque;
+    let devices = if devices.is_empty() {
+        vec![String::new()]
+    } else {
+        devices
+    };
+    // permits == pool size, so a permit holder is always guaranteed a free device to pop.
+    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
+    let pool = Arc::new(Mutex::new(devices.into_iter().collect::<VecDeque<String>>()));
+    let mut handles = Vec::with_capacity(items.len());
+    for item in items {
+        let permits = permits.clone();
+        let pool = pool.clone();
+        let f = f.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = permits
+                .acquire_owned()
+                .await
+                .expect("fleet semaphore never closed");
+            let dev = {
+                pool.lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("a device is free whenever a permit is held")
+            };
+            let out = f(item, dev.clone()).await;
+            pool.lock().unwrap().push_back(dev);
+            out
+        }));
+    }
+    let mut results = Vec::with_capacity(handles.len());
+    for h in handles {
+        if let Ok(r) = h.await {
+            results.push(r);
+        }
+    }
+    results
 }
 
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
