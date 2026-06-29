@@ -164,3 +164,17 @@ Do NOT tune the judge; keep watching A2 to confirm.
     told to WIRE the module in (cli loads store on start, saves on mutation) — would have fixed A1-3. (c)
     CONTRACTS may PREVENT it (frozen store/runner interface injected => cli worker imports not re-invents);
     A2-1 (contracts ON) tests this. Combines #2 (duplicate impls) + #5/#11.
+
+## New lesson (live, v8 A2-1 ledger WIN, 2026-06-29) — the full stack converts the multi-module DRAW->WIN
+16. **The full v8 stack converts the multi-module DRAW class into a WIN.** A1-2 spreadsheet (no contracts,
+    minimal spec) FAILED 2/0/5/2 via the detailer-drift cascade; A1-3 scheduler (no contracts) shipped
+    broken 3/5/5/4 with an unwired store (tasks did not persist); A2-1 ledger (FULL stack: CONTRACTS +
+    detailer-fix + smoke + review; detailed spec) is the FIRST multi-module app in v8 that WORKS end-to-end
+    — RAN it: posts balanced entries, REJECTS unbalanced ("Unbalanced journal entry"), trial-balance correct
+    (debits==credits), and PERSISTENCE ROUND-TRIPS across a fresh process (the exact test A1-3 failed).
+    8/6/8/8 vs AB mean 5.8/5.6/7.6/5.6. VERIFIED the mechanisms fired (read the tree): the CONTRACTS phase
+    injected frozen interfaces and ledger-core imported the EXACT frozen models API (no drift); the REVIEW
+    event found 0 unwired; no surviving contract stubs. CAVEAT (honest): A2-1 was MAX-DETAIL vs A1's MINIMAL,
+    so the detailed spec also contributes — a contracts-OFF same-spec run would isolate contracts. Still, the
+    two draw-class failure mechanisms that sank A1-2/A1-3 (cross-module drift cascade; built-but-unwired) did
+    NOT occur with the full stack — the strongest end-to-end evidence the v8 build targets the right thing.
