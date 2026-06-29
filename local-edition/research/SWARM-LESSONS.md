@@ -221,3 +221,22 @@ Do NOT tune the judge; keep watching A2 to confirm.
     data: URLs with SVG content time out (30s) then hang the backend. 6 attempts, 4 approaches. For SVG/web
     verification here, fall back to STRUCTURAL + ALGORITHMIC checks (valid SVG + the generating algorithm +
     a matching ASCII render) rather than a pixel screenshot.
+
+## New lesson (live, v8 A3-2 byte-oracle --json, 2026-06-29) — amendment WRONG-PATH + FALSE-GREEN + wire-fix
+20. **AMENDMENT failure mode #2 (distinct from #1 re-architecture): WRONG-PATH write + FALSE-GREEN tests.**
+    With an explicit edit-in-place instruction (OLD binary), the worker did NOT parallel-rename (the
+    byte_oracle package stayed intact) but wrote its --json `cli.py` to the CWD ROOT instead of editing
+    `byte_oracle/cli.py` — so `python3 -m byte_oracle --json` -> "error: unrecognized arguments: --json"
+    while the feature sits DEAD in a stray root file the package entry never imports. 135 pytest PASS (the
+    test imports the stray file / json fn directly) and smoke passed (it only checks `--help` exit 0) — so
+    BOTH green signals were FALSE; only RUNNING the real feature exposed it (VERIFY-don't-trust, again). The
+    AST reviewer DID flag the stray 'cli' unwired. Root: the amendment subtask owned a bare `cli.py` (root),
+    not the package-qualified `byte_oracle/cli.py` (my spec also said "edit the existing cli.py" unqualified).
+    f9e89b782's "own the EXACT existing path" clause targets this; A3-3 (new binary, NO instruction) tests it.
+    + **WIRE-FIX mis-applies on amendments:** it tried to wire the PRE-EXISTING intentional detector dup
+    (byte-oracle ships detector.py unwired; cli inlines detection — lesson 14) AND the stray cli, ran 14 shell
+    calls ~9min without resolving -> cut. CANDIDATE FIX (confirm on A3-3): AST review/wire-fix should only
+    flag/fix modules NEWLY created THIS run (diff vs the amendment's original manifest), never pre-existing.
+    NET: amendments are the hard regime — TWO distinct failure modes now (re-architecture A3-1; wrong-path
+    A3-2); greenfield is solid (A1-1, A2 x3). The deterministic gates each PARTIALLY helped (AST flagged the
+    stray) but none alone catches a wrong-path feature whose tests falsely pass.

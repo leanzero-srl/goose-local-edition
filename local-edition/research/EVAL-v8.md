@@ -26,7 +26,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | DONE | smoke+review CLEAN | 8/8/8/8 | WIN (2nd multi-module WIN — logfunnel class tamed) |
 | A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (A2 = 3/3 — DRAW class converted) |
 | A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | CUT (thrash) | n/a (cut) | 5/3/4/6 | PARTIAL: --svg WORKS but amendment RE-ARCHITECTED (abandoned dups, broken test); AST caught it; Playwright env-blocked |
-| A3-2 | A3 feature | byte-oracle: add --json output | full v8 stack (amendment, edit-in-place) | A3-2-byteoracle-json | RUNNING | — | — | — |
+| A3-2 | A3 feature | byte-oracle: add --json output | full v8 stack (amendment, edit-in-place instr) | A3-2-byteoracle-json | CUT (wire-fix loop) | smoke PASS (entry --help ok) | 4/5/4/5 | PARTIAL/FAIL: --json written to STRAY ROOT cli.py (wrong path) so `-m byte_oracle --json` errors; AST caught stray; wire-fix flailed on pre-existing detector dup |
+| A3-3 | A3 feature | byte-oracle: add --count | full v8 stack (amendment, NEW binary f9e89b782, NO instr) | A3-3-byteoracle-count | RUNNING | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
 
@@ -170,6 +171,29 @@ SMOKE pass. 10 pytest pass.
 - Score 8/6/8/8. A2 = WIN/WIN/WIN (ledger 8/6/8/8, log-DSL 8/8/8/8, fsm 8/6/8/8). All THREE hard multi-
   module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
   cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
+
+### A3-2 — byte-oracle: add --json (AMENDMENT, edit-in-place instr) — PARTIAL/FAIL (corr 4 / test 5 / qual 4 / spec 5)
+CONTROL run (OLD binary 8af809359 + an explicit "edit the existing cli.py in place" instruction in the spec).
+CUT at ~43min during a flailing wire-fix. The edit-in-place instruction PREVENTED the A3-1 parallel-RENAME (the
+byte_oracle package stayed intact, no render_ascii-style dup) — BUT a SECOND amendment failure appeared:
+- WRONG-PATH WRITE: the add-json-flag worker wrote a NEW `cli.py` to the CWD ROOT (81 lines, with --json +
+  `import json`) instead of EDITING `byte_oracle/cli.py` (220 lines, left UNCHANGED). So `python3 -m
+  byte_oracle --json` -> "error: unrecognized arguments: --json" — the feature is DEAD (the package entry
+  never imports the stray root cli.py). Note: my spec said "edit the existing cli.py" UNqualified — the
+  architect/worker owned a bare `cli.py` (root), not `byte_oracle/cli.py`. f9e89b782's "own the EXACT existing
+  path" clause is meant to fix exactly this; A3-3 (new binary) is the test.
+- FALSE-GREEN TESTS: 135 pytest PASS because tests/test_json_output.py imports the stray ROOT cli.py / the
+  json function directly, NOT via `python3 -m byte_oracle` — so the suite is green while the actual CLI lacks
+  --json. (Smoke also passed: it only checks `-m byte_oracle --help` exit 0, which the base CLI satisfies.)
+- The PRE-REVIEWER did catch a real spec drift mid-run (worker used JSON key "detected_type"/"extension"
+  instead of "detected") and re-dispatched with a corrective hint — but in the stray file, so it didn't help
+  the real entry. The AST REVIEWER correctly flagged the stray 'cli' (+ the pre-existing detector dup) as
+  unwired. The WIRE-FIX then FLAILED: it tried to wire BOTH the stray cli AND the pre-existing intentional
+  detector dup (lesson 14), ran 14 shell calls over ~9min without resolving -> I cut it.
+- Score 4/5/4/5 vs AB 5.8/5.6/7.6/5.6 — below. TWO real findings: (1) WRONG-PATH write (edited file landed at
+  cwd root, not the owned package path) — a worker/planner path bug distinct from A3-1's re-architecture;
+  (2) WIRE-FIX mis-applies on amendments (chases pre-existing intentional dups). The table default still works
+  + detection is correct (unchanged base).
 
 ### A3-1 — chaos-fern: add --svg export (AMENDMENT) — PARTIAL / CUT (corr 5 / test 3 / qual 4 / spec 6)
 Full v8 stack on a COPY of chaos-fern. CUT after ~34min: cli-entry + tests-svg THRASHED (each judge-killed
