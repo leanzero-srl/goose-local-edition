@@ -903,6 +903,68 @@ async fn pre_review_runs_concurrently_with_judge() {
     );
 }
 
+/// Records PEAK concurrent pre-reviews so the idle_jobs invariant can be asserted.
+struct PeakPreReviewer {
+    cur: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl PreReviewer for PeakPreReviewer {
+    async fn pre_review(&self, _req: PreReviewRequest) -> PreReviewOutput {
+        let n = self.cur.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(n, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        self.cur.fetch_sub(1, Ordering::SeqCst);
+        PreReviewOutput {
+            had_findings: false,
+            summary: String::new(),
+        }
+    }
+}
+
+/// idle_jobs accounting invariant: concurrent pre-reviews must NEVER exceed idle_capacity(). `slow` holds
+/// one of 3 weight-1 nodes (idle_capacity 2 while it runs); four completed tasks are pre-review targets. The
+/// double-decrement-on-normal-exit bug undercounts idle_jobs after each review and lets a 3rd concurrent
+/// review spawn on the 2-slot fleet; with the IdleSlotGuard as the SOLE releaser the gate caps peak at 2.
+#[tokio::test]
+async fn pre_review_never_oversubscribes_free_nodes() {
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["sl.py"]),
+        spec("d1", &[], &["d1.py"]),
+        spec("d2", &[], &["d2.py"]),
+        spec("d3", &[], &["d3.py"]),
+        spec("d4", &[], &["d4.py"]),
+    ])
+    .unwrap();
+    let peak = Arc::new(AtomicUsize::new(0));
+    let pr = Arc::new(PeakPreReviewer {
+        cur: Arc::new(AtomicUsize::new(0)),
+        peak: peak.clone(),
+    });
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_pre_reviewer(pr);
+    let report = sched
+        .run(dag, slow_dispatcher(&rec, 30, &["slow"]), String::new())
+        .await
+        .unwrap();
+    assert!(
+        report.failed.is_empty(),
+        "no task fails: {:?}",
+        report.failed
+    );
+    assert!(
+        peak.load(Ordering::SeqCst) <= 2,
+        "concurrent pre-reviews ({}) must not exceed idle_capacity 2 while `slow` holds one of 3 nodes \
+         (an idle_jobs double-decrement would let a 3rd spawn and oversubscribe the fleet)",
+        peak.load(Ordering::SeqCst)
+    );
+}
+
 /// A judge that proposes a MALFORMED split — a sibling cycle (big-a<->big-b). apply_split must reject it.
 struct CyclicSplitJudge {
     target: String,
