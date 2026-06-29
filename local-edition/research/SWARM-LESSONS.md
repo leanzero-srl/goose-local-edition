@@ -94,3 +94,15 @@ next quality gains are in the multi-module-integration regime.
     again — the .swarm jsonl + progress.log named the detailing phase precisely (no guessing from the LM
     Studio screenshot). Scouts / best-of-N / research-questions share the idiom and will adopt the helper
     next; they only over-dispatch in the rarer items > nodes case (lenses/questions = 4 on a 3-node fleet).
+
+## Observation (live, v8 A1-2 spreadsheet, 2026-06-29) — judge may over-kill HARD slow tasks (WATCH)
+NOT yet a confirmed lesson — one data point. A1-2's formula-parser (a genuinely hard 385-line formula
+parser/evaluator) was re-dispatched 3x and drew ~67 judge_verdict events on a 2-tasks-done run; the kills
+read as the idle-judge's "over_reading / produced no file yet" verdict firing while the 27B was legitimately
+reasoning for minutes before its first tool call (reasoning models think long on hard tasks). Confirmed by
+reading the logs that this is NOT a v8-feature bug: zero task_retry/ContentRetry events and formula_parser.py
+PARSES (DONE_GATE correctly silent); the file IS produced, just slowly across re-dispatches. The scheduler
+already excludes judge kills from the transient-retry budget so it is bounded, but it wastes work. IF this
+recurs on the A2 multi-module runs -> candidate tuning: raise the judge's min-age/over-reading patience for
+HARD-difficulty tasks (a hard task legitimately reads + reasons longer before producing), or gate the
+over_reading verdict on elapsed-vs-difficulty. Gather evidence across A2 before touching the judge.
