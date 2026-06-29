@@ -2630,7 +2630,7 @@ impl GooseAgentDispatcher {
         research_findings: &str,
         best_of_n: usize,
         homogeneous: bool,
-    ) -> Result<String> {
+    ) -> Result<(String, Option<u8>, String)> {
         let homo_hint = if homogeneous {
             "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
              independently on different nodes mesh consistently (same naming priors, same conventions). \
@@ -2809,33 +2809,42 @@ impl GooseAgentDispatcher {
         // systematically overconfident, so it is the SECONDARY signal (0.3) behind the calibrated
         // cross-draft agreement (0.7). One extra planner call, only on the best-of-N path (the opt-in
         // plan-quality experiment) so single-draft runs keep their old latency exactly.
-        if n > 1 {
+        // Hoisted out of `if n > 1` so the confidence + the model's stated uncertainties are RETURNED to the
+        // caller (the GOOSE_SWARM_ASK gate consumes them). n==1 keeps its old latency (no verbalized call)
+        // and yields the inert agreement default — the ask gate forces best_of_n>=2 anyway.
+        let (plan_conf, uncertainties): (Option<u8>, String) = if n > 1 {
             let verbalized = self
                 .verbalized_confidence(planner_model, user_prompt, &skeleton)
                 .await;
             let final_conf = match (agreement_conf, verbalized.as_ref()) {
                 (Some(a), Some((v, _))) => {
-                    ((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8
+                    Some(((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8)
                 }
-                (Some(a), None) => a,
-                (None, Some((v, _))) => *v,
-                (None, None) => 60,
+                (Some(a), None) => Some(a),
+                (None, Some((v, _))) => Some(*v),
+                (None, None) => Some(60),
             };
-            if let Some((v, unc)) = &verbalized {
+            let unc = verbalized
+                .as_ref()
+                .map(|(_, u)| u.clone())
+                .unwrap_or_default();
+            if let Some((v, u)) = &verbalized {
                 eprintln!(
                     "  plan self-confidence {v}/100 (verbalized, discounted){}",
-                    if unc.is_empty() {
+                    if u.is_empty() {
                         String::new()
                     } else {
-                        format!(" — uncertainties: {unc}")
+                        format!(" — uncertainties: {u}")
                     }
                 );
             }
-            eprintln!(
-                "  {} final plan confidence {final_conf}/100",
-                style("◆").cyan()
-            );
-        }
+            if let Some(fc) = final_conf {
+                eprintln!("  {} final plan confidence {fc}/100", style("◆").cyan());
+            }
+            (final_conf, unc)
+        } else {
+            (agreement_conf, String::new())
+        };
         let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
         // Deterministically ensure a final integrate-verify sink: the weak architect sometimes OMITS it
         // despite the prompt, and without it nothing smoke-runs the program end-to-end — so a broken entry
@@ -2966,7 +2975,7 @@ impl GooseAgentDispatcher {
         for (idx, desc) in results {
             v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
         }
-        Ok(v.to_string())
+        Ok((v.to_string(), plan_conf, uncertainties))
     }
 
     pub async fn plan(
@@ -2976,7 +2985,7 @@ impl GooseAgentDispatcher {
         plan_schema: serde_json::Value,
         worker_count: usize,
         research_findings: &str,
-    ) -> Result<String> {
+    ) -> Result<(String, Option<u8>, String)> {
         let lang = detect_language(user_prompt, &[]);
         let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
@@ -3011,8 +3020,11 @@ impl GooseAgentDispatcher {
                 &[],
             )
             .await?;
-        out.final_output
-            .ok_or_else(|| anyhow!("planner did not produce a final_output plan"))
+        let plan = out
+            .final_output
+            .ok_or_else(|| anyhow!("planner did not produce a final_output plan"))?;
+        // Solo planner has no cross-draft confidence; the ask gate forces the best-of-N path instead.
+        Ok((plan, None, String::new()))
     }
 }
 
@@ -4676,6 +4688,130 @@ fn phase_banner(label: &str, why: &str) {
     );
 }
 
+/// Confidence-gated clarifying questions (GOOSE_SWARM_ASK_FLOOR). When the plan-confidence meter is below
+/// the floor, the swarm asks the USER rather than guessing — local models are weak, so asking beats a
+/// confident wrong decomposition. Interactive TTY -> cliclack prompts. Detached (no TTY: the autonomous
+/// harness or an eval) -> write the questions to `.swarm/clarify-questions.json`, emit a `low_confidence_ask`
+/// event, and BLOCK-poll for `.swarm/clarify-answers.json` (the harness answers AS the human) up to
+/// `wait_secs`, then proceed. Returns a Q&A block to fold into the planner findings, or "" if unanswered.
+async fn ask_clarifying_questions(
+    questions: &[String],
+    cwd: &Path,
+    plan_conf: u8,
+    wait_secs: u64,
+    sink: &dyn EventSink,
+) -> String {
+    use std::io::IsTerminal;
+    if questions.is_empty() {
+        return String::new();
+    }
+    let dir = cwd.join(".swarm");
+    let _ = std::fs::create_dir_all(&dir);
+    let qpath = dir.join("clarify-questions.json");
+    let apath = dir.join("clarify-answers.json");
+    let _ = std::fs::remove_file(&apath); // never read a stale answer from a previous gate
+    let _ = std::fs::write(
+        &qpath,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "plan_confidence": plan_conf,
+            "questions": questions,
+            "answer_file": ".swarm/clarify-answers.json",
+            "how_to_answer": "Write a JSON array of answer strings (one per question, same order), or {\"answers\":[...]}, to answer_file. The swarm is BLOCKED on it and will re-plan with your answers.",
+        }))
+        .unwrap_or_default(),
+    );
+    sink.write_value(serde_json::json!({
+        "event": "low_confidence_ask",
+        "plan_confidence": plan_conf,
+        "questions": questions,
+    }));
+
+    let mut answers: Vec<String> = Vec::new();
+    if std::io::stdin().is_terminal() {
+        eprintln!(
+            "{}",
+            style(format!(
+                "Plan confidence {plan_conf}/100 — {} quick question(s) to get this right:",
+                questions.len()
+            ))
+            .yellow()
+            .bold()
+        );
+        for q in questions {
+            let a: String = cliclack::input(q.as_str())
+                .default_input("")
+                .interact()
+                .unwrap_or_default();
+            answers.push(a);
+        }
+    } else {
+        eprintln!(
+            "{}",
+            style(format!(
+                "Plan confidence {plan_conf}/100 below floor — wrote {} question(s) to {}; BLOCKING up to {}s for answers in {} (the harness answers as the human) ...",
+                questions.len(),
+                qpath.display(),
+                wait_secs,
+                apath.display()
+            ))
+            .yellow()
+        );
+        let mut waited = 0u64;
+        loop {
+            if let Ok(s) = std::fs::read_to_string(&apath) {
+                let parsed: Option<Vec<String>> = serde_json::from_str::<Vec<String>>(&s)
+                    .ok()
+                    .or_else(|| {
+                        serde_json::from_str::<serde_json::Value>(&s)
+                            .ok()
+                            .and_then(|val| {
+                                val.get("answers").and_then(|a| a.as_array()).map(|arr| {
+                                    arr.iter()
+                                        .map(|x| x.as_str().unwrap_or("").to_string())
+                                        .collect()
+                                })
+                            })
+                    });
+                if let Some(a) = parsed {
+                    answers = a;
+                    eprintln!(
+                        "{}",
+                        style("clarifications received — re-planning with the answers").green()
+                    );
+                    break;
+                }
+            }
+            if waited >= wait_secs {
+                eprintln!(
+                    "{}",
+                    style("no answers within the wait window — proceeding with the current plan").yellow()
+                );
+                return String::new();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            waited += 5;
+        }
+    }
+
+    let mut block = String::from(
+        "\n\nUSER CLARIFICATIONS (authoritative — they resolve ambiguity in the spec above; honor them):\n",
+    );
+    let mut any = false;
+    for (i, q) in questions.iter().enumerate() {
+        let a = answers.get(i).map(|s| s.trim()).unwrap_or("");
+        if !a.is_empty() {
+            block.push_str(&format!("Q: {q}\nA: {a}\n"));
+            any = true;
+        }
+    }
+    if any {
+        sink.write_value(serde_json::json!({ "event": "low_confidence_answered" }));
+        block
+    } else {
+        String::new()
+    }
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
@@ -4954,63 +5090,124 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         );
     }
 
-    let plan_json = if cfg.parallel_planning {
-        phase_banner(
-            "PLAN",
-            "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
-        );
-        eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
-        let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-        match dispatcher
-            .parallel_plan(
-                &cfg.planner_model,
-                wm,
-                &opts.prompt,
-                plan_schema(),
-                devices.len(),
-                &research_findings,
-                opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons),
-                cfg.homogeneous_models,
-            )
-            .await
-        {
-            Ok(j) => j,
-            Err(e) => {
-                eprintln!("  parallel planning failed ({e}); falling back to the solo planner");
-                dispatcher
-                    .plan(
-                        &cfg.planner_model,
-                        &opts.prompt,
-                        plan_schema(),
-                        devices.len(),
-                        &research_findings,
+    // GOOSE_SWARM_ASK_FLOOR (1-100): when set, the swarm asks the USER clarifying questions if the plan-
+    // confidence meter is below the floor, instead of committing to a low-confidence decomposition — local
+    // models are weak, so asking beats guessing. Unset/0 = OFF = today's behavior exactly (eval/upstream
+    // untouched). Setting it forces best_of_n>=2 so the calibrated cross-draft agreement signal is real
+    // (it returns an inert neutral 60 for a single draft).
+    let ask_floor: Option<u8> = std::env::var("GOOSE_SWARM_ASK_FLOOR")
+        .ok()
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .filter(|f| *f > 0);
+    let ask_max_q: usize = std::env::var("GOOSE_SWARM_ASK_MAXQ")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(3)
+        .max(1);
+    let ask_wait_secs: u64 = std::env::var("GOOSE_SWARM_ASK_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(1800);
+    let best_of_n = {
+        let base = opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons);
+        if ask_floor.is_some() {
+            base.max(2)
+        } else {
+            base
+        }
+    };
+    let cwd_for_ask = std::env::current_dir().unwrap_or_default();
+    let mut asked = false;
+    let (plan_json, dag) = loop {
+        let (pj, plan_conf, uncertainties) = if cfg.parallel_planning {
+            phase_banner(
+                "PLAN",
+                "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
+            );
+            eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
+            let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+            match dispatcher
+                .parallel_plan(
+                    &cfg.planner_model,
+                    wm,
+                    &opts.prompt,
+                    plan_schema(),
+                    devices.len(),
+                    &research_findings,
+                    best_of_n,
+                    cfg.homogeneous_models,
+                )
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("  parallel planning failed ({e}); falling back to the solo planner");
+                    dispatcher
+                        .plan(
+                            &cfg.planner_model,
+                            &opts.prompt,
+                            plan_schema(),
+                            devices.len(),
+                            &research_findings,
+                        )
+                        .await?
+                }
+            }
+        } else {
+            phase_banner(
+                "PLAN",
+                "27B builds the task DAG ALONE — workers idle while it reasons",
+            );
+            eprintln!(
+                "  planning on {} (targeting {} workers) ...",
+                cfg.planner_model,
+                devices.len()
+            );
+            dispatcher
+                .plan(
+                    &cfg.planner_model,
+                    &opts.prompt,
+                    plan_schema(),
+                    devices.len(),
+                    &research_findings,
+                )
+                .await?
+        };
+        let dag = Dag::from_planner_json(&pj)
+            .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
+        eprintln!("  plan: {} subtask(s)", dag.tasks.len());
+        // CONFIDENCE GATE: ask the user once when the meter is below the floor, then re-plan with the answers.
+        if let (Some(floor), Some(conf)) = (ask_floor, plan_conf) {
+            if conf < floor && !asked {
+                asked = true;
+                let questions: Vec<String> = uncertainties
+                    .split(';')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .take(ask_max_q)
+                    .collect();
+                if !questions.is_empty() {
+                    let qa = ask_clarifying_questions(
+                        &questions,
+                        &cwd_for_ask,
+                        conf,
+                        ask_wait_secs,
+                        sink.as_ref(),
                     )
-                    .await?
+                    .await;
+                    if !qa.is_empty() {
+                        research_findings.push_str(&qa);
+                        eprintln!(
+                            "  {} re-planning with the user's clarifications",
+                            style("↻").cyan()
+                        );
+                        continue;
+                    }
+                }
             }
         }
-    } else {
-        phase_banner(
-            "PLAN",
-            "27B builds the task DAG ALONE — workers idle while it reasons",
-        );
-        eprintln!(
-            "  planning on {} (targeting {} workers) ...",
-            cfg.planner_model,
-            devices.len()
-        );
-        dispatcher
-            .plan(
-                &cfg.planner_model,
-                &opts.prompt,
-                plan_schema(),
-                devices.len(),
-                &research_findings,
-            )
-            .await?
+        break (pj, dag);
     };
-    let dag = Dag::from_planner_json(&plan_json)
-        .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
-    eprintln!("  plan: {} subtask(s)", dag.tasks.len());
 
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
     // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
