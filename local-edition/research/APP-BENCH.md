@@ -115,3 +115,25 @@ modules coherent. KEY TAKEAWAY: the languages with a COMPILE + a derive-based CL
 likely to ship a functional, spec-matching app on a weak 27B than Python (hand-rolled CLI, no compile). This
 strengthens the advertised-entry/build-verify improvement (37cfd95fc): forcing a real BUILD + advertised-entry
 run is exactly what Python/TS lack and Rust gets for free.
+
+## IDLE-FIX LIVE VALIDATION (APP4, new binary f5cac6468, 2026-06-30) — works + finds defects, but partial
+The idle fix (concurrent judge+pre-review, idle_jobs<=idle_capacity) + the PreReview event let me observe it LIVE.
+EVENT NAME GOTCHA: serializes as "pre_review" (snake_case), not "PreReview".
+WHAT WORKED: pre_review FIRED on cli-entry-point (device mihai) with had_findings=TRUE — the idle node caught a
+REAL defect, persisted to .swarm/prereview/ and fed to integrate-verify. The judge ran 22x concurrently
+(store-module 10x + tests 12x, all "observed"). So idle nodes do VALUABLE correctness work, not just busywork —
+this serves BOTH goals (utilization + functionality).
+HONEST LIMIT: 2 of 3 nodes still showed IDLE across repeated lms ps snapshots while `tests` ran on gabee. Root
+cause is NOT the concurrency fix (that works) — it is that idle WORK is BOUNDED: (1) each completed task is
+pre-reviewed exactly once (2 done tasks -> at most 2 pre-reviews, quickly exhausted); (2) the judge re-judges the
+SAME in-flight task every ~15s tick (12x on `tests` = repetitive) and its "observed" verdicts intentionally do
+NOT re-notify the loop, so between ticks the idle nodes sleep ~15s; (3) the replanner (bonus tasks) fired once and
+is capped at max_replans=2. So at a SPARSE DAG tail (few tasks, 1 in-flight) there is genuinely little continuous
+idle work. The fix fills idle nodes IN BURSTS (judge tick + the finite pre-reviews), not continuously.
+TO FULLY ELIMINATE TAIL IDLE (flag for the user — each has real costs, don't rush): (a) SPECULATIVE EXECUTION — an
+idle node runs a PARALLEL attempt of the in-flight task, first-to-finish wins (risk: file-conflict, wasted work);
+(b) raise max_replans / lower the replan idle threshold (cost: ~900s planner calls, tail-padding — the idle-node
+workflow flagged these); (c) more pre-review passes per task / deeper review (diminishing value). RECOMMEND: keep
+the current fix (real value: caught a defect + observable), and treat full tail-idle-elimination as a separate,
+user-steered decision given the costs. NET: idle fix is a genuine improvement (concurrent + observable + caught a
+real bug), honestly PARTIAL on pure utilization.
