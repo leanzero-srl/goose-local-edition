@@ -5720,7 +5720,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     "result": after_value,
                     "new_findings": after_new,
                 }));
-                if after_new.is_empty() {
+                if after.ran && after_new.is_empty() {
                     eprintln!(
                         "{}",
                         style("AST review: wire-fix RESOLVED the unwired findings").green()
