@@ -1506,15 +1506,16 @@ impl GooseAcpAgent {
                         // common cases without paying for the regular model.
                         let mut llm_outcome: Option<String> = None;
                         for attempt in 0..2 {
-                            match provider
-                                .complete(
+                            match crate::session_context::with_session_id(
+                                Some(sid.0.to_string()),
+                                provider.complete(
                                     &fast_model_config,
-                                    &sid.0,
                                     system,
                                     std::slice::from_ref(&message),
                                     &[],
-                                )
-                                .await
+                                ),
+                            )
+                            .await
                             {
                                 Ok((response, _)) => {
                                     let summary: String = response
@@ -1796,15 +1797,16 @@ impl GooseAcpAgent {
             // momentarily flaky, without escalating to the regular model.
             let mut summary: Option<String> = None;
             for attempt in 0..2 {
-                match provider
-                    .complete(
+                match crate::session_context::with_session_id(
+                    Some(sid.0.to_string()),
+                    provider.complete(
                         &fast_model_config,
-                        &sid.0,
                         system,
                         std::slice::from_ref(&message),
                         &[],
-                    )
-                    .await
+                    ),
+                )
+                .await
                 {
                     Ok((response, _)) => {
                         let s = response

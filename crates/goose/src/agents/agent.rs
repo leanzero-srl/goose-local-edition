@@ -3088,28 +3088,21 @@ impl Agent {
         );
 
         tracing::info!("Calling provider to generate recipe content");
-        let (result, _usage) = self
-            .provider
-            .lock()
-            .await
-            .as_ref()
-            .ok_or_else(|| {
-                let error = anyhow!("Provider not available during recipe creation");
-                tracing::error!("{}", error);
-                error
-            })?
-            .complete(
-                &model_config,
-                session_id,
-                &system_prompt,
-                messages.messages(),
-                &tools,
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!("Provider completion failed during recipe creation: {}", e);
-                e
-            })?;
+        let provider = self.provider.lock().await;
+        let provider = provider.as_ref().ok_or_else(|| {
+            let error = anyhow!("Provider not available during recipe creation");
+            tracing::error!("{}", error);
+            error
+        })?;
+        let (result, _usage) = crate::session_context::with_session_id(
+            Some(session_id.to_string()),
+            provider.complete(&model_config, &system_prompt, messages.messages(), &tools),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Provider completion failed during recipe creation: {}", e);
+            e
+        })?;
 
         let content = result.as_concat_text();
         tracing::debug!(
@@ -3318,7 +3311,6 @@ mod tests {
             &self,
             _: &goose_providers::model::ModelConfig,
             _: &str,
-            _: &str,
             _: &[crate::conversation::message::Message],
             _: &[rmcp::model::Tool],
         ) -> Result<crate::providers::base::MessageStream, ProviderError> {
@@ -3511,7 +3503,6 @@ exit 0
         async fn stream(
             &self,
             _model_config: &goose_providers::model::ModelConfig,
-            _session_id: &str,
             _system_prompt: &str,
             _messages: &[Message],
             _tools: &[Tool],
@@ -3534,7 +3525,6 @@ exit 0
         async fn stream(
             &self,
             _model_config: &goose_providers::model::ModelConfig,
-            _session_id: &str,
             _system_prompt: &str,
             _messages: &[Message],
             _tools: &[Tool],
@@ -3563,7 +3553,6 @@ exit 0
         async fn stream(
             &self,
             _model_config: &goose_providers::model::ModelConfig,
-            _session_id: &str,
             _system_prompt: &str,
             _messages: &[Message],
             _tools: &[Tool],
