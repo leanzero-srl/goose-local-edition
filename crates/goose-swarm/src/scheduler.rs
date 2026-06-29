@@ -1482,7 +1482,17 @@ impl Scheduler {
                             state: st.clone(),
                             is_judge: false,
                         };
-                        let _ = pr.pre_review(req).await;
+                        let tid = req.task_id.clone();
+                        let dev = req.reviewer_model_id.clone();
+                        let out = pr.pre_review(req).await;
+                        // Emit so idle-node utilization is OBSERVABLE in the jsonl (it was previously invisible
+                        // — a pre-review only left a file when it found ISSUES, so "ran + OK" looked like "never
+                        // ran"). One quick sync emit under the lock, same as the judge's verdict emit.
+                        st.lock().await.sink.emit(&SwarmEvent::PreReview {
+                            task_id: tid,
+                            device: dev,
+                            had_findings: out.had_findings,
+                        });
                     });
                 }
             }

@@ -53,6 +53,14 @@ pub enum SwarmEvent {
         hint: String,
         action: String,
     },
+    /// An idle node ran a correctness PRE-REVIEW of a completed task on a spare device (concurrently with
+    /// the judge). Makes idle-node utilization observable in the jsonl; `had_findings` = a defect was found
+    /// (persisted to `.swarm/prereview/<task>.json` for integrate-verify).
+    PreReview {
+        task_id: String,
+        device: String,
+        had_findings: bool,
+    },
 }
 
 pub trait EventSink: Send + Sync {
