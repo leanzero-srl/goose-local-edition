@@ -23,8 +23,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A1-3 | A1 minimal | a CLI task scheduler | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-3-sched | DONE | smoke PASS but app BROKEN | 3/5/5/4 | RUNS-but-broken (store unwired -> no persistence; AST reviewer caught it) |
 | A1-3 | A1 minimal | a CLI task scheduler | (tbd) | — | pending | — | — | — |
 | A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,CONTRACTS,REVIEW,research | A2-1-ledger | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (1st multi-module WIN — CONTRACTS decoupled) |
-| A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | RUNNING | — | — | — |
-| A2-3 | A2 max-detail | state-machine workflow engine (full spec) | (tbd) | — | pending | — | — | — |
+| A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | DONE | smoke+review CLEAN | 8/8/8/8 | WIN (2nd multi-module WIN — logfunnel class tamed) |
+| A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | RUNNING | — | — | — |
 | A3-1 | A3 feature | chaos-fern: add SVG/HTML export (Playwright) | (tbd) | — | pending | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
@@ -140,7 +140,23 @@ done, 0 failed. THE HEADLINE RESULT: the FIRST multi-module app in the eval that
   alone; a contracts-OFF same-spec run would isolate it. But the draw-class mechanisms (drift cascade,
   unwiring) that sank A1-2/A1-3 demonstrably did NOT occur with the full stack — verified in the tree.
 
-### A2-2 — log-pipeline DSL (FULL spec)  (RUNNING)
-First run on the stub-cleanup + wire-fix binary (8af809359). The logfunnel DRAW class (lexer/parser/stages/
-dispatcher). Watch: "contracts: removed N stray stub file(s)" line, did stages get WIRED by a dispatcher
-(vs unwired like logfunnel), review_after_fix if the AST review finds unwired, smoke pass.
+### A2-2 — log-pipeline DSL (FULL spec) — WIN (corr 8 / test 8 / qual 8 / spec 8)
+DONE on the full v8 stack (binary 8af809359, has stub-cleanup + wire-fix). 10 done, 0 failed. The 2nd
+multi-module DRAW->WIN — and it is the LOGFUNNEL class (which STALLED with no dispatcher / unwired stages
+in the AB).
+- CONTRACTS fired; 0 stray stub files (the prompt fix prevented the stub-writing — no removal line); AST
+  review CLEAN (10 modules, 0 unwired) -> stages are WIRED through the runner/dispatcher (the exact thing
+  logfunnel lacked). SMOKE pass (entry logdsl, collect ok). No surviving stubs.
+- RAN IT END-TO-END: python3 -m logdsl --pipeline "filter ERROR | count" over 3 lines (2 ERROR) -> 2
+  (correct); --pipeline "filter ERROR | upper" -> ERROR X / ERROR Z (multi-stage WIRED + correct). 44
+  pytest pass (tokenizer/parser/stages/pipeline — deep). A genuinely working pipeline DSL.
+- Score 8/8/8/8 vs AB mean 5.8/5.6/7.6/5.6. The architect explicitly planned a runner-module (dispatcher)
+  — the missing piece in logfunnel — and CONTRACTS froze the tokens/parser/stages interfaces so dependents
+  wired against them.
+- A2 ARCHETYPE = WIN, WIN (ledger 8/6/8/8, log-DSL 8/8/8/8). Both hard multi-module max-detail apps WORK
+  with the full stack, vs A1-2 FAIL + A1-3 broken (multi-module, no contracts). Consistent DRAW->WIN.
+
+### A2-3 — state-machine workflow engine (FULL spec)  (RUNNING)
+Full v8 stack. The AB state-machine class. Watch: contracts decoupling of states/transitions/machine, AST
+review (machine wired into cli), RUN it (load a spec, fire a valid event -> transitions, fire an invalid
+event -> rejected/InvalidTransition, guard blocks), smoke. Does A2 go 3-for-3?
