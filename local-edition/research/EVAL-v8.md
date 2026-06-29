@@ -27,7 +27,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (A2 = 3/3 — DRAW class converted) |
 | A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | CUT (thrash) | n/a (cut) | 5/3/4/6 | PARTIAL: --svg WORKS but amendment RE-ARCHITECTED (abandoned dups, broken test); AST caught it; Playwright env-blocked |
 | A3-2 | A3 feature | byte-oracle: add --json output | full v8 stack (amendment, edit-in-place instr) | A3-2-byteoracle-json | CUT (wire-fix loop) | smoke PASS (entry --help ok) | 4/5/4/5 | PARTIAL/FAIL: --json written to STRAY ROOT cli.py (wrong path) so `-m byte_oracle --json` errors; AST caught stray; wire-fix flailed on pre-existing detector dup |
-| A3-3 | A3 feature | byte-oracle: add --count | full v8 stack (amendment, NEW binary f9e89b782, NO instr) | A3-3-byteoracle-count | RUNNING | — | — | — |
+| A3-3 | A3 feature | byte-oracle: add --count | full v8 stack (amendment, NEW binary f9e89b782, NO instr) | A3-3-byteoracle-count | DONE | smoke PASS | 7/6/7/7 | WIN — VALIDATES f9e89b782: --count in the REAL cli.py in place, NO stray, works via -m |
+| TS-1 | agnostic | LANG=TypeScript todo CLI (greenfield) | architect de-Python (6881ae6d9), CONTRACTS off | TS-1-todo | RUNNING | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
 
@@ -171,6 +172,27 @@ SMOKE pass. 10 pytest pass.
 - Score 8/6/8/8. A2 = WIN/WIN/WIN (ledger 8/6/8/8, log-DSL 8/8/8/8, fsm 8/6/8/8). All THREE hard multi-
   module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
   cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
+
+### A3-3 — byte-oracle: add --count (AMENDMENT, NEW binary f9e89b782, NO instruction) — WIN (corr 7 / test 6 / qual 7 / spec 7)
+THE VALIDATION RUN for the f9e89b782 amendment EXACT-path rule, on a clean copy, with NO per-run edit-in-place
+instruction (tests the rule as the DEFAULT). 3/3 done, smoke PASS.
+- f9e89b782 WORKED: the architect owned the QUALIFIED path `byte_oracle/cli.py` (not a bare `cli.py`), the
+  worker EDITED it IN PLACE (--count added to the REAL cli.py, 14 matches), and there is NO stray root cli.py.
+  Contrast A3-2 (OLD binary, even WITH an explicit instruction) which wrote a stray ROOT cli.py and left --json
+  dead. The rule flipped a wrong-path FAIL into a working in-place amendment.
+- RAN IT (real entry): `python3 -m byte_oracle --count /tmp/botest` prints the table THEN a correct per-type
+  summary ("Type counts: png 1, text 2, zip 1", total 4); `python3 -m byte_oracle` table still works; 133
+  pytest pass. The feature is genuinely wired + correct (not false-green like A3-2).
+- Only review finding = the PRE-EXISTING `byte_oracle.detector` dup (lesson 14), unrelated to --count; the
+  wire-fix again flailed on it (re-confirms the wire-fix-skip-pre-existing candidate — wire-fix should ignore
+  modules already unwired before the run).
+- Score 7/6/7/7 vs AB 5.8/5.6/7.6/5.6 — at/above on correctness. A3 amendment archetype: A3-1 5/3/4/6 (re-
+  architect, no fix) -> A3-2 4/5/4/5 (wrong-path, no fix) -> A3-3 7/6/7/7 (f9e89b782 fix) — clear upward
+  trend as the amendment fix landed.
+
+NOTE — 9-RUN PYTHON MATRIX COMPLETE (A1 x3, A2 x3, A3 x3). Greenfield: A1-1 WIN + A2 3/3 WIN. Amendments:
+A3-1/A3-2 partial (failure modes found + fixed), A3-3 WIN (fix validated). Next phase = language-named
+experiments (TS-1 running) validating the de-Python work.
 
 ### A3-2 — byte-oracle: add --json (AMENDMENT, edit-in-place instr) — PARTIAL/FAIL (corr 4 / test 5 / qual 4 / spec 5)
 CONTROL run (OLD binary 8af809359 + an explicit "edit the existing cli.py in place" instruction in the spec).
