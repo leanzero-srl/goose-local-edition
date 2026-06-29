@@ -128,3 +128,16 @@ over_reading verdict on elapsed-vs-difficulty. Gather evidence across A2 before 
     SMOKE-autofix patches WIRING (could add a __main__) but cannot conjure an absent module.
     META-LESSON: read the logs to the ACTUAL file on disk vs the planned owned_files before blaming the
     model's reasoning — a filename mismatch masquerades as a hard-task failure.
+
+## New lesson (validating GOOSE_SWARM_REVIEW, 2026-06-29) — runs + tests + human ALL missed an unwired dup
+14. **A built-but-unwired DUPLICATE hides behind a passing run.** byte-oracle — an AB 9/9/9/9 "clean win" —
+    actually has detector.py UNWIRED: cli.py RE-IMPLEMENTS the whole detection inline (220 lines, its own
+    detect_type + magic signatures), so detector.py is imported only by tests; plus two dead src/ modules
+    nobody imports. The manual AB review MISSED all of it because `python3 -m byte_oracle` RUNS correctly
+    (via the inline duplicate) and the unit tests pass (they test detector.py directly). This is the
+    deepest validation of the new model-free AST reviewer (a59d53edc): SMOKE (app runs) + unit tests (green)
+    + a careful human (reviewed) ALL gave byte-oracle a clean bill, yet a deterministic import-graph pass
+    instantly flagged the unwired duplicate + dead code. Combines lesson #2 (duplicate impls drift) + #5
+    (built-but-unwired). -> STRATEGY: run GOOSE_SWARM_REVIEW=1 on every eval; it catches a class that
+    running + testing + reading cannot. NB prior "clean win" verdicts may be inflated where an inline
+    duplicate masks an unwired module — the deterministic graph is the only reliable check.
