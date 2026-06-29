@@ -4562,7 +4562,17 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     let missing: Vec<String> = req
                         .owned_files
                         .iter()
-                        .filter(|f| cwd.join(f).metadata().map(|m| m.len() == 0).unwrap_or(true))
+                        .filter(|f| match cwd.join(f).metadata() {
+                            // Missing -> always flag. Empty -> flag UNLESS it is a legitimately-empty marker
+                            // (an empty `__init__.py` / `py.typed` is a correct, intentional file, not a
+                            // flaky no-write); flagging those would wrongly tell the worker to "write it
+                            // IN FULL".
+                            Err(_) => true,
+                            Ok(m) => {
+                                m.len() == 0
+                                    && !(f.ends_with("__init__.py") || f.ends_with("py.typed"))
+                            }
+                        })
                         .cloned()
                         .collect();
                     if !missing.is_empty() {
