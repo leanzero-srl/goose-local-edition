@@ -304,3 +304,13 @@ Spec "build a CLI to deduplicate records in a CSV", GOOSE_SWARM_ASK_FLOOR=70. in
 the gate CORRECTLY did NOT ask (the feature respects the threshold; no over-asking on a clear-enough spec).
 Validates: the scaling is live + the gate is calibrated (asks only below the effective floor). To exercise
 the inc2 generator a sub-floor confidence is needed -> ASK-TEST3 with a higher floor.
+
+## ASK-TEST3 — inc2 GENERATOR validated LIVE (real interrogatives, not the fallback) (2026-06-29)
+Spec "build a CLI to deduplicate records in a CSV", floor=90 -> eff 95 (27b +5 weak-bump). final plan conf
+60/100 < 95 -> the inc2 clarify_questions() GENERATOR produced 3 CRISP REAL interrogatives (NOT the generic
+fallback): "How are duplicates identified — all columns or a subset of key columns via CLI flags?", "Which
+duplicate to keep (first/last/...)?", "Output to a new file or overwrite in place?" — exactly the real
+ambiguities of CSV-dedup, all ending with '?'. The HARNESS answered as the human (--key default all, keep
+FIRST + --keep flag, --out default stdout never in-place) -> swarm logged "clarifications received —
+re-planning" -> re-planned. The inc2 GENERATOR is validated end-to-end: it asks GOOD questions, not just the
+fallback. The inquisitive feature (inc1 handshake + inc2 generator + inc3 scaling) is fully proven LIVE.
