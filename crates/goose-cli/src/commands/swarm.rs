@@ -5551,6 +5551,22 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
         scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
     }
+    // GOOSE_SWARM_REVIEW: snapshot the PRE-EXECUTE unwired findings so the post-run wire-fix only chases
+    // modules THIS run left unwired — never a PRE-EXISTING intentional dead module (e.g. an amendment's
+    // already-unwired duplicate, like byte-oracle's detector.py, which the wire-fix otherwise flails on).
+    // Greenfield: the tree is empty here -> no findings -> review_before is empty -> no effect.
+    let review_before: std::collections::HashSet<String> = if std::env::var("GOOSE_SWARM_REVIEW")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+    {
+        run_ast_review(&std::env::current_dir().unwrap_or_default())
+            .await
+            .findings
+            .into_iter()
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
     let report = scheduler
         .run(
             dag,
@@ -5634,33 +5650,54 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     if review_on {
         let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
         let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
+        // Only act on findings THIS run introduced — exclude any that already held before EXECUTE (a
+        // pre-existing intentional dead module). The `review` event still carries ALL findings for the eval.
+        let new_findings: Vec<String> = review
+            .findings
+            .iter()
+            .filter(|f| !review_before.contains(*f))
+            .cloned()
+            .collect();
+        let pre_existing = review.findings.len().saturating_sub(new_findings.len());
         sink.write_value(serde_json::json!({
             "event": "review",
             "result": review_value,
+            "new_findings": new_findings,
+            "pre_existing_skipped": pre_existing,
         }));
         if !review.ran {
             eprintln!("AST review: skipped (no python in the produced tree)");
-        } else if review.findings.is_empty() {
+        } else if new_findings.is_empty() {
+            let extra = if pre_existing > 0 {
+                format!(" ({pre_existing} pre-existing skipped)")
+            } else {
+                String::new()
+            };
             eprintln!(
                 "{}",
-                style("AST review: clean (no unwired modules)").green()
+                style(format!("AST review: clean (no NEW unwired modules){extra}")).green()
             );
         } else {
+            let extra = if pre_existing > 0 {
+                format!(", {pre_existing} pre-existing skipped")
+            } else {
+                String::new()
+            };
             eprintln!(
-                "{} ({} finding(s) — model-free, advisory):",
+                "{} ({} new finding(s){extra} — model-free, advisory):",
                 style("AST review").yellow().bold(),
-                review.findings.len()
+                new_findings.len()
             );
-            for f in &review.findings {
+            for f in &new_findings {
                 eprintln!("  - {f}");
             }
             // Corrective re-dispatch (mirrors the SMOKE autofix): ONE guided wire-fix that imports + uses
-            // the unwired module(s), then re-reviews once. Bounded to a single attempt.
+            // the NEWLY-unwired module(s), then re-reviews once. Bounded to a single attempt.
             if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
                 eprintln!("AST review: dispatching ONE corrective wire-fix attempt ...");
                 let fix_req = DispatchRequest {
                     task_id: "wire-fix".to_string(),
-                    description: ast_fix_description(&review.findings),
+                    description: ast_fix_description(&new_findings),
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
@@ -5671,21 +5708,28 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
                 let after = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+                let after_new: Vec<String> = after
+                    .findings
+                    .iter()
+                    .filter(|f| !review_before.contains(*f))
+                    .cloned()
+                    .collect();
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
                 sink.write_value(serde_json::json!({
                     "event": "review_after_fix",
                     "result": after_value,
+                    "new_findings": after_new,
                 }));
-                if after.ran && after.findings.is_empty() {
+                if after_new.is_empty() {
                     eprintln!(
                         "{}",
                         style("AST review: wire-fix RESOLVED the unwired findings").green()
                     );
                 } else {
                     eprintln!(
-                        "{} ({} finding(s) remain after one wire-fix)",
+                        "{} ({} new finding(s) remain after one wire-fix)",
                         style("AST review: still unwired").yellow().bold(),
-                        after.findings.len()
+                        after_new.len()
                     );
                 }
             }
