@@ -20,10 +20,9 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
-    DispatchRequest, EventSink, Judge,
-    JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PreReviewOutput,
-    PreReviewRequest, PreReviewer, ReplanContext, Replanner,
-    Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
+    DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext, Replanner, Scheduler,
+    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1256,10 +1255,16 @@ mod tests {
             parse_confidence("72|missing error handling; no CLI test").unwrap(),
             (72, "missing error handling; no CLI test".to_string())
         );
-        assert_eq!(parse_confidence("SCORE: 85 | parser edge cases").unwrap().0, 85);
+        assert_eq!(
+            parse_confidence("SCORE: 85 | parser edge cases").unwrap().0,
+            85
+        );
         assert_eq!(parse_confidence("100").unwrap(), (100, String::new()));
         // a stray "out of 100" must not be read as the score — first integer wins.
-        assert_eq!(parse_confidence("I rate it 40 out of 100|risky").unwrap().0, 40);
+        assert_eq!(
+            parse_confidence("I rate it 40 out of 100|risky").unwrap().0,
+            40
+        );
         // clamp + no-digit guard.
         assert_eq!(parse_confidence("130|over").unwrap().0, 100);
         assert!(parse_confidence("no digits here").is_none());
@@ -1275,14 +1280,22 @@ mod tests {
             "VERDICT|LOW|",
             "VERDICT|HIGH|OK|done",
         ] {
-            assert_eq!(parse_judge_reply(ok).verdict, Verdict::Ok, "should be OK: {ok}");
+            assert_eq!(
+                parse_judge_reply(ok).verdict,
+                Verdict::Ok,
+                "should be OK: {ok}"
+            );
         }
         // A real catch with NO verdict keyword — just HIGH + a corrective hint — must become actionable
         // (this is the qwen format that was silently dropped before).
         let caught = parse_judge_reply(
             "VERDICT|HIGH|STOP retrying failing commands — write rules.py directly with a parser",
         );
-        assert_ne!(caught.verdict, Verdict::Ok, "keyword-less HIGH+hint must act");
+        assert_ne!(
+            caught.verdict,
+            Verdict::Ok,
+            "keyword-less HIGH+hint must act"
+        );
         assert!(caught.confidence >= 0.8);
         assert!(
             caught.hint.contains("rules.py"),
@@ -1301,7 +1314,10 @@ mod tests {
         use CollectVerdict::*;
         assert_eq!(interpret_pytest_collect(Some(0), "collected 12 items"), Ok);
         // exit 5 = "no tests collected" — not an error.
-        assert_eq!(interpret_pytest_collect(Some(5), "no tests ran in 0.01s"), Ok);
+        assert_eq!(
+            interpret_pytest_collect(Some(5), "no tests ran in 0.01s"),
+            Ok
+        );
         // pytest not installed -> inconclusive, never a failure.
         assert_eq!(
             interpret_pytest_collect(Some(1), "ModuleNotFoundError: No module named pytest"),
@@ -1390,7 +1406,10 @@ mod tests {
         .await;
         assert_eq!(results.len(), 9, "every item returns a result");
         for (dev, &m) in max_per_device.lock().unwrap().iter() {
-            assert!(m <= 1, "device {dev} ran {m} concurrent calls; must be <= 1");
+            assert!(
+                m <= 1,
+                "device {dev} ran {m} concurrent calls; must be <= 1"
+            );
         }
         assert!(
             max_total.load(Ordering::SeqCst) <= 3,
@@ -1420,7 +1439,8 @@ mod tests {
     #[test]
     fn ast_fix_description_carries_unwired_findings() {
         let d = ast_fix_description(&[
-            "module 'sched.store' is imported by no non-test module — built-but-unwired".to_string(),
+            "module 'sched.store' is imported by no non-test module — built-but-unwired"
+                .to_string(),
         ]);
         assert!(d.contains("sched.store"));
         assert!(d.contains("WIRE"));
@@ -1489,7 +1509,11 @@ mod tests {
         assert_eq!(procs[0].identifier, "qwen/qwen3.6-27b");
         assert_eq!(procs[0].status, "GENERATING");
         assert_eq!(procs[0].device.as_deref(), Some("WorksMacStudio.lan"));
-        assert_eq!(procs[0].parallel, Some(4), "reads the PARALLEL column as the device weight source");
+        assert_eq!(
+            procs[0].parallel,
+            Some(4),
+            "reads the PARALLEL column as the device weight source"
+        );
         let local = procs
             .iter()
             .filter(|p| p.device.as_deref() == Some("Local"))
@@ -2168,7 +2192,10 @@ impl GooseAgentDispatcher {
             dir.join(format!("{k}.json"))
         });
         if let Some(p) = &activity_file {
-            let _ = std::fs::write(p, "{\"tool_calls\":0,\"errors\":0,\"recent\":[],\"last_text\":\"\"}");
+            let _ = std::fs::write(
+                p,
+                "{\"tool_calls\":0,\"errors\":0,\"recent\":[],\"last_text\":\"\"}",
+            );
         }
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
@@ -2234,7 +2261,13 @@ impl GooseAgentDispatcher {
                     .rev()
                     .take(6)
                     .rev()
-                    .map(|t| format!("{} {}", t.name, if t.ok == Some(false) { "ERR" } else { "ok" }))
+                    .map(|t| {
+                        format!(
+                            "{} {}",
+                            t.name,
+                            if t.ok == Some(false) { "ERR" } else { "ok" }
+                        )
+                    })
                     .collect();
                 let lt = texts.last().cloned().unwrap_or_default();
                 let n = lt.chars().count();
@@ -2595,10 +2628,14 @@ impl GooseAgentDispatcher {
             under `tests/`; OR fully FLAT (every .py at the project root, imports like `from models import X`). NEVER put the cli \
             in a package while its modules sit at the root. Every subtask's `files` and every import MUST match the one chosen \
             layout exactly.\n\
-            AMENDMENT — if the manifest below already lists project files, you are EDITING an existing app: every subtask that \
-            changes existing behavior MUST own the EXACT existing path (e.g. `src/notes/models.py`), and imports MUST match the \
-            real modules. NEVER invent a new filename (e.g. `note.py`) for a module that already exists (e.g. `models.py`) — that \
-            file will never be written and the task fails. Create NEW files ONLY for genuinely new modules or tests.\n\
+            AMENDMENT — if the manifest below already lists project files, you are EDITING an existing app, NOT rebuilding it: to \
+            ADD a feature, EDIT the EXISTING files IN PLACE. Every subtask that touches existing behavior MUST own the EXACT \
+            existing path (e.g. `src/notes/models.py`), and imports MUST match the real modules. NEVER create a PARALLEL renamed \
+            module that duplicates one that already exists (do NOT add `render_ascii.py` beside an existing `renderer.py`, or \
+            `fern.py` beside `ifs.py`), and NEVER rewire the entry point away from the existing modules — that abandons the working \
+            originals as dead/unwired duplicates and breaks the existing tests. NEVER invent a new filename (e.g. `note.py`) for a \
+            module that already exists (e.g. `models.py`). Create NEW files ONLY for genuinely-new functionality the existing \
+            modules do not already provide (plus a test for it).\n\
             If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
             writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
             AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
@@ -2729,7 +2766,9 @@ impl GooseAgentDispatcher {
                 .verbalized_confidence(planner_model, user_prompt, &skeleton)
                 .await;
             let final_conf = match (agreement_conf, verbalized.as_ref()) {
-                (Some(a), Some((v, _))) => ((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8,
+                (Some(a), Some((v, _))) => {
+                    ((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8
+                }
                 (Some(a), None) => a,
                 (None, Some((v, _))) => *v,
                 (None, None) => 60,
@@ -3022,7 +3061,14 @@ fn entry_package_from_paths(rel_paths: &[String]) -> Option<String> {
 
 /// Recursively collect `.py` files under `root` (to ~3 levels), skipping vendored/build/cache dirs.
 fn collect_py_files(root: &Path) -> Vec<PathBuf> {
-    const SKIP: &[&str] = &[".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"];
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        ".venv",
+        ".swarm",
+        "__pycache__",
+    ];
     fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
         let Ok(rd) = std::fs::read_dir(dir) else {
             return;
@@ -3184,7 +3230,9 @@ where
     };
     // permits == pool size, so a permit holder is always guaranteed a free device to pop.
     let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
-    let pool = Arc::new(Mutex::new(devices.into_iter().collect::<VecDeque<String>>()));
+    let pool = Arc::new(Mutex::new(
+        devices.into_iter().collect::<VecDeque<String>>(),
+    ));
     let mut handles = Vec::with_capacity(items.len());
     for item in items {
         let permits = permits.clone();
@@ -3227,8 +3275,19 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
     let is_token = |seg: &str| {
         matches!(
             seg.to_uppercase().trim(),
-            "VERDICT" | "CONFIDENCE" | "CONF" | "HINT" | "OK" | "BROKEN_CODE" | "BROKEN CODE"
-                | "LOOPING" | "OVER_READING" | "OVER READING" | "SPEC_DRIFT" | "SPEC DRIFT" | "HIGH"
+            "VERDICT"
+                | "CONFIDENCE"
+                | "CONF"
+                | "HINT"
+                | "OK"
+                | "BROKEN_CODE"
+                | "BROKEN CODE"
+                | "LOOPING"
+                | "OVER_READING"
+                | "OVER READING"
+                | "SPEC_DRIFT"
+                | "SPEC DRIFT"
+                | "HIGH"
                 | "LOW"
         )
     };
@@ -3255,9 +3314,7 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
         // marked HIGH confidence, AND gave a substantive correction; anything else reads as healthy so a
         // vague reply still can't kill a good worker. (Recoverable if wrong: a re-dispatch with a hint,
         // capped per task — revert via the HIGH mapping above if false-positives show up live.)
-        let said_ok = s
-            .split('|')
-            .any(|p| p.trim().eq_ignore_ascii_case("ok"));
+        let said_ok = s.split('|').any(|p| p.trim().eq_ignore_ascii_case("ok"));
         let substantive = hint.map(|h| h.len() >= 16).unwrap_or(false);
         if !said_ok && upper.contains("HIGH") && substantive {
             Verdict::SpecDrift
@@ -3329,8 +3386,9 @@ impl GooseAgentDispatcher {
             biggest risks, semicolon-separated (empty if none)."
             .to_string();
         let plan: String = plan_json.chars().take(2500).collect();
-        let user =
-            format!("GOAL: {goal}\n\nPLAN (subtask skeleton JSON):\n{plan}\n\nYour one-line score:");
+        let user = format!(
+            "GOAL: {goal}\n\nPLAN (subtask skeleton JSON):\n{plan}\n\nYour one-line score:"
+        );
         let text = tokio::time::timeout(
             std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
             self.run_agent(model, system, user, None, 2, &[], 0, None),
@@ -3598,7 +3656,11 @@ impl Judge for GooseAgentDispatcher {
                 // behaviour can actually be studied — when it ran and what it concluded. A semantic OK is
                 // otherwise indistinguishable from a deterministic OK in the verdict event.
                 let log = cwd.join(".swarm").join("semantic_reviews.log");
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log)
+                {
                     use std::io::Write;
                     let reply: String = o.text.replace('\n', " ").chars().take(240).collect();
                     let _ = writeln!(f, "{}\t{}s\t{}", req.task_id, req.elapsed_secs, reply);
@@ -4693,7 +4755,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             .tasks
             .values()
             .map(|n| n.spec.clone())
-            .filter(|s| s.id != "integrate-verify" && s.owned_files.iter().any(|f| f.ends_with(".py")))
+            .filter(|s| {
+                s.id != "integrate-verify" && s.owned_files.iter().any(|f| f.ends_with(".py"))
+            })
             .collect();
         if !modules.is_empty() {
             phase_banner(
@@ -4704,7 +4768,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             let cwd = std::env::current_dir().unwrap_or_default();
             let before: std::collections::HashSet<PathBuf> =
                 collect_py_files(&cwd).into_iter().collect();
-            let bundle = dispatcher.generate_contracts(modules, wm, &opts.prompt).await;
+            let bundle = dispatcher
+                .generate_contracts(modules, wm, &opts.prompt)
+                .await;
             // The stub-gen workers must emit TEXT, but a weak model sometimes writes a `...`-body stub
             // file anyway. Remove any .py that appeared so EXECUTE starts from a clean tree — a leftover
             // stub would otherwise risk a lazy worker shipping it as "done".
@@ -4770,7 +4836,8 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .unwrap_or(true);
     if judge_on {
         eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
-        scheduler = scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
+        scheduler =
+            scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
     // M5: idle-node correctness PRE-REVIEW of completed tasks (findings feed integrate-verify). OFF by
     // default — opt in with GOOSE_SWARM_PREREVIEW=1 — until proven on a live run.
