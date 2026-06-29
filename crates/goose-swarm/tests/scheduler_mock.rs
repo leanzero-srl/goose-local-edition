@@ -561,7 +561,8 @@ async fn judge_kills_and_redispatches_stuck_worker() {
     );
     let h = hints.lock().unwrap();
     assert!(
-        h.iter().any(|(t, hint)| t == "stuck" && hint.contains("WRITE")),
+        h.iter()
+            .any(|(t, hint)| t == "stuck" && hint.contains("WRITE")),
         "the re-dispatch carried the judge's corrective hint"
     );
 }
@@ -759,7 +760,11 @@ async fn judge_splits_task_and_dependent_waits_for_all_children() {
         Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
 
-    assert!(report.failed.is_empty(), "no task fails: {:?}", report.failed);
+    assert!(
+        report.failed.is_empty(),
+        "no task fails: {:?}",
+        report.failed
+    );
     for child in ["big-a", "big-b", "verify"] {
         assert!(
             report.done.contains(&child.to_string()),
@@ -770,7 +775,10 @@ async fn judge_splits_task_and_dependent_waits_for_all_children() {
     let order = order.lock().unwrap();
     let ia = order.iter().position(|t| t == "big-a").expect("big-a ran");
     let ib = order.iter().position(|t| t == "big-b").expect("big-b ran");
-    let iv = order.iter().position(|t| t == "verify").expect("verify ran");
+    let iv = order
+        .iter()
+        .position(|t| t == "verify")
+        .expect("verify ran");
     assert!(
         iv > ia && iv > ib,
         "the dependent finished AFTER both split children — dependents were re-pointed onto the WHOLE \
@@ -819,7 +827,11 @@ async fn idle_node_pre_reviews_completed_task() {
         Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_pre_reviewer(pr);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
 
-    assert!(report.failed.is_empty(), "no task fails: {:?}", report.failed);
+    assert!(
+        report.failed.is_empty(),
+        "no task fails: {:?}",
+        report.failed
+    );
     assert!(
         report.done.contains(&"core".to_string()) && report.done.contains(&"verify".to_string()),
         "both tasks complete: {:?}",
@@ -828,6 +840,65 @@ async fn idle_node_pre_reviews_completed_task() {
     assert!(
         reviewed.lock().unwrap().contains(&"core".to_string()),
         "the idle node pre-reviewed the completed task `core`; reviewed = {:?}",
+        reviewed.lock().unwrap()
+    );
+}
+
+/// A judge that only OBSERVES (never intervenes). Used to prove the pre-reviewer runs CONCURRENTLY with a
+/// firing judge instead of being starved by the single idle-slot they used to share.
+struct ObservingJudge;
+
+#[async_trait]
+impl Judge for ObservingJudge {
+    async fn judge(&self, _req: JudgeRequest) -> JudgeOutcome {
+        JudgeOutcome::ok()
+    }
+}
+
+/// Idle-jobs concurrency (the lone-idle-node fix): with BOTH a judge and a pre-reviewer attached and >=2
+/// free slots, they must run CONCURRENTLY — the judge inspects the in-flight `slow` worker while a SECOND
+/// idle node pre-reviews the completed `done` task. Under the OLD single `judge_running` slot the judge
+/// starved the pre-review (gate was `if s.judge_running`), so `done` was never reviewed; the fix bounds idle
+/// jobs by `idle_capacity()` instead, so both run. 3 devices: `slow` occupies one, leaving capacity 2.
+#[tokio::test]
+async fn pre_review_runs_concurrently_with_judge() {
+    let reviewed = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: Arc::new(Mutex::new(HashMap::new())),
+        hints: Arc::new(Mutex::new(Vec::new())),
+        target: "slow".to_string(), // slow stays in-flight -> the judge has a worker to inspect
+        delay: Duration::from_millis(60),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![
+        spec("done", &[], &["d.py"]), // completes fast -> a completed-unreviewed task to pre-review
+        spec("slow", &[], &["s.py"]), // runs long -> the judge's in-flight target
+    ])
+    .unwrap();
+    let pr = Arc::new(RecordingPreReviewer {
+        reviewed: reviewed.clone(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        ..JudgeConfig::default()
+    };
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_judge(Arc::new(ObservingJudge), cfg)
+    .with_pre_reviewer(pr);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(
+        report.failed.is_empty(),
+        "no task fails: {:?}",
+        report.failed
+    );
+    assert!(
+        reviewed.lock().unwrap().contains(&"done".to_string()),
+        "pre-review ran on `done` CONCURRENTLY with the judge inspecting `slow` (lone-idle fix); \
+         reviewed = {:?}",
         reviewed.lock().unwrap()
     );
 }
@@ -960,7 +1031,11 @@ async fn content_retry_threads_hint_infra_transient_does_not() {
         .run(dag, disp, String::new())
         .await
         .unwrap();
-    assert_eq!(report.done.len(), 2, "both tasks eventually succeed: {report:?}");
+    assert_eq!(
+        report.done.len(),
+        2,
+        "both tasks eventually succeed: {report:?}"
+    );
 
     let seen = seen.lock().unwrap();
     let content_retry = seen

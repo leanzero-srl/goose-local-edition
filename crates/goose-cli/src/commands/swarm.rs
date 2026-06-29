@@ -1443,11 +1443,23 @@ mod tests {
     #[test]
     fn detect_language_defaults_python_and_honors_cues() {
         // No cue -> Python (the validated baseline default).
-        assert_eq!(detect_language("a CLI markdown to HTML renderer", &[]), TargetLang::Python);
+        assert_eq!(
+            detect_language("a CLI markdown to HTML renderer", &[]),
+            TargetLang::Python
+        );
         // Explicit spec cues win.
-        assert_eq!(detect_language("build a TypeScript CLI todo app", &[]), TargetLang::TypeScript);
-        assert_eq!(detect_language("a Rust CLI using cargo", &[]), TargetLang::Rust);
-        assert_eq!(detect_language("a golang command line tool", &[]), TargetLang::Go);
+        assert_eq!(
+            detect_language("build a TypeScript CLI todo app", &[]),
+            TargetLang::TypeScript
+        );
+        assert_eq!(
+            detect_language("a Rust CLI using cargo", &[]),
+            TargetLang::Rust
+        );
+        assert_eq!(
+            detect_language("a golang command line tool", &[]),
+            TargetLang::Go
+        );
         // A named-but-unprofiled language is honored (generic), never forced to Python.
         assert_eq!(detect_language("a Ruby CLI gem", &[]), TargetLang::Other);
         // Amendment: the existing files' extensions are the strongest signal, overriding a bare spec.
@@ -1456,7 +1468,10 @@ mod tests {
             TargetLang::TypeScript
         );
         assert_eq!(
-            detect_language("add a --json flag", &["cli.py".into(), "detector.py".into()]),
+            detect_language(
+                "add a --json flag",
+                &["cli.py".into(), "detector.py".into()]
+            ),
             TargetLang::Python
         );
     }
@@ -1475,9 +1490,19 @@ mod tests {
         assert!(TargetLang::Rust.entry_clause().contains("main.rs"));
         assert_eq!(TargetLang::Go.test_cmd(), "go test ./...");
         // Source/test-file predicates: Python arm = the original `.py` behavior; non-Python is language-correct.
-        assert!(TargetLang::Python.is_source_file("foo.py") && !TargetLang::Python.is_source_file("foo.ts"));
-        assert!(ts.is_source_file("foo.ts") && ts.is_source_file("foo.tsx") && !ts.is_source_file("foo.py"));
-        assert!(TargetLang::Python.is_test_file("test_foo.py") && TargetLang::Python.is_test_file("conftest.py"));
+        assert!(
+            TargetLang::Python.is_source_file("foo.py")
+                && !TargetLang::Python.is_source_file("foo.ts")
+        );
+        assert!(
+            ts.is_source_file("foo.ts")
+                && ts.is_source_file("foo.tsx")
+                && !ts.is_source_file("foo.py")
+        );
+        assert!(
+            TargetLang::Python.is_test_file("test_foo.py")
+                && TargetLang::Python.is_test_file("conftest.py")
+        );
         assert!(ts.is_test_file("foo.test.ts") && !ts.is_test_file("foo.ts"));
         assert!(!TargetLang::Other.is_source_file("foo.rb"));
     }
@@ -4772,11 +4797,11 @@ fn model_active_params_b(model_id: &str) -> Option<u32> {
 /// HEURISTIC; small + bounded. None (unknown) gets a mild bump.
 fn ask_floor_weak_bump(active_b: Option<u32>) -> u8 {
     match active_b {
-        Some(n) if n >= 30 => 0,  // strong dense (e.g. 30B+)
-        Some(n) if n >= 13 => 5,  // mid (e.g. 13-27B)
-        Some(n) if n >= 7 => 10,  // small dense (7-12B)
-        Some(_) => 15,            // <7B active (e.g. an a3b MoE) -> ask much sooner
-        None => 5,                // unknown id -> mild bump
+        Some(n) if n >= 30 => 0, // strong dense (e.g. 30B+)
+        Some(n) if n >= 13 => 5, // mid (e.g. 13-27B)
+        Some(n) if n >= 7 => 10, // small dense (7-12B)
+        Some(_) => 15,           // <7B active (e.g. an a3b MoE) -> ask much sooner
+        None => 5,               // unknown id -> mild bump
     }
 }
 
@@ -4940,9 +4965,8 @@ async fn ask_clarifying_questions(
         let mut waited = 0u64;
         loop {
             if let Ok(s) = std::fs::read_to_string(&apath) {
-                let parsed: Option<Vec<String>> = serde_json::from_str::<Vec<String>>(&s)
-                    .ok()
-                    .or_else(|| {
+                let parsed: Option<Vec<String>> =
+                    serde_json::from_str::<Vec<String>>(&s).ok().or_else(|| {
                         serde_json::from_str::<serde_json::Value>(&s)
                             .ok()
                             .and_then(|val| {
@@ -4965,7 +4989,8 @@ async fn ask_clarifying_questions(
             if waited >= wait_secs {
                 eprintln!(
                     "{}",
-                    style("no answers within the wait window — proceeding with the current plan").yellow()
+                    style("no answers within the wait window — proceeding with the current plan")
+                        .yellow()
                 );
                 return String::new();
             }
@@ -5281,13 +5306,18 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .and_then(|v| v.trim().parse::<u8>().ok())
         .filter(|f| *f > 0)
         .map(|f| f.min(100)); // documented 1-100; clamp so the weak-bump can never dip below the literal floor
-    // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
-    // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
-    // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
-    // params is fuzzy); the bump is small + capped at 100.
+                              // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
+                              // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
+                              // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
+                              // params is fuzzy); the bump is small + capped at 100.
     let ask_scale = base_floor.is_some()
         && std::env::var("GOOSE_SWARM_ASK_SCALE")
-            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+            .map(|v| {
+                !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                )
+            })
             .unwrap_or(true);
     let ask_floor: Option<u8> = base_floor.map(|f| {
         if ask_scale {
@@ -5542,11 +5572,13 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         scheduler =
             scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
-    // M5: idle-node correctness PRE-REVIEW of completed tasks (findings feed integrate-verify). OFF by
-    // default — opt in with GOOSE_SWARM_PREREVIEW=1 — until proven on a live run.
+    // M5: idle-node correctness PRE-REVIEW of completed tasks (findings feed integrate-verify). DEFAULT-ON
+    // for the local fleet so a node never sleeps while completed work is unreviewed (it now runs CONCURRENTLY
+    // with the judge, bounded by idle_capacity, instead of being starved by the single judge slot). Opt out
+    // with GOOSE_SWARM_PREREVIEW=0.
     let prereview_on = std::env::var("GOOSE_SWARM_PREREVIEW")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+        .unwrap_or(true);
     if prereview_on {
         eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
         scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
@@ -5620,7 +5652,8 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     prior_hint: None,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
-                let after = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
+                let after =
+                    run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
                 sink.write_value(serde_json::json!({
                     "event": "smoke_after_fix",
