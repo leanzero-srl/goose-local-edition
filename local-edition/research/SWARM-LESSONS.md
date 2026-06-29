@@ -287,3 +287,9 @@ Do NOT tune the judge; keep watching A2 to confirm.
     inquisitive ASK-TEST runs had CONTRACTS OFF and hit it. So this is a KNOWN no-contracts-regime flake, NOT a
     regression, with no clean additional swarm-side fix beyond what exists. Noted, NOT over-built. Practical:
     enable CONTRACTS for any multi-module run. The inquisitive feature itself is unaffected + fully validated.
+
+    UPDATE (REGRESS1, hardened binary): the guided retry RECOVERED core-renderer LIVE — it flaked (claimed
+    done without writing) but, given the guided hint, the worker WROTE the files and the run completed 5/5,
+    even though shared-types EXHAUSTED in ASK-TEST3. So fix 92f393495 is PARTIAL but REAL + live-proven (recovers
+    flakes the old blind re-roll would not); CONTRACTS reduces but does not eliminate the claim-done-without-write
+    tendency. Deeper fix only if it keeps biting (research the 7s-claim-done trace first).

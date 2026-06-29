@@ -328,3 +328,16 @@ that flakes — possibly the weak model treats a thin "types" spec as trivial/al
 need investigation (read the flaky worker session trace: is it writing to a wrong path, claiming done after a
 read, or looping?) — NOT built now; the guided retry is the bounded mitigation. The inquisitive feature
 itself is unaffected + fully validated.
+
+## REGRESS1 — fully-hardened-binary regression: markdown-to-HTML renderer WIN ~8/7/8/8 (2026-06-29)
+Binary ef3dfee24 = ALL session fixes together (inquisitive 3-inc + de-Python 6-inc + flaky-worker guided-retry
++ empty-file exemption + wire-fix-skip-pre-existing), full v8 stack incl CONTRACTS, spec = A1-1's CLI
+markdown-to-HTML renderer (pkg md2html). RESULT: ALL 5 subtasks done, 0 failed. smoke CLEAN (collect ok,
+md2html entry_ok, findings []). review CLEAN (0 findings, NEW 0 — wire-fix-skip-pre-existing did NOT mis-fire
+on greenfield). RAN `python3 -m md2html`: correct HTML for ALL constructs (<h1>, <strong>, <code>, <ul><li>).
+29/30 pytest pass (1 minor failure). KEY VALIDATIONS: (1) the hardened binary still WINS A1-1's class — every
+session fix COEXISTS without regression. (2) the GUIDED-RETRY fix (92f393495) RECOVERED LIVE: core-renderer
+flaked (claimed done without writing) but the guided hint got the worker to write -> recovered -> run
+completed (the old blind Transient re-roll would have exhausted). (3) wire-fix-skip-pre-existing CLEAN on
+greenfield (NEW 0). COST: slow (~33min) — the core-renderer flake cost several guided retries. Net: the
+fully-hardened binary is REGRESSION-CLEAN and the new fixes are validated working together.
