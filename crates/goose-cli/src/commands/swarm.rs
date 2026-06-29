@@ -3810,6 +3810,36 @@ impl TaskDispatcher for GooseAgentDispatcher {
                         )));
                     }
                 }
+                // GOOSE_SWARM_DONE_GATE: a worker is not "done" if an owned .py will not parse. Return a
+                // ContentRetry carrying the exact error so the retry is GUIDED (the hint reaches the worker
+                // as a SUPERVISOR NOTE) instead of a blind re-roll. Off by default; reuses py_syntax_error
+                // (ast.parse, no __pycache__ pollution). The retry budget bounds it — a worker that cannot
+                // fix the syntax in max_attempts fails the task rather than looping.
+                let done_gate_on = std::env::var("GOOSE_SWARM_DONE_GATE")
+                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                    .unwrap_or(false);
+                if done_gate_on {
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    for f in &req.owned_files {
+                        if !f.ends_with(".py") {
+                            continue;
+                        }
+                        let path = cwd.join(f);
+                        if path.is_file() {
+                            if let Some(err) = py_syntax_error(&path).await {
+                                eprintln!(
+                                    "  {} {} on {}: syntax error in {f} — retry with the fix",
+                                    style("✗").red().bold(),
+                                    style(&req.task_id).bold(),
+                                    req.device_id
+                                );
+                                return Err(DispatchError::ContentRetry(format!(
+                                    "syntax error in {f}: {err} — FIX it before finishing"
+                                )));
+                            }
+                        }
+                    }
+                }
                 eprintln!(
                     "  {} {} on {} ({:.1}s)",
                     style("✓").green().bold(),

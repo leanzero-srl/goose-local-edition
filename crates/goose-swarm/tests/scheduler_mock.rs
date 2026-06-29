@@ -906,3 +906,78 @@ async fn cyclic_split_proposal_is_a_noop() {
         report.done
     );
 }
+
+/// GOOSE_SWARM_DONE_GATE scoping: a `ContentRetry` (the pre-done syntax gate) must thread its error into
+/// the retry's `prior_hint` so the fix is GUIDED; an infra `Transient` (model unloaded) must NOT — a stale
+/// content note on an infra retry would mislead the worker. Guards the scheduler.rs combined-arm change.
+#[tokio::test]
+async fn content_retry_threads_hint_infra_transient_does_not() {
+    struct Seen {
+        task: String,
+        attempt: u32,
+        hint: Option<String>,
+    }
+    struct HintProbe {
+        fail0: HashMap<String, DispatchError>,
+        seen: Arc<Mutex<Vec<Seen>>>,
+    }
+    #[async_trait]
+    impl TaskDispatcher for HintProbe {
+        async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.seen.lock().unwrap().push(Seen {
+                task: req.task_id.clone(),
+                attempt: req.attempt,
+                hint: req.prior_hint.clone(),
+            });
+            if req.attempt == 0 {
+                if let Some(e) = self.fail0.get(&req.task_id) {
+                    return Err(e.clone());
+                }
+            }
+            Ok(format!("ok-{}", req.task_id).into())
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut fail0 = HashMap::new();
+    fail0.insert(
+        "content".to_string(),
+        DispatchError::ContentRetry("syntax error in a.py: bad token — FIX it".into()),
+    );
+    fail0.insert(
+        "infra".to_string(),
+        DispatchError::Transient("Model is unloaded".into()),
+    );
+    let disp = Arc::new(HintProbe {
+        fail0,
+        seen: seen.clone(),
+    });
+    let dag = Dag::from_specs(vec![
+        spec("content", &[], &["a.py"]),
+        spec("infra", &[], &["b.py"]),
+    ])
+    .unwrap();
+    let report = Scheduler::new(vec![dev("d0", "m0", 1), dev("d1", "m1", 1)], 3)
+        .run(dag, disp, String::new())
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 2, "both tasks eventually succeed: {report:?}");
+
+    let seen = seen.lock().unwrap();
+    let content_retry = seen
+        .iter()
+        .find(|s| s.task == "content" && s.attempt == 1)
+        .expect("content task must be retried (attempt 1)");
+    assert_eq!(
+        content_retry.hint.as_deref(),
+        Some("syntax error in a.py: bad token — FIX it"),
+        "ContentRetry must thread its error into the retry's prior_hint"
+    );
+    let infra_retry = seen
+        .iter()
+        .find(|s| s.task == "infra" && s.attempt == 1)
+        .expect("infra task must be retried (attempt 1)");
+    assert_eq!(
+        infra_retry.hint, None,
+        "an infra Transient must NOT thread a content hint"
+    );
+}

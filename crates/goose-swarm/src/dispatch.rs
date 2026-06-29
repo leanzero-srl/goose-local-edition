@@ -62,6 +62,10 @@ pub struct DispatchRequest {
 pub enum DispatchError {
     /// Recoverable — e.g. LM Studio "Model is unloaded". Re-dispatch within the attempt budget.
     Transient(String),
+    /// A CONTENT failure (e.g. a syntax error in an owned file) caught by the pre-done gate. Re-dispatched
+    /// like `Transient`, but the error is threaded into the retry's `prior_hint` so the fix is guided
+    /// rather than a blind re-roll. Scoped to content — infra transients never carry a hint.
+    ContentRetry(String),
     /// Unrecoverable for this task.
     Terminal(String),
 }
@@ -70,6 +74,7 @@ impl std::fmt::Display for DispatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DispatchError::Transient(m) => write!(f, "transient: {m}"),
+            DispatchError::ContentRetry(m) => write!(f, "content-retry: {m}"),
             DispatchError::Terminal(m) => write!(f, "terminal: {m}"),
         }
     }

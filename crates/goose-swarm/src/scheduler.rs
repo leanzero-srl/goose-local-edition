@@ -479,14 +479,21 @@ impl State {
                     }
                 }
             }
-            Err(DispatchError::Transient(msg)) => {
+            Err(e @ (DispatchError::Transient(_) | DispatchError::ContentRetry(_))) => {
+                // A CONTENT failure (pre-done syntax gate) is re-dispatched exactly like a Transient, but its
+                // error is threaded into the retry's prior_hint so the fix is guided. Infra transients are not.
+                let (msg, is_content) = match e {
+                    DispatchError::Transient(m) => (m, false),
+                    DispatchError::ContentRetry(m) => (m, true),
+                    DispatchError::Terminal(_) => unreachable!(),
+                };
                 self.attempt_log
                     .entry(tid.to_string())
                     .or_default()
                     .push(AttemptRecord {
                         device: dev_id.clone(),
                         model: model_id.clone(),
-                        outcome: "transient".to_string(),
+                        outcome: if is_content { "content_retry" } else { "transient" }.to_string(),
                         error: Some(msg.clone()),
                         elapsed_ms,
                     });
@@ -523,6 +530,12 @@ impl State {
                             fan_out,
                             id: tid.to_string(),
                         });
+                    }
+                    // Guided retry: thread the content error into the next attempt's prior_hint (surfaced to
+                    // the worker as a SUPERVISOR NOTE). Infra transients carry no hint — a stale content note
+                    // on a "model unloaded" retry would mislead the worker.
+                    if is_content {
+                        self.prior_hints.insert(tid.to_string(), msg.clone());
                     }
                     self.sink.emit(&SwarmEvent::TaskRetry {
                         task_id: tid.to_string(),
