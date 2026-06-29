@@ -4710,7 +4710,7 @@ async fn ask_clarifying_questions(
     let qpath = dir.join("clarify-questions.json");
     let apath = dir.join("clarify-answers.json");
     let _ = std::fs::remove_file(&apath); // never read a stale answer from a previous gate
-    let _ = std::fs::write(
+    if let Err(e) = std::fs::write(
         &qpath,
         serde_json::to_string_pretty(&serde_json::json!({
             "plan_confidence": plan_conf,
@@ -4719,7 +4719,12 @@ async fn ask_clarifying_questions(
             "how_to_answer": "Write a JSON array of answer strings (one per question, same order), or {\"answers\":[...]}, to answer_file. The swarm is BLOCKED on it and will re-plan with your answers.",
         }))
         .unwrap_or_default(),
-    );
+    ) {
+        eprintln!(
+            "  warning: could not write clarify questions to {} ({e}) — the harness has nothing to answer",
+            qpath.display()
+        );
+    }
     sink.write_value(serde_json::json!({
         "event": "low_confidence_ask",
         "plan_confidence": plan_conf,
@@ -4727,7 +4732,15 @@ async fn ask_clarifying_questions(
     }));
 
     let mut answers: Vec<String> = Vec::new();
-    if std::io::stdin().is_terminal() {
+    // INTERACTIVE only when BOTH stdin AND stdout are real terminals. A capture harness that pipes stdout
+    // (or the autonomous loop / evals) is detached -> the file handshake, never a timeout-less cliclack
+    // prompt that could hang forever on a PTY-backed child. GOOSE_SWARM_ASK_FILE=1 forces the file path.
+    let force_file = std::env::var("GOOSE_SWARM_ASK_FILE")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    let interactive =
+        !force_file && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    if interactive {
         eprintln!(
             "{}",
             style(format!(
@@ -5117,9 +5130,12 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         }
     };
     let cwd_for_ask = std::env::current_dir().unwrap_or_default();
+    // The confidence meter only exists on the parallel (best-of-N) path; force it when a floor is set so
+    // the gate is never silently inert (the solo planner returns no confidence).
+    let use_parallel = cfg.parallel_planning || ask_floor.is_some();
     let mut asked = false;
     let (plan_json, dag) = loop {
-        let (pj, plan_conf, uncertainties) = if cfg.parallel_planning {
+        let (pj, plan_conf, uncertainties) = if use_parallel {
             phase_banner(
                 "PLAN",
                 "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
@@ -5142,6 +5158,12 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("  parallel planning failed ({e}); falling back to the solo planner");
+                    if ask_floor.is_some() {
+                        eprintln!(
+                            "  {} GOOSE_SWARM_ASK_FLOOR is inert on the solo fallback (no confidence signal)",
+                            style("!").yellow()
+                        );
+                    }
                     dispatcher
                         .plan(
                             &cfg.planner_model,
@@ -5180,29 +5202,37 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         if let (Some(floor), Some(conf)) = (ask_floor, plan_conf) {
             if conf < floor && !asked {
                 asked = true;
-                let questions: Vec<String> = uncertainties
+                let mut questions: Vec<String> = uncertainties
                     .split(';')
                     .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
+                    .filter(|s| s.len() >= 4) // drop junk fragments / empty splits
                     .take(ask_max_q)
                     .collect();
-                if !questions.is_empty() {
-                    let qa = ask_clarifying_questions(
-                        &questions,
-                        &cwd_for_ask,
-                        conf,
-                        ask_wait_secs,
-                        sink.as_ref(),
-                    )
-                    .await;
-                    if !qa.is_empty() {
-                        research_findings.push_str(&qa);
-                        eprintln!(
-                            "  {} re-planning with the user's clarifications",
-                            style("↻").cyan()
-                        );
-                        continue;
-                    }
+                if questions.is_empty() {
+                    // Below floor but the model gave no usable uncertainties (common for weak local
+                    // models). STILL ask — never proceed on a default for a low-confidence plan; fall
+                    // back to one generic, high-value question.
+                    questions.push(format!(
+                        "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
+                        opts.prompt
+                    ));
+                }
+                // Always engage the handshake when below floor (the harness IS the human).
+                let qa = ask_clarifying_questions(
+                    &questions,
+                    &cwd_for_ask,
+                    conf,
+                    ask_wait_secs,
+                    sink.as_ref(),
+                )
+                .await;
+                if !qa.is_empty() {
+                    research_findings.push_str(&qa);
+                    eprintln!(
+                        "  {} re-planning with the user's clarifications",
+                        style("↻").cyan()
+                    );
+                    continue;
                 }
             }
         }
