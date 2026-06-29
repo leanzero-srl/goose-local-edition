@@ -97,6 +97,25 @@ struct DeviceRt {
 }
 
 /// Ready-set ordering: higher fan-out first (unblock the most work), tie-break by id ascending for
+/// Releases the single idle-job slot (`judge_running`) when an idle-job task ends — INCLUDING on panic, so
+/// a panicking judge or pre-reviewer can never permanently wedge the slot and deadlock all future idle work.
+/// Drop is synchronous, so it spawns a tiny task to clear the flag under the async State lock (only if a
+/// runtime is still current — during shutdown the flag no longer matters).
+struct IdleSlotGuard {
+    state: Arc<Mutex<State>>,
+}
+
+impl Drop for IdleSlotGuard {
+    fn drop(&mut self) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let st = self.state.clone();
+            handle.spawn(async move {
+                st.lock().await.judge_running = false;
+            });
+        }
+    }
+}
+
 /// determinism. `BinaryHeap` is a max-heap, so `Ord` returns Greater for higher priority.
 #[derive(Eq, PartialEq)]
 struct Ranked {
@@ -715,9 +734,23 @@ impl State {
             && interv >= cfg.max_interventions_per_task
             && elapsed >= cfg.terminal_min_secs;
         let redispatch = actionable && interv < cfg.max_interventions_per_task;
-        let action = if is_split {
-            "split"
-        } else if terminal {
+        // SPLIT is handled FIRST so the emitted event reflects the ACTUAL outcome: apply_split validates the
+        // proposal and returns false (no-op, worker keeps running) if it is malformed — in that case the
+        // event must report "observed", not a "split" that never happened.
+        if is_split {
+            let children = outcome.proposed_split.clone().unwrap_or_default();
+            let applied = self.apply_split(tid, &children);
+            self.sink.emit(&SwarmEvent::JudgeVerdict {
+                task_id: tid.to_string(),
+                device: device.clone().unwrap_or_default(),
+                verdict: outcome.verdict.as_str().to_string(),
+                confidence: outcome.confidence,
+                hint: outcome.hint.clone(),
+                action: if applied { "split" } else { "observed" }.to_string(),
+            });
+            return applied;
+        }
+        let action = if terminal {
             "failed"
         } else if redispatch {
             "re_dispatch"
@@ -732,12 +765,6 @@ impl State {
             hint: outcome.hint.clone(),
             action: action.to_string(),
         });
-        if is_split {
-            // proposed_split is present + non-empty here; apply_split validates the partition and returns
-            // false (no-op, worker keeps running) if it is malformed — a bad proposal never corrupts the DAG.
-            let children = outcome.proposed_split.clone().unwrap_or_default();
-            return self.apply_split(tid, &children);
-        }
         if terminal {
             if let Some(h) = self.abort_handles.remove(tid) {
                 h.abort();
@@ -873,6 +900,44 @@ impl State {
         {
             return false;
         }
+        // Reject a self-dep or any cycle among siblings BEFORE aborting the worker. Otherwise such a
+        // proposal passes here but fails splice_specs' Kahn check AFTER the abort, hitting the destructive
+        // Err arm — which would cascade-FAIL a healthy worker and break the documented no-op contract.
+        if children.iter().any(|c| c.depends_on.iter().any(|d| d == &c.id)) {
+            return false;
+        }
+        {
+            // Kahn topological drain over the children's sibling-dep edges; a non-empty remainder = a cycle.
+            let mut indeg: std::collections::HashMap<&str, usize> =
+                children.iter().map(|c| (c.id.as_str(), 0usize)).collect();
+            for c in children {
+                for d in &c.depends_on {
+                    *indeg.get_mut(c.id.as_str()).unwrap() += 1;
+                    let _ = d;
+                }
+            }
+            let mut queue: Vec<&str> = indeg
+                .iter()
+                .filter(|(_, &n)| n == 0)
+                .map(|(&k, _)| k)
+                .collect();
+            let mut drained = 0usize;
+            while let Some(node) = queue.pop() {
+                drained += 1;
+                for c in children {
+                    if c.depends_on.iter().any(|d| d == node) {
+                        let e = indeg.get_mut(c.id.as_str()).unwrap();
+                        *e -= 1;
+                        if *e == 0 {
+                            queue.push(c.id.as_str());
+                        }
+                    }
+                }
+            }
+            if drained != children.len() {
+                return false; // cycle among siblings — leave the worker running (no-op)
+            }
+        }
         // ---- abort + release the original worker (mirror the kill/re-dispatch cleanup) ----
         if let Some(h) = self.abort_handles.remove(tid) {
             h.abort();
@@ -947,6 +1012,9 @@ impl State {
         if let Some(n) = self.dag.tasks.get_mut(tid) {
             n.attempts += 1;
             n.state = TaskState::Done;
+            // The split shell is superseded by its children — mark it reviewed so the idle pre-reviewer
+            // (M5) never picks this phantom (Done + owns the union files) and reviews a partial file set.
+            n.pre_reviewed = true;
         }
         // ---- enqueue the children that are immediately ready ----
         for id in newly_ready {
@@ -1322,6 +1390,9 @@ impl Scheduler {
                     let nt = notify.clone();
                     let cfg = self.judge_cfg;
                     tokio::spawn(async move {
+                        // Backstop: if judge.judge() or apply_judge_outcome PANICS, this guard still releases
+                        // the idle slot on unwind (the explicit reset below is the hot-path primary).
+                        let _slot = IdleSlotGuard { state: st.clone() };
                         let outcome = judge.judge(req).await;
                         let intervened = {
                             let mut s = st.lock().await;
@@ -1355,6 +1426,9 @@ impl Scheduler {
                     let pr = pr.clone();
                     let st = state.clone();
                     tokio::spawn(async move {
+                        // Backstop: release the idle slot even if pre_review() panics (else it deadlocks
+                        // ALL future idle work, judge included). Explicit reset below is the hot path.
+                        let _slot = IdleSlotGuard { state: st.clone() };
                         let _ = pr.pre_review(req).await;
                         st.lock().await.judge_running = false;
                     });
