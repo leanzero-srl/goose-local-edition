@@ -1418,6 +1418,16 @@ mod tests {
     }
 
     #[test]
+    fn ast_fix_description_carries_unwired_findings() {
+        let d = ast_fix_description(&[
+            "module 'sched.store' is imported by no non-test module — built-but-unwired".to_string(),
+        ]);
+        assert!(d.contains("sched.store"));
+        assert!(d.contains("WIRE"));
+        assert!(d.contains("SMALLEST"));
+    }
+
+    #[test]
     fn smoke_fix_description_carries_findings_and_targets() {
         let d = smoke_fix_description(&[
             "pytest --collect-only errors: ImportError cannot import name bar from baz".to_string(),
@@ -3797,6 +3807,23 @@ async fn run_ast_review(root: &Path) -> AstReviewResult {
     }
 }
 
+/// Build the worker instruction for the GOOSE_SWARM_REVIEW corrective wire-fix from the unwired findings.
+/// Pure — unit-tested. Asks the worker to WIRE each unwired module into the app (import + use it) rather
+/// than leave it dead behind an inline duplicate.
+fn ast_fix_description(findings: &[String]) -> String {
+    format!(
+        "A model-free wiring review found modules that are BUILT BUT UNWIRED — no non-test code imports \
+         them, so the app does not actually use them (it likely re-implements their logic inline, leaving \
+         the real module dead and a feature silently broken — e.g. a persisted store that is never saved \
+         to, so data does not persist). Findings:\n{}\n\nWIRE each unwired module into the app: make the \
+         entry point / CLI IMPORT and USE it instead of duplicating its logic — load a store module on \
+         startup and save THROUGH it on every mutation; call a runner module to execute work; etc. Make \
+         the SMALLEST change that wires them (do NOT rewrite working code), then RUN the relevant command \
+         to confirm the feature now works end to end (e.g. add an item, then list it in a fresh process).",
+        findings.join("\n")
+    )
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String]) -> String {
@@ -4835,6 +4862,41 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             );
             for f in &review.findings {
                 eprintln!("  - {f}");
+            }
+            // Corrective re-dispatch (mirrors the SMOKE autofix): ONE guided wire-fix that imports + uses
+            // the unwired module(s), then re-reviews once. Bounded to a single attempt.
+            if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                eprintln!("AST review: dispatching ONE corrective wire-fix attempt ...");
+                let fix_req = DispatchRequest {
+                    task_id: "wire-fix".to_string(),
+                    description: ast_fix_description(&review.findings),
+                    device_id: dev_id,
+                    model_id,
+                    context_slice: String::new(),
+                    attempt: 0,
+                    owned_files: vec![],
+                    all_files: smoke_all_files.clone(),
+                    prior_hint: None,
+                };
+                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                let after = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+                let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
+                sink.write_value(serde_json::json!({
+                    "event": "review_after_fix",
+                    "result": after_value,
+                }));
+                if after.ran && after.findings.is_empty() {
+                    eprintln!(
+                        "{}",
+                        style("AST review: wire-fix RESOLVED the unwired findings").green()
+                    );
+                } else {
+                    eprintln!(
+                        "{} ({} finding(s) remain after one wire-fix)",
+                        style("AST review: still unwired").yellow().bold(),
+                        after.findings.len()
+                    );
+                }
             }
         }
     }
