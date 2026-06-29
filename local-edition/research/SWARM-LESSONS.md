@@ -274,3 +274,16 @@ Do NOT tune the judge; keep watching A2 to confirm.
     file handshake (+ GOOSE_SWARM_ASK_FILE override) so a detached/eval run never hangs. Default-OFF
     (unset/0) so every existing run is byte-identical. Next: a dedicated question GENERATOR (real
     interrogatives from spec+plan, not split-the-uncertainty-string) + local-model-strength floor scaling.
+
+## New lesson (live, 2026-06-29) — flaky early shared/types subtask = weak-model EXPLORE-not-WRITE (no clean fix)
+23. **The recurring flaky early "shared/types" subtask is a weak-model EXPLORE-INSTEAD-OF-WRITE pattern, not a
+    new bug.** Read-the-logs on ASK-TEST3 shared-types (owned dedup_csv/__init__.py + types.py, dispatched 3x,
+    FAILED): activity = 7 tool_calls, ALL shell (cat/ls), ZERO writes — the worker explored instead of writing,
+    claimed done, the guard caught the missing files, retried, repeated the same, exhausted. The worker prompt
+    ALREADY says "WRITE FIRST, do NOT ls/cat"; the missing-files guard + the new guided retry (92f393495) both
+    fire; yet the weak 27b still explores. Same class as A1-2 (minimal-spec flake). KEY MITIGATION already in
+    the stack: CONTRACTS pre-freezes the type signatures as a stub the worker just writes, removing the "what
+    types do I write?" ambiguity that triggers exploration — the A2 wins (CONTRACTS on) did NOT flake; the
+    inquisitive ASK-TEST runs had CONTRACTS OFF and hit it. So this is a KNOWN no-contracts-regime flake, NOT a
+    regression, with no clean additional swarm-side fix beyond what exists. Noted, NOT over-built. Practical:
+    enable CONTRACTS for any multi-module run. The inquisitive feature itself is unaffected + fully validated.
