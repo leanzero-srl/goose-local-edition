@@ -2835,6 +2835,37 @@ impl GooseAgentDispatcher {
     }
 }
 
+/// M5: read all `.swarm/prereview/<task>.json` findings under `cwd` into a worker-prompt block for the
+/// integrate-verify sink (CONFIRM + FIX). Returns "" when the dir is absent or no findings were recorded.
+fn read_prereview_findings(cwd: &std::path::Path) -> String {
+    let entries = match std::fs::read_dir(cwd.join(".swarm").join("prereview")) {
+        Ok(e) => e,
+        Err(_) => return String::new(),
+    };
+    let mut findings = String::new();
+    for e in entries.flatten() {
+        if let Some(v) = std::fs::read_to_string(e.path())
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        {
+            if let (Some(t), Some(f)) = (
+                v.get("task_id").and_then(|x| x.as_str()),
+                v.get("findings").and_then(|x| x.as_str()),
+            ) {
+                findings.push_str(&format!("- {t}: {f}\n"));
+            }
+        }
+    }
+    if findings.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "## Pre-review findings — an idle reviewer flagged likely defects in completed work; CONFIRM \
+             each against the spec and FIX it before you finish:\n{findings}\n"
+        )
+    }
+}
+
 /// Parse the harsh self-rating reply `SCORE|uncertainties` (M6 step2). Tolerant: the score is the first
 /// integer found on the first digit-bearing line (clamped 0–100); uncertainties is whatever follows `|`.
 fn parse_confidence(reply: &str) -> Option<(u8, String)> {
@@ -3162,7 +3193,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 .collect::<Vec<_>>()
                 .join("\n");
             let owned_part = if req.owned_files.is_empty() {
-                let mut s = "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
+                "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
                  above actually exists on disk and the tests cover each module. CRITICAL: a green pytest \
                  suite does NOT prove the program works — unit tests usually call functions directly and \
                  NEVER invoke the CLI/entry point, so a broken argparse, a bad import, or a crashing \
@@ -3171,34 +3202,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  real command from the spec with real arguments) and confirm it prints sane output and does \
                  NOT raise. If the entry point crashes, FIX the offending file — a program whose CLI cannot \
                  run is a FAILURE no matter how many unit tests pass. Report any missing file or runtime crash.\n\n"
-                    .to_string();
-                // M5: surface idle-node PRE-REVIEW findings so integrate-verify CONFIRMS and FIXES the
-                // flagged defects (wrong default-path output, a spec deliverable built but not wired) —
-                // not merely makes the suite green.
-                let pdir = std::path::Path::new(&cwd).join(".swarm").join("prereview");
-                if let Ok(entries) = std::fs::read_dir(&pdir) {
-                    let mut findings = String::new();
-                    for e in entries.flatten() {
-                        if let Some(v) = std::fs::read_to_string(e.path())
-                            .ok()
-                            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                        {
-                            if let (Some(t), Some(f)) = (
-                                v.get("task_id").and_then(|x| x.as_str()),
-                                v.get("findings").and_then(|x| x.as_str()),
-                            ) {
-                                findings.push_str(&format!("- {t}: {f}\n"));
-                            }
-                        }
-                    }
-                    if !findings.is_empty() {
-                        s.push_str(&format!(
-                            "## Pre-review findings — an idle reviewer flagged likely defects in completed \
-                             work; CONFIRM each against the spec and FIX it before you finish:\n{findings}\n"
-                        ));
-                    }
-                }
-                s
+                    .to_string()
             } else {
                 // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
                 // have spammed `mkdir` 27x on a nested path and paralysed the task (0 writes). Deterministic
@@ -3243,6 +3247,17 @@ impl TaskDispatcher for GooseAgentDispatcher {
                      written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
                      #1 way workers burn their whole budget and produce nothing.\n\n"
                 )
+            };
+            // M5: inject idle-node PRE-REVIEW findings into the integrate-verify sink — whether or not it
+            // happens to own files (a model-authored sink can own files) — so it CONFIRMS + FIXES the
+            // flagged defects, not merely greens the suite. read_prereview_findings returns "" if none.
+            let owned_part = if req.owned_files.is_empty() || req.task_id == "integrate-verify" {
+                format!(
+                    "{owned_part}{}",
+                    read_prereview_findings(std::path::Path::new(&cwd))
+                )
+            } else {
+                owned_part
             };
             // Inject the CURRENT content of any owned file that already exists (an AMENDMENT: you are
             // EDITING it) so the worker need not re-`cat` it. Integration/wire-into-existing-file tasks
@@ -3652,6 +3667,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
 
     let run_id = format!("swarm-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S%3f"));
+    // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
+    // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
+    let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
     let log_path: Option<PathBuf> = if opts.no_log {
         None
     } else {

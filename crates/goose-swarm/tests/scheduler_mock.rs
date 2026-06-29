@@ -831,3 +831,78 @@ async fn idle_node_pre_reviews_completed_task() {
         reviewed.lock().unwrap()
     );
 }
+
+/// A judge that proposes a MALFORMED split — a sibling cycle (big-a<->big-b). apply_split must reject it.
+struct CyclicSplitJudge {
+    target: String,
+}
+
+#[async_trait]
+impl Judge for CyclicSplitJudge {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        if req.task_id == self.target && req.split_count == 0 {
+            JudgeOutcome::split(vec![
+                ChildSpec {
+                    id: "big-a".to_string(),
+                    files: vec!["a.py".to_string()],
+                    depends_on: vec!["big-b".to_string()],
+                },
+                ChildSpec {
+                    id: "big-b".to_string(),
+                    files: vec!["b.py".to_string()],
+                    depends_on: vec!["big-a".to_string()],
+                },
+            ])
+        } else {
+            JudgeOutcome::ok()
+        }
+    }
+}
+
+/// M3 robustness (audit fix A): a malformed split proposal (sibling cycle) must be a TRUE NO-OP — the
+/// worker keeps running and completes, the task is NOT failed, and NO children are injected. Guards the
+/// contract that a bad judge proposal can never corrupt the DAG (the cycle is rejected BEFORE the abort).
+#[tokio::test]
+async fn cyclic_split_proposal_is_a_noop() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: Arc::new(Mutex::new(Vec::new())),
+        target: "big".to_string(), // slow target so the judge fires on it repeatedly
+        delay: Duration::from_millis(20),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![
+        spec("big", &[], &["a.py", "b.py"]),
+        spec("verify", &["big"], &["v.py"]),
+    ])
+    .unwrap();
+    let judge = Arc::new(CyclicSplitJudge {
+        target: "big".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    assert!(
+        report.failed.is_empty(),
+        "a malformed (cyclic) split must NOT fail the task: failed={:?}",
+        report.failed
+    );
+    assert!(
+        report.done.contains(&"big".to_string()) && report.done.contains(&"verify".to_string()),
+        "the worker keeps running and the run completes normally: done={:?}",
+        report.done
+    );
+    assert!(
+        !report.done.contains(&"big-a".to_string()) && !report.done.contains(&"big-b".to_string()),
+        "NO children are injected from a rejected proposal: done={:?}",
+        report.done
+    );
+}
