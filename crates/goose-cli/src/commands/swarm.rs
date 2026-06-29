@@ -5017,7 +5017,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let contracts_on = std::env::var("GOOSE_SWARM_CONTRACTS")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
-    if contracts_on {
+    // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
+    // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
+    // module filter below already empties on a pure non-Python tree; this makes the skip explicit and
+    // misfire-proof. Per-language (TS interface / Rust trait) stub generation is deferred. Python unchanged.
+    if contracts_on && detect_language(&opts.prompt, &[]) == TargetLang::Python {
         let modules: Vec<TaskSpec> = dag
             .tasks
             .values()

@@ -173,6 +173,28 @@ SMOKE pass. 10 pytest pass.
   module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
   cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
 
+## DE-PYTHON (technology-agnostic swarm) — FUNCTIONALLY COMPLETE (2026-06-29)
+Per the user's direction ("it should not care about python, allow multiple technologies"). The swarm ENGINE
+(scheduler/dispatch/judge) was always language-agnostic; the architect prompt + every gate were Python-
+hardcoded. Now all language-aware via a `TargetLang` profile (Python/TypeScript/Rust/Go/Other) +
+`detect_language(spec, existing-file extensions)`. SIX increments, Python BYTE-IDENTICAL throughout (268
+goose-cli + 29 goose-swarm tests green at every step; experiment specs now lead with `LANG=<X>`):
+ 1. ARCHITECT prompt (6881ae6d9) — per-language directive + entry-point mandate + test command.
+ 2. WORKER prompt (75682ae7c) — directive + the dependency-API filter via is_source_file/is_test_file
+    (FUNCTIONAL fix: non-Python workers now get sibling-module APIs injected instead of over-reading).
+ 3. PLANNER fallbacks (12cd6a744) — `(NOT py_compile)` gated; synthetic integrate-verify entry_run_example;
+    solo `plan` test_cmd.
+ 4. SMOKE gate (dcf6a6b2e) — returns ran=false on non-Python (no pytest-against-TS misfire on a mixed tree).
+ 5. DONE-GATE + judge (8d7f4d55b) — per-file `syntax_error` dispatch (.py = ast.parse verbatim; others skip).
+ 6. CONTRACTS (this) — gated to a Python target (never injects Python stubs into a TS/Rust app).
+DEFERRED (LOW confidence, not needed for correctness): a TypeScript import-graph AST reviewer — run_ast_review
+already no-ops cleanly on a no-.py tree; a real ES-import reviewer is a separate effort. Full per-language
+CONTRACT stubs (TS interfaces / Rust traits) also deferred.
+VALIDATION: TS-1 (architect-only binary) produced real TypeScript (30 vitest pass) but its still-Python
+integrate-verify thrashed 13x -> proved the worker/gate de-Python is necessary, not just the architect.
+RUST-1 (full de-Python binary) produces real Rust with integrate-verify dispatch=1 (NO thrash) -> the chain
+works end to end. A Python control (PY-CTRL) confirms the 9-run Python matrix behavior is unchanged.
+
 ### TS-1 — LANG=TypeScript todo CLI (FIRST non-Python run; architect de-Python only) — 4/6/5/5, CUT
 The first language-named experiment + the first real proof the de-Python works. Ran on binary 6881ae6d9
 (architect de-Python ONLY — the worker/planner/gate fixes came AFTER this launched), CONTRACTS off.
