@@ -2296,12 +2296,12 @@ impl GooseAgentDispatcher {
         if worker_models.is_empty() {
             return Vec::new();
         }
-        let mut handles = Vec::new();
-        for (i, q) in questions.into_iter().enumerate() {
-            let me = self.clone();
+        let me = self.clone();
+        // One research call per device (work-stealing): a weight-1 node never has a second queued.
+        fanout_over_fleet(worker_models, questions, move |q, model| {
+            let me = me.clone();
             let exts = research_extensions.clone();
-            let model = worker_models[i % worker_models.len()].clone();
-            handles.push(tokio::spawn(async move {
+            async move {
                 let started = std::time::Instant::now();
                 eprintln!(
                     "  {} research {} ({}) → {}",
@@ -2338,15 +2338,9 @@ impl GooseAgentDispatcher {
                     kind: q.kind,
                     findings,
                 }
-            }));
-        }
-        let mut out = Vec::new();
-        for h in handles {
-            if let Ok(f) = h.await {
-                out.push(f);
             }
-        }
-        out
+        })
+        .await
     }
 
     /// Fan out fixed-lens SCOUTS IN PARALLEL across the fleet — each self-directs its lens with no
@@ -2364,16 +2358,15 @@ impl GooseAgentDispatcher {
         if worker_models.is_empty() {
             return Vec::new();
         }
-        let mut handles = Vec::new();
-        for (i, lens) in select_lenses(is_amendment, max_lenses)
-            .into_iter()
-            .enumerate()
-        {
-            let me = self.clone();
+        let me = self.clone();
+        let prompt = user_prompt.to_string();
+        let lenses = select_lenses(is_amendment, max_lenses);
+        // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
+        fanout_over_fleet(worker_models, lenses, move |lens, model| {
+            let me = me.clone();
             let exts = research_extensions.clone();
-            let model = worker_models[i % worker_models.len()].clone();
-            let prompt = user_prompt.to_string();
-            handles.push(tokio::spawn(async move {
+            let prompt = prompt.clone();
+            async move {
                 let started = std::time::Instant::now();
                 eprintln!(
                     "  {} scout {} → {}",
@@ -2420,15 +2413,9 @@ impl GooseAgentDispatcher {
                     kind: lens.id.to_string(),
                     findings,
                 }
-            }));
-        }
-        let mut out = Vec::new();
-        for h in handles {
-            if let Ok(f) = h.await {
-                out.push(f);
             }
-        }
-        out
+        })
+        .await
     }
 
     /// Parallel planning: the 27B drafts a STRUCTURAL SKELETON (brief one-line descriptions) fast, then
