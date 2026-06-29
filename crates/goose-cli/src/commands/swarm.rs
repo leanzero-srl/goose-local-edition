@@ -1404,6 +1404,17 @@ mod tests {
     }
 
     #[test]
+    fn smoke_fix_description_carries_findings_and_targets() {
+        let d = smoke_fix_description(&[
+            "pytest --collect-only errors: ImportError cannot import name bar from baz".to_string(),
+        ]);
+        assert!(d.contains("ImportError cannot import name bar from baz"));
+        assert!(d.contains("--collect-only"));
+        assert!(d.contains("--help"));
+        assert!(d.contains("SMALLEST"));
+    }
+
+    #[test]
     fn frozen_interfaces_block_noop_when_empty() {
         assert_eq!(frozen_interfaces_block(""), "");
         assert_eq!(frozen_interfaces_block("   \n  "), "");
@@ -3613,6 +3624,19 @@ impl PreReviewer for GooseAgentDispatcher {
     }
 }
 
+/// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
+/// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
+fn smoke_fix_description(findings: &[String]) -> String {
+    format!(
+        "The integrated app FAILS a deterministic end-to-end smoke check the harness just ran. Findings:\n{}\n\n\
+         FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that BOTH \
+         `python3 -m pytest --collect-only -q` (no collection/import errors) AND `python3 -m <package> --help` \
+         (exit 0) succeed. Do NOT add features or rewrite working modules; make the SMALLEST change that \
+         resolves the findings, then run those two commands yourself to confirm before finishing.",
+        findings.join("\n")
+    )
+}
+
 /// Format the frozen module-interface contracts bundle for injection into a worker prompt. An empty (or
 /// whitespace) bundle yields an empty string, so the GOOSE_SWARM_CONTRACTS injection is a true no-op
 /// until the stub pass populates it. Pure — unit-tested without a model.
@@ -4503,6 +4527,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         "EXECUTE",
         "subtasks run IN PARALLEL across the fleet; dynamic replan fills idle workers",
     );
+    // Captured before `devices`/`dag`/`dispatcher` move into the scheduler — used only by the
+    // GOOSE_SWARM_SMOKE corrective re-dispatch (one guided fix attempt if the smoke check fails).
+    let smoke_fix_target = devices.first().map(|d| (d.id.clone(), d.model_id.clone()));
+    let smoke_all_files: Vec<String> = dag
+        .tasks
+        .values()
+        .flat_map(|n| n.spec.owned_files.clone())
+        .collect();
+    let smoke_fix_dispatcher = dispatcher.clone();
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
     if replan_on && cfg.max_replans > 0 {
@@ -4563,6 +4596,41 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             );
             for f in &smoke.findings {
                 eprintln!("  - {f}");
+            }
+            // Corrective re-dispatch: ONE guided fix attempt against the findings, then re-verify once.
+            // Bounded to a single attempt (no loop) — the traceback IS the worker's instruction.
+            if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
+                let fix_req = DispatchRequest {
+                    task_id: "smoke-fix".to_string(),
+                    description: smoke_fix_description(&smoke.findings),
+                    device_id: dev_id,
+                    model_id,
+                    context_slice: String::new(),
+                    attempt: 0,
+                    owned_files: vec![],
+                    all_files: smoke_all_files.clone(),
+                    prior_hint: None,
+                };
+                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                let after = run_smoke_gate(&std::env::current_dir().unwrap_or_default()).await;
+                let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
+                sink.write_value(serde_json::json!({
+                    "event": "smoke_after_fix",
+                    "result": after_value,
+                }));
+                if after.passed() {
+                    eprintln!(
+                        "{}",
+                        style("smoke gate: corrective fix RESOLVED the findings").green()
+                    );
+                } else {
+                    eprintln!(
+                        "{} ({} finding(s) remain after one fix attempt)",
+                        style("smoke gate: still failing").red().bold(),
+                        after.findings.len()
+                    );
+                }
             }
         }
     }
