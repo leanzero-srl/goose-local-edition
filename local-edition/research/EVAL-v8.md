@@ -297,3 +297,10 @@ the answers genuinely RESHAPED the decomposition, not just triggered a re-plan. 
 flaky worker — parser-module claimed done without writing parser.py -> cascade to pipeline-cli/tests/iv; a
 known worker-flakiness issue UNRELATED to the inquisitive feature, so the final tool didn't build. The
 feature itself — ask + answer + re-plan-with-the-answers — is fully validated.)
+
+## ASK-TEST2 — inc3 weak-bump + correct NO-ask (2026-06-29)
+Spec "build a CLI to deduplicate records in a CSV", GOOSE_SWARM_ASK_FLOOR=70. inc3 weak-bump fired:
+"ask floor 70 -> 75/100 (+5 weak-planner bump for 27b)". final plan confidence 80/100 >= eff floor 75 ->
+the gate CORRECTLY did NOT ask (the feature respects the threshold; no over-asking on a clear-enough spec).
+Validates: the scaling is live + the gate is calibrated (asks only below the effective floor). To exercise
+the inc2 generator a sub-floor confidence is needed -> ASK-TEST3 with a higher floor.
