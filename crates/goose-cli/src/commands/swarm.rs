@@ -4552,9 +4552,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         match outcome {
             Ok(out) => {
                 // Hallucinated-completion guard: a worker can call final_output ("done") WITHOUT ever
-                // writing its owned file — a test-archive task did exactly this (0 writes, the file never
-                // appeared, yet the task was marked done). Verify every owned file now exists and is
-                // non-empty; if not, RETRY the task (Transient) instead of silently accepting the lie.
+                // writing its owned file — seen repeatedly (a test-archive task; parser/shared-models
+                // subtasks). Verify every owned file now exists and is non-empty; if not, retry. Use
+                // ContentRetry (NOT Transient) so the next attempt is GUIDED — the worker is told as a
+                // SUPERVISOR NOTE exactly which files it failed to write, instead of a blind re-roll that
+                // tends to repeat the same omission until attempts exhaust.
                 if !req.owned_files.is_empty() {
                     let cwd = std::env::current_dir().unwrap_or_default();
                     let missing: Vec<String> = req
@@ -4572,9 +4574,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
                             secs,
                             missing.join(", ")
                         );
-                        return Err(DispatchError::Transient(format!(
-                            "task {} returned without writing its owned file(s): {}",
-                            req.task_id,
+                        return Err(DispatchError::ContentRetry(format!(
+                            "You finished WITHOUT writing your owned file(s): {}. Your VERY FIRST action this \
+                             attempt MUST be to `write` EACH of them IN FULL from your spec, then finish — do \
+                             NOT explore, cat, or explain first.",
                             missing.join(", ")
                         )));
                     }
