@@ -19,7 +19,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | # | arch | spec | flags active | scratch dir | status | smoke fired | scores (c/t/q/s) | verdict |
 |---|------|------|--------------|-------------|--------|-------------|------------------|---------|
 | A1-1 | A1 minimal | a CLI markdown-to-HTML renderer | SMOKE,SPLIT,PREREVIEW,JUDGE,research | A1-1-mdhtml | DONE | YES / PASS | 9/9/9/9 | CLEAN WIN |
-| A1-2 | A1 minimal | a CLI spreadsheet with formulas | SMOKE,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-2-sheet | RUNNING | — | — | — |
+| A1-2 | A1 minimal | a CLI spreadsheet with formulas | SMOKE,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-2-sheet | DONE | YES / caught FAIL | 2/0/5/2 | FAIL (no entry; 5/7 subtasks failed) |
+| A1-3 | A1 minimal | a CLI task scheduler | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,JUDGE,research | A1-3-sched | RUNNING | — | — | — |
 | A1-3 | A1 minimal | a CLI task scheduler | (tbd) | — | pending | — | — | — |
 | A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | (tbd) | — | pending | — | — | — |
 | A2-2 | A2 max-detail | log-pipeline DSL (full spec) | (tbd) | — | pending | — | — | — |
@@ -59,9 +60,36 @@ mihai 2 / workhorse 4.
   verify, resolved on attempt 1). Minor APP nit (not a swarm issue): linkify is default-on
   but the plugin isn't installed, so every run warns to stderr — defensible degradation.
 
-### A1-2 — a CLI spreadsheet with formulas  (RUNNING)
-First run with GOOSE_SWARM_DONE_GATE=1 (on the 8f4fb225a binary) + SMOKE+SPLIT+PREREVIEW.
-Spreadsheet-with-formulas is harder than A1-1 (a formula parser/evaluator + cell refs +
-recalc) so it leans toward the multi-module regime — a better test of the v8 gates than
-A1-1. Watching: does DONE_GATE fire a ContentRetry on any syntax-broken file, does SMOKE
-catch a cross-module import error, does SPLIT trigger on the formula-engine task.
+### A1-2 — a CLI spreadsheet with formulas — FAIL (corr 2 / test 0 / qual 5 / spec 2)
+DONE on the 8f4fb225a binary (SMOKE+SPLIT+PREREVIEW+DONE_GATE; NO contracts/autofix — predates
+them). Outcome: "5 core subtask(s) failed". DONE: shared-types, cell-sheet. FAILED: formula-parser
+(3 attempts -> exhausted), and its 4 dependents cascaded — formula-evaluator, cli-entry, tests,
+integrate-verify. Files: only spreadsheet/{types,cell,sheet,formula_parser,__init__}.py — NO
+evaluator, NO cli.py, NO __main__.py, NO tests. Not a runnable spreadsheet.
+- SMOKE GATE caught it CLEANLY: ran=true, collect=ok (the 5 modules import), entry_package=null,
+  finding="no python3 -m <pkg> entry point (no package with __main__.py) — the app may be
+  unrunnable". The deterministic no-entry / unrunnable verdict — exactly the BUILT-BUT-UNWIRED /
+  NO-ENTRY draw class. (The scheduler also reported the 5 failures, so detection was doubly clear.)
+- ROOT CAUSE: formula-parser is the hard lynchpin everything depends on. Attempt 0 (gabee) was
+  judge-killed (over_reading — see the watch observation); attempts 1-2 PRODUCED formula_parser.py
+  (385 valid lines, parses — DONE_GATE correctly silent) but the TASK still failed (the worker wrote
+  the file yet did not reach a clean final_output — likely max-turns / test-thrash on a hard module).
+  3 real failed attempts -> exhausted -> fail_descendants tanked evaluator/cli/tests/integrate-verify.
+- vs AB qwopus mean 5.8/5.6/7.6/5.6 — WELL BELOW; a clear FAIL, the multi-module regime where qwopus
+  draws/loses (logfunnel/fsdrift class). A1 "minimal spec" but it decomposed into a hard 7-subtask
+  multi-module app, so it accidentally tests the draw class.
+- WHAT THE v8 GATES WOULD CHANGE (to test on A2 with the full binary): (a) CONTRACTS — a FROZEN
+  formula-parser interface injected upfront would let evaluator/cli build against it EVEN IF the
+  parser task is rocky, decoupling the lynchpin (the single biggest potential win here). (b)
+  SMOKE-AUTOFIX — on the no-entry finding it would fire one fix worker to add __main__.py/cli wiring
+  (partial — the missing evaluator is a deeper hole). (c) JUDGE over-kill of the hard parser
+  (observation, now 2nd data point) wasted attempt 0 — candidate judge tuning if it recurs on A2.
+- KEY TAKEAWAY: the "worker writes the file but the TASK fails (no clean final_output on a hard
+  module)" failure is distinct from a syntax error (DONE_GATE) — a hard lynchpin task exhausting its
+  attempts cascades the whole run. CONTRACTS' decoupling is the most promising mitigation; validate on A2.
+
+### A1-3 — a CLI task scheduler  (RUNNING)
+On the NEW 31f671a18 binary (SMOKE+autofix + SPLIT+PREREVIEW+DONE_GATE). Watching: does it stay
+cohesive (A1-3 is less lynchpin-heavy than the spreadsheet), does SMOKE pass, and if it smoke-FAILS
+does the corrective AUTOFIX fire (smoke_after_fix event) + resolve it — the first chance to validate
+the auto-fix end-to-end.
