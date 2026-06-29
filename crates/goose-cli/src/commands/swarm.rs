@@ -2435,6 +2435,75 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    /// GOOSE_SWARM_CONTRACTS (2b): freeze the contract before EXECUTE. Set once; every worker reads it.
+    pub fn set_contracts(&self, bundle: String) {
+        let _ = self.contracts.set(bundle);
+    }
+
+    /// Generate signature-only interface stubs per module IN PARALLEL across the fleet and assemble them
+    /// into one frozen-contract bundle, so parallel workers build against the SAME interfaces (kills the
+    /// cross-module drift that passing isolation tests hide). One call per module, work-stolen over the
+    /// fleet; a slow/empty/failed stub just drops out of the bundle.
+    async fn generate_contracts(
+        self: &Arc<Self>,
+        modules: Vec<TaskSpec>,
+        worker_models: Vec<String>,
+        goal: &str,
+    ) -> String {
+        let goal = goal.to_string();
+        let me = self.clone();
+        let stubs = fanout_over_fleet(worker_models, modules, move |spec, model| {
+            let me = me.clone();
+            let goal = goal.clone();
+            async move {
+                let files = spec
+                    .owned_files
+                    .iter()
+                    .filter(|f| f.ends_with(".py"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "  {} contract {} → {}",
+                    style("▸").cyan().bold(),
+                    style(&spec.id).bold(),
+                    model
+                );
+                let system = "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
+                    implemented, so parallel workers agree on the contract. Output ONLY Python signature \
+                    stubs for the listed files: every public function and class the module will expose, \
+                    with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
+                    `...` as the body. NO implementations, NO private helpers, NO prose, NO code fences. \
+                    Keep it tight."
+                    .to_string();
+                let user = format!(
+                    "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
+                     Emit signature-only stubs, each file preceded by a `# <path>` header.",
+                    spec.id, spec.description
+                );
+                let stub = match tokio::time::timeout(
+                    std::time::Duration::from_secs(75),
+                    me.run_agent(&model, system, user, None, 6, &[], 0, None),
+                )
+                .await
+                {
+                    Ok(Ok(o)) if !o.text.trim().is_empty() => o.text,
+                    _ => String::new(),
+                };
+                (spec.id, stub)
+            }
+        })
+        .await;
+        let mut bundle = String::new();
+        for (id, stub) in stubs {
+            let stub = stub.trim();
+            if !stub.is_empty() {
+                bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
+            }
+        }
+        bundle
+    }
+
     /// Parallel planning: the 27B drafts a STRUCTURAL SKELETON (brief one-line descriptions) fast, then
     /// the fleet writes every subtask's implementation-ready spec IN PARALLEL, and we assemble the final
     /// plan deterministically. Returns the same plan JSON `plan()` would — callers fall back to `plan()`
@@ -4388,6 +4457,34 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let dag = Dag::from_planner_json(&plan_json)
         .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {plan_json}"))?;
     eprintln!("  plan: {} subtask(s)", dag.tasks.len());
+
+    // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
+    // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
+    let contracts_on = std::env::var("GOOSE_SWARM_CONTRACTS")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if contracts_on {
+        let modules: Vec<TaskSpec> = dag
+            .tasks
+            .values()
+            .map(|n| n.spec.clone())
+            .filter(|s| s.id != "integrate-verify" && s.owned_files.iter().any(|f| f.ends_with(".py")))
+            .collect();
+        if !modules.is_empty() {
+            phase_banner(
+                "CONTRACTS",
+                "freeze signature-only module interfaces across the fleet before EXECUTE",
+            );
+            let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+            let bundle = dispatcher.generate_contracts(modules, wm, &opts.prompt).await;
+            if bundle.trim().is_empty() {
+                eprintln!("  contracts: no stubs produced — skipping injection");
+            } else {
+                dispatcher.set_contracts(bundle);
+                eprintln!("  contracts: frozen interfaces injected into every worker");
+            }
+        }
+    }
 
     sink.write_value(serde_json::json!({
         "event": "plan_loaded",
