@@ -281,3 +281,12 @@ fire because the worker kept emitting shell events).
   fern-point circles) + ALGORITHM (the coords are the chaos-game Barnsley fern) + the matching ASCII render.
 - Score 5/3/4/6 vs AB mean 5.8/5.6/7.6/5.6 — below. The AMENDMENT failure mode (re-architect vs edit-in-
   place) is distinct from the greenfield A2 wins; A3-2 tests recurrence with an explicit edit-in-place spec.
+
+## ASK-TEST — inquisitive-swarm handshake PROVEN LIVE (2026-06-29)
+GOOSE_SWARM_ASK_FLOOR=100, GOOSE_SWARM_ASK_FILE=1, vague spec "build a tool to process logs", binary cf573d811.
+Swarm computed final plan confidence 82/100 (best-of-2 cross-draft agreement) < floor -> verbalized
+uncertainties were EMPTY -> generic-fallback question fired -> wrote .swarm/clarify-questions.json + emitted
+low_confidence_ask + BLOCKED. The HARNESS answered as the human (.swarm/clarify-answers.json, 1 concrete
+answer) -> swarm logged "clarifications received — re-planning", emitted low_confidence_answered, folded the
+Q&A into planner findings, RE-PLANNED exactly once (asked flag), then -> EXECUTE. Closed Q&A loop validated
+end-to-end. See SWARM-LESSONS lesson 22.
