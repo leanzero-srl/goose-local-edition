@@ -1456,6 +1456,12 @@ mod tests {
         assert!(ts.test_cmd().contains("vitest") || ts.test_cmd().contains("npm"));
         assert!(TargetLang::Rust.entry_clause().contains("main.rs"));
         assert_eq!(TargetLang::Go.test_cmd(), "go test ./...");
+        // Source/test-file predicates: Python arm = the original `.py` behavior; non-Python is language-correct.
+        assert!(TargetLang::Python.is_source_file("foo.py") && !TargetLang::Python.is_source_file("foo.ts"));
+        assert!(ts.is_source_file("foo.ts") && ts.is_source_file("foo.tsx") && !ts.is_source_file("foo.py"));
+        assert!(TargetLang::Python.is_test_file("test_foo.py") && TargetLang::Python.is_test_file("conftest.py"));
+        assert!(ts.is_test_file("foo.test.ts") && !ts.is_test_file("foo.ts"));
+        assert!(!TargetLang::Other.is_source_file("foo.rb"));
     }
 
     #[test]
@@ -4066,6 +4072,38 @@ impl TargetLang {
             TargetLang::Other => "the project's standard test runner for the target language",
         }
     }
+
+    /// Is `f` a source file in this language? Used to pick which sibling files' APIs get injected into a
+    /// worker prompt. The Python arm is the original `.py` check verbatim (byte-identical behavior).
+    fn is_source_file(self, f: &str) -> bool {
+        match self {
+            TargetLang::Python => f.ends_with(".py"),
+            TargetLang::TypeScript => {
+                f.ends_with(".ts") || f.ends_with(".tsx") || f.ends_with(".js")
+            }
+            TargetLang::Rust => f.ends_with(".rs"),
+            TargetLang::Go => f.ends_with(".go"),
+            TargetLang::Other => false,
+        }
+    }
+
+    /// Is `base` (a file name) a TEST file? Excluded from dependency-API injection. Python arm verbatim.
+    fn is_test_file(self, base: &str) -> bool {
+        match self {
+            TargetLang::Python => {
+                base.starts_with("test_") || base.ends_with("_test.py") || base == "conftest.py"
+            }
+            TargetLang::TypeScript => {
+                base.ends_with(".test.ts")
+                    || base.ends_with(".spec.ts")
+                    || base.ends_with(".test.js")
+                    || base.ends_with(".spec.js")
+            }
+            TargetLang::Rust => base.ends_with("_test.rs"),
+            TargetLang::Go => base.ends_with("_test.go"),
+            TargetLang::Other => false,
+        }
+    }
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
@@ -4100,6 +4138,10 @@ fn frozen_interfaces_block(bundle: &str) -> String {
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        // Detect the target language from this subtask's manifest (extensions are language-correct after the
+        // architect plans them) + its description. Python (the no-cue / .py default) keeps every prompt arm
+        // below byte-identical; other languages get the right scaffolding via the TargetLang profile.
+        let lang = detect_language(&req.description, &req.all_files);
         let context_block = if req.context_slice.is_empty() {
             String::new()
         } else {
@@ -4223,15 +4265,14 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 if dep_budget == 0 {
                     break;
                 }
-                if owned_set.contains(f) || !f.ends_with(".py") {
+                if owned_set.contains(f) || !lang.is_source_file(f) {
                     continue;
                 }
                 let base = std::path::Path::new(f)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
-                if base.starts_with("test_") || base.ends_with("_test.py") || base == "conftest.py"
-                {
+                if lang.is_test_file(base) {
                     continue;
                 }
                 if let Ok(content) = std::fs::read_to_string(std::path::Path::new(&cwd).join(f)) {
@@ -4266,8 +4307,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        let worker_directive = lang.directive();
         let system_prompt = format!(
-            "You are a WORKER on a local AI swarm. Complete EXACTLY the task below using your tools, \
+            "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
              When finished, briefly state what you produced.\n\
              SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
