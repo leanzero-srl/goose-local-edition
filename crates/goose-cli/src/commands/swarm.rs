@@ -2412,6 +2412,67 @@ impl GooseAgentDispatcher {
             .collect())
     }
 
+    /// GOOSE_SWARM_ASK: generate crisp INTERROGATIVE clarifying questions to ask the USER when plan
+    /// confidence is low. The answers should change HOW the program is built (scope/IO/formats/acceptance),
+    /// not be make-work. Returns an empty vec on any failure or a self-contained task — the caller falls
+    /// back to a generic question so a below-floor plan ALWAYS asks (never proceeds on a default).
+    async fn clarify_questions(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        plan_json: &str,
+        uncertainties: &str,
+        conf: u8,
+        max_q: u32,
+    ) -> Vec<String> {
+        let unc = if uncertainties.trim().is_empty() {
+            "(none stated)".to_string()
+        } else {
+            uncertainties.trim().to_string()
+        };
+        let plan_excerpt: String = plan_json.chars().take(2000).collect();
+        let system = format!(
+            "A weak local model just drafted a plan for a coding task but its confidence is LOW ({conf}/100). \
+             Ask the USER AT MOST {max_q} crisp, specific, INTERROGATIVE questions whose answers would most \
+             change HOW the program is built — its scope, inputs/outputs, file formats, or acceptance criteria \
+             — NOT trivia or anything already pinned down by the task. Each question must be answerable in one \
+             sentence and end with '?'. If the task is genuinely self-contained and nothing would change the \
+             build, return an EMPTY questions list — do NOT invent make-work. Then call the final_output tool."
+        );
+        let user = format!(
+            "Task: {user_prompt}\n\nThe model's stated uncertainties: {unc}\n\nThe drafted plan (excerpt):\n{plan_excerpt}"
+        );
+        let response = Some(Response {
+            json_schema: Some(clarify_schema()),
+        });
+        let out = match self
+            .run_agent_timed(planner_model, system, user, response, 8, &[])
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+        let Some(fo) = out.final_output else {
+            return Vec::new();
+        };
+        #[derive(serde::Deserialize)]
+        struct Qs {
+            #[serde(default)]
+            questions: Vec<String>,
+        }
+        let parsed: Qs = match serde_json::from_str(&fo) {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
+        };
+        parsed
+            .questions
+            .into_iter()
+            .map(|q| q.trim().to_string())
+            .filter(|q| q.len() >= 8)
+            .take(max_q as usize)
+            .collect()
+    }
+
     /// Run the research questions IN PARALLEL across the fleet (round-robin over worker models), each
     /// with the research MCP extensions. A failed research worker degrades to a note, never blocks.
     async fn run_research(
@@ -4627,6 +4688,21 @@ impl Replanner for GooseAgentDispatcher {
     }
 }
 
+/// Schema for the GOOSE_SWARM_ASK clarifying-question generator: a flat list of interrogative strings.
+fn clarify_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["questions"],
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        }
+    })
+}
+
 fn research_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -5202,16 +5278,29 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         if let (Some(floor), Some(conf)) = (ask_floor, plan_conf) {
             if conf < floor && !asked {
                 asked = true;
-                let mut questions: Vec<String> = uncertainties
-                    .split(';')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| s.len() >= 4) // drop junk fragments / empty splits
-                    .take(ask_max_q)
-                    .collect();
+                // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
+                // (never proceeds on a default): (1) a dedicated LLM generator writes crisp interrogatives
+                // from the spec + plan + uncertainties; (2) else split the model's raw uncertainties; (3)
+                // else one generic high-value question.
+                let mut questions = dispatcher
+                    .clarify_questions(
+                        &cfg.planner_model,
+                        &opts.prompt,
+                        &pj,
+                        &uncertainties,
+                        conf,
+                        ask_max_q as u32,
+                    )
+                    .await;
                 if questions.is_empty() {
-                    // Below floor but the model gave no usable uncertainties (common for weak local
-                    // models). STILL ask — never proceed on a default for a low-confidence plan; fall
-                    // back to one generic, high-value question.
+                    questions = uncertainties
+                        .split(';')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| s.len() >= 4)
+                        .take(ask_max_q)
+                        .collect();
+                }
+                if questions.is_empty() {
                     questions.push(format!(
                         "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
                         opts.prompt
