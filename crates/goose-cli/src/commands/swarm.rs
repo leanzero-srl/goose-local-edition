@@ -1423,6 +1423,42 @@ mod tests {
     }
 
     #[test]
+    fn detect_language_defaults_python_and_honors_cues() {
+        // No cue -> Python (the validated baseline default).
+        assert_eq!(detect_language("a CLI markdown to HTML renderer", &[]), TargetLang::Python);
+        // Explicit spec cues win.
+        assert_eq!(detect_language("build a TypeScript CLI todo app", &[]), TargetLang::TypeScript);
+        assert_eq!(detect_language("a Rust CLI using cargo", &[]), TargetLang::Rust);
+        assert_eq!(detect_language("a golang command line tool", &[]), TargetLang::Go);
+        // A named-but-unprofiled language is honored (generic), never forced to Python.
+        assert_eq!(detect_language("a Ruby CLI gem", &[]), TargetLang::Other);
+        // Amendment: the existing files' extensions are the strongest signal, overriding a bare spec.
+        assert_eq!(
+            detect_language("add a --json flag", &["index.ts".into(), "util.ts".into()]),
+            TargetLang::TypeScript
+        );
+        assert_eq!(
+            detect_language("add a --json flag", &["cli.py".into(), "detector.py".into()]),
+            TargetLang::Python
+        );
+    }
+
+    #[test]
+    fn target_lang_profile_python_is_unchanged_others_translate() {
+        // Python keeps the exact original scaffolding and an EMPTY directive (prompt byte-identical).
+        assert!(TargetLang::Python.directive().is_empty());
+        assert!(TargetLang::Python.entry_clause().contains("cli.py"));
+        assert_eq!(TargetLang::Python.test_cmd(), "python3 -m pytest");
+        // Non-Python: forceful directive + language-correct entry point + test runner, no Python mandate.
+        let ts = TargetLang::TypeScript;
+        assert!(ts.directive().contains("TARGET LANGUAGE: TypeScript"));
+        assert!(ts.entry_clause().contains("index.ts") && !ts.entry_clause().contains("cli.py"));
+        assert!(ts.test_cmd().contains("vitest") || ts.test_cmd().contains("npm"));
+        assert!(TargetLang::Rust.entry_clause().contains("main.rs"));
+        assert_eq!(TargetLang::Go.test_cmd(), "go test ./...");
+    }
+
+    #[test]
     fn parse_ast_review_reads_findings_and_degrades() {
         let r = parse_ast_review(
             r#"{"modules": 6, "findings": ["app.orphan is imported by no non-test module"]}"#,
@@ -2601,7 +2637,11 @@ impl GooseAgentDispatcher {
         } else {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
-        let system = format!("You are the ARCHITECT on the smart model. Produce a PLAN SKELETON ONLY — do NOT write code. \
+        let lang = detect_language(user_prompt, &[]);
+        let lang_directive = lang.directive();
+        let entry_clause = lang.entry_clause();
+        let test_cmd = lang.test_cmd();
+        let system = format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
             There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
@@ -2636,15 +2676,12 @@ impl GooseAgentDispatcher {
             originals as dead/unwired duplicates and breaks the existing tests. NEVER invent a new filename (e.g. `note.py`) for a \
             module that already exists (e.g. `models.py`). Create NEW files ONLY for genuinely-new functionality the existing \
             modules do not already provide (plus a test for it).\n\
-            If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
-            writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
-            AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
-            omit the entry point.\n\
+            {entry_clause}\n\
             For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
             it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
-            difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `python3 -m pytest` \
+            difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \
             (NOT py_compile) and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
             change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
             existing test to assert the new correct output. Do not stall — make the whole suite pass. Then runs the program's \
@@ -3885,6 +3922,150 @@ fn ast_fix_description(findings: &[String]) -> String {
          to confirm the feature now works end to end (e.g. add an item, then list it in a fresh process).",
         findings.join("\n")
     )
+}
+
+/// Target programming language for a swarm run, inferred from the spec (and, for amendments, the
+/// existing files). Keeps the swarm from being Python-specific: the architect/worker scaffolding is
+/// templated per language. Python is the no-cue default (the validated baseline + the weak fleet's
+/// strongest training); any other language is honored when the spec or existing files call for it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TargetLang {
+    Python,
+    TypeScript,
+    Rust,
+    Go,
+    Other,
+}
+
+/// Detect the target language. Existing files (an amendment) are the strongest signal; otherwise scan
+/// the spec for explicit language cues; default to Python when nothing indicates otherwise.
+fn detect_language(spec: &str, existing_files: &[String]) -> TargetLang {
+    if !existing_files.is_empty() {
+        let ext_of = |p: &str| {
+            p.rsplit('.')
+                .next()
+                .filter(|e| *e != p)
+                .unwrap_or("")
+                .to_lowercase()
+        };
+        let n = |e: &str| existing_files.iter().filter(|p| ext_of(p) == e).count();
+        let (py, ts, rs, go) = (n("py"), n("ts") + n("tsx") + n("js"), n("rs"), n("go"));
+        let top = [py, ts, rs, go].into_iter().max().unwrap_or(0);
+        if top > 0 {
+            if ts == top {
+                return TargetLang::TypeScript;
+            }
+            if rs == top {
+                return TargetLang::Rust;
+            }
+            if go == top {
+                return TargetLang::Go;
+            }
+            return TargetLang::Python;
+        }
+    }
+    let s = spec.to_lowercase();
+    if s.contains("typescript")
+        || s.contains("javascript")
+        || s.contains("node.js")
+        || s.contains("nodejs")
+        || s.contains(".ts")
+        || s.contains(".js")
+        || s.contains("vitest")
+        || s.contains(" jest")
+        || s.contains("npm ")
+    {
+        return TargetLang::TypeScript;
+    }
+    if s.contains("rust") || s.contains("cargo") || s.contains(".rs") {
+        return TargetLang::Rust;
+    }
+    if s.contains("golang") || s.contains(".go") || s.contains(" go ") {
+        return TargetLang::Go;
+    }
+    if s.contains("python") || s.contains("pytest") || s.contains(".py") {
+        return TargetLang::Python;
+    }
+    // A named-but-unprofiled language: still honor it (generic non-Python guidance), never force Python.
+    if s.contains("ruby")
+        || s.contains("java")
+        || s.contains("c#")
+        || s.contains("c++")
+        || s.contains("php")
+        || s.contains("swift")
+        || s.contains("kotlin")
+        || s.contains("scala")
+        || s.contains("elixir")
+        || s.contains("haskell")
+    {
+        return TargetLang::Other;
+    }
+    TargetLang::Python
+}
+
+impl TargetLang {
+    fn name(self) -> &'static str {
+        match self {
+            TargetLang::Python => "Python",
+            TargetLang::TypeScript => "TypeScript",
+            TargetLang::Rust => "Rust",
+            TargetLang::Go => "Go",
+            TargetLang::Other => "the target language",
+        }
+    }
+
+    /// A forceful directive prepended to the architect prompt. EMPTY for Python so the validated Python
+    /// prompt stays byte-identical; for every other language it names the target and tells the model the
+    /// Python-looking examples below are illustrative — translate them.
+    fn directive(self) -> String {
+        if self == TargetLang::Python {
+            return String::new();
+        }
+        format!(
+            "TARGET LANGUAGE: {n}. Build the ENTIRE program in {n} using that language's idiomatic conventions \
+             — its file extensions, module/import system, project layout, runnable entry point and standard \
+             test runner. Any Python-looking names or commands in the guidance below (e.g. `cli.py`, \
+             `python3 -m`, `pytest`, `.py`) are ILLUSTRATIVE ONLY — translate them to idiomatic {n}; do NOT \
+             emit Python. ",
+            n = self.name()
+        )
+    }
+
+    /// The runnable-entry-point mandate, language-specific. The Python text is the original verbatim.
+    fn entry_clause(self) -> &'static str {
+        match self {
+            TargetLang::Python => "If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
+            writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
+            AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
+            omit the entry point.",
+            TargetLang::TypeScript => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `src/index.ts` (or `src/cli.ts`) using a real argument parser (commander/yargs, or `process.argv`) wired into actual \
+            commands, PLUS a `package.json` with a `bin` and/or `scripts` entry so the CLI runs from the shell (e.g. \
+            `npx tsx src/index.ts ...`). The logic modules + tests ALONE are NOT a usable CLI; never omit the entry point.",
+            TargetLang::Rust => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `src/main.rs` with a real argument parser (clap, or std::env::args) wired into actual commands, PLUS the `Cargo.toml` \
+            `[[bin]]`/deps so `cargo run -- ...` runs it. The library modules + tests ALONE are NOT a usable CLI; never omit it.",
+            TargetLang::Go => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `main.go` (package main, with the `flag` package or os.Args) wired into actual commands so `go run . ...` runs it. The \
+            packages + tests ALONE are NOT a usable CLI; never omit the entry point.",
+            TargetLang::Other => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT in the \
+            target language — the idiomatic executable that wires the logic modules into actual shell commands. The logic modules + \
+            tests ALONE are NOT a usable program; never omit the entry point.",
+        }
+    }
+
+    /// The command the integrate-verify subtask runs to execute the test suite.
+    fn test_cmd(self) -> &'static str {
+        match self {
+            TargetLang::Python => "python3 -m pytest",
+            TargetLang::TypeScript => {
+                "the project's configured test runner (e.g. `npm test`, `npx vitest run`, or `npx jest`)"
+            }
+            TargetLang::Rust => "cargo test",
+            TargetLang::Go => "go test ./...",
+            TargetLang::Other => "the project's standard test runner for the target language",
+        }
+    }
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
