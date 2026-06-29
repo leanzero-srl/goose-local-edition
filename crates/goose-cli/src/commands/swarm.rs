@@ -2509,7 +2509,8 @@ impl GooseAgentDispatcher {
                     stubs for the listed files: every public function and class the module will expose, \
                     with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
                     `...` as the body. NO implementations, NO private helpers, NO prose, NO code fences. \
-                    Keep it tight."
+                    You have file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY \
+                    file — put the stubs in your reply TEXT only. Keep it tight."
                     .to_string();
                 let user = format!(
                     "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
@@ -4700,7 +4701,26 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 "freeze signature-only module interfaces across the fleet before EXECUTE",
             );
             let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let before: std::collections::HashSet<PathBuf> =
+                collect_py_files(&cwd).into_iter().collect();
             let bundle = dispatcher.generate_contracts(modules, wm, &opts.prompt).await;
+            // The stub-gen workers must emit TEXT, but a weak model sometimes writes a `...`-body stub
+            // file anyway. Remove any .py that appeared so EXECUTE starts from a clean tree — a leftover
+            // stub would otherwise risk a lazy worker shipping it as "done".
+            let stray: Vec<PathBuf> = collect_py_files(&cwd)
+                .into_iter()
+                .filter(|p| !before.contains(p))
+                .collect();
+            for p in &stray {
+                let _ = std::fs::remove_file(p);
+            }
+            if !stray.is_empty() {
+                eprintln!(
+                    "  contracts: removed {} stray stub file(s) the stub-gen wrote (interfaces kept in-prompt)",
+                    stray.len()
+                );
+            }
             if bundle.trim().is_empty() {
                 eprintln!("  contracts: no stubs produced — skipping injection");
             } else {
