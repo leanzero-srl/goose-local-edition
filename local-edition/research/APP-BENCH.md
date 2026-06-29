@@ -20,7 +20,7 @@ For every app:
 | id | tech | archetype | spec | time | FUNCTIONAL? | failure mode | notes |
 |----|------|-----------|------|------|-------------|--------------|-------|
 | APP1 | Python | greenfield CLI (moderate) | unit converter (length/weight/temp, --precision, list-units) | ~43.7min | **NO** | flaky hallucinated-completion (5/7 subtasks failed) + CLI spec-drift | files built + runs, but `convert 100 km mi` (the spec's own example) ERRORS — built bare-VALUE CLI, no `convert` subcommand; integrate-verify FAILED but didn't recover |
-| APP2 | TypeScript | greenfield CLI (moderate) | CSV column stats (mean/median/mode/stddev, --column, --json) | — | IN FLIGHT | — | run_in_background bkgnsb30f, CONTRACTS on |
+| APP2 | TypeScript | greenfield CLI (moderate) | CSV column stats (mean/median/mode/stddev, --column, --json) | 66.9min | **PARTIAL** | missing tsconfig.json -> broken build (no dist); very slow | LOGIC CORRECT (mean/median/mode/pop-stddev right, --json works, missing-col -> exit 1, 12/12 vitest pass, runs via tsx) BUT `npm run build` (tsc) emits nothing -> advertised `node dist/cli.js`/bin fails. 7/7 subtasks "done" = false-green on the build |
 
 ## Improvement log (empirical — build only what the failures justify, then re-test)
 (pending the first apps' data)
@@ -73,3 +73,28 @@ REPRIORITIZATION: APP1's core was NOT a stub, so the spec-example verification (
 HIGHER value than the stub/fake detector for THIS failure mode. Build order now: (1) idle-node fix [user top
 priority, design ready], (2) spec-example verification A+B [grounded by APP1], (3) stub/fake detector [still
 useful for the hallucinated/fake class]. Confirm A's value against APP2/3 before over-investing.
+
+## APP2 DEEP ANALYSIS (2026-06-30) — logic CORRECT, BUILD broken (missing tsconfig); slow
+7/7 subtasks "done", 0 failed, but FALSE-GREEN on the build. 66.9min (2.7x over the 15-25min target).
+FUNCTIONAL?: PARTIAL. WORKS: src/*.ts is real + correct — `npx tsx src/cli.ts -f f.csv --column x` prints
+mean 2.5 / median 2.5 / mode / pop-stddev 1.118 (all numerically correct for [1,2,3,4]); --json emits clean
+JSON; a missing column exits 1; 12/12 vitest pass. BROKEN: there is NO tsconfig.json, so `npm run build`
+(script = `tsc`) just prints tsc help and emits nothing -> no dist/ -> the advertised `node dist/cli.js`
+(package.json start + bin `tsstats`) FAILS with "Cannot find module dist/cli.js". So a user following the
+project's own build+run instructions hits a broken build, even though the logic is sound.
+ROOT CAUSE: the swarm produced package.json (with a `build: tsc` script + a dist-based bin) but never
+generated the tsconfig.json that `tsc` needs -> an INCOMPLETE BUILD CONFIG. The TS smoke/verify did not
+catch it (no TS build gate that runs `npm run build` + checks the entry exists).
+WHAT TO CHANGE — instructions + goose guidance:
+A. **GOOSE GUIDANCE (highest value, generalizes APP1+APP2): smoke + integrate-verify must BUILD the project
+   to its ADVERTISED entry and RUN it.** For TS: `npm ci/install` + `npm run build` (or tsc) + assert the
+   built entry (package.json bin/main/start target, e.g. dist/cli.js) EXISTS, then run it on a real input.
+   For Python: run the spec's example commands (APP1). This single gate catches BOTH APP1 (wrong CLI) and
+   APP2 (no dist) — both are "the advertised entry doesn't work" false-greens that --help-only smoke misses.
+B. **ARCHITECT/CONTRACT: a TS project MUST include tsconfig.json** (and any config its build script needs)
+   as an owned file — list it like package.json, so `tsc` has a config. Generalize: if package.json has a
+   `build` script or a dist-based bin/main, the matching build config + a verified build are REQUIRED.
+C. **TIME: TS on the 27B is SLOW** (66.9min; one test task alone 18.5min). Data point for the 15-25min goal
+   — the TS test phase is a long pole; a future improvement may need to cap/split heavy test tasks or speed
+   the build-verify. Note, don't build yet.
+This REINFORCES the spec-example/advertised-entry verification as THE top improvement (now grounded by 2 apps).
