@@ -26,3 +26,19 @@ For every app:
 
 ## Running tally
 apps attempted: 1 | functional: TBD | avg time-to-deliver: TBD
+
+## Finding (2026-06-29) — the "7s claim-done" = HALLUCINATED COMPLETION
+Read-the-logs on APP1 test-converter flakes: ~7s sessions, ZERO write/text_editor tool calls, message text
+claims "I produced the file". So the weak 27B sometimes HALLUCINATES completion — emits "done, wrote X" +
+calls final_output WITHOUT calling the write tool. The claimed-done guard catches it (file missing/empty) +
+the guided retry (92f393495) sometimes recovers, sometimes exhausts. (Worker sessions persist with 0 output
+tokens in sessions.db -> study the JOURNEY via the .swarm jsonl + activity digests, not raw worker reasoning.)
+TWO failure classes for "functional apps", both targets of the planned review upgrade:
+  (A) HALLUCINATED COMPLETION (claim done, no write) — partly handled (guard + guided retry); the deeper
+      prevention (force a write before final_output) is in crates/goose core = OUT OF SCOPE; mitigation only.
+  (B) FAKE/STUB/UNFINISHED impl (worker WRITES but the body is pass / ... / raise NotImplementedError / TODO /
+      a trivial hardcoded return) — NOT currently detected. THIS is the high-value new build: a model-free
+      stub/fake detector (extend the AST reviewer) + strengthen integrate-verify to RUN the primary command
+      and assert REAL output, so the adversarial review verifies FUNCTIONALITY (per the user's ask).
+PLAN: build the diverse app batch, confirm A vs B frequency empirically, then build the stub/fake detector +
+functional-verification upgrade, adversarially review, RE-TEST, report functional-app count + time-to-deliver.
