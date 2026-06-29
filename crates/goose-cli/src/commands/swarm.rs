@@ -1404,6 +1404,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_ast_review_reads_findings_and_degrades() {
+        let r = parse_ast_review(
+            r#"{"modules": 6, "findings": ["app.orphan is imported by no non-test module"]}"#,
+        );
+        assert!(r.ran);
+        assert_eq!(r.modules, 6);
+        assert_eq!(r.findings.len(), 1);
+        // a reviewer hiccup (non-JSON stderr/traceback) must degrade to ran=false, never a hard failure.
+        let bad = parse_ast_review("Traceback (most recent call last): SyntaxError");
+        assert!(!bad.ran);
+        assert!(bad.findings.is_empty());
+    }
+
+    #[test]
     fn smoke_fix_description_carries_findings_and_targets() {
         let d = smoke_fix_description(&[
             "pytest --collect-only errors: ImportError cannot import name bar from baz".to_string(),
@@ -3649,6 +3663,158 @@ impl PreReviewer for GooseAgentDispatcher {
     }
 }
 
+/// Embedded model-free AST wiring/drift reviewer (GOOSE_SWARM_REVIEW). Parses the produced Python tree
+/// and flags cross-module DRIFT (a from-import of a name the local module does not define) and
+/// BUILT-BUT-UNWIRED modules (a non-test logic module no non-test module imports — a duplicate-impl /
+/// dead-feature smell SMOKE cannot see because the app still runs via the duplicate). Validated: clean on
+/// a well-wired app, true-positive on a known-unwired tree, and it surfaced real dead/duplicate code in a
+/// "clean" example that a manual review missed.
+const AST_REVIEW_SCRIPT: &str = r##"
+import ast, json, os, sys
+
+root = sys.argv[1]
+SKIP = {".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"}
+
+mods = {}
+for dirpath, dirs, files in os.walk(root):
+    dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")]
+    for f in files:
+        if f.endswith(".py"):
+            full = os.path.join(dirpath, f)
+            rel = os.path.relpath(full, root)
+            mods[".".join(rel[:-3].split(os.sep))] = full
+
+
+def base(mod):
+    return mod.split(".")[-1]
+
+
+def is_test(mod):
+    b = base(mod)
+    return b.startswith("test_") or b.endswith("_test") or b == "conftest"
+
+
+def localmatch(name):
+    if not name:
+        return None
+    if name in mods:
+        return name
+    for m in mods:
+        if m.endswith("." + name) or base(m) == name:
+            return m
+    return None
+
+
+defined = {}
+imports_of = {}
+imported_by_nontest = set()
+
+for mod, path in mods.items():
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except Exception:
+        continue
+    dnames = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            dnames.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    dnames.add(t.id)
+    defined[mod] = dnames
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            lm = localmatch(node.module)
+            if lm:
+                for alias in node.names:
+                    imports_of.setdefault(mod, set()).add((lm, alias.name))
+                if not is_test(mod):
+                    imported_by_nontest.add(lm)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                lm = localmatch(alias.name)
+                if lm and not is_test(mod):
+                    imported_by_nontest.add(lm)
+
+findings = []
+for mod, imps in imports_of.items():
+    for (lm, name) in imps:
+        if name != "*" and lm in defined and name not in defined[lm]:
+            findings.append(
+                "%s imports '%s' from local module '%s' which does not define it (cross-module drift)"
+                % (mod, name, lm)
+            )
+for mod in mods:
+    if base(mod) in ("__init__", "__main__") or is_test(mod):
+        continue
+    if mod not in imported_by_nontest:
+        findings.append(
+            "module '%s' is imported by no non-test module — built-but-unwired (dead or unreachable from the app)"
+            % mod
+        )
+
+print(json.dumps({"modules": len(mods), "findings": sorted(set(findings))}))
+"##;
+
+/// Outcome of the AST review, serialized into the run jsonl `review` event.
+#[derive(Debug, Clone, Serialize)]
+struct AstReviewResult {
+    ran: bool,
+    modules: usize,
+    findings: Vec<String>,
+}
+
+/// Parse the AST reviewer's JSON stdout. Pure — unit-tested. Any parse failure degrades to `ran=false`
+/// (advisory: a reviewer hiccup never fails the run).
+fn parse_ast_review(stdout: &str) -> AstReviewResult {
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        modules: usize,
+        #[serde(default)]
+        findings: Vec<String>,
+    }
+    match serde_json::from_str::<Raw>(stdout.trim()) {
+        Ok(r) => AstReviewResult {
+            ran: true,
+            modules: r.modules,
+            findings: r.findings,
+        },
+        Err(_) => AstReviewResult {
+            ran: false,
+            modules: 0,
+            findings: vec![],
+        },
+    }
+}
+
+/// Run the model-free AST wiring/drift review over the produced tree. No-op (`ran=false`) when there is
+/// no Python or python3 is unavailable. Advisory — emits findings, never blocks the run.
+async fn run_ast_review(root: &Path) -> AstReviewResult {
+    if collect_py_files(root).is_empty() {
+        return AstReviewResult {
+            ran: false,
+            modules: 0,
+            findings: vec![],
+        };
+    }
+    match tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg(AST_REVIEW_SCRIPT)
+        .arg(root)
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => parse_ast_review(&String::from_utf8_lossy(&o.stdout)),
+        _ => AstReviewResult {
+            ran: false,
+            modules: 0,
+            findings: vec![],
+        },
+    }
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String]) -> String {
@@ -4656,6 +4822,37 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         after.findings.len()
                     );
                 }
+            }
+        }
+    }
+
+    // GOOSE_SWARM_REVIEW: model-free AST wiring/drift review of the produced tree (off by default).
+    // Advisory — emits a `review` event the eval reads; never blocks or fails the run.
+    let review_on = std::env::var("GOOSE_SWARM_REVIEW")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if review_on {
+        let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+        let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
+        sink.write_value(serde_json::json!({
+            "event": "review",
+            "result": review_value,
+        }));
+        if !review.ran {
+            eprintln!("AST review: skipped (no python in the produced tree)");
+        } else if review.findings.is_empty() {
+            eprintln!(
+                "{}",
+                style("AST review: clean (no drift / unwired modules)").green()
+            );
+        } else {
+            eprintln!(
+                "{} ({} finding(s) — model-free, advisory):",
+                style("AST review").yellow().bold(),
+                review.findings.len()
+            );
+            for f in &review.findings {
+                eprintln!("  - {f}");
             }
         }
     }
