@@ -314,3 +314,17 @@ ambiguities of CSV-dedup, all ending with '?'. The HARNESS answered as the human
 FIRST + --keep flag, --out default stdout never in-place) -> swarm logged "clarifications received —
 re-planning" -> re-planned. The inc2 GENERATOR is validated end-to-end: it asks GOOD questions, not just the
 fallback. The inquisitive feature (inc1 handshake + inc2 generator + inc3 scaling) is fully proven LIVE.
+
+## ASK-TEST3 EXECUTE — flaky-worker pattern PERSISTS despite the guided retry (honest finding, 2026-06-29)
+The inquisitive feature worked end-to-end (asked 3 real questions, harness answered, re-planned with the
+clarifications). BUT the EXECUTE of the re-planned DAG FAILED: 6 subtasks failed because shared-types flaked —
+"claimed done but never wrote" fired 4x; shared-types was dispatched 3x and EXHAUSTED, cascading to its
+dependents. Only dedup_csv/reader.py + writer.py were written; no CLI/dedup logic.
+TAKEAWAYS (honest): (1) the guided-retry fix (92f393495: ContentRetry hint naming the missing files) is a NET
+improvement over the old blind Transient re-roll, but it does NOT eliminate a model that stubbornly claims
+done without writing a particular file — shared-types failed anyway. (2) RECURRING PATTERN across 3 runs: the
+EARLY "shared/types" dependency subtask (parser-module / shared-models / shared-types) is the repeat offender
+that flakes — possibly the weak model treats a thin "types" spec as trivial/already-done. A deeper fix would
+need investigation (read the flaky worker session trace: is it writing to a wrong path, claiming done after a
+read, or looping?) — NOT built now; the guided retry is the bounded mitigation. The inquisitive feature
+itself is unaffected + fully validated.
