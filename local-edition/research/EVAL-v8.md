@@ -25,7 +25,8 @@ Binary builds this session: `80f9b2408` (GOOSE_SWARM_SMOKE, Track A #1).
 | A2-1 | A2 max-detail | double-entry ledger CLI (full spec) | SMOKE+autofix,SPLIT,PREREVIEW,DONE_GATE,CONTRACTS,REVIEW,research | A2-1-ledger | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (1st multi-module WIN — CONTRACTS decoupled) |
 | A2-2 | A2 max-detail | log-pipeline DSL (full spec) | full v8 stack (+ stub-cleanup + wire-fix) | A2-2-logdsl | DONE | smoke+review CLEAN | 8/8/8/8 | WIN (2nd multi-module WIN — logfunnel class tamed) |
 | A2-3 | A2 max-detail | state-machine workflow engine (full spec) | full v8 stack | A2-3-fsm | DONE | smoke+review CLEAN | 8/6/8/8 | WIN (A2 = 3/3 — DRAW class converted) |
-| A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | RUNNING | — | — | — |
+| A3-1 | A3 feature | chaos-fern: add --svg export (Playwright) | full v8 stack (amendment) | A3-1-chaosfern-svg | CUT (thrash) | n/a (cut) | 5/3/4/6 | PARTIAL: --svg WORKS but amendment RE-ARCHITECTED (abandoned dups, broken test); AST caught it; Playwright env-blocked |
+| A3-2 | A3 feature | byte-oracle: add --json output | full v8 stack (amendment, edit-in-place) | A3-2-byteoracle-json | RUNNING | — | — | — |
 | A3-2 | A3 feature | byte-oracle: add --json output | (tbd) | — | pending | — | — | — |
 | A3-3 | A3 feature | byte-oracle/chaos-fern: 2nd feature | (tbd) | — | pending | — | — | — |
 
@@ -170,10 +171,23 @@ SMOKE pass. 10 pytest pass.
   module max-detail apps WORK with the full stack — across THREE distinct draw classes (contract-drift
   cascade / no-dispatcher stall / state-graph). The thesis is strongly confirmed.
 
-### A3-1 — chaos-fern: add --svg export (AMENDMENT + Playwright)  (RUNNING)
-First A3 (feature-add). Full v8 stack on a COPY of the chaos-fern example (6 modules + 5 test files). Tests
-the AMENDMENT flow + the detailer-owned-files fix on an EXISTING project + REGRESSION (keep ASCII default).
-When DONE: AST reviewer; RUN python3 -m chaos_fern fern --svg --out /tmp/fern.svg; then PLAYWRIGHT-verify —
-ToolSearch select:mcp__playwright__browser_navigate,...take_screenshot,...snapshot; open file:///tmp/fern.svg
-and screenshot/assert it renders a fern shape; confirm the existing ASCII render + 85 prior tests still pass
-(regression).
+### A3-1 — chaos-fern: add --svg export (AMENDMENT) — PARTIAL / CUT (corr 5 / test 3 / qual 4 / spec 6)
+Full v8 stack on a COPY of chaos-fern. CUT after ~34min: cli-entry + tests-svg THRASHED (each judge-killed
+once -> attempt 2, then no file writes for 150s+ while running shell — over-reading the messy layout). NOT a
+v8-feature bug (no ContentRetry/infra retries; bounded by the intervention cap; the idle-timeout did not
+fire because the worker kept emitting shell events).
+- THE AMENDMENT RE-ARCHITECTED instead of editing in place: it created NEW chaos_fern/fern.py +
+  render_ascii.py + export_svg.py and rewired cli.py to import THEM, ABANDONING the original
+  renderer.py/ifs.py/chaos_game.py. The AST reviewer (scratchpad/ast_review2.py) CORRECTLY flagged all
+  three originals as built-but-unwired — a clean demo of the reviewer catching amendment-duplication.
+- THE FEATURE WORKS though: python3 -m chaos_fern fern --svg --out /tmp/fern.svg wrote a valid 5.7MB SVG
+  with 100000 point <circle> elements at the correct Barnsley-fern coordinates (scales with --iter); the
+  ASCII default still renders a fern (via the new render_ascii.py). BUT tests/test_cli.py FAILS pytest
+  collection (broken by the rewrite) and tests-svg never completed (cut).
+- PLAYWRIGHT: env-BLOCKED. The Playwright MCP browser LAUNCHES (about:blank renders) but cannot render real
+  content in this sandbox — file:// is blocked, the browser is network-isolated from a local HTTP server
+  (127.0.0.1 times out), and data: URLs with the SVG content time out at 30s (the backend then hangs). Six
+  attempts across 4 approaches. Verified the SVG instead by STRUCTURE (valid <svg 800x400> + N green
+  fern-point circles) + ALGORITHM (the coords are the chaos-game Barnsley fern) + the matching ASCII render.
+- Score 5/3/4/6 vs AB mean 5.8/5.6/7.6/5.6 — below. The AMENDMENT failure mode (re-architect vs edit-in-
+  place) is distinct from the greenfield A2 wins; A3-2 tests recurrence with an explicit edit-in-place spec.

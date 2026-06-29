@@ -201,3 +201,23 @@ Do NOT tune the judge; keep watching A2 to confirm.
     honestly): A2 is max-detail vs A1's minimal, so spec detail also contributes — the cleanest isolation is
     a contracts-OFF same-spec A2 run (good next experiment). But the failure MECHANISMS that sank A1-2/A1-3
     (drift, unwiring, stub-pollution) were each observed PREVENTED on A2.
+
+## New lesson (live, v8 A3-1 chaos-fern --svg, 2026-06-29) — AMENDMENT re-architect + Playwright env wall
+19. **AMENDMENT failure mode: the architect RE-ARCHITECTS an existing project instead of editing in place.**
+    Asked to ADD a --svg flag to chaos-fern, the architect created NEW parallel modules (fern.py/
+    render_ascii.py/export_svg.py) + rewired cli.py to them, ABANDONING the originals (renderer.py/ifs.py/
+    chaos_game.py = unwired duplicates), broke test_cli.py collection, and the run THRASHED (cli-entry/
+    tests-svg judge-killed + re-dispatched, no writes 150s, CUT at 34min). The --svg feature itself WORKED
+    (correct 100k-element Barnsley SVG; ASCII default preserved), but as a messy rewrite. The AST reviewer
+    CORRECTLY flagged the 3 abandoned originals as unwired — a real demo. Score 5/3/4/6. -> CANDIDATE FIXES
+    (confirm recurrence on A3-2 first): (a) ARCHITECT amendment rule — when the manifest already lists
+    project files, EDIT them at their EXACT paths; NEVER create a parallel renamed module (render_ascii.py
+    beside renderer.py); A3-2 launched WITH an explicit edit-in-place instruction to test if that alone
+    fixes it. (b) the WIRE-FIX mis-applies to amendments — it would WIRE the abandoned duplicates back in
+    (wrong; they should be DELETED) — so wire-fix should be cautious on amendment runs. NB all the v8 WINS
+    are GREENFIELD (A1-1, A2 x3); amendments are a separate, harder regime.
+    PLAYWRIGHT LIMITATION (env): the MCP browser LAUNCHES (about:blank renders) but cannot render real
+    content in this sandbox — file:// blocked, localhost HTTP network-isolated (127.0.0.1 times out), and
+    data: URLs with SVG content time out (30s) then hang the backend. 6 attempts, 4 approaches. For SVG/web
+    verification here, fall back to STRUCTURAL + ALGORITHMIC checks (valid SVG + the generating algorithm +
+    a matching ASCII render) rather than a pixel screenshot.
