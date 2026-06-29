@@ -106,6 +106,13 @@ already excludes judge kills from the transient-retry budget so it is bounded, b
 recurs on the A2 multi-module runs -> candidate tuning: raise the judge's min-age/over-reading patience for
 HARD-difficulty tasks (a hard task legitimately reads + reasons longer before producing), or gate the
 over_reading verdict on elapsed-vs-difficulty. Gather evidence across A2 before touching the judge.
+-> LIKELY RESOLVED (2nd data point, A1-3 task-scheduler): A1-3 had only 12 judge verdicts, ZERO
+over_reading kills, ZERO re-dispatches — a calm judge. The A1-2 over-kills were a SYMPTOM of the detailer
+filename drift: the worker wrote formula_parser.py not the owned parser.py, so at the owned path the judge
+saw "no file produced" and fired over_reading/"produced no file yet" — i.e. the over-kill was DOWNSTREAM of
+the drift bug (lesson 13), not an independent judge defect. With no drift (A1-3 wrote all 8 owned files
+correctly) the judge stayed quiet. So the detailer fix (7e81b3b6a) probably also fixes this over-kill class.
+Do NOT tune the judge; keep watching A2 to confirm.
 
 ## New lesson (live, v8 A1-2 spreadsheet FAIL, 2026-06-29)
 13. **A HARD LYNCHPIN task that exhausts its attempts CASCADES the whole run.** A1-2's formula-parser —
