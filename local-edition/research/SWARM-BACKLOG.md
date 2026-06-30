@@ -235,3 +235,12 @@ instead. Test over_read_exempts_no_owned_task. VERIFY on UNIQ6+ (new binary): in
 completion, run-status should stop false-failing working apps. REMAINING cause (separate): UNIQ2/ABskeloff
 integrate-verify failed with 0 attempts = BLOCKED by the failed tests subtask -> a failed test/dep should not
 fail the run if the app RUNS (smoke passed). Pairs with tests-subtask-produces-nothing.
+
+### [test-suite cost — campaign data] UNIQ5 test-suite = 23.5min (1408s), the single biggest task
+The test-suite subtask is a major time sink on complex apps: UNIQ5 test-suite took 1408s (23.5min) — more than
+any module. Combined with tests-subtask-produces-NOTHING (UNIQ4 + AB run2 shipped zero tests despite the cost),
+the test-suite phase has QUESTIONABLE payoff: either very slow (UNIQ5) or empty (UNIQ4/run2). CAMPAIGN QUESTION
+(quality+time, per the user method): does the per-app test-suite earn its 20+min on a slow fleet? Options to A/B
+later: scope the test-suite smaller (a few golden-value tests not exhaustive coverage), OR make it a knob, OR
+fix the empty-test failure first. Do NOT cut blindly — tests CAN catch bugs (but UNIQ4 had a budget bug AND
+tests failed, so they did not help there). Pairs with the integrate-verify tail cost.
