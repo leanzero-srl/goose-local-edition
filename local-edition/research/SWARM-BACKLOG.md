@@ -120,3 +120,10 @@ ALL 3 nodes GENERATING, exactly 1 task each (loader->gabee, node-queries-and-cen
 cli-entry-point->workhorse). NO node +QUEUED, NO node IDLE. So the execute-phase 1-per-node fix HOLDS (the
 gabee +1-QUEUED-while-workhorse-idle bug is gone). Monitoring discipline: ALWAYS check lms ps PER-NODE each
 cycle (jsonl alone hid the original bug). Remaining avoidable-idle fix (best_of_n=fleet) verifies on UNIQ3.
+
+### [DONE] unwired-cli at scale -> explicit ENTRY-WIRING instruction (52715d760, MED-HIGH, grounded)
+UNIQ1 cli.py registered ZERO commands (unusable). UNIQ2 PROVED the 27B wires correctly when told (my ASK
+answer "every command a registered subcommand" -> all 8 subcommands wired). Fix: the integrator worker prompt
+now explicitly states ENTRY WIRING is the #1 multi-module integration failure (register every advertised
+command, --help must list each). Prompt-only. VERIFY on UNIQ3+ (a NON-asking complex app should now wire its
+CLI). Pairs with the still-open DB-schema-in-CONTRACTS (the other integration failure: the fixtures drift).
