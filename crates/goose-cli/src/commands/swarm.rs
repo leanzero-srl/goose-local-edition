@@ -5112,10 +5112,51 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 } else {
                     String::new()
                 };
+                // GOOSE_SWARM_SKELETON_FIRST (direction A — atomic writes): a multi-command ENTRY/wiring file
+                // makes the worker front-load ~5k tokens planning the whole file then dump it in one write,
+                // which trips the deterministic over_read kill (gated on !any_owned_written) and surfaces a
+                // bad import only after a full rewrite. When ON, instruct a SKELETON-FIRST build for the entry
+                // file: write the compiling structure (imports + every command registered with a placeholder
+                // body) FIRST, confirm it imports, THEN fill each body. This OVERRIDES the one-write rule for
+                // the entry file ONLY (resolved locally so non-entry workers see the unchanged rule). Default
+                // OFF -> byte-identical default path; A/B it on the slow fleet. The kill-on-mid-fill hazard
+                // (a skeleton with placeholder bodies accepted as done) is backstopped by integrate-verify +
+                // the smoke gate, which run the entry end-to-end; the note also forbids finishing on a stub.
+                let skeleton_first = std::env::var("GOOSE_SWARM_SKELETON_FIRST")
+                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                    .unwrap_or(false);
+                let is_entry_file = |f: &str| {
+                    f.ends_with("cli.py")
+                        || f.ends_with("__main__.py")
+                        || f.ends_with("main.rs")
+                        || f.ends_with("index.ts")
+                        || f.ends_with("cli.ts")
+                        || f.ends_with("main.go")
+                };
+                let skeleton_note = if skeleton_first
+                    && req.owned_files.iter().any(|f| is_entry_file(f))
+                {
+                    format!(
+                            "\nSKELETON-FIRST (OVERRIDES the 'write the whole file in ONE write' rule below, \
+                             for your ENTRY/wiring file ONLY): your entry file wires many commands, so do NOT \
+                             plan the entire file then dump it in one write — that front-loads thinking, burns \
+                             turns, and hides a bad import until the very end. Instead: (1) your FIRST `write` \
+                             emits the COMPILING SKELETON — every import plus every command/subcommand the spec \
+                             advertises REGISTERED, each with a placeholder body (`pass` / `todo!()` / \
+                             `throw new Error('todo')`); (2) run `{check}` ONCE and confirm it imports and \
+                             lists EVERY command; (3) THEN fill each handler body with a focused `edit`. You \
+                             MUST finish with EVERY body fully implemented — a skeleton with placeholder bodies \
+                             left in is NOT done and will fail verification. Write any NON-entry owned file \
+                             complete in one write as usual.",
+                            check = lang.entry_run_example()
+                        )
+                } else {
+                    String::new()
+                };
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}\n\
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
                      the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
