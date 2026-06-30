@@ -54,6 +54,10 @@ pub struct DispatchRequest {
     /// A corrective hint from the idle-model judge when this is a re-dispatch after the judge killed a
     /// prior attempt (e.g. "you were looping/over-reading — WRITE now"). `None` on a normal attempt.
     pub prior_hint: Option<String>,
+    /// True when this is a SPECULATIVE twin of an in-flight chokepoint task, raced on an idle device
+    /// (GOOSE_SWARM_SPECULATE). The dispatcher must run it in an ISOLATED shadow workspace so it never
+    /// writes the real owned_files; the winner's output is promoted back. `false` for every normal task.
+    pub speculative: bool,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
@@ -86,4 +90,9 @@ impl std::error::Error for DispatchError {}
 pub trait TaskDispatcher: Send + Sync {
     /// Run one task on its assigned device. Returns the task's output plus observability on success.
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError>;
+
+    /// Promote a winning SPECULATIVE twin: copy its shadow-workspace output for `task_id` into the real
+    /// project tree. Called by the scheduler when a speculative twin finishes first. Default no-op so the
+    /// mock and the speculation-OFF path need no change; the real dispatcher overrides it in Phase 2.
+    async fn promote_speculative(&self, _task_id: &str) {}
 }
