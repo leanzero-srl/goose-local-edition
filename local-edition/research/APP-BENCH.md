@@ -566,3 +566,22 @@ confidence in run-status (the whole point is trusting the result). RESEARCH: rea
 session trace (jsonl session_id -> sessions.db messages) — WHY does it fail? a flaky end-to-end check? a
 build/timeout? the bin-name invocation? Does its FAIL block the run report from saying done even when the app
 runs? Fix so a genuinely-working app is reported DONE (and a real failure still fails). HIGH-VALUE for trust.
+
+## UNIQ4 — SQLite budget tracker: PARTIAL (functional+wired, but a budget-status bug + no tests), 709 LOC, SKELETON_FIRST=1
+Phases: total 85.0min | research 2.0min | planning(start->plan) 27.0min | execute 58.0min (planning ~35min = the WASTE; 1:22 total — LONG).
+1. FUNCTIONAL? MOSTLY. Runs, CLI WIRED (--help lists all 7: init/account/category/tx/transfer/budget/report —
+   entry-wiring works), report balances CORRECT (checking 950 = 1000 income - 50 expense), validation works
+   (unknown account -> exit 1). BUG: budget status sums RAW signed amounts as spent (salary income shows
+   spent 1000; food expense spent -50 remaining 250) instead of expense magnitudes (food should be spent 50
+   remaining 150) — a sign/semantics error in commands_budget_report.py.
+2. SKELETON-FIRST (direction A) quality: NO STUB LEFT (grep found zero pass/todo/NotImplementedError) = the
+   skeleton-first hazard did NOT bite; cli.py fully implemented + wired. over_read 1 (vs UNIQ3 5, CONFOUNDED).
+3. tests subtask FAILED (no test files produced) — a real miss.
+4. SMOKE GATE PAID OFF: caught the flat-layout (root __main__.py) unrunnable-via- + auto-fixed (added
+   __init__.py + relative import). EVIDENCE the gate earns its time.
+5. integrate-verify FAILED — and UNIQ4 ACTUALLY HAS a bug (budget status) -> this may be a TRUE negative, NOT a
+   false one. So integrate-verify is not purely broken: it false-negatived UNIQ2/UNIQ3 (working) but may have
+   correctly failed UNIQ4 (buggy). The fix must separate true from false — read the traces of ALL THREE.
+6. Schema mostly consistent (account/category/amount/date dominant; minor 'acct' abbrev). DB-schema-freeze held.
+VERDICT: a PARTIAL, not a clean win (UNIQ2/UNIQ3 were cleaner). Skeleton-first did NOT hurt quality (no stub).
+The budget bug is a worker logic error integrate-verify should ideally have repaired (it flagged, did not fix).
