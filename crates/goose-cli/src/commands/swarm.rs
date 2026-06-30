@@ -1462,6 +1462,29 @@ mod tests {
         );
         // A named-but-unprofiled language is honored (generic), never forced to Python.
         assert_eq!(detect_language("a Ruby CLI gem", &[]), TargetLang::Other);
+        // APP8 regression: an explicit LANG=Python wins over ".json" (which contains ".js") — previously
+        // mis-detected as TypeScript and the JSON validator was built in the wrong language.
+        assert_eq!(
+            detect_language(
+                "LANG=Python — a CLI JSON-schema validator: validate SCHEMA.json DATA.json",
+                &[]
+            ),
+            TargetLang::Python
+        );
+        // ".json" with no explicit language is NOT TypeScript (word-boundary ext match) -> default Python.
+        assert_eq!(
+            detect_language("a CLI that reads config.json and prints a report", &[]),
+            TargetLang::Python
+        );
+        // a real .js file mention IS TypeScript; node.js name IS TypeScript.
+        assert_eq!(
+            detect_language("a CLI whose entry is bin/cli.js", &[]),
+            TargetLang::TypeScript
+        );
+        assert_eq!(
+            detect_language("a node.js CLI that validates data.json", &[]),
+            TargetLang::TypeScript
+        );
         // Amendment: the existing files' extensions are the strongest signal, overriding a bare spec.
         assert_eq!(
             detect_language("add a --json flag", &["index.ts".into(), "util.ts".into()]),
@@ -4559,8 +4582,19 @@ enum TargetLang {
     Other,
 }
 
-/// Detect the target language. Existing files (an amendment) are the strongest signal; otherwise scan
-/// the spec for explicit language cues; default to Python when nothing indicates otherwise.
+/// True if `s` mentions a `.<ext>` file at a word boundary (the char after the ext is not alphanumeric), so
+/// ".js" matches "cli.js" but NOT "schema.json", and ".ts" matches "a.ts" but not "a.tsx". `s` is ASCII-lower.
+fn mentions_ext(s: &str, ext: &str) -> bool {
+    let needle = format!(".{ext}");
+    let bytes = s.as_bytes();
+    s.match_indices(&needle).any(|(i, _)| {
+        let after = i + needle.len();
+        after >= bytes.len() || !bytes[after].is_ascii_alphanumeric()
+    })
+}
+
+/// Detect the target language. Existing files (an amendment) are the strongest signal; otherwise an EXPLICIT
+/// language name in the spec wins, then weaker word-boundary file-extension cues; default Python otherwise.
 fn detect_language(spec: &str, existing_files: &[String]) -> TargetLang {
     if !existing_files.is_empty() {
         let ext_of = |p: &str| {
@@ -4587,25 +4621,43 @@ fn detect_language(spec: &str, existing_files: &[String]) -> TargetLang {
         }
     }
     let s = spec.to_lowercase();
+    // EXPLICIT language declarations win over incidental file-extension mentions: a Python app whose spec
+    // says "validate SCHEMA.json" must NOT be read as TypeScript just because ".json" contains ".js" (the
+    // exact APP8 failure — a LANG=Python JSON validator was built in TypeScript).
+    if s.contains("python") || s.contains("pytest") {
+        return TargetLang::Python;
+    }
     if s.contains("typescript")
         || s.contains("javascript")
         || s.contains("node.js")
         || s.contains("nodejs")
-        || s.contains(".ts")
-        || s.contains(".js")
+    {
+        return TargetLang::TypeScript;
+    }
+    if s.contains("rust") || s.contains("cargo") {
+        return TargetLang::Rust;
+    }
+    if s.contains("golang") {
+        return TargetLang::Go;
+    }
+    // Weaker file-extension / tool cues — matched at a word BOUNDARY so ".js" does not match ".json" and
+    // ".ts" does not match ".tsx".
+    if mentions_ext(&s, "ts")
+        || mentions_ext(&s, "tsx")
+        || mentions_ext(&s, "js")
         || s.contains("vitest")
         || s.contains(" jest")
         || s.contains("npm ")
     {
         return TargetLang::TypeScript;
     }
-    if s.contains("rust") || s.contains("cargo") || s.contains(".rs") {
+    if mentions_ext(&s, "rs") {
         return TargetLang::Rust;
     }
-    if s.contains("golang") || s.contains(".go") || s.contains(" go ") {
+    if mentions_ext(&s, "go") || s.contains(" go ") {
         return TargetLang::Go;
     }
-    if s.contains("python") || s.contains("pytest") || s.contains(".py") {
+    if mentions_ext(&s, "py") {
         return TargetLang::Python;
     }
     // A named-but-unprofiled language: still honor it (generic non-Python guidance), never force Python.
