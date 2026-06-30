@@ -602,3 +602,23 @@ The most COMPLEX app yet (SQLite + dependency DAG + topo sort + cycle detect + 8
 IMPROVEMENT vs UNIQ4: higher complexity (1115 vs 709 LOC, a real DAG/topo engine that is CORRECT) at the same
 PARTIAL grade (one logic bug each). Wiring + schema-freeze + skeleton-first all held. The two open gaps are
 run-status trust (integrate-verify, FIXED -> UNIQ6 validates) and the secondary-business-rule correctness.
+
+## UNIQ6 — forward-chaining rules engine: FAIL (genuinely broken), 813 LOC, 52.7min — but the JUDGE-KILL FIX CONFIRMED
+HONEST + nuanced. Judged by RUNNING.
+1. FUNCTIONAL? NO. CLI WIRED (all 7: init/fact/rule/infer/query/explain/reset). infer LOGIC correct (derives c
+   from a,b then d from c — forward-chaining works). BUT the app is BROKEN: infer does NOT PERSIST the derived
+   facts -> query d returns no/exit1 (should be yes), fact list shows only base facts (c,d missing), explain d
+   CRASHES (traceback). The core feature (derive + query/explain) does not work end-to-end. A TRUE failure.
+2. JUDGE-KILL FIX (6e1547b2d) CONFIRMED: integrate-verify attempt_history = [] (0 attempts, NOT judge_killed
+   over_reading) vs UNIQ5 [judge_killed,judge_killed,judge_failed]. The over-read exemption HELD. The fix works.
+3. BUT run-status FAILED [integrate-verify, tests] is CORRECT here (UNIQ6 IS broken) — so UNIQ6 is a TRUE
+   negative, NOT the false-negative demo I wanted. Need a WORKING complex app on the fixed binary to SHOW
+   run-status honesty. tests FAILED genuinely (judge_killed over_reading+looping x3 — tests OWNS files so the
+   over-read gate CORRECTLY applies; my exemption is scoped to no-owned tasks only = precise). tests failing
+   then BLOCKED integrate-verify (0 attempts = the dependency-blocked false-negative cause, CONFIRMED real).
+4. FASTER: no-ASK -> planning 9.4min (vs UNIQ5 29min with ASK+re-plan), total 52.7min (vs UNIQ5 114). The
+   re-plan-after-ASK waste is the difference. skeleton-first default-on, no stubs.
+IMPROVEMENT vs UNIQ5: swarm-side fixes all held (wiring, schema, skeleton-first, judge-kill); FASTER (no ASK).
+REGRESSION on app quality (broken persistence) = the local 27B variance, not a swarm regression. The infer-
+persist bug is EXACTLY what integrate-verify should catch — but tests blocked it -> STRONG motivation for the
+dependency-blocked fix (let integrate-verify run even if tests fails) + the tests-subtask reliability.
