@@ -543,3 +543,26 @@ multi-module app; the levers are (a) explicit entry wiring (DONE), (b) shared-co
 drift, still open), (c) integrate-verify false-negatives (it failed a working app — worth a look).
 BATCH: complex apps — UNIQ1 FAILED (unwired), UNIQ2 WIN (wired+correct, 1179 LOC). The wall is integration,
 and it is now being knocked down.
+
+## UNIQ3 — data-pipeline ETL: WIN (FUNCTIONAL), 1578 LOC, ~85min — entry-wiring VALIDATED w/o my help
+2nd consecutive complex-app WIN (judged by RUNNING; run-status FAILED but lies — integrate-verify false-failed).
+1. FUNCTIONAL? YES. 1578 LOC, etl_pipeline/{core,io,schema,stages,errors,cli,__main__} + tests. CLI FULLY WIRED:
+   --help lists all 5 commands (run/head/schema/stats/join) — and UNIQ3 hit confidence 85 so it NEVER ASKED:
+   the ENTRY-WIRING FIX (52715d760) did this with NO wiring answer from me = VALIDATED on a fresh non-asking app.
+2. CORRECT (golden): filter age gt 30 + select -> right 3 rows; groupby dept agg avg:salary -> eng 105.0 /
+   sales 95.0 (exact); stats salary -> count4/min80/max120/mean100; bad stage -> exit 1. 87 pytest pass.
+3. Prompt complex enough? YES — 7 stage types + 5 commands + SQLite-free tabular engine, 1578 LOC.
+4. Answered questions? N/A — conf 85, NO ASK (tested entry-wiring without my help, the point).
+5. PHASES: 9 done, integrate-verify FALSE-FAILED. 1-per-node + 3-draft VERIFIED. commands-cli over-read (judge
+   caught it) but resolved CLEAN (clean cli.py, all 5 wired).
+6. REVIEW false-negative AGAIN: app WORKS but integrate-verify marked FAILED (3rd: UNIQ2, APP10, UNIQ3).
+7. ~85min (the integrate-verify tail is SLOW — note). Over the 15-25 target but FUNCTIONAL+CORRECT.
+HEADLINE: 2 consecutive complex-app WINS (UNIQ2 graph 1179 LOC, UNIQ3 ETL 1578 LOC). The ~1000-LOC integration
+wall is BROKEN — both fixes (entry-wiring + schema-freeze) working; entry-wiring now VALIDATED without my help.
+
+### [IMPROVEMENT ITEM — integrate-verify FALSE-NEGATIVE, now 3rd occurrence, MED, the next backlog target]
+integrate-verify marks a WORKING app FAILED (UNIQ2, APP10, UNIQ3). A working app reported FAILED costs the user
+confidence in run-status (the whole point is trusting the result). RESEARCH: read the integrate-verify task
+session trace (jsonl session_id -> sessions.db messages) — WHY does it fail? a flaky end-to-end check? a
+build/timeout? the bin-name invocation? Does its FAIL block the run report from saying done even when the app
+runs? Fix so a genuinely-working app is reported DONE (and a real failure still fails). HIGH-VALUE for trust.
