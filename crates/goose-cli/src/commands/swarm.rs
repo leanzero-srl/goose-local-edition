@@ -6017,6 +6017,10 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         },
     };
     let mut research_findings = String::new();
+    // Per-phase wall-clock so every run SHOWS where time goes (research / planning / execute) — performance
+    // must be MEASURED, not asserted: a phase that does not pay for its minutes is waste to find and cut.
+    let t_start = std::time::Instant::now();
+    let mut t_research = t_start;
     if do_research {
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
             ["context7", "web-search"]
@@ -6090,6 +6094,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             serde_json::json!({"event": "research_completed", "findings": findings.len()}),
         );
     }
+    t_research = std::time::Instant::now();
 
     // GOOSE_SWARM_ASK_FLOOR (1-100): when set, the swarm asks the USER clarifying questions if the plan-
     // confidence meter is below the floor, instead of committing to a low-confidence decomposition — local
@@ -6410,6 +6415,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     } else {
         std::collections::HashSet::new()
     };
+    // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
+    // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
+    let t_plan = std::time::Instant::now();
     let report = scheduler
         .run(
             dag,
@@ -6417,6 +6425,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             opts.prompt.clone(),
         )
         .await?;
+    let t_exec = std::time::Instant::now();
 
     // GOOSE_SWARM_SMOKE: deterministic end-to-end oracle on the produced tree (off by default —
     // GOOSE_SWARM_SMOKE=1). Emits a `smoke` event the eval reads; does not alter the run's exit code.
@@ -6583,9 +6592,28 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     }
 
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
+    // Phase wall-clock (minutes). research = scouts; planning = skeleton draft + verbalized + ASK/re-plan +
+    // detailing (INCLUDES any human ASK-answer wait); execute = workers + judge + integrate-verify + review.
+    let research_m = t_research.duration_since(t_start).as_secs_f64() / 60.0;
+    let planning_m = t_plan.duration_since(t_research).as_secs_f64() / 60.0;
+    let execute_m = t_exec.duration_since(t_plan).as_secs_f64() / 60.0;
+    let total_m = t_exec.duration_since(t_start).as_secs_f64() / 60.0;
+    let pct = |x: f64| {
+        if total_m > 0.0 {
+            (100.0 * x / total_m).round() as u32
+        } else {
+            0
+        }
+    };
     sink.write_value(serde_json::json!({
         "event": "run_finished",
         "report": report_value,
+        "phases": {
+            "research_min": (research_m * 10.0).round() / 10.0,
+            "planning_min": (planning_m * 10.0).round() / 10.0,
+            "execute_min": (execute_m * 10.0).round() / 10.0,
+            "total_min": (total_m * 10.0).round() / 10.0,
+        },
     }));
 
     if json {
@@ -6595,6 +6623,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         );
     } else {
         println!("\n{}", style("=== swarm report ===").bold());
+        println!(
+            "phases: research {:.1}m ({}%) | planning {:.1}m ({}%) | execute {:.1}m ({}%) | total {:.1}m",
+            research_m,
+            pct(research_m),
+            planning_m,
+            pct(planning_m),
+            execute_m,
+            pct(execute_m),
+            total_m
+        );
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
         let core_failed: Vec<&String> = report
             .failed
