@@ -1547,13 +1547,64 @@ mod tests {
 
     #[test]
     fn smoke_fix_description_carries_findings_and_targets() {
-        let d = smoke_fix_description(&[
-            "pytest --collect-only errors: ImportError cannot import name bar from baz".to_string(),
-        ]);
+        let d = smoke_fix_description(
+            &[
+                "pytest --collect-only errors: ImportError cannot import name bar from baz"
+                    .to_string(),
+            ],
+            TargetLang::Python,
+        );
         assert!(d.contains("ImportError cannot import name bar from baz"));
         assert!(d.contains("--collect-only"));
         assert!(d.contains("--help"));
         assert!(d.contains("SMALLEST"));
+        // Language-aware: the TS variant names the npm build + node entry, not pytest.
+        let ts = smoke_fix_description(
+            &["`npm run build` failed".to_string()],
+            TargetLang::TypeScript,
+        );
+        assert!(ts.contains("npm run build"));
+        assert!(ts.contains("node "));
+        assert!(!ts.contains("pytest"));
+    }
+
+    #[test]
+    fn ts_entry_detection_and_crash_signature() {
+        // bin as an object -> first value, ./ stripped.
+        let pkg: serde_json::Value =
+            serde_json::from_str(r#"{"bin":{"calc":"./dist/bin/calc.js"}}"#).unwrap();
+        assert_eq!(
+            ts_entry_from_package_json(&pkg),
+            Some("dist/bin/calc.js".to_string())
+        );
+        // main fallback.
+        let pkg2: serde_json::Value = serde_json::from_str(r#"{"main":"dist/index.js"}"#).unwrap();
+        assert_eq!(
+            ts_entry_from_package_json(&pkg2),
+            Some("dist/index.js".to_string())
+        );
+        // scripts.start -> the .js token.
+        let pkg3: serde_json::Value =
+            serde_json::from_str(r#"{"scripts":{"start":"node dist/bin/calc.js"}}"#).unwrap();
+        assert_eq!(
+            ts_entry_from_package_json(&pkg3),
+            Some("dist/bin/calc.js".to_string())
+        );
+        // nothing declared.
+        let pkg4: serde_json::Value = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
+        assert_eq!(ts_entry_from_package_json(&pkg4), None);
+        // crash signature: a thrown Error WITH a stack frame is a crash; a clean usage line is not.
+        assert!(looks_like_runtime_crash(
+            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)"
+        ));
+        assert!(!looks_like_runtime_crash(
+            "Usage: calc <expr>\n  --help  show help"
+        ));
+        assert!(!looks_like_runtime_crash("error: unknown flag --help"));
+        assert!(looks_like_rust_panic(
+            "thread 'main' panicked at src/main.rs:10:5:\nindex out of bounds"
+        ));
+        assert!(!looks_like_rust_panic("Usage: mycli [OPTIONS]"));
     }
 
     #[test]
@@ -3315,25 +3366,30 @@ impl SmokeResult {
     fn passed(&self) -> bool {
         self.ran && self.findings.is_empty()
     }
-}
-
-/// Run the deterministic end-to-end smoke oracles on the produced tree at `root`. No-ops
-/// (`ran=false`) when there is no Python. A missing `python3`/`pytest` is inconclusive, never a
-/// failure; the findings are cross-module import errors and an entry point that fails or is absent.
-async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
-    // The smoke oracles (pytest collect-only + `python3 -m <pkg>`) are Python-specific. On a non-Python
-    // target skip cleanly (ran=false) rather than run pytest against a TS/Rust/Go tree — which on a mixed
-    // tree (a stray .py) would push a bogus "no python entry point" finding and trigger a corrective
-    // re-dispatch telling the model to inject Python into a non-Python app. Python path below is unchanged.
-    if lang != TargetLang::Python {
-        return SmokeResult {
+    /// The gate did not apply to this tree (no recognized build) — never a failure.
+    fn skipped() -> Self {
+        SmokeResult {
             ran: false,
             py_files: 0,
             collect: None,
             entry_package: None,
             entry_ok: None,
             findings: vec![],
-        };
+        }
+    }
+}
+
+/// Run the deterministic end-to-end smoke oracles on the produced tree at `root`. No-ops
+/// (`ran=false`) when there is no Python. A missing `python3`/`pytest` is inconclusive, never a
+/// failure; the findings are cross-module import errors and an entry point that fails or is absent.
+async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
+    // Dispatch by language: TS/Rust get their own build+run oracles (below). Go/Other have no profile yet
+    // -> skip cleanly. Python falls through to the unchanged pytest/`-m` logic below — byte-identical.
+    match lang {
+        TargetLang::TypeScript => return smoke_typescript(root).await,
+        TargetLang::Rust => return smoke_rust(root).await,
+        TargetLang::Python => {}
+        TargetLang::Go | TargetLang::Other => return SmokeResult::skipped(),
     }
     let py = collect_py_files(root);
     if py.is_empty() {
@@ -3428,6 +3484,230 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         py_files: py.len(),
         collect,
         entry_package,
+        entry_ok,
+        findings,
+    }
+}
+
+/// A Node uncaught-exception signature: a thrown Error WITH a stack frame. A clean usage message, or a CLI
+/// that cleanly rejects `--help` with a nonzero exit but no stack, has no `\n    at ` frame -> NOT flagged,
+/// so the gate catches a real runtime CRASH (e.g. APP6's "Invalid array length") not a benign exit code.
+fn looks_like_runtime_crash(output: &str) -> bool {
+    (output.contains("Error:") || output.contains("Error [")) && output.contains("\n    at ")
+}
+
+/// A Rust panic signature in `cargo run` output (vs a clean nonzero exit / printed usage).
+fn looks_like_rust_panic(output: &str) -> bool {
+    output.contains("panicked at") || output.contains("thread 'main' panicked")
+}
+
+/// The runnable entry path from a parsed package.json: `bin` (string or first object value), else `main`,
+/// else the first `.js`/`.mjs`/`.cjs` token in `scripts.start`. Leading `./` stripped. None if none declared.
+fn ts_entry_from_package_json(pkg: &serde_json::Value) -> Option<String> {
+    let norm = |s: &str| s.trim_start_matches("./").to_string();
+    if let Some(bin) = pkg.get("bin") {
+        if let Some(s) = bin.as_str() {
+            return Some(norm(s));
+        }
+        if let Some(v) = bin.as_object().and_then(|o| o.values().next()?.as_str()) {
+            return Some(norm(v));
+        }
+    }
+    if let Some(m) = pkg.get("main").and_then(|v| v.as_str()) {
+        return Some(norm(m));
+    }
+    if let Some(start) = pkg
+        .get("scripts")
+        .and_then(|s| s.get("start"))
+        .and_then(|v| v.as_str())
+    {
+        for tok in start.split_whitespace() {
+            if tok.ends_with(".js") || tok.ends_with(".mjs") || tok.ends_with(".cjs") {
+                return Some(norm(tok));
+            }
+        }
+    }
+    None
+}
+
+/// Deterministic TypeScript/Node smoke oracle: `npm run build` must succeed, the package.json entry artifact
+/// must EXIST after the build (catches built-but-unwired), and running it (`node <entry> --help`) must not
+/// CRASH at runtime (catches APP6-class "compiles but throws on every input"). A missing `npm`/`node`, or no
+/// package.json, is inconclusive (ran=false), never a failure.
+async fn smoke_typescript(root: &Path) -> SmokeResult {
+    let pkg_path = root.join("package.json");
+    let pkg: serde_json::Value = match std::fs::read_to_string(&pkg_path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(_) => return SmokeResult::skipped(),
+        },
+        Err(_) => return SmokeResult::skipped(),
+    };
+    let mut findings: Vec<String> = Vec::new();
+    // 1) build (only if a build script is declared — many tiny TS CLIs run via tsx with no build step).
+    let has_build = pkg
+        .get("scripts")
+        .and_then(|s| s.get("build"))
+        .and_then(|v| v.as_str())
+        .is_some();
+    // A missing node_modules would fail `npm run build`/the entry run SPURIOUSLY (a false finding). If deps
+    // are declared but not installed, best-effort `npm install` first; if that fails (offline), skip the whole
+    // TS gate as inconclusive rather than report a phantom build failure.
+    let needs_deps = pkg.get("dependencies").is_some() || pkg.get("devDependencies").is_some();
+    if needs_deps && !root.join("node_modules").exists() {
+        match tokio::process::Command::new("npm")
+            .args(["install", "--no-audit", "--no-fund"])
+            .current_dir(root)
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {}
+            _ => return SmokeResult::skipped(), // cannot install deps -> inconclusive, never a failure
+        }
+    }
+    if has_build {
+        match tokio::process::Command::new("npm")
+            .args(["run", "build"])
+            .current_dir(root)
+            .output()
+            .await
+        {
+            Ok(out) if !out.status.success() => {
+                let combined = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                findings.push(format!(
+                    "`npm run build` failed (exit {}):\n{}",
+                    out.status.code().unwrap_or(-1),
+                    tail_lines(&combined, 40)
+                ));
+            }
+            Ok(_) => {}
+            Err(_) => return SmokeResult::skipped(), // npm missing -> inconclusive
+        }
+    }
+    // 2) entry artifact exists + runs without crashing.
+    let entry_ok = match ts_entry_from_package_json(&pkg) {
+        Some(entry_rel) => {
+            let entry_path = root.join(&entry_rel);
+            if !entry_path.exists() {
+                findings.push(format!(
+                    "the package.json entry `{entry_rel}` is missing after build — the app is unrunnable \
+                     (built-but-unwired entry point)"
+                ));
+                Some(false)
+            } else {
+                match tokio::process::Command::new("node")
+                    .arg(&entry_path)
+                    .arg("--help")
+                    .current_dir(root)
+                    .output()
+                    .await
+                {
+                    Ok(out) => {
+                        let combined = format!(
+                            "{}{}",
+                            String::from_utf8_lossy(&out.stdout),
+                            String::from_utf8_lossy(&out.stderr)
+                        );
+                        if looks_like_runtime_crash(&combined) {
+                            findings.push(format!(
+                                "running the entry `node {entry_rel} --help` CRASHES at runtime:\n{}",
+                                tail_lines(&combined, 40)
+                            ));
+                            Some(false)
+                        } else {
+                            Some(true)
+                        }
+                    }
+                    Err(_) => None, // node missing -> inconclusive
+                }
+            }
+        }
+        None => {
+            findings.push(
+                "no package.json bin/main/start entry — the app may be unrunnable".to_string(),
+            );
+            None
+        }
+    };
+    SmokeResult {
+        ran: true,
+        py_files: 0,
+        collect: None,
+        entry_package: None,
+        entry_ok,
+        findings,
+    }
+}
+
+/// Deterministic Rust smoke oracle: `cargo build` must succeed and `cargo run -- --help` must not PANIC.
+/// A missing `cargo` or no Cargo.toml is inconclusive (ran=false), never a failure.
+async fn smoke_rust(root: &Path) -> SmokeResult {
+    if !root.join("Cargo.toml").exists() {
+        return SmokeResult::skipped();
+    }
+    let mut findings: Vec<String> = Vec::new();
+    match tokio::process::Command::new("cargo")
+        .args(["build", "--quiet"])
+        .current_dir(root)
+        .output()
+        .await
+    {
+        Ok(out) if !out.status.success() => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            findings.push(format!(
+                "`cargo build` failed:\n{}",
+                tail_lines(&combined, 40)
+            ));
+            // Can't run an entry that didn't build — report the build failure and stop here.
+            return SmokeResult {
+                ran: true,
+                py_files: 0,
+                collect: None,
+                entry_package: None,
+                entry_ok: Some(false),
+                findings,
+            };
+        }
+        Ok(_) => {}
+        Err(_) => return SmokeResult::skipped(), // cargo missing -> inconclusive
+    }
+    let entry_ok = match tokio::process::Command::new("cargo")
+        .args(["run", "--quiet", "--", "--help"])
+        .current_dir(root)
+        .output()
+        .await
+    {
+        Ok(out) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if looks_like_rust_panic(&combined) {
+                findings.push(format!(
+                    "`cargo run -- --help` PANICS at runtime:\n{}",
+                    tail_lines(&combined, 40)
+                ));
+                Some(false)
+            } else {
+                Some(true)
+            }
+        }
+        Err(_) => None,
+    };
+    SmokeResult {
+        ran: true,
+        py_files: 0,
+        collect: None,
+        entry_package: None,
         entry_ok,
         findings,
     }
@@ -4398,13 +4678,23 @@ impl TargetLang {
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
-fn smoke_fix_description(findings: &[String]) -> String {
+fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
+    let verify = match lang {
+        TargetLang::TypeScript => {
+            "`npm run build` (no build errors) AND running the built entry point (e.g. \
+             `node <entry-from-package.json> --help`) WITHOUT a runtime crash/uncaught exception"
+        }
+        TargetLang::Rust => "`cargo build` (no errors) AND `cargo run -- --help` WITHOUT a panic",
+        _ => {
+            "`python3 -m pytest --collect-only -q` (no collection/import errors) AND \
+             `python3 -m <package> --help` (exit 0)"
+        }
+    };
     format!(
         "The integrated app FAILS a deterministic end-to-end smoke check the harness just ran. Findings:\n{}\n\n\
-         FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that BOTH \
-         `python3 -m pytest --collect-only -q` (no collection/import errors) AND `python3 -m <package> --help` \
-         (exit 0) succeed. Do NOT add features or rewrite working modules; make the SMALLEST change that \
-         resolves the findings, then run those two commands yourself to confirm before finishing.",
+         FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that {verify} succeed. \
+         Do NOT add features or rewrite working modules; make the SMALLEST change that resolves the findings, \
+         then run those commands yourself to confirm before finishing.",
         findings.join("\n")
     )
 }
@@ -5753,11 +6043,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             "result": smoke_value,
         }));
         if !smoke.ran {
-            eprintln!("smoke gate: skipped (no python in the produced tree)");
+            eprintln!("smoke gate: skipped (no recognized build/entry in the produced tree)");
         } else if smoke.passed() {
             eprintln!(
                 "{}",
-                style("smoke gate: PASS (collect-only + entry --help)").green()
+                style("smoke gate: PASS (built + entry runs without crashing)").green()
             );
         } else {
             eprintln!(
@@ -5774,7 +6064,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 eprintln!("smoke gate: dispatching ONE corrective fix attempt ...");
                 let fix_req = DispatchRequest {
                     task_id: "smoke-fix".to_string(),
-                    description: smoke_fix_description(&smoke.findings),
+                    description: smoke_fix_description(&smoke.findings, smoke_lang),
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
