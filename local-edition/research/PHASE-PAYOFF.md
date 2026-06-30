@@ -47,3 +47,15 @@ SKELETON_FIRST=0. CONFIDENCE: not-worse = SOLID (quality identical + over_read 0
 decomposition confound); complex BENEFIT = INFERRED (UNIQ3), confirm with a complex A/B (UNIQ5). Reversible.
 NOTE: run-status FALSE-FAILED both UNIQ-class working apps via integrate-verify — that phase needs the
 visibility-then-fix (it is not paying off as a TRUST signal). tests-subtask-produces-nothing recurs (UNIQ4+run2).
+
+## RUN-STATUS TRUST — BOTH false-negative causes now FIXED
+1. JUDGE-KILL (6e1547b2d, CONFIRMED UNIQ6): integrate-verify owns no files -> over-read gate permanently armed
+   -> guaranteed judge_killed. Fixed: over-read gate exempts no-owned tasks. UNIQ6 integrate-verify NOT killed.
+2. DEPENDENCY-BLOCKED (5146fd69b, NEW): integrate-verify depended on the tests subtask; a failed tests blocked
+   it (0 attempts, never ran). Fixed: strip_integrate_verify_test_deps removes test deps from integrate-verify
+   so it runs the PROGRAM regardless of the tests. Test integrate_verify_does_not_block_on_tests.
+NET: integrate-verify now RUNS on every app -> run-status reflects whether the APP works (honest DONE on a
+working app; honest FAIL catching real bugs like UNIQ6 infer-persist). VALIDATE on UNIQ7+ (a WORKING app should
+now report DONE; a buggy one should FAIL because integrate-verify actually caught it). The tests-subtask itself
+still fails sometimes (owns files, genuine over-read/looping) — separate reliability item, but it no longer
+poisons run-status.
