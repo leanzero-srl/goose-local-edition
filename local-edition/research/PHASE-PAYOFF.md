@@ -26,9 +26,24 @@ RUN 1 (SKELETON_FIRST=1, ABskelon): single cli-entrypoint task (NOT split — co
   QUALITY: CLEAN WIN. 4 done 0 FAILED (run-status PASSED — integrate-verify did NOT false-negative here).
   Golden all correct: list newest-first, search matches both, tags counts (tech2/news1/lang1), export valid
   JSON exit0, bad-format exit2, unknown-id exit1. NO stub left. CLI wired (all 8 commands).
-RUN 2 (SKELETON_FIRST=0, ABskeloff): RUNNING (b0lp2t2tq, same spec, same flags but skeleton OFF).
-TRADEOFF VISIBLE: skeleton-first -> 0 over_read + 0 retries (no false-kill) BUT 23 tool calls (MANY round-trips
-= more wall-clock on a slow 27B). On THIS moderate app it prevented NOTHING (0 retries with the flag on), so the
-23 round-trips look like pure overhead. VERDICT pending run 2: if run 2 (OFF) is also ~0 over_read / 0 retries
-with SIMILAR quality + FEWER round-trips + similar-or-less time -> skeleton-first is OVERHEAD on simple apps ->
-keep default-OFF, complexity-gate it. If run 2 has over_read kills + retries run 1 avoided -> it earned its keep.
+RUN 2 (SKELETON_FIRST=0, ABskeloff): COMPLETE. cli SPLIT into 4 tasks (cli-entry-point 6 + 3 command tasks 1
+  each = 9 tool_calls), over_read 0, retries 0. TIME: research 2.0/planning 9.7/execute 19.1/TOTAL 30.8m.
+  QUALITY: CLEAN (golden all correct by running) — but run-status FAILED (integrate-verify + tests
+  false-negatived a WORKING app again; tests subtask produced none, same as UNIQ4).
+
+### VERDICT (skeleton-first) — NOT-WORSE on simple apps -> DEFAULT ON (66dac9395, per user rule)
+| metric | run1 ON | run2 OFF |
+|--------|---------|----------|
+| over_read | 0 | 0 |
+| retries | 0 | 0 |
+| quality (golden by RUN) | CLEAN | CLEAN |
+| cli round-trips | 23 (1 task) | 9 (4 tasks) |
+| execute | 20.5m | 19.1m |
+| total | 28.9m | 30.8m |
+WASH: identical quality, 0 over_read both ways (the front-load problem did NOT occur on this moderate app), total
+time within noise. The 23-vs-9 round-trips did NOT cost wall-clock (run2 split into 4 tasks, offsetting). So
+skeleton-first is NOT-WORSE on simple apps + helps on COMPLEX entries (UNIQ3 over_read) -> default ON, opt-out
+SKELETON_FIRST=0. CONFIDENCE: not-worse = SOLID (quality identical + over_read 0 both); time = LOW (N=1 +
+decomposition confound); complex BENEFIT = INFERRED (UNIQ3), confirm with a complex A/B (UNIQ5). Reversible.
+NOTE: run-status FALSE-FAILED both UNIQ-class working apps via integrate-verify — that phase needs the
+visibility-then-fix (it is not paying off as a TRUST signal). tests-subtask-produces-nothing recurs (UNIQ4+run2).
