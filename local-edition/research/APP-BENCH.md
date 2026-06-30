@@ -306,3 +306,36 @@ capture the real process exit.) 37.5min — still over the 15-25 target (TIME re
 => 5/5 FUNCTIONAL on the improved binary, spanning moderate CLIs (3 techs) AND a hard correctness-critical
 multi-module app. The improvements hold across archetypes. The ONLY systemic miss is TIME (all >25min except
 APP2-retest 25.9) — fleet SPEED, not correctness.
+
+## APP6 — complex TS expression evaluator: FAILED (runtime crash), 73.5min — CEILING data point
+Studied against the user's 7 points:
+1. FUNCTIONAL? **NO.** It BUILDS (tsconfig present — advertised-entry fix held; tsc -> dist/ clean) and the
+   parser is REAL (no eval() — a genuine recursive-descent tokenizer/parser/evaluator, exactly as spec'd), BUT
+   `calc "2 + 3 * (4 - 1)"` CRASHES at runtime: "Invalid array length", exit 1 — on EVERY expression. A real
+   bug (an array allocated with a bad length, likely in the tokenizer). So: compiles, doesn't run.
+2. TIME: **73.5min** — 3x over the 15-25 target; the WORST of the batch. Complex TS on the 27B is very slow.
+3. Prompt complex enough? **YES** — a recursive-descent evaluator with precedence + variables + a no-eval
+   constraint is genuinely hard (the user wanted complex; this WAS complex).
+4. Answered its questions? No ask floor -> it did not ask.
+5. PHASES followed? **YES** — research -> plan -> contracts -> execute -> smoke/review all fired (4 pre_review,
+   1 AST review, 1 smoke). But cli-entry-point + tests-core + integrate-verify FAILED in execute (3/7).
+6. Did the REVIEW push toward FUNCTIONAL? **Partially, but it FAILED to fix it.** integrate-verify (with the
+   advertised-entry prompt) DID try to build+run the entry — that is WHY it failed (the entry crashes, and the
+   27B could not fix the "Invalid array length" bug across its attempts -> exhausted -> the run correctly
+   reported FAILED). The smoke gate is PYTHON-ONLY (returns ran:false for TS) so there was no DETERMINISTIC
+   TS build+run check; the only functional check was the (LLM) integrate-verify, which tried but the model
+   could not repair a hard runtime bug.
+7. Working in 15-25min? **NO** — 73.5min + broken.
+CEILING FINDING: on a COMPLEX TS app, the 27B produced a real runtime bug it could NOT self-fix even with the
+review trying. This is a MODEL-CAPABILITY ceiling, not a false-green (the run was honestly FAILED). vs APP5
+(hard Python ledger, FUNCTIONAL 37.5min): Python hard worked, complex-TS-parser did not. So the ceiling is
+roughly: hard-but-conventional (ledger) PASSES; algorithmically-tricky + a weaker-for-the-27B language (a TS
+parser) FAILS + is slow.
+WHAT ELSE COULD IMPROVE THIS DELIVERABLE: (a) a DETERMINISTIC language-aware build+RUN gate (TS: npm run build
++ run the bin on a trivial input + assert no crash) would catch the "Invalid array length" reliably (here the
+run WAS marked failed, so the user knew — but the deterministic gate makes the functional check not depend on
+the flaky LLM integrate-verify). (b) the 27B can't fix hard runtime bugs -> simpler decomposition (split the
+tokenizer/parser into smaller verified pieces) or a stronger model for the fix step. (c) TS is slow -> the
+TIME gap is worst on complex TS.
+BATCH UPDATE: APP1-retest/APP2-retest/APP3/APP4/APP5 functional (5), APP6 FAILED (complex-TS ceiling). So
+6 of 7 distinct apps functional on the new binary; the 1 failure is a complex TS algorithm at the 27B's ceiling.
