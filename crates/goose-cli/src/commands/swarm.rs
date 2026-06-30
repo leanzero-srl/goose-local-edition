@@ -1533,6 +1533,19 @@ mod tests {
     }
 
     #[test]
+    fn ast_fix_description_carries_stub_findings() {
+        let d = ast_fix_description(&[
+            "function 'compute_total' in module 'app.core' is a STUB/UNIMPLEMENTED (body is only pass / ... \
+             / raise NotImplementedError / a docstring) — implement it FULLY per the spec"
+                .to_string(),
+        ]);
+        assert!(d.contains("app.core") && d.contains("compute_total"));
+        assert!(d.contains("IMPLEMENT"));
+        assert!(d.contains("STUB"));
+        assert!(d.contains("SMALLEST"));
+    }
+
+    #[test]
     fn smoke_fix_description_carries_findings_and_targets() {
         let d = smoke_fix_description(&[
             "pytest --collect-only errors: ImportError cannot import name bar from baz".to_string(),
@@ -4019,6 +4032,74 @@ for mod in mods:
             % mod
         )
 
+
+def _strip_doc(body):
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(getattr(body[0], "value", None), ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[1:]
+    return body
+
+
+def _is_abstract(fn):
+    for d in fn.decorator_list:
+        n = d.id if isinstance(d, ast.Name) else (d.attr if isinstance(d, ast.Attribute) else None)
+        if n in ("abstractmethod", "abstractproperty"):
+            return True
+    return False
+
+
+def _is_stub(fn):
+    # Dunders (an empty __init__ is fine) and @abstractmethod are legitimately trivial — never flag them.
+    if fn.name.startswith("__") and fn.name.endswith("__"):
+        return False
+    if _is_abstract(fn):
+        return False
+    body = _strip_doc(fn.body)
+    if not body:
+        return True
+    if len(body) == 1:
+        s = body[0]
+        if isinstance(s, ast.Pass):
+            return True
+        if (
+            isinstance(s, ast.Expr)
+            and isinstance(getattr(s, "value", None), ast.Constant)
+            and s.value.value is Ellipsis
+        ):
+            return True
+        if isinstance(s, ast.Raise):
+            exc = s.exc
+            nm = None
+            if isinstance(exc, ast.Name):
+                nm = exc.id
+            elif isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                nm = exc.func.id
+            if nm == "NotImplementedError":
+                return True
+    return False
+
+
+# STUB/FAKE/UNIMPLEMENTED detection: a non-test logic function whose whole body is pass / ... /
+# raise NotImplementedError / just a docstring is unimplemented — a passing test suite can hide it (the
+# test may never call it, or assert nothing). Flag it so the review can drive a real implementation.
+for mod, path in mods.items():
+    if is_test(mod):
+        continue
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except Exception:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_stub(node):
+            findings.append(
+                "function '%s' in module '%s' is a STUB/UNIMPLEMENTED (body is only pass / ... / raise NotImplementedError / a docstring) — implement it FULLY per the spec"
+                % (node.name, mod)
+            )
+
 print(json.dumps({"modules": len(mods), "findings": sorted(set(findings))}))
 "##;
 
@@ -4080,19 +4161,21 @@ async fn run_ast_review(root: &Path) -> AstReviewResult {
     }
 }
 
-/// Build the worker instruction for the GOOSE_SWARM_REVIEW corrective wire-fix from the unwired findings.
-/// Pure — unit-tested. Asks the worker to WIRE each unwired module into the app (import + use it) rather
-/// than leave it dead behind an inline duplicate.
+/// Build the worker instruction for the GOOSE_SWARM_REVIEW corrective fix from the model-free findings —
+/// BUILT-BUT-UNWIRED modules (wire them) and/or STUB/UNIMPLEMENTED functions (implement them fully). Pure —
+/// unit-tested. The finding strings are self-describing, so one prompt covers both defect classes.
 fn ast_fix_description(findings: &[String]) -> String {
     format!(
-        "A model-free wiring review found modules that are BUILT BUT UNWIRED — no non-test code imports \
-         them, so the app does not actually use them (it likely re-implements their logic inline, leaving \
-         the real module dead and a feature silently broken — e.g. a persisted store that is never saved \
-         to, so data does not persist). Findings:\n{}\n\nWIRE each unwired module into the app: make the \
-         entry point / CLI IMPORT and USE it instead of duplicating its logic — load a store module on \
-         startup and save THROUGH it on every mutation; call a runner module to execute work; etc. Make \
-         the SMALLEST change that wires them (do NOT rewrite working code), then RUN the relevant command \
-         to confirm the feature now works end to end (e.g. add an item, then list it in a fresh process).",
+        "A model-free review found defects a passing test suite can hide. Findings:\n{}\n\nFix EACH:\n\
+         - BUILT-BUT-UNWIRED module (no non-test code imports it): WIRE it into the app — make the entry \
+         point / CLI IMPORT and USE it instead of duplicating its logic inline (load a store on startup and \
+         save THROUGH it on every mutation; call a runner module to execute work; etc.).\n\
+         - STUB/UNIMPLEMENTED function (body is only pass / ... / raise NotImplementedError / a docstring): \
+         IMPLEMENT it FULLY per the spec — real working logic that returns the correct result, with NO pass \
+         / ... / NotImplementedError / TODO left behind. A function the tests never exercise still must work.\n\
+         Make the SMALLEST change that resolves the findings (do NOT rewrite working code), then RUN the \
+         relevant command to confirm the feature works end to end (e.g. add an item, then list it in a fresh \
+         process).",
         findings.join("\n")
     )
 }
