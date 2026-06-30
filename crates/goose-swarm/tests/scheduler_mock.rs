@@ -1125,6 +1125,8 @@ async fn content_retry_threads_hint_infra_transient_does_not() {
 /// concurrent in-flight per device (to assert 1-task-per-node).
 struct SpecDispatcher {
     saw_speculative: Arc<AtomicBool>,
+    twin_delay_ms: u64,
+    primary_slow_delay_ms: u64,
 }
 
 #[async_trait]
@@ -1132,11 +1134,11 @@ impl TaskDispatcher for SpecDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         if req.speculative {
             self.saw_speculative.store(true, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(5)).await; // twin wins the race
+            tokio::time::sleep(Duration::from_millis(self.twin_delay_ms)).await;
             return Ok(format!("twin-{}", req.task_id).into());
         }
         let d = if req.task_id == "slow" {
-            Duration::from_millis(400) // the chokepoint primary runs long
+            Duration::from_millis(self.primary_slow_delay_ms) // the chokepoint primary
         } else {
             Duration::from_millis(10)
         };
@@ -1153,6 +1155,8 @@ async fn speculation_twin_wins_chokepoint_and_no_leak() {
     let saw = Arc::new(AtomicBool::new(false));
     let disp = Arc::new(SpecDispatcher {
         saw_speculative: saw.clone(),
+        twin_delay_ms: 5,
+        primary_slow_delay_ms: 400,
     });
     let dag = Dag::from_specs(vec![
         spec("slow", &[], &["slow.py"]),
@@ -1186,6 +1190,8 @@ async fn speculation_off_spawns_no_twin() {
     let saw = Arc::new(AtomicBool::new(false));
     let disp = Arc::new(SpecDispatcher {
         saw_speculative: saw.clone(),
+        twin_delay_ms: 5,
+        primary_slow_delay_ms: 400,
     });
     let dag = Dag::from_specs(vec![
         spec("slow", &[], &["slow.py"]),
@@ -1199,5 +1205,40 @@ async fn speculation_off_spawns_no_twin() {
     assert!(
         !saw.load(Ordering::SeqCst),
         "with speculation OFF, no twin is ever spawned (byte-identical path)"
+    );
+}
+
+/// SPECULATIVE primary-wins-first (the review's untested ordering): the chokepoint PRIMARY finishes BEFORE
+/// the (now slow) twin, so the abort-loser hook in complete() aborts the twin + releases its device. The run
+/// must complete with NO leak, the primary's output accepted exactly once, and the twin still spawned.
+#[tokio::test]
+async fn speculation_primary_wins_aborts_twin_no_leak() {
+    let saw = Arc::new(AtomicBool::new(false));
+    let disp = Arc::new(SpecDispatcher {
+        saw_speculative: saw.clone(),
+        twin_delay_ms: 400,        // twin is SLOW -> loses
+        primary_slow_delay_ms: 50, // primary long enough to spawn the twin, but finishes first
+    });
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["slow.py"]),
+        spec("d1", &["slow"], &["d1.py"]),
+        spec("d2", &["slow"], &["d2.py"]),
+    ])
+    .unwrap();
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_speculation();
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(
+        report.failed.is_empty(),
+        "no leak/deadlock when the primary wins: {:?}",
+        report.failed
+    );
+    assert_eq!(report.done.len(), 3, "all 3 done exactly once");
+    assert!(
+        saw.load(Ordering::SeqCst),
+        "a twin was spawned (then lost the race + was aborted)"
     );
 }

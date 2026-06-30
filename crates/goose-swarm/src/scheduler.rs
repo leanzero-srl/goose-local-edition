@@ -842,14 +842,19 @@ impl State {
         self.spec_started_at.remove(tid);
         self.spec_abort.remove(tid);
         self.speculating.remove(tid);
-        let still_claimed = self
+        // The twin only wins if the task is STILL Claimed AND on the SAME attempt. The attempt check is
+        // essential when a judge is also on: the judge can re-dispatch this task (bumping n.attempts) while a
+        // twin of the OLD attempt is still running — without it, the stale twin would abort the healthy new
+        // primary and, because complete()'s attempt guard then rejects the stale call, leak its device.
+        // (Mirrors complete()'s and apply_judge_outcome()'s attempt guards.)
+        let still_live = self
             .dag
             .tasks
             .get(tid)
-            .map(|n| n.state == TaskState::Claimed)
+            .map(|n| n.state == TaskState::Claimed && n.attempts == attempt)
             .unwrap_or(false);
-        if !still_claimed {
-            return; // the primary already won (or the task is gone) — the twin lost
+        if !still_live {
+            return; // primary already won, OR the judge re-dispatched (attempt advanced) — the twin lost
         }
         if res.is_ok() {
             if let Some(h) = self.abort_handles.get(tid) {
