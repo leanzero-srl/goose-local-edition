@@ -834,6 +834,31 @@ mod tests {
     }
 
     #[test]
+    fn test_all_bundled_providers_deserialize() {
+        // `load_fixed_providers` silently skips any bundled JSON that fails to
+        // deserialize (it only emits a `warn!`), so a malformed provider file would
+        // ship as a missing provider rather than a build/test failure. Assert every
+        // bundled file parses through the same path the loader uses.
+        let mut failures = Vec::new();
+        for file in FIXED_PROVIDERS.files() {
+            if file.path().extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let content = file
+                .contents_utf8()
+                .unwrap_or_else(|| panic!("bundled provider {:?} is not valid UTF-8", file.path()));
+            if let Err(e) = deserialize_provider_config(content) {
+                failures.push(format!("{:?}: {e}", file.path()));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "bundled declarative providers failed to deserialize:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
     fn test_existing_json_files_still_deserialize_without_new_fields() {
         let json = include_str!("../providers/declarative/groq.json");
         let config =
