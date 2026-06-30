@@ -1654,6 +1654,58 @@ mod tests {
     }
 
     #[test]
+    fn speculative_copy_helpers_isolated_and_traversal_guarded() {
+        use std::fs;
+        let base = tempfile::TempDir::new().unwrap();
+        let real = base.path().join("real");
+        fs::create_dir_all(real.join("sub")).unwrap();
+        fs::create_dir_all(real.join("node_modules")).unwrap();
+        fs::write(real.join("a.py"), "real-a").unwrap();
+        fs::write(real.join("sub/b.py"), "real-b").unwrap();
+        fs::write(real.join("node_modules/junk.js"), "junk").unwrap();
+        // shadow = cp -r excluding heavy dirs.
+        let shadow = base.path().join("shadow");
+        copy_tree_excluding(&real, &shadow).unwrap();
+        assert_eq!(fs::read_to_string(shadow.join("a.py")).unwrap(), "real-a");
+        assert_eq!(
+            fs::read_to_string(shadow.join("sub/b.py")).unwrap(),
+            "real-b"
+        );
+        assert!(
+            !shadow.join("node_modules").exists(),
+            "heavy dirs excluded from the shadow"
+        );
+        // the twin edits a.py + adds c.py inside the shadow only.
+        fs::write(shadow.join("a.py"), "twin-a").unwrap();
+        fs::write(shadow.join("c.py"), "twin-c").unwrap();
+        // BEFORE promote: the real tree is untouched by the twin's shadow writes.
+        assert_eq!(fs::read_to_string(real.join("a.py")).unwrap(), "real-a");
+        assert!(!real.join("c.py").exists());
+        // promote ONLY the owned files.
+        let n = copy_owned_files(&shadow, &real, &["a.py".to_string(), "c.py".to_string()]);
+        assert_eq!(n, 2);
+        assert_eq!(fs::read_to_string(real.join("a.py")).unwrap(), "twin-a");
+        assert_eq!(fs::read_to_string(real.join("c.py")).unwrap(), "twin-c");
+        assert_eq!(
+            fs::read_to_string(real.join("sub/b.py")).unwrap(),
+            "real-b",
+            "a NON-owned file is never touched by promote"
+        );
+        // path-traversal / absolute paths are rejected -> nothing written outside the real tree.
+        fs::write(shadow.join("evil"), "evil").unwrap();
+        let n2 = copy_owned_files(
+            &shadow,
+            &real,
+            &["../SENTINEL".to_string(), "/tmp/abs-escape".to_string()],
+        );
+        assert_eq!(n2, 0, "traversal + absolute owned paths are rejected");
+        assert!(
+            !base.path().join("SENTINEL").exists(),
+            "promote never escapes the real tree"
+        );
+    }
+
+    #[test]
     fn frozen_interfaces_block_noop_when_empty() {
         assert_eq!(frozen_interfaces_block(""), "");
         assert_eq!(frozen_interfaces_block("   \n  "), "");
@@ -2203,6 +2255,10 @@ pub struct GooseAgentDispatcher {
     /// cross-module drift. Empty until the GOOSE_SWARM_CONTRACTS stub pass populates it (stage 2b); set
     /// once before the EXECUTE phase, then read by every worker. Empty -> the injection is a no-op.
     contracts: std::sync::OnceLock<String>,
+    /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE): per-twin shadow workspace + its owned files, keyed by
+    /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
+    /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
+    spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
 }
 
 impl GooseAgentDispatcher {
@@ -2237,7 +2293,28 @@ impl GooseAgentDispatcher {
             allow_model_load,
             sampling,
             contracts: std::sync::OnceLock::new(),
+            spec_shadows: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Build the isolated SHADOW workspace for a speculative twin: a cp -r of the real tree (heavy dirs
+    /// excluded) into a fresh TempDir, stored in `spec_shadows[task_id]` with the twin's owned files so a
+    /// later `promote_speculative` can copy exactly those back. Returns the shadow path. On any IO error the
+    /// caller MUST bail the twin (never fall back to the real tree — that would let two writers collide).
+    fn make_shadow(
+        &self,
+        task_id: &str,
+        owned_files: &[String],
+        real_root: &Path,
+    ) -> std::io::Result<PathBuf> {
+        let tmp = tempfile::TempDir::new()?;
+        copy_tree_excluding(real_root, tmp.path())?;
+        let path = tmp.path().to_path_buf();
+        self.spec_shadows
+            .lock()
+            .unwrap()
+            .insert(task_id.to_string(), (tmp, owned_files.to_vec()));
+        Ok(path)
     }
 
     /// `run_agent` wrapped in a wall-clock timeout (`worker_timeout_secs`). Used for PLANNER-side
@@ -2269,8 +2346,40 @@ impl GooseAgentDispatcher {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn run_agent(
         &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        extensions: &[ExtensionConfig],
+        idle_secs: u64,
+        activity_key: Option<&str>,
+    ) -> Result<RunAgentOut> {
+        // Normal path: the agent writes the REAL project tree (self.working_dir).
+        self.run_agent_in(
+            self.working_dir.clone(),
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            max_turns,
+            extensions,
+            idle_secs,
+            activity_key,
+        )
+        .await
+    }
+
+    /// Like `run_agent` but the agent's file/shell tools are rooted at `work_dir` (the session working_dir).
+    /// For a SPECULATIVE twin this is an isolated shadow copy, so the twin never writes the real tree; for
+    /// every normal call `work_dir == self.working_dir`, so behavior is unchanged.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_agent_in(
+        &self,
+        work_dir: PathBuf,
         model_id: &str,
         system_prompt: String,
         user_text: String,
@@ -2297,7 +2406,7 @@ impl GooseAgentDispatcher {
         let session = self
             .session_manager
             .create_session(
-                self.working_dir.clone(),
+                work_dir.clone(),
                 "swarm-task".to_string(),
                 SessionType::Hidden,
                 GooseMode::default(),
@@ -4582,6 +4691,73 @@ enum TargetLang {
     Other,
 }
 
+/// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
+/// twin gets the source to read but the copy stays cheap. Best-effort — an unreadable entry is skipped, never
+/// fatal. Used only on the speculative path (GOOSE_SWARM_SPECULATE); never touches the real tree.
+fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
+    const SKIP: &[&str] = &[
+        "node_modules",
+        "target",
+        "dist",
+        ".git",
+        ".swarm",
+        ".venv",
+        "__pycache__",
+        "build",
+    ];
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let name = entry.file_name();
+        if SKIP.iter().any(|s| **s == *name.to_string_lossy()) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        match entry.file_type() {
+            Ok(ft) if ft.is_dir() => {
+                let _ = copy_tree_excluding(&from, &to);
+            }
+            Ok(ft) if ft.is_file() => {
+                let _ = std::fs::copy(&from, &to);
+            }
+            _ => {} // skip symlinks / other
+        }
+    }
+    Ok(())
+}
+
+/// SPECULATIVE promote: copy ONLY `files` (the winning twin's owned, relative paths) from its shadow `from`
+/// into the real tree `to`. SAFETY: rejects any absolute or parent-escaping (`..`) path so it can NEVER write
+/// outside `to`; creates parent dirs; NEVER deletes; touches nothing but the listed owned files. Returns the
+/// count promoted. This is the only place a twin's work reaches the real tree.
+fn copy_owned_files(from: &Path, to: &Path, files: &[String]) -> usize {
+    let mut promoted = 0;
+    for f in files {
+        let rel = Path::new(f);
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            continue; // never escape `to`
+        }
+        let src = from.join(rel);
+        let dst = to.join(rel);
+        if !src.is_file() {
+            continue;
+        }
+        if let Some(parent) = dst.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                continue;
+            }
+        }
+        if std::fs::copy(&src, &dst).is_ok() {
+            promoted += 1;
+        }
+    }
+    promoted
+}
+
 /// True if `s` mentions a `.<ext>` file at a word boundary (the char after the ext is not alphanumeric), so
 /// ".js" matches "cli.js" but NOT "schema.json", and ".ts" matches "a.ts" but not "a.tsx". `s` is ASCII-lower.
 fn mentions_ext(s: &str, ext: &str) -> bool {
@@ -4837,6 +5013,22 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // architect plans them) + its description. Python (the no-cue / .py default) keeps every prompt arm
         // below byte-identical; other languages get the right scaffolding via the TargetLang profile.
         let lang = detect_language(&req.description, &req.all_files);
+        // SPECULATIVE twin isolation: a twin runs rooted at a SHADOW copy so it never writes the real tree; a
+        // normal task uses the real working dir (byte-identical). If a twin's shadow cannot be built, BAIL the
+        // twin (Transient) rather than fall back to the real tree — two writers there would corrupt it.
+        let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let root: PathBuf = if req.speculative {
+            match self.make_shadow(&req.task_id, &req.owned_files, &real_root) {
+                Ok(shadow) => shadow,
+                Err(e) => {
+                    return Err(DispatchError::Transient(format!(
+                        "speculative shadow setup failed: {e}"
+                    )))
+                }
+            }
+        } else {
+            real_root
+        };
         let context_block = if req.context_slice.is_empty() {
             String::new()
         } else {
@@ -4851,9 +5043,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
-            let cwd = std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
+            let cwd = root.display().to_string();
             let manifest = req
                 .all_files
                 .iter()
@@ -5089,7 +5279,8 @@ impl TaskDispatcher for GooseAgentDispatcher {
             None => req.description.clone(),
         };
         let outcome = self
-            .run_agent(
+            .run_agent_in(
+                root.clone(),
                 &req.model_id,
                 system_prompt,
                 worker_user_text,
@@ -5110,7 +5301,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 // SUPERVISOR NOTE exactly which files it failed to write, instead of a blind re-roll that
                 // tends to repeat the same omission until attempts exhaust.
                 if !req.owned_files.is_empty() {
-                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let cwd = root.clone();
                     let missing: Vec<String> = req
                         .owned_files
                         .iter()
@@ -5153,7 +5344,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                     .unwrap_or(false);
                 if done_gate_on {
-                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let cwd = root.clone();
                     for f in &req.owned_files {
                         let path = cwd.join(f);
                         if path.is_file() {
@@ -5218,6 +5409,19 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     Err(DispatchError::Terminal(s))
                 }
             }
+        }
+    }
+
+    /// The twin WON: copy ONLY its owned files from its shadow into the real tree, then drop the shadow
+    /// (TempDir cleanup). `copy_owned_files` is guarded so it can never write outside the real tree. A no-op
+    /// if there is no shadow for `task_id` (e.g. the flag is off, or the twin already lost + was discarded).
+    async fn promote_speculative(&self, task_id: &str) {
+        let entry = self.spec_shadows.lock().unwrap().remove(task_id);
+        if let Some((shadow, owned)) = entry {
+            let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+            let n = copy_owned_files(shadow.path(), &real_root, &owned);
+            eprintln!("speculative: promoted {n} owned file(s) from the winning twin of {task_id}");
+            // `shadow` (TempDir) drops here -> the shadow workspace is removed from disk.
         }
     }
 }
