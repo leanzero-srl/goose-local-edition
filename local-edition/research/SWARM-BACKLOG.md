@@ -170,3 +170,16 @@ IDLE: legitimate — 4 pre_reviews fired (idle-node fix working) + dependency-ch
 wait on stages). REASONING: sound. ARTIFACTS: HIGH — stages.py frozen dataclasses per stage, Literal/Union
 typing, docstrings; NO while-True/eval/bare-except across modules. Judge ~33/35min ~= 1/min (cooldown holds).
 IMPROVEMENT ITEMS: none from the artifacts (clean). Full golden-run review on completion.
+
+### [DONE-A] atomic writes: GOOSE_SWARM_SKELETON_FIRST (3fe9967b2) — skeleton-first for entry files
+Research workflow (6 agents, ATOMIC-WRITES-DESIGN.md) found the over-read is MANDATED: swarm.rs:5247 hard-rules
+one-big-write + plan-whole-file-first, which CONTRADICTS the judge over_read hint (judge.rs:288). Direction A
+(env-gated): entry-file worker writes a compiling skeleton (imports + every command registered, placeholder
+bodies) FIRST, confirms it imports, THEN fills bodies — one early write provably disarms the over_read kill
+(gated on !any_owned_written). Mechanism HIGH, weak-model compliance MEDIUM. SKIPPED the completion-guard
+placeholder-scan (heuristic, false-positive risk on legit pass) — backstopped by integrate-verify + smoke.
+A/B NEXT: launch an app with GOOSE_SWARM_SKELETON_FIRST=1, compare the entry-file write pattern (early skeleton
+write? fewer over_read flags? faster-to-first-write?) vs default.
+### [B] detailer build-order checklist (count capped) — SECOND, depends on A softening 5247. Do the cheap
+variant ONLY; do NOT lower the 2x-3x multiplier (coarsens -> MORE over-reading). [C] multi-model single-file
+slicing — PROBABLY NEVER (lowest conf, merge reintroduces drift, net-negative on 3 nodes).
