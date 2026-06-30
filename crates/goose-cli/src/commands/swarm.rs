@@ -5772,6 +5772,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
+                    speculative: false,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
                 let after =
@@ -5860,6 +5861,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
+                    speculative: false,
                 };
                 let _ = smoke_fix_dispatcher.run(fix_req).await;
                 let after = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;

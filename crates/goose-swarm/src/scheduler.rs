@@ -396,6 +396,7 @@ impl State {
                 owned_files,
                 all_files,
                 prior_hint,
+                speculative: false,
             },
         });
     }
