@@ -339,3 +339,28 @@ tokenizer/parser into smaller verified pieces) or a stronger model for the fix s
 TIME gap is worst on complex TS.
 BATCH UPDATE: APP1-retest/APP2-retest/APP3/APP4/APP5 functional (5), APP6 FAILED (complex-TS ceiling). So
 6 of 7 distinct apps functional on the new binary; the 1 failure is a complex TS algorithm at the 27B's ceiling.
+
+## APP7 — hard Python cron parser: PARTIAL (subtle next bug), 29.7min — tests-pass-but-wrong-output
+Studied against the 7 points:
+1. FUNCTIONAL? PARTIAL. Builds + runs. matches "*/15 * * * *" at T10:00:00 -> True (correct, minute 0 div 15).
+   Malformed expr -> exit 2 (correct). BUT the next command has a SUBTLE CORRECTNESS BUG: next "0 9 * * 1-5"
+   from T08:00:00 --count 2 returns 09:00:00 AND 09:00:01 — it steps by SECONDS, so the 2nd "next run" is one
+   second later (still minute 0 / hour 9 -> technically matches) instead of the next DISTINCT cron occurrence
+   (the next weekday 09:00). So next --count N returns sub-minute duplicates — broken for its purpose.
+2. TIME: 29.7min — CLOSE to target (best Python time; slightly over 25).
+3. Prompt complex enough? YES — cron field parsing (star, step, ranges, lists) + next-run datetime math is hard.
+4. Questions? No ask floor -> did not ask.
+5. PHASES followed? YES — 6/6 subtasks done, 0 failed; run SUCCEEDED.
+6. Did the REVIEW push toward FUNCTIONAL? It verified RUNS but NOT CORRECT. smoke/AST/pre-review/integrate-
+   verify all passed (6/6 done) but NONE caught the next seconds-granularity bug (it is subtle — 09:00:01 does
+   satisfy minute=0/hour=9). 21 pytest PASSED but never asserted next returns DISTINCT minute occurrences.
+   EXACTLY the user deepest concern: tests pass + it runs, but the output is subtly WRONG. A golden-value test
+   (next 2 of 0 9 * * 1-5 == [today 9:00, tomorrow 9:00]) would have caught it; the swarm tests asserted shape.
+7. Working in 15-25min? Close on time (29.7) but the next bug = not fully usable.
+STUB-DETECTOR LIVE: 0 findings (no stub in the produced code) -> the detector correctly did NOT false-positive
+on a real implementation. A live CATCH of a real stub still awaits a run where the 27B actually stubs.
+TAKEAWAY: the review reliably catches "does not BUILD/RUN" (APP1/APP2/APP6) but NOT subtle wrong-output when the
+code runs + shape-tests pass. Grounded improvement: integrate-verify / a golden-value check must assert the
+OUTPUT matches what the spec IMPLIES on a known input, not just no-crash (recurring EVAL-v8 lesson 6).
+BATCH (new binary): fully-functional = APP1-retest, APP2-retest, APP3, APP4, APP5 (5); APP6 FAILED (TS parser,
+27B ceiling); APP7 PARTIAL (subtle next bug). APP7 29.7min best Python; avg ~37min still over target.
