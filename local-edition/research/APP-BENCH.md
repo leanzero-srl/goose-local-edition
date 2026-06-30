@@ -585,3 +585,20 @@ Phases: total 85.0min | research 2.0min | planning(start->plan) 27.0min | execut
 6. Schema mostly consistent (account/category/amount/date dominant; minor 'acct' abbrev). DB-schema-freeze held.
 VERDICT: a PARTIAL, not a clean win (UNIQ2/UNIQ3 were cleaner). Skeleton-first did NOT hurt quality (no stub).
 The budget bug is a worker logic error integrate-verify should ideally have repaired (it flagged, did not fix).
+
+## UNIQ5 — SQLite task tracker w/ dependency DAG: PARTIAL (complex, topo/cycle CORRECT, refuse-done bug), 1115 LOC, 114min, skeleton-first default-on
+The most COMPLEX app yet (SQLite + dependency DAG + topo sort + cycle detect + 8 commands). Judged by RUNNING.
+1. FUNCTIONAL? MOSTLY. CLI WIRED (--help all 8: init/project/task/dep/status/schedule/ready/report). CORRECT:
+   schedule = topological order (C,B,A respecting deps), cycle detection (exit 1 on a cycle), ready set, report
+   counts. The HARD algorithmic part (DAG/topo/cycle) WORKS. BUG: status set done while a direct dep is not done
+   was ALLOWED (should REFUSE nonzero) — the refuse-when-deps-undone check is broken (a secondary business rule).
+2. SKELETON-FIRST on the COMPLEX entry (the missing data): entry-point judge verdict 'ok', over_read 0 — skeleton-
+   first HELD over_read at 0 on a big multi-command CLI entry. No stubs. So on a complex entry it does its job
+   (the simple-app A/B was a wash; here it is at least neutral + clean). Default-on stands.
+3. integrate-verify = the BUG CONTROL: failed [judge_killed, judge_killed, judge_failed] = over_reading kill loop
+   (no-owned -> permanently armed). This is the EXACT bug fixed in 6e1547b2d. UNIQ6 (new binary) is the treatment.
+4. TIME: 114min (slowest) — planning 29.2 (re-plan after ASK = the waste), execute 82.7 (test-suite 23.5min +
+   the integrate-verify kill loop + slow modules). The performance gap is real on complex apps.
+IMPROVEMENT vs UNIQ4: higher complexity (1115 vs 709 LOC, a real DAG/topo engine that is CORRECT) at the same
+PARTIAL grade (one logic bug each). Wiring + schema-freeze + skeleton-first all held. The two open gaps are
+run-status trust (integrate-verify, FIXED -> UNIQ6 validates) and the secondary-business-rule correctness.
