@@ -20,10 +20,15 @@ PLANNING is a persistent 22-30min / 25-38% before any code. The biggest waste su
   UNIQ3 wired with NO answer from me = the fix works default. Schema consistent across UNIQ4 modules.
 
 ## EXPERIMENT 1: SKELETON_FIRST (direction A) — clean A/B, same bookmark-manager spec
-RUN 1 (SKELETON_FIRST=1, ABskelon): single cli-entrypoint task (NOT split — confound removed).
-  cli metrics: over_read 0, judge 3x ok, tool_calls 23 (incremental write+fill+shell-checks), errors 0,
-  cli.py 4043b, package layout correct. [quality + phase-time pending completion]
-RUN 2 (SKELETON_FIRST=0, ABskeloff): [pending — launch after run 1]
-TRADEOFF VISIBLE: skeleton-first -> 0 over_read (no false-kill) BUT 23 tool calls (MANY round-trips = more
-wall-clock on a slow 27B). The verdict needs run 2: does skeleton-OFF trade fewer round-trips for more
-over_read? Net = time + quality. HONEST: not yet decided.
+RUN 1 (SKELETON_FIRST=1, ABskelon): single cli-entrypoint task (NOT split — confound removed). COMPLETE.
+  cli metrics: over_read 0, retries 0, judge 3x ok, tool_calls 23 (incremental write+fill+shell-checks), cli.py 4043b.
+  TIME (phase report): research 1.7m | planning 6.6m | execute 20.5m | TOTAL 28.9m.
+  QUALITY: CLEAN WIN. 4 done 0 FAILED (run-status PASSED — integrate-verify did NOT false-negative here).
+  Golden all correct: list newest-first, search matches both, tags counts (tech2/news1/lang1), export valid
+  JSON exit0, bad-format exit2, unknown-id exit1. NO stub left. CLI wired (all 8 commands).
+RUN 2 (SKELETON_FIRST=0, ABskeloff): RUNNING (b0lp2t2tq, same spec, same flags but skeleton OFF).
+TRADEOFF VISIBLE: skeleton-first -> 0 over_read + 0 retries (no false-kill) BUT 23 tool calls (MANY round-trips
+= more wall-clock on a slow 27B). On THIS moderate app it prevented NOTHING (0 retries with the flag on), so the
+23 round-trips look like pure overhead. VERDICT pending run 2: if run 2 (OFF) is also ~0 over_read / 0 retries
+with SIMILAR quality + FEWER round-trips + similar-or-less time -> skeleton-first is OVERHEAD on simple apps ->
+keep default-OFF, complexity-gate it. If run 2 has over_read kills + retries run 1 avoided -> it earned its keep.
