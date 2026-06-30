@@ -364,3 +364,34 @@ code runs + shape-tests pass. Grounded improvement: integrate-verify / a golden-
 OUTPUT matches what the spec IMPLIES on a known input, not just no-crash (recurring EVAL-v8 lesson 6).
 BATCH (new binary): fully-functional = APP1-retest, APP2-retest, APP3, APP4, APP5 (5); APP6 FAILED (TS parser,
 27B ceiling); APP7 PARTIAL (subtle next bug). APP7 29.7min best Python; avg ~37min still over target.
+
+## APP8 — hard Python JSON-schema validator: HARD FAILURE (wrong language + recursive ceiling), 60.9min
+Studied against the 7 points + a root-cause dig (the user: analyse the failed app carefully):
+1. FUNCTIONAL? NO. TWO compounding failures: (a) LANGUAGE MIS-DETECTION — the spec said LANG=Python but the
+   swarm built it in TYPESCRIPT (dist/cli.js, dist/validator.js, node_modules with vitest; ZERO .py files).
+   Root cause found: detect_language checked s.contains(".js") BEFORE the python cue, and "SCHEMA.json"/
+   "DATA.json" contain ".js" -> the TypeScript branch fired and the explicit LANG=Python was never reached.
+   (b) RECURSIVE CEILING — even as TS, core-validator (recursive nested schema validation) FAILED; 5/7
+   subtasks failed (cli-input-validation, core-validator, edge-case-tests, test-core-validator, integrate-
+   verify). Same ceiling class as APP6 (parser) — the 27B cannot complete a hard recursive algorithm.
+2. TIME: 60.9min — way over (the recursive-app ceiling; cf APP6 73min). Hard recursive apps blow the budget.
+3. Prompt complex enough? YES — recursive nested validation (types/required/min-max/minLength-maxLength) is hard.
+4. Questions? No ask floor.
+5. PHASES followed? YES, but EXECUTE collapsed (5/7 failed). JUDGE WAS HEALTHY: 183 observed / 8 re_dispatch
+   / 4 failed -> mostly OBSERVING, occasional re_dispatch, correctly terminal-failing genuinely-stuck tasks.
+   NOT thrashing (the 133-then-183 verdict count looked alarming but the action breakdown is healthy). This
+   is a POSITIVE validation of the idle-node/judge work under a hard pinned chokepoint.
+6. Did the REVIEW push functional? The run failed before a working integrate-verify; the smoke gate logged
+   py_files:0 (the tree was TS, not Python). Not reached.
+7. Working in 15-25min? NO — 60.9min + failed.
+ROOT-CAUSE FIX SHIPPED: detect_language now checks EXPLICIT language names FIRST (LANG wins) + matches
+extension cues at a WORD BOUNDARY (".js" != ".json") (commit 4a9c2e30e, regression-tested). This was a real
+HIGH-confidence bug that would mis-build ANY JSON-related Python app as TS.
+SECOND LESSON (open): the recursive-algorithm TIME+capability ceiling recurs (APP6 73min TS parser FAIL,
+APP8 60.9min recursive validator FAIL). Candidate mitigations to think about: decompose the recursive core
+into smaller verified pieces (one validator-per-type subtask) so no single subtask is the whole hard
+algorithm; OR a hard per-subtask wall-clock that fails fast instead of grinding 60min; OR accept the ceiling
+and surface EARLY (the judge already terminal-failed at 8 re_dispatch — but only after 60min).
+BATCH: 5 functional, APP6 FAIL (TS parser), APP7 PARTIAL (next bug), APP8 FAIL (lang mis-detect + recursive).
+Two of the failures (APP6 TS, APP8 recursive) are 27B-capability ceilings; APP8 ALSO exposed a real
+swarm bug (language detection) now fixed. avg time on hard apps ~50-70min = well over the 15-25 target.
