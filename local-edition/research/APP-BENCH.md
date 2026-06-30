@@ -518,3 +518,28 @@ The user raised the bar to ~1000-LOC feature-dense apps; this is the first. ALSO
 THE WALL AT ~1000 LOC (the user question): it is INTEGRATION, not module logic. The swarm builds many coherent
 modules but fails to (a) WIRE them into the entry point and (b) agree on shared cross-module contracts (the DB
 schema). The 27B builds the pieces; assembling them at 13-module scale is the ceiling.
+
+## UNIQ2 — graph analysis tool: WIN (FUNCTIONAL), 1179 LOC / 8 modules, ~58.3min — integration HELD at scale
+The FIRST complex (~1000+ LOC) app that actually WORKS. Judged by RUNNING (the run reported FAILED but the
+run-status LIES — the app is functional).
+1. FUNCTIONAL? YES. 1179 LOC, 8 modules (loader, path_algo, structural, node_queries, centrality, cli + main).
+   CLI FULLY WIRED: --help lists all 8 subcommands (path/components/topo/cycles/neighbors/degree/reachable/
+   centrality) — the OPPOSITE of UNIQ1's empty group. Graph algorithms all CORRECT: topo on a directed cycle
+   -> error + exit 1; cycles -> A->C->B->A; path A C -> A->B->C (hops 2); degree B -> in 1 out 1. 47 pytest pass.
+2. TIME: ~58.3min — complex-app range (over the 15-25 target, expected at this size).
+3. Prompt complex enough? YES — 8 graph algorithms (BFS/Dijkstra/topo/cycle/components/centrality), 1179 LOC.
+4. Answered its questions? YES — the ASK handshake: I answered 4 clarify questions; the SUBCOMMANDS answer
+   ("every command a registered subcommand reachable from --help") is WHY the CLI wired correctly.
+5. PHASES followed? YES — 9 done, 2 (cli-entry-point + integrate-verify) reported FAILED but FALSE-failed (the
+   CLI works when run). 1-PER-NODE VERIFIED in execute (lms ps: 3 nodes, 1 task each), judge calls ~5 (cooldown).
+6. Did the REVIEW push functional? MIXED + a FALSE-NEGATIVE: the app WORKS but integrate-verify marked it
+   FAILED (same false-negative class as APP10 — run-status lies BOTH ways; JUDGE BY RUNNING caught it).
+7. Working 15-25min? No (~58.3min) but FUNCTIONAL + CORRECT — the deliverable a user wants.
+HEADLINE (the user where-is-the-wall question): the ~1000-LOC INTEGRATION wall is ADDRESSABLE. UNIQ1 (925
+LOC, UNWIRED cli) failed; UNIQ2 (1179 LOC, WIRED cli) WORKS — the difference is EXPLICIT entry-wiring (via my
+ASK answer). This VALIDATES the entry-wiring fix (52715d760) that now makes the instruction default for ALL
+apps -> UNIQ3 (no wiring ASK-answer from me) should also wire. So the swarm CAN build a functional ~1200-LOC
+multi-module app; the levers are (a) explicit entry wiring (DONE), (b) shared-contract freezing (the DB-schema
+drift, still open), (c) integrate-verify false-negatives (it failed a working app — worth a look).
+BATCH: complex apps — UNIQ1 FAILED (unwired), UNIQ2 WIN (wired+correct, 1179 LOC). The wall is integration,
+and it is now being knocked down.
