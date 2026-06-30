@@ -1213,9 +1213,88 @@ fn print_import_summary(s: &ImportSummary) {
     }
 }
 
+/// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
+/// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
+/// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
+/// blocked integrate-verify so the app's real bug went uncaught and the run looked failed for the wrong
+/// reason). Strip test-subtask ids from integrate-verify's `depends_on` so it runs regardless of the tests;
+/// it still depends on the real module/entry subtasks. Returns how many deps were stripped (for logging).
+fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    let is_test_subtask = |s: &serde_json::Value| -> bool {
+        let id = s.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files: Vec<&str> = s
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+            .unwrap_or_default();
+        id.contains("test") || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(f)))
+    };
+    let test_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| is_test_subtask(s))
+        .filter_map(|s| s.get("id").and_then(|i| i.as_str()).map(String::from))
+        .collect();
+    if test_ids.is_empty() {
+        return 0;
+    }
+    let mut stripped = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
+                if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                    let before = deps.len();
+                    deps.retain(|d| d.as_str().map(|x| !test_ids.contains(x)).unwrap_or(true));
+                    stripped += before - deps.len();
+                }
+            }
+        }
+    }
+    stripped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integrate_verify_does_not_block_on_tests() {
+        // A failing `tests` subtask must not block integrate-verify (UNIQ6: tests failed -> integrate-verify
+        // never ran -> the app's real bug went uncaught + the run looked failed for the wrong reason).
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core","depends_on":[],"files":["core.py"]},
+                {"id":"cli-entry","depends_on":["core"],"files":["cli.py"]},
+                {"id":"tests","depends_on":["core"],"files":["tests/test_core.py"]},
+                {"id":"integrate-verify","depends_on":["core","cli-entry","tests"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let stripped = strip_integrate_verify_test_deps(&mut plan, TargetLang::Python);
+        assert_eq!(stripped, 1, "the single 'tests' dep should be stripped");
+        let iv = plan["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "integrate-verify")
+            .unwrap();
+        let deps: Vec<&str> = iv["depends_on"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|d| d.as_str())
+            .collect();
+        assert_eq!(
+            deps,
+            vec!["core", "cli-entry"],
+            "real module/entry deps stay; tests dep removed"
+        );
+    }
 
     #[test]
     fn score_skeleton_prefers_wider_flatter_plan() {
@@ -3218,6 +3297,14 @@ impl GooseAgentDispatcher {
                 }));
                 eprintln!("  · injected missing integrate-verify sink (architect omitted it)");
             }
+        }
+        // A failing unit-test subtask must not BLOCK integrate-verify (it runs the program, not the tests) —
+        // else the run reports FAILED while integrate-verify never ran to confirm whether the app works.
+        let stripped = strip_integrate_verify_test_deps(&mut v, lang);
+        if stripped > 0 {
+            eprintln!(
+                "  · integrate-verify no longer waits on the test subtask(s) ({stripped} dep(s) stripped) — a failing test will not hide whether the app actually runs"
+            );
         }
         let items: Vec<(usize, String, String, String)> = v
             .get("subtasks")
