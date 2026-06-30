@@ -2910,9 +2910,15 @@ impl GooseAgentDispatcher {
                     implemented, so parallel workers agree on the contract. Output ONLY Python signature \
                     stubs for the listed files: every public function and class the module will expose, \
                     with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
-                    `...` as the body. NO implementations, NO private helpers, NO prose, NO code fences. \
-                    You have file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY \
-                    file — put the stubs in your reply TEXT only. Keep it tight."
+                    `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
+                    SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
+                    block listing each TABLE and its EXACT column names (and types), because every module \
+                    that reads or writes those tables MUST use the SAME column names — a drift (one module \
+                    using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
+                    integration failure that passing isolation unit-tests hide. NO implementations, NO \
+                    private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
+                    them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
+                    Keep it tight."
                     .to_string();
                 let user = format!(
                     "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
