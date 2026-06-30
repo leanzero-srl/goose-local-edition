@@ -9,7 +9,7 @@ use goose_swarm::{
     Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1116,5 +1116,88 @@ async fn content_retry_threads_hint_infra_transient_does_not() {
     assert_eq!(
         infra_retry.hint, None,
         "an infra Transient must NOT thread a content hint"
+    );
+}
+
+/// Dispatcher for the SPECULATIVE-EXECUTION tests. The PRIMARY of `slow` runs long; a SPECULATIVE twin
+/// (req.speculative) returns FAST so it wins the race — exercising resolve_speculation's twin-win path
+/// (abort the primary, accept the twin's output via complete()). Records that a twin was seen + the peak
+/// concurrent in-flight per device (to assert 1-task-per-node).
+struct SpecDispatcher {
+    saw_speculative: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl TaskDispatcher for SpecDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if req.speculative {
+            self.saw_speculative.store(true, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5)).await; // twin wins the race
+            return Ok(format!("twin-{}", req.task_id).into());
+        }
+        let d = if req.task_id == "slow" {
+            Duration::from_millis(400) // the chokepoint primary runs long
+        } else {
+            Duration::from_millis(10)
+        };
+        tokio::time::sleep(d).await;
+        Ok(format!("output-of-{}", req.task_id).into())
+    }
+}
+
+/// SPECULATIVE EXECUTION (flag ON): `slow` is a chokepoint that d1/d2/d3 all depend on — while it runs, 2
+/// nodes idle, so a TWIN of `slow` is raced on an idle device and (being fast) WINS. The run must complete
+/// cleanly with NO device leak (a leak would hang the loop) and `slow` accepted exactly once.
+#[tokio::test]
+async fn speculation_twin_wins_chokepoint_and_no_leak() {
+    let saw = Arc::new(AtomicBool::new(false));
+    let disp = Arc::new(SpecDispatcher {
+        saw_speculative: saw.clone(),
+    });
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["slow.py"]),
+        spec("d1", &["slow"], &["d1.py"]),
+        spec("d2", &["slow"], &["d2.py"]),
+        spec("d3", &["slow"], &["d3.py"]),
+    ])
+    .unwrap();
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_speculation();
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(
+        report.failed.is_empty(),
+        "no task fails (no device leak / deadlock): {:?}",
+        report.failed
+    );
+    assert_eq!(report.done.len(), 4, "all 4 tasks Done exactly once");
+    assert!(
+        saw.load(Ordering::SeqCst),
+        "a speculative twin of the chokepoint was actually spawned on an idle node"
+    );
+}
+
+/// Flag OFF (no with_speculation): the SAME chokepoint DAG must complete with NO twin ever spawned —
+/// byte-identical to the non-speculative scheduler.
+#[tokio::test]
+async fn speculation_off_spawns_no_twin() {
+    let saw = Arc::new(AtomicBool::new(false));
+    let disp = Arc::new(SpecDispatcher {
+        saw_speculative: saw.clone(),
+    });
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["slow.py"]),
+        spec("d1", &["slow"], &["d1.py"]),
+    ])
+    .unwrap();
+    let sched = Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3); // no with_speculation
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(report.failed.is_empty());
+    assert_eq!(report.done.len(), 2);
+    assert!(
+        !saw.load(Ordering::SeqCst),
+        "with speculation OFF, no twin is ever spawned (byte-identical path)"
     );
 }
