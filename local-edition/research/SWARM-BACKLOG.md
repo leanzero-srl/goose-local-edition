@@ -29,3 +29,12 @@ the 27B is unsure about on a complex spec is itself a signal.
 
 ## DONE (fixed)
 (none yet)
+
+### [APP11][core-logic] worker produced UNBOUNDED loops (while len<count / while True, no max-iter cap)
+A degenerate input loops forever; pytest hung 2min -> tests-core + integrate-verify timed out -> run FAILED.
+The 27B could not fix it. SWARM-SIDE FIX IDEA (MED): the worker prompt for any search/generation loop should
+mandate a bounded loop (a max-iterations guard or an explicit termination proof), and/or the DONE_GATE could
+flag a `while True:` / `while <grows>:` with no break/bound in an owned file as a likely-hang smell and ask
+for a cap. Confidence MED (a heuristic loop-detector has false positives; the prompt nudge is safer). Verify
+by re-running a recurrence/search app and checking no unbounded loop ships. NOTE: the worker-timeout already
+prevents a hung test from hanging the whole RUN (good) — this is about the produced APP not hanging.

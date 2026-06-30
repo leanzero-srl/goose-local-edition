@@ -466,3 +466,27 @@ actually-working app marked FAILED) and is a recurring confusion. Run-status lie
 BATCH: functional (by RUNNING) = APP1-retest, APP2-retest, APP3, APP4, APP5, APP9, APP10 (7); APP7 PARTIAL;
 APP6 + APP8 FAIL (recursive ceiling + APP8 also the now-fixed lang bug). 7 of 10 functional. The TS smoke
 gate is validated (fired correctly twice the criteria: no false-positive + entry runs).
+
+## APP11 — Python monthly recurrence: FUNCTIONAL on golden, REAL edge-case HANG, run correctly FAILED
+1. FUNCTIONAL? PARTIAL-YES. occurrences 2026-01-15 31 --count 3 -> 2026-01-31 / 2026-03-31 / 2026-05-31
+   (CORRECT — Feb+Apr SKIPPED, the tricky month-skip the 27B usually botches is RIGHT, exit 0); count
+   2026-01-01 2026-12-31 31 -> 7 (CORRECT); bad date -> exit 1. So correct on conventional inputs. BUT
+   core.py has UNBOUNDED loops (while len(result)<count + while True, no max-iteration cap) -> a degenerate
+   input (a reversed range / out-of-range day not validated at the core layer) loops FOREVER. pytest HANGS
+   (2min timeout) -> tests-core + integrate-verify FAILED -> run correctly marked FAILED.
+2. TIME: ~elapsed not cleanly parsed (~30-40min).
+3. Prompt complex enough? YES — recurrence + month-skip + range-count.
+4. Questions? ASK not enabled on this run (pre-handshake).
+5. PHASES followed? YES — 3 done (cli/core/tests-cli), 2 failed (tests-core, integrate-verify on the hang).
+6. Did the REVIEW push functional? The tests CAUGHT the hang (good test depth — an edge the golden cases
+   missed); the worker-timeout correctly failed the hanging tests-core rather than hanging the whole run; the
+   run honestly reported FAILED. The smoke gate passed (it runs pytest --collect-only, NOT the full suite, so
+   it does not execute the looping test — by design, to avoid hanging). The 27B could NOT fix the unbounded
+   loop (same fix-capability ceiling as APP6/APP8).
+7. Working 15-25min? Correct on common cases but the edge-hang = not robust.
+GOLDEN-VALUE CATCH TEST RESULT: the multi-output (the month-skip) is CORRECT, so there was NO wrong output to
+catch -> the golden-value catch-power STILL unproven (the 27B got the tricky logic right; whether the
+strengthened prompt helped is unknowable without the trace). What the tests DID catch was a different class
+(an infinite loop), via test-execution timeout, not the golden-value check.
+BATCH: APP11 -> functional-on-golden but a real edge-hang (run correctly FAILED). Pattern holds: conventional
+correctness OK, a subtle bug (here an unbounded loop) the 27B cannot self-fix.
