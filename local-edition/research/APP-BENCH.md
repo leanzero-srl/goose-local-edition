@@ -639,3 +639,17 @@ TIME: 66min (planning 23.8 = re-plan waste; execute 40.2 = entry-point 3-attempt
 entry is the recurring slow/risky spot (UNIQ7 broken_code, took 3 attempts).
 IMPROVEMENT: QUALITY is the BEST complex app yet (works fully, clean output) — wiring/schema/skeleton-first all
 held. The gap is purely run-status honesty (3rd facet) + the slow complex-entry. JUDGE BY RUNNING remains essential.
+
+## UNIQ8 — SQLite snippet manager: CLEAN WIN + HONEST run-status (the MILESTONE), 743 LOC, 47min
+*** THE RUN-STATUS-HONESTY MILESTONE: done 7, FAILED [] (zero) — integrate-verify RAN (1 attempt, done['ok'],
+11 judge-ok verdicts, NOT killed/blocked). The FIRST clean honest DONE on a multi-module app since the fixes. ***
+1. FUNCTIONAL? YES, fully. CLI WIRED (all 9: init/add/list/search/show/edit/delete/tags/export). Golden ALL
+   correct: list (id title lang tags), search demo -> 2 matches, tags (demo2/greet1/iter1), export valid JSON 2
+   records, bad-format exit2, unknown-id exit1. No stubs.
+2. RUN-STATUS HONEST (the point): vs UNIQ2/UNIQ3 (WINS but run-status FALSE-FAILED, integrate-verify judge_killed)
+   -> UNIQ8 same class of working app now reports DONE honestly. judge-kill exemption + test-dep-strip both held;
+   integrate-verify ran end-to-end (11 ok) + passed. JUDGE BY RUNNING agrees with run-status for once.
+3. FASTER + cleaner: planning 18.4 (some ASK), execute 26.6, total 47min. Fast entry -> no finalize-spin (entry
+   finished under 7min) -> no re-dispatch loop. So the finalize-spin issue is a COMPLEX-entry problem, not moderate.
+IMPROVEMENT vs prior: this is the app-after-app proof the user wanted — run-status went from LYING (UNIQ2/3/6/7
+false or blocked) to HONEST DONE on a working app. Both run-status causes fixed + validated end-to-end.
