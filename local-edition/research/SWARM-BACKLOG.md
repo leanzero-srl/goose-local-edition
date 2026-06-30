@@ -133,3 +133,16 @@ UNIQ3 PLAN banner: "drafting 3 skeleton candidate(s) IN PARALLEL" (was 2). lms p
 nodes GENERATING (gabee/mihai/workhorse). So no node idles during skeleton drafting now. Both idle issues
 the user caught are fixed + VERIFIED live: execute-stacking (UNIQ2: 1-per-node) + planning-idle (UNIQ3:
 3-node draft). Remaining idle is only the truly-serial lone-27B skeleton pre-step + the integrate-verify tail.
+
+### [UNIQ3][planning-idle INVESTIGATED] the 2-idle is LEGITIMATE serial sub-steps, NOT a fan-out bug
+The user watches idle; I dug in (read parallel_plan ~2950-3188). After the 3-draft skeleton pick (which DOES
+use 3 nodes — verified), the serial sub-steps that briefly idle 2 nodes are: (1) verbalized_confidence — ONE
+planner self-rating call (line 3155), needed for the ASK confidence blend (0.7 agreement + 0.3 verbalized) +
+the uncertainties; CANNOT be parallelized (one LLM call) and CANNOT be skipped when confident (0.7*max-agree
+= 70 < the 80 floor, so the verbalized could always drop the blend below floor -> the ASK correctness needs
+it); bounded by planner_timeout_secs.max(90) so a stall fails fast. (2) the DETAILING TAIL — the last subtask
+spec (integrate-verify) being written on 1 node while the others are done (the tail confirms detailing DID
+fan out: "detail stages-module" + "detail integrate-verify" on different nodes). So NO fan-out bug; these are
+irreducible serial moments. HONEST: planning on a complex spec is ~20min (research + 3-draft + verbalized +
+detailing) — the only avoidable planning idle (best_of_n=2->fleet) is already fixed. The verbalized was slow
+this run (part of the 20min); it is one bounded call, not a bug. Verified, not hand-waved.
