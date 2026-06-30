@@ -66,3 +66,26 @@ answers were just provided. VERIFY: a complex app with ASK answers reaches EXECU
 NUANCE/risk: if an answer DID change the structure (rare — e.g. "actually make it a web app"), re-detail-only
 would miss it; gate the reuse on answers being clarifications (the common case) and keep a re-draft path for a
 structural pivot. Confidence MED-HIGH that re-detail-only is correct for clarification answers.
+
+### [UNIQ1][execute] INTEGRATION-AT-SCALE CONTRACT DRIFT on the `fixtures` table — CAUGHT LIVE (MED fix)
+The integration-at-scale failure mode I was watching for, MANIFESTED on a ~1000-LOC app. Three modules
+disagree on the fixtures table schema:
+- schema.py (core-db) CREATEs fixtures(id, league_id, home_team, away_team, round_num) UNIQUE(league_id,home_team,away_team).
+- fixtures.py (list cmd) SELECTs f.round_num / f.home_team / f.away_team  <- matches schema.py. GOOD.
+- scheduler.py (schedule-engine) CREATE TABLE IF NOT EXISTS fixtures(... round INTEGER ...) + INSERT INTO
+  fixtures (league, round, home, away)  <- DIFFERENT column names (league vs league_id, round vs round_num,
+  home/away vs home_team/away_team) AND stores the league NAME not the id. DIVERGED.
+RUNTIME EFFECT: league-create runs schema.py init_schema -> fixtures has league_id/home_team/away_team/round_num.
+Then `schedule` runs scheduler.py -> its CREATE IF NOT EXISTS is a no-op (table exists) -> INSERT INTO
+fixtures(league,round,home,away) FAILS: "table fixtures has no column named league". So the schedule command
+is BROKEN unless integrate-verify catches+fixes it. This is exactly the AB-CONTROLLED draw class (cross-module
+CONTRACT DRIFT hidden by isolation-only unit tests): each module unit-tests fine in isolation; the END-TO-END
+integration breaks. The CONTRACTS (frozen-interface) feature did NOT prevent it — it froze module FUNCTION
+signatures but NOT the shared DB SCHEMA / column names.
+SWARM-SIDE FIX (MED, in scope): include the SHARED DB SCHEMA (the exact CREATE TABLE column names from the
+core-db/schema module) in the CONTRACTS frozen-interface bundle, so every DB-touching module is told the EXACT
+columns and cannot invent its own (league vs league_id). Alternatively/additionally the schema module should be
+the SINGLE source of truth and other modules must import it, never re-CREATE the table. WATCH: does
+integrate-verify (pending — runs after standings-form-cmds) actually RUN `schedule` end-to-end and catch+fix
+this? If yes -> the integrate-verify + DB-schema-in-contracts combo handles it. If it ships broken -> the
+swarm did NOT prevent a real cross-module integration failure at scale = the headline finding for the user.
