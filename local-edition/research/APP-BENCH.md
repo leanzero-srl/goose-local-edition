@@ -257,3 +257,22 @@ CONCRETE TIME LEVERS (user to weigh — each is a real tradeoff, NOT built overn
 BOTTOM LINE: TIME is fleet SPEED (27B per-task latency x 5-7 tasks), not correctness. The parallelism + idle
 fix already help; the biggest code lever is reducing the TEST-task burden. This is the systemic gap vs 15-25min
 and the clearest next-improvement target — but it trades against test coverage, so it is a USER decision.
+
+## APP4 FALSE-NEGATIVE — ROOT CAUSE (diagnosed, fix candidate for the user)
+Why APP4's run reported "failed" on a FUNCTIONAL app: the `tests` subtask was marked FAILED (3 attempts
+exhausted, empty error), BUT its test files (test_cli.py, test_store.py) ARE present and `python3 -m pytest`
+-> 20 PASSED. So the worker WROTE valid, passing tests, yet every attempt was marked failed -> integrate-verify
+(downstream) cascaded -> run "failed". This is a FLAKY-WORKER FALSE-NEGATIVE: the INVERSE of "claimed done
+without writing" (a false-positive done) — here the worker DID the work (files written, tests pass) but its
+completion/attempt flaked (final_output flake / transient / a done-gate mis-fire), so good work was reported as
+failure.
+FIX CANDIDATE (for the user — NOT built; it touches the completion/retry path which is delicate): on a FAILED
+worker attempt, RE-CHECK the owned files — if they EXIST + are non-empty + VALID for the language (e.g. Python
+test files that `pytest --collect-only` accepts, or a module that imports), treat the task as DONE rather than
+failed (verify-by-ARTIFACT, not by the worker's completion signal). This is the mirror of the existing
+claimed-done guard (which catches false-POSITIVE done by checking files are missing); this would catch
+false-NEGATIVE fail by checking files are actually GOOD. Confidence: MED — the completion/retry path is the
+riskiest surface (an earlier idle_jobs double-decrement bug lived nearby); it needs careful design + adversarial
+review + a scheduler_mock test asserting "wrote-good-files-but-attempt-failed -> Done". Worth doing IF the
+false-negative recurs across runs; otherwise the practical takeaway stands: JUDGE BY RUNNING THE APP, the
+run-status lies in BOTH directions (APP2 false-green, APP4 false-negative).
