@@ -234,3 +234,26 @@ fewer phases?), the hardest + most impactful; (b) idle-fix is partial — specul
 to fully fill the tail (costs flagged); (c) the advertised-entry prompt is LLM-dependent — promote to the
 deterministic build gate if it regresses; (d) the false-negative run-status (a functional app reported failed)
 deserves a look (integrate-verify/tests flake shouldn't fail a working app).
+
+## TIME ANALYSIS (where the wall-clock goes — the #1 open item)
+PHASE SPLIT (all 4 new-binary apps): research ~2min (FAST — parallel scouts work), plan ~6-8min (parallel
+planning, moderate), EXECUTE+REVIEW ~17-39min (THE BULK). research is NOT the problem; the bulk is execute.
+DOMINANT SINK = slow INDIVIDUAL TASKS on the 27B (5-13min EACH), especially:
+- TEST tasks: APP1-retest had THREE (tests-cli 545s=9min, tests-edge-cases 349s, tests-conversion 233s) =
+  ~19min of test-writing alone. APP2 tests 234s. Test tasks are 30-50% of wall-clock.
+- cli-entry-point: a CHOKEPOINT everything depends on, and slow (APP3 769s=12.8min!, APP1 361s).
+- integrate-verify: 280-418s, now SLOWER because the advertised-entry prompt makes it BUILD + run the spec's
+  commands (a correctness/speed tradeoff — worth it, it catches real defects, but it adds ~3-5min).
+CONCRETE TIME LEVERS (user to weigh — each is a real tradeoff, NOT built overnight):
+1. CAP / CONSOLIDATE TEST TASKS (highest value): the architect over-decomposes tests into 2-3 separate slow
+   tasks, and the 27B writes exhaustive suites (9min each). Cap test scope (a focused golden-value suite, not
+   exhaustive) OR merge the test tasks. Could cut 10-20min. Tradeoff: less test coverage.
+2. KEEP cli-entry-point TINY (it's the chokepoint): the architect rule already says keep shared deps small;
+   the entry task balloons. A stricter "entry = wiring only, <40 lines" could shave the 769s outlier.
+3. integrate-verify speed: it got more thorough (build+commands). Could time-box it or run the spec commands
+   in the deterministic smoke gate instead (faster, model-free) — ties to the deterministic-build-gate candidate.
+4. FASTER MODEL for the easy/test tasks (the planner labels hard tasks for the 27B; a faster small model for
+   test-writing could parallelize cheaper) — a fleet/config lever, not code.
+BOTTOM LINE: TIME is fleet SPEED (27B per-task latency x 5-7 tasks), not correctness. The parallelism + idle
+fix already help; the biggest code lever is reducing the TEST-task burden. This is the systemic gap vs 15-25min
+and the clearest next-improvement target — but it trades against test coverage, so it is a USER decision.
