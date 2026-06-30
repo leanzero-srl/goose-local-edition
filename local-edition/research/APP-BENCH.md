@@ -439,3 +439,30 @@ TAKEAWAY: the moderate-Python sweet spot (APP9 17.9min, APP4/APP5 habit/ledger, 
 well; the failures cluster on RECURSIVE algorithms (APP6 parser, APP8 validator) = the 27B capability ceiling.
 BATCH: functional now = APP1-retest, APP2-retest, APP3, APP4, APP5, APP9 (6); APP7 PARTIAL; APP6 + APP8 FAIL
 (recursive ceiling). The gates + detect_language fix are validated working on a clean passing app.
+
+## APP10 — TS sequence generator (multi-output): FUNCTIONAL (run-status LIED), ~34min — integrate-verify false-fail
+Judged by RUNNING (the run was marked FAILED on integrate-verify; the app WORKS):
+1. FUNCTIONAL? YES. Built as TypeScript (detect_language TS path correct). `node dist/index.js fib --count 8`
+   -> 0 1 1 2 3 5 8 13 (CORRECT); primes --count 5 -> 2 3 5 7 11; triangular --count 4 -> 1 3 6 10; fib
+   --count -1 -> exit 1 (validation). 16 vitest pass. The multi-output (the golden-value class) is CORRECT +
+   distinct. NOTE: my first test mis-invoked `node dist/index.js seq fib` -> "unknown command seq"; `seq` is
+   the BIN NAME (the program), `fib` is the subcommand, so the real invocation is `node dist/index.js fib`.
+2. TIME: ~34min — over target (TS slower than the Python sweet-spot APP9 17.9min).
+3. Prompt complex enough? Moderate (3 sequences, multi-output, a subcommand group).
+4. Questions? No ask floor.
+5. PHASES followed? YES — 4/4 work subtasks done; only integrate-verify "failed".
+6. Did the REVIEW push functional? MIXED. The TS SMOKE GATE FIRED CORRECTLY (ran=True, entry_ok=True, 0
+   findings) — the FIRST live TS smoke-gate test, NO false-positive on a healthy TS app -> validates the
+   MF1/MF3 review fixes. BUT integrate-verify FALSE-FAILED: told to run "the EXACT commands the spec
+   advertises", it ran the spec literal "seq fib --count N" but the built artifact is invoked as
+   `node dist/index.js fib` (the leading "seq" is the BIN name, dropped when running via node <entry>) ->
+   "unknown command seq" -> it concluded broken + failed the run. A FALSE NEGATIVE on a working app.
+7. Working in 15-25min? ~34min, but FUNCTIONAL.
+GROUNDED IMPROVEMENT (the bin-name vs subcommand invocation bug): integrate-verify + the worker entry-run
+guidance must state that when invoking the BUILT entry directly (node <dist-entry> / python3 -m <pkg>), the
+spec's LEADING program/bin name is NOT repeated as an argument — pass only the SUBCOMMAND + args (spec
+"myapp build --x" -> `node dist/cli.js build --x`, NOT `... myapp build --x`). This false-failed APP10 (an
+actually-working app marked FAILED) and is a recurring confusion. Run-status lies BOTH ways — JUDGE BY RUNNING.
+BATCH: functional (by RUNNING) = APP1-retest, APP2-retest, APP3, APP4, APP5, APP9, APP10 (7); APP7 PARTIAL;
+APP6 + APP8 FAIL (recursive ceiling + APP8 also the now-fixed lang bug). 7 of 10 functional. The TS smoke
+gate is validated (fired correctly twice the criteria: no false-positive + entry runs).
