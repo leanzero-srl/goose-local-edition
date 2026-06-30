@@ -153,3 +153,20 @@ round_num) -> schedule broke at runtime. Fix: generate_contracts system prompt n
 (each table + exact columns) for any DB-owning module, so all DB modules use the SAME columns. Prompt-only,
 MED (LLM-dependent). VERIFY on the next complex DB-app (a SQLite app — does the schema stay consistent?).
 Pairs with entry-wiring -> the two UNIQ1 integration failures both have a fix now.
+
+## MONITORING RUBRIC (user, every cycle + ALWAYS an improvement set after each app)
+Each monitoring check reviews FOUR dimensions, and on EVERY app finish produce an improvement-items set here:
+1. IDLE MODELS — lms ps PER-NODE. Each idle node: is it filled by the idle-node fix (pre-review/judge fired?
+   grep pre_review/judge_verdict counts) or legitimately serial (lone-27B brief, verbalized-confidence,
+   dependency-chokepoint tail, single integrate-verify)? If avoidably idle -> diagnose phase + FIX.
+2. REASONING QUALITY — read a worker session trace / the produced modules: wrong sibling contract, dropped
+   feature, wrong constant, looping/over-reading, unbounded loop. Judge re_dispatch vs observed ratio.
+3. ARTIFACT QUALITY — read the produced code: clean structure + typing + docstrings? smells (while True,
+   eval(, bare except:, stubs, fake impls)? does it match the spec? run it (golden) on completion.
+4. IMPROVEMENT ITEMS — ALWAYS append concrete swarm-side improvements found (or "none — clean") below.
+
+### [UNIQ3][monitor] mid-execute review — CLEAN (no new items)
+IDLE: legitimate — 4 pre_reviews fired (idle-node fix working) + dependency-chokepoint tail (cli/tests/iv
+wait on stages). REASONING: sound. ARTIFACTS: HIGH — stages.py frozen dataclasses per stage, Literal/Union
+typing, docstrings; NO while-True/eval/bare-except across modules. Judge ~33/35min ~= 1/min (cooldown holds).
+IMPROVEMENT ITEMS: none from the artifacts (clean). Full golden-run review on completion.
