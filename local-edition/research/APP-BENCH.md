@@ -622,3 +622,20 @@ IMPROVEMENT vs UNIQ5: swarm-side fixes all held (wiring, schema, skeleton-first,
 REGRESSION on app quality (broken persistence) = the local 27B variance, not a swarm regression. The infer-
 persist bug is EXACTLY what integrate-verify should catch — but tests blocked it -> STRONG motivation for the
 dependency-blocked fix (let integrate-verify run even if tests fails) + the tests-subtask reliability.
+
+## UNIQ7 — SQLite inventory tracker: WORKS PERFECTLY (best complex app) but run-status FALSE-FAILED, 66min
+JUDGE BY RUNNING = the cleanest complex app yet. Golden ALL correct: --help wired (7 cmds), item list on-hand
+70 (100 recv - 30 ship), ship-overflow REFUSED exit1, valuation 70*$5=$350 + Grand Total, lowstock empty,
+movements dated (recv 100 / ship -30), unknown SKU exit1. Nicely formatted tables. CLI WIRED, no stubs.
+BUT run-status FAILED [entry-point, integrate-verify] = FALSE-NEGATIVE (the app WORKS):
+- entry-point marked FAILED (3 attempts, 1 broken_code + 1 looping earlier) but its FINAL files RUN PERFECTLY.
+  A THIRD run-status facet: a real module that exhausts retries but whose final-attempt files actually work.
+- integrate-verify BLOCKED by the failed entry-point (0 attempts). My test-dep-strip fix only covers TESTS; a
+  failed real MODULE still blocks it (correctly in principle — but here the module false-failed).
+RUN-STATUS PROGRESS: judge-kill cause FIXED (no judge_killed here), test-blocked cause FIXED (tests passed +
+did not block). REMAINING: a module that exhausts retries with WORKING final files -> false-fail + blocks
+integrate-verify. Harder: the scheduler marks it failed on the attempt cap though the files are usable.
+TIME: 66min (planning 23.8 = re-plan waste; execute 40.2 = entry-point 3-attempt struggle). The complex CLI
+entry is the recurring slow/risky spot (UNIQ7 broken_code, took 3 attempts).
+IMPROVEMENT: QUALITY is the BEST complex app yet (works fully, clean output) — wiring/schema/skeleton-first all
+held. The gap is purely run-status honesty (3rd facet) + the slow complex-entry. JUDGE BY RUNNING remains essential.
