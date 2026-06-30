@@ -276,7 +276,14 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // slow one composing a large file, makes only a handful of tool calls before its file appears; a
     // worker on its Nth action with nothing written is over-reading and should be redirected NOW, not in
     // several more minutes. A small min-age guard keeps a fast startup burst from being misread.
-    if !input.any_owned_written
+    // The over-read heuristic only makes sense for a worker that OWNS files it should be writing. A task
+    // that owns NO files (the integrate-verify sink, a pure verifier) legitimately reads the whole program
+    // and RUNS it without ever writing an owned file, so `!any_owned_written` is permanently true for it —
+    // applying this gate GUARANTEES it is killed for over_reading once it makes a few tool calls (the
+    // observed false-negative: integrate-verify judge_killed x3 -> run reported FAILED though the app works).
+    // No-owned tasks are bounded by the idle-based worker_timeout instead; exempt them here.
+    if !input.owned_files.is_empty()
+        && !input.any_owned_written
         && input.elapsed_secs >= cfg.min_age_secs
         && input
             .worker_tool_calls
@@ -294,7 +301,10 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
             proposed_split: None,
         });
     }
-    if !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
+    if !input.owned_files.is_empty()
+        && !input.any_owned_written
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+    {
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
             confidence: 0.9,
@@ -356,31 +366,52 @@ mod tests {
 
     #[test]
     fn finalize_spin_fires_when_owned_file_goes_stale() {
-        let v = deterministic_verdict(&mk("scan-module", true, Some(500), 700), &JudgeConfig::default());
+        let v = deterministic_verdict(
+            &mk("scan-module", true, Some(500), 700),
+            &JudgeConfig::default(),
+        );
         assert_eq!(v.map(|o| o.verdict), Some(Verdict::Looping));
     }
 
     #[test]
     fn finalize_spin_excludes_integrate_verify() {
-        let v = deterministic_verdict(&mk("integrate-verify", true, Some(500), 700), &JudgeConfig::default());
-        assert!(v.is_none(), "the verify sink edits other files; must not be finalize-spin-killed");
+        let v = deterministic_verdict(
+            &mk("integrate-verify", true, Some(500), 700),
+            &JudgeConfig::default(),
+        );
+        assert!(
+            v.is_none(),
+            "the verify sink edits other files; must not be finalize-spin-killed"
+        );
     }
 
     #[test]
     fn finalize_spin_quiet_when_recently_written() {
-        let v = deterministic_verdict(&mk("scan-module", true, Some(60), 700), &JudgeConfig::default());
-        assert!(v.is_none(), "a worker that wrote recently is making progress");
+        let v = deterministic_verdict(
+            &mk("scan-module", true, Some(60), 700),
+            &JudgeConfig::default(),
+        );
+        assert!(
+            v.is_none(),
+            "a worker that wrote recently is making progress"
+        );
     }
 
     #[test]
     fn over_read_fires_with_no_output_on_old_attempt() {
-        let v = deterministic_verdict(&mk("scan-module", false, None, 500), &JudgeConfig::default());
+        let v = deterministic_verdict(
+            &mk("scan-module", false, None, 500),
+            &JudgeConfig::default(),
+        );
         assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
     }
 
     #[test]
     fn healthy_young_worker_is_quiet() {
-        let v = deterministic_verdict(&mk("scan-module", true, Some(30), 100), &JudgeConfig::default());
+        let v = deterministic_verdict(
+            &mk("scan-module", true, Some(30), 100),
+            &JudgeConfig::default(),
+        );
         assert!(v.is_none());
     }
 
@@ -391,6 +422,21 @@ mod tests {
         i.worker_tool_calls = Some(16);
         let v = deterministic_verdict(&i, &JudgeConfig::default());
         assert_eq!(v.map(|o| o.verdict), Some(Verdict::OverReading));
+    }
+
+    #[test]
+    fn over_read_exempts_no_owned_task() {
+        // integrate-verify (and any pure verifier sink) owns NO files, so `!any_owned_written` is permanently
+        // true and it legitimately reads the whole program + RUNS it. It must NOT be over-read-killed even
+        // with many tool calls on an old attempt (the observed false-negative: integrate-verify judge_killed
+        // x3 -> run reported FAILED though the app worked). The idle-based worker_timeout bounds it instead.
+        let mut i = mk("integrate-verify", false, None, 500);
+        i.owned_files = vec![];
+        i.worker_tool_calls = Some(40);
+        assert!(
+            deterministic_verdict(&i, &JudgeConfig::default()).is_none(),
+            "a no-owned verifier task must not be over-read-killed"
+        );
     }
 
     #[test]
