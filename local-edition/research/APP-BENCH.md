@@ -416,3 +416,26 @@ recursive algorithm, and the run correctly FAILS rather than shipping a fake. Re
 ONE lower-risk idea kept for later (MED): for a CRITICAL CHOKEPOINT subtask that everything depends on, once
 it terminal-fails, the run is doomed — could fail the WHOLE run faster instead of also burning attempts on its
 now-orphaned siblings. Needs careful trace work + a control-flow change; deferred, not rushed.
+
+## APP9 — Python date utility (gate-validation): WIN, 17.9min — FIRST app inside the 15-25 target
+The end-to-end validation of this session gates. Built as PYTHON (detect_language fix confirmed). 4/4 done, 0 failed.
+1. FUNCTIONAL? YES, fully correct. series 2026-01-01 --count 3 --step 7 -> 2026-01-01 / 2026-01-08 / 2026-01-15
+   (correct + distinct, exit 0). weekdays 2026-01-01 --count 3 -> 2026-01-02 Fri / 2026-01-05 Mon / 2026-01-06
+   Tue (correctly skips Sat 01-03 + Sun 01-04). malformed date -> exit 2. 14 pytest pass.
+2. TIME: 17.9min — INSIDE the 15-25 target (the FIRST app to do so). Moderate Python (date arithmetic, not a
+   recursive ceiling) -> tractable for the 27B + fast.
+3. Prompt complex enough? Moderate — 2 subcommands, multi-output with --count N, weekday skipping, validation.
+4. Questions? No ask floor.
+5. PHASES followed? YES — 4/4 done.
+6. GATE PROOF (the point of this run): SMOKE GATE FIRED CORRECTLY -> ran=True, py_files=5, entry_ok=True,
+   findings=0 (it ran the Python entry, passed, NO false-positive). The MULTI-OUTPUT (series/weekdays --count
+   N — exactly APP7s wrong-output class) is CORRECT + DISTINCT. So the gates behave correctly on a passing app.
+7. Working in 15-25min? YES — 17.9min + correct. The deliverable a user would actually want.
+HONEST CAVEAT: APP9 had NO bug, so it PROVES the gates fire without false-positives + a correct multi-output,
+but does NOT prove the golden-value check CATCHES a wrong multi-output (there was nothing to catch). The
+golden-value catch-power remains unproven until a run where the 27B produces a wrong --count output and the
+check catches+fixes it. The smoke gate firing cleanly (ran the Python entry, passed) IS proven here.
+TAKEAWAY: the moderate-Python sweet spot (APP9 17.9min, APP4/APP5 habit/ledger, APP1-retest/APP7 ~30min) works
+well; the failures cluster on RECURSIVE algorithms (APP6 parser, APP8 validator) = the 27B capability ceiling.
+BATCH: functional now = APP1-retest, APP2-retest, APP3, APP4, APP5, APP9 (6); APP7 PARTIAL; APP6 + APP8 FAIL
+(recursive ceiling). The gates + detect_language fix are validated working on a clean passing app.
