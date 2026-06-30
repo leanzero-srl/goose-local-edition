@@ -71,3 +71,13 @@ On task `commands-cli` a worker spent ~5k tokens reading (`cat`/Read across the 
 - **Do NOT forget the solo-fallback `plan()` prompt (`swarm.rs:3338-3361`)** if you touch granularity policy — it currently gives uncapped "more is better" guidance and will flip the policy on any parallel-planning failure.
 
 **Verified anchors:** architect prompt `swarm.rs:2991-3005`; modular rule `2999-3005`; one-big-write `5247-5249`; entry branch `5115-5130`; over_read gates `judge.rs:279-309`; scorer `swarm.rs:2028-2092`; detailer `3285-3301`; entry names `4903-4923`; entry-run example `4940-4953`; env-flag pattern `5204-5206`; completion guard `5326-5358`.
+## A/B EARLY SIGNAL — encouraging but CONFOUNDED (not yet a verdict)
+UNIQ4 (SKELETON_FIRST=1) vs UNIQ3 (off): over_read flags 1 vs 5; cli.py 7021b written via 7 tool calls
+(incremental write+edits, NOT a single late dump). BUT NOT a clean A/B: different apps AND UNIQ4 split its CLI
+into 4 tasks (cli-entry-point + commands-accounts-categories + commands-transactions +
+commands-transfer-budget-report) vs UNIQ3 single commands-cli — smaller tasks reduce over_read on their own,
+so the drop is confounded with the task split, not cleanly attributable to skeleton-first. HONEST: suggestive,
+not proven. RIGOROUS TEST NEEDED (user method: same spec both ways): run ONE spec twice, SKELETON_FIRST=1 vs 0,
+same binary, compare over_read + time-to-first-entry-write + QUALITY (cli fully implemented + wired, no stub
+left). Until then: keep the flag env-gated, do NOT change the default. Quality so far: cli.py non-trivial
+(7KB) + the entry task completed (will verify fully-implemented + wired on completion, not skeleton-left).
