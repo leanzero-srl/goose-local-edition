@@ -148,6 +148,11 @@ jobs:
           chmod +x ui/desktop/src/bin/goosed
           ls -la ui/desktop/src/bin/
 
+      - name: Free Rust build artifacts before packaging
+        run: |
+          source ./bin/activate-hermit
+          cargo clean
+
       - name: Cache pnpm dependencies
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
         with:
