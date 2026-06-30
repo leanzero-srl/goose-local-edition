@@ -50,3 +50,19 @@ increasing to the final). POSITIVE finding: the ASK feature is working as intend
 OBSERVATIONS to keep (not yet bugs): 1-of-2 skeleton drafts invalid on this complex spec (inert-60, no
 cross-check) + ~10min planning before the gate. If repeated across the next complex apps -> backlog a
 skeleton-drafter robustness fix; for now just an observation.
+
+### [UNIQ1][plan] CONFIRMED + ROOT-CAUSED: the ASK re-plan WASTEFULLY re-drafts the full skeleton (MED-HIGH fix)
+At 26min the league run is STILL in planning (research -> scout -> skeleton round 1 -> conf 60 -> ASK ->
+my answers -> skeleton round 2 -> detailing 8 subtasks). The ASK re-plan re-entered the FULL plan() and
+re-drafted the skeleton (a 2nd best_of_n round). But my answers were about SEMANTICS — head-to-head
+tiebreak definition, output format (ASCII vs JSON), schedule idempotency, bracket round numbering — which
+affect the DETAILING (the per-subtask specs), NOT the skeleton STRUCTURE (the ~8 modules: store, schedule,
+standings, bracket, cli, etc. are identical regardless of those answers). So re-drafting the skeleton on the
+ASK answers is WASTED work (~5-8 min on the 27B). FIX (MED-HIGH, in scope): on the ASK re-plan, REUSE the
+already-picked skeleton and ONLY RE-DETAIL, folding the Q&A answers into the detailing prompts (they clarify
+the spec, not the decomposition). Locate the re-plan path (after ask_clarifying_questions returns the Q&A,
+the code re-enters the plan loop) and short-circuit the skeleton-draft step when a skeleton already exists +
+answers were just provided. VERIFY: a complex app with ASK answers reaches EXECUTE ~5-8min sooner.
+NUANCE/risk: if an answer DID change the structure (rare — e.g. "actually make it a web app"), re-detail-only
+would miss it; gate the reuse on answers being clarifications (the common case) and keep a re-draft path for a
+structural pivot. Confidence MED-HIGH that re-detail-only is correct for clarification answers.
