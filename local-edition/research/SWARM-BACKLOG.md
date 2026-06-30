@@ -38,3 +38,15 @@ flag a `while True:` / `while <grows>:` with no break/bound in an owned file as 
 for a cap. Confidence MED (a heuristic loop-detector has false positives; the prompt nudge is safer). Verify
 by re-running a recurrence/search app and checking no unbounded loop ships. NOTE: the worker-timeout already
 prevents a hung test from hanging the whole RUN (good) — this is about the produced APP not hanging.
+
+### [UNIQ1][clarify] ASK mechanism worked WELL on a complex spec — asked the RIGHT 4 questions (POSITIVE)
+plan_confidence 60 (single valid skeleton of 2) -> below the ~80 floor -> it asked 4 genuinely-ambiguous
+questions and BLOCKED for answers (the file handshake worked): (1) head-to-head tiebreak definition;
+(2) output format (ASCII table vs JSON); (3) schedule idempotency when fixtures already exist; (4) bracket
+round numbering direction. These are exactly the under-specified parts of the spec -> the clarify-question
+generator is GOOD. Answered as the user (head-to-head = direct-matches mini-league then alphabetical; ASCII
+tables for standings/bracket + plain lines for fixtures/form; schedule errors if fixtures exist; rounds 1..k
+increasing to the final). POSITIVE finding: the ASK feature is working as intended on a complex app.
+OBSERVATIONS to keep (not yet bugs): 1-of-2 skeleton drafts invalid on this complex spec (inert-60, no
+cross-check) + ~10min planning before the gate. If repeated across the next complex apps -> backlog a
+skeleton-drafter robustness fix; for now just an observation.
