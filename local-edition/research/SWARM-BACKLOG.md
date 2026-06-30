@@ -224,3 +224,14 @@ HashMap<TaskId,String> to RunReport (scheduler.rs:42), capture the last Dispatch
 diagnosable per run. LIKELY real fix after that: a stalled/timed-out integrate-verify should NOT fail the whole
 run if the smoke gate + the produced app pass (distinguish verify-incomplete from app-broken). Implement with a
 scheduler_mock test next focused cycle — do NOT rush a scheduler edit at marathon depth.
+
+### [FIXED] integrate-verify false-negative (judge over-read kill) — 6e1547b2d
+attempt_history (already in the report.tasks[], I was reading the wrong place) proved it: UNIQ3
+integrate-verify = judge_killed x3 verdict over_reading. ROOT CAUSE: the behavioral over-read gate fires on
+!any_owned_written; integrate-verify owns NO files -> permanently armed -> guaranteed kill after ~16 tool calls
+(it legitimately reads the whole program + runs it). FIX: both over-read gates now require !owned_files.is_empty()
+so they only apply to workers that HAVE files to write; no-owned verifiers are bounded by the idle worker_timeout
+instead. Test over_read_exempts_no_owned_task. VERIFY on UNIQ6+ (new binary): integrate-verify should run to
+completion, run-status should stop false-failing working apps. REMAINING cause (separate): UNIQ2/ABskeloff
+integrate-verify failed with 0 attempts = BLOCKED by the failed tests subtask -> a failed test/dep should not
+fail the run if the app RUNS (smoke passed). Pairs with tests-subtask-produces-nothing.
