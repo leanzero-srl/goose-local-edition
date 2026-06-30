@@ -244,3 +244,18 @@ the test-suite phase has QUESTIONABLE payoff: either very slow (UNIQ5) or empty 
 later: scope the test-suite smaller (a few golden-value tests not exhaustive coverage), OR make it a knob, OR
 fix the empty-test failure first. Do NOT cut blindly — tests CAN catch bugs (but UNIQ4 had a budget bug AND
 tests failed, so they did not help there). Pairs with the integrate-verify tail cost.
+
+### [run-status 3rd facet + skeleton-first downside] finalize-spin false-kills a slow entry whose files WORK
+UNIQ7 entry-point: attempt_history [judge_killed looping, judge_killed broken_code, judge_failed looping] -> 3
+attempts exhausted -> FAILED -> blocked integrate-verify -> run-status FAILED on an app that RUNS PERFECTLY.
+ROOT: the finalize-spin gate (judge.rs:325) fires Looping when an owned file is written but UNTOUCHED >=420s
+while the worker still runs ("stuck re-verifying"). SKELETON-FIRST INTERACTION (a downside of my own change):
+skeleton-first writes the file EARLY (the skeleton), so the 420s stale-timer starts early; while the slow 27B
+THINKS about filling, the file is untouched -> finalize-spin fires though the worker is mid-fill, not stuck.
+A non-skeleton-first worker writes LATE (one big write) so the timer is low at finish. So skeleton-first INVERTS
+the finalize-spin assumption -> false-kills on complex entries (the very place skeleton-first was meant to help).
+FIX OPTIONS (subtle, do with FOCUS): (a) raise finalize-spin threshold for entry/skeleton-first tasks; (b) when
+a task EXHAUSTS retries but its owned files EXIST + PARSE (no compile_errors), SALVAGE it -> mark DONE not FAILED
+(the files are usable; risk: parsing-but-stub files); (c) finalize-spin should reset on ANY tool activity not
+just file edits (a worker running checks IS making progress). RECONSIDER skeleton-first default-on pending a
+CLEAN complex A/B — it may be net-negative on complex entries via this interaction. JUDGE BY RUNNING caught it.
