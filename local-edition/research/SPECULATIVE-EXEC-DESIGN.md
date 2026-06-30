@@ -87,3 +87,28 @@ concurrent normal tasks. STANDALONE TEST before any flag-on: a speculative dispa
 TempDir + the real tree is byte-identical; promote copies exactly the owned_files. Confidence now MED (was
 MED-LOW) — the isolation mechanism is a supported API, not a hack. STILL the riskiest change (promote touches
 the real tree) -> flag OFF until the standalone test + adversarial review are GREEN.
+
+## PHASE-2 VERDICT (2026-06-30): the cwd-shadow is NOT a real jail -> GOOSE_SWARM_SPECULATE STAYS OFF
+Adversarial review of the Phase-2 dispatcher shadow (commit e54b98285) found the headline invariant FALSE:
+a cwd shadow contains only RELATIVE-path editor writes. The developer SHELL tool (sets child cwd, no
+chroot/seccomp) and ABSOLUTE-path editor writes (passed through verbatim by core goose edit.rs) BYPASS the
+shadow -> a misbehaving twin could write outside it. The root cause is in CORE GOOSE (developer edit.rs /
+shell.rs), OUT OF the editable swarm scope. So a true isolation GUARANTEE is not achievable in scope.
+Mitigating reality (why it is not as scary as "catastrophic" first sounds): (1) the shadow is in OS temp, so
+`cd ..` reaches /tmp, not the project; (2) the worker is shown ONLY the shadow path (the layout cwd = root =
+shadow), so it has no real-path to target; (3) the "real tree" for a swarm run is the SCRATCH APP DIR the
+user cd-d into (an eval app being built), NOT ~/.important files; (4) the PRIMARY worker ALREADY has
+unsandboxed shell today, so a twin adds NO new risk CLASS — only a second concurrent writer, and only if it
+uses an absolute path it never sees. So the PRACTICAL containment is strong; the GUARANTEE is absent.
+DECISION (made as the operator, honoring the user safety emphasis + the catastrophic framing): keep
+GOOSE_SWARM_SPECULATE OFF. The plumbing stays LANDED + DORMANT (default-OFF, byte-identical, both halves
+built + reviewed, the file-ops + flag-gating proven) so it is ready IF a real sandbox is ever added (a
+container/chroot per twin, or an abs-path reject in the developer extension — both core-goose, out of scope).
+The remaining wire-up (resolve_speculation -> promote) is NOT done, since completing an un-enableable feature
+is low-value; it is a ~20-line scheduler change documented in the loop notes if isolation is ever solved.
+IDLE-NODE PROBLEM (what speculative was meant to solve) — safe in-scope status: Phase-1 (idle-node judge +
+pre-review) already fills idle nodes whenever there is review work. The remaining gap is a serial chokepoint
+with NO review work left. The SAFE alternative is FLATTER DAGS (the architect already caps dependency depth
+at 2 + discourages chokepoints; can be strengthened), which reduces idle moments with ZERO corruption risk.
+The recursive-ceiling apps (APP6/APP8) have an IRREDUCIBLE chokepoint (one hard algorithm) that no DAG
+flattening removes — there the idle is inherent to a capability-bound task.
