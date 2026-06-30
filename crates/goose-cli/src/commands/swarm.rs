@@ -4045,9 +4045,20 @@ def _strip_doc(body):
 
 
 def _is_abstract(fn):
+    # @abstractmethod/@abstractproperty are intentionally unimplemented; @overload/@typing.overload
+    # signatures REQUIRE a `...`/`pass` body (structural, never implemented). Never flag these.
     for d in fn.decorator_list:
         n = d.id if isinstance(d, ast.Name) else (d.attr if isinstance(d, ast.Attribute) else None)
-        if n in ("abstractmethod", "abstractproperty"):
+        if n in ("abstractmethod", "abstractproperty", "overload"):
+            return True
+    return False
+
+
+def _is_protocol_class(cls):
+    # A typing.Protocol class's methods have structural `...`/`pass` bodies (interface declarations).
+    for b in cls.bases:
+        n = b.id if isinstance(b, ast.Name) else (b.attr if isinstance(b, ast.Attribute) else None)
+        if n == "Protocol":
             return True
     return False
 
@@ -4093,8 +4104,20 @@ for mod, path in mods.items():
         tree = ast.parse(open(path, encoding="utf-8").read())
     except Exception:
         continue
+    # Methods directly defined on a typing.Protocol class are structural interface declarations whose
+    # `...`/`pass` body is correct — collect them (by node identity within THIS parse) to skip.
+    protocol_methods = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_stub(node):
+        if isinstance(node, ast.ClassDef) and _is_protocol_class(node):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    protocol_methods.add(id(item))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and id(node) not in protocol_methods
+            and _is_stub(node)
+        ):
             findings.append(
                 "function '%s' in module '%s' is a STUB/UNIMPLEMENTED (body is only pass / ... / raise NotImplementedError / a docstring) — implement it FULLY per the spec"
                 % (node.name, mod)
