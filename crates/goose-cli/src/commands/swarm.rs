@@ -5118,13 +5118,16 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 // bad import only after a full rewrite. When ON, instruct a SKELETON-FIRST build for the entry
                 // file: write the compiling structure (imports + every command registered with a placeholder
                 // body) FIRST, confirm it imports, THEN fill each body. This OVERRIDES the one-write rule for
-                // the entry file ONLY (resolved locally so non-entry workers see the unchanged rule). Default
-                // OFF -> byte-identical default path; A/B it on the slow fleet. The kill-on-mid-fill hazard
-                // (a skeleton with placeholder bodies accepted as done) is backstopped by integrate-verify +
-                // the smoke gate, which run the entry end-to-end; the note also forbids finishing on a stub.
+                // the entry file ONLY (resolved locally so non-entry workers see the unchanged rule). DEFAULT
+                // ON (opt-out with GOOSE_SWARM_SKELETON_FIRST=0): a same-spec A/B (bookmark CLI) showed it is a
+                // WASH on simple apps (identical quality + 0 over_read + total time within noise both ways) and
+                // it helps on COMPLEX multi-command entries where the front-load actually fires (UNIQ3 ETL),
+                // so on-by-default is not-worse and beneficial-where-it-matters. The kill-on-mid-fill hazard (a
+                // skeleton with placeholder bodies accepted as done) is backstopped by integrate-verify + the
+                // smoke gate, which run the entry end-to-end; the note also forbids finishing on a stub.
                 let skeleton_first = std::env::var("GOOSE_SWARM_SKELETON_FIRST")
                     .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 let is_entry_file = |f: &str| {
                     f.ends_with("cli.py")
                         || f.ends_with("__main__.py")
