@@ -159,3 +159,22 @@ BATCH SCORECARD so far: APP3 Rust = clean WIN (28min); APP4 Python = functional 
 APP1 Python = FAIL (CLI drift); APP2 TS = PARTIAL (broken build). => 2 of 4 functional; ALL over 25min; Rust
 fastest+cleanest; Python functional-but-slow; the swarm's review caught real defects in 2 (cli-entry pre-review,
 store wire-fix). TIME is the systemic gap vs the 15-25min goal.
+
+## RE-TEST RESULTS (new binary f5cac6468 — validating the advertised-entry prompts 37cfd95fc)
+### APP2-RETEST (TS CSV-stats) — FUNCTIONAL WIN, 25.9min — PROMPT FIX VALIDATED
+The cleanest possible validation: SAME spec, NEW binary. Original APP2 = PARTIAL (no tsconfig -> `npm run build`
+emitted nothing -> broken advertised entry; 66.9min). RE-TEST = FUNCTIONAL WIN:
+- It GENERATED tsconfig.json (the exact missing file) — the architect now includes the build config.
+- `npm run build` (tsc) SUCCEEDS -> dist/ produced (cli.js + modules). The advertised `node dist/cli.js` RUNS.
+- `node dist/cli.js f.csv --column x` -> Mean 2.5 / Median 2.5 / StdDev 1.2910 (sample) — CORRECT; missing
+  column -> exit 1; clean commander --help (Usage: csv-stats [options] <file>).
+- 6/6 subtasks done, 0 failed. 25.9min — AT the 15-25min target (vs original 66.9min).
+- Minor gap: no `npm test` script (test/ files exist but unscripted). Mode N/A for all-unique input (reasonable).
+VERDICT: the advertised-entry prompt fix (force integrate-verify to BUILD + run the advertised entry + add the
+missing build config) CONVERTED the broken-build class PARTIAL -> FUNCTIONAL WIN. Validated by re-test (1 run).
+Confidence: the fix WORKS but is LLM-dependent — 1 success is not proof of reliability; the deterministic build
+gate remains the belt-and-suspenders IF future runs regress. Not built now (prompt worked; don't over-build).
+### APP1-RETEST (Python unit-converter) — IN FLIGHT (bpr1gy7wy)
+Tests whether the advertised-entry prompts ALSO fix the CLI-spec-drift class (original APP1 built `value -f -t`
+flags, not the spec's `convert X Y Z` subcommand + list-units). The prompt now says run the spec's EXACT
+commands + match the interface. Judge: does `python3 -m <pkg> convert 100 km mi` (~62.137) + `list-units` WORK?
