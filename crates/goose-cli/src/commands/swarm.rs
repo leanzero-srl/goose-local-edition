@@ -5286,8 +5286,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
                             ""
                         };
                         existing_block.push_str(&format!(
-                            "## CURRENT content of {f}{note} — you are EDITING this file; do NOT `cat` it \
-                             again, edit it from here:\n```\n{capped}\n```\n\n"
+                            "## CURRENT content of {f}{note} — this file ALREADY EXISTS (you were re-dispatched, \
+                             or it is an amendment). Do NOT rewrite it from scratch — that re-does finished work \
+                             and risks another timeout. FIRST run the program/tests to check whether it already \
+                             satisfies the spec; if it does, report DONE immediately. Otherwise edit ONLY the real \
+                             defect, from here. Do NOT `cat` it again:\n```\n{capped}\n```\n\n"
                         ));
                     }
                 }
