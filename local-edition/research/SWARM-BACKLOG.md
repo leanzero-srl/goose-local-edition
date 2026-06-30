@@ -192,3 +192,12 @@ type is display-only label; overdrafts ALLOWED (tracker records reality), transf
 insufficient-detail only. Good questions — the model correctly surfaced real ambiguities. NO wiring/schema/
 skeleton answers given (the fixes handle those — UNIQ4 tests them). All 3 nodes idle during the ASK = the
 block-poll handshake (legitimate, blocked on human input).
+
+### [UNIQ4][improvement + smoke-gate-PAYS-OFF] flat layout (root __main__.py) is not `-m` runnable
+UNIQ4 built a FLAT layout (cli.py + commands_*.py + root __main__.py, no package), so `python3 -m <pkg>` has
+no package to run -> smoke gate FAILED "no -m entry point, app may be unrunnable" + dispatched a smoke-fix
+(27 tool calls, progressing). EVIDENCE the SMOKE GATE PAYS OFF: it caught a genuinely-unrunnable-via-`-m`
+app the run would have shipped. IMPROVEMENT ITEM (prevention, MED): the architect/layout guidance should
+prefer a `-m`-runnable PACKAGE (pkg/__main__.py) OR, if flat, the entry-wiring + smoke expectations must
+match `python3 cli.py` not `-m`. The smoke-fix repairs it (caught+fixed) but at a time cost. For the STUDY:
+run via `python3 __main__.py`/`python3 cli.py` (flat) unless the smoke-fix restructured into a package.
