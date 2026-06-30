@@ -395,3 +395,24 @@ and surface EARLY (the judge already terminal-failed at 8 re_dispatch — but on
 BATCH: 5 functional, APP6 FAIL (TS parser), APP7 PARTIAL (next bug), APP8 FAIL (lang mis-detect + recursive).
 Two of the failures (APP6 TS, APP8 recursive) are 27B-capability ceilings; APP8 ALSO exposed a real
 swarm bug (language detection) now fixed. avg time on hard apps ~50-70min = well over the 15-25 target.
+
+## APP8 recursive-ceiling DIAGNOSIS (read-the-logs before tuning — no knob built, MED-LOW confidence any would help)
+Traced WHY APP8 ground 60.9min before failing. core-validator timeline: dispatched attempt 0 -> judge
+re_dispatch -> attempt 1 -> judge re_dispatch -> attempt 2 -> task_completed status=failed (terminal, max
+attempts). NO worker_timeout/re-route markers in stderr. So it is NOT a single-attempt grind a wall-clock cap
+would shorten — it is the 27B FAILING the recursive core on ALL 3 attempts (a capability limit), with the
+judge behaving CORRECTLY (re_dispatch x2 then terminal-fail). The 60min is CUMULATIVE: many hard subtasks
+(core-validator, cli-input-validation, edge-case-tests, test-core-validator) each retried to their attempt
+cap, plus the judge 15s cycles, plus research/plan. Conclusion: the recursive-algorithm ceiling (APP6 parser,
+APP8 validator) is largely a MODEL-CAPABILITY limit, not a swarm-fixable knob.
+Why the obvious mitigations are MED-LOW confidence (flagged, NOT built): (a) decompose the recursive core by
+constraint-type (validate-types / validate-required / validate-numeric / validate-nested) does NOT remove the
+RECURSION — each piece still must recurse into nested objects, so the irreducible hard part remains; the
+architect ALREADY decomposed (core-validator was already one subtask) and the recursion was still too hard.
+(b) a fail-fast wall-clock would not help — it is failing across attempts, not grinding one. (c) it already
+surfaces (terminal-fail + dependent cascade + run reports FAILED honestly). The judge already gives the right
+behavior. So there is no high-confidence swarm change here; the honest answer is the 27B cannot do a hard
+recursive algorithm, and the run correctly FAILS rather than shipping a fake. Recorded, not knob-tuned.
+ONE lower-risk idea kept for later (MED): for a CRITICAL CHOKEPOINT subtask that everything depends on, once
+it terminal-fails, the run is doomed — could fail the WHOLE run faster instead of also burning attempts on its
+now-orphaned siblings. Needs careful trace work + a control-flow change; deferred, not rushed.
