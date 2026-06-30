@@ -89,3 +89,16 @@ the SINGLE source of truth and other modules must import it, never re-CREATE the
 integrate-verify (pending — runs after standings-form-cmds) actually RUN `schedule` end-to-end and catch+fix
 this? If yes -> the integrate-verify + DB-schema-in-contracts combo handles it. If it ships broken -> the
 swarm did NOT prevent a real cross-module integration failure at scale = the headline finding for the user.
+
+## DONE (fixed)
+- [1-PER-NODE VIOLATION] (user caught live: gabee +1 QUEUED while workhorse idle). TWO root causes, both fixed:
+  1. NO judge re-judge cooldown -> an OK long worker re-judged every 15s tick (146 calls/42min, 88 observed)
+     = wasted model calls that queue on a busy node. FIX: 60s JUDGE_REJUDGE_COOLDOWN_SECS, under-cap only
+     (cap-exhausted terminal-fail stays prompt). commit 2510556f0. ~4x fewer judge calls.
+  2. idle-jobs (judge/pre-review) picked an idle device by model_id but never CLAIMED it (no in_flight bump)
+     -> a worker dispatch / the next idle-job stacked a 2nd call on the same node while another idled. FIX:
+     idle-jobs bump devices[i].in_flight + the IdleSlotGuard releases it; pre-review/speculative gates ->
+     idle_capacity()==0 (in_flight now tracks idle-jobs). commit 01c9c580c. 1-per-node now holds across
+     workers + judge + pre-review. 34 swarm tests green 5x.
+  MONITORING LESSON: I was watching the swarm JSONL (scheduler view), NOT the LM Studio per-node queue — they
+  diverged. Going forward, when checking idle/queue, READ lms ps per-node, not just the jsonl dispatch counts.
