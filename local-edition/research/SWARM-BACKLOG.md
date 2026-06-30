@@ -183,3 +183,12 @@ write? fewer over_read flags? faster-to-first-write?) vs default.
 ### [B] detailer build-order checklist (count capped) — SECOND, depends on A softening 5247. Do the cheap
 variant ONLY; do NOT lower the 2x-3x multiplier (coarsens -> MORE over-reading). [C] multi-model single-file
 slicing — PROBABLY NEVER (lowest conf, merge reintroduces drift, net-negative on 3 nodes).
+
+### [UNIQ4][clarify] 4 questions answered (transfer semantics + account-type + overdraft)
+UNIQ4 (SQLite budget, SKELETON_FIRST=1) asked at 14min (conf<floor): transfer amount sign? transfer-pair
+delete cascade? account-type behavior? insufficient-funds error? Answered: transfer --amount positive
+auto-direction (debit from / credit to); deleting either transfer row deletes the linked partner (atomic);
+type is display-only label; overdrafts ALLOWED (tracker records reality), transfer error = structural
+insufficient-detail only. Good questions — the model correctly surfaced real ambiguities. NO wiring/schema/
+skeleton answers given (the fixes handle those — UNIQ4 tests them). All 3 nodes idle during the ASK = the
+block-poll handshake (legitimate, blocked on human input).
