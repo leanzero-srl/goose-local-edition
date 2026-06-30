@@ -146,3 +146,10 @@ fan out: "detail stages-module" + "detail integrate-verify" on different nodes).
 irreducible serial moments. HONEST: planning on a complex spec is ~20min (research + 3-draft + verbalized +
 detailing) — the only avoidable planning idle (best_of_n=2->fleet) is already fixed. The verbalized was slow
 this run (part of the 20min); it is one bounded call, not a bug. Verified, not hand-waved.
+
+### [DONE] DB-schema-in-CONTRACTS (e3d8ef7b4, MED) — the contract stub generator now freezes table+column names
+UNIQ1 fixtures-table drift (scheduler.py league/round/home/away vs schema.py league_id/home_team/away_team/
+round_num) -> schedule broke at runtime. Fix: generate_contracts system prompt now appends a # SCHEMA block
+(each table + exact columns) for any DB-owning module, so all DB modules use the SAME columns. Prompt-only,
+MED (LLM-dependent). VERIFY on the next complex DB-app (a SQLite app — does the schema stay consistent?).
+Pairs with entry-wiring -> the two UNIQ1 integration failures both have a fix now.
