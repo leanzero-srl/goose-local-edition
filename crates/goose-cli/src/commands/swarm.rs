@@ -3034,7 +3034,10 @@ impl GooseAgentDispatcher {
             through its BUILT, ADVERTISED entry point — if the language compiles, BUILD it first (e.g. `npm run build` \
             for TypeScript, `cargo build` for Rust) and run the BUILT artifact (e.g. `node dist/cli.js`), NOT the source \
             via tsx/ts-node — using the EXACT commands the spec advertises (the SAME subcommands and argument shapes shown \
-            in the goal; do NOT silently redesign the interface into flags). If a build step or a build config the entry \
+            in the goal; do NOT silently redesign the interface into flags). When you run the BUILT entry directly, the \
+            spec LEADING program/bin name is the program ITSELF, never an argument: spec `app build x` runs as \
+            `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x` (mis-prefixing \
+            the bin name makes a WORKING app look broken). If a build step or a build config the entry \
             needs (e.g. a tsconfig.json) is MISSING so the advertised entry will not build or run, that is a FAILURE — add it. \
             ALSO confirm the \
             spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
@@ -3195,7 +3198,7 @@ impl GooseAgentDispatcher {
                 let ids: Vec<serde_json::Value> =
                     arr.iter().filter_map(|s| s.get("id").cloned()).collect();
                 let iv_desc = format!(
-                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
+                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). INVOCATION: when you run the BUILT entry directly, the spec LEADING program/bin name is the program ITSELF, never an argument — spec `app build x` runs as `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x`; mis-prefixing the bin name makes a WORKING app look broken. For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
                     lang.test_cmd(),
                     lang.entry_run_example()
                 );
@@ -3341,7 +3344,10 @@ impl GooseAgentDispatcher {
             stall). Then BUILD + RUN the program's ADVERTISED entry point (build first if it compiles — e.g. `npm run \
             build` for TypeScript, `cargo build` for Rust — and run the BUILT artifact, NOT the source via tsx/ts-node) \
             using the EXACT commands the SPEC advertises (the SAME subcommands and argument shapes; do NOT redesign the \
-            interface into flags). GOLDEN-VALUE CHECK each command: feed a spec-given/implied input and confirm the ACTUAL \
+            interface into flags). When you run the BUILT entry directly, the spec LEADING program/bin name is the \
+            program ITSELF, never an argument: spec `app build x` runs as `node dist/cli.js build x` or `python3 -m \
+            app build x`, NEVER `node dist/cli.js app build x` (mis-prefixing the bin name fails a WORKING app). \
+            GOLDEN-VALUE CHECK each command: feed a spec-given/implied input and confirm the ACTUAL \
             output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list) \
             confirm all N are correct AND distinct at the right granularity where required; do NOT invent an expected output. \
             FIX wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE, and ADD any missing build config \
