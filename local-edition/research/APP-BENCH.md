@@ -490,3 +490,31 @@ strengthened prompt helped is unknowable without the trace). What the tests DID 
 (an infinite loop), via test-execution timeout, not the golden-value check.
 BATCH: APP11 -> functional-on-golden but a real edge-hang (run correctly FAILED). Pattern holds: conventional
 correctness OK, a subtle bug (here an unbounded loop) the 27B cannot self-fix.
+
+## UNIQ1 — league manager (FIRST complex hands-on app): 925 LOC / 13 modules, FAILED at INTEGRATION, ~105min
+The user raised the bar to ~1000-LOC feature-dense apps; this is the first. ALSO the first ASK-handshake run
+(I answered 4 clarify questions as the user) + the first hands-on monitor+backlog cycle.
+1. FUNCTIONAL? NO — but the failure is INTEGRATION, not logic. 925 LOC across 13 coherent modules (db, schema,
+   league, team, scheduler, fixtures, results, standings, form, bracket, cli, __main__). The schema is sound,
+   the round-robin uses the correct circle method (bounded, BYE-handled), etc. BUT cli.py (the entry) defines
+   an empty click group with --db and NEVER registers any command (no add_command, no imports of the command
+   modules) -> `schedule` / `standings` / `bracket` / `league create` are ALL "No such command". So the whole
+   app is unusable: the pieces exist, the ENTRY WIRING does not. The classic BUILT-BUT-UNWIRED ENTRY failure
+   (one of the original 4 classes) — recurring AT SCALE. Run correctly FAILED (cli-entry + integrate-verify +
+   tests). PLUS an earlier-caught cross-module CONTRACT DRIFT (scheduler.py fixtures(league,round,home,away)
+   vs schema.py fixtures(league_id,...)). Two integration failures, zero module-logic failures.
+2. TIME: ~105min — severe blowup (the ASK re-plan re-drafts the whole skeleton + a long 13-module execute).
+3. Prompt complex enough? YES — 925 LOC / 13 modules, the bar is met.
+4. Answered its questions? YES — the ASK handshake worked: it asked 4 GOOD clarify questions (head-to-head
+   tiebreak, output format, schedule idempotency, bracket numbering), I answered as the user, it re-planned.
+5. PHASES followed? YES — research -> ASK -> plan -> execute (6/9 subtasks done); cli-entry + integrate-verify
+   + tests FAILED. Judge HEALTHY all run (mostly observed). 1-per-node violated mid-run (the bug the user
+   caught — now FIXED in the binary, not this run).
+6. Did the REVIEW push functional? PARTIALLY. The smoke gate DETECTED the entry problem (1 finding,
+   entry_ok=None); integrate-verify TRIED to fix the unwired CLI but FAILED — the 27B could not wire 13
+   modules into the group. So the review correctly marked it FAILED (no false-green) but could not REPAIR the
+   integration. Same fix-capability ceiling, now at the INTEGRATION layer.
+7. Working 15-25min? NO — 105min + unusable.
+THE WALL AT ~1000 LOC (the user question): it is INTEGRATION, not module logic. The swarm builds many coherent
+modules but fails to (a) WIRE them into the entry point and (b) agree on shared cross-module contracts (the DB
+schema). The 27B builds the pieces; assembling them at 13-module scale is the ceiling.

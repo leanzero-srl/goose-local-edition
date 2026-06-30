@@ -102,3 +102,14 @@ swarm did NOT prevent a real cross-module integration failure at scale = the hea
      workers + judge + pre-review. 34 swarm tests green 5x.
   MONITORING LESSON: I was watching the swarm JSONL (scheduler view), NOT the LM Studio per-node queue — they
   diverged. Going forward, when checking idle/queue, READ lms ps per-node, not just the jsonl dispatch counts.
+
+### [UNIQ1][cli-entry] BUILT-BUT-UNWIRED ENTRY at scale — cli.py registers ZERO commands (HIGH-value, MED fix)
+925 LOC / 13 modules but cli.py defines an empty click group and never add_command()s the command modules ->
+the whole app is unusable. integrate-verify could not fix it. This is THE integration wall at ~1000 LOC.
+SWARM-SIDE FIXES (pick by confidence): (a) the SMOKE GATE should assert the entry exposes the spec-advertised
+COMMANDS, not just that --help runs without crashing (run `python -m pkg --help`, parse the Commands section,
+and if the spec advertises N subcommands but the CLI lists ~0, that is a finding) — deterministic, MED-HIGH.
+(b) the architect should make ONE explicit cli-entry/wiring subtask whose contract is "import + register EVERY
+command module into the group" with the full command list frozen, and integrate-verify must run EACH advertised
+command (catch the unwired ones). (c) combined with the DB-schema-in-CONTRACTS fix (the fixtures drift), the
+two together harden integration-at-scale. Confidence MED-HIGH on (a) — it is deterministic + grounded.
