@@ -6020,7 +6020,6 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // Per-phase wall-clock so every run SHOWS where time goes (research / planning / execute) — performance
     // must be MEASURED, not asserted: a phase that does not pay for its minutes is waste to find and cut.
     let t_start = std::time::Instant::now();
-    let mut t_research = t_start;
     if do_research {
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
             ["context7", "web-search"]
@@ -6094,7 +6093,8 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             serde_json::json!({"event": "research_completed", "findings": findings.len()}),
         );
     }
-    t_research = std::time::Instant::now();
+    // Research is done (or was skipped — then this is ~t_start, research_min ~= 0).
+    let t_research = std::time::Instant::now();
 
     // GOOSE_SWARM_ASK_FLOOR (1-100): when set, the swarm asks the USER clarifying questions if the plan-
     // confidence meter is below the floor, instead of committing to a low-confidence decomposition — local
