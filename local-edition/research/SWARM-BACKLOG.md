@@ -211,3 +211,16 @@ its PASS/FAIL + the specific failing check (which command, expected vs actual) i
 report. THEN the false-negative is diagnosable + fixable (currently ok:None likely = the worker PASS/FAIL is
 not parsed -> defaults to failed even when the app runs). Deferred until after the skeleton-first A/B; do NOT
 start an intricate parse change at marathon depth without the visibility first.
+
+### [integrate-verify visibility — DIAGNOSED, ready to implement] the failure reason is never stored
+Confirmed: a failed task (incl. integrate-verify) records NO reason anywhere — RunReport.failed (scheduler.rs:44)
+is just Vec<TaskId>; the real reason is the DispatchError at swarm.rs:5450-5477 (Transient stall / Terminal),
+eprintln'd to stderr only, never persisted. integrate-verify owns no files so it is NOT the DONE_GATE/completion
+guard; its attempts:3 + ok:None = it EXHAUSTED retries, almost certainly a Transient STALL (heavy end-to-end
+verify task that the slow 27B cannot finish within the idle-timeout). So the app WORKS but the verify STEP timed
+out -> run reports FAILED = the false-negative. FIX (additive, low-risk, scheduler): add fail_reasons:
+HashMap<TaskId,String> to RunReport (scheduler.rs:42), capture the last DispatchError msg when a task -> Failed
+(~589/622/638), surface it in run_finished JSON + the text report (like phase-timing). THEN the false-negative is
+diagnosable per run. LIKELY real fix after that: a stalled/timed-out integrate-verify should NOT fail the whole
+run if the smoke gate + the produced app pass (distinguish verify-incomplete from app-broken). Implement with a
+scheduler_mock test next focused cycle — do NOT rush a scheduler edit at marathon depth.
