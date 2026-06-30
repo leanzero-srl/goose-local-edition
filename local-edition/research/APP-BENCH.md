@@ -276,3 +276,33 @@ riskiest surface (an earlier idle_jobs double-decrement bug lived nearby); it ne
 review + a scheduler_mock test asserting "wrote-good-files-but-attempt-failed -> Done". Worth doing IF the
 false-negative recurs across runs; otherwise the practical takeaway stands: JUDGE BY RUNNING THE APP, the
 run-status lies in BOTH directions (APP2 false-green, APP4 false-negative).
+
+## APP5 — HARD ARCHETYPE FUNCTIONAL WIN (Python double-entry ledger, 37.5min)
+The missing hard/multi-module/correctness-critical archetype (vs the 4 moderate CLIs). NEW binary. RESULT:
+FUNCTIONAL WIN. 5/5 subtasks done, 0 failed, 37.5min. Real multi-module pkg: ledger_cli/{models,store,
+commands,cli,__main__}.py + tests. CORRECTNESS-CRITICAL CORE WORKS:
+- Double-entry BALANCING RULE: `post ... --debit cash 100 --credit sales 100` -> exit 0 (balanced OK);
+  `post ... --debit cash 50 --credit sales 30` -> exit 1 + "Error: Debits must equal credits" (REJECTED with
+  non-zero exit, exactly as the spec demanded). This is the hard correctness requirement — it WORKS.
+- trial-balance sums to zero (Cash -1200 + Rent_Expense +1200 = 0 across the book) = real double-entry.
+- account add validates --type against [asset|liability|equity|income|expense] (built TYPE as a -t/--type
+  choice OPTION, not the spec's positional — a DEFENSIBLE design with enum validation, not a real defect).
+- Persists to data/ledger.json; 21 pytest pass.
+IDLE-FIX on the harder run: pre_review fired 2x (at idle moments), judge_verdict 12x; at full fan-out all 3
+nodes were busy (idle_capacity 0 -> correctly no idle jobs). Idle-fix behaves correctly across the run.
+VERDICT: the swarm + the improvements (contracts/advertised-entry/idle) DELIVER on a HARD app — hard
+multi-module correctness-critical work is NOT the ceiling on this fleet. (NB the buggy first read: my exit
+check captured `head`'s exit via a pipe, not python's — the corrected no-pipe test shows exit 1. Always
+capture the real process exit.) 37.5min — still over the 15-25 target (TIME remains the systemic gap).
+
+## ★ UPDATED SCORECARD (new binary): 5/5 FUNCTIONAL across archetypes
+| app | tech | archetype | FUNCTIONAL | time |
+|-----|------|-----------|-----------|------|
+| APP3 word-freq | Rust | moderate CLI | YES (clean) | 28.1min |
+| APP2-retest CSV-stats | TS | moderate CLI | YES (build fixed) | 25.9min |
+| APP1-retest unit-conv | Python | moderate CLI | YES (CLI fixed) | 39.9min |
+| APP4 habit-tracker | Python | multi-module | YES (run-status false-neg) | 46.8min |
+| APP5 ledger | Python | HARD multi-module (correctness-critical) | YES | 37.5min |
+=> 5/5 FUNCTIONAL on the improved binary, spanning moderate CLIs (3 techs) AND a hard correctness-critical
+multi-module app. The improvements hold across archetypes. The ONLY systemic miss is TIME (all >25min except
+APP2-retest 25.9) — fleet SPEED, not correctness.
