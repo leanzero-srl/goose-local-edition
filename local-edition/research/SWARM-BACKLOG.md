@@ -259,3 +259,11 @@ a task EXHAUSTS retries but its owned files EXIST + PARSE (no compile_errors), S
 (the files are usable; risk: parsing-but-stub files); (c) finalize-spin should reset on ANY tool activity not
 just file edits (a worker running checks IS making progress). RECONSIDER skeleton-first default-on pending a
 CLEAN complex A/B — it may be net-negative on complex entries via this interaction. JUDGE BY RUNNING caught it.
+
+### [PARTIAL FIX] finalize-spin re-dispatch loop — re-dispatched worker verifies not rewrites (0fd08ef34)
+The dominant cost of the finalize-spin false-kill (UNIQ7 entry-point killed 3x though files work) was the
+RE-DISPATCH rewriting the working file from scratch -> slow -> re-killed -> exhausted. Fixed (prompt): the
+existing_block now tells a re-dispatched worker the file ALREADY EXISTS -> run it, report DONE if it satisfies
+the spec, do NOT rewrite. Low-risk (worker still verifies, no false-DONE). STILL OPEN: the finalize-spin
+THRESHOLD (420s too aggressive for slow skeleton-first entries) + the SALVAGE (exhausted+parses -> done, risky).
+VERIFY on UNIQ9+ (a complex entry should re-dispatch faster + succeed more often).
