@@ -113,3 +113,10 @@ and if the spec advertises N subcommands but the CLI lists ~0, that is a finding
 command module into the group" with the full command list frozen, and integrate-verify must run EACH advertised
 command (catch the unwired ones). (c) combined with the DB-schema-in-CONTRACTS fix (the fixtures drift), the
 two together harden integration-at-scale. Confidence MED-HIGH on (a) — it is deterministic + grounded.
+
+### [VERIFIED] 1-per-node fix CONFIRMED working on UNIQ2 execute (lms ps, not just jsonl)
+UNIQ2 graph tool (on the binary WITH the cooldown + device-claiming fix). At 23min in EXECUTE, lms ps shows
+ALL 3 nodes GENERATING, exactly 1 task each (loader->gabee, node-queries-and-centrality->mihai,
+cli-entry-point->workhorse). NO node +QUEUED, NO node IDLE. So the execute-phase 1-per-node fix HOLDS (the
+gabee +1-QUEUED-while-workhorse-idle bug is gone). Monitoring discipline: ALWAYS check lms ps PER-NODE each
+cycle (jsonl alone hid the original bug). Remaining avoidable-idle fix (best_of_n=fleet) verifies on UNIQ3.
