@@ -64,3 +64,26 @@ SCHEDULER_MOCK TESTS (no FS; mock promote is the no-op default; mock varies dela
         "event.rs — add SpeculativeDispatched + SpeculativeResolved events (excluded from dispatched_per_device / device_speed).",
         "swarm.rs:4430 (GooseAgentDispatcher::run) — compute one `root`: req.speculative -> tempfile::TempDir cp -r of current_dir, remembered in a new Mutex<HashMap<task_id,(TempDir,Vec<String>)>> field; else current_dir. Replace std::env::current_dir() at :4449,:4474,:4520,:4530,:4568,:4708,:4751 with `root`. Leave the .swarm telemetry at :2285 on the REAL cwd.",
         "swarm.rs:2203 — thread `root` into run_agent (add a working_dir param) t
+
+## PHASE-2 FEASIBILITY — CONFIRMED in-scope (the key de-risking finding, 2026-06-30)
+The Phase-2 blocker was: can a speculative TWIN be isolated to a shadow workspace WITHOUT modifying core
+goose (out of scope)? Researched the dispatcher + agent + developer extension. ANSWER: YES, in scope.
+- The developer extension writes via a PER-CALL working_dir: crates/goose/.../developer/mod.rs passes
+  ctx.working_dir to shell_with_cwd / file_write_with_cwd / file_edit_with_cwd / tree_with_cwd (tested at
+  developer_client_uses_working_dir_for_file_tools). So file tools are NOT hardcoded to process cwd.
+- ctx.working_dir comes from session.working_dir (agent.rs reads session.working_dir into the ToolCallContext).
+- session.working_dir is set at SESSION CREATION: SessionManager::create_session(working_dir: PathBuf, ...)
+  (session_manager.rs:372). The swarm dispatcher ALREADY calls self.session_manager.create_session(...) with
+  self.working_dir (swarm.rs ~2298-2300). So the dispatcher controls the agent file-write root via the
+  working_dir it passes to create_session.
+=> PHASE-2 DESIGN (in scope, no core change): in GooseAgentDispatcher::run, when req.speculative, (1) build a
+shadow = cp -r of self.working_dir into a tempfile::TempDir (EXCLUDE node_modules/.git/.swarm for speed), (2)
+create the twin agent session with working_dir = shadow (instead of self.working_dir) -> the agent writes ONLY
+the shadow, (3) thread the shadow as `root` through the dispatcher OWN post-check reads (the
+current_dir().unwrap_or(self.working_dir) sites at ~2382/4059/4271/4854) so the twin syntax-check/prereview
+read the shadow, (4) store task_id -> TempDir on the dispatcher, (5) promote_speculative(task_id) copies ONLY
+the winner owned_files shadow->real (never a blind cp -r). The PROCESS cwd is never changed -> thread-safe with
+concurrent normal tasks. STANDALONE TEST before any flag-on: a speculative dispatch writes only inside the
+TempDir + the real tree is byte-identical; promote copies exactly the owned_files. Confidence now MED (was
+MED-LOW) — the isolation mechanism is a supported API, not a hack. STILL the riskiest change (promote touches
+the real tree) -> flag OFF until the standalone test + adversarial review are GREEN.
