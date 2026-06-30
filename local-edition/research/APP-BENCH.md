@@ -178,3 +178,59 @@ gate remains the belt-and-suspenders IF future runs regress. Not built now (prom
 Tests whether the advertised-entry prompts ALSO fix the CLI-spec-drift class (original APP1 built `value -f -t`
 flags, not the spec's `convert X Y Z` subcommand + list-units). The prompt now says run the spec's EXACT
 commands + match the interface. Judge: does `python3 -m <pkg> convert 100 km mi` (~62.137) + `list-units` WORK?
+
+### APP1-RETEST (Python unit-converter) — FUNCTIONAL WIN, 39.9min — CLI-DRIFT FIX VALIDATED
+Original APP1 = FAIL (built `value -f -t` flag CLI, not the spec; `convert 100 km mi` errored; 43.7min).
+RE-TEST (new binary) = FUNCTIONAL WIN: cli.py now `add_subparsers` with REAL `convert` + `list-units`
+subcommands (`subparsers.add_parser("convert")` / `("list-units")`). `convert 100 km mi` -> 62.14 (the EXACT
+example original APP1 errored on); `convert 0 C F` -> 32; `list-units` lists units; unknown unit -> exit 1;
+7/7 subtasks done; 77 pytest pass. 39.9min (still over target). VERDICT: the advertised-entry prompt fix
+("run the spec's EXACT commands, match the interface, don't redesign into flags") CONVERTED the CLI-spec-drift
+class FAIL -> FUNCTIONAL WIN. Now BOTH failure modes the fix targeted are validated by re-test (APP2 build +
+APP1 CLI-shape).
+
+## ★ MORNING SUMMARY (for the user — overnight session, 2026-06-29 -> 06-30)
+GOAL was: get the local 27B swarm to deliver FUNCTIONAL apps (15-25min); make the adversarial review verify
+functionality; keep idle nodes used; analyze every app + improve + re-test.
+
+APP RESULTS (judged by RUNNING the app, not run-status):
+| app | tech | binary | FUNCTIONAL | time |
+|-----|------|--------|-----------|------|
+| APP3 word-freq | Rust | new | YES (clean win) | 28.1min |
+| APP4 habit-tracker | Python | new | YES (run-status falsely "failed") | 46.8min |
+| APP2 CSV-stats | TS | OLD | PARTIAL (broken build) | 66.9min |
+| APP2-RETEST | TS | new | YES (build fixed) | 25.9min |
+| APP1 unit-conv | Python | OLD | NO (CLI drift + flaky) | 43.7min |
+| APP1-RETEST | Python | new | YES (CLI fixed) | 39.9min |
+=> On the NEW (fully-improved) binary: 4/4 apps FUNCTIONAL (APP3, APP4, APP2-retest, APP1-retest). The 2
+original failures were on the OLD binary and BOTH were fixed by the improvements + validated by re-test.
+
+IMPROVEMENTS SHIPPED + VALIDATED (all committed, 31 swarm + 269 cli tests green):
+1. IDLE-NODE FIX (the user's "goose should keep idle nodes used"): judge + pre-review now run CONCURRENTLY
+   on separate idle nodes (idle_jobs<=idle_capacity; was a single shared slot -> a 2nd node slept). Adversarial
+   review caught + I fixed a double-decrement over-count. Added a PreReview jsonl event for observability.
+   LIVE: pre-review fired on idle nodes and CAUGHT A REAL DEFECT (cli-entry-point, had_findings) -> fed to
+   integrate-verify. HONEST LIMIT: PARTIAL — fills idle in bursts; idle persists at the sparse DAG tail (idle
+   work is bounded). Full elimination needs speculative-exec/aggressive-replan (costs flagged) — your call.
+2. ADVERTISED-ENTRY PROMPTS: integrate-verify must BUILD to the ADVERTISED entry (TS: npm run build then run
+   node dist/..., NOT tsx source which hid APP2's broken build) and run the SPEC'S EXACT commands (matching
+   the interface, no flag redesign which sank APP1) + add any missing build config (tsconfig). VALIDATED by
+   BOTH re-tests (APP2 build + APP1 CLI). Confidence: works but LLM-dependent (each 1 success); a DETERMINISTIC
+   build gate is the scoped fallback if future runs regress (not built — prompt worked, didn't over-build).
+3. (Earlier) The AST reviewer + wire-fix CAUGHT habit.store BUILT-BUT-UNWIRED on APP4 + wired it (else a
+   non-persisting shell). The review machinery demonstrably catches real functional defects.
+
+SYSTEMIC FINDINGS:
+- TIME is the gap: the 27B is slow. Only APP2-retest hit target (25.9min); Python apps run ~40-47min, ~1.6x
+  the Rust win. This is the #1 unsolved issue vs the 15-25min goal — it is fleet SPEED, not correctness.
+- RUN-STATUS != FUNCTIONALITY: APP2 false-green (7/7 done but broken build), APP4 false-negative (run "failed"
+  but app works). Judging by RUNNING the app — as you insisted — was essential every time.
+- Rust >> Python/TS on this fleet for shipping FUNCTIONAL apps: it COMPILES (broken build can't ship green),
+  clap derives a correct conventional CLI (no drift). Python ships correct logic but slowly + drift-prone; TS
+  needed the build fix (now works).
+
+OPEN ITEMS / NEXT (your call): (a) TIME — needs a fleet-speed lever (split/cap heavy test tasks? faster model?
+fewer phases?), the hardest + most impactful; (b) idle-fix is partial — speculative exec or aggressive replan
+to fully fill the tail (costs flagged); (c) the advertised-entry prompt is LLM-dependent — promote to the
+deterministic build gate if it regresses; (d) the false-negative run-status (a functional app reported failed)
+deserves a look (integrate-verify/tests flake shouldn't fail a working app).
