@@ -2488,10 +2488,9 @@ impl GooseAgentDispatcher {
         // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
         // just means the judge falls back to its time-based checks.
         let activity_file = activity_key.map(|k| {
-            let dir = std::env::current_dir()
-                .unwrap_or_else(|_| self.working_dir.clone())
-                .join(".swarm")
-                .join("activity");
+            // Use work_dir (== self.working_dir for a normal task, == the shadow for a speculative twin) so a
+            // twin's heartbeat stays inside its shadow rather than touching the real tree's .swarm/activity.
+            let dir = work_dir.join(".swarm").join("activity");
             let _ = std::fs::create_dir_all(&dir);
             dir.join(format!("{k}.json"))
         });
@@ -4749,6 +4748,13 @@ fn copy_owned_files(from: &Path, to: &Path, files: &[String]) -> usize {
         if let Some(parent) = dst.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 continue;
+            }
+            // Defense-in-depth: the RESOLVED destination parent must stay inside `to` — defeats a symlinked
+            // path component that the absolute/`..` textual checks miss (a pre-existing symlink at an owned
+            // prefix could otherwise let std::fs::copy write THROUGH it outside the real tree).
+            match (parent.canonicalize(), to.canonicalize()) {
+                (Ok(cp), Ok(ct)) if cp.starts_with(&ct) => {}
+                _ => continue, // cannot confirm containment -> skip
             }
         }
         if std::fs::copy(&src, &dst).is_ok() {
