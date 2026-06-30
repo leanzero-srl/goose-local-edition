@@ -6088,10 +6088,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .unwrap_or(1800);
     let best_of_n = {
         let base = opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons);
+        // Size the skeleton drafting to the FLEET so no worker node sits IDLE during the draft step (the user
+        // flagged a 3rd node idling while only 2 of 3 drafted). Drafts run in parallel, so using all nodes
+        // adds no wall-clock and yields a better best-of-N skeleton. Capped so a large fleet does not
+        // over-draft. An explicit --best-of-n still wins (max with the fleet, never below the user's intent).
+        let fleet = devices.len().clamp(1, 5);
+        let sized = base.max(fleet);
         if ask_floor.is_some() {
-            base.max(2)
+            sized.max(2)
         } else {
-            base
+            sized
         }
     };
     let cwd_for_ask = std::env::current_dir().unwrap_or_default();
