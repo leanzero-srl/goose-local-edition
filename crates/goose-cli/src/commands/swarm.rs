@@ -5705,6 +5705,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
         scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
     }
+    // GOOSE_SWARM_SPECULATE (default-OFF, experimental): when a node would otherwise idle at a serial
+    // chokepoint, race a TWIN of the longest-running in-flight task on the idle device (first-to-finish wins).
+    // OFF until the Phase-2 dispatcher shadow-isolation is verified — with it off the scheduler is unchanged.
+    let speculate_on = std::env::var("GOOSE_SWARM_SPECULATE")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if speculate_on {
+        eprintln!("speculative execution: ON (idle nodes race the chokepoint — EXPERIMENTAL)");
+        scheduler = scheduler.with_speculation();
+    }
     // GOOSE_SWARM_REVIEW: snapshot the PRE-EXECUTE unwired findings so the post-run wire-fix only chases
     // modules THIS run left unwired — never a PRE-EXISTING intentional dead module (e.g. an amendment's
     // already-unwired duplicate, like byte-oracle's detector.py, which the wire-fix otherwise flails on).

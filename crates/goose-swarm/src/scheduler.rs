@@ -148,6 +148,10 @@ struct Assignment {
     request: DispatchRequest,
 }
 
+/// Global cap on SPECULATIVE twins per run (GOOSE_SWARM_SPECULATE) — a long serial chokepoint cannot burn
+/// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
+const SPECULATION_CAP: u32 = 8;
+
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -187,6 +191,17 @@ struct State {
     split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
     idle_jobs: u32,
+    /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE, default-OFF). When a node would otherwise sit idle at a
+    /// serial dependency chokepoint, a TWIN of the in-flight task is raced on the idle device (first-to-finish
+    /// wins). The twin runs in a shadow workspace (dispatcher side) so it never touches `held_files` — only
+    /// the PRIMARY ever holds the real owned files. These maps track the twin's OWN device claim, keyed by
+    /// the task id; `speculating` marks a task that currently has a twin. All empty unless the flag is on, so
+    /// the validated path is byte-identical.
+    spec_device: HashMap<TaskId, usize>,
+    spec_started_at: HashMap<TaskId, Instant>,
+    spec_abort: HashMap<TaskId, tokio::task::AbortHandle>,
+    speculating: HashSet<TaskId>,
+    spec_count: u32,
 }
 
 impl State {
@@ -409,6 +424,13 @@ impl State {
         if self.dag.tasks.get(tid).map(|n| n.attempts) != Some(attempt) {
             return;
         }
+        // SPECULATIVE first-wins: if the task is no longer Claimed, the other instance (primary or twin) of
+        // this attempt already accepted it -> this completion is the loser; do nothing (each instance's own
+        // device was released by its own path). With speculation OFF no twin exists and the task is always
+        // Claimed here, so this guard never triggers (byte-identical).
+        if self.dag.tasks.get(tid).map(|n| n.state) != Some(TaskState::Claimed) {
+            return;
+        }
         self.abort_handles.remove(tid);
         let released_dev = self.claimed_device.remove(tid);
         let released_dev_id = released_dev.map(|i| self.devices[i].cfg.id.clone());
@@ -489,6 +511,20 @@ impl State {
                         let fan_out = nd.fan_out;
                         self.ready.push(Ranked { fan_out, id: d });
                     }
+                }
+                // SPECULATIVE abort-loser: this PRIMARY won -> abort + release any twin still racing this
+                // task. (When the TWIN won, resolve_speculation cleared `speculating` BEFORE calling
+                // complete(), so this is a no-op there.) Off by default -> the maps are empty -> no-op.
+                if self.speculating.remove(tid) {
+                    if let Some(h) = self.spec_abort.remove(tid) {
+                        h.abort();
+                    }
+                    if let Some(dev) = self.spec_device.remove(tid) {
+                        if self.devices[dev].in_flight > 0 {
+                            self.devices[dev].in_flight -= 1;
+                        }
+                    }
+                    self.spec_started_at.remove(tid);
                 }
             }
             Err(e @ (DispatchError::Transient(_) | DispatchError::ContentRetry(_))) => {
@@ -717,6 +753,111 @@ impl State {
             goal: self.goal.clone(),
             reviewer_model_id,
         })
+    }
+
+    /// SPECULATIVE EXECUTION: pick a TWIN to race on an idle device. Choose the longest-running Claimed task
+    /// that is NOT already being speculated and whose PRIMARY is on a DIFFERENT device than the idle one (so
+    /// the twin truly runs on a free node — 1 task per node). Builds the same DispatchRequest the primary got
+    /// but `speculative: true`, and claims the twin's OWN device slot + spec_* maps WITHOUT touching
+    /// held_files / claimed_device / the task's Claimed state (only the primary holds the real files).
+    fn pick_speculation_target(&mut self) -> Option<(DispatchRequest, usize)> {
+        let dev = self
+            .devices
+            .iter()
+            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)?;
+        let mut best: Option<(TaskId, u64)> = None;
+        for (tid, n) in &self.dag.tasks {
+            if n.state != TaskState::Claimed || self.speculating.contains(tid) {
+                continue;
+            }
+            if self.claimed_device.get(tid) == Some(&dev) {
+                continue; // the twin must run on a DIFFERENT device than the primary
+            }
+            let elapsed = self
+                .attempt_started_at
+                .get(tid)
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0);
+            if best.as_ref().map(|(_, e)| elapsed > *e).unwrap_or(true) {
+                best = Some((tid.clone(), elapsed));
+            }
+        }
+        let (tid, _elapsed) = best?;
+        let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let slice = self.ctx.slice_for(&deps);
+        let (owned_files, description, attempt) = {
+            let n = &self.dag.tasks[&tid];
+            (
+                n.spec.owned_files.clone(),
+                n.spec.description.clone(),
+                n.attempts,
+            )
+        };
+        let device_id = self.devices[dev].cfg.id.clone();
+        let model_id = self.devices[dev].cfg.model_id.clone();
+        let mut all_files: Vec<String> = self
+            .dag
+            .tasks
+            .values()
+            .flat_map(|n| n.spec.owned_files.iter().cloned())
+            .collect();
+        all_files.sort();
+        all_files.dedup();
+        self.devices[dev].in_flight += 1;
+        self.spec_device.insert(tid.clone(), dev);
+        self.spec_started_at.insert(tid.clone(), Instant::now());
+        self.speculating.insert(tid.clone());
+        self.spec_count += 1;
+        let req = DispatchRequest {
+            task_id: tid,
+            description,
+            device_id,
+            model_id,
+            context_slice: slice,
+            attempt,
+            owned_files,
+            all_files,
+            prior_hint: None,
+            speculative: true,
+        };
+        Some((req, dev))
+    }
+
+    /// Resolve a SPECULATIVE twin's completion. Releases the twin's OWN device + clears its spec_* maps
+    /// (idempotent with the primary-win abort path). Then FIRST-WINS: if the task is no longer Claimed the
+    /// PRIMARY already won -> the twin lost, nothing more to do. Otherwise the twin WON: on Ok, abort the
+    /// primary's future and route the twin's output through `complete()` (which releases the primary's device
+    /// + file hold and does Done/merge/relax); on Err, leave the primary running.
+    fn resolve_speculation(
+        &mut self,
+        tid: &str,
+        attempt: u32,
+        res: Result<TaskRunOutput, DispatchError>,
+    ) {
+        if let Some(dev) = self.spec_device.remove(tid) {
+            if self.devices[dev].in_flight > 0 {
+                self.devices[dev].in_flight -= 1;
+            }
+        }
+        self.spec_started_at.remove(tid);
+        self.spec_abort.remove(tid);
+        self.speculating.remove(tid);
+        let still_claimed = self
+            .dag
+            .tasks
+            .get(tid)
+            .map(|n| n.state == TaskState::Claimed)
+            .unwrap_or(false);
+        if !still_claimed {
+            return; // the primary already won (or the task is gone) — the twin lost
+        }
+        if res.is_ok() {
+            if let Some(h) = self.abort_handles.get(tid) {
+                h.abort();
+            }
+            self.complete(tid, attempt, res);
+        }
+        // On a twin Err: the primary keeps running; the twin's own device was already released above.
     }
 
     /// Apply a judge verdict. Always emits a `JudgeVerdict` event. If the verdict is an actionable
@@ -1173,6 +1314,7 @@ pub struct Scheduler {
     judge: Option<Arc<dyn Judge>>,
     judge_cfg: JudgeConfig,
     pre_reviewer: Option<Arc<dyn PreReviewer>>,
+    speculation_enabled: bool,
 }
 
 impl Scheduler {
@@ -1186,6 +1328,7 @@ impl Scheduler {
             judge: None,
             judge_cfg: JudgeConfig::default(),
             pre_reviewer: None,
+            speculation_enabled: false,
         }
     }
 
@@ -1203,6 +1346,15 @@ impl Scheduler {
     /// for integrate-verify. OFF by default — with none attached the scheduler is unchanged.
     pub fn with_pre_reviewer(mut self, pre_reviewer: Arc<dyn PreReviewer>) -> Self {
         self.pre_reviewer = Some(pre_reviewer);
+        self
+    }
+
+    /// Enable SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE): when a node would otherwise idle at a serial
+    /// chokepoint (no ready task, no pre-review work) a TWIN of the longest-running in-flight task is raced
+    /// on the idle device, first-to-finish wins. OFF by default — with it off no twin is ever spawned and
+    /// the scheduler is byte-identical. The twin spawns ONLY on a genuinely idle device (1 task per node).
+    pub fn with_speculation(mut self) -> Self {
+        self.speculation_enabled = true;
         self
     }
 
@@ -1285,6 +1437,11 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             idle_jobs: 0,
+            spec_device: HashMap::new(),
+            spec_started_at: HashMap::new(),
+            spec_abort: HashMap::new(),
+            speculating: HashSet::new(),
+            spec_count: 0,
         }));
         let notify = Arc::new(Notify::new());
 
@@ -1307,9 +1464,9 @@ impl Scheduler {
                     }
                     notify.notify_one();
                 });
-                // Register the abort handle only when a judge is attached, so it can kill this attempt.
-                // No judge -> the map stays empty and the default path is byte-identical to before.
-                if self.judge.is_some() {
+                // Register the abort handle when a judge OR speculation is on, so the loser can be killed.
+                // Neither -> the map stays empty and the default path is byte-identical to before.
+                if self.judge.is_some() || self.speculation_enabled {
                     state
                         .lock()
                         .await
@@ -1497,13 +1654,53 @@ impl Scheduler {
                     });
                 }
             }
+            // SPECULATIVE EXECUTION: when speculation is ON and a node is STILL idle (runs AFTER pre-review,
+            // so pre-review gets first refusal of the idle slot), race a TWIN of the longest-running in-flight
+            // task on a free device — first-to-finish wins. Gated on spare capacity beyond the running idle
+            // jobs (so it never oversubscribes) and no ready work. OFF by default -> the block is skipped and
+            // pick_speculation_target / spec_* are never touched (byte-identical).
+            if self.speculation_enabled {
+                let target = {
+                    let mut s = state.lock().await;
+                    // Bounds: no ready work, spare capacity beyond the running idle jobs, and a global cap on
+                    // total speculative spawns per run (so a long chokepoint can't burn unbounded compute).
+                    if !s.ready.is_empty()
+                        || s.idle_jobs >= s.idle_capacity()
+                        || s.spec_count >= SPECULATION_CAP
+                    {
+                        None
+                    } else {
+                        s.pick_speculation_target()
+                    }
+                };
+                if let Some((req, _dev)) = target {
+                    let dispatcher = dispatcher.clone();
+                    let task_state = state.clone();
+                    let notify = notify.clone();
+                    let attempt = req.attempt;
+                    let tid = req.task_id.clone();
+                    let tid_spawn = tid.clone();
+                    let jh = tokio::spawn(async move {
+                        let res = dispatcher.run(req).await;
+                        {
+                            let mut s = task_state.lock().await;
+                            s.resolve_speculation(&tid_spawn, attempt, res);
+                        }
+                        notify.notify_one();
+                    });
+                    state.lock().await.spec_abort.insert(tid, jh.abort_handle());
+                }
+            }
             // Wake on a completion, or — when a judge is attached — at least every 15s, so it can
             // inspect a worker that crosses a threshold BETWEEN completions (a lone stuck worker produces
             // no completion to wake on). A short tick means the behavioral over-read signal (many actions,
             // zero output) and the terminal-fail decision act within ~15s of tripping, not minutes.
             // tokio::Notify stores one permit, so a completion that fires before this await is not lost.
             // With no judge this is an effectively-infinite wait: byte-identical to before.
-            let tick = if self.judge.is_some() || self.pre_reviewer.is_some() {
+            let tick = if self.judge.is_some()
+                || self.pre_reviewer.is_some()
+                || self.speculation_enabled
+            {
                 std::time::Duration::from_secs(15)
             } else {
                 std::time::Duration::from_secs(86_400)
