@@ -127,3 +127,9 @@ answer "every command a registered subcommand" -> all 8 subcommands wired). Fix:
 now explicitly states ENTRY WIRING is the #1 multi-module integration failure (register every advertised
 command, --help must list each). Prompt-only. VERIFY on UNIQ3+ (a NON-asking complex app should now wire its
 CLI). Pairs with the still-open DB-schema-in-CONTRACTS (the other integration failure: the fixtures drift).
+
+### [VERIFIED] planning-idle fix (best_of_n=fleet) CONFIRMED on UNIQ3 (lms ps)
+UNIQ3 PLAN banner: "drafting 3 skeleton candidate(s) IN PARALLEL" (was 2). lms ps during the draft: ALL 3
+nodes GENERATING (gabee/mihai/workhorse). So no node idles during skeleton drafting now. Both idle issues
+the user caught are fixed + VERIFIED live: execute-stacking (UNIQ2: 1-per-node) + planning-idle (UNIQ3:
+3-node draft). Remaining idle is only the truly-serial lone-27B skeleton pre-step + the integrate-verify tail.
