@@ -5071,7 +5071,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  program end-to-end: invoke its entry point (e.g. `python3 -m <package> --help`, then one \
                  real command from the spec with real arguments) and confirm it prints sane output and does \
                  NOT raise. If the entry point crashes, FIX the offending file — a program whose CLI cannot \
-                 run is a FAILURE no matter how many unit tests pass. Report any missing file or runtime crash.\n\n"
+                 run is a FAILURE no matter how many unit tests pass. ENTRY WIRING (the #1 integration \
+                 failure on a multi-module app): the CLI entry MUST import and REGISTER every command/\
+                 subcommand the spec advertises — run `--help` and confirm EVERY advertised command is \
+                 listed and actually invokable; a command group/parser that defines no commands, or omits \
+                 some, means the modules exist but the program is UNUSABLE — wire them all. Report any \
+                 missing file, unregistered command, or runtime crash.\n\n"
                     .to_string()
             } else {
                 // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
