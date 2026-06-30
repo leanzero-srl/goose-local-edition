@@ -152,6 +152,13 @@ struct Assignment {
 /// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
 const SPECULATION_CAP: u32 = 8;
 
+/// Minimum seconds between RE-judging the SAME in-flight task. The judge tick is ~15s; without this an OK
+/// long-running worker was re-inspected every tick (~4 model calls/min, mostly "observed"), and those extra
+/// calls queued on a busy node while another idled. 60s = at most ~1 re-judge/min/task, still catches a
+/// worker that goes bad (the idle-based worker_timeout is the hard-stall backstop). The FIRST judge is gated
+/// by min_age_secs, not this.
+const JUDGE_REJUDGE_COOLDOWN_SECS: u64 = 60;
+
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -191,6 +198,10 @@ struct State {
     split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
     idle_jobs: u32,
+    /// When each task was last judged, so an OK ("observed") task is NOT re-judged every 15s tick for its
+    /// whole life — that fired ~4 wasted model calls/min on a single long worker, which LM Studio piled onto
+    /// a busy node (one node "+1 QUEUED" while another sat idle). A re-judge waits `JUDGE_REJUDGE_COOLDOWN`.
+    last_judged: HashMap<TaskId, Instant>,
     /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE, default-OFF). When a node would otherwise sit idle at a
     /// serial dependency chokepoint, a TWIN of the in-flight task is raced on the idle device (first-to-finish
     /// wins). The twin runs in a shadow workspace (dispatcher side) so it never touches `held_files` — only
@@ -661,6 +672,19 @@ impl State {
             }
             let at_cap =
                 self.interventions.get(tid).copied().unwrap_or(0) >= cfg.max_interventions_per_task;
+            // Re-judge cooldown: an already-judged task is not re-inspected until JUDGE_REJUDGE_COOLDOWN_SECS
+            // has passed, so an OK long worker is not re-judged every tick (the wasted-call/queue-on-busy-node
+            // problem). Applies ONLY to UNDER-CAP re-judging — a cap-exhausted stuck task is NEVER cooled down,
+            // so its terminal-fail stays prompt. The first judge is gated only by min_age_secs above.
+            if !at_cap
+                && self
+                    .last_judged
+                    .get(tid)
+                    .map(|t| t.elapsed().as_secs() < JUDGE_REJUDGE_COOLDOWN_SECS)
+                    .unwrap_or(false)
+            {
+                continue;
+            }
             let slot = if at_cap {
                 &mut best_terminal
             } else {
@@ -718,6 +742,7 @@ impl State {
         };
         self.judge_running = true;
         self.idle_jobs += 1;
+        self.last_judged.insert(tid.clone(), Instant::now());
         Some((req, attempt))
     }
 
@@ -1442,6 +1467,7 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             idle_jobs: 0,
+            last_judged: HashMap::new(),
             spec_device: HashMap::new(),
             spec_started_at: HashMap::new(),
             spec_abort: HashMap::new(),
