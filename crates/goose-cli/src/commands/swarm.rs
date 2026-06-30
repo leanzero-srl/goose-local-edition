@@ -1583,28 +1583,51 @@ mod tests {
             ts_entry_from_package_json(&pkg2),
             Some("dist/index.js".to_string())
         );
-        // scripts.start -> the .js token.
+        // scripts.start -> the source-file token, incl. a tsx .ts entry (run-script apps).
         let pkg3: serde_json::Value =
             serde_json::from_str(r#"{"scripts":{"start":"node dist/bin/calc.js"}}"#).unwrap();
         assert_eq!(
             ts_entry_from_package_json(&pkg3),
             Some("dist/bin/calc.js".to_string())
         );
+        let pkg3b: serde_json::Value =
+            serde_json::from_str(r#"{"scripts":{"start":"tsx src/index.ts"}}"#).unwrap();
+        assert_eq!(
+            ts_entry_from_package_json(&pkg3b),
+            Some("src/index.ts".to_string())
+        );
         // nothing declared.
         let pkg4: serde_json::Value = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
         assert_eq!(ts_entry_from_package_json(&pkg4), None);
-        // crash signature: a thrown Error WITH a stack frame is a crash; a clean usage line is not.
+        assert!(has_run_script(&pkg3b));
+        assert!(!has_run_script(&pkg4));
+        // a real stack frame (`at ... :line`) vs help prose ("at least one of") that also starts with "at ".
+        assert!(has_stack_frame(
+            "RangeError: bad\n    at tokenize (/x/dist/tok.js:5:11)"
+        ));
+        assert!(!has_stack_frame(
+            "Usage:\n    at least one of --foo/--bar is required"
+        ));
+        // crash = NONZERO exit AND a stack frame. A clean exit (success=true) is never a crash, even with a
+        // stack-looking line; a clean nonzero rejection with no frame is not a crash either.
         assert!(looks_like_runtime_crash(
-            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)"
+            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)",
+            false
         ));
         assert!(!looks_like_runtime_crash(
-            "Usage: calc <expr>\n  --help  show help"
+            "RangeError: Invalid array length\n    at tokenize (/x/dist/tok.js:5:11)",
+            true // exited 0 -> not a crash
         ));
-        assert!(!looks_like_runtime_crash("error: unknown flag --help"));
+        assert!(!looks_like_runtime_crash(
+            "error: unknown flag --help",
+            false
+        ));
         assert!(looks_like_rust_panic(
-            "thread 'main' panicked at src/main.rs:10:5:\nindex out of bounds"
+            "thread 'main' panicked at src/main.rs:10:5:\nindex out of bounds",
+            false
         ));
-        assert!(!looks_like_rust_panic("Usage: mycli [OPTIONS]"));
+        assert!(!looks_like_rust_panic("thread 'main' panicked at x", true));
+        assert!(!looks_like_rust_panic("Usage: mycli [OPTIONS]", false));
     }
 
     #[test]
@@ -3405,18 +3428,13 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
     let mut findings: Vec<String> = Vec::new();
 
     // 1) collect-only — imports every module + test, surfacing cross-module ImportError.
-    let collect = match tokio::process::Command::new("python3")
+    let mut collect_cmd = tokio::process::Command::new("python3");
+    collect_cmd
         .args(["-m", "pytest", "--collect-only", "-q"])
-        .current_dir(root)
-        .output()
-        .await
-    {
-        Ok(out) => {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
+        .current_dir(root);
+    let collect = match smoke_output(collect_cmd, 90).await {
+        Some(out) => {
+            let combined = combined_output(&out);
             let v = interpret_pytest_collect(out.status.code(), &combined);
             if let CollectVerdict::Errors(ref t) = v {
                 findings.push(format!(
@@ -3425,7 +3443,7 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
             }
             Some(v)
         }
-        Err(_) => None, // python3 missing -> inconclusive, not a failure
+        None => None, // python3 missing / timed out -> inconclusive, not a failure
     };
 
     // 2) entry point — `python3 -m <pkg> --help` must exit 0.
@@ -3445,21 +3463,16 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         } else {
             format!("src:{existing}")
         };
-        match tokio::process::Command::new("python3")
+        let mut help_cmd = tokio::process::Command::new("python3");
+        help_cmd
             .args(["-m", pkg.as_str(), "--help"])
             .current_dir(root)
-            .env("PYTHONPATH", pythonpath)
-            .output()
-            .await
-        {
-            Ok(out) => {
+            .env("PYTHONPATH", pythonpath);
+        match smoke_output(help_cmd, 30).await {
+            Some(out) => {
                 let ok = out.status.success();
                 if !ok {
-                    let combined = format!(
-                        "{}{}",
-                        String::from_utf8_lossy(&out.stdout),
-                        String::from_utf8_lossy(&out.stderr)
-                    );
+                    let combined = combined_output(&out);
                     findings.push(format!(
                         "`python3 -m {pkg} --help` failed (exit {}):\n{}",
                         out.status.code().unwrap_or(-1),
@@ -3468,7 +3481,7 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 }
                 Some(ok)
             }
-            Err(_) => None,
+            None => None,
         }
     } else {
         findings.push(
@@ -3489,20 +3502,57 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
     }
 }
 
-/// A Node uncaught-exception signature: a thrown Error WITH a stack frame. A clean usage message, or a CLI
-/// that cleanly rejects `--help` with a nonzero exit but no stack, has no `\n    at ` frame -> NOT flagged,
-/// so the gate catches a real runtime CRASH (e.g. APP6's "Invalid array length") not a benign exit code.
-fn looks_like_runtime_crash(output: &str) -> bool {
-    (output.contains("Error:") || output.contains("Error [")) && output.contains("\n    at ")
+/// Run a smoke subcommand with a HARD TIMEOUT + null stdin, so a produced server/REPL/daemon that ignores
+/// `--help` (or a build that waits on input) can never hang the whole run at the finish line. Returns None on
+/// spawn error OR timeout (inconclusive — never a finding); the child is killed on drop when the timeout fires.
+async fn smoke_output(mut cmd: tokio::process::Command, secs: u64) -> Option<std::process::Output> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    match tokio::time::timeout(std::time::Duration::from_secs(secs), cmd.output()).await {
+        Ok(Ok(out)) => Some(out),
+        _ => None, // spawn error or timed out -> inconclusive
+    }
 }
 
-/// A Rust panic signature in `cargo run` output (vs a clean nonzero exit / printed usage).
-fn looks_like_rust_panic(output: &str) -> bool {
-    output.contains("panicked at") || output.contains("thread 'main' panicked")
+/// stdout+stderr of a finished smoke process, lossily decoded.
+fn combined_output(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// A real V8/Node stack frame: a line whose trimmed form starts with `at ` and carries a `:<digit>` location
+/// (`at fn (file:line:col)` / `at file:line:col`), NOT ordinary indented help prose like "at least one of
+/// --foo" or "at most 3 items" (no `:<digit>`). Distinguishes a true uncaught crash from a usage message.
+fn has_stack_frame(output: &str) -> bool {
+    output.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("at ")
+            && t.as_bytes()
+                .windows(2)
+                .any(|w| w[0] == b':' && w[1].is_ascii_digit())
+    })
+}
+
+/// A Node uncaught-exception signature: the process exited NONZERO AND its output has a real stack frame. A
+/// clean `--help` (exit 0) or a clean nonzero rejection with no stack is NOT a crash, so the gate never flags
+/// a benign exit code (it intentionally misses caught-error/no-stack bugs like APP6 — that is golden-value).
+fn looks_like_runtime_crash(output: &str, success: bool) -> bool {
+    !success && has_stack_frame(output)
+}
+
+/// A Rust panic: the process exited NONZERO AND printed a panic message (vs a clean usage/exit).
+fn looks_like_rust_panic(output: &str, success: bool) -> bool {
+    !success && (output.contains("panicked at") || output.contains("thread 'main' panicked"))
 }
 
 /// The runnable entry path from a parsed package.json: `bin` (string or first object value), else `main`,
-/// else the first `.js`/`.mjs`/`.cjs` token in `scripts.start`. Leading `./` stripped. None if none declared.
+/// else the first source-file token in `scripts.start` (`.js/.mjs/.cjs` OR `.ts/.tsx` for tsx/ts-node apps).
+/// Leading `./` stripped. None if none declared. A `.ts/.tsx` entry is detected but NOT run with bare `node`.
 fn ts_entry_from_package_json(pkg: &serde_json::Value) -> Option<String> {
     let norm = |s: &str| s.trim_start_matches("./").to_string();
     if let Some(bin) = pkg.get("bin") {
@@ -3522,12 +3572,28 @@ fn ts_entry_from_package_json(pkg: &serde_json::Value) -> Option<String> {
         .and_then(|v| v.as_str())
     {
         for tok in start.split_whitespace() {
-            if tok.ends_with(".js") || tok.ends_with(".mjs") || tok.ends_with(".cjs") {
+            if [".js", ".mjs", ".cjs", ".ts", ".tsx"]
+                .iter()
+                .any(|e| tok.ends_with(e))
+            {
                 return Some(norm(tok));
             }
         }
     }
     None
+}
+
+/// True if package.json declares a way to RUN the app other than a built `node` entry (a start/dev/serve
+/// script) — used to suppress the "no entry" finding for tsx/ts-node apps that legitimately have no bin/main.
+fn has_run_script(pkg: &serde_json::Value) -> bool {
+    pkg.get("scripts")
+        .and_then(|s| s.as_object())
+        .map(|o| {
+            ["start", "dev", "serve"]
+                .iter()
+                .any(|k| o.get(*k).and_then(|v| v.as_str()).is_some())
+        })
+        .unwrap_or(false)
 }
 
 /// Deterministic TypeScript/Node smoke oracle: `npm run build` must succeed, the package.json entry artifact
@@ -3551,68 +3617,63 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
         .and_then(|v| v.as_str())
         .is_some();
     // A missing node_modules would fail `npm run build`/the entry run SPURIOUSLY (a false finding). If deps
-    // are declared but not installed, best-effort `npm install` first; if that fails (offline), skip the whole
-    // TS gate as inconclusive rather than report a phantom build failure.
+    // are declared but not installed, best-effort `npm install --include=dev` (so an inherited
+    // NODE_ENV=production cannot drop the build toolchain); if that fails (offline), skip the whole TS gate
+    // as inconclusive rather than report a phantom build failure.
     let needs_deps = pkg.get("dependencies").is_some() || pkg.get("devDependencies").is_some();
     if needs_deps && !root.join("node_modules").exists() {
-        match tokio::process::Command::new("npm")
-            .args(["install", "--no-audit", "--no-fund"])
-            .current_dir(root)
-            .output()
-            .await
-        {
-            Ok(out) if out.status.success() => {}
-            _ => return SmokeResult::skipped(), // cannot install deps -> inconclusive, never a failure
+        let mut c = tokio::process::Command::new("npm");
+        c.args(["install", "--no-audit", "--no-fund", "--include=dev"])
+            .current_dir(root);
+        match smoke_output(c, 180).await {
+            Some(out) if out.status.success() => {}
+            _ => return SmokeResult::skipped(), // cannot install deps / timed out -> inconclusive
         }
     }
     if has_build {
-        match tokio::process::Command::new("npm")
-            .args(["run", "build"])
-            .current_dir(root)
-            .output()
-            .await
-        {
-            Ok(out) if !out.status.success() => {
-                let combined = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                );
+        let mut c = tokio::process::Command::new("npm");
+        c.args(["run", "build"]).current_dir(root);
+        match smoke_output(c, 180).await {
+            Some(out) if !out.status.success() => {
+                let combined = combined_output(&out);
                 findings.push(format!(
                     "`npm run build` failed (exit {}):\n{}",
                     out.status.code().unwrap_or(-1),
                     tail_lines(&combined, 40)
                 ));
             }
-            Ok(_) => {}
-            Err(_) => return SmokeResult::skipped(), // npm missing -> inconclusive
+            Some(_) => {}
+            None => return SmokeResult::skipped(), // npm missing / timed out -> inconclusive
         }
     }
-    // 2) entry artifact exists + runs without crashing.
+    // 2) entry: confirm it exists, and for a BUILT (.js/.mjs/.cjs) entry that it runs without an uncaught
+    // crash. A .ts/.tsx entry (tsx/ts-node) is NOT run with bare `node` — node cannot parse TS on the common
+    // LTS, which would throw a SyntaxError and FALSE-flag a healthy app; we only confirm its presence.
     let entry_ok = match ts_entry_from_package_json(&pkg) {
         Some(entry_rel) => {
             let entry_path = root.join(&entry_rel);
+            let is_js = [".js", ".mjs", ".cjs"]
+                .iter()
+                .any(|e| entry_rel.ends_with(e));
             if !entry_path.exists() {
-                findings.push(format!(
-                    "the package.json entry `{entry_rel}` is missing after build — the app is unrunnable \
-                     (built-but-unwired entry point)"
-                ));
-                Some(false)
-            } else {
-                match tokio::process::Command::new("node")
-                    .arg(&entry_path)
-                    .arg("--help")
-                    .current_dir(root)
-                    .output()
-                    .await
-                {
-                    Ok(out) => {
-                        let combined = format!(
-                            "{}{}",
-                            String::from_utf8_lossy(&out.stdout),
-                            String::from_utf8_lossy(&out.stderr)
-                        );
-                        if looks_like_runtime_crash(&combined) {
+                // Only a missing BUILT artifact is a real unwired-entry finding. A missing .ts source with a
+                // run script (tsx) is left inconclusive, not flagged.
+                if is_js {
+                    findings.push(format!(
+                        "the package.json entry `{entry_rel}` is missing after build — the app is unrunnable \
+                         (built-but-unwired entry point)"
+                    ));
+                    Some(false)
+                } else {
+                    None
+                }
+            } else if is_js {
+                let mut c = tokio::process::Command::new("node");
+                c.arg(&entry_path).arg("--help").current_dir(root);
+                match smoke_output(c, 30).await {
+                    Some(out) => {
+                        let combined = combined_output(&out);
+                        if looks_like_runtime_crash(&combined, out.status.success()) {
                             findings.push(format!(
                                 "running the entry `node {entry_rel} --help` CRASHES at runtime:\n{}",
                                 tail_lines(&combined, 40)
@@ -3622,15 +3683,23 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
                             Some(true)
                         }
                     }
-                    Err(_) => None, // node missing -> inconclusive
+                    None => None, // node missing / timed out -> inconclusive
                 }
+            } else {
+                None // a .ts/.tsx entry: present, but not run with bare node (inconclusive)
             }
         }
         None => {
-            findings.push(
-                "no package.json bin/main/start entry — the app may be unrunnable".to_string(),
-            );
-            None
+            // No bin/main/start entry. If a start/dev/serve script exists the app is runnable via tsx -> not
+            // unwired; only flag a true no-way-to-run.
+            if has_run_script(&pkg) {
+                None
+            } else {
+                findings.push(
+                    "no package.json bin/main/start entry — the app may be unrunnable".to_string(),
+                );
+                None
+            }
         }
     };
     SmokeResult {
@@ -3650,18 +3719,11 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         return SmokeResult::skipped();
     }
     let mut findings: Vec<String> = Vec::new();
-    match tokio::process::Command::new("cargo")
-        .args(["build", "--quiet"])
-        .current_dir(root)
-        .output()
-        .await
-    {
-        Ok(out) if !out.status.success() => {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
+    let mut build = tokio::process::Command::new("cargo");
+    build.args(["build", "--quiet"]).current_dir(root);
+    match smoke_output(build, 240).await {
+        Some(out) if !out.status.success() => {
+            let combined = combined_output(&out);
             findings.push(format!(
                 "`cargo build` failed:\n{}",
                 tail_lines(&combined, 40)
@@ -3676,22 +3738,16 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                 findings,
             };
         }
-        Ok(_) => {}
-        Err(_) => return SmokeResult::skipped(), // cargo missing -> inconclusive
+        Some(_) => {}
+        None => return SmokeResult::skipped(), // cargo missing / timed out -> inconclusive
     }
-    let entry_ok = match tokio::process::Command::new("cargo")
-        .args(["run", "--quiet", "--", "--help"])
-        .current_dir(root)
-        .output()
-        .await
-    {
-        Ok(out) => {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            if looks_like_rust_panic(&combined) {
+    let mut run = tokio::process::Command::new("cargo");
+    run.args(["run", "--quiet", "--", "--help"])
+        .current_dir(root);
+    let entry_ok = match smoke_output(run, 60).await {
+        Some(out) => {
+            let combined = combined_output(&out);
+            if looks_like_rust_panic(&combined, out.status.success()) {
                 findings.push(format!(
                     "`cargo run -- --help` PANICS at runtime:\n{}",
                     tail_lines(&combined, 40)
@@ -3701,7 +3757,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                 Some(true)
             }
         }
-        Err(_) => None,
+        None => None,
     };
     SmokeResult {
         ran: true,
