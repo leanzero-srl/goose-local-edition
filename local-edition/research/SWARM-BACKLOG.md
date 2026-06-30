@@ -201,3 +201,13 @@ app the run would have shipped. IMPROVEMENT ITEM (prevention, MED): the architec
 prefer a `-m`-runnable PACKAGE (pkg/__main__.py) OR, if flat, the entry-wiring + smoke expectations must
 match `python3 cli.py` not `-m`. The smoke-fix repairs it (caught+fixed) but at a time cost. For the STUDY:
 run via `python3 __main__.py`/`python3 cli.py` (flat) unless the smoke-fix restructured into a package.
+
+### [integrate-verify false-negative — BLOCKED on visibility, instrument first]
+Tried to diagnose why integrate-verify fails working apps (UNIQ2/UNIQ3) vs a buggy one (UNIQ4). The jsonl
+does NOT surface WHY: UNIQ3 shows ok:None + attempts:3 (exhausted retries) with EMPTY output + no session_id
+on the task events. So I cannot tell a true fail (UNIQ4 budget bug) from a false one (UNIQ3 fully working)
+without the verdict reason. FIRST STEP (visibility, like phase-timing): instrument integrate-verify to EMIT
+its PASS/FAIL + the specific failing check (which command, expected vs actual) into the run_finished JSON +
+report. THEN the false-negative is diagnosable + fixable (currently ok:None likely = the worker PASS/FAIL is
+not parsed -> defaults to failed even when the app runs). Deferred until after the skeleton-first A/B; do NOT
+start an intricate parse change at marathon depth without the visibility first.
