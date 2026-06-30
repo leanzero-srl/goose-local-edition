@@ -2891,11 +2891,15 @@ impl GooseAgentDispatcher {
             difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \
             {no_compile}and fixes EVERY failure until GREEN — INCLUDING a pre-existing test that now fails because this \
             change intentionally altered behavior (e.g. a new field appears in a serialized dict): in that case EDIT that \
-            existing test to assert the new correct output. Do not stall — make the whole suite pass. Then runs the program's \
-            PRIMARY/default command on a concrete example and CHECKS THE OUTPUT IS ACTUALLY CORRECT — not merely that it starts \
-            or exits 0. A green test suite does NOT prove correctness: a real failure mode is the DEFAULT code path producing \
-            WRONG output (e.g. wrong constants/parameters) while every test passes. So exercise the default path with a known \
-            input, sanity-check the result against what the spec implies, and fix it if it is wrong. RUN the program \
+            existing test to assert the new correct output. Do not stall — make the whole suite pass. Then a GOLDEN-VALUE CHECK: \
+            for EACH command/subcommand the spec advertises (NOT only the default one), run it on a concrete input the spec gives \
+            or directly implies, and verify the ACTUAL output equals the SPECIFIC value the spec implies — not merely that it \
+            starts or exits 0. For a MULTI-OUTPUT command (one with a --count N, or that lists N results) verify ALL N outputs are \
+            correct AND, where the semantics require distinct results (e.g. the NEXT N occurrences of a schedule), that they are \
+            genuinely distinct at the right granularity, not near-duplicates. Derive the expected value from the spec's semantics; \
+            do NOT invent an output just to make the check pass. A green test suite does NOT prove correctness: a real failure mode \
+            is a code path producing WRONG output (wrong constants, off-by-one, wrong granularity) while every shape-only test \
+            passes — fix the ROOT CAUSE if the actual output is wrong. RUN the program \
             through its BUILT, ADVERTISED entry point — if the language compiles, BUILD it first (e.g. `npm run build` \
             for TypeScript, `cargo build` for Rust) and run the BUILT artifact (e.g. `node dist/cli.js`), NOT the source \
             via tsx/ts-node — using the EXACT commands the spec advertises (the SAME subcommands and argument shapes shown \
@@ -3060,7 +3064,7 @@ impl GooseAgentDispatcher {
                 let ids: Vec<serde_json::Value> =
                     arr.iter().filter_map(|s| s.get("id").cloned()).collect();
                 let iv_desc = format!(
-                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags) — confirming each produces correct output, and FIX any build error, missing build config (e.g. a tsconfig.json the build needs), or runtime crash. A green test suite does NOT prove the CLI runs, and running the source directly does NOT prove the BUILT/advertised entry works.",
+                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
                     lang.test_cmd(),
                     lang.entry_run_example()
                 );
@@ -3206,8 +3210,11 @@ impl GooseAgentDispatcher {
             stall). Then BUILD + RUN the program's ADVERTISED entry point (build first if it compiles — e.g. `npm run \
             build` for TypeScript, `cargo build` for Rust — and run the BUILT artifact, NOT the source via tsx/ts-node) \
             using the EXACT commands the SPEC advertises (the SAME subcommands and argument shapes; do NOT redesign the \
-            interface into flags), CHECK the output is correct, and ADD any missing build config the entry needs (e.g. \
-            tsconfig.json). Reports PASS/FAIL; its files must NOT overlap the others.\n\
+            interface into flags). GOLDEN-VALUE CHECK each command: feed a spec-given/implied input and confirm the ACTUAL \
+            output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list) \
+            confirm all N are correct AND distinct at the right granularity where required; do NOT invent an expected output. \
+            FIX wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE, and ADD any missing build config \
+            the entry needs (e.g. tsconfig.json). Reports PASS/FAIL; its files must NOT overlap the others.\n\
             Also produce a short integration note. Then call the final_output tool with the plan.");
         let response = Some(Response {
             json_schema: Some(plan_schema),
