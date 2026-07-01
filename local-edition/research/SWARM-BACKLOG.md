@@ -293,3 +293,24 @@ skeleton-first instruction. FIX DIRECTION (atomic-writes theme, NOT relaxing the
 skeleton_first ACTUALLY force the entry to write its stub before reading siblings (stronger prompt /
 verify it emits an early write). CONFIDENCE MED — confirm from the attempt-1 session trace that the
 entry read-batched before writing; if so this is a concrete skeleton_first-effectiveness bug.
+
+### [VERIFIED from session traces — over_read gate is CORRECT; hypothesis OVERTURNED] UNIQ9
+Read the killed attempts' actual tool calls (sessions.db) BEFORE touching judge.rs (memory read-logs-first).
+Result CORRECTS the prior "over_read gate false-kills legitimate dep-reading" hypothesis:
+- tests-advanced ATT0 (killed, 5 calls): cat on DIRECTORIES (errors), repeated find, repeated cat = GENUINE
+  flailing/exploration, NOT clean distinct-dep reads. The over_read gate caught a REAL spin. Gate is RIGHT.
+- tests-advanced ATT1 (killed, 12 calls): flailed 5 calls, THEN wrote its test file (call 6), ran pytest,
+  then spent calls 7-12 reading/re-running to debug a FAILING test WITHOUT editing the file for >420s ->
+  finalize-spin killed (backlog B, not over_read).
+- cli-app ATT1 (RECOVERED, session 32): wrote commands.py + __main__.py IMMEDIATELY (calls 1-2), then ran +
+  edited. CLEAN, no flailing. The verify-not-rewrite re-dispatch fix WORKED.
+CONCLUSION: DO NOT relax the over_read gate (would let real flailing run). The real lever is the WEAK
+tests-writer FLAILING on exploration (cat dirs, find) instead of reading the known dep files directly + then
+finalize-spinning while debugging a failing test. FIX DIRECTIONS (verified-grounded):
+  (1) anti-flail worker prompt: "You have the exact file manifest + dep APIs injected. Do NOT run find or cat
+      directories; cat the SPECIFIC dep files you need (they error on a dir), then WRITE." CHEAP, low-risk,
+      MED confidence (weak models may ignore, but can only help).
+  (2) finalize-spin-while-debugging (backlog B): a worker that wrote its file then debugs a failing test for
+      >420s without an edit is killed as looping — sometimes it is genuinely stuck (weak model), sometimes
+      mid-debug. Threshold/salvage question stands.
+WIN for the discipline: reading the trace flipped the conclusion (would have wrongly disarmed a correct gate).
