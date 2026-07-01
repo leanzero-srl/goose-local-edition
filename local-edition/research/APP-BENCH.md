@@ -766,3 +766,31 @@ Headline results (JUDGED BY RUNNING, real exit rc=$?):
 VERDICT: WORKING WIN (core double-entry engine correct incl multi-line + trial-balance equality + tests) with 2 minor
 validation gaps. Two phase-payoff validations in one run: multi-file stub-first (hard case) + review-catches-skeleton-
 stub. Comparable to UNIQ8/12 (win + honest gaps). The strongest end-to-end result of the multi-file arc.
+
+## UNIQ16 — inventory/warehouse (b989fz8w2) — WORKING WIN (math + validation correct) + systematic CLI-CONTRACT DRIFT
+JUDGED BY RUNNING (real exit rc=$?), with the app's ACTUAL contract (see measurement note):
+- MATH ALL CORRECT: stock level W1 = A 50, B 20, Total 70 (100-30 ship -20 transfer); valuation --warehouse A = $125.00
+  (50*2.50); insufficient ship -> "Error: insufficient stock" rc1; transfer A->B moves qty; 8/8 pytest pass; 650 LOC.
+- VALIDATION COMPLETE (app logic, not argparse): insufficient-ship, same-warehouse-transfer, negative-price,
+  unknown-SKU, duplicate-SKU all rc1. Better than UNIQ15 (which missed 2/5) — the architect split out a dedicated
+  hardening-cli-errors task + dynamic-replan ADDED test-validation-edge-cases (coverage expansion PAYS OFF).
+- MULTI-FILE STUB-FIRST 2nd data point CONFIRMED: 4-file non-entry module (cmd-init-product-warehouse: commands/
+  __init__+init_+product+warehouse) DONE 0 over_read; shared-core 2-file clean; cli-framework 3-file entry clean.
+- ENTRY NOT STUBBED (0 NotImplementedError) — no skeleton-stub recurrence. test-stock finalize-spin RECOVERED via
+  re-dispatch (94.9s). Reasoning was clean overall (no over_read; 2 finalize-spins both recovered).
+- THE FLAW — systematic CLI-CONTRACT DRIFT: the app converted EVERY spec positional to a --flag (product add --sku
+  SKU not positional SKU; warehouse add --name NAME not positional NAME; stock level --sku), and renamed options
+  (--from/--to -> --source/--dest; --reorder -> --reorder-level). Internally consistent + tests pass, but does NOT
+  match the spec CLI surface. The CLI-contract note did NOT prevent positional-vs-flag drift; SpecDrift did not flag
+  it. A spec-following user hits argparse errors.
+VERDICT: WORKING WIN (correct engine + full validation + multi-file fix 2nd data point) with a CLI-surface drift.
+Comparable-or-better than UNIQ15 on correctness/validation; the CLI-contract drift is the one real miss.
+
+### MEASUREMENT LESSON (3rd real-exit slip caught) — a spec-contract golden gave FALSE nonzeros
+My first UNIQ16 golden used the SPEC contract (positional SKU, --from/--to). The app drifted to --sku/--source/--dest,
+so EVERY command hit argparse rc=2 (missing-required-arg) BEFORE app logic. I nearly concluded "7 validation cases
+nonzero = validation works" — a FALSE PASS (the nonzeros were argparse rejecting MY wrong syntax, not the app
+validating). Caught it by reading the app's ACTUAL add_argument contract, then re-goldened with --sku/--source/--dest
+-> revealed the math+validation are actually correct AND surfaced the CLI-drift. LESSON: when a golden shows uniform
+rc=2 with "usage:" output, it is argparse rejecting YOUR syntax (contract mismatch), NOT the app erroring — read the
+app's real argparse before scoring. rc=2 (argparse) vs rc=1 (app sys.exit) distinguishes them.
