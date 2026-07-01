@@ -572,3 +572,13 @@ confidence rule I flag that honestly and gather more evidence first (UNIQ25 = va
 recur at N=3?). If N=3 confirms, the least-fragile increment is likely C (run the tests) PLUS strengthening test
 quality, not A. Root cause is partly MODEL capacity (weak model writes incomplete validations + thin tests) — no cheap
 knob fully fixes that; be honest about the ceiling rather than ship a fragile gate.
+
+### [CORRECTION — the "smoke+tests miss runtime validation bugs" finding COLLAPSES]
+Re-checked UNIQ24 AFTER run_finished: the 2 order-add validation bugs (unknown-customer, neg-amount) are BOTH FIXED
+(rc1) in the final app — the run's INTEGRATE-VERIFY phase fixed them; I had goldened BEFORE it ran. So UNIQ24 does NOT
+evidence the "smoke misses validation bugs" finding — the swarm CAUGHT them. Combined with UNIQ25 (11/11 validations
+implemented directly), the validation-completeness concern is CLOSED: (1) the weak model implements enumerated
+validations well; (2) when it misses one, integrate-verify/review catches it (UNIQ24); (3) only a total run FAILURE
+(UNIQ21, honestly marked failed) ships holes. NET: no validation fix warranted, AND the earlier N=2 was a MEASUREMENT
+error (goldened mid-run). The real reusable lesson is the DISCIPLINE one: golden after run_finished, not mid-run.
+smoke-runs-tests remains a minor nice-to-have (HIGH conf, cheap) but is NOT solving a demonstrated shipped-bug problem.
