@@ -462,3 +462,18 @@ of flailing. CONTRAST proven: UNIQ13 plan-shopping att0 = ls x3/find/cat x3/no-w
 = write/write/checks/clean. VERDICT: multi-file stub-first VALIDATED (N=1 hard-case trace-confirmed + shared-types-db
 + UNIQ14 easy-case). The HARD gate fix (raise no-write elapsed cap for multi-file) is NOT needed — the note sufficed.
 Golden pending on run completion (does the reporting math compute right).
+
+### [UNIQ15 — TEST-writers over_read despite multifile_stub_note (N=2); gate+re-dispatch RECOVERS (anti-flail-tests)]
+Both test tasks in UNIQ15 are MULTI-FILE (test-transactions-decimal owns test_transactions.py + test_decimal.py;
+test-balance-reports owns test_balance.py + test_reports.py) so multifile_stub_note applied — yet BOTH got over_reading
+on attempt 0. test-transactions-decimal recovered on att1 (done, 388s); test-balance-reports re-dispatched (att1
+running). So the stub-first note WORKS for a logic module (balance-reports wrote stubs first, clean) but does NOT
+prevent TEST-writer flail: a test writer must read the module-under-test to write meaningful assertions (read-then-
+write is its nature), and a test stub (def test_x(): pass) is not a natural early-write the way a module stub is.
+IMPORTANT: the over_read gate + re-dispatch RECOVERED both (safety net PAYS OFF) — this is waste (an extra dispatch
++ ~388s), NOT a correctness failure. So a fix here is an OPTIMIZATION (save the flail dispatch), not a repair.
+FIX CANDIDATE (MED-LOW confidence — prompt plea a weak model may ignore): a TEST-writer-specific note — the module-
+under-test API is ALREADY injected in the dep_block, so tell the test worker to write tests FROM the injected API and
+NOT open the implementation files (behavior via public API, not internals) -> less reading -> less over_read. MUST
+READ the att0 test-writer trace FIRST (ts 08:36:30, map to session) to confirm it flails on reading-the-impl vs
+exploring, before building. Do NOT relax the over_read gate (it correctly recovered). N=2 evidence.
