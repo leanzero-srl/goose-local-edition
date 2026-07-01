@@ -477,3 +477,20 @@ under-test API is ALREADY injected in the dep_block, so tell the test worker to 
 NOT open the implementation files (behavior via public API, not internals) -> less reading -> less over_read. MUST
 READ the att0 test-writer trace FIRST (ts 08:36:30, map to session) to confirm it flails on reading-the-impl vs
 exploring, before building. Do NOT relax the over_read gate (it correctly recovered). N=2 evidence.
+
+### [UNIQ15 — ENTRY left ALL handlers as NotImplementedError stubs, marked done (skeleton-first hazard) — DOES THE REVIEW CATCH IT?]
+UNIQ15 golden (app files complete): --help works (nested + global --db correct via cli.py build_parser), BUT every
+command fails — __main__.py has ALL 8 handlers as `raise NotImplementedError("X not implemented yet")` (init_db,
+add_account, list_accounts, add_transaction, list_transactions, get_balance, trial_balance_report,
+income_statement_report). The entry (cli-entry-point, owns cli.py + __main__.py) wrote the compiling skeleton (parser
+real, handlers registered, --help passes) but NEVER FILLED the handler bodies to call the modules, and was marked
+DONE (994s — likely wrote skeleton, --help passed, ran out of turns before filling). Modules (accounts/transactions/
+balance/reports .py) have real logic (balance-reports validated write-first). So the app is 100% non-functional
+DESPITE clean modules — the skeleton-first hazard (entry accepted as done with placeholder bodies) FIRED on a complex
+8-handler entry. NOT caused by multifile_stub_note (empty for entry). KEY: the AST_REVIEW_SCRIPT ALREADY detects
+`raise NotImplementedError` as STUB/UNIMPLEMENTED (swarm.rs:4772/4802) and fires an ast_fix — BUT review runs at the
+END (after integrate-verify, still running when goldened). SO: this is the PAYOFF TEST — does the review phase catch
+the 8 stub handlers + re-dispatch a fix that fills them? IF YES -> phases pay off (skeleton hazard is backstopped as
+the code comment claims), UNIQ15 recovers. IF NO (review misses __main__.py, or the fix re-dispatch fails/stubs
+again) -> that is the real gap to fix (e.g. detect NotImplementedError in the completion guard so the entry is NOT
+marked done with stubs, not just at end-review). WATCHING run completion. Do NOT build blindly — the detector exists.
