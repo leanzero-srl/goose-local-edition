@@ -1213,6 +1213,23 @@ fn print_import_summary(s: &ImportSummary) {
     }
 }
 
+/// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either RE-PLAN
+/// from scratch with the answers folded in (default — today's behavior) or REUSE the first plan and rely on
+/// the answers already appended to research_findings (which every worker prompt injects). A full re-plan is a
+/// ~20min tax (skeleton re-draft + re-detailing every subtask) that only pays off when the answers change the
+/// plan STRUCTURE; when the ASK was about semantics, the reused plan is identical in shape and the workers
+/// still see the answers. Opt out with GOOSE_SWARM_ASK_REPLAN=0 (also off/false/no). Default preserves the
+/// current re-plan behavior exactly, so the evidence-based default is decided by an A/B, not by this flag.
+fn ask_replan_enabled(v: Option<String>) -> bool {
+    match v {
+        Some(s) => !matches!(
+            s.trim().to_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        ),
+        None => true,
+    }
+}
+
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
 /// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
 /// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
@@ -1293,6 +1310,22 @@ mod tests {
             deps,
             vec!["core", "cli-entry"],
             "real module/entry deps stay; tests dep removed"
+        );
+    }
+
+    #[test]
+    fn ask_replan_defaults_on_and_opts_out() {
+        // Unset + truthy -> re-plan (today's behavior); explicit off-values -> reuse the first plan.
+        assert!(ask_replan_enabled(None), "unset defaults ON (re-plan)");
+        assert!(ask_replan_enabled(Some("1".into())));
+        assert!(ask_replan_enabled(Some("true".into())));
+        assert!(ask_replan_enabled(Some("anything".into())));
+        assert!(!ask_replan_enabled(Some("0".into())));
+        assert!(!ask_replan_enabled(Some("off".into())));
+        assert!(!ask_replan_enabled(Some("FALSE".into())));
+        assert!(
+            !ask_replan_enabled(Some(" no ".into())),
+            "trimmed + case-insensitive"
         );
     }
 
@@ -6236,6 +6269,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(1800);
+    // After the ASK handshake, re-plan from scratch (default) or reuse the first plan (answers still reach
+    // workers via research_findings). Default-ON = today's behavior; the evidence-based default is set by A/B.
+    let ask_replan = ask_replan_enabled(std::env::var("GOOSE_SWARM_ASK_REPLAN").ok());
     let best_of_n = {
         let base = opts.best_of_n.unwrap_or(cfg.best_of_n_skeletons);
         // Size the skeleton drafting to the FLEET so no worker node sits IDLE during the draft step (the user
@@ -6362,11 +6398,17 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 .await;
                 if !qa.is_empty() {
                     research_findings.push_str(&qa);
+                    if ask_replan {
+                        eprintln!(
+                            "  {} re-planning with the user's clarifications",
+                            style("↻").cyan()
+                        );
+                        continue;
+                    }
                     eprintln!(
-                        "  {} re-planning with the user's clarifications",
-                        style("↻").cyan()
+                        "  {} keeping this plan; clarifications injected into every worker via research findings (GOOSE_SWARM_ASK_REPLAN=0, skips the ~20min re-plan)",
+                        style("✓").green()
                     );
-                    continue;
                 }
             }
         }
