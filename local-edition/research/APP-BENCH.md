@@ -980,3 +980,27 @@ review-fix it triggered) then FIXED both order-add validation guards. So:
   golden can catch TRANSIENT bugs that the run's OWN later phases fix -> premature/wrong verdict. My quick-test-when-
   complete shortcut caused this. Golden AFTER run_finished, or explicitly mark mid-run goldens PROVISIONAL + re-verify on
   completion. (UNIQ23 + UNIQ25 mid-run goldens were already all-green, so those verdicts stand; only UNIQ24 was affected.)
+
+## UNIQ26 — inventory+orders store / UNIQ21-SCALE CAPSTONE (bjcy8it0n) — near-FULL WIN, CEILING MOVED (PROVISIONAL, integrate-verify still running)
+JUDGED BY RUNNING (real exit rc=$?), nested tree (product add/list/show/orders + order add/list + export/import_/report;
+positionals sku/name kept). The FULL 4-dim combination that OVERLOADED UNIQ21 (2 entities + multi-format 3 cmds +
+JSON round-trip + revenue-agg report + ~9 cmds + 7 validations):
+- BUILT CLEANLY: all 5 build tasks (db-layer/cli-parsing/command-handlers/entry-point/tests) done with ZERO non-ok
+  verdicts — NO cli-entry over_read, NO broken_code, NO spec_drift, NO cross-module mismatch. CONTRAST UNIQ21 which
+  FAILED (cli-entrypoint x3 over_read + member-format crash + export --file broken). The plan SPLIT the entry
+  (cli-parsing separate from command-handlers) which absorbed the big surface.
+- WORKS across all 4 dims: 3 formatters consistent+valid (product list json2/csv, order list json3, product orders
+  json2); report agg EXACTLY correct (SKU1 5u=$50, SKU2 1u=$20) sorted revenue DESC; export valid nested {products:2,
+  orders:3}; ROUND-TRIP LOGIC works (import_ preserves products+orders into fresh db); 7/7 validations nonzero
+  (dup-sku, neg-price, unknown-sku-order, zero-qty, bad-format, unknown-show, missing-file); 7 pytest pass; 378 LOC.
+- ONE BUG: the import subcommand is registered as `import_` (trailing underscore — Python-KEYWORD avoidance leaked into
+  the argparse subcommand STRING), so the spec's `store import --file` -> argparse invalid-choice. The round-trip is
+  inaccessible via the spec name (works via `import_`). A specific, mechanical CLI-CONTRACT DRIFT (import->import_).
+CAPSTONE VERDICT (PROVISIONAL — integrate-verify still running, may rename import_->import like it fixed UNIQ24): the
+cumulative-overload CEILING has MOVED ABOVE UNIQ21-scale. The full 4-dim app that FAILED as UNIQ21 now BUILDS CLEANLY +
+WORKS almost entirely. What carried it: (1) the planner SPLIT the entry (cli-parsing / command-handlers) so no big-entry
+over_read; (2) DB-schema-CONTRACTS + multi-file stub-first kept modules consistent (no member-format-class mismatch);
+(3) accumulated CLI-contract + skeleton fixes. The ONE remaining defect is a NEW, narrow, HIGH-confidence-fixable class:
+Python-keyword subcommand names get a spurious trailing underscore. RE-VERIFY after run_finished (does integrate-verify
+rename it?). If NOT -> add a cli_contract_note line: argparse subcommand names are STRINGS, use the EXACT spec name even
+if a Python keyword (add_parser('import') not 'import_'); keyword-avoidance is for Python identifiers not CLI strings.
