@@ -889,3 +889,22 @@ difficulty (multi-format-everywhere + JSON round-trip + 10-cmd surface) EXPOSED 
 cross-module format-CONSISTENCY (2nd formatter written wrong), file-IO round-trip, structure reorg on large surface,
 and thin tests on new dimensions. These are the NEXT real findings. WATCHING if the review/smoke catches the runtime
 crashes (member list + export) before run_finished.
+
+## UNIQ22 — notes / ISOLATED JSON round-trip (bht7v4r4g) — FULL WORKING WIN (calibration: round-trip ALONE works)
+JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first (2 golden passes — 1st used flat `add`, app is nested
+`note add`; SpecDrift caught+FIXED a flatten draft -> app correctly nested, my 1st golden was wrong not the app):
+- JSON EXPORT/IMPORT ROUND-TRIP WORKS end-to-end: export -> valid JSON 2 notes; import into fresh t2.db -> both notes
+  present; note show Meeting -> Body "agenda" + Tags "work, urgent" PRESERVED (bodies AND tags survive round-trip);
+  re-import IDEMPOTENT -> still 2 notes (merge skips existing). This is the exact dimension UNIQ21 FAILED — here it WORKS.
+- multi-tag (--tag action=append repeatable) works; search --tag correct; note list shows title+tags; nested note
+  add/show/list/delete + top-level search/export/import (matches spec); validation dup/unknown-show/unknown-delete/
+  missing-file all rc1 (4/4); 3 pytest pass; 346 LOC; positionals kept (note add TITLE) = 6th data point.
+- CLEAN: no broken_code; SpecDrift PAID OFF (fixed the note-flatten drift to nested — contrast UNIQ21 where the
+  10-cmd flatten was not caught). export --file / import --file both correct (contrast UNIQ21 export --file broken).
+CALIBRATION VERDICT (resolves the UNIQ21 question): the JSON round-trip ALONE = FULL WIN. So UNIQ21's failure was
+COMBINATION-OVERLOAD (multi-format-for-ALL-entities + round-trip + 10-cmd surface + 2 entities simultaneously), NOT
+the round-trip dimension itself. The swarm handles each hard dimension INDIVIDUALLY (round-trip UNIQ22, graph UNIQ19,
+FSM UNIQ20, weighted-avg UNIQ18, multi-format-for-contacts UNIQ21-partial) but hits a CUMULATIVE-complexity ceiling
+when MANY are combined at once = weak-model capacity limit, NOT a single-dimension bug -> NO clean single-dimension
+fix. This is the honest map of the ceiling. UNIQ23 tests the 2-dimension boundary (round-trip + multi-format on 1
+entity) to locate where cumulative overload begins.
