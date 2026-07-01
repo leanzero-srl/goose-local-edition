@@ -722,3 +722,13 @@ CLI-contract + passing tests on a COMPLEX nested-CLI app. This is the payoff: CL
 class (UNIQ10 drift-fail) into a compliant full win. NOTE: the run itself was still spinning a SPURIOUS review
 wire-fix (the from-pkg-import false-positive, now FIXED in fa71ed041) on the OLD binary — the app was done+correct
 before that.
+
+## UNIQ12b — helpdesk (b0xe8a1df, 594 LOC) — FULL WIN (ASK_REPLAN=0 A/B arm)
+Same spec as UNIQ12 but skip-re-plan. Golden ALL CORRECT by running: --help = helpdesk [-h] --db DB {init,agent,
+ticket,sla} (GLOBAL --db + NESTED); init/dup-agent(rc1)/close-already-closed(rc1)/comment-on-closed(rc1); ticket
+open WITH and WITHOUT --assignee both rc0 (optional honored, list shows "unassigned"); ticket list --status/
+--priority filters correct; workload alice = 1 open avg 0.00 EXACT; sla report = t1 high BREACHED 1over EXACT;
+unknown ticket/agent rc1. entry cli-parser 0 spec_drift + 0 broken_code (cleaner than UNIQ12). Modular split
+(agents/tickets/sla/db/constants/cli/__main__). VERDICT: FULL WIN — equals UNIQ12 quality while skipping the
+re-plan -> the ASK_REPLAN default-off evidence. Also validated AST-import fix (no spurious cli-unwired wire-fix
+expected — new binary).
