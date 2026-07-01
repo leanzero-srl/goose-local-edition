@@ -1004,3 +1004,12 @@ over_read; (2) DB-schema-CONTRACTS + multi-file stub-first kept modules consiste
 Python-keyword subcommand names get a spurious trailing underscore. RE-VERIFY after run_finished (does integrate-verify
 rename it?). If NOT -> add a cli_contract_note line: argparse subcommand names are STRINGS, use the EXACT spec name even
 if a Python keyword (add_parser('import') not 'import_'); keyword-avoidance is for Python identifiers not CLI strings.
+
+### UNIQ26 FINAL (integrate-verify cut after thrashing 2 attempts ~26min; import_ PERSISTED)
+integrate-verify re-dispatched twice + never finished (smoke checks the app's ACTUAL names so it structurally cannot
+catch a spec-vs-actual NAME mismatch). import subcommand stayed `import_`. FINAL VERDICT: UNIQ26 = near-FULL WIN, CEILING
+MOVED above UNIQ21-scale (built clean + works across all 4 dims); the ONE defect is the `import`->`import_` keyword-name
+drift. FIX SHIPPED (commit 1c71965c8): cli_contract_note gains a 5th rule — argparse add_parser() subcommand names are
+STRINGS, use the EXACT spec name even for Python reserved words (import/class/del), keyword-avoidance is for Python
+variables only. HIGH conf, zero false-positive (only says 'match the spec name'), test extended, GATE green. UNIQ27 =
+2nd UNIQ21-scale app (library book+loan) WITH an `import` cmd to validate the fix live + confirm the moved ceiling N=2.
