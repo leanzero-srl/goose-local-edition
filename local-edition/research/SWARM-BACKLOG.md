@@ -423,3 +423,17 @@ but the weak model might write a broken stub; and skeleton-first was a WASH on S
 /hard modules only, not blanket). SECONDARY: a stronger over_read RE-DISPATCH hint (you failed twice by exploring;
 your VERY FIRST action MUST be write to <path>, no other command) — but prompt-pleas are what the model already
 ignores. ASSESS + build the skeleton-first-for-multi-file after UNIQ13 finishes (or is cut). N=2 evidence.
+
+### [UNIQ14 — multi-file stub-first fix NOT tested on the hard case (plan variance)]
+UNIQ14 (same recipe spec as UNIQ13) plan = shared-types(__init__+models), database-layer(db.py), cli-entry(cli.py+
+__main__.py), tests, integrate-verify. UNLIKE UNIQ13, the architect MERGED all commands + the shopping aggregation
+into cli-entry (an ENTRY task) rather than splitting a separate non-entry plan-shopping module. So multifile_stub_note
+(which is empty for entry tasks — skeleton_note covers them) fired only for shared-types (2 files, but __init__ is
+trivial = EASY), which passed 0 over_read. The HARD case (a NON-entry complex multi-file module like UNIQ13
+plan-shopping) did NOT recur -> the fix is UNTESTED on the case it targets. HONEST: shipped + unit-tested + weak-
+positive on easy multi-file, but no in-the-wild proof on a hard non-entry multi-file module yet. cli-entry (the
+complex entry with the aggregation) is handled by skeleton_note (entry skeleton-first) — watch it survive.
+TO TEST PROPERLY: UNIQ15 needs a spec the architect will SPLIT into non-entry multi-file modules — i.e. 2+ distinct
+complex algorithmic domains (not a thin CLI over one engine). Note: whether a module is entry-vs-non-entry-multi-file
+is PLAN-dependent + not fully controllable; the fix is best-effort + the hard mechanism (raise the no-write elapsed
+gate for owned_files.len()>1 in judge.rs) remains the fallback if a hard multi-file module flails again.
