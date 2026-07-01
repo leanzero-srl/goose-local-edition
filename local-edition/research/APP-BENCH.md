@@ -1049,3 +1049,22 @@ precedence + associativity (incl the tricky right-assoc ^) correctly, no python-
 Joins UNIQ19 (graph algo) + UNIQ20 (FSM) as compute wins. No new finding from arithmetic-eval -> UNIQ29 probes a HARDER
 compute class (JSON-path query engine: path parsing + recursive nested traversal + array indexing/filters) to find where
 compute breaks, if anywhere.
+
+## UNIQ29 — jq-lite JSON-path query / HARDER compute (biwk8v91h) — FULL WIN (integrate-verify fixed 2 transient bugs)
+JUDGED BY RUNNING (real exit rc=$?) AFTER integrate-verify's fix pass (UNIQ24 lesson applied — first golden was mid-run):
+- HARDER-COMPUTE ALL WORKS: nested key access (.address.city=NYC, .items[0].price=10); [] expansion WITH continuation
+  (.items[].sku -> "A" then "B" — the trailing key IS applied to each expanded elem); bare . = whole doc (rc0); keys
+  (city,zip); length (2); type (array/string/number); select PATH --where FIELD=VALUE string-compare (sku=B -> 1 elem,
+  price=20 -> 1 elem). 5/5 validations nonzero (file-not-found, invalid-JSON, bad-syntax .items[, key-not-present,
+  index-non-array). NO python eval (real parser.py+resolver.py). 36 pytest pass. clean modular (ast/parser/resolver/
+  commands/cli). 350 LOC.
+- PROVISIONAL->FINAL: my FIRST golden (mid-run, before integrate-verify's fix) caught 2 bugs — .items[].sku dropped the
+  trailing key (printed whole objects) + bare . rc1. I marked it PROVISIONAL (UNIQ24 lesson) + re-verified after the
+  fix pass: BOTH FIXED. So integrate-verify PAYS OFF on COMPUTE bugs too (like it fixed UNIQ24's validation guards).
+- MEASUREMENT-ERROR CAUGHT: my first re-verify ran from the REPO ROOT (wrong cwd) -> "No module named jq" + 50 pytest
+  errors (garbage); re-ran from the scratchpad dir -> correct (bugs fixed, 36 pass). Always cd the scratchpad before
+  python3 -m PKG.
+VERDICT: FULL WIN. COMPUTE is a BROAD swarm STRENGTH — arithmetic-precedence+associativity (UNIQ28), graph (UNIQ19),
+FSM (UNIQ20), and now JSON-path parse + recursive traversal + []-expansion-WITH-continuation + select (UNIQ29). No new
+finding (the harder compute worked once integrate-verify fixed the first draft). PIVOT: UNIQ30 tries a DIFFERENT hard
+axis (stateful TRANSACTIONS — a KV store with BEGIN/COMMIT/ROLLBACK + rollback semantics) to find where the swarm breaks.
