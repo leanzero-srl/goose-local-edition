@@ -1090,3 +1090,10 @@ whole catches runtime bugs via integrate-verify's test run + fix re-dispatch. So
 LOWER value than a naive read suggests — it would mostly DUPLICATE integrate-verify. Its only marginal value is for runs
 where integrate-verify THRASHES (UNIQ26, cut at 26min) or the run FAILS before it. Downgrade that fix; the real residual
 gap is integrate-verify RELIABILITY/thrash, not smoke depth.
+
+## VAL1 — bm bookmark manager (b9wh0r8kw) — FIX VALIDATION (smoke-runs-tests, ad8334c2f)
+First run on the fixed binary. VALIDATES the new pytest -q smoke oracle end-to-end:
+- smoke event.result: ran=true, py_files=6, collect={kind:ok}, TESTS={kind:PASS} (<-- NEW oracle fired), entry_package=bm, entry_ok=true, findings=[].
+- run_finished: done=[cli-entry, commands-layer, db-layer, integrate-verify, tests], failed=[] (5/5 clean, full-4-dim CRUD: nested bookmark add/show/list/delete + search + export/import round-trip + multi-format + validations).
+- Independent re-run of the generated suite: 5 passed in 0.64s.
+VERDICT: the smoke-runs-tests fix works as designed — the gate now RUNS the tests as a deterministic runtime oracle and serializes the tests verdict into the smoke event. Full-4-dim app built clean.
