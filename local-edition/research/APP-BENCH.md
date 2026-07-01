@@ -794,3 +794,19 @@ validating). Caught it by reading the app's ACTUAL add_argument contract, then r
 -> revealed the math+validation are actually correct AND surfaced the CLI-drift. LESSON: when a golden shows uniform
 rc=2 with "usage:" output, it is argparse rejecting YOUR syntax (contract mismatch), NOT the app erroring — read the
 app's real argparse before scoring. rc=2 (argparse) vs rc=1 (app sys.exit) distinguishes them.
+
+## UNIQ17 — library lending (bbemc0qyu) — CLI-contract POSITIONAL fix VALIDATED (headline); app left broken by fix-loop regression
+- HEADLINE WIN: the positional-vs-flag strengthening (a9466d898) VALIDATED. Original cli.py kept EVERY spec positional
+  (member add NAME -> add_argument('name'); book add ISBN; loan out ISBN MEMBER -> 2 positionals; report member MEMBER)
+  and --from/--to unrenamed; confirmed by RUNNING member add Alice -> rc0 (positional accepted, not rc2 argparse).
+  Direct contrast to UNIQ16 total drift. The fix WORKED. SpecDrift also caught a cli-entry drift (cli-entry x2).
+- multi-file stub-first 3rd data point: db-layer (2-file) clean 0 over_read.
+- BUG 1 (schema drift): report overdue crashed no-such-column-isbn on first golden; review/fix ADDED loans.isbn
+  (review DID catch the runtime SQL error class). BUG 2 (REGRESSION from the fix): a cli-entry re-dispatch then broke
+  cli.py with dest-supplied-twice-for-positional -> EVERY command crashes; the fix was NOT re-verified (a trivial
+  --help catches it). So the app ended BROKEN by the fix loop despite the correct original entry. Run thrashed
+  (cli-entry x2, tests-core x3 over_read) -> CUT.
+VERDICT: positional fix VALIDATED (the campaign goal for this app) but app NOT shippable (fix-loop regression). The
+review is NET positive across apps (UNIQ15 skeleton-stub fixed cleanly) — UNIQ17 is the 1st regression seen ->
+review-wire-fix-spin-protection (gate corrective re-dispatch on post-fix --help smoke) is now a well-evidenced N=1
+backlog item; build on a 2nd instance or after assessing the phase order. tests over_read N=3 (recovers).
