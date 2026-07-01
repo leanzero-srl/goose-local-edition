@@ -708,3 +708,17 @@ INCONCLUSIVE (no entry artifact to inspect, no complete app to run). Only positi
 judge verdicts / NO spec_drift before it was blocked. CUT via TaskStop (stalled: db-layer dead, 2/3 nodes idle, no
 path to success). broken_code verdict WORKED (caught the syntax) — this is a weak-model self-repair limitation, not
 a swarm bug. UNIQ12 (helpdesk) is the clean CLI-contract re-validation.
+
+## UNIQ12 — helpdesk ticketing (b4zhx5r0p, 451 LOC) — FULL WIN (best result of the campaign)
+CLI-contract WIN (global --db + NESTED subcommands: helpdesk [-h] --db DB {init,agent,ticket,sla}). Golden ALL
+CORRECT by running (REAL exit): init rc0; agent add rc0; dup agent rc1; ticket open (nested) rc0; close 3 rc0;
+close-already-closed rc1; comment-on-closed rc1; ticket list --status/--priority/--assignee all correct tabular;
+agent workload alice --today 2026-07-01 = "1 open ticket(s), avg age 0.0 days" EXACT; sla report --today
+2026-07-03 = ticket1 high Age2 SLA1 DaysOver1 BREACHED, t2 low excluded, t3 closed excluded EXACT; unknown
+ticket/agent rc1. smoke PASS (entry_ok), integrate-verify DONE, all 3 TEST tasks DONE (tests PASSED — better than
+UNIQ9/10 where tests failed). entry WIRED cli via `from helpdesk import cli`. Only nit: empty --today '' tracebacks
+(edge case; valid dates work). VERDICT: FULL WIN — matches UNIQ8s honest-DONE milestone AND adds a validated
+CLI-contract + passing tests on a COMPLEX nested-CLI app. This is the payoff: CLI-contract converted the entry
+class (UNIQ10 drift-fail) into a compliant full win. NOTE: the run itself was still spinning a SPURIOUS review
+wire-fix (the from-pkg-import false-positive, now FIXED in fa71ed041) on the OLD binary — the app was done+correct
+before that.
