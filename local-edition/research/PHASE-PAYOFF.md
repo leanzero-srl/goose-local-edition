@@ -102,3 +102,14 @@ broken_code (recovered in-place). Confidence: HIGH now (validated by running on 
 title positional takes ONE arg (multi-word needs quotes) — argparse-standard, a golden test-artifact not a bug.
 Remaining: full golden (SLA/workload math) on run_finished + wire-vs-inline check (does the entry import+dispatch
 sibling handlers or reimplement inline?).
+
+## ASK_REPLAN A/B — VERDICT: skip (reuse plan) = equal quality + ~15min faster -> DEFAULT flipped OFF (2a195ae7f)
+Same ASKING helpdesk spec, one flag flipped. UNIQ12 (ASK_REPLAN=1, re-plan): conf 69->88, FULL WIN, ~15min re-plan.
+UNIQ12b (ASK_REPLAN=0, skip): conf 78 reused, FULL WIN, went answer->execute with NO re-plan (saved ~15min) AND
+executed CLEANER (entry cli-parser 0 spec_drift + 0 broken_code vs UNIQ12 entry 1 broken_code). BOTH golden
+all-correct (global --db + nested subcommands; SLA report t1 high BREACHED 1over; workload 1 open avg 0.0; error
+exits; UNIQ12b also honored --assignee optional). So the re-plan's confidence boost did NOT yield a better app.
+DECISION: flip GOOSE_SWARM_ASK_REPLAN default -> OFF (reuse). Opt in with =1. CONFIDENCE MED: N=1 + a draft-variance
+CONFOUND (skip arm reused a higher-conf 78 plan vs re-plan arm's 69 start), so this is evidence-based not proven; a
+2nd ASKING-spec pair (ideally same initial skeleton both arms) would strengthen. Knob stays configurable. Net: the
+~15min re-plan tax (4x observed) is cut by default; anyone wanting the re-plan sets =1.
