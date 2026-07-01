@@ -526,3 +526,22 @@ before accepting — else it can ship a WORSE app than it started with. HONEST n
 error). Fix candidate: after any review/smoke corrective re-dispatch that touches the entry, re-run the --help/
 collect-only smoke and REJECT the fix (keep prior version or re-dispatch) if it now fails. Confidence MED. READ the
 fix re-dispatch trace first to confirm which task added dest=.
+
+### [UNIQ21 — raised-difficulty FAIL = weak-model coding limit, NOT a swarm-mechanism gap (trace-confirmed, no fix built)]
+UNIQ21 (contacts, 10-cmd + multi-format-everywhere + JSON round-trip) FAILED honestly (run_finished marks cli-entrypoint
++ integrate-verify + test-formats-roundtrip + test-search-errors FAILED — run-status HONEST, no false success = GOOD).
+Bugs: (1) format_members expects list-of-DICTS (m['contact_name']) but cli.py passes STRINGS -> member list crashes
+TypeError (cross-module DATA-SHAPE mismatch; CONTRACTS injects signatures not data shapes); (2) export --file ->
+unrecognized-argument (arg drift on export); (3) contact multi-format json/csv WORKS but member multi-format broken
+(2nd formatter written inconsistently); (4) CLI structure flattened (nested->flat on 10-cmd surface).
+TRACE (session 20260701_636): cli-entrypoint worker WROTE cli.py as its FIRST action (write-first, 7 calls) — so the
+skeleton_note WORKED and the entry did NOT over_read from reading deps. Therefore the earlier "large-command-split /
+big-entry-over_read" hypothesis is NOT confirmed — I did NOT build it (would have been the wrong fix). The failure is
+GENUINE weak-model coding errors on a harder app (data-shape disagreement between 2 modules, arg drift), which the
+swarm CORRECTLY caught + reported. NO clean MED+ confidence mechanically-sound swarm fix -> model-capability ceiling.
+DECISION: no fix built (confidence rule — do not overbuild on 1 partial off an unconfirmed cause). The reusable
+learnings: swarm HONESTLY fails at raised difficulty (does not lie); the ceiling is cross-module data-shape agreement
++ consistency across sibling modules (contract-drift class, the original v8 motivation) — a HARD problem for a weak
+model. A future CONTRACTS enhancement conveying argument DATA SHAPES (not just signatures) could help but is MED-LOW
+confidence + a big surface -> parked, not built. Calibrate: UNIQ22 isolates JSON round-trip ALONE (smaller surface,
+1 entity, no multi-format) to test whether round-trip itself is the ceiling or it was UNIQ21's COMBINATION.
