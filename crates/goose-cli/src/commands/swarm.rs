@@ -1516,6 +1516,34 @@ mod tests {
     }
 
     #[test]
+    fn smoke_pytest_run_interpretation() {
+        use TestRunVerdict::*;
+        // all pass.
+        assert_eq!(interpret_pytest_run(Some(0), "12 passed in 0.3s"), Pass);
+        // exit 5 = no tests collected -> inconclusive, not a failure.
+        assert_eq!(
+            interpret_pytest_run(Some(5), "no tests ran in 0.01s"),
+            NoTests
+        );
+        // pytest not installed -> inconclusive, never a failure.
+        assert_eq!(
+            interpret_pytest_run(Some(1), "ModuleNotFoundError: No module named 'pytest'"),
+            PytestMissing
+        );
+        // a real RUNTIME failure (the class --help/collect-only miss) becomes a finding with the tail.
+        match interpret_pytest_run(
+            Some(1),
+            "test_nested_rollback FAILED\nsqlite3.ProgrammingError: You can only execute one statement at a time",
+        ) {
+            Failures(t) => assert!(
+                t.contains("ProgrammingError"),
+                "tail must carry the runtime failure: {t}"
+            ),
+            other => panic!("expected Failures, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn smoke_entry_package_detection() {
         // top-level package with __main__.py is runnable via `python3 -m pkg`.
         assert_eq!(
@@ -3651,6 +3679,46 @@ fn interpret_pytest_collect(code: Option<i32>, output: &str) -> CollectVerdict {
     }
 }
 
+/// Verdict of RUNNING the generated test suite (`pytest -q`) — the deterministic RUNTIME oracle that
+/// exercises real code paths `--help` + `--collect-only` never touch. This is the exact class the two
+/// other gates are blind to: the broken_code judge only COMPILES (a runtime crash on an un-run path
+/// passes), and import-only smoke never invokes a command (verified: UNIQ21 shipped a member-list
+/// crash + broken export that `--help` never hit). The generated tests ARE the model's representative
+/// invocations, so running them needs zero command-synthesis. Passing, an absent/unavailable pytest
+/// (inconclusive — never a failure), no tests, or real failures (the finding).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "detail")]
+enum TestRunVerdict {
+    Pass,
+    NoTests,
+    PytestMissing,
+    Failures(String),
+}
+
+/// Interpret a `python3 -m pytest -q` run from its exit code + combined output. Pure (no I/O) so it is
+/// unit-tested without spawning Python. Exit 0 = all pass; exit 5 = no tests collected (inconclusive, not
+/// a failure); a missing pytest module is inconclusive; any other non-zero is a real test failure/error
+/// (the finding). Mirrors `interpret_pytest_collect`'s "missing/none is never a failure" rule so the gate
+/// only ever fails on a genuine, reproducible runtime failure.
+fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
+    let low = output.to_lowercase();
+    if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
+        return TestRunVerdict::PytestMissing;
+    }
+    match code {
+        Some(0) => TestRunVerdict::Pass,
+        Some(5) => TestRunVerdict::NoTests,
+        _ => {
+            let tail = tail_lines(output, 40);
+            TestRunVerdict::Failures(if tail.is_empty() {
+                "pytest reported test failures".to_string()
+            } else {
+                tail
+            })
+        }
+    }
+}
+
 /// The last `n` non-blank lines of `s`, in original order — captures a traceback tail for a hint.
 fn tail_lines(s: &str, n: usize) -> String {
     let mut lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -3720,6 +3788,7 @@ struct SmokeResult {
     ran: bool,
     py_files: usize,
     collect: Option<CollectVerdict>,
+    tests: Option<TestRunVerdict>,
     entry_package: Option<String>,
     entry_ok: Option<bool>,
     findings: Vec<String>,
@@ -3735,6 +3804,7 @@ impl SmokeResult {
             ran: false,
             py_files: 0,
             collect: None,
+            tests: None,
             entry_package: None,
             entry_ok: None,
             findings: vec![],
@@ -3760,6 +3830,7 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
             ran: false,
             py_files: 0,
             collect: None,
+            tests: None,
             entry_package: None,
             entry_ok: None,
             findings: vec![],
@@ -3784,6 +3855,31 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
             Some(v)
         }
         None => None, // python3 missing / timed out -> inconclusive, not a failure
+    };
+
+    // 1b) RUN the generated tests — the runtime oracle. `--help`/`--collect-only` never execute a real
+    // code path; the suite does, catching the runtime-crash class both other gates are blind to. Gated on
+    // a clean collect (Ok) so an import error is reported once as its own finding; a real failure becomes a
+    // finding that feeds the SAME corrective re-dispatch as the collect/entry findings.
+    let tests = if matches!(collect, Some(CollectVerdict::Ok)) {
+        let mut run_cmd = tokio::process::Command::new("python3");
+        run_cmd.args(["-m", "pytest", "-q"]).current_dir(root);
+        match smoke_output(run_cmd, 120).await {
+            Some(out) => {
+                let combined = combined_output(&out);
+                let v = interpret_pytest_run(out.status.code(), &combined);
+                if let TestRunVerdict::Failures(ref t) = v {
+                    findings.push(format!(
+                        "`pytest -q` failed — the generated tests exercise runtime paths that \
+                         `--help`/`--collect-only` never invoke:\n{t}"
+                    ));
+                }
+                Some(v)
+            }
+            None => None, // pytest missing / timed out -> inconclusive, not a failure
+        }
+    } else {
+        None
     };
 
     // 2) entry point — `python3 -m <pkg> --help` must exit 0.
@@ -3836,6 +3932,7 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         ran: true,
         py_files: py.len(),
         collect,
+        tests,
         entry_package,
         entry_ok,
         findings,
@@ -4046,6 +4143,7 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
         ran: true,
         py_files: 0,
         collect: None,
+        tests: None,
         entry_package: None,
         entry_ok,
         findings,
@@ -4073,6 +4171,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                 ran: true,
                 py_files: 0,
                 collect: None,
+                tests: None,
                 entry_package: None,
                 entry_ok: Some(false),
                 findings,
@@ -4103,6 +4202,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         ran: true,
         py_files: 0,
         collect: None,
+        tests: None,
         entry_package: None,
         entry_ok,
         findings,
