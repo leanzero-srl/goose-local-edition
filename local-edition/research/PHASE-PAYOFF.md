@@ -59,3 +59,24 @@ working app; honest FAIL catching real bugs like UNIQ6 infer-persist). VALIDATE 
 now report DONE; a buggy one should FAIL because integrate-verify actually caught it). The tests-subtask itself
 still fails sometimes (owns files, genuine over-read/looping) — separate reliability item, but it no longer
 poisons run-status.
+
+## UNIQ9 (habit tracker) — MULTI-PHASE PAYOFF observed in ONE run (smoke+review+judge all fired)
+- SMOKE gate PAID OFF: result {ran:true, py_files:9, collect:ok, entry_package:habits, entry_ok:TRUE, findings:[]}
+  = the entry `python -m habits --help` RUNS (exit 0) + pytest collects. Confirms runnable before shipping.
+- REVIEW (AST wiring) PAID OFF: found "module 'habits.models' imported by no non-test module — built-but-unwired".
+  models.py (336b dataclass) is dead/unreachable. Real finding a unit-test-only pass would miss.
+- SpecDrift judge PAID OFF: caught __main__.py checkin/uncheck using POSITIONAL date vs the spec --date flag
+  (a bug the golden would fail on) -> re_dispatched cli-app att2 to fix. BUT att2 was finalize-spin-KILLED
+  mid-fix (verdict looping->failed) so the --date fix may be INCOMPLETE (golden will verify).
+- test-dep-strip CONFIRMED: BOTH tests terminally FAILED yet the run proceeded to smoke+review (not blocked).
+  run-status reflects the APP (smoke), not the failing tests. The exact scenario the strip fix was built for.
+- dynamic replanner correct: round 0 added [] stopped (nothing to parallelize at the tail) -> 2 idle nodes = LEGIT.
+- verify-not-rewrite CONFIRMED (att1 wrote commands.py+__main__.py immediately, trace).
+
+### finalize-spin-while-FIXING — now TWO instances (backlog B strengthened)
+tests-advanced/tests-core: wrote test -> debugged failing test >420s w/o edit -> looping killed. AND cli-app att2:
+was applying the SpecDrift --date fix, made progress (ok x2), then went stale >420s -> looping killed mid-fix.
+So the 420s finalize-spin threshold kills workers that are LEGITIMATELY fixing/debugging, not just idle-spinning.
+This is the strongest evidence yet for backlog B (threshold + salvage: on finalize-spin, if the file PARSES and
+smoke/entry is ok, SALVAGE it as done rather than discarding the partial fix). Needs the existing finalize-spin
+test kept green. CONFIDENCE MED — salvage risks shipping a half-fix; must gate on parse+smoke-ok.
