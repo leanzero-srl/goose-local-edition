@@ -14,7 +14,9 @@ use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
-use crate::judge::{Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer};
+use crate::judge::{
+    Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer, Verdict,
+};
 use crate::replan::{ReplanContext, Replanner};
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -23,6 +25,51 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
+
+/// GOOSE_SWARM_SALVAGE_SPIN (default ON): when a NON-TEST task terminal-fails via finalize-spin (Verdict::
+/// Looping), salvage it as Done instead of Failed. Looping only fires once the owned file was written, so the
+/// worker DID produce output — discarding it also fails its dependents (esp. the integrate-verify sink), which
+/// reports a WORKING app as FAILED (observed UNIQ9: the entry spun on its final fix -> integrate-verify blocked
+/// -> run FAILED though the app runs). Salvaging lets integrate-verify be the real gate. Off with 0/off/false/no.
+fn salvage_spin_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn looks_like_test_file(f: &str) -> bool {
+    let lower = f.to_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
+    base.starts_with("test_")
+        || base.ends_with("_test.py")
+        || base.ends_with("_test.rs")
+        || base.ends_with(".test.ts")
+        || base.ends_with(".test.js")
+        || base == "conftest.py"
+        || lower.contains("/tests/")
+        || lower.contains("/test/")
+}
+
+/// A test subtask: id mentions "test", or every owned file looks like a test file. Test tasks are never
+/// salvaged (a spinning test is not "done", and tests do not block integrate-verify).
+fn is_test_task(id: &str, owned_files: &[String]) -> bool {
+    id.to_lowercase().contains("test")
+        || (!owned_files.is_empty() && owned_files.iter().all(|f| looks_like_test_file(f)))
+}
+
+/// At least one owned file exists on disk and is non-empty. The deterministic finalize-spin gate only fires
+/// once a file was written, but a custom/LLM judge could emit Looping with nothing on disk — never salvage
+/// then (there is no output to gate). Paths resolve against the run cwd (where workers write).
+fn owned_file_written(owned_files: &[String]) -> bool {
+    owned_files
+        .iter()
+        .any(|f| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false))
+}
 
 /// A pool device = one LM Link model id with a capacity weight.
 #[derive(Clone, Debug)]
@@ -1013,22 +1060,61 @@ impl State {
                 }
             }
             self.attempt_started_at.remove(tid);
+            // FINALIZE-SPIN SALVAGE: a Looping terminal-fail means the owned file WAS written (the judge only
+            // emits Looping once any_owned_written); the worker produced output but kept spinning after. For a
+            // non-test task, discard also fails its dependents (the integrate-verify sink), so a working app is
+            // reported FAILED. Mark it Done and let integrate-verify gate it honestly. Only Looping; never a
+            // test task.
+            let salvage = salvage_spin_enabled()
+                && matches!(outcome.verdict, Verdict::Looping)
+                && self.dag.tasks.get(tid).is_some_and(|n| {
+                    !is_test_task(&n.spec.id, &n.spec.owned_files)
+                        && owned_file_written(&n.spec.owned_files)
+                });
+            let (outcome_label, error_text, state, status) = if salvage {
+                (
+                    "salvaged_spin",
+                    "finalize-spin salvaged: owned file written; integrate-verify gates it"
+                        .to_string(),
+                    TaskState::Done,
+                    "done",
+                )
+            } else {
+                (
+                    "judge_failed",
+                    outcome.verdict.as_str().to_string(),
+                    TaskState::Failed,
+                    "failed",
+                )
+            };
+            if salvage {
+                self.sink.emit(&SwarmEvent::JudgeVerdict {
+                    task_id: tid.to_string(),
+                    device: device.clone().unwrap_or_default(),
+                    verdict: "salvaged_spin".to_string(),
+                    confidence: 1.0,
+                    hint: error_text.clone(),
+                    action: "salvaged".to_string(),
+                });
+            }
             self.attempt_log
                 .entry(tid.to_string())
                 .or_default()
                 .push(AttemptRecord {
                     device: device.clone(),
                     model: model.clone(),
-                    outcome: "judge_failed".to_string(),
-                    error: Some(outcome.verdict.as_str().to_string()),
+                    outcome: outcome_label.to_string(),
+                    error: Some(error_text),
                     elapsed_ms: 0,
                 });
-            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
-            self.fail_descendants(tid);
+            self.dag.tasks.get_mut(tid).unwrap().state = state;
+            if !salvage {
+                self.fail_descendants(tid);
+            }
             let attempts = self.attempt_log[tid].len() as u32;
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
-                status: "failed".to_string(),
+                status: status.to_string(),
                 device,
                 model,
                 attempts,
@@ -1771,5 +1857,48 @@ impl Scheduler {
             };
             let _ = tokio::time::timeout(tick, notify.notified()).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod salvage_tests {
+    use super::*;
+
+    #[test]
+    fn test_files_and_tasks_are_recognized() {
+        assert!(looks_like_test_file("tests/test_core.py"));
+        assert!(looks_like_test_file("test_utils.py"));
+        assert!(looks_like_test_file("habits/foo_test.py"));
+        assert!(looks_like_test_file("tests/conftest.py"));
+        assert!(!looks_like_test_file("habits/__main__.py"));
+        assert!(!looks_like_test_file("habits/commands.py"));
+        // A non-test entry task is salvageable; test tasks and empty-owned tasks are not.
+        assert!(!is_test_task(
+            "cli-app",
+            &["habits/commands.py".into(), "habits/__main__.py".into()]
+        ));
+        assert!(is_test_task(
+            "tests-advanced",
+            &["tests/test_advanced.py".into()]
+        ));
+        assert!(is_test_task(
+            "unit",
+            &["tests/test_a.py".into(), "tests/test_b.py".into()]
+        ));
+        // id mentions test even if a file does not look like one.
+        assert!(is_test_task("integration-test", &["run_it.py".into()]));
+    }
+
+    #[test]
+    fn salvage_off_values_parse() {
+        // Parse mirror of salvage_spin_enabled: unset -> ON; explicit off-values -> OFF.
+        let off = |v: &str| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            )
+        };
+        assert!(off("0") && off("off") && off("FALSE") && off(" no "));
+        assert!(!off("1") && !off("true") && !off("anything"));
     }
 }
