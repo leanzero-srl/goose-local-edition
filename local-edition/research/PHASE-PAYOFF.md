@@ -113,3 +113,13 @@ DECISION: flip GOOSE_SWARM_ASK_REPLAN default -> OFF (reuse). Opt in with =1. CO
 CONFOUND (skip arm reused a higher-conf 78 plan vs re-plan arm's 69 start), so this is evidence-based not proven; a
 2nd ASKING-spec pair (ideally same initial skeleton both arms) would strengthen. Knob stays configurable. Net: the
 ~15min re-plan tax (4x observed) is cut by default; anyone wanting the re-plan sets =1.
+
+### REVIEW phase — scope confirmed on UNIQ15 (catches app-breaking, not subtle edge-validation)
+UNIQ15 skeleton-stub entry (8 NotImplementedError handlers, app dead) was CAUGHT + FIXED by the idle-node pre-review
+(correctness-checks completed tasks) -> handlers filled, app functional. So REVIEW PAYS OFF on the big class
+(unimplemented/app-breaking). BUT the 2 subtle validation gaps (balance <unknown-account> rc0, income-statement
+from>to rc0) were NOT fixed by the review (still rc0 after finalization). So the review's correctness-check catches
+NON-FUNCTIONAL/unimplemented code but not spec-completeness edge cases (a handler that RUNS but skips one validation
+branch looks correct to the reviewer). This is the right scope (catch the app-killers cheaply) — closing every edge
+validation gap is a weak-model completeness limit, acceptable per app. NOT a fix target now; a future spec-coverage
+reviewer (assert each spec-listed error path exits nonzero) could close it but is lower-value than the app-breaker catch.
