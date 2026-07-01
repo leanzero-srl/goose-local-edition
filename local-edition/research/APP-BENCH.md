@@ -829,3 +829,22 @@ JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first:
 VERDICT: FULL WORKING WIN — correct engine + full validation + correct weighted-avg + clean entry + tests pass. The
 cleanest end-to-end result of UNIQ15-18. Demonstrates the campaign compounding: shipped fixes (positional, multi-file)
 validated while the app is fully correct. app-after-app improvement realized.
+
+## UNIQ19 — build-order resolver / topo sort (bp1thxa24) — FULL WORKING WIN (graph algorithm correct); 2nd consecutive full win
+JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first, topo VERIFIED programmatically:
+- GRAPH ALGORITHM CORRECT: order = A,B,C,D and PROGRAMMATICALLY VERIFIED a VALID topological sort (index(req) <
+  index(dependent) for every edge A->B, A->C, B->D, C->D; alphabetical tiebreak deterministic). Module uses Kahn's
+  algorithm with a min-heap + DFS three-state coloring for cycle detection — correct, sophisticated, FIRST TRY, no
+  broken_code. dependents A = B,C,D (transitive closure correct).
+- CYCLE DETECTION CORRECT: dep add A D (would close A->D->B->A) REJECTED "error: cycle" rc1; graph intact after (order
+  still A,B,C,D). check rc0 acyclic.
+- VALIDATION COMPLETE: unknown-package, duplicate, self-dependency, cycle-closing-add all rc1 (4/4). 19/19 pytest. 415 LOC.
+- CLI-CONTRACT POSITIONAL fix 3rd data point: package add NAME; dep add PACKAGE REQUIRES (2 positionals); dependents
+  PACKAGE — all positional, dep add B A -> rc0 not rc2. Positional-vs-flag strengthening now VALIDATED on 3 apps.
+- CLEAN RUN: 0 over_read, 0 broken_code, 0 spec_drift, NO fix-loop regression -> review-fix-regression stays N=1.
+  Multi-file: db-layer + graph.py single-file dep-heavy clean; cli-app 3-file entry clean.
+FINDING (payoff campaign): the weak model CAN produce a CORRECT sophisticated algorithm (Kahn topo + DFS-coloring
+cycle detection) end-to-end when scoped to a dedicated module — contrast UNIQ11 db-layer broken_code-couldnt-self-fix.
+So the recurring broken_code limit is task/scoping-specific, not a blanket algorithmic ceiling.
+VERDICT: FULL WORKING WIN. 2 consecutive clean full wins (UNIQ18 gradebook + UNIQ19 buildgraph) — the shipped fixes
+(positional, multi-file) hold while apps are fully correct across CRUD-aggregate AND graph-algorithm archetypes.
