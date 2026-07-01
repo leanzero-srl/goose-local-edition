@@ -966,3 +966,17 @@ fix warranted (the highest-payoff validation-smoke was LOWEST-confidence anyway;
 are mostly correct -> a fragile validation gate would HURT more than help. Honest close: the swarm + weak model handle
 enumerated validation well; UNIQ24 was situational. CAMPAIGN CEILING MAP holds: single-dim + 2-dim/1-entity + 2-entity-
 multi-format + validation-stress ALL WORK; only UNIQ21's full 4-dim-2-entity-10cmd combination overloads (cumulative).
+
+## CORRECTION — UNIQ24 was goldened TOO EARLY (mid-run); its final state is a (near-)FULL WIN
+After UNIQ24's background run FINISHED (run_finished: all 7 tasks done, 0 failed), I re-checked its 2 "validation bugs":
+order add unknown-customer -> rc1 (was rc0 mid-run); order add neg-amount -> rc1 (was rc0 mid-run). BOTH FIXED. I had
+goldened UNIQ24 when cli-entry-point was done but INTEGRATE-VERIFY had NOT yet run; the integrate-verify (or a
+review-fix it triggered) then FIXED both order-add validation guards. So:
+- UNIQ24 CORRECTED VERDICT: (near-)FULL WIN — all 3 formatters consistent+valid (already confirmed) AND all validations
+  work in the FINAL state. The "validation-gap" I recorded was a MID-RUN measurement artifact, not a shipped bug.
+- INTEGRATE-VERIFY / REVIEW PAYS OFF ON VALIDATION: it caught + fixed the 2 order-add guards UNIQ24's happy-path modules
+  had skipped. (Contrast UNIQ21, whose run FAILED — marked failed, did not ship a false success.)
+- LESSON (discipline): DO NOT golden before run_finished / integrate-verify completes. A mid-run "complete-but-stale"
+  golden can catch TRANSIENT bugs that the run's OWN later phases fix -> premature/wrong verdict. My quick-test-when-
+  complete shortcut caused this. Golden AFTER run_finished, or explicitly mark mid-run goldens PROVISIONAL + re-verify on
+  completion. (UNIQ23 + UNIQ25 mid-run goldens were already all-green, so those verdicts stand; only UNIQ24 was affected.)
