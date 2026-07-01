@@ -314,3 +314,22 @@ finalize-spinning while debugging a failing test. FIX DIRECTIONS (verified-groun
       >420s without an edit is killed as looping — sometimes it is genuinely stuck (weak model), sometimes
       mid-debug. Threshold/salvage question stands.
 WIN for the discipline: reading the trace flipped the conclusion (would have wrongly disarmed a correct gate).
+
+### [KEY — finalize-spin false-kill of the ENTRY cascades to block integrate-verify -> run-status REGRESSION] UNIQ9
+run_finished: done=[core-models-utils, db-layer], FAILED=[cli-app, integrate-verify, tests-advanced, tests-core].
+BUT the golden PROVES the app works end-to-end + smoke reported entry_ok:True. So the run FALSELY reports FAILED.
+CAUSE CHAIN (verified from report.tasks[].attempt_history):
+  - cli-app: status=failed, 3 attempts, last_outcome=judge_failed. att2 was applying the SpecDrift --date fix,
+    wrote a WORKING __main__.py (golden confirms), then spun >420s -> finalize-spin (Looping) -> exhausted ->
+    judge_failed -> marked FAILED. The produced file WORKS but the TASK is failed.
+  - integrate-verify: status=failed, attempts=0 (NEVER RAN). It depends on cli-app (legit entry dep, NOT a test
+    dep so the test-dep-strip does not help here). cli-app FAILED -> integrate-verify BLOCKED -> never dispatched
+    -> run reports FAILED.
+NET: a finalize-spin FALSE-kill of the entry (which produced a working file) cascades to block integrate-verify
+and fails the whole run. REGRESSION vs UNIQ8 (honest DONE). This is a run-status honesty bug, SAME CLASS as the
+UNIQ8 fixes (judge-kill exemption, test-dep-strip) but a NEW facet: the entry itself finalize-spin-failing.
+FIX = finalize-spin SALVAGE (scheduler.rs terminal fail path): when a NON-TEST task would be marked FAILED via
+judge_failed/looping AND its owned files EXIST + PARSE (py_syntax_error clean), mark it DONE (salvaged) instead,
+so a dependent (integrate-verify) can run + the run reports honestly. Scope to NON-TEST tasks (a parsing-but-
+failing test is not done; and tests do not block integrate-verify anyway). Confidence MED-HIGH: the case is clear
++ the parse gate is safe (here the salvaged file actually WORKS per golden). Keep the finalize-spin test green.
