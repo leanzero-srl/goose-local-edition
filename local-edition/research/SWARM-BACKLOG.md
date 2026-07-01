@@ -510,3 +510,19 @@ WATCHING: run still finalizing (integrate-verify/review) — does the review/smo
 schema (like UNIQ15 stub entry)? If YES = review pays off again. If run finishes broken = the schema-contract needs
 strengthening (inject the EXACT db table+column DDL into the command modules, or a smoke query check). Also tests-core
 over_reading = N=3 for anti-flail-tests (UNIQ9, UNIQ15, UNIQ17) — recovers via re-dispatch though.
+
+### [UNIQ17 — review/fix loop FIXED the schema but INTRODUCED an argparse regression (review-fix not verified)]
+Follow-up to the schema-drift payoff test: the review/fix loop DID address the schema (db.py loans table now has
+`isbn TEXT NOT NULL REFERENCES books(isbn)` — the missing column was added). SO review-catches-schema-drift = YES
+(it ran, found the runtime SQL error class, re-dispatched a schema fix). BUT the SAME finalization introduced a NEW
+bug: every command now crashes `TypeError: dest supplied twice for positional argument, did you mean metavar?` — a
+fix re-dispatch added dest= to a POSITIONAL add_argument (illegal). Confirmed a REGRESSION: my first golden had
+member add Alice -> rc0 (clean), now it crashes -> the fix broke cli.py. The fix's own verification did NOT catch
+that EVERY command crashes on import/parse (an argparse construction error fails at first invocation — a trivial
+--help would have caught it). EVIDENCE for backlog (2b) review-wire-fix-spin-protection / fix-not-verified: a
+review/hardening re-dispatch that edits the entry MUST be gated on a post-fix smoke (python -m pkg --help exit 0)
+before accepting — else it can ship a WORSE app than it started with. HONEST net: UNIQ17 positional fix VALIDATED
+(headline, from the ORIGINAL clean cli.py) but the app was left BROKEN by the fix-loop regression (argparse dest
+error). Fix candidate: after any review/smoke corrective re-dispatch that touches the entry, re-run the --help/
+collect-only smoke and REJECT the fix (keep prior version or re-dispatch) if it now fails. Confidence MED. READ the
+fix re-dispatch trace first to confirm which task added dest=.
