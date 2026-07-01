@@ -88,3 +88,17 @@ AND >=1 owned file exists non-empty on disk, mark it Done (salvaged), skip fail_
 check). Scheduler terminal path. Tests: salvage helpers + judge_terminal_fails_worker_stuck_at_cap stays green
 (mock writes no real file -> not salvaged). VALIDATE on UNIQ10: if an entry finalize-spins after writing, the
 run should now report honestly (integrate-verify runs) instead of FAILED-by-cascade.
+
+## CLI-STRUCTURE contract (57c892261) — VALIDATED: WORKS (UNIQ12 helpdesk)
+UNIQ10 entry DRIFTED (flat group-add + per-command --db -> `--db init` rc2, spec_drift-FAILED). Shipped the
+CLI-contract. UNIQ12 entry (cli-entrypoint) built COMPLIANT, VERIFIED BY RUNNING:
+  `python -m helpdesk --help` => usage: helpdesk [-h] --db DB {init,agent,ticket,sla} ...  (GLOBAL --db + NESTED
+  subcommands agent/ticket groups). `--db test.db init` rc0; `agent add alice` rc0 (NESTED); dup agent rc1
+  (clarify honored); `ticket open ... --priority high` rc0; `ticket list` rc0 tabular w/ header (clarify honored);
+  invalid priority rc2. entry judge verdicts: 14 ok, 0 spec_drift, recovered from 1 broken_code in-place.
+VERDICT: CLI-contract PAYS OFF — converted the entry from UNIQ10 drift-fail to spec-compliant nested/global CLI.
+The contract SHIFTED the entry failure mode from structural spec_drift (unrecoverable in 3) to an ordinary
+broken_code (recovered in-place). Confidence: HIGH now (validated by running on a fresh complex app). Note: the
+title positional takes ONE arg (multi-word needs quotes) — argparse-standard, a golden test-artifact not a bug.
+Remaining: full golden (SLA/workload math) on run_finished + wire-vs-inline check (does the entry import+dispatch
+sibling handlers or reimplement inline?).
