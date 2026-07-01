@@ -1213,20 +1213,22 @@ fn print_import_summary(s: &ImportSummary) {
     }
 }
 
-/// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either RE-PLAN
-/// from scratch with the answers folded in (default — today's behavior) or REUSE the first plan and rely on
-/// the answers already appended to research_findings (which every worker prompt injects). A full re-plan is a
-/// ~20min tax (skeleton re-draft + re-detailing every subtask) that only pays off when the answers change the
-/// plan STRUCTURE; when the ASK was about semantics, the reused plan is identical in shape and the workers
-/// still see the answers. Opt out with GOOSE_SWARM_ASK_REPLAN=0 (also off/false/no). Default preserves the
-/// current re-plan behavior exactly, so the evidence-based default is decided by an A/B, not by this flag.
+/// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either REUSE the
+/// first plan (relying on the answers already appended to research_findings, which every worker prompt injects)
+/// or RE-PLAN from scratch with the answers folded in. A full re-plan is a ~15-20min tax (skeleton re-draft +
+/// re-detailing every subtask) that only pays off when the answers change the plan STRUCTURE; when the ASK was
+/// about semantics the reused plan is identical in shape and the workers still see the answers. DEFAULT is now
+/// REUSE (skip the re-plan): an A/B on the same ASKING helpdesk spec (UNIQ12 re-plan vs UNIQ12b skip) produced
+/// TWO equally-correct full-win apps while the skip saved ~15min — the re-plan's confidence boost (69->88) did
+/// NOT yield a better app. Opt INTO the re-plan with GOOSE_SWARM_ASK_REPLAN=1 (also on/true/yes). N=1 with a
+/// draft-variance confound (the skip arm reused a higher-confidence 78 plan), so the default stays a knob.
 fn ask_replan_enabled(v: Option<String>) -> bool {
     match v {
-        Some(s) => !matches!(
+        Some(s) => matches!(
             s.trim().to_lowercase().as_str(),
-            "0" | "off" | "false" | "no"
+            "1" | "on" | "true" | "yes"
         ),
-        None => true,
+        None => false,
     }
 }
 
@@ -1353,19 +1355,24 @@ mod tests {
     }
 
     #[test]
-    fn ask_replan_defaults_on_and_opts_out() {
-        // Unset + truthy -> re-plan (today's behavior); explicit off-values -> reuse the first plan.
-        assert!(ask_replan_enabled(None), "unset defaults ON (re-plan)");
+    fn ask_replan_defaults_off_and_opts_in() {
+        // Default (unset) now REUSES the plan (skip the re-plan, per the UNIQ12/UNIQ12b A/B); opt INTO the
+        // re-plan only with an explicit on-value.
+        assert!(
+            !ask_replan_enabled(None),
+            "unset defaults OFF (reuse plan / skip re-plan)"
+        );
         assert!(ask_replan_enabled(Some("1".into())));
+        assert!(ask_replan_enabled(Some("on".into())));
         assert!(ask_replan_enabled(Some("true".into())));
-        assert!(ask_replan_enabled(Some("anything".into())));
+        assert!(ask_replan_enabled(Some("YES".into())), "case-insensitive");
         assert!(!ask_replan_enabled(Some("0".into())));
         assert!(!ask_replan_enabled(Some("off".into())));
-        assert!(!ask_replan_enabled(Some("FALSE".into())));
         assert!(
-            !ask_replan_enabled(Some(" no ".into())),
-            "trimmed + case-insensitive"
+            !ask_replan_enabled(Some("anything".into())),
+            "unknown values skip — only explicit on-values re-plan"
         );
+        assert!(!ask_replan_enabled(Some(" no ".into())));
     }
 
     #[test]
@@ -5989,7 +5996,7 @@ async fn ask_clarifying_questions(
                     answers = a;
                     eprintln!(
                         "{}",
-                        style("clarifications received — re-planning with the answers").green()
+                        style("clarifications received — continuing with the answers").green()
                     );
                     break;
                 }
@@ -6493,7 +6500,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         continue;
                     }
                     eprintln!(
-                        "  {} keeping this plan; clarifications injected into every worker via research findings (GOOSE_SWARM_ASK_REPLAN=0, skips the ~20min re-plan)",
+                        "  {} keeping this plan; clarifications injected into every worker via research findings (default: skips the ~15min re-plan — set GOOSE_SWARM_ASK_REPLAN=1 to re-plan instead)",
                         style("✓").green()
                     );
                 }
