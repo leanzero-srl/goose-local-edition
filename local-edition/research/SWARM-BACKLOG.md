@@ -278,3 +278,18 @@ fine (the ASK is about SEMANTICS not structure). Saves the WHOLE re-plan (~20min
 would be missed (rare). This is a planning-flow behavior change -> needs a FOCUSED cycle + a guard (e.g. skip
 re-plan only when the plan structure is unchanged / the Q&A is semantic) + test. NOT a rushed change. Confidence
 MED (the quality impact of pre-Q&A specs is uncertain — worth an A/B: re-plan-on vs skip, same ASK spec).
+
+### [UNIQ9 execute — over_read kills the ENTRY on attempt 1; skeleton-first not forcing an early write]
+UNIQ9 dispatch trace: cli-app / tests-advanced / tests-core each dispatched x2 (re-dispatched ONCE);
+0 finalize-spin kills, 0 kill loops (vs UNIQ7 entry killed 3x). The re-dispatch cause is over_reading
+(3 over_reading verdicts, on exactly those 3 tasks) — killed on attempt 1 (>=16 tool_calls, no owned
+write yet), recovered on attempt 2 (commands.py 6920b + __main__.py 3270b written). NET: the entry
+recovered in ONE re-dispatch = BETTER than UNIQ7, but attempt 1 was wasted.
+ROOT-CAUSE HYPOTHESIS (verify on completion via the session trace): the ENTRY legitimately reads
+db.py/models.py/utils.py to wire imports, batching its reads BEFORE the first write -> trips the
+over_read gate. skeleton_first is SUPPOSED to make the entry write a stub FIRST (which would give it an
+early owned-write and exempt it), but cli-app still read-first -> the entry worker likely IGNORED the
+skeleton-first instruction. FIX DIRECTION (atomic-writes theme, NOT relaxing the gate): make
+skeleton_first ACTUALLY force the entry to write its stub before reading siblings (stronger prompt /
+verify it emits an early write). CONFIDENCE MED — confirm from the attempt-1 session trace that the
+entry read-batched before writing; if so this is a concrete skeleton_first-effectiveness bug.
