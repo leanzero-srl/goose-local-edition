@@ -1068,3 +1068,25 @@ VERDICT: FULL WIN. COMPUTE is a BROAD swarm STRENGTH — arithmetic-precedence+a
 FSM (UNIQ20), and now JSON-path parse + recursive traversal + []-expansion-WITH-continuation + select (UNIQ29). No new
 finding (the harder compute worked once integrate-verify fixed the first draft). PIVOT: UNIQ30 tries a DIFFERENT hard
 axis (stateful TRANSACTIONS — a KV store with BEGIN/COMMIT/ROLLBACK + rollback semantics) to find where the swarm breaks.
+
+## UNIQ30 — txkv transactional KV store / NEW axis: stateful transactions (b9sfbkn51) — FULL WIN (integrate-verify fixed nested-rollback, 3rd payoff)
+JUDGED BY RUNNING (real exit rc=$?) AFTER integrate-verify's fix (UNIQ24/29 lesson — first golden was mid-run):
+- SINGLE-LEVEL: SET a 1; BEGIN; SET a 2; GET a=2; ROLLBACK; GET a=1 (undone); COUNT 1. Correct.
+- NESTED (the hard case): SET x 10; BEGIN; SET y 20; BEGIN; SET y 30; GET y=30; ROLLBACK; GET y=20 (inner discarded);
+  COMMIT; GET y=20 (outer persisted); COUNT 2. EXACTLY correct. Nested transaction visibility + rollback + commit work.
+- DELETE/COUNT (2->1); persistence (x set outside tx persists); 5/5 validations nonzero (GET-unset, ROLLBACK-no-tx,
+  unknown-verb, wrong-args, missing-file); 7 pytest pass; 221 LOC; clean modular (transaction.py/store.py/parser.py/cli.py).
+- PROVISIONAL->FINAL: my FIRST golden (mid-run) hit sqlite3.ProgrammingError 'one statement at a time' — transaction.py:45
+  ran `ROLLBACK TO SAVEPOINT sp; RELEASE SAVEPOINT sp` in ONE execute(). integrate-verify SPLIT it into TWO execute()
+  calls (lines 45+46) and the nested path now works. 3rd integrate-verify save (UNIQ24 validation, UNIQ29 compute,
+  UNIQ30 transaction).
+VERDICT: FULL WIN. TRANSACTIONS axis is a swarm STRENGTH — nested BEGIN/COMMIT/ROLLBACK with correct rollback-undo +
+commit-visibility + persist-on-outermost. Adds to the capability map: CRUD-full-4-dim, validation, compute (arithmetic/
+graph/FSM/JSON-path), transactions.
+HONEST CORRECTION to the smoke-misses-runtime-bugs finding: BOTH concrete cases resolved WITHOUT a shipped-broken app —
+UNIQ21's run FAILED honestly (marked failed), UNIQ30 was FIXED by integrate-verify. So integrate-verify BACKSTOPS
+runtime bugs (3/3: UNIQ24, UNIQ29, UNIQ30). The smoke gate IS shallow (--help + collect-only), but the pipeline as a
+whole catches runtime bugs via integrate-verify's test run + fix re-dispatch. So smoke-runs-representative-commands is
+LOWER value than a naive read suggests — it would mostly DUPLICATE integrate-verify. Its only marginal value is for runs
+where integrate-verify THRASHES (UNIQ26, cut at 26min) or the run FAILS before it. Downgrade that fix; the real residual
+gap is integrate-verify RELIABILITY/thrash, not smoke depth.
