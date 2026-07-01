@@ -545,3 +545,30 @@ learnings: swarm HONESTLY fails at raised difficulty (does not lie); the ceiling
 model. A future CONTRACTS enhancement conveying argument DATA SHAPES (not just signatures) could help but is MED-LOW
 confidence + a big surface -> parked, not built. Calibrate: UNIQ22 isolates JSON round-trip ALONE (smaller surface,
 1 entity, no multi-format) to test whether round-trip itself is the ceiling or it was UNIQ21's COMBINATION.
+
+### [smoke+tests miss runtime validation/correctness bugs — N=2 finding + HONEST fix-confidence assessment]
+FINDING (N=2): SMOKE = collect-only (imports) + --help (exit 0), swarm.rs:3746 run_smoke_gate — it NEVER runs commands
+nor executes the tests. So apps ship with real runtime holes that "pass smoke": UNIQ21 (member list crash + export
+--file broken) and UNIQ24 (order add skips unknown-customer + neg-amount guards, both rc0). Thin/over-read tests
+compound it (UNIQ24 tests over_read -> none ran). This is the real recurring swarm-quality gap now that format/round-
+trip/single-dim are all solved.
+FIX CANDIDATES — assessed with HONEST confidence (user rule: flag LOWER confidence + why, never rank by effort):
+  A) VALIDATION-SMOKE (extract spec 'reject with nonzero' clauses, RUN each, assert nonzero) — would catch the UNIQ24
+     class (rc0-should-be-nonzero). CONFIDENCE: LOWER / the weakest of the three. WHY: it needs the weak local model to
+     generate commands that are valid in EVERY field except the one validation under test, then disambiguate rc2
+     (argparse/contract) vs rc1 (real validation) vs rc0 (bug). That is EXACTLY the measurement I (Opus) keep slipping
+     on by hand (3 golden re-runs this campaign). A weak model doing it will false-fail (rc2 read as pass, or a
+     mis-arg'd command read as a bug). I do NOT have confidence I can make this reliably non-false-failing -> do NOT
+     rush it.
+  B) TRACEBACK-SMOKE (run a happy-path command sequence, FAIL on a Python traceback in stderr) — catches the UNIQ21
+     crash class only, NOT UNIQ24 (rc0, no crash). CONFIDENCE: MED. Assertion is deterministic (traceback=fail); the
+     fragility is model-deriving a valid happy-path sequence.
+  C) SMOKE RUNS THE TESTS (pytest -q, not just --collect-only) — CONFIDENCE: HIGH/deterministic + cheap + low blast
+     radius. LIMITATION: payoff is bounded by test quality — catches nothing when tests over_read (UNIQ24) or are thin
+     (UNIQ21). Strictly-positive but does not fix the two observed cases.
+DECISION: NO fix built yet. The highest-PAYOFF fix (A, catches UNIQ24 class) is the LOWEST-CONFIDENCE (fragile model-
+driven command-gen + rc-disambiguation); building it now risks a false-failing gate that HURTS good runs. Per the
+confidence rule I flag that honestly and gather more evidence first (UNIQ25 = validation-stress app -> does the gap
+recur at N=3?). If N=3 confirms, the least-fragile increment is likely C (run the tests) PLUS strengthening test
+quality, not A. Root cause is partly MODEL capacity (weak model writes incomplete validations + thin tests) — no cheap
+knob fully fixes that; be honest about the ceiling rather than ship a fragile gate.
