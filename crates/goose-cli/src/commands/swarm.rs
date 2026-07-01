@@ -1369,6 +1369,8 @@ mod tests {
         let note = cli_contract_note(true, true);
         assert!(note.contains("CLI STRUCTURE CONTRACT"));
         assert!(note.contains("NESTED") && note.contains("GLOBAL"));
+        // POSITIONAL-vs-flag + no-rename rules (UNIQ16 drifted positionals to flags + renamed --from/--to).
+        assert!(note.contains("POSITIONAL") && note.contains("do NOT rename"));
         // Disabled, or no entry file among the owned set -> empty (no-op, byte-identical default-off path).
         assert!(cli_contract_note(true, false).is_empty());
         assert!(cli_contract_note(false, true).is_empty());
@@ -5247,10 +5249,16 @@ fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
        a `group` command WITH an `add` subcommand — NOT a flat hyphenated `group-add`.\n\
      - GLOBAL options stay GLOBAL: if the spec shows an option BEFORE the subcommand (e.g. `--db PATH init`), \
        parse it at the top level so it works before ANY subcommand — NOT as a per-command positional argument.\n\
-     - Match the spec's EXACT command names, option names (a `--flag` stays a flag, not a positional), value \
-       UNITS (e.g. dollars with 2 decimals vs raw cents), and share/pair SYNTAX (e.g. `name=value`, not \
-       `name:value`). A CLI that computes correctly but does not accept the spec's exact invocations is a \
-       spec-drift FAILURE — do not silently re-shape the interface for convenience.\n"
+     - Match each argument's POSITIONAL-vs-FLAG form EXACTLY as the spec writes it: a BARE word after the \
+       subcommand (e.g. `product add SKU`, `warehouse add NAME`, `stock level SKU`) is a POSITIONAL argument — keep \
+       it positional, do NOT convert it into a `--sku`/`--name` flag; conversely a `--flag VALUE` stays a flag, not \
+       a positional. Converting the spec's positionals into flags (or vice-versa) is a spec-drift FAILURE even when \
+       the logic is correct.\n\
+     - Use the spec's EXACT option and command names — do NOT rename or 'improve' them: `--from`/`--to` must stay \
+       `--from`/`--to` (not `--source`/`--dest`), `--reorder` must stay `--reorder` (not `--reorder-level`). Match \
+       value UNITS (dollars with 2 decimals vs raw cents) and share/pair SYNTAX (`name=value`, not `name:value`). A \
+       CLI that computes correctly but does not accept the spec's exact invocations is a spec-drift FAILURE — do not \
+       silently re-shape the interface for convenience.\n"
         .to_string()
 }
 
