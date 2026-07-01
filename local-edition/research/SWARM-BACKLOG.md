@@ -367,3 +367,17 @@ and DISPATCHES to the imported sibling handlers (import from e.g. splitwise.comm
 reimplement their logic inline (that orphans the module + duplicates code). The entry-wiring instruction exists but
 was not strong enough here. Note: the wire-fix may change UNIQ10 final state -> re-verify golden after run_finished
 if __main__.py changed. Confidence MED (a prompt rule; weak model may still inline).
+
+### [UNIQ10 tail — review wire-fix WORKED but the wire-fix worker SPINS, uncovered by SALVAGE (scheduler-only)]
+The AST-review wire-fix rewrote __main__.py (9182b inline-duplicated -> 4182b): it now IMPORTS commands.py (no
+longer orphaned) + keeps a working click group (--help rc0). So the review wire-fix FIXED the wiring (commands.py
+wired) though it kept the FLAT interface shape (review targeted the unwired-module/cli-stub, not the shape drift).
+BUT the wire-fix worker then SPUN: file written 5min ago, worker still GENERATING 9+min after dispatch, no
+completion, no run_finished. This is a finalize-spin — but salvaged_spin=0 because the REVIEW wire-fix dispatches
+OUTSIDE the scheduler, so the scheduler's finalize-spin gate + my SALVAGE do NOT cover it. FINDING (candidate fix):
+the review corrective-fix dispatch lacks the finalize-spin/idle protection scheduler tasks have -> it can spin to
+worker_max_turns, delaying/hanging run_finished. Extend a spin/idle-timeout (and possibly SALVAGE) to the review
+dispatch path. Confidence MED (need to locate the review-dispatch code; separate from the scheduler terminal path).
+Also reinforces the wire-not-inline CLI-contract enhancement: had the entry wired commands.py the first time, the
+review wire-fix (and its spin) would not have been needed. CUT UNIQ10 here (stall 3+, app stable, verdict recorded)
+to free the fleet for UNIQ11 (validate the CLI-contract).
