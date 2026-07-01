@@ -333,3 +333,23 @@ judge_failed/looping AND its owned files EXIST + PARSE (py_syntax_error clean), 
 so a dependent (integrate-verify) can run + the run reports honestly. Scope to NON-TEST tasks (a parsing-but-
 failing test is not done; and tests do not block integrate-verify anyway). Confidence MED-HIGH: the case is clear
 + the parse gate is safe (here the salvaged file actually WORKS per golden). Keep the finalize-spin test green.
+
+### [UNIQ10 — cli-entry spec_drift FAILED (REAL, verified) + SALVAGE correctly did NOT fire + entry structural-drift is 2x now]
+cli-entry-point terminal-failed via spec_drift (over_read -> spec_drift -> spec_drift FAILED, 3 attempts). VERIFIED
+by smoke it is a REAL drift, not a false-negative:
+  - `python -m splitwise --help` works (rc0) BUT commands are FLAT (group-add/member-add/expense-add) — spec
+    required NESTED (group add / member add). And `--db` is PER-COMMAND not GLOBAL: `--db smoke.db init` -> rc2
+    "No such option --db". Spec required a global --db BEFORE the subcommand.
+  - Judge hint was exactly right: "spec requires a GLOBAL --db before subcommands ... code uses per-command
+    positional db-path; commands should be nested groups like `group add`, not flat `group-add`".
+PAYOFF: SpecDrift PAYS OFF (caught a real structural CLI-contract violation). Run-status HONEST (cli-entry failed
+for a legit reason; integrate-verify will cascade-block, which is CORRECT here — the entry really is non-compliant).
+SALVAGE correctly did NOT fire (salvaged_spin=0): the terminal verdict was spec_drift, not Looping — my salvage is
+scoped to Looping only, and salvaging a genuinely-drifted entry would be WRONG. So SALVAGE validation on UNIQ10 is
+INCONCLUSIVE (no finalize-spin occurred) — still shipped+unit-tested, awaits a real finalize-spin run.
+KEY PATTERN: the ENTRY is repeatedly the hard part, drifting on STRUCTURE/INTERFACE — UNIQ9 (--date positional vs
+--date flag) + UNIQ10 (flat commands + per-command db vs nested + global db). The weak model builds a working-ish
+CLI but with the WRONG interface shape. FIX DIRECTION (high-value, 2x evidenced): a CLI-CONTRACT freeze analogous
+to the DB-schema-freeze that PAID OFF — inject the EXACT required command tree (nested subcommands) + global option
+signature into the entry worker prompt (and the entry skeleton pre-declares that argparse/click structure so the
+worker only fills handlers, cannot drift the shape). Confidence MED-HIGH (mirrors the schema-freeze that worked).
