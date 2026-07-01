@@ -494,3 +494,19 @@ the 8 stub handlers + re-dispatch a fix that fills them? IF YES -> phases pay of
 the code comment claims), UNIQ15 recovers. IF NO (review misses __main__.py, or the fix re-dispatch fails/stubs
 again) -> that is the real gap to fix (e.g. detect NotImplementedError in the completion guard so the entry is NOT
 marked done with stubs, not just at end-review). WATCHING run completion. Do NOT build blindly — the detector exists.
+
+### [UNIQ17 — CLI-contract POSITIONAL fix VALIDATED; but cross-module SCHEMA DRIFT bug (watching review)]
+CLI-contract positional-vs-flag strengthening (a9466d898) VALIDATED: UNIQ17 cli.py kept EVERY spec positional —
+member add NAME -> add_argument('name'); book add ISBN -> add_argument('isbn'); loan out ISBN MEMBER -> TWO
+positionals add_argument('isbn')+add_argument('member'); report member MEMBER -> positional; --from/--to KEPT (not
+renamed --source/--dest); --db global. Confirmed by RUNNING: member add Alice -> rc0 (positional accepted, NOT rc2
+argparse). Direct contrast to UNIQ16 which drifted ALL positionals to flags. The fix WORKED (N=1 clean). Note:
+cli-entry got a spec_drift verdict (caught + corrected -> final contract compliant) so note+SpecDrift worked together.
+BUT the APP has a CROSS-MODULE SCHEMA DRIFT bug: report overdue crashes sqlite3.OperationalError: no such column:
+isbn — db.py loans table schema is MISSING the isbn column that commands.py queries (SELECT isbn ... FROM loans).
+book add + loan out + report crash on it; member add works. This is the classic contract-drift failure class (db
+schema vs command queries) that DB-schema-CONTRACTS + CONTRACTS are meant to prevent — the schema still drifted.
+WATCHING: run still finalizing (integrate-verify/review) — does the review/smoke catch the OperationalError + fix the
+schema (like UNIQ15 stub entry)? If YES = review pays off again. If run finishes broken = the schema-contract needs
+strengthening (inject the EXACT db table+column DDL into the command modules, or a smoke query check). Also tests-core
+over_reading = N=3 for anti-flail-tests (UNIQ9, UNIQ15, UNIQ17) — recovers via re-dispatch though.
