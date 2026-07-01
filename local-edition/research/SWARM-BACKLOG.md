@@ -448,3 +448,17 @@ still drifted; SpecDrift + re-dispatch is the backstop that recovers it (at the 
 CLI-contract PAYS OFF partially (fewer/faster drifts) but SpecDrift remains essential. Not a new fix needed — just
 honest scope: CLI-contract reduces entry drift, SpecDrift catches the residual. Watch UNIQ14 cli-entry converge or
 exhaust; golden the FINAL state only.
+
+### [UNIQ15 — multi-file STUB-FIRST fix VALIDATED on the HARD case (trace-confirmed WIN)]
+UNIQ15 (ledger, 2 complex domains) forced a dep-heavy non-entry multi-file module: balance-reports owns balance.py +
+reports.py (the reporting engine: reads types+db+transactions to compute running balances, trial-balance, income
+statement) = the EXACT UNIQ13 plan-shopping pattern that over_read-flailed (ls/tree/find/cat, never wrote, killed x3).
+RESULT: balance-reports dispatched ONCE, 0 over_read, 5 ok verdicts, both files on disk. TRACE-CONFIRMED (session
+20260701_349): its FIRST TWO actions are `write` balance.py + `write` reports.py, THEN shell/checks — STUB-FIRST
+exactly as multifile_stub_note instructs. NO exploration first. Also shared-types-db (3-file) clean, transaction-logic
+(posting/balancing engine) DONE no broken_code. So the multi-file STUB-FIRST fix (1d6ac3d1a) WORKS on the hard case:
+a dep-heavy 2-file non-entry module now writes stubs first (any_owned_written true -> exempt over-read gate) instead
+of flailing. CONTRAST proven: UNIQ13 plan-shopping att0 = ls x3/find/cat x3/no-write/killed vs UNIQ15 balance-reports
+= write/write/checks/clean. VERDICT: multi-file stub-first VALIDATED (N=1 hard-case trace-confirmed + shared-types-db
++ UNIQ14 easy-case). The HARD gate fix (raise no-write elapsed cap for multi-file) is NOT needed — the note sufficed.
+Golden pending on run completion (does the reporting math compute right).
