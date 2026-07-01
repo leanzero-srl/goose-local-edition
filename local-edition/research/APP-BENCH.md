@@ -692,3 +692,9 @@ but a step down from UNIQ8/UNIQ9 (compliant working entries).
 KEY: this is the cleanest evidence yet that the ENTRY/interface is the weak spot while MODULE LOGIC is strong ->
 CLI-contract-freeze (constrain the entry interface to the spec) should convert this PARTIAL to a WIN, since the
 engine already computes correctly. High-confidence fix direction (the hard part — the math — already works).
+
+### UNIQ10 FINAL (run_finished): done=[commands, shared-db, split-logic, test-suite], failed=[cli-entry-point, integrate-verify]
+test-suite PASSED (25min, slow). cli-entry FAILED via spec_drift (real interface drift) -> integrate-verify
+cascade-blocked. run-status HONEST. The AST-review wire-fix wired commands.py WITHOUT breaking the engine
+(post-fix balances still EXACT: alice +15500c, bob -7500c, carol -8000c). VERDICT stands: PARTIAL — correct engine,
+drifted interface. This is the baseline UNIQ11 (with the CLI-contract) must beat: entry should NOT spec_drift-fail.
