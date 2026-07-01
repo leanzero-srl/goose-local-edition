@@ -267,3 +267,14 @@ existing_block now tells a re-dispatched worker the file ALREADY EXISTS -> run i
 the spec, do NOT rewrite. Low-risk (worker still verifies, no false-DONE). STILL OPEN: the finalize-spin
 THRESHOLD (420s too aggressive for slow skeleton-first entries) + the SALVAGE (exhausted+parses -> done, risky).
 VERIFY on UNIQ9+ (a complex entry should re-dispatch faster + succeed more often).
+
+### [re-plan-after-ASK waste — 4th confirmation + assessment] UNIQ9 also ~30min planning
+UNIQ4/5/7/9 all pay ~20-30min planning when they ASK. ASSESSMENT (read the plan loop + parallel_plan): the
+re-plan (loop continue after ASK) re-calls parallel_plan = skeleton re-draft (~5min) + DETAILING (~15min, the
+dominant cost — re-writes every subtask spec). So "re-detail-only" saves little (detailing IS the cost + must
+re-run for the Q&A). The REAL lever: SKIP the re-plan entirely on the ASK retry — the Q&A is ALREADY injected
+into worker prompts via research_findings, so workers get it regardless; the first plan's STRUCTURE is usually
+fine (the ASK is about SEMANTICS not structure). Saves the WHOLE re-plan (~20min). RISK: a structural Q&A
+would be missed (rare). This is a planning-flow behavior change -> needs a FOCUSED cycle + a guard (e.g. skip
+re-plan only when the plan structure is unchanged / the Q&A is semantic) + test. NOT a rushed change. Confidence
+MED (the quality impact of pre-Q&A specs is uncertain — worth an A/B: re-plan-on vs skip, same ASK spec).
