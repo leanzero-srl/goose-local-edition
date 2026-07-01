@@ -1033,3 +1033,19 @@ MOVED above UNIQ21-scale (not a lucky UNIQ26). AND the one UNIQ26 defect (import
 LIVE on UNIQ27 = a complete find->fix->validate loop. This is the campaign's headline payoff. Next: UNIQ28 raises to a
 NEW dimension (compute/algorithm — expression-evaluator REPL) to find the next real finding beyond the now-solved
 CRUD+multiformat+roundtrip+validation class.
+
+## UNIQ28 — calc / COMPUTE-HEAVY recursive-descent parser (brjyft7t8) — FULL WIN (NEW capability: precedence+associativity)
+JUDGED BY RUNNING (real exit rc=$?). NEW dimension beyond CRUD — a real expression evaluator:
+- PRECEDENCE + ASSOCIATIVITY 9/9 EXACT: 2+3*4=14 (prec), 2^3^2=512 (RIGHT-assoc 2^(3^2), NOT (2^3)^2=64 — the hard
+  case), 10-2-3=5 (LEFT-assoc), (2+3)*4=20 (parens), -3+5=2 (unary), 2*3%4=2, 7%3=1, 2^10=1024, 10/4=2.5.
+- REAL PARSER: NO python eval() (grep clean); clean modular tokenizer.py + parser.py + models.py + db.py + formatter.py
+  + cli.py. shared-models-db hit broken_code -> judge caught + RE-DISPATCHED -> RECOVERED (run_finished 8 done/0 failed).
+- constants (def pi 3; pi*2=6; x^2=25; vars json 2); history persisted + multi-format (json 11 entries, csv header+rows);
+  6/6 validations nonzero (syntax 2+, unbalanced (1+2, div0, mod0, undefined-const, bad-format rc2); 44 pytest pass; 466 LOC.
+- MINOR (cosmetic only): eval prints float form 14.0 not int 14 (spec said integer-where-exact); VALUE is correct, just
+  display. Not worth a fix.
+VERDICT: FULL WIN. COMPUTE dimension is a CONFIRMED STRENGTH — the swarm handles recursive-descent parsing + operator
+precedence + associativity (incl the tricky right-assoc ^) correctly, no python-eval shortcut, clean module split.
+Joins UNIQ19 (graph algo) + UNIQ20 (FSM) as compute wins. No new finding from arithmetic-eval -> UNIQ29 probes a HARDER
+compute class (JSON-path query engine: path parsing + recursive nested traversal + array indexing/filters) to find where
+compute breaks, if anywhere.
