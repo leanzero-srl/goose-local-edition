@@ -676,3 +676,19 @@ so `$?` captured the EXIT of `echo "EXIT:"` (always 0), NOT python. Caught it by
 (NOTHING between) -> errors correctly rc1/rc2. LESSON: capture `rc=$?` on the SAME line right after the process,
 never put any command (not even echo) between the process and the $? read. READ-THE-CODE caught the bad metric
 (memory assess-qualitatively-not-just-metrics paid off again).
+
+## UNIQ10 — expense-splitter (bipj1vx40) — PARTIAL: CORRECT ENGINE, DRIFTED INTERFACE
+The golden run via the app's DRIFTED interface (flat `expense-add DB_PATH GROUP DESC AMOUNT_CENTS PAID_BY MODE`,
+--exact NAME:CENTS / --percent NAME:PCT) gives EXACTLY the by-hand values:
+  balances: alice +15500c (+$155), bob -7500c (-$75), carol -8000c (-$80) — EXACT.
+  settle: carol->alice 8000c ($80), bob->alice 7500c ($75) — EXACT minimal settle.
+So ALL THREE split modes (equal/exact/percent), balance math, and greedy settle-up minimization are CORRECT — the
+weak swarm built genuinely complex logic right (split-logic 4283b + commands 6433b + db 3473b, all modules done).
+BUT the ENTRY drifted the CLI interface from the spec: flat commands (group-add) not nested (group add);
+positional DB_PATH not a GLOBAL --db before the subcommand; amounts/display in raw CENTS not dollars-2dp; shares
+NAME:CENTS not name=amount. cli-entry-point terminal-FAILED via spec_drift (the judge caught the interface
+violation, honest). VERDICT: PARTIAL — correct engine, non-compliant interface. Better logic than UNIQ6 (fail),
+but a step down from UNIQ8/UNIQ9 (compliant working entries). 
+KEY: this is the cleanest evidence yet that the ENTRY/interface is the weak spot while MODULE LOGIC is strong ->
+CLI-contract-freeze (constrain the entry interface to the spec) should convert this PARTIAL to a WIN, since the
+engine already computes correctly. High-confidence fix direction (the hard part — the math — already works).
