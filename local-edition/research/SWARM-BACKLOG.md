@@ -381,3 +381,13 @@ dispatch path. Confidence MED (need to locate the review-dispatch code; separate
 Also reinforces the wire-not-inline CLI-contract enhancement: had the entry wired commands.py the first time, the
 review wire-fix (and its spin) would not have been needed. CUT UNIQ10 here (stall 3+, app stable, verdict recorded)
 to free the fleet for UNIQ11 (validate the CLI-contract).
+
+### [NUANCE — re-plan-after-ASK is NOT pure waste: it produced a BETTER plan] UNIQ12
+Earlier I framed the ASK re-plan as ~15min WASTE. UNIQ12 refines that: after the answers, the re-plan re-drafted
+to confidence 88/100 (UP from the pre-answer 69) AND restructured 7 subtasks -> 5 (cleaner). So the re-plan
+incorporates the answers into a measurably better plan (higher cross-draft agreement + tighter decomposition),
+not just a delay. IMPLICATION for the ASK_REPLAN A/B (=1 re-plan vs =0 skip-reuse): the metric must be APP QUALITY
+(build+run+correct), not only wall-clock. Skip (=0) reuses the LOW-confidence 69 plan + answers-via-research_findings;
+re-plan (=1) builds the 88-confidence plan. If the better plan yields a better app often enough, the ~15min pays
+off; if apps are equal, skip wins on time. Do the A/B on a spec that reliably ASKS (like this helpdesk/library
+class, conf < 80). Confidence MED — genuinely uncertain which wins; that is WHY it needs the A/B, not a guess.
