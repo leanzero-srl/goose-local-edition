@@ -848,3 +848,21 @@ cycle detection) end-to-end when scoped to a dedicated module — contrast UNIQ1
 So the recurring broken_code limit is task/scoping-specific, not a blanket algorithmic ceiling.
 VERDICT: FULL WORKING WIN. 2 consecutive clean full wins (UNIQ18 gradebook + UNIQ19 buildgraph) — the shipped fixes
 (positional, multi-file) hold while apps are fully correct across CRUD-aggregate AND graph-algorithm archetypes.
+
+## UNIQ20 — FSM workflow engine (bctbpb6rd) — FULL WORKING WIN (3rd consecutive); FSM correct + positional 4th data point
+JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first:
+- FSM CORRECT: fire sequence Draft -(submit)-> Review -(approve)-> Published, each status confirms; history = exact
+  ordered path Draft,Review,Published; firing an event with NO transition from current state -> rc1 "No valid
+  transition" AND instance STAYS Published (correct semantics). shared-db-engine (3-file, engine.py transition logic)
+  built clean 0 broken_code.
+- VALIDATION COMPLETE: no-transition, dup-instance, unknown-state, start-unknown-state, unknown-instance all rc1 (5/5).
+- CLI-CONTRACT POSITIONAL fix 4th data point: state add NAME; transition add FROM_STATE TO_STATE (2 pos) + --on flag;
+  fire ID EVENT (2 pos); start ID --at; status/history ID. All positional. NO dest-on-positional regression (dest= is
+  only on --on/--at FLAGS, legal; fire's event positional is clean). Positional fix now VALIDATED on 4 apps.
+- BLEMISH: tests-engine broken_code (a TEST module compile error) -> thinner suite (3 tests ran + pass) but the APP is
+  fully correct. NOT an app defect; a test-file quality miss (weak model). No fix action (isolated).
+- CLEAN otherwise: 0 spec_drift, no entry stub, no fix-loop regression -> review-fix-regression STAYS N=1.
+VERDICT: FULL WORKING WIN. 3 CONSECUTIVE clean full wins (UNIQ18 gradebook CRUD-aggregate, UNIQ19 buildgraph graph-algo,
+UNIQ20 flow FSM) across 3 distinct archetypes -> the nested-CLI+SQLite+validation app CLASS is now solidly handled by
+the swarm with the shipped fixes. Next (UNIQ21): RAISE difficulty to a NEW dimension (JSON export/import round-trip +
+multi-format output) to surface the next real finding rather than re-confirm a solved class.
