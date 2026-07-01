@@ -810,3 +810,22 @@ VERDICT: positional fix VALIDATED (the campaign goal for this app) but app NOT s
 review is NET positive across apps (UNIQ15 skeleton-stub fixed cleanly) — UNIQ17 is the 1st regression seen ->
 review-wire-fix-spin-protection (gate corrective re-dispatch on post-fix --help smoke) is now a well-evidenced N=1
 backlog item; build on a 2nd instance or after assessing the phase order. tests over_read N=3 (recovers).
+
+## UNIQ18 — gradebook (b0gl5m7o9) — FULL WORKING WIN (cleanest of the arc); positional fix 2nd data point + weighted-avg correct
+JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first:
+- CLI-CONTRACT POSITIONAL fix VALIDATED (2nd data point, hardest case): cli.py kept EVERY spec positional — course
+  add name; student add name; assignment add COURSE NAME (2 positionals); grade set COURSE ASSIGNMENT STUDENT (3
+  POSITIONALS); report course/student/gradebook positional. All commands rc0/rc1 (app logic), NOT rc2 (argparse).
+  So positional-vs-flag strengthening (a9466d898) now VALIDATED on 2 apps (UNIQ17 lending + UNIQ18 gradebook 3-pos).
+- WEIGHTED-AVERAGE MATH CORRECT: report student Alice = 86.0% (= (40*8/10 + 60*90/100)/(40+60)); Bob = 50.0% (=
+  (40*5/10)/40); report course sorts high-to-low. Exact match to hand computation — the normalized-by-graded-weight
+  formula is right.
+- VALIDATION COMPLETE (app logic rc1): unknown-student, duplicate-course, zero-weight, score>max, total-weights>100
+  all rejected. 5/5 error cases enforced. 5/5 pytest pass. 715 LOC.
+- CLEAN ENTRY: cli-entry 8 ok verdicts, NO spec_drift, NO stub, NO fix-loop regression (contrast UNIQ17 dest crash)
+  -> review-fix-regression stays N=1 (not N=2, do NOT build review-wire-fix-spin yet).
+- MULTI-FILE stub-first: 3 multi-file modules (shared-models 3-file, course-student + assignment-grade 2-file) all
+  clean 0 over_read = 5th app confirming the fix; report-cmds single-file dep-heavy over_read then RECOVERED.
+VERDICT: FULL WORKING WIN — correct engine + full validation + correct weighted-avg + clean entry + tests pass. The
+cleanest end-to-end result of UNIQ15-18. Demonstrates the campaign compounding: shipped fixes (positional, multi-file)
+validated while the app is fully correct. app-after-app improvement realized.
