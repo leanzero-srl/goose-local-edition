@@ -1313,6 +1313,34 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ast_review_counts_from_pkg_import_submodule_as_wired() {
+        // A package whose __main__ wires its cli via `from pkg import cli` must NOT be flagged unwired
+        // (the observed UNIQ12 false-positive); a genuinely orphaned module still must be. Skips if python3
+        // is unavailable (run_ast_review returns ran=false then).
+        let dir = std::env::temp_dir().join(format!("goose_ast_review_{}", std::process::id()));
+        let pkg = dir.join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        std::fs::write(pkg.join("__main__.py"), "from pkg import cli\ncli.main()\n").unwrap();
+        std::fs::write(pkg.join("cli.py"), "def main():\n    return 0\n").unwrap();
+        std::fs::write(pkg.join("orphan.py"), "x = 1\n").unwrap();
+        let res = run_ast_review(&dir).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !res.ran {
+            return; // python3 not available in this environment
+        }
+        let joined = res.findings.join("\n");
+        assert!(
+            !joined.contains("module 'pkg.cli' is imported by no"),
+            "cli wired via `from pkg import cli` must not be flagged UNWIRED: {joined}"
+        );
+        assert!(
+            joined.contains("pkg.orphan"),
+            "a genuinely orphaned module must still be flagged: {joined}"
+        );
+    }
+
     #[test]
     fn cli_contract_note_fires_only_for_entry_when_enabled() {
         // Entry file + enabled -> a non-empty CLI-structure contract mentioning nested/global/units.
@@ -4633,6 +4661,14 @@ for mod, path in mods.items():
             lm = localmatch(node.module)
             if lm:
                 imported_by_nontest.add(lm)
+            # `from PKG import MOD` (or `from . import MOD`) can import a local SUBMODULE, not just a
+            # name inside PKG. Count PKG.MOD / MOD so a module wired ONLY this way (a very common entry
+            # pattern, e.g. __main__ doing `from pkg import cli`) is not falsely flagged built-but-unwired.
+            for alias in node.names:
+                cand = (node.module + "." + alias.name) if node.module else alias.name
+                sm = localmatch(cand) or localmatch(alias.name)
+                if sm:
+                    imported_by_nontest.add(sm)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 lm = localmatch(alias.name)
