@@ -698,3 +698,13 @@ test-suite PASSED (25min, slow). cli-entry FAILED via spec_drift (real interface
 cascade-blocked. run-status HONEST. The AST-review wire-fix wired commands.py WITHOUT breaking the engine
 (post-fix balances still EXACT: alice +15500c, bob -7500c, carol -8000c). VERDICT stands: PARTIAL — correct engine,
 drifted interface. This is the baseline UNIQ11 (with the CLI-contract) must beat: entry should NOT spec_drift-fail.
+
+## UNIQ11 — library lending (b595ch1c9) — FAIL (db-layer syntax) — CLI-contract INCONCLUSIVE
+db-layer FAILED via broken_code x3 (SyntaxError: unterminated string literal line 21) — the weak model could not
+self-repair the syntax in 3 attempts even with the compile-error hint. db-layer is a shared dependency, so its
+failure cascade-BLOCKED models-layer/commands/integrate-verify AND the cli-parsing ENTRY (which needs db-layers
+API) — the entry NEVER wrote its file (only __init__.py + broken db.py on disk). So the CLI-contract validation is
+INCONCLUSIVE (no entry artifact to inspect, no complete app to run). Only positive fragment: cli-parsing had 5 ok
+judge verdicts / NO spec_drift before it was blocked. CUT via TaskStop (stalled: db-layer dead, 2/3 nodes idle, no
+path to success). broken_code verdict WORKED (caught the syntax) — this is a weak-model self-repair limitation, not
+a swarm bug. UNIQ12 (helpdesk) is the clean CLI-contract re-validation.
