@@ -744,3 +744,25 @@ cleanly. VERDICT: PARTIAL — engine/modules OK, entry stuck in a slow SpecDrift
 on this slow fleet. Honest: CLI-contract reduced but did NOT eliminate the entry drift; SpecDrift is the backstop
 but a 4-dispatch loop on a slow 27B did not converge in time. The multi-file stub-first HARD case is still untested
 -> UNIQ15 (ledger, 2 complex domains) targets it.
+
+## UNIQ15 — double-entry accounting ledger (bl1ow7jsx) — WORKING WIN + 2 minor validation gaps; MULTI-FILE FIX + REVIEW PHASE both VALIDATED
+Headline results (JUDGED BY RUNNING, real exit rc=$?):
+- MULTI-FILE STUB-FIRST fix VALIDATED on the hard case: balance-reports (balance.py+reports.py, dep-heavy reporting
+  engine) trace-confirmed WROTE both owned files FIRST then checked (session 20260701_349), 0 over_read — vs UNIQ13
+  plan-shopping flail. shared-types-db (3-file) also clean.
+- REVIEW PHASE VALIDATED on the skeleton-first hazard: cli-entry-point was marked DONE with ALL 8 handlers as `raise
+  NotImplementedError` (app 100% non-functional at first golden). The idle-node pre-review (correctness-checks on
+  completed tasks) CAUGHT it + re-dispatched a fix that FILLED every handler -> NotImplementedError count 8 -> 0, app
+  now works. The skeleton-stub hazard IS backstopped by the review, exactly as the skeleton_note code comment claims.
+  PHASES PAY OFF (do NOT need a completion-guard stub-detector — the review already recovers it).
+- ACCOUNTING MATH CORRECT: balance Cash --as-of = 1300 (1000+500-200); trial-balance total debit 1500 = credit 1500;
+  income-statement Income 500 - Expenses 200 = Net 300; MULTI-LINE txn (Cash:60+Rent:40 credit Sales:100) rc0;
+  unbalanced rejected (debits=100 credits=90 nonzero); bad --type rc2; 19/19 pytest pass; 825 LOC.
+- 2 MINOR VALIDATION GAPS (honest): `balance <UnknownAccount>` -> rc0 (should nonzero — unknown-account not checked
+  on balance); `income-statement --from 2026-07-10 --to 2026-07-01` -> rc0 (from>to not rejected on report). 3/5
+  error cases enforced (unbalanced, bad-type, and others), 2/5 missed. Weak-model gap on exhaustive validation.
+- TEST-writers over_read on att0 (both test tasks) but gate+re-dispatch RECOVERED (19 tests pass). CLI-contract note:
+  entry parser structure was correct (nested + global --db, --help clean) — no spec_drift on THIS entry.
+VERDICT: WORKING WIN (core double-entry engine correct incl multi-line + trial-balance equality + tests) with 2 minor
+validation gaps. Two phase-payoff validations in one run: multi-file stub-first (hard case) + review-catches-skeleton-
+stub. Comparable to UNIQ8/12 (win + honest gaps). The strongest end-to-end result of the multi-file arc.
