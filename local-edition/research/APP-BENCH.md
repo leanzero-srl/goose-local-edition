@@ -732,3 +732,15 @@ unknown ticket/agent rc1. entry cli-parser 0 spec_drift + 0 broken_code (cleaner
 (agents/tickets/sla/db/constants/cli/__main__). VERDICT: FULL WIN — equals UNIQ12 quality while skipping the
 re-plan -> the ASK_REPLAN default-off evidence. Also validated AST-import fix (no spurious cli-unwired wire-fix
 expected — new binary).
+
+## UNIQ14 — recipe/meal-planner (bwgzd3rtp) — PARTIAL/FAIL (entry SpecDrift loop did not converge; CUT)
+Plan merged all commands + shopping aggregation into cli-entry (an ENTRY task) rather than a non-entry multi-file
+module -> so the multi-file stub-first fix was NOT tested on its hard case here. cli-entry DRIFTED despite the
+CLI-contract note (spec_drift x2: --db not GLOBAL, positional args instead of --flags), SpecDrift caught + re-
+dispatched (4 dispatches) and the interface converged to compliant (--help = recipes [-h] [--db DB] {init,recipe,
+ingredient,pantry,plan,shopping}) BUT a mid-loop golden showed recipe add NOT persisting (broken transient); the
+4th attempt then ran 11+min (run.out stale 650s) without converging -> CUT (stall). Modules (models.py, db.py) done
+cleanly. VERDICT: PARTIAL — engine/modules OK, entry stuck in a slow SpecDrift correction loop that did not finish
+on this slow fleet. Honest: CLI-contract reduced but did NOT eliminate the entry drift; SpecDrift is the backstop
+but a 4-dispatch loop on a slow 27B did not converge in time. The multi-file stub-first HARD case is still untested
+-> UNIQ15 (ledger, 2 complex domains) targets it.
