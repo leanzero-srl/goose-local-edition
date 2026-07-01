@@ -908,3 +908,22 @@ FSM UNIQ20, weighted-avg UNIQ18, multi-format-for-contacts UNIQ21-partial) but h
 when MANY are combined at once = weak-model capacity limit, NOT a single-dimension bug -> NO clean single-dimension
 fix. This is the honest map of the ceiling. UNIQ23 tests the 2-dimension boundary (round-trip + multi-format on 1
 entity) to locate where cumulative overload begins.
+
+## UNIQ23 — task tracker / 2-DIM boundary (bhji5olht) — FULL WORKING WIN (round-trip + multi-format together on 1 entity)
+JUDGED BY RUNNING (real exit rc=$?), nested task tree (task add/done/show/list + top-level export/import/report):
+- MULTI-FORMAT (dim 1) ALL VALID: list --format json = valid JSON 2 objs; --format csv = header id,title,priority,due,
+  status + 2 rows; report --format json = valid nested {done:..,open:..}. table = aligned columns.
+- JSON ROUND-TRIP (dim 2) PRESERVES ALL FIELDS: export valid JSON 2 tasks; import into fresh t2 -> 2 tasks; show ->
+  priority=high due=2026-07-10 status=done ALL preserved (incl the done status set before export); re-import IDEMPOTENT
+  (still 2). done + --status done filter works.
+- VALIDATION 5/5 nonzero: dup(rc1), bad-priority(rc2 argparse), bad-format(rc2 argparse), unknown-id(rc1), missing-file
+  (rc1). 301 LOC. positionals kept (task add TITLE; done/show ID) = 7th data point. no broken_code; no entry stub.
+- The confidence-ASK gate scored this 2-dim app 65 (vs 88 single-dim) -> ASKed 4 good Qs -> discriminates by complexity.
+2-DIM BOUNDARY VERDICT: round-trip + multi-format TOGETHER on 1 entity = FULL WIN. So the ceiling is NOT 2 dimensions.
+REFINES UNIQ21: its failure was NOT the round-trip nor multi-format per se, but CUMULATIVE overload from MULTIPLE
+ENTITIES (its member-format crash was the 2nd entity's formatter written INCONSISTENTLY with the cli data shape -
+dicts vs strings) PLUS a 10-command surface. With ONE entity -> ONE formatter -> consistent -> works. So the specific
+ceiling is MULTI-ENTITY format/serialization CONSISTENCY (writing N mutually-consistent formatters/handlers) + large
+surface = a weak-model cross-module-agreement limit. Capability MAP: 1-dim works (UNIQ18/19/20/22); 2-dim/1-entity
+works (UNIQ23); 4-dim/2-entity/10-cmd fails (UNIQ21). UNIQ24 tests the multi-entity-format hypothesis directly (2
+entities, multi-format on both, small surface, no round-trip) - if the 2nd formatter drifts again = N=2 confirmed.
