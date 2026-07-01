@@ -405,3 +405,21 @@ count `from PKG import MOD` (and `from . import MOD`) as importing PKG.MOD, so a
 unwired. MUST READ the AST-reviewer code first (swarm.rs review phase / the model-free AST reviewer) to confirm the
 exact detection gap before building. Confidence MED-HIGH (clear false-positive + a well-scoped detection fix; risk =
 missing another import form). This is likely the NEXT fix to build (beats the ASK_REPLAN A/B on cleanliness).
+
+### [UNIQ13 — hardest module FLAILS on over_read, never writes (VERIFIED, 2nd instance) -> UNIQ13 FAIL] 
+plan-shopping-module (owns plan.py + shopping.py; needs recipe/ingredient/pantry/db to aggregate) FAILED via
+over_reading x3 -> cascade-blocked cli-entry-point + tests + integrate-verify -> UNIQ13 FAIL. VERIFIED from the
+session traces (271 att0, 275 att1): att0 = ls x3, find, cat x3 (7 calls, NO write); att1 = tree, find x2, cat x4
+(7 calls, NO write). It EXPLORES the layout (ls/tree/find) + reads deps (cat) but NEVER commits a write to its
+owned files -> over_read gate kills it (correct). The worker prompt ALREADY forbids ls/find/tree + says WRITE
+FIRST, but the weak model IGNORES it on this hard 2-file/4-dep task. This is the 2nd VERIFIED instance of the
+hardest-module-flails pattern (UNIQ9 tests-writer was the 1st: cat dirs, find).
+FIX CANDIDATES (over_read gate is CORRECT — do NOT relax it): the ONLY mechanically-reliable lever is to FORCE an
+early owned-file write, because any_owned_written=true then EXEMPTS the over_read gate (not a prompt plea the model
+ignores). LEADING: extend SKELETON-FIRST beyond the entry to MULTI-FILE / complex modules (owned_files.len() > 1,
+like plan-shopping) — first action writes a COMPILING stub of each owned file (imports + signatures + pass bodies),
+then read deps + fill. Currently skeleton-first is is_entry_file-only. Confidence MED (mechanical early-write helps,
+but the weak model might write a broken stub; and skeleton-first was a WASH on SIMPLE apps so scope it to multi-file
+/hard modules only, not blanket). SECONDARY: a stronger over_read RE-DISPATCH hint (you failed twice by exploring;
+your VERY FIRST action MUST be write to <path>, no other command) — but prompt-pleas are what the model already
+ignores. ASSESS + build the skeleton-first-for-multi-file after UNIQ13 finishes (or is cut). N=2 evidence.
