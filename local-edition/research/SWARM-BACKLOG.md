@@ -437,3 +437,14 @@ TO TEST PROPERLY: UNIQ15 needs a spec the architect will SPLIT into non-entry mu
 complex algorithmic domains (not a thin CLI over one engine). Note: whether a module is entry-vs-non-entry-multi-file
 is PLAN-dependent + not fully controllable; the fix is best-effort + the hard mechanism (raise the no-write elapsed
 gate for owned_files.len()>1 in judge.rs) remains the fallback if a hard multi-file module flails again.
+
+### [UNIQ14 — CLI-contract note REDUCED but did NOT eliminate entry drift; SpecDrift is the backstop (re-dispatch loop)]
+UNIQ14 cli-entry drifted DESPITE the CLI-contract note: 2 spec_drift verdicts — (1) --db not added as a GLOBAL
+option before parse, (2) positional servings/qty/unit instead of --flags. SpecDrift caught BOTH and re-dispatched
+(4 dispatches). Current --help IS now compliant (recipes [-h] [--db DB] {init,recipe,ingredient,pantry,plan,
+shopping}) so the loop is converging the interface, but a mid-fix golden showed recipe add not persisting (broken
+transient). HONEST: the CLI-contract note is NOT a complete fix — it worked cleanly on UNIQ12 but the UNIQ14 entry
+still drifted; SpecDrift + re-dispatch is the backstop that recovers it (at the cost of a 4-dispatch loop). So the
+CLI-contract PAYS OFF partially (fewer/faster drifts) but SpecDrift remains essential. Not a new fix needed — just
+honest scope: CLI-contract reduces entry drift, SpecDrift catches the residual. Watch UNIQ14 cli-entry converge or
+exhaust; golden the FINAL state only.
