@@ -353,3 +353,17 @@ CLI but with the WRONG interface shape. FIX DIRECTION (high-value, 2x evidenced)
 to the DB-schema-freeze that PAID OFF — inject the EXACT required command tree (nested subcommands) + global option
 signature into the entry worker prompt (and the entry skeleton pre-declares that argparse/click structure so the
 worker only fills handlers, cannot drift the shape). Confidence MED-HIGH (mirrors the schema-freeze that worked).
+
+### [UNIQ10 tail — AST review PAYS OFF (caught unwired commands.py) + entry REIMPLEMENTED inline, a 2nd entry problem]
+UNIQ10 tail: test-suite completed (1535s=25min, slow), smoke gate PASS (entry runs), then AST review found 2:
+(1) __main__.py `cli` function is a STUB/unimplemented; (2) `splitwise.commands` imported by NO non-test module =
+built-but-UNWIRED. The entry (cli-entry-point, __main__.py 9182b) DUPLICATED the command logic INLINE instead of
+importing+dispatching to commands.py (6433b) -> commands.py is DEAD. My golden worked because the logic is inline
+in __main__.py. AST REVIEW PAYS OFF: caught it + dispatched ONE corrective wire-fix (gabee). So the entry has TWO
+drift modes: (a) interface SHAPE (flat/global-db/cents) — the CLI-contract I just shipped targets this; (b)
+REIMPLEMENT-INLINE instead of WIRE the sibling handlers — the CLI-contract does NOT target this yet. CANDIDATE
+CLI-contract ENHANCEMENT (after validating the shape-contract on UNIQ11): add a rule — the entry only PARSES args
+and DISPATCHES to the imported sibling handlers (import from e.g. splitwise.commands and CALL them); do NOT
+reimplement their logic inline (that orphans the module + duplicates code). The entry-wiring instruction exists but
+was not strong enough here. Note: the wire-fix may change UNIQ10 final state -> re-verify golden after run_finished
+if __main__.py changed. Confidence MED (a prompt rule; weak model may still inline).
