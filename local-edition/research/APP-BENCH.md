@@ -866,3 +866,26 @@ VERDICT: FULL WORKING WIN. 3 CONSECUTIVE clean full wins (UNIQ18 gradebook CRUD-
 UNIQ20 flow FSM) across 3 distinct archetypes -> the nested-CLI+SQLite+validation app CLASS is now solidly handled by
 the swarm with the shipped fixes. Next (UNIQ21): RAISE difficulty to a NEW dimension (JSON export/import round-trip +
 multi-format output) to surface the next real finding rather than re-confirm a solved class.
+
+## UNIQ21 — contacts (bh0i3eg3i) — PARTIAL at RAISED difficulty (broke the 3-win streak — the difficulty ramp found the ceiling)
+JUDGED BY RUNNING (real exit rc=$?), read ACTUAL contract first (2 golden passes — spec-contract failed on structure drift, re-goldened with app contract):
+- WORKS: contact CRUD (top-level add/show/list/delete); MULTI-FORMAT for CONTACTS list --format json = VALID JSON 2
+  objs, --format csv = proper header+rows; validation dup/no-@/unknown-group all nonzero; 21 pytest pass.
+- BROKEN 1 — member-format cross-module bug: member list crashes TypeError string-indices in utils.py:58
+  format_members does m["contact_name"] but cli.py passes STRINGS not dicts. So multi-format works for contacts but
+  is INCONSISTENT/broken for members (a cross-module contract mismatch — the exact CONTRACT-DRIFT failure class, now
+  at raised difficulty on a 2nd formatter the model wrote differently from the 1st).
+- BROKEN 2 — JSON export/import ROUND-TRIP broken: export --file -> argparse rc2 (file handling wrong) -> no file
+  written -> import finds nothing. The headline new dimension (serialization round-trip) FAILED.
+- CLI-STRUCTURE DRIFT: spec nested contact add NAME / group addmember GROUP CONTACT -> app FLATTENED to top-level add
+  + a separate member{add,remove,list} group. The CLI-contract note (nested stays nested) did NOT prevent
+  reorganization at the larger 10-command surface; SpecDrift did not flag it (cli-entrypoint over_read then recovered,
+  no spec_drift verdict). Positionals themselves kept (add NAME; member add GROUP CONTACT 2 pos) = 5th data point OK.
+- TESTS THIN: 21 pass but miss the member-crash AND the export bug -> test coverage does not exercise the new
+  dimensions (multi-format-for-all-entities, round-trip). Weak-model test-quality gap at raised difficulty.
+- MINOR: --db defaults to :memory: (spec wanted a file) -> no-persistence without --db.
+VERDICT: PARTIAL. The difficulty ramp WORKED as intended — 3 clean full wins on the standard class, then raised
+difficulty (multi-format-everywhere + JSON round-trip + 10-cmd surface) EXPOSED genuine weak-model ceilings:
+cross-module format-CONSISTENCY (2nd formatter written wrong), file-IO round-trip, structure reorg on large surface,
+and thin tests on new dimensions. These are the NEXT real findings. WATCHING if the review/smoke catches the runtime
+crashes (member list + export) before run_finished.
