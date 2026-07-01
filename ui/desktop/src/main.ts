@@ -599,10 +599,11 @@ async function handleProtocolUrl(url: string, parsedUrl: URL) {
       existingWindows.length > 0
         ? existingWindows[0]
         : await createChat(app, { dir: openDir || undefined });
+    if (!targetWindow) return;
     await processProtocolUrl(url, parsedUrl, targetWindow);
   } else {
     const existingWindows = BrowserWindow.getAllWindows();
-    let targetWindow: BrowserWindow;
+    let targetWindow: BrowserWindow | undefined;
     if (existingWindows.length > 0) {
       targetWindow = existingWindows[0];
       if (targetWindow.isMinimized()) {
@@ -612,6 +613,8 @@ async function handleProtocolUrl(url: string, parsedUrl: URL) {
     } else {
       targetWindow = await createChat(app, { dir: openDir || undefined });
     }
+
+    if (!targetWindow) return;
 
     if (targetWindow.webContents.isLoadingMainFrame()) {
       queuePendingDeepLink(targetWindow.id, url);
@@ -709,6 +712,7 @@ app.on('open-url', async (_event, url) => {
     } else {
       openUrlHandledLaunch = true;
       const newWindow = await createChat(app, { dir: openDir || undefined });
+      if (!newWindow) return;
       queuePendingDeepLink(newWindow.id, url);
     }
   }
@@ -944,7 +948,10 @@ interface CreateChatOptions {
   recipeParameters?: Record<string, string>;
 }
 
-const createChat = async (app: App, options: CreateChatOptions = {}) => {
+const createChat = async (
+  app: App,
+  options: CreateChatOptions = {}
+): Promise<BrowserWindow | undefined> => {
   const {
     initialMessage,
     initialMessageNoAutoSubmit,
@@ -957,6 +964,42 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
     recipeParameters,
   } = options;
   const settings = getSettings();
+
+  if (settings.externalGoosed?.enabled && settings.externalGoosed.certFingerprint) {
+    const url = settings.externalGoosed.url;
+    const usesHttps = (() => {
+      try {
+        return new URL(url).protocol === 'https:';
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!usesHttps) {
+      const response = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'External Backend Misconfigured',
+        message: 'Certificate fingerprint requires an HTTPS external backend URL.',
+        detail: 'Use an https:// URL or remove the configured certificate fingerprint.',
+        buttons: ['Disable External Backend & Retry', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+
+      if (response === 0) {
+        updateSettings((s) => {
+          if (s.externalGoosed) {
+            s.externalGoosed.enabled = false;
+          }
+        });
+        return createChat(app, options);
+      }
+
+      app.quit();
+      return;
+    }
+  }
+
   const serverSecret = getServerSecret(settings);
 
   // Update the cached trusted-external-hostname so the TLS handlers allow
