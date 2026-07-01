@@ -948,3 +948,21 @@ CORRECTNESS/VALIDATION bugs (UNIQ21 member-crash+export N=1; UNIQ24 order-add 2 
 gap. ASSESS a fix next: read the smoke code; a spec-derived VALIDATION SMOKE (extract the spec's 'reject with nonzero'
 clauses, RUN each, assert nonzero) would catch the validation-gap class; a run-commands+detect-traceback smoke would
 catch the UNIQ21 crash class. Both MED conf — READ smoke_fix_description ~5184 + SMOKE flow first, build only if sound.
+
+## UNIQ25 — secrets vault / VALIDATION-STRESS (brbp3453c) — FULL WIN, 11/11 validations (N=3 REFUTES the systemic-gap hypothesis)
+JUDGED BY RUNNING (real exit rc=$?), nested tree (secret set/get/list/delete/rename/tag + policy set + audit; positionals
+key + rename OLD NEW). NO ASK (planned >=80 — single-entity clear-validation app is easy to plan).
+- ALL 11 SPEC VALIDATIONS ENFORCED (+ bad-format = 12/12), every one a proper nonzero: empty-key rc1, empty-value rc1,
+  get-unknown rc1, delete-unknown rc1, rename-old-missing rc1, rename-new-collision rc1, tag-unknown rc1, policy-unknown
+  rc1, max-reads-0 rc1, max-reads-neg rc1, audit-unknown rc1, bad-format rc2. ZERO rc0 bugs.
+- HAPPY PATH works: set/get (V1)/list json(2)+csv(header+rows)/tag/rename/policy/audit; 12 pytest pass; 250 LOC;
+  dedicated exceptions.py module (clean validation via custom exceptions). test-foundation spec_drift (a test task, not
+  app-breaking; SpecDrift flagged it).
+VALIDATION-COMPLETENESS VERDICT (N=3): 11/11 = the weak model implements validations WELL when clearly enumerated.
+UNIQ24's 2 missing order-add guards were an OUTLIER (correlated with 2-entity complexity + the order module), NOT a
+systemic validation-completeness gap. So the "model skips validations" hypothesis is REFUTED at N=3 -> NO validation
+fix warranted (the highest-payoff validation-smoke was LOWEST-confidence anyway; not building it was correct). The
+"smoke is shallow (collect-only + --help, skips test execution)" observation stands but is a MINOR gap since validations
+are mostly correct -> a fragile validation gate would HURT more than help. Honest close: the swarm + weak model handle
+enumerated validation well; UNIQ24 was situational. CAMPAIGN CEILING MAP holds: single-dim + 2-dim/1-entity + 2-entity-
+multi-format + validation-stress ALL WORK; only UNIQ21's full 4-dim-2-entity-10cmd combination overloads (cumulative).
