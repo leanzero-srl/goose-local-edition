@@ -391,3 +391,17 @@ not just a delay. IMPLICATION for the ASK_REPLAN A/B (=1 re-plan vs =0 skip-reus
 re-plan (=1) builds the 88-confidence plan. If the better plan yields a better app often enough, the ~15min pays
 off; if apps are equal, skip wins on time. Do the A/B on a spec that reliably ASKS (like this helpdesk/library
 class, conf < 80). Confidence MED — genuinely uncertain which wins; that is WHY it needs the A/B, not a guess.
+
+### [UNIQ12 — AST review FALSE-POSITIVE: `from PKG import MODULE` not detected as wiring -> spurious unwired finding + wasteful wire-fix]
+UNIQ12 (a CLEAN WIN otherwise): smoke PASS (entry_ok), integrate-verify DONE, all 3 test tasks DONE (tests
+PASSED — better than UNIQ9/10), CLI-contract WIN. BUT the AST review flagged "module helpdesk.cli is imported by
+no non-test module — built-but-unwired". FALSE POSITIVE: __main__.py does `from helpdesk import cli` (verified) and
+the golden RUNS (init/agent add/ticket open all rc0 via __main__ -> cli). So cli IS wired. The AST reviewer likely
+detects `import pkg.mod` / `from pkg.mod import X` but NOT `from pkg import mod` (importing a submodule as a package
+attribute). This spurious finding then triggers an UNNECESSARY review wire-fix (observed gabee processing) — wasted
+work on a non-problem (and connects to the UNIQ10 review-wire-fix-spin waste).
+CANDIDATE FIX (HIGH value, clean, fixes the CAUSE not the symptom): improve the AST review import-detection to also
+count `from PKG import MOD` (and `from . import MOD`) as importing PKG.MOD, so a module wired that way is NOT flagged
+unwired. MUST READ the AST-reviewer code first (swarm.rs review phase / the model-free AST reviewer) to confirm the
+exact detection gap before building. Confidence MED-HIGH (clear false-positive + a well-scoped detection fix; risk =
+missing another import form). This is likely the NEXT fix to build (beats the ASK_REPLAN A/B on cleanliness).
