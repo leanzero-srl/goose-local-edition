@@ -1371,6 +1371,8 @@ mod tests {
         assert!(note.contains("NESTED") && note.contains("GLOBAL"));
         // POSITIONAL-vs-flag + no-rename rules (UNIQ16 drifted positionals to flags + renamed --from/--to).
         assert!(note.contains("POSITIONAL") && note.contains("do NOT rename"));
+        // Keyword-subcommand-name rule (UNIQ26 registered `import_` for the spec's `import` -> `store import` failed).
+        assert!(note.contains("reserved word") && note.contains("add_parser(\"import\")"));
         // Disabled, or no entry file among the owned set -> empty (no-op, byte-identical default-off path).
         assert!(cli_contract_note(true, false).is_empty());
         assert!(cli_contract_note(false, true).is_empty());
@@ -5258,7 +5260,13 @@ fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
        `--from`/`--to` (not `--source`/`--dest`), `--reorder` must stay `--reorder` (not `--reorder-level`). Match \
        value UNITS (dollars with 2 decimals vs raw cents) and share/pair SYNTAX (`name=value`, not `name:value`). A \
        CLI that computes correctly but does not accept the spec's exact invocations is a spec-drift FAILURE — do not \
-       silently re-shape the interface for convenience.\n"
+       silently re-shape the interface for convenience.\n\
+     - Subcommand NAMES passed to add_parser() are STRINGS, not Python identifiers: use the spec's EXACT subcommand \
+       name even when it is a Python reserved word — write `add_parser(\"import\")`, `add_parser(\"class\")`, \
+       `add_parser(\"del\")`, NOT `\"import_\"`/`\"import2\"`/`\"import_cmd\"`. Trailing-underscore keyword-avoidance \
+       is for Python VARIABLE/function names ONLY (`import_parser = subparsers.add_parser(\"import\")` is correct); \
+       the CLI-facing subcommand string must stay verbatim so `prog import --file` works. Renaming the subcommand \
+       `import` to `import_` makes the spec's `import` invocation fail = spec-drift.\n"
         .to_string()
 }
 
