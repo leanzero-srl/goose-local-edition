@@ -1344,6 +1344,26 @@ mod tests {
     }
 
     #[test]
+    fn multifile_stub_note_fires_only_for_multifile_non_entry() {
+        // Multi-file non-entry module (the plan-shopping case) -> stub-first note; entry, single-file, and
+        // disabled -> empty.
+        let note = multifile_stub_note(
+            &["recipes/plan.py".into(), "recipes/shopping.py".into()],
+            true,
+        );
+        assert!(note.contains("STUB-FIRST") && note.contains("COMPILING STUB"));
+        // A file set that includes the entry is covered by skeleton_note -> empty here.
+        assert!(multifile_stub_note(&["pkg/cli.py".into(), "pkg/util.py".into()], true).is_empty());
+        assert!(
+            multifile_stub_note(&["pkg/__main__.py".into(), "pkg/x.py".into()], true).is_empty()
+        );
+        // Single-file -> empty (skeleton-first was a wash on simple single-file tasks).
+        assert!(multifile_stub_note(&["pkg/only.py".into()], true).is_empty());
+        // Disabled -> empty.
+        assert!(multifile_stub_note(&["a.py".into(), "b.py".into()], false).is_empty());
+    }
+
+    #[test]
     fn cli_contract_note_fires_only_for_entry_when_enabled() {
         // Entry file + enabled -> a non-empty CLI-structure contract mentioning nested/global/units.
         let note = cli_contract_note(true, true);
@@ -5234,6 +5254,36 @@ fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
         .to_string()
 }
 
+/// Non-entry MULTI-FILE modules are the other over-read failure class (verified UNIQ13 plan-shopping, which owns
+/// plan.py + shopping.py and needs 4 sibling modules: across 3 attempts it ran ls/tree/find/cat exploring the
+/// layout + reading deps but NEVER wrote an owned file, so the no-write over-read timeout killed each attempt and
+/// cascade-failed the run — 2nd instance after the UNIQ9 tests-writer). The entry gets skeleton_note; give non-entry
+/// multi-file owners the same MECHANICAL fix: write a COMPILING STUB of each owned file FIRST (which flips
+/// any_owned_written true and exempts the over-read timeout), then read deps + fill. Scoped to multi-file only —
+/// single-file skeleton-first was a same-spec-A/B WASH. Empty when an owned file is the entry (skeleton_note covers
+/// it). Gated on GOOSE_SWARM_SKELETON_FIRST (passed in as `enabled`). Pure + unit-tested.
+fn multifile_stub_note(owned_files: &[String], enabled: bool) -> String {
+    let is_entry = |f: &str| {
+        f.ends_with("cli.py")
+            || f.ends_with("__main__.py")
+            || f.ends_with("main.rs")
+            || f.ends_with("index.ts")
+            || f.ends_with("cli.ts")
+            || f.ends_with("main.go")
+    };
+    if !enabled || owned_files.len() <= 1 || owned_files.iter().any(|f| is_entry(f.as_str())) {
+        return String::new();
+    }
+    "\nSTUB-FIRST (you own MULTIPLE non-entry files): do NOT run ls/tree/find or read every dependency before \
+     producing — a weak worker that explores first burns its budget and is KILLED for over-reading before it \
+     writes anything (a whole task lost). Your FIRST actions must be a `write` for EACH owned file emitting a \
+     COMPILING STUB: the imports it needs plus every public function/class with its real signature and a `pass` \
+     body. Once the files EXIST you are exempt from the over-read timeout — THEN read only the specific dependency \
+     APIs you need (injected below under 'API of …') and fill each body with a focused `edit`. Never finish with a \
+     `pass`/stub body still in place."
+        .to_string()
+}
+
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
@@ -5370,10 +5420,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     req.owned_files.iter().any(|f| is_entry_file(f)),
                     cli_contract_enabled(),
                 );
+                let multifile_note = multifile_stub_note(&req.owned_files, skeleton_first);
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}\n\
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
                      the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
