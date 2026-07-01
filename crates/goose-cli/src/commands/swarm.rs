@@ -1314,6 +1314,17 @@ mod tests {
     }
 
     #[test]
+    fn cli_contract_note_fires_only_for_entry_when_enabled() {
+        // Entry file + enabled -> a non-empty CLI-structure contract mentioning nested/global/units.
+        let note = cli_contract_note(true, true);
+        assert!(note.contains("CLI STRUCTURE CONTRACT"));
+        assert!(note.contains("NESTED") && note.contains("GLOBAL"));
+        // Disabled, or no entry file among the owned set -> empty (no-op, byte-identical default-off path).
+        assert!(cli_contract_note(true, false).is_empty());
+        assert!(cli_contract_note(false, true).is_empty());
+    }
+
+    #[test]
     fn ask_replan_defaults_on_and_opts_out() {
         // Unset + truthy -> re-plan (today's behavior); explicit off-values -> reuse the first plan.
         assert!(ask_replan_enabled(None), "unset defaults ON (re-plan)");
@@ -5144,6 +5155,42 @@ fn frozen_interfaces_block(bundle: &str) -> String {
     )
 }
 
+/// GOOSE_SWARM_CLI_CONTRACT (default ON): whether to inject the CLI-STRUCTURE contract into the entry worker.
+fn cli_contract_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_CLI_CONTRACT")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
+/// The entry file DEFINES the app's command-line interface, and it is the module the weak worker most often
+/// drifts on the SHAPE of — verified twice: UNIQ9 built `checkin NAME DATE` (positional) instead of the spec's
+/// `checkin NAME --date DATE`; UNIQ10 built flat `group-add` + per-command positional db + cents display instead
+/// of the spec's nested `group add` + a GLOBAL `--db` before the subcommand + dollars. In both the ENGINE was
+/// correct but the interface violated the spec, so spec-drift review failed the entry (and blocked its
+/// dependents). This note freezes the interface CONTRACT for the entry worker: preserve the spec's exact command
+/// tree, option placement, units and value syntax. Pure + unit-tested.
+fn cli_contract_note(has_entry_file: bool, enabled: bool) -> String {
+    if !enabled || !has_entry_file {
+        return String::new();
+    }
+    "\nCLI STRUCTURE CONTRACT (your entry file IS the command-line interface — match the spec's SHAPE exactly; \
+     spec-drift review verifies this and FAILS a working-but-wrong-shaped CLI):\n\
+     - NESTED subcommands stay NESTED: if the spec writes `group add NAME` / `member add GROUP NAME`, implement \
+       a `group` command WITH an `add` subcommand — NOT a flat hyphenated `group-add`.\n\
+     - GLOBAL options stay GLOBAL: if the spec shows an option BEFORE the subcommand (e.g. `--db PATH init`), \
+       parse it at the top level so it works before ANY subcommand — NOT as a per-command positional argument.\n\
+     - Match the spec's EXACT command names, option names (a `--flag` stays a flag, not a positional), value \
+       UNITS (e.g. dollars with 2 decimals vs raw cents), and share/pair SYNTAX (e.g. `name=value`, not \
+       `name:value`). A CLI that computes correctly but does not accept the spec's exact invocations is a \
+       spec-drift FAILURE — do not silently re-shape the interface for convenience.\n"
+        .to_string()
+}
+
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
@@ -5276,10 +5323,14 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 } else {
                     String::new()
                 };
+                let cli_note = cli_contract_note(
+                    req.owned_files.iter().any(|f| is_entry_file(f)),
+                    cli_contract_enabled(),
+                );
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}\n\
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}\n\
                      WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
                      the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
