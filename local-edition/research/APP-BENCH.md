@@ -1013,3 +1013,23 @@ drift. FIX SHIPPED (commit 1c71965c8): cli_contract_note gains a 5th rule — ar
 STRINGS, use the EXACT spec name even for Python reserved words (import/class/del), keyword-avoidance is for Python
 variables only. HIGH conf, zero false-positive (only says 'match the spec name'), test extended, GATE green. UNIQ27 =
 2nd UNIQ21-scale app (library book+loan) WITH an `import` cmd to validate the fix live + confirm the moved ceiling N=2.
+
+## UNIQ27 — library book+loan / 2nd UNIQ21-SCALE (bay1ukei0) — FULL WIN + keyword fix VALIDATED LIVE (N=2 CEILING MOVED)
+JUDGED BY RUNNING (real exit rc=$?), nested tree (book add/list/show/loans + loan add/list + export/import/report;
+positionals isbn kept). The FULL 4-dim combination (2 entities + multi-format 3 cmds + round-trip + agg report + ~9 cmds
++ validations), DIFFERENT domain than UNIQ26:
+- KEYWORD FIX VALIDATED LIVE + END-TO-END: add_parser("import") verbatim (var import_p is fine); `library import --file`
+  rc0 (NOT rc2 argparse like UNIQ26's import_). The shipped cli_contract_note rule (1c71965c8) WORKS on a fresh app ->
+  the round-trip is reachable via the spec's `import` name.
+- ALL 4 DIMS WORK: 3 formatters consistent+valid (book list json2/csv isbn,title,author; loan list json3; book loans
+  json2); report agg EXACTLY correct (Dune loan_count 2, Foundation 1) sorted DESC; export valid nested {books:2,
+  loans:3}; ROUND-TRIP export->import into fresh t2 -> books2+loans3, re-import IDEMPOTENT; 6/6 validations nonzero
+  (dup-isbn, unknown-isbn-loan, empty-member, bad-format rc2, unknown-show, missing-file); 11 pytest pass; 424 LOC.
+- CLEAN BUILD: 0 non-ok verdicts (entry-split db-layer/cli-entry; dynamic-replan added validation-error-tests +
+  import-and-show-validation-tests = more coverage). No cli-entry over_read, no broken_code, no cross-module mismatch.
+CAMPAIGN PROOF (N=2): the exact full-4-dim class that FAILED as UNIQ21 (cumulative overload) now BUILDS CLEAN + WORKS
+ENTIRELY across TWO different domains (UNIQ26 store, UNIQ27 library) -> the cumulative-overload CEILING has genuinely
+MOVED above UNIQ21-scale (not a lucky UNIQ26). AND the one UNIQ26 defect (import_) is FIXED by a shipped rule, VALIDATED
+LIVE on UNIQ27 = a complete find->fix->validate loop. This is the campaign's headline payoff. Next: UNIQ28 raises to a
+NEW dimension (compute/algorithm — expression-evaluator REPL) to find the next real finding beyond the now-solved
+CRUD+multiformat+roundtrip+validation class.
