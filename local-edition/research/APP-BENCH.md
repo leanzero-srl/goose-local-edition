@@ -653,3 +653,26 @@ held. The gap is purely run-status honesty (3rd facet) + the slow complex-entry.
    finished under 7min) -> no re-dispatch loop. So the finalize-spin issue is a COMPLEX-entry problem, not moderate.
 IMPROVEMENT vs prior: this is the app-after-app proof the user wanted — run-status went from LYING (UNIQ2/3/6/7
 false or blocked) to HONEST DONE on a working app. Both run-status causes fixed + validated end-to-end.
+
+## UNIQ9 — habit tracker (bm13d1izs, 501 LOC habits/*.py) — WORKING app, verify-not-rewrite + SpecDrift + smoke + review + test-dep-strip ALL fired
+GOLDEN (JUDGE BY RUNNING, exit codes captured CORRECTLY as `python ...; rc=$?`):
+  init OK | habit add OK | checkin --date 2026-06-29/-30 OK (the --date FLAG WORKS — SpecDrift fix LANDED even
+  though cli-app att2 was finalize-spin-killed mid-fix; the file it wrote persisted + functions) | streak gym = 2
+  CORRECT | stats = 2 check-ins, 2/3 week CORRECT | history --weeks 2 = correct weekly grid [##.] | report gym
+  --week 2026-W27 AND --week 2026-06-29 (date form) both OK rc0 (clarify #1 satisfied: both forms -> same week).
+  ERROR SIGNALING CORRECT: dup checkin rc1, unknown habit rc1, before-init rc1, argparse missing-arg rc2, happy rc0.
+DEVIATIONS (minor): (1) report requires a POSITIONAL habit name — golden implied cross-habit `report --week X`;
+  app made it per-habit (works WITH a name). (2) habit list omits the streak column (clarify #3 wanted it). (3)
+  models.py (336b dataclass) built-but-UNWIRED — review phase CAUGHT it. (4) BOTH test suites FAILED to be
+  produced (flail + finalize-spin, verified from traces).
+VERDICT: FUNCTIONAL app, comparable to UNIQ8's working core but slightly less complete (report/list deviations,
+  NO tests). The --date SpecDrift catch+fix is a clear judge payoff. vs UNIQ8 (743 LOC clean honest DONE): UNIQ9
+  is a WIN on functionality (works end-to-end) but a step down on completeness (tests absent, 2 minor spec misses).
+
+### MEASUREMENT-ERROR LESSON (2nd real-exit slip — do not repeat)
+First golden pass reported "systematic exit-0 bug on ALL error cases" — WRONG. Cause: I ran `echo "EXIT:"; echo $?`
+so `$?` captured the EXIT of `echo "EXIT:"` (always 0), NOT python. Caught it by READING __main__.py source
+(main() does sys.exit(1) on error) which CONTRADICTED the bogus measurement -> redid with `python ...; rc=$?`
+(NOTHING between) -> errors correctly rc1/rc2. LESSON: capture `rc=$?` on the SAME line right after the process,
+never put any command (not even echo) between the process and the $? read. READ-THE-CODE caught the bad metric
+(memory assess-qualitatively-not-just-metrics paid off again).
