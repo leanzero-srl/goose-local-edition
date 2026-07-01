@@ -80,3 +80,11 @@ So the 420s finalize-spin threshold kills workers that are LEGITIMATELY fixing/d
 This is the strongest evidence yet for backlog B (threshold + salvage: on finalize-spin, if the file PARSES and
 smoke/entry is ok, SALVAGE it as done rather than discarding the partial fix). Needs the existing finalize-spin
 test kept green. CONFIDENCE MED — salvage risks shipping a half-fix; must gate on parse+smoke-ok.
+
+## SHIPPED: finalize-spin SALVAGE (429a69d5a, GOOSE_SWARM_SALVAGE_SPIN default-on)
+Fixes the UNIQ9 run-status honesty REGRESSION. When a NON-TEST task terminal-fails via finalize-spin (Looping)
+AND >=1 owned file exists non-empty on disk, mark it Done (salvaged), skip fail_descendants, so a dependent
+(integrate-verify) still runs and is the real gate. Never salvages test tasks or a Looping-with-no-file (disk
+check). Scheduler terminal path. Tests: salvage helpers + judge_terminal_fails_worker_stuck_at_cap stays green
+(mock writes no real file -> not salvaged). VALIDATE on UNIQ10: if an entry finalize-spins after writing, the
+run should now report honestly (integrate-verify runs) instead of FAILED-by-cascade.
