@@ -927,3 +927,24 @@ ceiling is MULTI-ENTITY format/serialization CONSISTENCY (writing N mutually-con
 surface = a weak-model cross-module-agreement limit. Capability MAP: 1-dim works (UNIQ18/19/20/22); 2-dim/1-entity
 works (UNIQ23); 4-dim/2-entity/10-cmd fails (UNIQ21). UNIQ24 tests the multi-entity-format hypothesis directly (2
 entities, multi-format on both, small surface, no round-trip) - if the 2nd formatter drifts again = N=2 confirmed.
+
+## UNIQ24 — CRM / 2-entity multi-format (bpndnemip) — PARTIAL: format-hypothesis REFUTED, order-add validation GAP
+JUDGED BY RUNNING (real exit rc=$?), nested tree (customer add/list/orders + order add/list + report; positionals name/
+customer_name kept = 8th data point):
+- MULTI-ENTITY FORMAT HYPOTHESIS *REFUTED*: ALL 3 formatters VALID + CONSISTENT — customer list (json 2, csv name,email),
+  order list (json 3, csv id,customer_name,amount,date), customer orders (json 2, csv id,amount,date). The 2nd/3rd
+  formatter did NOT drift/crash (contrast UNIQ21 member-format). report agg CORRECT + sorted DESC (Globex 200, Acme 150).
+  So the swarm handles 2 entities x 3 formatters cleanly -> UNIQ21's member-format drift required the FULL 4-dim
+  combination (multi-format-everywhere + round-trip + 10-cmd + 2-entity), NOT just 2 entities. Ceiling = CUMULATIVE.
+- NEW BUG (order-module validation GAP): order add Nope (unknown customer) -> rc0 (should be nonzero); order add Acme
+  --amount -5 (negative) -> rc0 (should be nonzero). The order module wrote the happy-path + formatter but SKIPPED 2 of
+  its spec-required guards (customer-existence FK check + amount-positivity). Customer-side validations WORK (dup rc1,
+  no-@ rc1, bad-format rc2, unknown-cust-orders rc1) = 4/6. 406 LOC. tests over_reading (N=4, recovering) so tests did
+  not even run. AST clean (0 NotImplementedError). no format broken_code.
+VERDICT: PARTIAL. The hypothesis test cleanly REFUTED multi-entity-format-consistency as the ceiling (formatters are
+fine). But it surfaced a RECURRING finding at N=2: SMOKE (--help + collect-only) + THIN/OVER-READ TESTS miss runtime
+CORRECTNESS/VALIDATION bugs (UNIQ21 member-crash+export N=1; UNIQ24 order-add 2 missing validations N=2). The app
+"passes" smoke + ships with real validation holes. This — not format-consistency — is the real recurring swarm-quality
+gap. ASSESS a fix next: read the smoke code; a spec-derived VALIDATION SMOKE (extract the spec's 'reject with nonzero'
+clauses, RUN each, assert nonzero) would catch the validation-gap class; a run-commands+detect-traceback smoke would
+catch the UNIQ21 crash class. Both MED conf — READ smoke_fix_description ~5184 + SMOKE flow first, build only if sound.
