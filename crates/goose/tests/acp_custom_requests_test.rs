@@ -574,16 +574,13 @@ fn test_steer_session_adds_input_to_active_prompt() {
         let mut steer_sent = false;
         let mut steer_message_id: Option<String> = None;
         let mut final_response = None;
+        let mut observed_updates = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
 
         while tokio::time::Instant::now() < deadline {
             tokio::select! {
-                response = &mut prompt => {
-                    final_response = Some(response.unwrap());
-                    break;
-                }
-                _ = tokio::time::sleep(Duration::from_millis(10)), if !steer_sent => {
-                    let updates = session.session_updates();
+                biased;
+                updates = session.wait_for_session_updates(), if !steer_sent => {
                     if let Some(run_id) = updates.iter().find_map(active_run_id_from_update) {
                         let response = send_custom(
                             conn.cx(),
@@ -607,6 +604,11 @@ fn test_steer_session_adds_input_to_active_prompt() {
                         steer_message_id = mid.map(ToString::to_string);
                         steer_sent = true;
                     }
+                    observed_updates.extend(updates);
+                }
+                response = &mut prompt => {
+                    final_response = Some(response.unwrap());
+                    break;
                 }
             }
         }
@@ -615,7 +617,8 @@ fn test_steer_session_adds_input_to_active_prompt() {
         assert_eq!(response.stop_reason, StopReason::EndTurn);
         assert!(steer_sent, "test never observed an active run id");
 
-        let updates = session.session_updates();
+        let mut updates = observed_updates;
+        updates.extend(session.session_updates());
         let agent_text = collect_agent_text(&updates);
         assert!(
             agent_text.contains("saw steer"),

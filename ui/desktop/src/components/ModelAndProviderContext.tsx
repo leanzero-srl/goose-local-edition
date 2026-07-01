@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { toastError, toastSuccess } from '../toasts';
-import Model, { getProviderMetadata } from './settings/models/modelInterface';
+import Model, { getProviderMetadata, validateProviderModel } from './settings/models/modelInterface';
 import type { ProviderMetadata } from '../types/providers';
 import { acpChatSessionActions, acpChatSessionStore } from '../acp/chatSessionStore';
 import {
@@ -93,10 +93,13 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
     async (sessionId: string | null, model: Model) => {
       const modelName = model.name;
       const providerName = model.provider;
-      let phase = 'agent';
+      let phase = 'validation';
 
       try {
+        await validateProviderModel(providerName, modelName);
+
         if (sessionId) {
+          phase = 'agent';
           const applied = await acpSetSessionProviderModel(
             sessionId,
             providerName,
@@ -128,13 +131,14 @@ export const ModelAndProviderProvider: React.FC<ModelAndProviderProviderProps> =
         return true;
       } catch (error) {
         console.error(`Failed to change model at ${phase} step -- ${modelName} ${providerName}`);
+        const message = errorMessage(error);
         toastError({
           title: intl.formatMessage(i18n.modelChangeFailed, {
             provider: providerName,
             model: modelName,
           }),
-          msg: `${error}`,
-          traceback: errorMessage(error),
+          msg: message,
+          traceback: message,
         });
         return false;
       }

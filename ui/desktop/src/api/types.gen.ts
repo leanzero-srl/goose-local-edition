@@ -60,6 +60,7 @@ export type ChatRequest = {
 };
 
 export type CheckProviderRequest = {
+    model?: string | null;
     provider: string;
 };
 

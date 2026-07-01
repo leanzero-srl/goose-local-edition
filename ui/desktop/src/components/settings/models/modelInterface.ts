@@ -1,5 +1,10 @@
+import {
+  checkProvider,
+  getProviderModelInfo,
+  getProviderModels,
+} from '../../../api';
 import { listLocalModels } from '../../../acp/local-inference';
-import { acpListProviderDetails, acpListProviderModels } from '../../../acp/providers';
+import { acpListProviderDetails } from '../../../acp/providers';
 import type { ProviderDetails, ThinkingEffort } from '../../../types/providers';
 import { errorMessage as getErrorMessage } from '../../../utils/conversionUtils';
 
@@ -43,6 +48,13 @@ export async function getProviderMetadata(providerName: string) {
   return matches.metadata;
 }
 
+export async function validateProviderModel(provider: string, model: string): Promise<void> {
+  await checkProvider({
+    body: { provider, model },
+    throwOnError: true,
+  });
+}
+
 export interface ProviderModelsResult {
   provider: ProviderDetails;
   models: Model[] | null;
@@ -64,13 +76,16 @@ export async function fetchModelsForProviders(
         return { provider: p, models: downloadedModels, error: null, warning: null };
       }
 
-      const providerModels = await acpListProviderModels(p.name);
-      const models = providerModels.map(
+      const response = await getProviderModels({
+        path: { name: p.name },
+        throwOnError: true,
+      });
+      const models = (response.data || []).map(
         (m) =>
           ({
-            name: m.id,
+            name: m.name,
             provider: p.name,
-            context_limit: m.contextLimit ?? undefined,
+            context_limit: m.context_limit,
             reasoning: m.reasoning ?? undefined,
           }) as Model
       );
@@ -118,9 +133,11 @@ export async function fetchModelReasoning(
   fallback?: boolean
 ): Promise<boolean | null> {
   try {
-    const models = await acpListProviderModels(provider);
-    const match = models.find((m) => m.id === model);
-    return match?.reasoning ?? fallback ?? null;
+    const response = await getProviderModelInfo({
+      path: { name: provider },
+      body: { model },
+    });
+    return response.data?.reasoning ?? fallback ?? null;
   } catch {
     return fallback ?? null;
   }
