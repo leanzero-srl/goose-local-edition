@@ -71,3 +71,8 @@ _Once both runs are done: study both, finalize this list, then apply all at once
 ## Cross-variant finding: txn exec-GET breakage on BOTH variants
 - MLX txn r3 AND GGUF txn r6 both built a txkvbench whose `exec` GET prints NOTHING (golden empty) while --help + the generated pytests pass. It appears on both runtimes -> a WEAK-MODEL coding limit on that spec's multi-command exec path, NOT variant-specific. GGUF r6 additionally had a 3-of-4 task failure cascade (exit=1).
 - This strengthens the low-conf swarm idea (record, weigh after): the smoke/integrate-verify gate runs the model's OWN generated tests (which pass here) so it stays blind to a broken feature the tests don't cover; running a SPEC-DERIVED representative command would catch it. The harness golden caught it both times, so the benchmark grading is doing its job.
+
+## Harness finding: golden-check false-partials (judge by running matters)
+- GGUF crud r10 recorded checks=partial but the app is fully correct when run (value 25, json valid, pytest pass). A golden check failed transiently at grade time (likely a shared bench.db state collision across the sequential command_succeeds checks) though the app is fine.
+- FUTURE-SUITE fix (do NOT change now — would break the paired MLX/GGUF comparison): isolate each golden check's db (unique/temp file per check, or rm between checks) so check-state can't collide. For NEXT benchmark suites only.
+- Verdict implication: raw checks-pass-rate UNDERSTATES true functional quality (esp. GGUF: 2 of 3 non-passes are artifacts — capped-but-correct + false-partial). Report BOTH raw checks-rate AND a judged-by-running "app actually works" rate.
