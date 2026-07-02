@@ -83,3 +83,51 @@ _Once both runs are done: study both, finalize this list, then apply all at once
 
 ## tail-churn confidence raised (2 GGUF crud caps: r4 + r13)
 - Post-build tail-churn now confirmed RECURRING: GGUF crud r4 AND r13 both built a correct app then hit the 3600s cap in judge/pre-review/re-dispatch churn (46+ judge_verdict events). 2/5 GGUF crud runs capped; MLX crud never capped. Raise the deadlock-recovery + tail-churn fix to a clear MED-HIGH: the swarm must short-circuit the post-build phases once integrate-verify + checks are green, and/or bound the judge re-judging, so a completed app is not churned past the cap. This is the single most impactful GGUF-side efficiency fix. Apply after GGUF finishes (with the batch).
+
+---
+# FIX BATCH DISPOSITION (both benchmarks done — applied vs presented)
+
+## Tail-churn ROOT CAUSE (deep investigation, HIGH confidence)
+Not a re-judge/re-dispatch loop. The `integrate-verify` SINK is a genuinely heavy critical-path
+worker (~1400s even when healthy) and the run's ONLY normal exit is `all_terminal()` (every task
+Done/Failed, scheduler.rs:1621-1625). The sink is the sole non-terminal task; the judge re-observes
+it ~every 60s emitting "ok" — but "ok" (action=observed) is a NO-OP (apply_judge_outcome
+1037-1039/1127-1128): there is NO arm that force-completes a healthy-but-slow task. The watchdog is
+IDLE-based (900s no-progress); the sink emits an event every turn so it never idles → never trips.
+`scheduler.run()` has no run-level wall-clock. So a slow sink runs until the external 3600s cap.
+gguf-12 = pathological sink (2124s vs healthy 1414s); gguf-03 = slow detailing phase (1335s) started
+the sink too late (2216s). NOTE: the `conf=1.0` on every "ok" is a hard-coded constant (judge.rs
+113-114), NOT strength — the model self-rated those OKs as LOW. So the judge's "ok" is a WEAK signal.
+
+## APPLIED (shipped, gated + committed)
+- **Sink wall-clock cap (Option B)** — swarm.rs run_agent_in: `GOOSE_SWARM_SINK_CAP_SECS>0` gives the
+  `integrate-verify` sink a graceful wall-clock deadline; on expiry it finalizes as DONE (not error/
+  re-route) so the run terminates + the smoke gate backstops. Default unset/0 = OFF (byte-identical).
+  Confidence no-regression HIGH; bounds the pathological sink (gguf-12). PARTIAL: won't rescue the
+  plan-slow case (gguf-03, sink starts at 2216s). Needs a live A/B (run the bench with the flag ON)
+  to confirm efficacy + no quality regression.
+- **Diagnostics over-eager warn** — verifier/diagnostics.py: low-severity findings (leftover TODO,
+  transient failed-then-recovered tool call) no longer warn the dim → correct apps stop reading
+  overall=partial (clean-rate was stuck 0%). HIGH confidence.
+- **Two-mode harness upgrade** + **mode backfill** — shipped (monitor.py, operator_brain.py, explore,
+  frozen banner, mode tags on 30 records).
+
+## PRESENTED — NOT shipped (MEDIUM/lower confidence; need review or A/B first)
+- **Sink force-finalize (Option A)** — scheduler.rs apply_judge_outcome: finalize the sink after N
+  sustained non-problem verdicts when it's the SOLE non-terminal task. Solves BOTH capped cases
+  (incl. plan-slow gguf-03). BUT relies on the WEAK judge "ok" signal; changes load-bearing sink
+  terminal semantics; smoke catches crashes/build but NOT subtle logic bugs → a premature finalize
+  could ship a green run with a real integration bug the sink was mid-fixing; N=2 evidence. Ship
+  env-gated default-OFF + A/B-measure (golden-pass-rate + wall-time) BEFORE any default flip.
+- **Deadlock-recovery guard** (MLX compute r2 scheduler_stuck) — a DIFFERENT mechanism (real deadlock,
+  stuck tasks block the DAG), one-off. Needs its own trace investigation before a fix; don't ship
+  speculative.
+- **Gate-runs-spec-command** (3 txn tests-green-feature-broken) — the smoke gate runs the model's OWN
+  generated tests + --help, so it's blind to a required feature the model forgot to test. Real, but
+  the swarm has no access to the harness golden commands; the tractable version is "assert each
+  documented subcommand from --help exists/exits-0". MED, needs design.
+- **Golden-check isolation** — future benchmark suites only (isolate each check's db); NOT for the
+  frozen suite.
+- **Independent lever:** the slow DETAILING phase (1335s gguf-03 vs 426s gguf-06) can doom a run
+  before the sink even starts — a tail fix won't rescue plan-slow runs. Separate parallel-planning
+  investigation.
