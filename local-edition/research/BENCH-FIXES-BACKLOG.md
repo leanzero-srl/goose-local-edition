@@ -1,0 +1,60 @@
+# Benchmark fixes backlog — APPLY ONLY AFTER BOTH MLX + GGUF RUNS FINISH
+
+**Why deferred:** MLX and GGUF must run the benchmark on the IDENTICAL, unchanged binary +
+config for an apples-to-apples comparison. Any swarm code fix or knob change between the runs
+would rebuild/alter the binary and confound GGUF's results. So: run MLX → record findings here
+(don't apply) → run GGUF on the same binary → record GGUF findings here → THEN apply everything
+at once, gated + committed. The two-mode harness upgrade is also deferred to this batch (it edits
+the bench path cosmetically; keep the bench path frozen across both runs to be rigorous).
+
+Do NOT touch `target/debug/goose`, `crates/**`, `evals/swarm-gym/harness/bench.py`, the SUITE, or
+the flags until GGUF has finished.
+
+---
+
+## Proposed CODE fixes (swarm.rs / goose-swarm) — from the MLX run
+
+1. **Deadlock-recovery guard on `scheduler_stuck`** — confidence MED.
+   - Evidence: MLX compute run 2 (`rdcalc-mlx-01`) hit a `scheduler_stuck` deadlock — no
+     `run_finished`, only 4 of 6 planned tasks completed, the 2 stuck included the
+     `rdcalc/__main__.py` entry owner → entry never written → app unrunnable → the post-run
+     smoke gate never ran (no smoke event). 30 judge_verdict events before the deadlock.
+   - One-off, NOT systemic (compute runs 5/8/11/14 all passed) → downgraded from HIGH to MED.
+   - Proposed fix: when the scheduler detects `scheduler_stuck`, (a) mark the un-runnable
+     descendants failed so the run terminates cleanly with a report, and (b) still run the
+     smoke/entry gate on what WAS built so a partial app at least gets its entry wired + a
+     corrective re-dispatch. ROOT CAUSE still to confirm: read the killed-task session traces —
+     likely a judge-killed task whose dependents can't run and aren't marked failed → DAG can't
+     progress. GATE: cargo build + clippy -D warnings + test -p goose-cli/goose-swarm.
+
+2. **Diagnostics dim over-eager warn** — confidence MED (needs a look at the trigger).
+   - Evidence: EVERY MLX run reported `overall=partial` even when `checks=pass` and the app is
+     functionally correct (verified by running: crud value, compute 2^3^2=512, txn rollback all
+     correct). Cause: the `diagnostics` dim returns `warn` on otherwise-clean apps, dragging
+     `overall` down. Makes `overall`/`clean-rate` misleading; the trustworthy signal is
+     `checks-pass-rate` (judged-by-running).
+   - Proposed fix: investigate the diagnostics trigger (SMELLS regex / zero-tool-call) in
+     `harness/verifier/diagnostics.py`; scope or downgrade it so a clean app is not warned, OR
+     ensure `overall` doesn't drop to partial on a soft diagnostics-only warn. (Harness fix, not
+     swarm.rs — still batch it here.)
+
+## Proposed KNOB TUNING — from the MLX run
+
+- **Idle-node auto-tune** (from the two-mode design's `monitor.py`): starved/underused nodes ->
+  re-enable + `pool weight` bump via the tweaker. Two caveats to verify first: (a) does
+  `cluster.assess`'s `dispatched` map include zero-count entries for enabled-but-idle nodes?
+  (depends on `run_started` carrying the full pool); (b) `BUMP_WEIGHT=3` is a blind absolute set
+  — read current pool weights first so it's a real bump, not a no-op/down-tune.
+- (Watch for idle-node patterns in the MLX per_device data + the GGUF run before committing a
+  default weight scheme.)
+
+## Two-mode harness upgrade (deferred to this batch)
+- Apply from the design in the workflow output (`w8z90qz5l`): mode tags, frozen-SUITE banner,
+  README modes, `harness/monitor.py`, `harness/brain/operator_brain.py`, brain provider branch,
+  cli `explore` subcommand. Then backfill `mode=benchmark` onto MLX + GGUF ledger records.
+
+## From the GGUF run — (to be recorded after GGUF finishes)
+- (pending)
+
+---
+_Once both runs are done: study both, finalize this list, then apply all at once (gated + one commit per change)._
