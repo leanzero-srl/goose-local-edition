@@ -56,6 +56,14 @@ def main(argv: Optional[list] = None) -> None:
 
     sub.add_parser("bench-csv", help="export benchmark-runs.csv + benchmark-summary.csv from the ledger")
 
+    ex = sub.add_parser("explore", help="EXPLORATORY mode: open-ended generated sessions, actively "
+                                        "monitored; the operator (Claude Code) is the brain (no API key)")
+    ex.add_argument("--n", type=int, default=3)
+    ex.add_argument("--archetype", default=None, choices=ARCHES, help="fix the archetype (default: cycle)")
+    ex.add_argument("--turns", type=int, default=None)
+    ex.add_argument("--no-judge", action="store_true")
+    ex.add_argument("--tweak", action="store_true", help="apply scope-guarded idle-node/knob auto-tunes")
+
     args = ap.parse_args(argv)
 
     if args.cmd == "bench-report":
@@ -96,6 +104,30 @@ def main(argv: Optional[list] = None) -> None:
         bench.run_suite(cfg, root, args.tier, args.variant)
         print("\n=== benchmark report ===")
         print(bench.bench_report(root, cfg))
+    elif args.cmd == "explore":
+        import os
+
+        from . import monitor
+        if os.environ.get("SWARMGYM_PROVIDER") == "operator":
+            print("[explore] operator-as-brain: answer requests written to runs/operator/req-*.json "
+                  "by writing runs/operator/resp-*.txt (no API key needed).")
+        for i in range(args.n):
+            a = args.archetype or ARCHES[i % len(ARCHES)]
+            try:
+                s = orchestrator.run_session(
+                    cfg, root, a, None, 2000 + i, turns, not args.no_judge, args.tweak,
+                    mode="exploratory",
+                )
+                ir = s.get("idle_report") or {}
+                flag = "" if ir.get("balanced", True) else (
+                    f"  ⚠ idle/starved/underused: {ir.get('starved')}/{ir.get('idle')}/{ir.get('underused')}")
+                print(f"[explore {i + 1}/{args.n}] {s['session_id']} -> {s['overall']} "
+                      f"({s['turns']} turns){flag}")
+                findings = monitor.findings_for(ir)
+                for f in findings:
+                    print(f"    monitor[{f.severity}] {f.text}")
+            except Exception as e:
+                print(f"[explore {i + 1}/{args.n}] {a} session FAILED: {e}")
 
 
 if __name__ == "__main__":

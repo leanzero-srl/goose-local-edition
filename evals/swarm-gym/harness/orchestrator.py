@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import generator, report, runner, tweaker
+from . import generator, monitor, report, runner, tweaker
 from . import verifier as verifier_mod
 from .brain import make_brain
 from .collector import collect
@@ -65,6 +65,7 @@ def run_session(
     do_tweak: bool,
     variant: Optional[str] = None,
     tier: Optional[str] = None,
+    mode: str = "exploratory",
 ) -> Dict[str, Any]:
     apps_dir = (root / cfg["paths"]["apps"]).resolve()
     runs_dir = (root / cfg["paths"]["runs"]).resolve()
@@ -173,6 +174,7 @@ def run_session(
         "overall": overall,
         "judge_model": judge_brain.name if judge_brain else None,
         "run_dir": str(run_dir),
+        "mode": mode,
         # --- benchmark fields (bench mode) ---
         "variant": variant,
         "tier": tier,
@@ -181,6 +183,8 @@ def run_session(
         "tasks_failed": tasks_failed,
         "dims": dims,
         "per_device_runs": per_device_runs,
+        # EXPLORATORY active-monitoring: deterministic idle-node scan over the session's dispatch.
+        "idle_report": monitor.idle_scan(monitor.aggregate(per_device_runs)),
         "turns_detail": turns_detail,
     }
     report.write_session_report(run_dir, session)

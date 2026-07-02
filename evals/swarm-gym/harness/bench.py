@@ -37,6 +37,12 @@ _RUN_CAP_SECS = 3600
 # The fixed benchmark suite — 3 self-contained apps spanning the swarm's core capability
 # axes (CRUD+multi-format, recursive-descent compute, nested transactions). Each carries
 # golden-value deterministic checks so "quality" is measured by RUNNING the built app.
+#
+# ⚠️ FROZEN — this is BENCHMARK mode (mode=benchmark). The SUITE prompts + checks are the
+# reproducibility contract: they must stay BYTE-IDENTICAL across runs/variants so results pair
+# (e.g. MLX vs GGUF). Do NOT edit a prompt/check to "improve" a run — that silently breaks every
+# prior comparison. New coverage goes in a NEW suite/tier; open-ended prompt invention is
+# EXPLORATORY mode (the operator brain), never here.
 # --------------------------------------------------------------------------------------
 SUITE: List[Dict[str, Any]] = [
     {
@@ -210,6 +216,7 @@ def run_suite(cfg, root, tier, variant) -> List[Dict[str, Any]]:
                 "app_slug": slug,
                 "variant": variant,
                 "tier": tier,
+                "mode": "benchmark",
                 "wall_secs": wall,
                 "overall": vd.get("overall", "fail"),
                 "tasks_done": len(rr.done or []),
