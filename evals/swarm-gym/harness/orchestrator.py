@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -62,6 +63,8 @@ def run_session(
     turns: int,
     do_judge: bool,
     do_tweak: bool,
+    variant: Optional[str] = None,
+    tier: Optional[str] = None,
 ) -> Dict[str, Any]:
     apps_dir = (root / cfg["paths"]["apps"]).resolve()
     runs_dir = (root / cfg["paths"]["runs"]).resolve()
@@ -96,6 +99,7 @@ def run_session(
 
     turns_detail: List[Dict[str, Any]] = []
     last_verdict = None
+    t0 = time.monotonic()
     for turn in range(1, turns + 1):
         if turn > 1:
             try:
@@ -150,6 +154,15 @@ def run_session(
         turns_detail.append(detail)
 
     overall = _session_overall(turns_detail)
+    wall_secs = round(time.monotonic() - t0, 1)
+    tasks_done = sum(len((d.get("run") or {}).get("done") or []) for d in turns_detail)
+    tasks_failed = sum(len((d.get("run") or {}).get("failed") or []) for d in turns_detail)
+    per_device_runs = [(d.get("run") or {}).get("per_device") or {} for d in turns_detail]
+    last_v = (turns_detail[-1].get("verdict") if turns_detail else {}) or {}
+    dims = {
+        k: (dd.get("status") if isinstance(dd, dict) else dd)
+        for k, dd in (last_v.get("dimensions") or {}).items()
+    }
     session = {
         "session_id": session_id,
         "ts": dt.datetime.now().isoformat(),
@@ -160,6 +173,14 @@ def run_session(
         "overall": overall,
         "judge_model": judge_brain.name if judge_brain else None,
         "run_dir": str(run_dir),
+        # --- benchmark fields (bench mode) ---
+        "variant": variant,
+        "tier": tier,
+        "wall_secs": wall_secs,
+        "tasks_done": tasks_done,
+        "tasks_failed": tasks_failed,
+        "dims": dims,
+        "per_device_runs": per_device_runs,
         "turns_detail": turns_detail,
     }
     report.write_session_report(run_dir, session)
