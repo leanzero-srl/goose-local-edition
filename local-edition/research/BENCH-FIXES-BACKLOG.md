@@ -58,3 +58,7 @@ the flags until GGUF has finished.
 
 ---
 _Once both runs are done: study both, finalize this list, then apply all at once (gated + one commit per change)._
+
+## MLX final-study additions
+- r3 txn functional one-off (exec GET emits nothing; tests pass but golden fails): weak-model coding limit, NOT a swarm-mechanism fix. But it re-confirms the value of running representative commands vs trusting generated tests — the swarm's smoke runs the model's OWN tests (which passed here), so it stays blind to a broken feature the tests don't cover. POSSIBLE (low-conf) swarm idea: have integrate-verify/smoke run a spec-derived representative command, not only the generated tests. Defer + weigh after GGUF (does GGUF show the same class?).
+- MLX medium quality: checks-pass 87% (crud 100/compute 80/txn 80), 100% task success, median ~32m/run. Strong. Only fix-worthy MECHANISM item remains the scheduler_stuck deadlock-recovery guard (#1).
