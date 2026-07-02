@@ -1928,6 +1928,25 @@ mod tests {
     }
 
     #[test]
+    fn render_pillars_block_noop_when_empty_else_renders() {
+        // Empty -> empty string, so the GOOSE_SWARM_GOALS injection is a true no-op (byte-identical off-path).
+        assert_eq!(render_pillars_block(&Pillars::default()), "");
+        let p = Pillars {
+            pillars: vec![Pillar {
+                id: "P1".to_string(),
+                goal: "The command is invoked as `report budget`, not `budget report`.".to_string(),
+                check: None,
+            }],
+        };
+        let block = render_pillars_block(&p);
+        assert!(block.contains("APP PILLARS"));
+        assert!(
+            block.contains("P1: The command is invoked as `report budget`"),
+            "each pillar's goal must be embedded verbatim"
+        );
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -2465,6 +2484,11 @@ pub struct GooseAgentDispatcher {
     /// cross-module drift. Empty until the GOOSE_SWARM_CONTRACTS stub pass populates it (stage 2b); set
     /// once before the EXECUTE phase, then read by every worker. Empty -> the injection is a no-op.
     contracts: std::sync::OnceLock<String>,
+    /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
+    /// non-negotiable goals + interface/invariant shape) injected — as a pre-rendered block — into EVERY
+    /// worker prompt so modules cohere to the same north star through context compaction. Distilled once
+    /// at plan time (post-plan), set before EXECUTE. Empty -> the injection is a no-op (flag off).
+    pillars: std::sync::OnceLock<String>,
     /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE): per-twin shadow workspace + its owned files, keyed by
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
@@ -2503,6 +2527,7 @@ impl GooseAgentDispatcher {
             allow_model_load,
             sampling,
             contracts: std::sync::OnceLock::new(),
+            pillars: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
         })
     }
@@ -3115,6 +3140,59 @@ impl GooseAgentDispatcher {
     /// GOOSE_SWARM_CONTRACTS (2b): freeze the contract before EXECUTE. Set once; every worker reads it.
     pub fn set_contracts(&self, bundle: String) {
         let _ = self.contracts.set(bundle);
+    }
+
+    /// GOOSE_SWARM_GOALS: freeze the rendered app-PILLARS block before EXECUTE. Set once; every worker reads it.
+    pub fn set_pillars(&self, block: String) {
+        let _ = self.pillars.set(block);
+    }
+
+    /// GOOSE_SWARM_GOALS (part 1): distill the app's non-negotiable PILLARS from the spec + research + the
+    /// chosen plan, as a small set of imperative acceptance criteria. One planner call with a forced JSON
+    /// schema (mirrors `plan()`); grounded on the actual decomposition so the pillars reflect what will be
+    /// built. Bounded to <=7. Any failure -> empty Pillars (the injection then no-ops). Returns the pillars
+    /// (the confidence slot is reserved for the later clarify-if-thin gate).
+    async fn distill_pillars(
+        &self,
+        planner_model: &str,
+        user_prompt: &str,
+        research_findings: &str,
+        plan_json: &str,
+    ) -> Pillars {
+        let system = "You are distilling the PILLARS of an app about to be built by a swarm of parallel \
+            workers that each see only their own module. Output the 3-7 load-bearing acceptance criteria the \
+            FINISHED program MUST satisfy — each ONE short imperative sentence. Capture: (a) the EXACT \
+            interface the spec advertises — command names and ARGUMENT ORDER verbatim (if the spec says \
+            `report budget`, the pillar says `report budget`, never `budget report`); (b) the invariants that \
+            make modules agree — the shared store/file, the units (e.g. money to 2 decimals), the entry point; \
+            (c) any correctness rule the spec states. Do NOT restate implementation detail or invent features. \
+            Prefer the spec's literal words. Output ONLY the JSON object; no prose, no code fences."
+            .to_string();
+        let response = Some(Response {
+            json_schema: Some(pillars_schema()),
+        });
+        let research_block = if research_findings.trim().is_empty() {
+            String::new()
+        } else {
+            format!("## Research findings\n{research_findings}\n\n")
+        };
+        let user = format!(
+            "{research_block}## App spec\n{user_prompt}\n\n## The chosen plan (architecture already decided)\n{plan_json}\n\nDistill the pillars now."
+        );
+        let out = match self
+            .run_agent_timed(planner_model, system, user, response, 8, &[])
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("  pillars: distillation failed ({e}) — skipping");
+                return Pillars::default();
+            }
+        };
+        let raw = out.final_output.unwrap_or_default();
+        let mut p: Pillars = serde_json::from_str(&raw).unwrap_or_default();
+        p.pillars.truncate(7);
+        p
     }
 
     /// Generate signature-only interface stubs per module IN PARALLEL across the fleet and assemble them
@@ -5352,6 +5430,57 @@ fn frozen_interfaces_block(bundle: &str) -> String {
     )
 }
 
+/// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria injected into
+/// EVERY worker so the whole fleet builds toward the same north star even after context compaction.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct Pillar {
+    id: String,
+    /// ONE imperative acceptance criterion the finished app MUST satisfy — the exact interface/command shape,
+    /// a shared invariant (same store, same units), or the runnable entry — captured so workers cannot
+    /// silently redesign it. This is precisely what drifts today (e.g. `report budget` built as `budget report`).
+    goal: String,
+    /// Optional runnable check hint, consumed only by the later review-against-pillars step. None for v1.
+    #[serde(default)]
+    check: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct Pillars {
+    pillars: Vec<Pillar>,
+}
+
+/// GOOSE_SWARM_GOALS (default OFF): distill app-level pillars at plan time and inject them into every worker.
+fn goals_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_GOALS")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Render the pillars as a worker-prompt block. Empty pillars -> empty string (a true no-op), so injection is
+/// inert when the flag is off or nothing was distilled. Pure — unit-testable without a model.
+fn render_pillars_block(p: &Pillars) -> String {
+    if p.pillars.is_empty() {
+        return String::new();
+    }
+    let body = p
+        .pillars
+        .iter()
+        .map(|x| format!("- {}: {}", x.id, x.goal))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "\n## APP PILLARS — the app-wide acceptance criteria (NON-NEGOTIABLE; they outrank local convenience)\n\
+         Your module MUST conform to these EXACTLY — the command/argument shape, the shared store, the units. \
+         If your subtask touches a pillar, satisfy it VERBATIM; do NOT redesign the interface for convenience \
+         (do NOT, for example, flip a `noun verb` command into `verb noun`). These are the whole app's contract:\n{body}\n"
+    )
+}
+
 /// GOOSE_SWARM_CLI_CONTRACT (default ON): whether to inject the CLI-STRUCTURE contract into the entry worker.
 fn cli_contract_enabled() -> bool {
     std::env::var("GOOSE_SWARM_CLI_CONTRACT")
@@ -5673,6 +5802,13 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // GOOSE_SWARM_GOALS: the app-level PILLARS block (pre-rendered), injected into EVERY worker so the
+        // whole fleet holds the same acceptance criteria through compaction. Empty until distilled -> no-op.
+        let pillars_block = if goals_enabled() {
+            self.pillars.get().cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
         let worker_directive = lang.directive();
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
@@ -5735,7 +5871,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{layout_block}{contracts_block}{context_block}"
+             \n{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -6078,6 +6214,29 @@ fn plan_schema() -> serde_json::Value {
                 }
             },
             "integration": {"type": "string"}
+        }
+    })
+}
+
+fn pillars_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pillars"],
+        "properties": {
+            "pillars": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "goal"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "goal": {"type": "string"},
+                        "check": {"type": "string"}
+                    }
+                }
+            }
         }
     })
 }
@@ -6758,6 +6917,45 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 dispatcher.set_contracts(bundle);
                 eprintln!("  contracts: frozen interfaces injected into every worker");
             }
+        }
+    }
+
+    // GOOSE_SWARM_GOALS (part 1+3): distill the app's non-negotiable PILLARS from the spec + research + the
+    // chosen plan and inject them into EVERY worker, so modules cohere to one north star through context
+    // compaction. Post-plan (grounded in the real decomposition), before EXECUTE (reaches every worker).
+    // Off -> never runs; the injection block is then an empty string ⇒ the worker prompt is byte-identical.
+    if goals_enabled() {
+        phase_banner(
+            "PILLARS",
+            "distill the app's non-negotiable acceptance criteria + inject them into every worker",
+        );
+        let pillars = dispatcher
+            .distill_pillars(
+                &cfg.planner_model,
+                &opts.prompt,
+                &research_findings,
+                &plan_json,
+            )
+            .await;
+        if pillars.pillars.is_empty() {
+            eprintln!("  pillars: none distilled — skipping injection");
+        } else {
+            let dir = std::env::current_dir().unwrap_or_default().join(".swarm");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(
+                dir.join("pillars.json"),
+                serde_json::to_string_pretty(&pillars).unwrap_or_default(),
+            );
+            sink.write_value(serde_json::json!({
+                "event": "pillars",
+                "count": pillars.pillars.len(),
+                "pillars": pillars.pillars,
+            }));
+            eprintln!(
+                "  pillars: {} distilled and injected into every worker",
+                pillars.pillars.len()
+            );
+            dispatcher.set_pillars(render_pillars_block(&pillars));
         }
     }
 
