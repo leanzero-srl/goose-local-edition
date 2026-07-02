@@ -2714,14 +2714,44 @@ impl GooseAgentDispatcher {
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
         let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        // Optional graceful wall-clock cap for the heavy `integrate-verify` SINK worker. A healthy sink
+        // can legitimately run ~1400s; a pathological one blows past the run budget with no way for the
+        // scheduler to finalize it — the judge's repeated "ok" verdict is a no-op and the watchdog is
+        // idle-based, so a still-emitting sink never trips it. GOOSE_SWARM_SINK_CAP_SECS>0 finalizes the
+        // sink as DONE on expiry (NOT an error/re-route) so the run terminates cleanly and the
+        // deterministic smoke gate backstops correctness. Unset/0 = OFF ⇒ byte-identical default path;
+        // only the sink task is ever affected.
+        let sink_deadline = if activity_key == Some("integrate-verify") {
+            std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&s| s > 0)
+                .map(|s| tokio::time::Instant::now() + std::time::Duration::from_secs(s))
+        } else {
+            None
+        };
         loop {
-            let ev = match tokio::time::timeout(idle, stream.next()).await {
+            // Wait at most `idle`, but no later than the sink cap (when set) so the cap fires promptly.
+            let wait = match sink_deadline {
+                Some(dl) => idle.min(dl.saturating_duration_since(tokio::time::Instant::now())),
+                None => idle,
+            };
+            let ev = match tokio::time::timeout(wait, stream.next()).await {
                 Ok(Some(ev)) => ev,
                 Ok(None) => break,
                 Err(_) => {
+                    // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
+                    // as DONE (the app files are already built; the sink owns no deliverables) instead of
+                    // re-routing, so the run can terminate; otherwise re-route as before.
+                    if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
+                        eprintln!(
+                            "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
+                        );
+                        break;
+                    }
                     return Err(anyhow!(
                         "agent stalled — no progress for {idle_secs}s (no token/tool activity)"
-                    ))
+                    ));
                 }
             };
             match ev {
