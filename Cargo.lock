@@ -5184,6 +5184,7 @@ dependencies = [
  "futures",
  "goose-local-inference",
  "goose-provider-types",
+ "include_dir",
  "pem",
  "pkcs1",
  "pkcs8",
