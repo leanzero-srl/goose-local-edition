@@ -14,8 +14,30 @@ python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 # MCP secrets (only if config.yaml swarm.mcp is non-empty): export CONTEXT7_API_KEY / WEBSEARCH_BEARER / ...
 ```
 
-## Run
+## Two run modes
+The harness has two explicit, ledger-tagged modes (every session records `mode`):
+
+- **`benchmark` (locked / reproducible)** — replays the **FROZEN** `SUITE` in `harness/bench.py`
+  (crud / compute / txn ×N) through graduated tiers (smoke → light → medium → high → extreme),
+  tagged `--variant` (e.g. mlx / gguf), graded deterministically by RUNNING the built app. The
+  prompts + golden checks are byte-identical across runs on purpose — that is the reproducibility
+  contract that lets variants pair (do NOT edit them; new coverage = a new suite). Emits
+  `runs/BENCHMARK.md` + `benchmark-runs.csv` + `benchmark-summary.csv`.
+- **`exploratory` (open-ended / monitored)** — the brain invents new prompts across archetypes and
+  vibes follow-ups; an active monitor scans per-device dispatch each session and surfaces
+  **starved / idle / underused nodes** (`monitor.py`), optionally auto-tuning scope-guarded pool
+  knobs via the tweaker (`--tweak`). **No API key:** set `SWARMGYM_PROVIDER=operator` and Claude
+  Code (the operator driving the session) IS the brain via a file handshake — the harness writes
+  `runs/operator/req-*.json`, the operator answers with `runs/operator/resp-*.txt`.
+
 ```bash
+# BENCHMARK (locked, reproducible, variant-tagged)
+python -m harness bench --tier medium --variant mlx          # replay the frozen SUITE, 5×3, tagged mlx
+python -m harness bench-report                                # head-to-head MLX vs GGUF (+ writes BENCHMARK.md)
+python -m harness bench-csv                                   # export the CSVs for downstream authoring
+
+# EXPLORATORY (open-ended, actively monitored; operator = brain, no key)
+SWARMGYM_PROVIDER=operator python -m harness explore --n 6 --tweak   # generated sessions + idle-node monitor + auto-tune
 python -m harness once --archetype heavy-spec --turns 3      # one heavily-specced new app + follow-ups
 python -m harness once --archetype minimal-spec              # terse one-liner; judge scores gap-filling
 python -m harness once --archetype continue-existing         # extend a kept, previously-green app
