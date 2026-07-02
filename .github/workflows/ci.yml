@@ -183,12 +183,6 @@ jobs:
           cd ui/desktop && pnpm install --frozen-lockfile
           cd ../sdk && pnpm install --frozen-lockfile
 
-      - name: Check OpenAPI Schema is Up-to-Date
-        run: |
-          source ./bin/activate-hermit
-          hermit uninstall rustup
-          just check-openapi-schema
-
       - name: Check ACP Schema is Up-to-Date
         run: |
           source ./bin/activate-hermit

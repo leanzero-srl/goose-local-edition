@@ -51,6 +51,22 @@ fn generate_serve_secret_key() -> String {
     )
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ServePlatform {
+    #[default]
+    Cli,
+    Desktop,
+}
+
+impl From<ServePlatform> for GoosePlatform {
+    fn from(platform: ServePlatform) -> Self {
+        match platform {
+            ServePlatform::Cli => GoosePlatform::GooseCli,
+            ServePlatform::Desktop => GoosePlatform::GooseDesktop,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "goose", author, version, display_name = "", about, long_about = None)]
 pub struct Cli {
@@ -840,6 +856,9 @@ enum Command {
         #[arg(long = "tls-key-path", value_name = "PATH")]
         tls_key_path: Option<String>,
 
+        #[arg(long, value_enum, default_value_t = ServePlatform::Cli)]
+        platform: ServePlatform,
+
         #[arg(
             long = "with-builtin",
             value_name = "NAME",
@@ -1358,10 +1377,12 @@ async fn handle_mcp_command(server: McpCommand) -> Result<()> {
 
 struct ServeCommandArgs {
     host: String,
+
     port: u16,
     tls: bool,
     tls_cert_path: Option<String>,
     tls_key_path: Option<String>,
+    platform: ServePlatform,
     builtins: Vec<String>,
     dangerously_unauthenticated: bool,
     allowed_origins: Vec<String>,
@@ -1382,6 +1403,7 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         tls,
         tls_cert_path,
         tls_key_path,
+        platform,
         builtins,
         dangerously_unauthenticated,
         allowed_origins,
@@ -1409,7 +1431,7 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         builtins,
         data_dir: Paths::data_dir(),
         config_dir: Paths::config_dir(),
-        goose_platform: GoosePlatform::GooseCli,
+        goose_platform: platform.into(),
         additional_source_roots,
         scheduler: None,
     }));
@@ -2210,6 +2232,7 @@ pub async fn cli() -> anyhow::Result<()> {
             tls,
             tls_cert_path,
             tls_key_path,
+            platform,
             builtins,
             dangerously_unauthenticated,
             allowed_origins,
@@ -2220,6 +2243,7 @@ pub async fn cli() -> anyhow::Result<()> {
                 tls,
                 tls_cert_path,
                 tls_key_path,
+                platform,
                 builtins,
                 dangerously_unauthenticated,
                 allowed_origins,
