@@ -8,7 +8,7 @@ from typing import Optional
 
 import yaml
 
-from . import orchestrator
+from . import bench, orchestrator
 from .ledger import Ledger
 
 ARCHES = ["heavy-spec", "minimal-spec", "continue-existing"]
@@ -44,7 +44,27 @@ def main(argv: Optional[list] = None) -> None:
 
     sub.add_parser("report", help="print the session ledger summary")
 
+    bp = sub.add_parser("bench", help="run a benchmark tier tagged with a model variant (mlx/gguf)")
+    bp.add_argument("--tier", required=True, choices=list(bench.TIERS))
+    bp.add_argument("--variant", required=True, help="model variant label, e.g. mlx or gguf")
+    bp.add_argument("--turns", type=int, default=None)
+    bp.add_argument("--no-judge", action="store_true")
+    bp.add_argument("--tweak", action="store_true")
+
+    br = sub.add_parser("bench-report", help="print/write the head-to-head benchmark report")
+    br.add_argument("--variant", default=None, help="filter to one variant (optional)")
+
+    sub.add_parser("bench-csv", help="export benchmark-runs.csv + benchmark-summary.csv from the ledger")
+
     args = ap.parse_args(argv)
+
+    if args.cmd == "bench-report":
+        print(bench.bench_report(_root(), cfg, args.variant))
+        return
+
+    if args.cmd == "bench-csv":
+        print(bench.bench_csv(_root(), cfg))
+        return
 
     if args.cmd == "report":
         led = Ledger((root / cfg["paths"]["ledger"]).resolve())
@@ -72,6 +92,10 @@ def main(argv: Optional[list] = None) -> None:
                 print(f"[{i + 1}/{args.n}] {s['session_id']} -> {s['overall']} ({s['turns']} turns)")
             except Exception as e:
                 print(f"[{i + 1}/{args.n}] {a} session FAILED: {e}")
+    elif args.cmd == "bench":
+        bench.run_suite(cfg, root, args.tier, args.variant)
+        print("\n=== benchmark report ===")
+        print(bench.bench_report(root, cfg))
 
 
 if __name__ == "__main__":
