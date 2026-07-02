@@ -99,6 +99,12 @@ def assess(ev: Evidence) -> Tuple[DimensionVerdict, List[Finding], Dict]:
                 )
 
     has_high = any(f.severity == "high" for f in findings)
+    has_med = any(f.severity == "medium" for f in findings)
     has_zero = any(s["zero_tool_tasks"] for s in by_model.values())
-    status = "fail" if has_high else ("warn" if (findings or has_zero) else "pass")
+    # Low-severity findings (a leftover TODO, or a transient failed-then-recovered tool call — normal
+    # during development) are REPORTED for visibility but must NOT warn the dimension: a warn drops
+    # `overall` to partial via _overall, which made every functionally-correct app read "partial"
+    # (clean-rate stuck at 0%). Only a medium+ concern (zero-tool narration, missing MCP) warns; a
+    # high smell (NotImplementedError stub / breakpoint) fails.
+    status = "fail" if has_high else ("warn" if (has_med or has_zero) else "pass")
     return DimensionVerdict(status=status, source="deterministic", detail={"by_model": dict(by_model)}), findings, dict(by_model)
