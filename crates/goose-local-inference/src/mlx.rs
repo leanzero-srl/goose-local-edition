@@ -10,29 +10,30 @@ mod imp {
     use mlx_rs::transforms::eval;
     use serde_json::json;
 
-    use crate::conversation::message::Message;
-    use crate::providers::base::{DraftStats, ProviderStats, ProviderUsage, Usage};
-    use crate::providers::local_inference::backend::{
-        BackendLoadedModel, LocalGenerationRequest, LocalInferenceBackend,
-    };
-    use crate::providers::local_inference::local_model_registry::{ModelSettings, ToolCallingMode};
-    use crate::providers::local_inference::native_tool_parsing::message_from_native_tool_text;
-    use crate::providers::local_inference::tool_emulation::{
+    use crate::backend::{BackendLoadedModel, LocalGenerationRequest, LocalInferenceBackend};
+    use crate::local_model_registry::{ModelSettings, ToolCallingMode};
+    use crate::native_tool_parsing::message_from_native_tool_text;
+    use crate::provider_utils::filter_extensions_from_system_prompt;
+    use crate::tool_emulation::{
         build_emulator_tool_description, load_tiny_model_prompt, message_for_emulator_action,
         StreamingEmulatorParser, CODE_EXECUTION_TOOL,
     };
-    use crate::providers::local_inference::{extract_text_content, ResolvedModelPaths};
-    use crate::providers::utils::filter_extensions_from_system_prompt;
-    use goose_providers::errors::ProviderError;
-    use goose_providers::formats::openai;
-    use goose_providers::images::ImageFormat;
+    use crate::{extract_text_content, ResolvedModelPaths};
+    use goose_provider_types::conversation::message::Message;
+    use goose_provider_types::conversation::token_usage::{
+        DraftStats, ProviderStats, ProviderUsage, Usage,
+    };
+    use goose_provider_types::errors::ProviderError;
+    use goose_provider_types::formats::openai;
+    use goose_provider_types::images::ImageFormat;
+    use goose_provider_types::request_log::LoggerHandleExt;
 
-    pub(in crate::providers::local_inference) const MLX_BACKEND_ID: &str = "mlx";
+    pub(crate) const MLX_BACKEND_ID: &str = "mlx";
 
-    pub(in crate::providers::local_inference) struct MlxBackend;
+    pub(crate) struct MlxBackend;
 
     impl MlxBackend {
-        pub(in crate::providers::local_inference) fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self
         }
     }
@@ -511,14 +512,11 @@ mod imp {
 
     fn temperature(settings: &ModelSettings) -> f32 {
         match &settings.sampling {
-            crate::providers::local_inference::local_model_registry::SamplingConfig::Greedy => 0.0,
-            crate::providers::local_inference::local_model_registry::SamplingConfig::Temperature {
-                temperature,
-                ..
-            } => *temperature,
-            crate::providers::local_inference::local_model_registry::SamplingConfig::MirostatV2 {
-                ..
-            } => 0.0,
+            crate::local_model_registry::SamplingConfig::Greedy => 0.0,
+            crate::local_model_registry::SamplingConfig::Temperature { temperature, .. } => {
+                *temperature
+            }
+            crate::local_model_registry::SamplingConfig::MirostatV2 { .. } => 0.0,
         }
     }
 
@@ -553,19 +551,17 @@ mod imp {
 
 #[cfg(not(feature = "mlx"))]
 mod imp {
-    use crate::providers::local_inference::backend::{
-        BackendLoadedModel, LocalGenerationRequest, LocalInferenceBackend,
-    };
-    use crate::providers::local_inference::local_model_registry::ModelSettings;
-    use crate::providers::local_inference::ResolvedModelPaths;
-    use goose_providers::errors::ProviderError;
+    use crate::backend::{BackendLoadedModel, LocalGenerationRequest, LocalInferenceBackend};
+    use crate::local_model_registry::ModelSettings;
+    use crate::ResolvedModelPaths;
+    use goose_provider_types::errors::ProviderError;
 
-    pub(in crate::providers::local_inference) const MLX_BACKEND_ID: &str = "mlx";
+    pub(crate) const MLX_BACKEND_ID: &str = "mlx";
 
-    pub(in crate::providers::local_inference) struct MlxBackend;
+    pub(crate) struct MlxBackend;
 
     impl MlxBackend {
-        pub(in crate::providers::local_inference) fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self
         }
     }
@@ -604,4 +600,4 @@ mod imp {
     }
 }
 
-pub(in crate::providers::local_inference) use imp::{MlxBackend, MLX_BACKEND_ID};
+pub(crate) use imp::{MlxBackend, MLX_BACKEND_ID};

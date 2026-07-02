@@ -1,8 +1,8 @@
 use base64::prelude::*;
 use serde_json::Value;
 
-use crate::conversation::message::{Message, MessageContent};
-use goose_providers::errors::ProviderError;
+use goose_provider_types::conversation::message::{Message, MessageContent};
+use goose_provider_types::errors::ProviderError;
 
 #[derive(Debug)]
 pub struct ExtractedImage {

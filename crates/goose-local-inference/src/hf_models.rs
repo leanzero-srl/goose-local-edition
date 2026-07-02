@@ -8,7 +8,7 @@ use super::local_model_registry::{get_registry, model_id_from_repo, LocalModelSt
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-use crate::providers::huggingface_auth;
+use crate::huggingface_auth;
 
 use utoipa::ToSchema;
 

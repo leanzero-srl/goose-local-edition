@@ -11,9 +11,9 @@ use super::{
     available_inference_memory_bytes, builtin_chat_template_names, recommend_local_model,
     InferenceRuntime,
 };
-use crate::config::paths::Paths;
 use crate::download_manager::{get_download_manager, DownloadProgress, DownloadStatus};
-use crate::providers::huggingface_auth;
+use crate::huggingface_auth;
+use crate::paths::Paths;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use goose_sdk_types::custom_requests::{

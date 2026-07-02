@@ -1,10 +1,10 @@
 use rmcp::model::Tool;
 use std::any::Any;
 
-use crate::conversation::message::Message;
-use crate::providers::local_inference::local_model_registry::ModelSettings;
-use goose_providers::errors::ProviderError;
-use goose_providers::request_log::RequestLogHandle;
+use crate::local_model_registry::ModelSettings;
+use goose_provider_types::conversation::message::Message;
+use goose_provider_types::errors::ProviderError;
+use goose_provider_types::request_log::RequestLogHandle;
 
 use super::{ResolvedModelPaths, StreamSender};
 
