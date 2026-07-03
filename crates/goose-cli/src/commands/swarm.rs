@@ -1956,6 +1956,52 @@ mod tests {
     }
 
     #[test]
+    fn extract_file_prefers_source_over_test_and_none_when_absent() {
+        let f = "tests/test_cli.py:9: in test_add\n    from spendlog.cli import main\n\
+                 spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
+            .to_string();
+        assert_eq!(
+            extract_file_from_finding(&f).as_deref(),
+            Some("spendlog/cli.py"),
+            "a non-test source frame is the fix target"
+        );
+        assert_eq!(
+            extract_file_from_finding("no python3 -m app entry point found"),
+            None
+        );
+        // `File "path", line N` shape (pytest full traceback / rust).
+        assert_eq!(
+            extract_file_from_finding("File \"app/core.py\", line 7, in run").as_deref(),
+            Some("app/core.py")
+        );
+    }
+
+    #[test]
+    fn group_findings_by_file_partitions_dedups_and_serializes() {
+        let findings = vec![
+            "tests/test_a.py:5: in test_x\n    assert foo() == 1\nE   AssertionError".to_string(),
+            "spendlog/cli.py:12: in cmd_add\n    raise ValueError\nE   ValueError: boom"
+                .to_string(),
+            "spendlog/cli.py:40: in cmd_budget\n    x\nE   KeyError".to_string(), // SAME file
+            "spendlog/cli.py:12: in cmd_add\n    raise ValueError\nE   ValueError: boom"
+                .to_string(), // dup
+            "no python3 -m spendlog entry point found".to_string(),               // unassigned
+        ];
+        let (groups, unassigned) = group_findings_by_file(&findings);
+        let cli = groups
+            .iter()
+            .find(|g| g.file == "spendlog/cli.py")
+            .expect("cli.py group");
+        // The two DISTINCT cli.py findings collapse into ONE group (same-file serialize); the dup is dropped.
+        assert_eq!(cli.findings.len(), 2);
+        assert!(groups.iter().any(|g| g.file == "tests/test_a.py"));
+        assert_eq!(unassigned.len(), 1); // the file-less finding
+                                         // Partition invariant: every group names a distinct file.
+        let files: std::collections::HashSet<_> = groups.iter().map(|g| &g.file).collect();
+        assert_eq!(files.len(), groups.len());
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -5444,6 +5490,77 @@ impl TargetLang {
     }
 }
 
+/// GOOSE_SWARM_COMPLETE_PARALLEL: a group of verify findings that all name the SAME file, so exactly one
+/// fix agent ever writes that file (same-file failures serialize by construction).
+struct FileGroup {
+    file: String,
+    findings: Vec<String>,
+}
+
+/// Pull the fix-target source file out of a deterministic pytest/tooling finding. Findings are built from
+/// `tail_lines` of real pytest/`-m` output (not model text), so the `path.py:N: in ...` and
+/// `File "path.py", line N` shapes are stable. Prefers a NON-test source frame (the thing to fix); falls
+/// back to the last file seen. Returns None when the finding names no code file (e.g. a missing entry point).
+fn extract_file_from_finding(finding: &str) -> Option<String> {
+    let is_code = |p: &str| {
+        (p.ends_with(".py") || p.ends_with(".rs") || p.ends_with(".ts"))
+            && !p.is_empty()
+            && !p.contains(' ')
+    };
+    let mut last: Option<String> = None;
+    let mut src: Option<String> = None;
+    for raw in finding.lines() {
+        let line = raw.trim();
+        let cand: Option<&str> = if let Some((_, rest)) = line.split_once("File \"") {
+            rest.split('"').next()
+        } else {
+            line.split(':').next().map(|t| t.trim())
+        };
+        if let Some(p) = cand.map(|p| p.trim()) {
+            if is_code(p) {
+                last = Some(p.to_string());
+                if !p.contains("test") && !p.contains("conftest") {
+                    src = Some(p.to_string());
+                }
+            }
+        }
+    }
+    src.or(last)
+}
+
+/// Dedup + group findings by the file they name so each file becomes ONE fix agent (writes partitioned,
+/// same-file findings serialized). Returns (groups in first-seen order, unassigned findings that name no
+/// file) — the unassigned bucket gets a single serial fallback fix so a file-less finding is not dropped.
+fn group_findings_by_file(findings: &[String]) -> (Vec<FileGroup>, Vec<String>) {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_file: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut unassigned: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for f in findings {
+        if !seen.insert(f.clone()) {
+            continue;
+        }
+        match extract_file_from_finding(f) {
+            Some(file) => {
+                if !by_file.contains_key(&file) {
+                    order.push(file.clone());
+                }
+                by_file.entry(file).or_default().push(f.clone());
+            }
+            None => unassigned.push(f.clone()),
+        }
+    }
+    let groups = order
+        .into_iter()
+        .map(|file| {
+            let findings = by_file.remove(&file).unwrap_or_default();
+            FileGroup { file, findings }
+        })
+        .collect();
+    (groups, unassigned)
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
@@ -6454,6 +6571,15 @@ fn complete_rounds() -> u32 {
     complete_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_ROUNDS").ok())
 }
 
+/// GOOSE_SWARM_COMPLETE_PARALLEL (default OFF): fan the push-to-completion FIX step across the fleet's
+/// models — one fix agent per failing FILE, each writing only its own file (shadow isolation), instead of
+/// one serial fix on a single node. Off => the serial v1 fix path runs verbatim.
+fn complete_parallel() -> bool {
+    std::env::var("GOOSE_SWARM_COMPLETE_PARALLEL")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
@@ -7050,6 +7176,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .flat_map(|n| n.spec.owned_files.clone())
         .collect();
     let smoke_fix_dispatcher = dispatcher.clone();
+    // GOOSE_SWARM_COMPLETE_PARALLEL: the fleet's model ids, captured before the scheduler consumes
+    // `devices`, so the completion fix step can fan one fix per failing file across all models.
+    let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
     if replan_on && cfg.max_replans > 0 {
@@ -7181,24 +7310,98 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 eprintln!("complete: wall-clock cap reached — stopping the fix loop");
                 break;
             }
-            // Distill the failure (reuse the smoke-fix directive builder) + re-dispatch ONE bounded fix.
+            // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
+            // per failing FILE across the fleet's models — each agent writes only its own file (shadow
+            // isolation), so two agents can never touch the same file; same-file findings collapse into one
+            // group and serialize. Re-verify happens at the loop head next round.
             let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
                 break;
             };
-            eprintln!("complete: fix round {round} against the distilled failure ...");
-            let fix_req = DispatchRequest {
-                task_id: "complete-fix".to_string(),
-                description: smoke_fix_description(&verdict.findings, complete_lang),
-                device_id: dev_id,
-                model_id,
-                context_slice: String::new(),
-                attempt: round,
-                owned_files: vec![],
-                all_files: smoke_all_files.clone(),
-                prior_hint: None,
-                speculative: false,
-            };
-            let _ = smoke_fix_dispatcher.run(fix_req).await;
+            if complete_parallel() && !fleet_models.is_empty() {
+                let (groups, unassigned) = group_findings_by_file(&verdict.findings);
+                eprintln!(
+                    "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
+                    groups.len(),
+                    fleet_models.len(),
+                    unassigned.len()
+                );
+                if !groups.is_empty() {
+                    let me = smoke_fix_dispatcher.clone();
+                    let all_files = smoke_all_files.clone();
+                    let dev = dev_id.clone();
+                    let summaries =
+                        fanout_over_fleet(fleet_models.clone(), groups, move |g, model| {
+                            let me = me.clone();
+                            let all_files = all_files.clone();
+                            let dev = dev.clone();
+                            async move {
+                                let req = DispatchRequest {
+                                    task_id: format!("complete-fix::{}", g.file),
+                                    description: smoke_fix_description(&g.findings, complete_lang),
+                                    device_id: dev,
+                                    model_id: model,
+                                    context_slice: String::new(),
+                                    attempt: round,
+                                    owned_files: vec![g.file.clone()],
+                                    all_files,
+                                    prior_hint: None,
+                                    speculative: false,
+                                };
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(1200),
+                                    me.run(req),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(o)) => format!(
+                                        "{}: {}",
+                                        g.file,
+                                        o.output.lines().next().unwrap_or("fixed")
+                                    ),
+                                    _ => format!("{}: (fix timed out or errored)", g.file),
+                                }
+                            }
+                        })
+                        .await;
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_fix_wave",
+                        "round": round,
+                        "shards": summaries.len(),
+                        "unassigned": unassigned.len(),
+                    }));
+                }
+                // A finding that names no file still gets one serial shot after the partitioned wave.
+                if !unassigned.is_empty() {
+                    let req = DispatchRequest {
+                        task_id: "complete-fix-unassigned".to_string(),
+                        description: smoke_fix_description(&unassigned, complete_lang),
+                        device_id: dev_id,
+                        model_id,
+                        context_slice: String::new(),
+                        attempt: round,
+                        owned_files: vec![],
+                        all_files: smoke_all_files.clone(),
+                        prior_hint: None,
+                        speculative: false,
+                    };
+                    let _ = smoke_fix_dispatcher.run(req).await;
+                }
+            } else {
+                eprintln!("complete: fix round {round} against the distilled failure ...");
+                let fix_req = DispatchRequest {
+                    task_id: "complete-fix".to_string(),
+                    description: smoke_fix_description(&verdict.findings, complete_lang),
+                    device_id: dev_id,
+                    model_id,
+                    context_slice: String::new(),
+                    attempt: round,
+                    owned_files: vec![],
+                    all_files: smoke_all_files.clone(),
+                    prior_hint: None,
+                    speculative: false,
+                };
+                let _ = smoke_fix_dispatcher.run(fix_req).await;
+            }
         }
         complete_failed = !final_passed;
         sink.write_value(serde_json::json!({
