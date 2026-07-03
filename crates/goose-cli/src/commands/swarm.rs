@@ -1067,17 +1067,28 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
         .map(|p| SwarmDevice {
             id: gen_entry_id(cfg, p.device.as_deref(), &p.identifier),
             model_id: p.identifier.clone(),
-            // Weight = an explicit configured override for this model_id (user wins), else LM Studio's
-            // PARALLEL for this instance so swarm dispatch concurrency tracks the user's LM Studio
-            // concurrency setting (set PARALLEL=1 there and a node runs one task at a time), else 1.
-            weight: cfg
-                .devices
-                .iter()
-                .find(|d| d.model_id == p.identifier)
-                .map(|d| d.weight)
-                .or(p.parallel)
-                .unwrap_or(1)
-                .max(1),
+            // Weight = an explicit configured override for this model_id (USER WINS — never clamped: a
+            // weight above the probed PARALLEL is a legit throughput tactic since agent tasks are bursty, so
+            // an extra slot overlaps the idle LM Studio window between an agent's LLM calls), else LM Studio's
+            // PARALLEL for this instance (dispatch concurrency tracks the user's LM Studio setting), else 1.
+            // K6: if an override EXCEEDS the probed PARALLEL we WARN (it may just queue) but keep the value.
+            weight: {
+                let user_w = cfg
+                    .devices
+                    .iter()
+                    .find(|d| d.model_id == p.identifier)
+                    .map(|d| d.weight);
+                if let (Some(w), Some(par)) = (user_w, p.parallel) {
+                    if w > par {
+                        eprintln!(
+                            "  {} pool weight {w} for {} exceeds LM Studio PARALLEL {par} — kept (oversubscribing can overlap the idle gaps between an agent's LLM calls; if requests just queue with no gain, lower it)",
+                            style("⚠").yellow(),
+                            p.identifier,
+                        );
+                    }
+                }
+                user_w.or(p.parallel).unwrap_or(1).max(1)
+            },
             enabled: true,
             instances: 1,
             host: p.device.clone(),
@@ -7668,10 +7679,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
     // Phase wall-clock (minutes). research = scouts; planning = skeleton draft + verbalized + ASK/re-plan +
     // detailing (INCLUDES any human ASK-answer wait); execute = workers + judge + integrate-verify + review.
+    // GATES = the post-execute phases (COMPLETE / SMOKE / REVIEW) that run after t_exec; previously they
+    // landed in NO bucket and were excluded from total, so their single-node fix tails were unmeasurable.
+    // t_gates is read here (after all post-execute .awaits) so gates_m captures them and total_m sums all
+    // four buckets. gates_m == 0 in the default config (those phases are all default-OFF).
+    let t_gates = std::time::Instant::now();
     let research_m = t_research.duration_since(t_start).as_secs_f64() / 60.0;
     let planning_m = t_plan.duration_since(t_research).as_secs_f64() / 60.0;
     let execute_m = t_exec.duration_since(t_plan).as_secs_f64() / 60.0;
-    let total_m = t_exec.duration_since(t_start).as_secs_f64() / 60.0;
+    let gates_m = t_gates.duration_since(t_exec).as_secs_f64() / 60.0;
+    let total_m = t_gates.duration_since(t_start).as_secs_f64() / 60.0;
     let pct = |x: f64| {
         if total_m > 0.0 {
             (100.0 * x / total_m).round() as u32
@@ -7686,6 +7703,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             "research_min": (research_m * 10.0).round() / 10.0,
             "planning_min": (planning_m * 10.0).round() / 10.0,
             "execute_min": (execute_m * 10.0).round() / 10.0,
+            "gates_min": (gates_m * 10.0).round() / 10.0,
             "total_min": (total_m * 10.0).round() / 10.0,
         },
     }));
