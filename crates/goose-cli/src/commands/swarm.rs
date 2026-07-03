@@ -6423,6 +6423,53 @@ impl TaskDispatcher for GooseAgentDispatcher {
             None
         }
     }
+
+    async fn verify_finding(
+        &self,
+        model_id: &str,
+        finding: &str,
+        goal: &str,
+        files: &[String],
+    ) -> bool {
+        // Read-only SKEPTIC (a DIFFERENT model than raised the finding): hand it the finding + the real
+        // files and ask it to REFUTE. Only an independent CONFIRM|HIGH survives; fail-closed on anything
+        // else (REFUTE / LOW / timeout / parse fail) so an unverified finding can never drive a fix.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let mut files_block = String::new();
+        for f in files {
+            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
+                if c.trim().is_empty() {
+                    continue;
+                }
+                let body: String = c.chars().take(2000).collect();
+                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
+            }
+        }
+        if files_block.is_empty() {
+            return false; // no code to verify against -> cannot confirm
+        }
+        let system = "You are a SKEPTIC verifying ONE code-review finding raised by a DIFFERENT reviewer. \
+            Your job is to REFUTE it: read the ACTUAL files and decide whether the claimed defect is REAL and \
+            concrete, or whether it is wrong / already handled / not actually a defect. Default to REFUTE when \
+            unsure. Reply with EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM (the defect is real, \
+            you can point to it in the code) or REFUTE (not a real defect); confidence is HIGH or LOW. Only \
+            say CONFIRM|HIGH when you can point to the exact defect in the files shown."
+            .to_string();
+        let user = format!(
+            "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
+        );
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_default();
+        let (verdict, confidence) = text.trim().split_once('|').unwrap_or(("REFUTE", "LOW"));
+        verdict.to_uppercase().contains("CONFIRM") && confidence.to_uppercase().contains("HIGH")
+    }
 }
 
 #[async_trait]
@@ -7797,6 +7844,45 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             for f in &findings {
                 eprintln!("  - {f}");
             }
+        }
+        // ADVERSARIAL VERIFY (GOOSE_SWARM_REVIEW_VERIFY) — the three-vote core: hand each finding to a
+        // model that tries to REFUTE it against the real code; only findings that SURVIVE (independent
+        // CONFIRM|HIGH) are kept. Read-only + fanned across the fleet (idle nodes), fail-closed. Surfaced
+        // as a review_verify event; still advisory here (Phase 2b routes survivors through a re-verified fix).
+        let review_verify_on = std::env::var("GOOSE_SWARM_REVIEW_VERIFY")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+            .unwrap_or(false);
+        if review_verify_on && !findings.is_empty() {
+            let me = smoke_fix_dispatcher.clone();
+            let goal = opts.prompt.clone();
+            let files = smoke_all_files.clone();
+            let items: Vec<String> = findings.clone();
+            let verdicts = fanout_over_fleet(fleet_models.clone(), items, move |finding, model| {
+                let me = me.clone();
+                let goal = goal.clone();
+                let files = files.clone();
+                async move { me.verify_finding(&model, &finding, &goal, &files).await }
+            })
+            .await;
+            let survivors: Vec<String> = findings
+                .iter()
+                .zip(verdicts.iter())
+                .filter_map(|(f, &ok)| if ok { Some(f.clone()) } else { None })
+                .collect();
+            sink.write_value(serde_json::json!({
+                "event": "review_verify",
+                "candidates": findings.len(),
+                "survivors": survivors.len(),
+                "refuted": findings.len().saturating_sub(survivors.len()),
+                "detail": survivors,
+            }));
+            eprintln!(
+                "{} {} of {} finding(s) SURVIVED independent refutation ({} refuted)",
+                style("review verify:").cyan().bold(),
+                survivors.len(),
+                findings.len(),
+                findings.len().saturating_sub(survivors.len()),
+            );
         }
     }
     let review_on = std::env::var("GOOSE_SWARM_REVIEW")
