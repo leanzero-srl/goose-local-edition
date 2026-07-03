@@ -880,6 +880,15 @@ impl State {
             if n.state != TaskState::Claimed || self.speculating.contains(tid) {
                 continue;
             }
+            // FAIL-CLOSE: never speculate a task that owns NO files (e.g. the injected integrate-verify
+            // sink). A twin of such a task has nothing to promote, so a "win" would abort the primary and
+            // commit a text-only merge while the twin's whole-tree edits stay stranded in its shadow —
+            // dropping the integrator's files from the real tree. Only file-owning tasks are safe to
+            // speculate. (This bounds the blast radius of the still-default-OFF speculation path; the full
+            // promote/verify/join fix is tracked separately.)
+            if n.spec.owned_files.is_empty() {
+                continue;
+            }
             if self.claimed_device.get(tid) == Some(&dev) {
                 continue; // the twin must run on a DIFFERENT device than the primary
             }
