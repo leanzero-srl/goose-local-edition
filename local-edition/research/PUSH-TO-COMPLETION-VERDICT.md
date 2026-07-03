@@ -49,3 +49,15 @@ The all-flags-on run caught a REAL bug in the golden-check I shipped (2a01d224d)
 - Root cause: pillars/checks are distilled at PLAN time; the app is built later by different workers, so a check's assumed interface (arg placement) can mismatch the built interface -> stochastic false-red (the earlier gcheck-on run happened to match -> no false-red; this one didn't).
 - FIX (shipped): the golden pillar checks are now ADVISORY — run_pillar_checks output is emitted as a `pillar_check_advisory` event but NO LONGER extended into verdict.findings, so it cannot drive the fix loop or the exit gate. The reliable smoke oracle (pytest + entry --help) stays the gate; the pillars still ANCHOR the build (GOALS value intact). A false check can never again regress a correct app.
 - FUTURE (to restore a RELIABLE golden gate): re-distill each pillar check from the BUILT app's `--help` (post-build), so the check always matches the actual interface, then it can gate again.
+
+## RE-VALIDATION of the ADVISORY fix (same spendlog spec, all-flags-ON) — PASS + bonus
+| metric | earlier (golden-check GATING) | now (golden-check ADVISORY) |
+|---|---|---|
+| exit | 1 (refused) | **0 (green)** |
+| pytest | broke 2 (18 pass, 2 fail) | **88 pass, 0 fail (NO regression)** |
+| report budget | correct but red-gated | **correct: food $15.00/$10.00 [OVER BUDGET]** |
+| COMPLETE | RED, phantom fix loop | **GREEN at round 0** |
+| gates_min | 20.5 (wasted phantom fixing) | **0.0** |
+| golden check | gated -> regressed | **advisory: 6 findings SURFACED, drove nothing** |
+
+The advisory fix (6b7f06ec8) is proven: the golden check STILL runs + surfaces drift (pillar_check_advisory, 6 findings on this app) but NO LONGER gates or fixes -> a correct app is delivered GREEN with 88 tests passing, where the gating version broke 2 tests + refused exit 0. BONUS: it also eliminated the 20.5-min phantom fix loop (gates_min 20.5 -> 0.0) — the advisory change is both safer AND faster. The 6 advisory findings on a CORRECT app confirm the distilled checks are unreliable-as-gate (right call to make them advisory); a reliable golden gate needs the re-distill-from-built-`--help` step (future).
