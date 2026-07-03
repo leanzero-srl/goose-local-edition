@@ -1947,6 +1947,15 @@ mod tests {
     }
 
     #[test]
+    fn complete_rounds_defaults_and_clamps() {
+        assert_eq!(complete_rounds_from(None), 2); // default
+        assert_eq!(complete_rounds_from(Some("4".to_string())), 4);
+        assert_eq!(complete_rounds_from(Some("99".to_string())), 6); // clamped high
+        assert_eq!(complete_rounds_from(Some("0".to_string())), 1); // clamped low
+        assert_eq!(complete_rounds_from(Some("nope".to_string())), 2); // unparseable -> default
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -6433,6 +6442,18 @@ async fn ask_clarifying_questions(
     }
 }
 
+/// GOOSE_SWARM_COMPLETE_ROUNDS: the fix-round budget for the push-to-completion loop. Default 2; clamped
+/// to [1,6] so a misconfigured value can never spin the fleet forever. Pure split-out for unit testing.
+fn complete_rounds_from(v: Option<String>) -> u32 {
+    v.and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(2)
+        .clamp(1, 6)
+}
+
+fn complete_rounds() -> u32 {
+    complete_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_ROUNDS").ok())
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
@@ -7095,12 +7116,116 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .await?;
     let t_exec = std::time::Instant::now();
 
+    // GOOSE_SWARM_COMPLETE: push to REAL completion. VERIFY the built app by RUNNING it (reuse the smoke
+    // oracle — pytest collect + `pytest -q` + the entry `--help`); if it is red, re-dispatch ONE bounded fix
+    // against the distilled failure and RE-VERIFY — up to GOOSE_SWARM_COMPLETE_ROUNDS, capped by
+    // GOOSE_SWARM_COMPLETE_CAP_SECS. Unlike GOOSE_SWARM_SMOKE (advisory, one-shot) the FINAL verdict is fed
+    // into the run's exit code below, so a still-red app can no longer exit 0 and get delivered as "done".
+    // Off by default => this block never runs and the exit path stays byte-identical.
+    let complete_on = std::env::var("GOOSE_SWARM_COMPLETE")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    let mut complete_failed = false;
+    if complete_on {
+        let rounds = complete_rounds();
+        let cap_deadline = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&s| s > 0)
+            .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
+        let complete_lang = detect_language(&opts.prompt, &[]);
+        let cwd = std::env::current_dir().unwrap_or_default();
+        phase_banner(
+            "COMPLETE",
+            "verify the app by RUNNING it, fix-until-green (bounded), and refuse to ship a red app",
+        );
+        let mut final_passed = false;
+        let mut last_findings: Vec<String> = Vec::new();
+        // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
+        // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
+        for round in 0..=rounds {
+            let verdict = run_smoke_gate(&cwd, complete_lang).await;
+            sink.write_value(serde_json::json!({
+                "event": "complete_verify",
+                "round": round,
+                "ran": verdict.ran,
+                "passed": verdict.passed(),
+                "findings": verdict.findings.len(),
+            }));
+            // The gate does not apply (no recognized build) OR a clean verify => done.
+            if !verdict.ran || verdict.findings.is_empty() {
+                final_passed = true;
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "complete: GREEN at round {round} — the built app runs and its checks pass"
+                    ))
+                    .green()
+                );
+                break;
+            }
+            last_findings = verdict.findings.clone();
+            eprintln!(
+                "{} round {round}: {} finding(s)",
+                style("complete: RED").red().bold(),
+                verdict.findings.len()
+            );
+            for f in &verdict.findings {
+                eprintln!("  - {}", f.lines().next().unwrap_or(""));
+            }
+            // No fix budget left after the final verify, or the wall-clock cap has passed.
+            if round == rounds {
+                break;
+            }
+            if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
+                eprintln!("complete: wall-clock cap reached — stopping the fix loop");
+                break;
+            }
+            // Distill the failure (reuse the smoke-fix directive builder) + re-dispatch ONE bounded fix.
+            let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
+                break;
+            };
+            eprintln!("complete: fix round {round} against the distilled failure ...");
+            let fix_req = DispatchRequest {
+                task_id: "complete-fix".to_string(),
+                description: smoke_fix_description(&verdict.findings, complete_lang),
+                device_id: dev_id,
+                model_id,
+                context_slice: String::new(),
+                attempt: round,
+                owned_files: vec![],
+                all_files: smoke_all_files.clone(),
+                prior_hint: None,
+                speculative: false,
+            };
+            let _ = smoke_fix_dispatcher.run(fix_req).await;
+        }
+        complete_failed = !final_passed;
+        sink.write_value(serde_json::json!({
+            "event": "complete_result",
+            "passed": final_passed,
+            "remaining_findings": last_findings.len(),
+        }));
+        if !final_passed {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "complete: STILL RED after {rounds} fix round(s) — the run will NOT report success ({} finding(s) remain)",
+                    last_findings.len()
+                ))
+                .red()
+                .bold()
+            );
+        }
+    }
+
     // GOOSE_SWARM_SMOKE: deterministic end-to-end oracle on the produced tree (off by default —
     // GOOSE_SWARM_SMOKE=1). Emits a `smoke` event the eval reads; does not alter the run's exit code.
+    // GOOSE_SWARM_COMPLETE (above) supersedes this standalone gate to avoid double-running the suite.
     let smoke_on = std::env::var("GOOSE_SWARM_SMOKE")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
-    if smoke_on {
+    if smoke_on && !complete_on {
         let smoke_lang = detect_language(&opts.prompt, &[]);
         let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
         let smoke_value = serde_json::to_value(&smoke).unwrap_or(serde_json::Value::Null);
@@ -7375,7 +7500,19 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .iter()
         .filter(|id| !report.bonus.contains(*id))
         .count();
-    if core_failed == 0 {
+    // GOOSE_SWARM_COMPLETE: a still-red app (verify-by-running never went green within the fix budget) must
+    // NOT report success, even if every planned subtask "completed" — this is the never-ship-broken gate.
+    // When the flag is off, `complete_on && complete_failed` is false and the exit path is byte-identical.
+    if complete_on && complete_failed {
+        Err(anyhow!(
+            "push-to-completion: the built app still fails its verify checks after the fix loop{}",
+            if core_failed > 0 {
+                format!(" ({core_failed} core subtask(s) also failed)")
+            } else {
+                String::new()
+            }
+        ))
+    } else if core_failed == 0 {
         Ok(())
     } else {
         Err(anyhow!("{} core subtask(s) failed", core_failed))
