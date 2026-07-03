@@ -4739,8 +4739,25 @@ impl Judge for GooseAgentDispatcher {
             when you are sure and can point to the evidence); hint = a short, concrete correction (empty \
             for OK)."
             .to_string();
+        // GOOSE_SWARM_GOALS (part 5): give the judge the app's PILLARS so its existing SPEC_DRIFT verdict is
+        // grounded in the concrete acceptance criteria (a wrong command name/interface is now a nameable
+        // drift, not a vague "quality" call). Conservative: still HIGH-confidence + visible-evidence only.
+        let pillars_block = if goals_enabled() {
+            self.pillars
+                .get()
+                .map(|p| {
+                    format!(
+                        "\n{p}(If this worker's code CLEARLY violates one of the pillars above — a wrong \
+                         command name/argument order, or a different shared data shape — that is SPEC_DRIFT; \
+                         still require HIGH confidence + visible evidence, never flag merely-unfinished work.)"
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let user = format!(
-            "GOAL: {goal}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}\n\n\
+            "GOAL: {goal}{pillars_block}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}\n\n\
              THIS WORKER's subtask: {desc}\n  owns files: {owns}\n\nFiles produced so far:\n{files}\n\n\
              Worker activity log:\n{trace}\n\nYour one-line verdict:",
             goal = req.goal,
@@ -4809,8 +4826,24 @@ impl PreReviewer for GooseAgentDispatcher {
             corrections (what is wrong + which file), empty when OK. Be conservative — only ISSUES when you \
             can point to a real defect."
             .to_string();
+        // GOOSE_SWARM_GOALS (part 5): let the correctness pre-review catch a concrete pillar violation
+        // (wrong interface/command name, or a deliverable not wired to the pillar's entry) as an ISSUE.
+        let pillars_block = if goals_enabled() {
+            self.pillars
+                .get()
+                .map(|p| {
+                    format!(
+                        "\n{p}(Flag as an ISSUE any concrete violation of a pillar above — a wrong command \
+                         name/argument order, or a shared data shape that disagrees with a pillar — naming the \
+                         file. Stay conservative: only a defect you can point to.)"
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let user = format!(
-            "GOAL: {goal}\n\nSUBTASK: {desc}\n\nFiles produced:\n{files}\n\nYour one-line review:",
+            "GOAL: {goal}{pillars_block}\n\nSUBTASK: {desc}\n\nFiles produced:\n{files}\n\nYour one-line review:",
             goal = req.goal,
             desc = req.description,
             files = files_block,
