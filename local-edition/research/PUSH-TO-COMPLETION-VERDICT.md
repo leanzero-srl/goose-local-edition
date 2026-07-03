@@ -30,3 +30,13 @@ Result: exit=0, pytest=47 PASSED (green), COMPLETE fired + complete_verify{round
 
 ### Reprioritization (honest)
 The GOLDEN-CHECK increment (run the SPEC's advertised commands / pillar checks in verify, not just pytest+--help) is REQUIRED, not optional — it is what makes the gate catch interface drift. FOLD IT INTO V2's verify map (the v2 workflow already plans this). So: V2 = fleet-parallel map-reduce WITH golden-command verification in the VERIFY step. That single change is what would have caught both txkvbench --db and spendlog report-budget.
+
+## FULL FEATURE validation (GOALS+COMPLETE+golden-check ON vs OFF, spendlog report-budget)
+| variant | exit | complete_fired | report_budget_ok | pytest |
+|---|---|---|---|---|
+| OFF | 0 | 0 | **0 (DRIFTED, shipped green)** | 1 |
+| ON  | 0 | 1 | **1 (correct)** | 1 |
+
+- ON built `report budget` CORRECTLY (report budget: "food 10 5 Yes" = over-flag works) where OFF DRIFTED (report_budget_ok=0) and shipped it at exit 0. So the full stack (GOALS pillars + COMPLETE + golden-check) delivered a SPEC-COMPLIANT app where the baseline silently shipped a broken interface. 81 pytest pass.
+- NO FALSE-RED confirmed (the risk): the distilled pillars each carry a RUNNABLE check (5 real commands: entry-point/cli-interface/money-invariant/shared-store/reject-negative), and the COMPLETE verify ran GREEN at round 0 (complete_verify findings=0) — the golden checks PASSED on the correct app; the gate did NOT fail good software.
+- HONEST: the golden check CATCHING a drift + the fix loop firing is NOT triggered here (the app was correct from round 0, fix_wave_shards=0) — because GOALS-on anchored the interface so it was built right in the first place. So the golden check is a proven-safe BACKSTOP; its catch-and-fix path is hard to trigger precisely because pillars prevent the drift up front. Net value: interface adherence up (ON 1/1 vs OFF 0/1 here; matches the pillars A/B trend), with the golden gate as a verified-no-false-red safety net.
