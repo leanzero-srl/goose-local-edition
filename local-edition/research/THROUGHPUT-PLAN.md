@@ -42,3 +42,14 @@ Flip fix-agent dispatch speculative:false -> true (the ONLY consumer of req.spec
 1. MANDATORY file-key normalization in group_findings_by_file / extract_file_from_finding (strip leading ./, collapse //, unify separators) so two spellings of one file can't become two shards -> two promotes to the same real dst -> torn write.
 2. The per-shard promote call, a discard_shadow(task_id) on every non-promoted shard (undefined today), and the post-loop SERIAL cross-file fallback (a serial v1 fix if still red after the parallel rounds, so a cross-file fix is never dropped).
 3. It is the FIRST production + CONCURRENT caller of make_shadow/promote (only a single-threaded unit test today) -> gate hard + a concurrent unit test.
+
+---
+
+## SPECULATE fix status (2026-07-03) — fail-close SHIPPED; full promote/verify/join DEFERRED (honest confidence)
+Shipped (HIGH confidence, small): pick_speculation_target now FAIL-CLOSES on owns-nothing tasks (skip a task whose owned_files is empty, e.g. the integrate-verify sink) — kills the CRITICAL owns-nothing corruption (a sink twin would abort the primary + strand the integrator's whole-tree edits). Bounds the blast radius of the still-default-OFF speculation path.
+
+DEFERRED (LOWEST confidence — do NOT rush-ship): the full fix (verify_speculative + promote-on-win + verify-before-commit + the lock-split resolve_speculation into candidate/lock-win/commit + spec_committing guard + PRIMARY JoinHandle retention + JOIN-after-abort-before-promote). Why deferred, honestly:
+- It is a 5-phase lock/unlock restructure of the twin spawn closure (scheduler.rs ~1846) + a new primary_handles JoinHandle map + 3 new State methods + a complete() guard. Highest subtle-bug surface in the whole effort (double-complete / leaked handle / lock-ordering deadlock).
+- The prescribed JOIN-before-promote is itself an IMPERFECT mitigation: tokio abort() cancels at the next .await, but a file write already dispatched to a spawn_blocking thread DETACHES and can land AFTER the join — so the abort-double-write window is narrowed, not closed, for async writes.
+- SPECULATE is default-OFF and DORMANT (affects no current run). There is zero urgency, and rushing a moderate-confidence scheduler-concurrency change is exactly the "cripple the stable system" risk to avoid.
+PLAN: implement the full fix in a DEDICATED focused pass with a FRESH adversarial review of the IMPLEMENTATION (not just the design), gate, PRESENT the scheduler diff, enable-and-prove with a deadlock/wall-clock guard. Until then SPECULATE stays default-OFF + the fail-close bounds it.
