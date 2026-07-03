@@ -131,3 +131,6 @@ the sink too late (2216s). NOTE: the `conf=1.0` on every "ok" is a hard-coded co
 - **Independent lever:** the slow DETAILING phase (1335s gguf-03 vs 426s gguf-06) can doom a run
   before the sink even starts — a tail fix won't rescue plan-slow runs. Separate parallel-planning
   investigation.
+
+## Sink-cap Option B is idle-only (found 06:31 during pillars rate A/B)
+Option B caps IDLE-past-deadline but NOT a continuously-active integrate-verify (the tokio::select activity branch keeps winning over the fixed-deadline branch). Add a HARD wall-clock ceiling checked at the TOP of the sink loop (break before the select when now>deadline), gated by the same GOOSE_SWARM_SINK_CAP_SECS. Verified: off-2 ran integrate-verify >40min with 0 cap fires while actively editing tests.

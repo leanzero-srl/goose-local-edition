@@ -2756,6 +2756,17 @@ impl GooseAgentDispatcher {
             None
         };
         loop {
+            // HARD wall-clock ceiling: finalize the moment the sink deadline passes, regardless of whether
+            // the sink is still emitting. The wait/timeout path below only reaches the deadline check on an
+            // event GAP (the `Err(_)` arm), so a CONTINUOUSLY-active integrate-verify (steady tokens/tools)
+            // can otherwise run well past the deadline before a gap lets the cap fire. Checking here at the
+            // top makes GOOSE_SWARM_SINK_CAP_SECS a true ceiling. No-op when unset (sink_deadline == None).
+            if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
+                eprintln!(
+                    "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
+                );
+                break;
+            }
             // Wait at most `idle`, but no later than the sink cap (when set) so the cap fires promptly.
             let wait = match sink_deadline {
                 Some(dl) => idle.min(dl.saturating_duration_since(tokio::time::Instant::now())),
