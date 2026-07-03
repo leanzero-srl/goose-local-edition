@@ -7392,12 +7392,25 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
         for round in 0..=rounds {
-            let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
-            // GOLDEN CHECK: when goals are on, also run each distilled pillar's runnable check against the
-            // ADVERTISED interface. This catches interface drift (a renamed/missing advertised command that
-            // still passes pytest + `--help`) — the dominant "delivered broken" the smoke oracle is blind to.
+            let verdict = run_smoke_gate(&cwd, complete_lang).await;
+            // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
+            // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
+            // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
+            // FALSE-FAIL a correct app, and the fix loop would then REGRESS it (observed 2026-07-03: the
+            // pillar check used `spendlog add ... --db X` while the app built `--db` as a global option
+            // BEFORE the subcommand, so a CORRECT app went red and the fix loop broke 2 pytest tests +
+            // refused exit 0). The reliable smoke oracle (pytest + entry `--help`) stays the gate. Restoring
+            // a RELIABLE golden gate (re-distilling the check from the built app's `--help`) is future work.
             if goals_enabled() {
-                verdict.findings.extend(run_pillar_checks(&cwd).await);
+                let advisory = run_pillar_checks(&cwd).await;
+                if !advisory.is_empty() {
+                    sink.write_value(serde_json::json!({
+                        "event": "pillar_check_advisory",
+                        "round": round,
+                        "findings": advisory.len(),
+                        "detail": advisory,
+                    }));
+                }
             }
             sink.write_value(serde_json::json!({
                 "event": "complete_verify",
