@@ -2252,6 +2252,37 @@ struct ResearchFinding {
     findings: String,
 }
 
+/// A fixed CORRECTNESS-review angle, fanned one-per-model across the idle fleet in the post-execute
+/// REVIEW phase (GOOSE_SWARM_REVIEW_FANOUT). Read-only + ADVISORY: it surfaces defects, drives no fix.
+struct ReviewDimension {
+    id: &'static str,
+    brief: &'static str,
+}
+
+/// The review angles fanned across the fleet — small + orthogonal so each of 3-4 nodes gets one.
+const REVIEW_DIMENSIONS: &[ReviewDimension] = &[
+    ReviewDimension {
+        id: "correctness",
+        brief: "the DEFAULT/primary path produces WRONG output — a wrong constant, parameter, unit, sign, \
+                or formula — even though the tests pass. This is the deepest defect a green suite hides.",
+    },
+    ReviewDimension {
+        id: "wiring",
+        brief: "a spec deliverable is BUILT but never imported/wired into the program's entry point, so \
+                the advertised behaviour is unreachable at runtime.",
+    },
+    ReviewDimension {
+        id: "interface",
+        brief: "an advertised command, subcommand, argument name, or argument ORDER drifts from the GOAL \
+                or the pillars (e.g. a renamed subcommand, or an option that must be global vs per-subcommand).",
+    },
+    ReviewDimension {
+        id: "edge-cases",
+        brief: "a boundary or failure mode the passing test suite never exercises — empty input, a negative \
+                or zero value, a missing file/key, or a malformed argument — is unhandled or crashes.",
+    },
+];
+
 /// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
 /// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
 struct ScoutLens {
@@ -6330,6 +6361,68 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // and the TempDir is removed from disk when the entry is dropped here.
         let _ = self.spec_shadows.lock().unwrap().remove(task_id);
     }
+
+    async fn review_dimension(
+        &self,
+        model_id: &str,
+        dim_id: &str,
+        dim_brief: &str,
+        goal: &str,
+        files: &[String],
+    ) -> Option<String> {
+        // Mirrors pre_review's read-only shape: read the produced files as text, hand them to ONE model with
+        // NO tools (&[] extensions => it physically cannot write), get back one advisory line. Because it is
+        // read-only, N of these run concurrently over the same tree with no shadow + no write-race.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let mut files_block = String::new();
+        for f in files {
+            if let Ok(c) = std::fs::read_to_string(cwd.join(f)) {
+                if c.trim().is_empty() {
+                    continue;
+                }
+                let body: String = c.chars().take(2000).collect();
+                files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
+            }
+        }
+        if files_block.is_empty() {
+            return None; // nothing on disk to review
+        }
+        let pillars_block = if goals_enabled() {
+            self.pillars
+                .get()
+                .map(|p| format!("\n{p}"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let system = format!(
+            "You correctness-review a COMPLETED multi-module build along ONE dimension ONLY: {dim_brief} A \
+             passing test suite does NOT prove this defect is absent. Read the files against the GOAL and \
+             report ANY concrete defect of THIS dimension only. Reply with EXACTLY one line \
+             `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable corrections (what is \
+             wrong + which file), empty when OK. Be conservative — only ISSUES when you can point to a real \
+             defect of this dimension."
+        );
+        let user = format!(
+            "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
+        );
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_default();
+        let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
+        let findings = findings.trim();
+        if status.to_uppercase().contains("ISSUE") && !findings.is_empty() {
+            Some(format!("[{dim_id}] {findings}"))
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]
@@ -7646,6 +7739,66 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
 
     // GOOSE_SWARM_REVIEW: model-free AST wiring/drift review of the produced tree (off by default).
     // Advisory — emits a `review` event the eval reads; never blocks or fails the run.
+    // REVIEW FANOUT (GOOSE_SWARM_REVIEW_FANOUT, default OFF): while the whole fleet sits idle post-execute,
+    // fan a fixed set of correctness-review DIMENSIONS one-per-model across the nodes (fanout_over_fleet).
+    // Each reviewer is READ-ONLY (no tools) so N run concurrently over one tree with no write-race. Phase 1
+    // is ADVISORY: findings are surfaced in an event but DRIVE NO FIX — so a false finding can never regress
+    // a green app (the failure mode the golden-check demotion taught us). Off => byte-identical path.
+    let review_fanout_on = std::env::var("GOOSE_SWARM_REVIEW_FANOUT")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if review_fanout_on && !fleet_models.is_empty() {
+        let me = smoke_fix_dispatcher.clone();
+        let goal = opts.prompt.clone();
+        let files = smoke_all_files.clone();
+        let dims: Vec<(String, String)> = REVIEW_DIMENSIONS
+            .iter()
+            .map(|d| (d.id.to_string(), d.brief.to_string()))
+            .collect();
+        eprintln!(
+            "{}",
+            style(format!(
+                "▶  REVIEW-FANOUT   {} dimensions across {} model(s) — read-only, advisory",
+                dims.len(),
+                fleet_models.len()
+            ))
+            .cyan()
+        );
+        let per_dim = fanout_over_fleet(fleet_models.clone(), dims, move |(id, brief), model| {
+            let me = me.clone();
+            let goal = goal.clone();
+            let files = files.clone();
+            async move {
+                me.review_dimension(&model, &id, &brief, &goal, &files)
+                    .await
+            }
+        })
+        .await;
+        let findings: Vec<String> = per_dim.into_iter().flatten().collect();
+        sink.write_value(serde_json::json!({
+            "event": "review_fanout_advisory",
+            "dimensions": REVIEW_DIMENSIONS.len(),
+            "models": fleet_models.len(),
+            "findings": findings.len(),
+            "detail": findings,
+        }));
+        if findings.is_empty() {
+            eprintln!(
+                "{}",
+                style("review fanout: clean across all dimensions").green()
+            );
+        } else {
+            eprintln!(
+                "{} ({} finding(s) across {} model(s) — ADVISORY, drives no fix):",
+                style("review fanout").yellow().bold(),
+                findings.len(),
+                fleet_models.len()
+            );
+            for f in &findings {
+                eprintln!("  - {f}");
+            }
+        }
+    }
     let review_on = std::env::var("GOOSE_SWARM_REVIEW")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
