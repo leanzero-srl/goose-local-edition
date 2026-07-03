@@ -2013,6 +2013,23 @@ mod tests {
     }
 
     #[test]
+    fn normalize_rel_path_collapses_spellings_to_one_group() {
+        assert_eq!(normalize_rel_path("./pkg/x.py"), "pkg/x.py");
+        assert_eq!(normalize_rel_path("pkg//x.py"), "pkg/x.py");
+        assert_eq!(normalize_rel_path("pkg\\x.py"), "pkg/x.py");
+        assert_eq!(normalize_rel_path("pkg/x.py"), "pkg/x.py");
+        // Two DISTINCT findings that name the same file with different spellings must resolve to ONE
+        // file-group — otherwise two shards would promote to the same real dst (a torn write).
+        let findings = vec![
+            "./pkg/cli.py:1: in a\nE   Err".to_string(),
+            "pkg//cli.py:2: in b\nE   Err".to_string(),
+        ];
+        let (groups, _) = group_findings_by_file(&findings);
+        assert_eq!(groups.len(), 1, "both spellings collapse to one group");
+        assert_eq!(groups[0].file, "pkg/cli.py");
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -5583,6 +5600,18 @@ struct FileGroup {
 /// `tail_lines` of real pytest/`-m` output (not model text), so the `path.py:N: in ...` and
 /// `File "path.py", line N` shapes are stable. Prefers a NON-test source frame (the thing to fix); falls
 /// back to the last file seen. Returns None when the finding names no code file (e.g. a missing entry point).
+/// Normalize a finding-extracted file path so different spellings of the SAME file (`./x`, `x`, `a//b`,
+/// backslashes) collapse to ONE canonical relative string. LOAD-BEARING for GOOSE_SWARM_COMPLETE_PARALLEL:
+/// two spellings must NOT become two file-groups -> two shards -> two promotes to the same real dst -> a
+/// torn write. Pure + unit-tested.
+fn normalize_rel_path(p: &str) -> String {
+    p.replace('\\', "/")
+        .split('/')
+        .filter(|seg| !seg.is_empty() && *seg != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn extract_file_from_finding(finding: &str) -> Option<String> {
     let is_code = |p: &str| {
         (p.ends_with(".py") || p.ends_with(".rs") || p.ends_with(".ts"))
@@ -5600,9 +5629,11 @@ fn extract_file_from_finding(finding: &str) -> Option<String> {
         };
         if let Some(p) = cand.map(|p| p.trim()) {
             if is_code(p) {
-                last = Some(p.to_string());
+                // Normalize so two spellings of one file become ONE group (partition invariant).
+                let norm = normalize_rel_path(p);
+                last = Some(norm.clone());
                 if !p.contains("test") && !p.contains("conftest") {
-                    src = Some(p.to_string());
+                    src = Some(norm);
                 }
             }
         }
