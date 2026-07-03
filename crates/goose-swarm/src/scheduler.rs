@@ -293,6 +293,18 @@ impl State {
             .sum()
     }
 
+    /// K1: is the integrate-verify SINK the (only) in-flight task? Dynamic-replan is suppressed in this
+    /// window — the sink verifies-by-running the whole tree and owns NO files, so a bonus task completing
+    /// here could land UNVERIFIED code AFTER the sink's PASS. Before the sink starts (its deps are every
+    /// other task, so it runs alone at the end) other tasks are still in flight and replan is fine; this
+    /// only guards the exact sink-race window.
+    fn sink_in_flight(&self) -> bool {
+        self.dag
+            .tasks
+            .iter()
+            .any(|(id, n)| n.state == TaskState::Claimed && id.as_str() == "integrate-verify")
+    }
+
     fn make_replan_context(&self) -> ReplanContext {
         let mut completed = Vec::new();
         let mut failed = Vec::new();
@@ -1651,6 +1663,7 @@ impl Scheduler {
                         && s.ready.is_empty()
                         && s.idle_capacity() >= 2
                         && s.replans_done < self.max_replans
+                        && !s.sink_in_flight()
                     {
                         s.replans_done += 1;
                         Some(s.make_replan_context())
