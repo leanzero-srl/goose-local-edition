@@ -6448,12 +6448,16 @@ impl TaskDispatcher for GooseAgentDispatcher {
         if files_block.is_empty() {
             return false; // no code to verify against -> cannot confirm
         }
-        let system = "You are a SKEPTIC verifying ONE code-review finding raised by a DIFFERENT reviewer. \
-            Your job is to REFUTE it: read the ACTUAL files and decide whether the claimed defect is REAL and \
-            concrete, or whether it is wrong / already handled / not actually a defect. Default to REFUTE when \
-            unsure. Reply with EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM (the defect is real, \
-            you can point to it in the code) or REFUTE (not a real defect); confidence is HIGH or LOW. Only \
-            say CONFIRM|HIGH when you can point to the exact defect in the files shown."
+        let system = "You verify ONE code-review finding by CHECKING IT AGAINST THE ACTUAL CODE — do NOT \
+            rubber-stamp it, and do NOT reflexively reject it. The finding names a file and a defect: go read \
+            THAT file and see whether the defect is really present as described. CONFIRM if you can LOCATE the \
+            defect in the files shown — point to the exact construct (e.g. the argument really uses \
+            store_true, the module really is never imported, the command name really differs from the spec). \
+            REFUTE only if the finding is factually WRONG, already handled in the code, or not actually a \
+            defect. Reply EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM or REFUTE; confidence is \
+            HIGH or LOW. Use CONFIRM|HIGH when you LOCATED the defect in the code; REFUTE|HIGH when you \
+            checked and it is genuinely not a defect; use LOW only when the files shown are insufficient to \
+            tell. A real, locatable defect must be CONFIRMED — being unsure is not a reason to refute."
             .to_string();
         let user = format!(
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
