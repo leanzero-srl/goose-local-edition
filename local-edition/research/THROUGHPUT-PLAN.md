@@ -20,3 +20,25 @@ Master goal: cut wall-clock TIME at EXACTLY constant quality via node utilizatio
 
 ## Biggest REAL opportunity + honest read
 The sink tail (integrate-verify runs alone on 1 node while 2 idle) is the largest idle window. The only mechanism for it (SPECULATE) is BROKEN. On the 3-node fleet the EXECUTE middle is already well-utilized (DAG + fanout for research/plan/contracts), so the wins are: (1) MEASURE the tail (INSTR), (2) the weight lever IF hardware supports PARALLEL>1 (K6+guards), (3) fix SPECULATE correctly to fill the sink (big, careful). My V2 needs the isolation fix before it's safe to enable.
+
+---
+
+## FIX DESIGNS — adversarially reviewed (workflow wcrg7pjap, 2026-07-03). All 3 = implement-WITH-CHANGE.
+
+### SAFE now (skeptic HIGH): INSTR + K1
+- INSTR gates_m: add t_gates + gates_m bucket after the post-execute phases, include in total_m. Verified compiles + logic sound. CAVEAT: redefines total_min (no longer = research+planning+execute); the harness times externally so it doesn't break, but keep all buckets summing to total. Default-off phases => gates_m ~= 0 by default.
+- K1 replan-sink guard: exclude the integrate-verify sink from the dynamic-replan in_flight trigger (don't replan while the sink is the sole in-flight task). Preserves mutual-exclusion + stuck-bail; no deadlock (sink has a wall-clock cap; replan is opportunistic). Single call site. SHIP.
+
+### K6 weight — REQUIRED CHANGE: WARN-ONLY, do NOT silently clamp
+Skeptic: swarm "weight" = concurrent AGENT tasks (bursty, idle LM Studio slots between LLM calls), so oversubscribing weight>PARALLEL to overlap gaps is a LEGIT throughput tactic; silently clamping inverts the documented "user wins" contract. => Do NOT clamp. WARN on mismatch (weight > probed PARALLEL) only; keep the user's weight. (The real thrash guard is the back-off + excluding infra-eviction transients from the attempt count, from the original audit.)
+
+### SPECULATE fix — implement-with-change, but 2 HARD defects (default-OFF, no rush; PRESENT the diff before shipping)
+Design: verify_speculative (run_smoke_gate on the shadow, GREEN-only, fail-closed) + promote on a locked win + a lock-split of resolve_speculation. Skeptic found:
+1. OWNS-NOTHING CORRUPTION (critical): integrate-verify owns [] -> verify passes on the green shadow, win locks, promote copies ZERO files, the primary integrator is aborted, commit marks Done => ships the primary's PARTIAL tree, discards the twin's whole-tree edits. REQUIRED: make 'skip owns-nothing tasks in pick_speculation_target' MANDATORY, OR fail-close verify_speculative when owned_files is empty.
+2. ABORT-WITHOUT-JOIN double-write: the scheduler holds only a tokio AbortHandle (the JoinHandle is dropped at spawn); abort() is non-blocking, so a primary write already dispatched to a spawn_blocking thread can land AFTER promote. REQUIRED: keep the primary JoinHandle + await it after abort (join before promote), or a cooperative-cancel the worker checks. This is genuine hard concurrency -> implement carefully + PRESENT before shipping; SPECULATE stays default-OFF.
+
+### V2 (COMPLETE_PARALLEL) fix — implement-with-change (tractable; no abort-join since fix agents run to completion)
+Flip fix-agent dispatch speculative:false -> true (the ONLY consumer of req.speculative is make_shadow) => each shard writes its own shadow, not the real cwd. REQUIRED additions (do NOT exist yet):
+1. MANDATORY file-key normalization in group_findings_by_file / extract_file_from_finding (strip leading ./, collapse //, unify separators) so two spellings of one file can't become two shards -> two promotes to the same real dst -> torn write.
+2. The per-shard promote call, a discard_shadow(task_id) on every non-promoted shard (undefined today), and the post-loop SERIAL cross-file fallback (a serial v1 fix if still red after the parallel rounds, so a cross-file fix is never dropped).
+3. It is the FIRST production + CONCURRENT caller of make_shadow/promote (only a single-threaded unit test today) -> gate hard + a concurrent unit test.
