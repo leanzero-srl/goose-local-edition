@@ -6324,6 +6324,12 @@ impl TaskDispatcher for GooseAgentDispatcher {
             // `shadow` (TempDir) drops here -> the shadow workspace is removed from disk.
         }
     }
+
+    async fn discard_speculative(&self, task_id: &str) {
+        // Drop the shadow WITHOUT promoting (a lost/errored fix shard): its edits never reach the real tree
+        // and the TempDir is removed from disk when the entry is dropped here.
+        let _ = self.spec_shadows.lock().unwrap().remove(task_id);
+    }
 }
 
 #[async_trait]
@@ -7455,8 +7461,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                             let all_files = all_files.clone();
                             let dev = dev.clone();
                             async move {
+                                let task_id = format!("complete-fix::{}", g.file);
                                 let req = DispatchRequest {
-                                    task_id: format!("complete-fix::{}", g.file),
+                                    task_id: task_id.clone(),
                                     description: smoke_fix_description(&g.findings, complete_lang),
                                     device_id: dev,
                                     model_id: model,
@@ -7465,7 +7472,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                                     owned_files: vec![g.file.clone()],
                                     all_files,
                                     prior_hint: None,
-                                    speculative: false,
+                                    // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
+                                    // concurrent fix agents can never write the real tree at once. On success
+                                    // ONLY this shard's owned file is promoted back — and the file-groups are a
+                                    // NORMALIZED disjoint partition, so no two promotes touch the same real dst.
+                                    speculative: true,
                                 };
                                 match tokio::time::timeout(
                                     std::time::Duration::from_secs(1200),
@@ -7473,12 +7484,20 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                                 )
                                 .await
                                 {
-                                    Ok(Ok(o)) => format!(
-                                        "{}: {}",
-                                        g.file,
-                                        o.output.lines().next().unwrap_or("fixed")
-                                    ),
-                                    _ => format!("{}: (fix timed out or errored)", g.file),
+                                    Ok(Ok(o)) => {
+                                        // Fixed in the shadow -> copy ONLY this shard's owned file to real.
+                                        me.promote_speculative(&task_id).await;
+                                        format!(
+                                            "{}: {}",
+                                            g.file,
+                                            o.output.lines().next().unwrap_or("fixed")
+                                        )
+                                    }
+                                    _ => {
+                                        // Errored/timed out -> drop the shadow; its edits never reach real.
+                                        me.discard_speculative(&task_id).await;
+                                        format!("{}: (fix timed out or errored)", g.file)
+                                    }
                                 }
                             }
                         })

@@ -95,4 +95,8 @@ pub trait TaskDispatcher: Send + Sync {
     /// project tree. Called by the scheduler when a speculative twin finishes first. Default no-op so the
     /// mock and the speculation-OFF path need no change; the real dispatcher overrides it in Phase 2.
     async fn promote_speculative(&self, _task_id: &str) {}
+
+    /// Drop a shadow workspace for `task_id` WITHOUT promoting it — a lost/errored speculative shard, so its
+    /// edits never reach the real tree and the shadow does not leak. Default no-op.
+    async fn discard_speculative(&self, _task_id: &str) {}
 }
