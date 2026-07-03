@@ -114,4 +114,19 @@ pub trait TaskDispatcher: Send + Sync {
     ) -> Option<String> {
         None
     }
+
+    /// ADVERSARIAL VERIFY (the three-vote core): hand ONE review finding to a skeptic model — a DIFFERENT
+    /// model than raised it — prompted to REFUTE it against the ACTUAL code (read-only, no tools). Returns
+    /// true only if the skeptic independently CONFIRMS the finding is a real defect with HIGH confidence, i.e.
+    /// it SURVIVES refutation. FAIL-CLOSED: default false, and any refute / low-confidence / parse-or-timeout
+    /// failure returns false — an unverified finding can never drive a fix. Read-only => no write-race.
+    async fn verify_finding(
+        &self,
+        _model_id: &str,
+        _finding: &str,
+        _goal: &str,
+        _files: &[String],
+    ) -> bool {
+        false
+    }
 }
