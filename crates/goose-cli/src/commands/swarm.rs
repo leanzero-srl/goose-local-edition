@@ -2002,6 +2002,32 @@ mod tests {
     }
 
     #[test]
+    fn run_pillar_checks_flags_only_failing_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let swarm = dir.path().join(".swarm");
+        std::fs::create_dir_all(&swarm).unwrap();
+        let pillars = serde_json::json!({
+            "pillars": [
+                {"id": "P1", "goal": "ok", "check": "true"},        // exits 0 -> no finding
+                {"id": "P2", "goal": "drift", "check": "false"},    // exits 1 -> ONE finding
+                {"id": "P3", "goal": "no runnable check"}           // no check -> skipped
+            ]
+        });
+        std::fs::write(swarm.join("pillars.json"), pillars.to_string()).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let findings = rt.block_on(run_pillar_checks(dir.path()));
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the failing (false) pillar check is a finding"
+        );
+        assert!(findings[0].contains("P2"));
+        // A directory with no pillars.json yields no findings (off-path safe).
+        let empty = tempfile::tempdir().unwrap();
+        assert!(rt.block_on(run_pillar_checks(empty.path())).is_empty());
+    }
+
+    #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
@@ -3231,7 +3257,14 @@ impl GooseAgentDispatcher {
             interface the spec advertises — command names and ARGUMENT ORDER verbatim (if the spec says \
             `report budget`, the pillar says `report budget`, never `budget report`); (b) the invariants that \
             make modules agree — the shared store/file, the units (e.g. money to 2 decimals), the entry point; \
-            (c) any correctness rule the spec states. Do NOT restate implementation detail or invent features. \
+            (c) any correctness rule the spec states. \
+            For EACH pillar ALSO emit a runnable `check`: a SINGLE self-contained shell command that EXITS 0 \
+            IFF the pillar holds on the FINISHED app, exercising the ADVERTISED interface with sample input — \
+            e.g. `python3 -m <package> <advertised subcommand> <args> --db /tmp/pc.json | grep -qE '<expected>'`, \
+            chaining any setup with && and using a throwaway --db path. The check MUST pass on a CORRECT app and \
+            FAIL if the advertised command is missing/renamed/wrong; keep it short, deterministic, no network. \
+            Omit `check` ONLY for a pillar that genuinely has no runnable form. \
+            Do NOT restate implementation detail or invent features. \
             Prefer the spec's literal words. Output ONLY the JSON object; no prose, no code fences."
             .to_string();
         let response = Some(Response {
@@ -4111,6 +4144,44 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         entry_ok,
         findings,
     }
+}
+
+/// GOOSE_SWARM_COMPLETE + GOOSE_SWARM_GOALS: run each distilled pillar's runnable `check` — a self-contained
+/// shell command that exits 0 iff the pillar's ADVERTISED interface/golden holds — against the produced tree.
+/// A NON-ZERO exit becomes a finding: the advertised command is missing/renamed/wrong (the interface-drift
+/// class that `pytest` + `--help` cannot see). Reads `.swarm/pillars.json` (written at plan time). No pillars,
+/// no checks, or unparsable -> no findings. `sh -c` is scoped to `root` with a hard timeout; a spawn error or
+/// timeout is inconclusive (None -> never a finding), so a missing shell / hanging check can't false-fail.
+async fn run_pillar_checks(root: &Path) -> Vec<String> {
+    let text = match std::fs::read_to_string(root.join(".swarm").join("pillars.json")) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let pillars: Pillars = match serde_json::from_str(&text) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let mut findings = Vec::new();
+    for p in &pillars.pillars {
+        let check = match p.check.as_ref() {
+            Some(c) if !c.trim().is_empty() => c,
+            _ => continue,
+        };
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c").arg(check).current_dir(root);
+        if let Some(out) = smoke_output(cmd, 60).await {
+            if !out.status.success() {
+                let combined = combined_output(&out);
+                findings.push(format!(
+                    "pillar {} check FAILED (advertised interface/golden not satisfied): {}\n{}",
+                    p.id,
+                    check,
+                    tail_lines(&combined, 20)
+                ));
+            }
+        }
+    }
+    findings
 }
 
 /// Run a smoke subcommand with a HARD TIMEOUT + null stdin, so a produced server/REPL/daemon that ignores
@@ -7273,16 +7344,23 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
         for round in 0..=rounds {
-            let verdict = run_smoke_gate(&cwd, complete_lang).await;
+            let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
+            // GOLDEN CHECK: when goals are on, also run each distilled pillar's runnable check against the
+            // ADVERTISED interface. This catches interface drift (a renamed/missing advertised command that
+            // still passes pytest + `--help`) — the dominant "delivered broken" the smoke oracle is blind to.
+            if goals_enabled() {
+                verdict.findings.extend(run_pillar_checks(&cwd).await);
+            }
             sink.write_value(serde_json::json!({
                 "event": "complete_verify",
                 "round": round,
                 "ran": verdict.ran,
-                "passed": verdict.passed(),
+                "passed": verdict.findings.is_empty(),
                 "findings": verdict.findings.len(),
             }));
-            // The gate does not apply (no recognized build) OR a clean verify => done.
-            if !verdict.ran || verdict.findings.is_empty() {
+            // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
+            // smoke-skipped tree is still green — there is genuinely nothing to fix.
+            if verdict.findings.is_empty() {
                 final_passed = true;
                 eprintln!(
                     "{}",
