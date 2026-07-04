@@ -2633,9 +2633,20 @@ pub struct GooseAgentDispatcher {
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
+    /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
+    /// Empty unless the flag is on.
+    sink_review_findings: Mutex<Vec<String>>,
 }
 
 impl GooseAgentDispatcher {
+    /// Drain the sink idle-fill review findings accumulated during the sink (see `idle_dimension_review`).
+    /// Consumed by run_swarm's post-sink REVIEW block once the scheduler idle-loop wiring lands (next step).
+    #[allow(dead_code)]
+    fn drain_sink_review(&self) -> Vec<String> {
+        std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
@@ -2669,6 +2680,7 @@ impl GooseAgentDispatcher {
             contracts: std::sync::OnceLock::new(),
             pillars: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
+            sink_review_findings: Mutex::new(Vec::new()),
         })
     }
 
@@ -5068,6 +5080,28 @@ impl PreReviewer for GooseAgentDispatcher {
         PreReviewOutput {
             had_findings,
             summary: findings.chars().take(200).collect(),
+        }
+    }
+
+    async fn idle_dimension_review(&self, model_id: &str, goal: &str, dim_index: usize) {
+        // Read-only whole-tree review along ONE rotating dimension, on an idle node while the sink runs.
+        // Reuses review_dimension (empty extensions => physically cannot write, so it never races the sink).
+        // Any finding is accumulated for run_swarm to drain + re-verify against the FINAL tree after the sink
+        // (fail-closed => a stale/torn-read finding is refuted and dropped).
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let dim = &REVIEW_DIMENSIONS[dim_index % REVIEW_DIMENSIONS.len()];
+        let files: Vec<String> = collect_py_files(&cwd)
+            .iter()
+            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .collect();
+        if files.is_empty() {
+            return;
+        }
+        if let Some(finding) = self
+            .review_dimension(model_id, dim.id, dim.brief, goal, &files)
+            .await
+        {
+            self.sink_review_findings.lock().unwrap().push(finding);
         }
     }
 }
