@@ -18,3 +18,16 @@ Read-only (&[]) or shadow-isolated => no write-race; frozen snapshot => no torn 
 
 ## Verdict
 Genuine master-goal win (fills the biggest single-node window) + vetted safe. Moderate scheduler change (snapshot-at-dispatch + idle-job class + trait method + post-sink consume). Implement CAREFULLY with the 2 required changes + PRESENT the scheduler diff (lower-confidence scheduler edit). Modest wall-clock saving (~the review time overlapped) but the right direction for the serial tail.
+
+## MEASURED (budgetwise enable-prove, GOOSE_SWARM_SINK_REVIEW=1, ~10min sink)
+- Sink-window node distribution: 40 active=1 / 30 active=2 / 13 active=3 => ~52% of the sink had >=2 nodes ENGAGED (on a 10-min sink, EXECUTE workers are done, so >=2 = the idle-fill). REAL but PARTIAL utilization win (peak 3).
+- NOT saturating: the idle loop fires ONE sink-review per ~15s tick while each review runs ~90s -> gaps at 1 node. REFINEMENT: fire pick_sink_review for ALL free nodes per tick (while-let loop).
+- sink_review event did NOT fire this run (findings best-effort: scheduler.run() returns on all_terminal, not idle jobs, so a review outliving the sink is orphaned + not drained). Utilization is the primary win; findings-consumption is a bonus on long sinks.
+- SAFETY confirmed structural: read-only (empty extensions => cannot write). The app came out broken (exit 1, 9 pytest fail) this run but that is a SEPARATE stochastic swarm-build issue, NOT the idle-fill (which cannot alter delivered output). Exit gate correctly refused it green.
+
+## SATURATION PROVEN (finctl heavy long-sink, saturated build, 2026-07-04)
+Long sink: 114 sink-tagged samples (~15 min). Node distribution DURING the sink: 2 active=1, 29 active=2, 83 active=3.
+- >=2 nodes: 112/114 = 98% (was 52% pre-saturation).
+- all-3 nodes: 83/114 = 73% (was ~16%).
+- 1 node: 2/114 = 2% (was 43%).
+=> the fill-all-free-nodes saturation refinement (f005ea054, if-let->loop) WORKS: the two idle nodes are now busy essentially the whole sink. The user-observed 'one node crunching' during the sink is eliminated when GOOSE_SWARM_SINK_REVIEW is on. Read-only + re-verify => delivered output unchanged.
