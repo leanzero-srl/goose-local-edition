@@ -28,9 +28,9 @@ pub mod codex;
 pub mod codex_acp;
 pub mod copilot_acp;
 pub mod cursor_agent;
-pub mod databricks;
-pub mod databricks_auth;
-pub mod databricks_v2;
+pub mod custom_provider_config;
+pub mod databricks_def;
+pub mod databricks_v2_def;
 pub mod formats;
 mod gcpauth;
 pub mod gcpvertexai;
@@ -52,7 +52,10 @@ pub mod local_inference;
 pub mod nanogpt;
 pub mod oauth;
 pub mod oauth_device_flow;
-pub mod ollama;
+pub mod ollama {
+    pub use goose_providers::ollama::*;
+}
+pub mod ollama_def;
 pub mod openai {
     pub use goose_providers::openai::*;
 }
