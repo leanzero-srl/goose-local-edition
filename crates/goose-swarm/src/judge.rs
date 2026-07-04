@@ -251,6 +251,13 @@ pub struct PreReviewOutput {
 #[async_trait]
 pub trait PreReviewer: Send + Sync {
     async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput;
+
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO and pre-review is
+    /// exhausted, an otherwise-idle node runs a READ-ONLY whole-tree correctness review along ONE dimension
+    /// (by rotating index) and ACCUMULATES any finding inside the dispatcher for run_swarm to drain +
+    /// re-verify against the FINAL tree after the sink. Read-only (no tools) so it never races the sink's
+    /// writes; a stale/torn read just yields a finding the post-sink re-verify refutes. Default no-op.
+    async fn idle_dimension_review(&self, _model_id: &str, _goal: &str, _dim_index: usize) {}
 }
 
 /// A verdict derivable from cheap, unambiguous signals alone — no model required. The scheduler trusts
