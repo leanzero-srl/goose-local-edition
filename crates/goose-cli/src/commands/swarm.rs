@@ -1967,6 +1967,24 @@ mod tests {
     }
 
     #[test]
+    fn assured_gate_precedence_and_byte_identical_default() {
+        // Default path (assured OFF): unset -> false, byte-identical to the old env().unwrap_or(false).
+        assert!(!resolve_gate(None, false, true));
+        assert!(!resolve_gate(None, false, false));
+        // Assured ON fills a bundle gate that is unset; a non-bundle gate stays off.
+        assert!(resolve_gate(None, true, true));
+        assert!(!resolve_gate(None, true, false));
+        // EXPLICIT env ALWAYS wins over the profile (both directions).
+        assert!(!resolve_gate(Some("0".to_string()), true, true)); // assured on + explicit off -> off
+        assert!(!resolve_gate(Some("off".to_string()), true, true));
+        assert!(resolve_gate(Some("1".to_string()), false, true)); // assured off + explicit on -> on
+        assert!(resolve_gate(Some("true".to_string()), false, false)); // explicit on even outside the bundle
+                                                                       // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
+        assert!(resolve_gate(Some(" YES ".to_string()), false, false)); // trimmed + case-insensitive
+        assert!(!resolve_gate(Some("maybe".to_string()), true, true));
+    }
+
+    #[test]
     fn extract_file_prefers_source_over_test_and_none_when_absent() {
         let f = "tests/test_cli.py:9: in test_add\n    from spendlog.cli import main\n\
                  spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
@@ -4539,14 +4557,7 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
 /// GOOSE_SWARM_BROWSER_VERIFY: opt-in headless-browser advisory for a static web app. Default-OFF, so the
 /// whole path is dead unless set and the default run is byte-identical.
 fn browser_verify_enabled() -> bool {
-    std::env::var("GOOSE_SWARM_BROWSER_VERIFY")
-        .map(|v| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "1" | "on" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
+    swarm_gate("GOOSE_SWARM_BROWSER_VERIFY", true)
 }
 
 /// Locate a headless-chromium binary with NO npm/playwright driver: prefer Playwright's cached standalone
@@ -6084,8 +6095,12 @@ struct Pillars {
 }
 
 /// GOOSE_SWARM_GOALS (default OFF): distill app-level pillars at plan time and inject them into every worker.
-fn goals_enabled() -> bool {
-    std::env::var("GOOSE_SWARM_GOALS")
+/// GOOSE_SWARM_ASSURED turns ON the individually-validated reliability bundle as ONE group, so a user gets
+/// consistent functional delivery without knowing ~8 env vars (a fresh `goose swarm run` otherwise has no
+/// deterministic run-gate at all). It does NOT flip the shipped default: an EXPLICIT env var for any gate
+/// overrides the profile, and with the profile OFF every gate resolves byte-identically to before.
+fn assured_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_ASSURED")
         .map(|v| {
             matches!(
                 v.trim().to_lowercase().as_str(),
@@ -6093,6 +6108,33 @@ fn goals_enabled() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Resolve a `GOOSE_SWARM_<name>` boolean gate with the assured-profile precedence: an EXPLICIT env var
+/// wins (set to ANY recognized value — so explicit `0`/`off` beats the profile); else, if the assured
+/// profile is on AND this gate is in the bundle, on; else the shipped default (false for every gate today).
+/// When the profile is OFF this is byte-identical to `env(name).map(truthy).unwrap_or(false)`.
+fn swarm_gate(name: &str, in_assured_bundle: bool) -> bool {
+    resolve_gate(
+        std::env::var(name).ok(),
+        assured_enabled(),
+        in_assured_bundle,
+    )
+}
+
+/// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
+fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool) -> bool {
+    if let Some(v) = explicit {
+        return matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        );
+    }
+    in_assured_bundle && assured
+}
+
+fn goals_enabled() -> bool {
+    swarm_gate("GOOSE_SWARM_GOALS", true)
 }
 
 /// Render the pillars as a worker-prompt block. Empty pillars -> empty string (a true no-op), so injection is
@@ -6422,9 +6464,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
-        let contracts_on = std::env::var("GOOSE_SWARM_CONTRACTS")
-            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-            .unwrap_or(false);
+        let contracts_on = swarm_gate("GOOSE_SWARM_CONTRACTS", true);
         // GOOSE_SWARM_CONTRACTS: inject the frozen sibling-module interfaces so every parallel worker
         // builds against ONE agreed contract (kills cross-module drift). No-op until the stub pass (2b)
         // populates the bundle, so this is safe to ship ahead of the generator.
@@ -7304,6 +7344,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         eprintln!("log: {}", p.display());
     }
 
+    if assured_enabled() {
+        eprintln!(
+            "{}",
+            style(
+                "assured profile ON — resolving the validated reliability gates as a bundle \
+                 (explicit GOOSE_SWARM_* env vars override)"
+            )
+            .cyan()
+        );
+    }
     sink.write_value(serde_json::json!({
         "event": "run_started",
         "prompt": opts.prompt,
@@ -7315,6 +7365,19 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         "pool": enabled.iter().map(|d| serde_json::json!({
             "id": d.id, "model_id": d.model_id, "weight": d.weight, "instances": d.instances,
         })).collect::<Vec<_>>(),
+        // The RESOLVED gate set (assured bundle + explicit overrides applied) so a run's config is legible.
+        "assured": assured_enabled(),
+        "gates": {
+            "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
+            "goals": goals_enabled(),
+            "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
+            "review": swarm_gate("GOOSE_SWARM_REVIEW", true),
+            "review_fanout": swarm_gate("GOOSE_SWARM_REVIEW_FANOUT", true),
+            "review_verify": swarm_gate("GOOSE_SWARM_REVIEW_VERIFY", true),
+            "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
+            "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
+            "browser_verify": browser_verify_enabled(),
+        },
     }));
 
     // Optionally pre-warm the planner + enabled worker models so remote JIT-load doesn't race.
@@ -7689,9 +7752,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
 
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
     // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
-    let contracts_on = std::env::var("GOOSE_SWARM_CONTRACTS")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let contracts_on = swarm_gate("GOOSE_SWARM_CONTRACTS", true);
     // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
     // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
     // module filter below already empties on a pure non-Python tree; this makes the skip explicit and
@@ -7852,9 +7913,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // modules THIS run left unwired — never a PRE-EXISTING intentional dead module (e.g. an amendment's
     // already-unwired duplicate, like byte-oracle's detector.py, which the wire-fix otherwise flails on).
     // Greenfield: the tree is empty here -> no findings -> review_before is empty -> no effect.
-    let review_before: std::collections::HashSet<String> = if std::env::var("GOOSE_SWARM_REVIEW")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
+    let review_before: std::collections::HashSet<String> = if swarm_gate("GOOSE_SWARM_REVIEW", true)
     {
         run_ast_review(&std::env::current_dir().unwrap_or_default())
             .await
@@ -7882,9 +7941,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_COMPLETE_CAP_SECS. Unlike GOOSE_SWARM_SMOKE (advisory, one-shot) the FINAL verdict is fed
     // into the run's exit code below, so a still-red app can no longer exit 0 and get delivered as "done".
     // Off by default => this block never runs and the exit path stays byte-identical.
-    let complete_on = std::env::var("GOOSE_SWARM_COMPLETE")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let complete_on = swarm_gate("GOOSE_SWARM_COMPLETE", true);
     let mut complete_failed = false;
     if complete_on {
         let rounds = complete_rounds();
@@ -8149,9 +8206,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_SMOKE: deterministic end-to-end oracle on the produced tree (off by default —
     // GOOSE_SWARM_SMOKE=1). Emits a `smoke` event the eval reads; does not alter the run's exit code.
     // GOOSE_SWARM_COMPLETE (above) supersedes this standalone gate to avoid double-running the suite.
-    let smoke_on = std::env::var("GOOSE_SWARM_SMOKE")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let smoke_on = swarm_gate("GOOSE_SWARM_SMOKE", true);
     if smoke_on && !complete_on {
         let smoke_lang = detect_language(&opts.prompt, &smoke_all_files);
         let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
@@ -8227,9 +8282,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // Each reviewer is READ-ONLY (no tools) so N run concurrently over one tree with no write-race. Phase 1
     // is ADVISORY: findings are surfaced in an event but DRIVE NO FIX — so a false finding can never regress
     // a green app (the failure mode the golden-check demotion taught us). Off => byte-identical path.
-    let review_fanout_on = std::env::var("GOOSE_SWARM_REVIEW_FANOUT")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let review_fanout_on = swarm_gate("GOOSE_SWARM_REVIEW_FANOUT", true);
     if review_fanout_on && !fleet_models.is_empty() {
         let me = smoke_fix_dispatcher.clone();
         let goal = opts.prompt.clone();
@@ -8285,9 +8338,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         // model that tries to REFUTE it against the real code; only findings that SURVIVE (independent
         // CONFIRM|HIGH) are kept. Read-only + fanned across the fleet (idle nodes), fail-closed. Surfaced
         // as a review_verify event; still advisory here (Phase 2b routes survivors through a re-verified fix).
-        let review_verify_on = std::env::var("GOOSE_SWARM_REVIEW_VERIFY")
-            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-            .unwrap_or(false);
+        let review_verify_on = swarm_gate("GOOSE_SWARM_REVIEW_VERIFY", true);
         if review_verify_on && !findings.is_empty() {
             let me = smoke_fix_dispatcher.clone();
             let goal = opts.prompt.clone();
@@ -8325,9 +8376,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // DURING the sink, then re-verify each against the FINAL post-sink tree (fail-closed) — a finding the sink
     // obsoleted or a torn read is refuted + dropped. Overlapping the review with the sink (vs running it cold
     // after) is the throughput win; the re-gate keeps delivered quality unchanged. Advisory (drives no fix).
-    let sink_review_on = std::env::var("GOOSE_SWARM_SINK_REVIEW")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let sink_review_on = swarm_gate("GOOSE_SWARM_SINK_REVIEW", true);
     if sink_review_on && !fleet_models.is_empty() {
         let prewarmed = smoke_fix_dispatcher.drain_sink_review();
         if !prewarmed.is_empty() {
@@ -8365,9 +8414,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             );
         }
     }
-    let review_on = std::env::var("GOOSE_SWARM_REVIEW")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
+    let review_on = swarm_gate("GOOSE_SWARM_REVIEW", true);
     if review_on {
         let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
         let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
