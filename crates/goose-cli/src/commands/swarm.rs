@@ -4498,6 +4498,150 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
 
 /// Deterministic Rust smoke oracle: `cargo build` must succeed and `cargo run -- --help` must not PANIC.
 /// A missing `cargo` or no Cargo.toml is inconclusive (ran=false), never a failure.
+/// GOOSE_SWARM_BROWSER_VERIFY: opt-in headless-browser advisory for a static web app. Default-OFF, so the
+/// whole path is dead unless set and the default run is byte-identical.
+fn browser_verify_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_BROWSER_VERIFY")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Locate a headless-chromium binary with NO npm/playwright driver: prefer Playwright's cached standalone
+/// `chrome-headless-shell` (newest revision), else a browser on PATH. Returns None if nothing is found — the
+/// caller FAILS OPEN (no finding), so a node without a browser degrades to honest-unverified, never a false
+/// alarm.
+fn find_chrome_headless() -> Option<std::path::PathBuf> {
+    let subpaths = [
+        "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+        "chrome-headless-shell-mac-x64/chrome-headless-shell",
+        "chrome-headless-shell-linux64/chrome-headless-shell",
+        "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+        "chrome-linux/chrome",
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::Path::new(&home);
+        for base in [
+            home.join("Library/Caches/ms-playwright"),
+            home.join(".cache/ms-playwright"),
+        ] {
+            let Ok(entries) = std::fs::read_dir(&base) else {
+                continue;
+            };
+            let mut revs: Vec<std::path::PathBuf> = entries
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| {
+                            n.starts_with("chromium_headless_shell-") || n.starts_with("chromium-")
+                        })
+                        .unwrap_or(false)
+                })
+                .collect();
+            revs.sort();
+            for rev in revs.into_iter().rev() {
+                for sub in subpaths {
+                    let cand = rev.join(sub);
+                    if cand.is_file() {
+                        return Some(cand);
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(paths) = std::env::var("PATH") {
+        for name in [
+            "chrome-headless-shell",
+            "chromium",
+            "google-chrome",
+            "chrome",
+        ] {
+            for dir in std::env::split_paths(&paths) {
+                let cand = dir.join(name);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
+/// headless chromium is available, load index.html and return ONLY genuine code-defect console errors
+/// (ReferenceError / SyntaxError / "is not defined") — the class that ships a broken web app silently (e.g. a
+/// module export never imported). FAIL-OPEN (no browser / spawn error / timeout -> empty, never a finding);
+/// network/fetch/favicon/undefined-access noise is HARD-EXCLUDED so a fine app that fetches a resource under
+/// file:// is never false-flagged. REPORT-ONLY — the caller emits an advisory event and does NOT drive the
+/// COMPLETE corrective fix (a phantom fix on a working-but-needs-server app is the worst outcome).
+async fn run_browser_verify(root: &Path) -> Vec<String> {
+    let index = root.join("index.html");
+    if !index.is_file() {
+        return Vec::new();
+    }
+    for manifest in ["package.json", "Cargo.toml", "pyproject.toml", "go.mod"] {
+        if root.join(manifest).exists() {
+            return Vec::new(); // a real project goes through its own oracle, not this one
+        }
+    }
+    let Some(chrome) = find_chrome_headless() else {
+        return Vec::new(); // fail-open: no browser
+    };
+    let url = format!("file://{}", index.display());
+    let mut cmd = tokio::process::Command::new(chrome);
+    cmd.args([
+        "--headless",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--enable-logging=stderr",
+        "--v=1",
+        "--virtual-time-budget=3000",
+        "--dump-dom",
+        &url,
+    ]);
+    let Some(out) = smoke_output(cmd, 25).await else {
+        return Vec::new(); // spawn error / timeout -> inconclusive
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut findings: Vec<String> = Vec::new();
+    for line in stderr.lines() {
+        let is_code_defect = line.contains("ReferenceError")
+            || line.contains("SyntaxError")
+            || line.contains("is not defined");
+        if !is_code_defect {
+            continue;
+        }
+        let is_noise = line.contains("Failed to fetch")
+            || line.contains("Failed to load resource")
+            || line.contains("net::ERR")
+            || line.contains("Cannot read properties of")
+            || line.contains("favicon");
+        if is_noise {
+            continue;
+        }
+        let msg: String = line
+            .split_once("] ")
+            .map(|x| x.1)
+            .unwrap_or(line)
+            .trim()
+            .chars()
+            .take(200)
+            .collect();
+        if !findings.iter().any(|f| f == &msg) {
+            findings.push(msg);
+        }
+        if findings.len() >= 5 {
+            break;
+        }
+    }
+    findings
+}
+
 async fn smoke_rust(root: &Path) -> SmokeResult {
     if !root.join("Cargo.toml").exists() {
         return SmokeResult::skipped();
@@ -7656,6 +7800,31 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         "findings": advisory.len(),
                         "detail": advisory,
                     }));
+                }
+            }
+            // GOOSE_SWARM_BROWSER_VERIFY (opt-in): a STATIC web app has no runnable test oracle, so it ships
+            // honest-unverified (verified=false) — but a headless load can SURFACE the specific code error
+            // (e.g. a module export never imported -> ReferenceError -> blank page). ADVISORY only: emit the
+            // errors so the operator sees WHAT is wrong; do NOT drive the corrective fix (a phantom fix on a
+            // working-but-needs-server app is the worst outcome), and never gate the exit. Fail-open.
+            if browser_verify_enabled() {
+                let web = run_browser_verify(&cwd).await;
+                if !web.is_empty() {
+                    sink.write_value(serde_json::json!({
+                        "event": "browser_verify_advisory",
+                        "round": round,
+                        "findings": web.len(),
+                        "detail": web,
+                    }));
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "browser-verify (advisory, not auto-fixed): {} web console error(s) — {}",
+                            web.len(),
+                            web.first().map(|s| s.as_str()).unwrap_or("")
+                        ))
+                        .yellow()
+                    );
                 }
             }
             sink.write_value(serde_json::json!({
