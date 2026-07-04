@@ -4750,12 +4750,11 @@ async fn run_repro_once(cmd: &str, cwd: &Path) -> (String, bool) {
 }
 
 /// Lever B (GOOSE_SWARM_REVIEW_REPRO) — try to REPRODUCE a review finding by running a model-authored command
-/// against a THROWAWAY snapshot of the produced tree, and classify the outcome:
-/// - CRASH: a deterministic Python traceback (run TWICE — a one-off flake is not a repro).
-/// - BROWSER: a static-web tree whose browser-verify surfaces a code error.
-/// - else inconclusive (NOT reproduced).
-/// Returns `(class, reproduced)`. Fail-safe: an unsafe command or any snapshot error -> not reproduced. The
-/// snapshot is a local TempDir that is deleted the moment this returns, so nothing is left behind.
+/// against a THROWAWAY snapshot of the produced tree, and classify the outcome as CRASH (a deterministic
+/// Python traceback, run TWICE so a one-off flake is not a repro), BROWSER (a static-web tree whose
+/// browser-verify surfaces a code error), or inconclusive. Returns `(class, reproduced)`. Fail-safe: an unsafe
+/// command or any snapshot error -> not reproduced. The snapshot is a local TempDir deleted the moment this
+/// returns, so nothing is left behind.
 async fn reproduce_finding(cmd: &str, real_root: &Path) -> (&'static str, bool) {
     if !repro_command_is_safe(cmd) {
         return ("unsafe", false);
