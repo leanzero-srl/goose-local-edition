@@ -37,3 +37,7 @@ DELIVERABLE EXCELLENT: 53 pytest pass; streak logic CORRECT (3 consecutive done-
 
 ## fix#3 VALIDATED END-TO-END (Rust proof, lang-proof tempconv, 2026-07-04)
 A Rust-explicit spec built a Rust temperature converter. complete_verify ran=TRUE (smoke_rust fired — NOT a Python skip), complete_result verified=TRUE, cargo test green (11 tests), deliverable CORRECT (celsius 100 -> 212F, 373.15K). Proves: Part1 routing (Rust tree -> smoke_rust), Part2 honest verified flag, Part3 cargo test oracle — all live. Combined with polish-4 component proof (smoke_rust catches failing cargo tests) + COMPLETE's language-agnostic fixer -> the whole language-coverage chain holds. ALL 4 session fixes now real-run validated.
+
+## polish-6 (stockpile inventory Python) — assessed 2026-07-04
+DELIVERABLE EXCELLENT: 85 pytest pass; negative-stock guard WORKS (ship 100 with 7 in stock -> "Insufficient stock: have 7, need 100"); report-value CORRECT (7*2.50=17.50). complete_result verified=TRUE (fix#3 verified flag confirmed on Python path, byte-identical). Interface was hyphenated (item-add/report-value) not nested (item add) — a valid design choice, not a defect.
+SESSION deliverables so far ALL correct: csvkit-lite, calcpipe, habitdeck, stockpile, amendment(dedup), Rust tempconv. Pillars healthy + producing quality.
