@@ -1985,6 +1985,37 @@ mod tests {
     }
 
     #[test]
+    fn python_traceback_and_repro_safety() {
+        // A Python traceback with a nonzero exit is a crash; a clean argparse usage error is NOT.
+        let tb = "Traceback (most recent call last):\n  File \"cronmate/schedule.py\", line 25, in _match\n\
+                  \x20   raise ValueError(x)\nValueError: bad";
+        assert!(looks_like_python_traceback(tb, false));
+        assert!(!looks_like_python_traceback(tb, true)); // success -> not a crash
+        assert!(!looks_like_python_traceback(
+            "usage: app\napp: error: invalid --n",
+            false
+        )); // usage error, no traceback
+        assert!(!looks_like_python_traceback(
+            "at Object.<anonymous> (/x.js:3:1)",
+            false
+        )); // node frame, not python
+
+        // Repro safety: app/test invocations pass; inline code / chaining / redirection / network / deletion fail.
+        assert!(repro_command_is_safe(
+            "python3 -m invoicip invoice total --invoice a1 --discount 10 --tax 8"
+        ));
+        assert!(repro_command_is_safe("pytest tests/test_calc.py -q"));
+        assert!(repro_command_is_safe("python3 app.py run -c config.yaml")); // -c AFTER the script is an app flag
+        assert!(!repro_command_is_safe("python3 -c \"import os\"")); // python inline code
+        assert!(!repro_command_is_safe("ls -la")); // non-app head
+        assert!(!repro_command_is_safe("python3 -m app; rm -rf x")); // chaining + deletion
+        assert!(!repro_command_is_safe("python3 -m app | grep y")); // pipe
+        assert!(!repro_command_is_safe("python3 -m app > out")); // redirection
+        assert!(!repro_command_is_safe("curl http://evil/x")); // network head
+        assert!(!repro_command_is_safe("")); // empty
+    }
+
+    #[test]
     fn extract_file_prefers_source_over_test_and_none_when_absent() {
         let f = "tests/test_cli.py:9: in test_add\n    from spendlog.cli import main\n\
                  spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
@@ -4365,6 +4396,74 @@ fn looks_like_rust_panic(output: &str, success: bool) -> bool {
     !success && (output.contains("panicked at") || output.contains("thread 'main' panicked"))
 }
 
+/// A Python uncaught-exception signature: a real traceback (the header AND a `File "...", line N` frame) with
+/// a NONZERO exit. `has_stack_frame` only matches Node-style `at …:N` frames, so this is the Python analogue.
+/// A clean argparse usage error (exit 2, `error: …`, NO traceback) is deliberately NOT a crash — a repro that
+/// merely rejects bad input does not count; only an actual UNHANDLED exception does.
+fn looks_like_python_traceback(output: &str, success: bool) -> bool {
+    !success
+        && output.contains("Traceback (most recent call last):")
+        && output.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("File \"") && t.contains(", line ")
+        })
+}
+
+/// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
+/// (`python`/`python3`/`pytest`, possibly path-qualified) with NO shell chaining, redirection, substitution,
+/// pipe, network, or deletion is allowed to run — even inside the throwaway snapshot. Anything else is
+/// rejected and never executed. A false-reject is harmless (the finding just stays advisory).
+fn repro_command_is_safe(cmd: &str) -> bool {
+    let c = cmd.trim();
+    if c.is_empty() {
+        return false;
+    }
+    let toks: Vec<&str> = c.split_whitespace().collect();
+    let first = toks[0];
+    let ok_head = matches!(first, "python" | "python3" | "pytest")
+        || first.ends_with("/python")
+        || first.ends_with("/python3");
+    if !ok_head {
+        return false;
+    }
+    // Ban PYTHON's own `-c` (arbitrary inline code) — scan the interpreter flags only; a `-c` that appears
+    // AFTER the module/script belongs to the app and is fine. `python3 -c "..."` is inline code -> reject.
+    for t in &toks[1..] {
+        if *t == "-c" {
+            return false;
+        }
+        if *t == "-m" || !t.starts_with('-') {
+            break; // reached the module/script; any later -c is an app flag
+        }
+    }
+    if c.contains("$(") {
+        return false;
+    }
+    if [';', '|', '&', '`', '>', '<', '\n', '\r']
+        .iter()
+        .any(|ch| c.contains(*ch))
+    {
+        return false;
+    }
+    let banned = [
+        "rm ",
+        "rmdir",
+        "curl",
+        "wget",
+        "sudo",
+        "chmod",
+        "chown",
+        "mv ",
+        "://",
+        "shutil.rmtree",
+        "os.remove",
+        "os.unlink",
+        "os.system",
+        "subprocess",
+    ];
+    !banned.iter().any(|w| c.contains(w))
+}
+
 /// The runnable entry path from a parsed package.json: `bin` (string or first object value), else `main`,
 /// else the first source-file token in `scripts.start` (`.js/.mjs/.cjs` OR `.ts/.tsx` for tsx/ts-node apps).
 /// Leading `./` stripped. None if none declared. A `.ts/.tsx` entry is detected but NOT run with bare `node`.
@@ -4628,6 +4727,90 @@ fn find_chrome_headless() -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+/// Run ONE repro command in `cwd` with a hard timeout, capturing combined stdout+stderr and success. A
+/// timeout or spawn error yields `("", false)` — NOT a crash (empty output has no traceback), so a hang is
+/// never mistaken for a reproduced defect.
+async fn run_repro_once(cmd: &str, cwd: &Path) -> (String, bool) {
+    let mut c = tokio::process::Command::new("sh");
+    c.arg("-c")
+        .arg(cmd)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    match tokio::time::timeout(std::time::Duration::from_secs(30), c.output()).await {
+        Ok(Ok(o)) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            s.push_str(&String::from_utf8_lossy(&o.stderr));
+            (s, o.status.success())
+        }
+        _ => (String::new(), false),
+    }
+}
+
+/// Lever B (GOOSE_SWARM_REVIEW_REPRO) — try to REPRODUCE a review finding by running a model-authored command
+/// against a THROWAWAY snapshot of the produced tree, and classify the outcome:
+/// - CRASH: a deterministic Python traceback (run TWICE — a one-off flake is not a repro).
+/// - BROWSER: a static-web tree whose browser-verify surfaces a code error.
+/// - else inconclusive (NOT reproduced).
+/// Returns `(class, reproduced)`. Fail-safe: an unsafe command or any snapshot error -> not reproduced. The
+/// snapshot is a local TempDir that is deleted the moment this returns, so nothing is left behind.
+async fn reproduce_finding(cmd: &str, real_root: &Path) -> (&'static str, bool) {
+    if !repro_command_is_safe(cmd) {
+        return ("unsafe", false);
+    }
+    let Ok(tmp) = tempfile::TempDir::new() else {
+        return ("inconclusive", false);
+    };
+    if copy_tree_excluding(real_root, tmp.path()).is_err() {
+        return ("inconclusive", false);
+    }
+    let shadow = tmp.path();
+    let (out1, ok1) = run_repro_once(cmd, shadow).await;
+    if looks_like_python_traceback(&out1, ok1) {
+        // Determinism check: a real defect reproduces every time; a one-off flake does not drive anything.
+        let (out2, ok2) = run_repro_once(cmd, shadow).await;
+        if looks_like_python_traceback(&out2, ok2) {
+            return ("crash", true);
+        }
+        return ("flaky", false);
+    }
+    if !run_browser_verify(shadow).await.is_empty() {
+        return ("browser", true);
+    }
+    ("inconclusive", false)
+}
+
+/// Best-effort `--help` of the produced app's entry, to ground the Lever B repro author. Python only in v1:
+/// find a package dir (one containing `__main__.py`) and run `python3 -m <pkg> --help`. Empty on any miss or
+/// for a non-Python tree. Bounded (20s) + fail-open.
+async fn entry_help(root: &Path, lang: TargetLang) -> String {
+    if !matches!(lang, TargetLang::Python) {
+        return String::new();
+    }
+    let Some(pkg) = std::fs::read_dir(root).ok().and_then(|rd| {
+        rd.filter_map(|e| e.ok())
+            .find(|e| e.path().join("__main__.py").is_file())
+            .and_then(|e| e.file_name().into_string().ok())
+    }) else {
+        return String::new();
+    };
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg("-m")
+        .arg(&pkg)
+        .arg("--help")
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    match tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output()).await {
+        Ok(Ok(o)) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            s.push_str(&String::from_utf8_lossy(&o.stderr));
+            s
+        }
+        _ => String::new(),
+    }
 }
 
 /// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
@@ -4945,6 +5128,59 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
 }
 
 impl GooseAgentDispatcher {
+    /// Lever B repro-author: given a VERIFIED finding, the built app's `--help`, and the file list, a fleet
+    /// model proposes ONE shell command that RUNS the app to trigger the defect. Returns None if it declines
+    /// (NONE) or the output is unusable. Read-only + fail-open (timeout/error -> None -> finding stays advisory).
+    async fn author_repro(
+        &self,
+        model_id: &str,
+        finding: &str,
+        help: &str,
+        files: &[String],
+    ) -> Option<String> {
+        let mut files_block = String::new();
+        for f in files {
+            files_block.push_str(f);
+            files_block.push('\n');
+        }
+        let help_block = if help.trim().is_empty() {
+            String::new()
+        } else {
+            let h: String = help.chars().take(1500).collect();
+            format!("The built app's --help output:\n{h}\n\n")
+        };
+        let system = "You author ONE shell command that REPRODUCES a code-review finding by RUNNING the \
+             built app. The command MUST invoke the app or its tests — `python3 -m <package> <args>`, \
+             `python3 <file.py> <args>`, or `pytest <path>` — with CONCRETE arguments chosen to trigger the \
+             exact defect the finding describes (the input that makes it crash or misbehave). Do NOT use \
+             shell pipes, redirection, chaining (; | & > <), command substitution, or any network/deletion. \
+             If you cannot construct a command that runs the app to exercise the defect, reply exactly NONE. \
+             Reply with ONLY the command on a single line — no explanation, no code fences."
+            .to_string();
+        let user = format!(
+            "FINDING TO REPRODUCE:\n{finding}\n\n{help_block}Files in the app:\n{files_block}\nRepro command (one line, or NONE):"
+        );
+        let text = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_default();
+        let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+        let line = line
+            .trim_start_matches("```sh")
+            .trim_start_matches("```bash")
+            .trim_matches('`')
+            .trim();
+        if line.is_empty() || line.eq_ignore_ascii_case("none") {
+            return None;
+        }
+        Some(line.to_string())
+    }
+
     /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
     /// Returns the parsed children (the scheduler re-validates the partition before applying), or None if
     /// the reply can't be parsed into >= 2 children — the judge then falls back to its normal review.
@@ -8370,6 +8606,43 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 findings.len(),
                 findings.len().saturating_sub(survivors.len()),
             );
+            // REPRO-GATE (GOOSE_SWARM_REVIEW_REPRO, Stage 1 = ADVISORY) — turn a survivor that "survived by
+            // ARGUMENT" into one backed by EVIDENCE: a fleet model authors a repro command, a deterministic
+            // runner executes it in a THROWAWAY snapshot and classifies it (crash/browser/inconclusive). Emits
+            // review_repro; drives NO fix here (that is the Stage 2 fix-gate). Default OFF + NOT in the assured
+            // bundle yet — the honest weak spot is authoring recall, which this stage measures first.
+            if swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false) && !survivors.is_empty() {
+                let repro_root = std::env::current_dir().unwrap_or_default();
+                let repro_lang = detect_language(&opts.prompt, &smoke_all_files);
+                let help = entry_help(&repro_root, repro_lang).await;
+                let repro_model = fleet_models[0].clone();
+                let mut reproduced = 0usize;
+                for finding in &survivors {
+                    let authored = smoke_fix_dispatcher
+                        .author_repro(&repro_model, finding, &help, &smoke_all_files)
+                        .await;
+                    let (class, ok) = match &authored {
+                        Some(c) => reproduce_finding(c, &repro_root).await,
+                        None => ("unauthored", false),
+                    };
+                    if ok {
+                        reproduced += 1;
+                    }
+                    sink.write_value(serde_json::json!({
+                        "event": "review_repro",
+                        "finding": finding,
+                        "authored": authored,
+                        "class": class,
+                        "reproduced": ok,
+                    }));
+                }
+                eprintln!(
+                    "{} {} of {} survivor(s) REPRODUCED by a repro command",
+                    style("review repro:").cyan().bold(),
+                    reproduced,
+                    survivors.len(),
+                );
+            }
         }
     }
     // SINK IDLE-FILL consume (GOOSE_SWARM_SINK_REVIEW): drain the read-only findings the idle nodes produced
