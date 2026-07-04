@@ -7614,6 +7614,10 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
             if verdict.findings.is_empty() {
                 final_passed = true;
+                // Clear the prior round's findings so complete_result reports remaining_findings=0 on a
+                // green finish — the green break happens before last_findings is refreshed below, so
+                // without this it would report the stale pre-fix count for an app that is actually clean.
+                last_findings.clear();
                 eprintln!(
                     "{}",
                     style(format!(
