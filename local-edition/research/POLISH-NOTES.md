@@ -80,3 +80,10 @@ DOMAIN-CONVENTIONS (test-dc weekdates + direct 27B probes):
 - CATCHES (empirical on the real 27B + cronmate's buggy schedule.py): review with DOMAIN_PITFALLS -> 'ISSUE|schedule.py line 25 uses dt.weekday() for cron dow (Mon=0) but cron dow is Sun=0 -> off-by-one; use dt.isoweekday()%7'. The exact bug all pillars missed.
 - LOAD-BEARING VERIFY CONFIRMS: verify_finding with DOMAIN_PITFALLS injected -> CONFIRM|HIGH on the dow finding (the same-fleet refuter, given the ground truth, confirms instead of refuting with its own wrong prior). So a real domain-conventions finding FIRES + SURVIVES verify.
 => domain-conventions produces GOOD RESULTS: catches self-consistent domain bugs, survives verify, no false-positive. Process: poller torn down cleanly at swarm end.
+
+## EXPLORATORY TESTING — browser-verify VALIDATED (test-bv salesboard, 2026-07-04)
+salesboard web dashboard (index.html + salesboard.js ES module) built with GOOSE_SWARM_BROWSER_VERIFY=1. Result: app CORRECT — rendered over http, the bar chart renders (Q1 4200/50%, Q2 5800/69%, Q3 7100/84.5%), NO console errors, module wired. browser_verify_advisory: NONE -> NO FALSE-POSITIVE on a working app. Shipped verified=false (honest-unverified — static app, no test oracle). http server torn down cleanly.
+Combined with the earlier CATCH proof (manual http+chrome on the broken sparkboard -> flags 'DATA is not defined'), browser-verify works both directions: catches a broken web app, silent on a correct one.
+OVERALL VERDICT — both shipped features produce GOOD RESULTS end-to-end, adversarially reviewed (5 low-sev impl findings all fixed, no critical/regression):
+- domain-conventions: catches self-consistent domain bugs (cronmate dow) + verify CONFIRMS + no false-positive (weekdates correct). The pillars' self-consistent-error limit is now addressed via injected external ground truth.
+- browser-verify: surfaces web code-defects (sparkboard DATA-not-imported) + no false-positive (salesboard renders) + honest-unverified + fail-open + advisory.
