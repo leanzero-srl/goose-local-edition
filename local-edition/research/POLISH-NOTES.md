@@ -87,3 +87,6 @@ Combined with the earlier CATCH proof (manual http+chrome on the broken sparkboa
 OVERALL VERDICT — both shipped features produce GOOD RESULTS end-to-end, adversarially reviewed (5 low-sev impl findings all fixed, no critical/regression):
 - domain-conventions: catches self-consistent domain bugs (cronmate dow) + verify CONFIRMS + no false-positive (weekdates correct). The pillars' self-consistent-error limit is now addressed via injected external ground truth.
 - browser-verify: surfaces web code-defects (sparkboard DATA-not-imported) + no false-positive (salesboard renders) + honest-unverified + fail-open + advisory.
+
+## LEVER D (assured profile) — PROVEN on real runs (2026-07-04)
+GOOSE_SWARM_ASSURED=1 (no other flags) -> run_started assured:true + gates ALL true (complete/goals/contracts/review/review_fanout/review_verify/sink_review/smoke/browser_verify). Precedence: ASSURED=1 REVIEW_VERIFY=0 -> review_verify:false, rest true (explicit env overrides the profile). Byte-identical default pinned by the unit test. Committed ee9da303b. No negative. Next: Lever B.
