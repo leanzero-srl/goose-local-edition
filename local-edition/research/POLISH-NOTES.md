@@ -1,0 +1,10 @@
+# Pillar-polish loop — assessments + improvements (on merged v1.41.0)
+
+## polish-1 (csvkit-lite, 4 modules 6 commands, all flags + JUDGE) — assessed 2026-07-04
+DELIVERABLE: EXCELLENT — exit 0, 36 pytest pass, every command CORRECT (stats age mean=30/min=25/max=35/count=3; head/select/filter/sort/to-json all right). COMPLETE green at round 0 (built correctly first pass on the merged binary — pillars survive the upstream merge).
+REASONING: SOUND — decomposition clean (io-module shared base; transforms/stats/formatting depend on io; cli depends on the 3; integrate-verify last). owned_files DISJOINT + sensible. Contracts + parallel-skeleton planning fired.
+BEHAVIOR findings:
+1. JUDGE re-judges the long sink (integrate-verify) 5-6x, ALL "ok" conf 1.0 (seq 35/37/38/39/42, ~60s apart = JUDGE_REJUDGE_COOLDOWN_SECS=60). The re-judges add nothing (task already trusted). With SINK_REVIEW on, those idle nodes could do REVIEW (finds defects) instead of re-confirming -> a judge x idle-fill MISALLOCATION. Candidate fix: after k consecutive "ok" verdicts on a task, back off / stop re-judging it (free the node for sink-review); the idle-based worker_timeout stays the hard-stall backstop, so catch-ability is preserved. TO VERIFY + adversarially review before shipping.
+2. gates_min=13.7 on a CLEAN app (review_fanout findings=0) — the REVIEW stack runs full cost even when COMPLETE is green round-0 and nothing is found. Possible: skip/short-circuit some review when COMPLETE is green + app is small. LOWER confidence (the review is the safety net; cutting it risks quality). HOLD unless a safe form found.
+Phase buckets: research 1.9 / planning 15.7 / execute 16.5 / gates 13.7 / total 47.7 min.
+Per-device dispatch: mac-gabee 29 (judge-inflated), worksmacstudio 12, local-mihai 9, mihai 6, workhorse 2 — real WORKER balance is fine; the 29 is mostly judge verdicts on one node.
