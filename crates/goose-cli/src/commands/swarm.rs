@@ -2641,8 +2641,7 @@ pub struct GooseAgentDispatcher {
 
 impl GooseAgentDispatcher {
     /// Drain the sink idle-fill review findings accumulated during the sink (see `idle_dimension_review`).
-    /// Consumed by run_swarm's post-sink REVIEW block once the scheduler idle-loop wiring lands (next step).
-    #[allow(dead_code)]
+    /// Consumed by run_swarm's post-sink REVIEW block (drain + re-verify against the final tree).
     fn drain_sink_review(&self) -> Vec<String> {
         std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
     }
@@ -7946,6 +7945,50 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 survivors.len(),
                 findings.len(),
                 findings.len().saturating_sub(survivors.len()),
+            );
+        }
+    }
+    // SINK IDLE-FILL consume (GOOSE_SWARM_SINK_REVIEW): drain the read-only findings the idle nodes produced
+    // DURING the sink, then re-verify each against the FINAL post-sink tree (fail-closed) — a finding the sink
+    // obsoleted or a torn read is refuted + dropped. Overlapping the review with the sink (vs running it cold
+    // after) is the throughput win; the re-gate keeps delivered quality unchanged. Advisory (drives no fix).
+    let sink_review_on = std::env::var("GOOSE_SWARM_SINK_REVIEW")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if sink_review_on && !fleet_models.is_empty() {
+        let prewarmed = smoke_fix_dispatcher.drain_sink_review();
+        if !prewarmed.is_empty() {
+            let me = smoke_fix_dispatcher.clone();
+            let goal = opts.prompt.clone();
+            let files = smoke_all_files.clone();
+            let verdicts = fanout_over_fleet(
+                fleet_models.clone(),
+                prewarmed.clone(),
+                move |finding, model| {
+                    let me = me.clone();
+                    let goal = goal.clone();
+                    let files = files.clone();
+                    async move { me.verify_finding(&model, &finding, &goal, &files).await }
+                },
+            )
+            .await;
+            let survivors: Vec<String> = prewarmed
+                .iter()
+                .zip(verdicts.iter())
+                .filter_map(|(f, &ok)| if ok { Some(f.clone()) } else { None })
+                .collect();
+            sink.write_value(serde_json::json!({
+                "event": "sink_review",
+                "prewarmed": prewarmed.len(),
+                "survivors": survivors.len(),
+                "refuted": prewarmed.len().saturating_sub(survivors.len()),
+                "detail": survivors,
+            }));
+            eprintln!(
+                "{} {} idle-fill finding(s) reviewed DURING the sink, {} survived re-verification",
+                style("sink review:").cyan().bold(),
+                prewarmed.len(),
+                survivors.len(),
             );
         }
     }
