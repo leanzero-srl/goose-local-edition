@@ -255,6 +255,9 @@ struct State {
     split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
     idle_jobs: u32,
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): rotating review-dimension index for idle nodes during the
+    /// sink, so successive idle reviews cover different angles.
+    sink_review_dim: usize,
     /// When each task was last judged, so an OK ("observed") task is NOT re-judged every 15s tick for its
     /// whole life — that fired ~4 wasted model calls/min on a single long worker, which LM Studio piled onto
     /// a busy node (one node "+1 QUEUED" while another sat idle). A re-judge waits `JUDGE_REJUDGE_COOLDOWN`.
@@ -863,6 +866,30 @@ impl State {
             },
             claimed_device,
         ))
+    }
+
+    /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): while the integrate-verify SINK runs SOLO and pre-review is
+    /// exhausted, claim a genuinely-free device (never the sink's — it is at weight) for a READ-ONLY
+    /// whole-tree dimension review, rotating the dimension. Returns (model_id, dim_index, goal, device).
+    /// None unless the flag is on AND the sink is in flight AND a device is free (mirrors pick_prereview's
+    /// claim so it never oversubscribes). Released by the IdleSlotGuard.
+    fn pick_sink_review(&mut self) -> Option<(String, usize, String, usize)> {
+        let on = std::env::var("GOOSE_SWARM_SINK_REVIEW")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+            .unwrap_or(false);
+        if !on || !self.sink_in_flight() {
+            return None;
+        }
+        let claimed_device = self
+            .devices
+            .iter()
+            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)?;
+        let model_id = self.devices[claimed_device].cfg.model_id.clone();
+        let dim = self.sink_review_dim;
+        self.sink_review_dim = self.sink_review_dim.wrapping_add(1);
+        self.idle_jobs += 1;
+        self.devices[claimed_device].in_flight += 1;
+        Some((model_id, dim, self.goal.clone(), claimed_device))
     }
 
     /// SPECULATIVE EXECUTION: pick a TWIN to race on an idle device. Choose the longest-running Claimed task
@@ -1600,6 +1627,7 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             idle_jobs: 0,
+            sink_review_dim: 0,
             last_judged: HashMap::new(),
             spec_device: HashMap::new(),
             spec_started_at: HashMap::new(),
@@ -1823,6 +1851,25 @@ impl Scheduler {
                             device: dev,
                             had_findings: out.had_findings,
                         });
+                    });
+                }
+            }
+            // SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): when the integrate-verify SINK runs solo and
+            // pre-review is exhausted, put an otherwise-idle node on a READ-ONLY whole-tree dimension review.
+            // Findings accumulate in the dispatcher; run_swarm drains + re-verifies them after the sink. The
+            // IdleSlotGuard releases the claimed device. Off by default (pick_sink_review returns None).
+            if let Some(pr) = &self.pre_reviewer {
+                let pick = { state.lock().await.pick_sink_review() };
+                if let Some((model_id, dim, goal, claimed_device)) = pick {
+                    let pr = pr.clone();
+                    let st = state.clone();
+                    tokio::spawn(async move {
+                        let _slot = IdleSlotGuard {
+                            state: st.clone(),
+                            is_judge: false,
+                            claimed_device: Some(claimed_device),
+                        };
+                        pr.idle_dimension_review(&model_id, &goal, dim).await;
                     });
                 }
             }
