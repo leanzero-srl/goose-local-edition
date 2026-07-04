@@ -4513,11 +4513,25 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         }
         None => None,
     };
+    // Run the test suite (parity with the Python pytest path): a failing or non-compiling test is a
+    // finding COMPLETE will fix. Fail-OPEN — cargo missing / timeout is inconclusive (None), never a false
+    // finding. `cargo test` with zero tests exits 0 => Pass, so a test-less app is not false-flagged.
+    let mut test = tokio::process::Command::new("cargo");
+    test.args(["test", "--quiet"]).current_dir(root);
+    let tests = match smoke_output(test, 240).await {
+        Some(out) if !out.status.success() => {
+            let tail = tail_lines(&combined_output(&out), 40);
+            findings.push(format!("`cargo test` has failing tests:\n{tail}"));
+            Some(TestRunVerdict::Failures(tail))
+        }
+        Some(_) => Some(TestRunVerdict::Pass),
+        None => None,
+    };
     SmokeResult {
         ran: true,
         py_files: 0,
         collect: None,
-        tests: None,
+        tests,
         entry_package: None,
         entry_ok,
         findings,
@@ -7572,13 +7586,22 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|&s| s > 0)
             .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
-        let complete_lang = detect_language(&opts.prompt, &[]);
+        // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
+        // plan built a non-Python tree (e.g. a Rust CLI) would otherwise default to Python, run pytest on
+        // a tree with no .py, skip (ran=false), and ship trivially green. The manifest's extensions route
+        // the already-shipped smoke_rust/smoke_typescript oracles. Python-majority plans still detect
+        // Python => the main path is byte-identical.
+        let complete_lang = detect_language(&opts.prompt, &smoke_all_files);
         let cwd = std::env::current_dir().unwrap_or_default();
         phase_banner(
             "COMPLETE",
             "verify the app by RUNNING it, fix-until-green (bounded), and refuse to ship a red app",
         );
         let mut final_passed = false;
+        // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
+        // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
+        // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
+        let mut final_verified = false;
         let mut last_findings: Vec<String> = Vec::new();
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
@@ -7614,17 +7637,30 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
             if verdict.findings.is_empty() {
                 final_passed = true;
+                final_verified = verdict.ran;
                 // Clear the prior round's findings so complete_result reports remaining_findings=0 on a
                 // green finish — the green break happens before last_findings is refreshed below, so
                 // without this it would report the stale pre-fix count for an app that is actually clean.
                 last_findings.clear();
-                eprintln!(
-                    "{}",
-                    style(format!(
-                        "complete: GREEN at round {round} — the built app runs and its checks pass"
-                    ))
-                    .green()
-                );
+                if verdict.ran {
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "complete: GREEN at round {round} — the built app runs and its checks pass"
+                        ))
+                        .green()
+                    );
+                } else {
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "complete: UNVERIFIED — no smoke oracle ran for the produced tree ({} lang); \
+                             the app is shipped WITHOUT verification",
+                            complete_lang.name()
+                        ))
+                        .yellow()
+                    );
+                }
                 break;
             }
             last_findings = verdict.findings.clone();
@@ -7762,6 +7798,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         sink.write_value(serde_json::json!({
             "event": "complete_result",
             "passed": final_passed,
+            "verified": final_verified,
             "remaining_findings": last_findings.len(),
         }));
         if !final_passed {
@@ -7784,7 +7821,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
     if smoke_on && !complete_on {
-        let smoke_lang = detect_language(&opts.prompt, &[]);
+        let smoke_lang = detect_language(&opts.prompt, &smoke_all_files);
         let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
         let smoke_value = serde_json::to_value(&smoke).unwrap_or(serde_json::Value::Null);
         sink.write_value(serde_json::json!({
