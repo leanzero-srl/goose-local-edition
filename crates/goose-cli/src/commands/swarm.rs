@@ -5375,11 +5375,18 @@ impl GooseAgentDispatcher {
             Some(f) if manifest.iter().any(|m| m == &f) => vec![f],
             _ => Vec::new(),
         };
+        let scope = if owned.is_empty() {
+            "the single source file that contains the defect".to_string()
+        } else {
+            owned.join(", ")
+        };
         let mut desc = smoke_fix_description(&[finding.to_string()], TargetLang::Python);
         desc.push_str(&format!(
-            "\n\nThe defect REPRODUCES by running: {}\nFIX THE ROOT CAUSE. Do NOT silence it with \
-             try/except or sys.exit, do NOT edit/skip/xfail tests, do NOT delete the entry point.",
-            argv.join(" ")
+            "\n\nThe defect REPRODUCES by running: {argv_str}\nFIX THE ROOT CAUSE in {scope} — and edit that \
+             file ONLY. Do NOT create, add to, or modify ANY test file (no new tests, no edits to existing \
+             tests — the tests are the oracle). Do NOT touch any other module. Do NOT silence the crash with a \
+             bare try/except or sys.exit, and do NOT delete the entry point. Keep the change minimal.",
+            argv_str = argv.join(" ")
         ));
         let req = DispatchRequest {
             task_id: task_id.clone(),
