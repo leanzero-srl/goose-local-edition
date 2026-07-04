@@ -34,3 +34,6 @@ FIX OPTIONS (to crunch): (a) language-aware SMOKE — detect Cargo.toml -> cargo
 
 ## polish-5 (habitdeck Python) — assessed 2026-07-04
 DELIVERABLE EXCELLENT: 53 pytest pass; streak logic CORRECT (3 consecutive done-days -> Longest 3, Current 3). fix#1 confirmed on Python (sink_rejudges=0). fix#2 confirmed (complete_result remaining_findings=0 on green). Ran on pre-fix#3 binary so no verified field — fix#3 validated separately by the Rust proof.
+
+## fix#3 VALIDATED END-TO-END (Rust proof, lang-proof tempconv, 2026-07-04)
+A Rust-explicit spec built a Rust temperature converter. complete_verify ran=TRUE (smoke_rust fired — NOT a Python skip), complete_result verified=TRUE, cargo test green (11 tests), deliverable CORRECT (celsius 100 -> 212F, 373.15K). Proves: Part1 routing (Rust tree -> smoke_rust), Part2 honest verified flag, Part3 cargo test oracle — all live. Combined with polish-4 component proof (smoke_rust catches failing cargo tests) + COMPLETE's language-agnostic fixer -> the whole language-coverage chain holds. ALL 4 session fixes now real-run validated.
