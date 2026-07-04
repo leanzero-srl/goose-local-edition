@@ -9188,12 +9188,14 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 findings.len(),
                 findings.len().saturating_sub(survivors.len()),
             );
-            // REPRO-GATE (GOOSE_SWARM_REVIEW_REPRO, Stage 1 = ADVISORY) — turn a survivor that "survived by
-            // ARGUMENT" into one backed by EVIDENCE: a fleet model authors a repro command, a deterministic
-            // runner executes it in a THROWAWAY snapshot and classifies it (crash/browser/inconclusive). Emits
-            // review_repro; drives NO fix here (that is the Stage 2 fix-gate). Default OFF + NOT in the assured
-            // bundle yet — the honest weak spot is authoring recall, which this stage measures first.
-            if swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false) && !survivors.is_empty() {
+            // REPRO-GATE (GOOSE_SWARM_REVIEW_REPRO) — a REPRODUCTION is a STRONGER oracle than the
+            // argument-based verify: it runs over ALL fanout findings (NOT just verify survivors), because a
+            // finding that actually reproduces a crash is REAL regardless of what the refuter argued, and the
+            // repro SELF-VALIDATES (a false finding simply will not reproduce -> no fix). This is load-bearing:
+            // enable-prove showed verify FALSE-REFUTES real crash findings, which would otherwise starve the
+            // fix-gate. A fleet model authors a repro command; a deterministic runner executes it in a THROWAWAY
+            // snapshot and classifies it (crash/browser/inconclusive). Default OFF + NOT in the assured bundle.
+            if swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false) && !findings.is_empty() {
                 let repro_root = std::env::current_dir().unwrap_or_default();
                 let repro_lang = detect_language(&opts.prompt, &smoke_all_files);
                 let help = entry_help(&repro_root, repro_lang).await;
@@ -9209,7 +9211,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         .max(min_attempt_budget);
                 let mut reproduced = 0usize;
                 let mut fixed = 0usize;
-                for (i, finding) in survivors.iter().enumerate() {
+                for (i, finding) in findings.iter().enumerate() {
                     let authored = smoke_fix_dispatcher
                         .author_repro(&repro_model, finding, &help, &smoke_all_files)
                         .await;
@@ -9275,10 +9277,10 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     }
                 }
                 eprintln!(
-                    "{} {} of {} survivor(s) REPRODUCED by a repro command",
+                    "{} {} of {} finding(s) REPRODUCED by a repro command",
                     style("review repro:").cyan().bold(),
                     reproduced,
-                    survivors.len(),
+                    findings.len(),
                 );
                 if review_fix_on {
                     eprintln!(
