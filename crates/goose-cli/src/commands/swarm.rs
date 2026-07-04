@@ -9206,9 +9206,12 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 // budget, so no valid phase-cap config silently disables review-fix and the completion
                 // overshoot is bounded by the reserved headroom.
                 let min_attempt_budget = std::time::Duration::from_secs(fix_cap_secs() + 600);
-                let review_fix_deadline = std::time::Instant::now()
-                    + std::time::Duration::from_secs(review_fix_phase_cap_secs())
-                        .max(min_attempt_budget);
+                // The deadline must have HEADROOM above one attempt's budget: the per-finding repro-authoring
+                // BEFORE the first attempt elapses against the deadline, so a deadline set to EXACTLY the
+                // budget skips every attempt (enable-prove hit this — remaining was always just under budget).
+                let phase_cap = std::time::Duration::from_secs(review_fix_phase_cap_secs())
+                    .max(min_attempt_budget + std::time::Duration::from_secs(300));
+                let review_fix_deadline = std::time::Instant::now() + phase_cap;
                 let mut reproduced = 0usize;
                 let mut fixed = 0usize;
                 for (i, finding) in findings.iter().enumerate() {
