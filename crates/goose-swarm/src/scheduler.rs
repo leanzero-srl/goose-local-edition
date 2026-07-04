@@ -209,13 +209,6 @@ struct Assignment {
 /// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
 const SPECULATION_CAP: u32 = 8;
 
-/// Minimum seconds between RE-judging the SAME in-flight task. The judge tick is ~15s; without this an OK
-/// long-running worker was re-inspected every tick (~4 model calls/min, mostly "observed"), and those extra
-/// calls queued on a busy node while another idled. 60s = at most ~1 re-judge/min/task, still catches a
-/// worker that goes bad (the idle-based worker_timeout is the hard-stall backstop). The FIRST judge is gated
-/// by min_age_secs, not this.
-const JUDGE_REJUDGE_COOLDOWN_SECS: u64 = 60;
-
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -757,9 +750,17 @@ impl State {
                 && self
                     .last_judged
                     .get(tid)
-                    .map(|t| t.elapsed().as_secs() < JUDGE_REJUDGE_COOLDOWN_SECS)
+                    .map(|t| t.elapsed().as_secs() < cfg.rejudge_cooldown_secs)
                     .unwrap_or(false)
             {
+                continue;
+            }
+            // Skip RE-judging an owns-NOTHING task (the integrate-verify sink). Every deterministic
+            // judge gate is disarmed for it (over-read/finalize-spin/broken-code all require owned
+            // files, judge.rs:292/311/332), and its LLM verdict is always a non-actionable "ok", so a
+            // re-judge catches nothing yet steals an idle node from sink-review. Judge it ONCE (first
+            // pass, for observability) then leave it to worker_timeout as the hard-stall backstop.
+            if n.spec.owned_files.is_empty() && self.last_judged.contains_key(tid) {
                 continue;
             }
             let slot = if at_cap {
