@@ -4592,7 +4592,34 @@ async fn run_browser_verify(root: &Path) -> Vec<String> {
     let Some(chrome) = find_chrome_headless() else {
         return Vec::new(); // fail-open: no browser
     };
-    let url = format!("file://{}", index.display());
+    // Serve the tree over an EPHEMERAL localhost http server — REQUIRED, not optional: under file:// an
+    // ES-module `import` is CORS-blocked (origin 'null'), so the module never executes and the real code
+    // error (e.g. ReferenceError) never surfaces (only a CORS line does, which we correctly exclude — but
+    // that would MASK the bug). A served origin runs modules + same-origin fetches like a real load.
+    let Ok(port) =
+        std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr().map(|a| a.port()))
+    else {
+        return Vec::new(); // fail-open: can't get a free port
+    };
+    let mut server = tokio::process::Command::new("python3");
+    server
+        .args([
+            "-m",
+            "http.server",
+            &port.to_string(),
+            "--bind",
+            "127.0.0.1",
+        ])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let Ok(mut child) = server.spawn() else {
+        return Vec::new(); // no python3 -> fail-open
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await; // let the server bind
+    let url = format!("http://127.0.0.1:{port}/index.html");
     let mut cmd = tokio::process::Command::new(chrome);
     cmd.args([
         "--headless",
@@ -4600,11 +4627,13 @@ async fn run_browser_verify(root: &Path) -> Vec<String> {
         "--no-sandbox",
         "--enable-logging=stderr",
         "--v=1",
-        "--virtual-time-budget=3000",
+        "--virtual-time-budget=4000",
         "--dump-dom",
         &url,
     ]);
-    let Some(out) = smoke_output(cmd, 25).await else {
+    let out = smoke_output(cmd, 25).await;
+    let _ = child.kill().await; // tear the server down (also killed on drop)
+    let Some(out) = out else {
         return Vec::new(); // spawn error / timeout -> inconclusive
     };
     let stderr = String::from_utf8_lossy(&out.stderr);
