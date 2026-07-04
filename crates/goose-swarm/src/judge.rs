@@ -137,6 +137,11 @@ pub struct JudgeConfig {
     pub intervene_confidence: f32,
     /// Cap on kill+re-dispatch interventions per task, so the judge can never loop a task forever.
     pub max_interventions_per_task: u32,
+    /// Minimum seconds between RE-judging the SAME in-flight task. The judge tick is ~15s; without this an
+    /// OK long worker would be re-judged every tick (wasted calls queued on a busy node while another
+    /// idled). 60s = at most ~1 re-judge/min/task, still catches a worker that goes bad (the idle-based
+    /// worker_timeout is the hard-stall backstop). The FIRST judge is gated only by `min_age_secs`.
+    pub rejudge_cooldown_secs: u64,
     /// Behavioral over-read trip: this many tool calls (actions) with NO owned file written means the
     /// worker is thrashing, regardless of the clock. A healthy worker — even a slow one composing a big
     /// file — writes within a handful of actions; this catches the "many actions, zero output" worker
@@ -163,6 +168,7 @@ impl Default for JudgeConfig {
             // second round of "simplify your approach" guidance before it lands. Total work is still
             // bounded by max_attempts; the 420s thresholds prevent rapid re-killing.
             max_interventions_per_task: 2,
+            rejudge_cooldown_secs: 60,
             over_read_tool_calls: 16,
             terminal_min_secs: 90,
             split_threshold_secs: 900,

@@ -567,6 +567,90 @@ async fn judge_kills_and_redispatches_stuck_worker() {
     );
 }
 
+/// Counts how many times the judge inspects each task; always passes (never kills).
+struct CountJudge {
+    counts: Arc<Mutex<HashMap<String, u32>>>,
+}
+
+#[async_trait]
+impl Judge for CountJudge {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        *self
+            .counts
+            .lock()
+            .unwrap()
+            .entry(req.task_id.clone())
+            .or_default() += 1;
+        JudgeOutcome::ok()
+    }
+}
+
+/// Runs a scenario with ONE long-running task `target` (owning `files`) plus a chain of short filler
+/// tasks that wake the scheduler loop repeatedly (the judge inspects only on a wake / its 15s tick), so
+/// the judge gets many chances to re-inspect `target` — the single clear longest task, so no selection
+/// tie. cooldown=0. Returns how many times the judge inspected `target`. Three devices: target on one, a
+/// serialized filler on the second, the third always free for the judge.
+async fn count_target_rejudges(target: &str, files: &[&str]) -> u32 {
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let counts = Arc::new(Mutex::new(HashMap::new()));
+    let judge = Arc::new(CountJudge {
+        counts: counts.clone(),
+    });
+    let mut specs = vec![spec(target, &[], files)];
+    for i in 0..8 {
+        let id = format!("f{i}");
+        let f = format!("f{i}.py");
+        if i == 0 {
+            specs.push(spec(&id, &[], &[&f]));
+        } else {
+            let dep = format!("f{}", i - 1);
+            specs.push(spec(&id, &[&dep], &[&f]));
+        }
+    }
+    let dag = Dag::from_specs(specs).unwrap();
+    let disp = Arc::new(MockDispatcher {
+        rec: rec.clone(),
+        delay: Duration::from_millis(80),
+        fail_transient_first: HashSet::new(),
+        terminal: HashSet::new(),
+        slow: HashSet::from([target.to_string()]),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        rejudge_cooldown_secs: 0,
+        ..JudgeConfig::default()
+    };
+    let sched = Scheduler::new(
+        vec![dev("a", "m-a", 1), dev("b", "m-b", 1), dev("c", "m-c", 1)],
+        3,
+    )
+    .with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(report.failed.is_empty(), "no task fails");
+    let n = counts.lock().unwrap().get(target).copied().unwrap_or(0);
+    n
+}
+
+/// Control: a long-running FILE-OWNING worker IS re-inspected on successive wakes (cooldown disabled) —
+/// the re-judge machinery works, so the owns-nothing skip below is a real change, not vacuous.
+#[tokio::test]
+async fn judge_rejudges_long_file_owner() {
+    let work = count_target_rejudges("work", &["a.py"]).await;
+    assert!(work >= 2, "a long file-owner is re-judged, got {work}");
+}
+
+/// The scoped fix: an owns-NOTHING task (the integrate-verify sink) is judged AT MOST ONCE in the SAME
+/// harness — every deterministic gate is disarmed for it and its verdict is always a non-actionable "ok",
+/// so re-judging it only steals an idle node from sink-review. worker_timeout stays its hard-stall backstop.
+#[tokio::test]
+async fn judge_skips_rejudging_owns_nothing_sink() {
+    let sink = count_target_rejudges("sink", &[]).await;
+    assert!(
+        sink <= 1,
+        "owns-nothing sink judged at most once, got {sink}"
+    );
+}
+
 /// With the per-task intervention cap at 0, the judge may flag but must never kill — the worker runs
 /// to completion untouched. Guards against a weak judge looping a task forever.
 #[tokio::test]
