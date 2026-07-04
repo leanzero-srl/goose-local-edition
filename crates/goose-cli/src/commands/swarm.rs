@@ -2000,19 +2000,42 @@ mod tests {
             false
         )); // node frame, not python
 
-        // Repro safety: app/test invocations pass; inline code / chaining / redirection / network / deletion fail.
-        assert!(repro_command_is_safe(
-            "python3 -m invoicip invoice total --invoice a1 --discount 10 --tax 8"
+        // Repro safety (no-shell argv gate): app/test invocations parse; everything else is rejected (None).
+        let ok = |c: &str| safe_repro_argv(c).is_some();
+        assert_eq!(
+            safe_repro_argv("python3 -m invoicip invoice total --invoice a1 --discount 10 --tax 8"),
+            Some(
+                "python3 -m invoicip invoice total --invoice a1 --discount 10 --tax 8"
+                    .split(' ')
+                    .map(str::to_string)
+                    .collect()
+            )
+        );
+        assert!(ok("pytest tests/test_calc.py -q"));
+        assert!(ok("python3 app.py run --flag value")); // plain app args
+                                                        // The exact holes the adversarial review found — all MUST be rejected now:
+        assert!(!ok("python3 -c \"import os\"")); // separate inline code
+        assert!(!ok("python3 -cimport os")); // ATTACHED inline code (the critical bypass)
+        assert!(!ok("python3 -c'x'")); // quote char anywhere
+        assert!(!ok("pytest ~")); // tilde expansion
+        assert!(!ok("python3 -m app $HOME/x")); // parameter expansion
+        assert!(!ok("python3 -m app *.py")); // glob
+        assert!(!ok("python3 -m app; rm -rf x")); // chaining
+        assert!(!ok("python3 -m app | grep y")); // pipe
+        assert!(!ok("python3 -m app > out")); // redirection
+        assert!(!ok("python3 /etc/passwd")); // absolute path arg
+        assert!(!ok("python3 -m app ../escape")); // parent escape
+        assert!(!ok("ls -la")); // non-app head
+        assert!(!ok("curl http://evil/x")); // network head
+        assert!(!ok("")); // empty
+
+        // Import/setup crashes are NOT defect repros.
+        assert!(is_import_error_only(
+            "Traceback (most recent call last):\nModuleNotFoundError: No module named 'requests'"
         ));
-        assert!(repro_command_is_safe("pytest tests/test_calc.py -q"));
-        assert!(repro_command_is_safe("python3 app.py run -c config.yaml")); // -c AFTER the script is an app flag
-        assert!(!repro_command_is_safe("python3 -c \"import os\"")); // python inline code
-        assert!(!repro_command_is_safe("ls -la")); // non-app head
-        assert!(!repro_command_is_safe("python3 -m app; rm -rf x")); // chaining + deletion
-        assert!(!repro_command_is_safe("python3 -m app | grep y")); // pipe
-        assert!(!repro_command_is_safe("python3 -m app > out")); // redirection
-        assert!(!repro_command_is_safe("curl http://evil/x")); // network head
-        assert!(!repro_command_is_safe("")); // empty
+        assert!(!is_import_error_only(
+            "Traceback (most recent call last):\nValueError: bad input"
+        ));
     }
 
     #[test]
@@ -4413,55 +4436,88 @@ fn looks_like_python_traceback(output: &str, success: bool) -> bool {
 /// (`python`/`python3`/`pytest`, possibly path-qualified) with NO shell chaining, redirection, substitution,
 /// pipe, network, or deletion is allowed to run — even inside the throwaway snapshot. Anything else is
 /// rejected and never executed. A false-reject is harmless (the finding just stays advisory).
-fn repro_command_is_safe(cmd: &str) -> bool {
+fn safe_repro_argv(cmd: &str) -> Option<Vec<String>> {
     let c = cmd.trim();
     if c.is_empty() {
-        return false;
+        return None;
     }
-    let toks: Vec<&str> = c.split_whitespace().collect();
-    let first = toks[0];
-    let ok_head = matches!(first, "python" | "python3" | "pytest")
-        || first.ends_with("/python")
-        || first.ends_with("/python3");
+    // Any shell-special / expansion / quoting character -> reject. The argv is run DIRECTLY (never via a
+    // shell), so removing these removes ALL shell expansion, chaining, redirection, substitution, and globbing
+    // at the source — a blocklist over `sh -c` (the earlier design) could not, and was bypassable.
+    if c.chars().any(|ch| {
+        matches!(
+            ch,
+            ';' | '|'
+                | '&'
+                | '$'
+                | '`'
+                | '>'
+                | '<'
+                | '~'
+                | '*'
+                | '?'
+                | '{'
+                | '}'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '\\'
+                | '\''
+                | '"'
+                | '!'
+                | '#'
+        ) || ch.is_control()
+    }) {
+        return None;
+    }
+    let toks: Vec<String> = c.split_whitespace().map(str::to_string).collect();
+    let head = toks[0].as_str();
+    let ok_head = matches!(head, "python" | "python3" | "pytest")
+        || head.ends_with("/python")
+        || head.ends_with("/python3");
     if !ok_head {
-        return false;
+        return None;
     }
-    // Ban PYTHON's own `-c` (arbitrary inline code) — scan the interpreter flags only; a `-c` that appears
-    // AFTER the module/script belongs to the app and is fine. `python3 -c "..."` is inline code -> reject.
+    // Ban Python inline code in ANY form (`-c`, `-cCODE`) among the interpreter flags — a `-c` AFTER the
+    // module/script is the APP's flag and is fine. Attached `-cCODE` (one token) is caught by the prefix test.
     for t in &toks[1..] {
-        if *t == "-c" {
-            return false;
+        if t == "-m" || !t.starts_with('-') {
+            break;
         }
-        if *t == "-m" || !t.starts_with('-') {
-            break; // reached the module/script; any later -c is an app flag
+        if t.starts_with("-c") {
+            return None;
         }
     }
-    if c.contains("$(") {
-        return false;
-    }
-    if [';', '|', '&', '`', '>', '<', '\n', '\r']
+    // No arg may reach outside the snapshot: absolute path or parent-dir escape.
+    if toks[1..]
         .iter()
-        .any(|ch| c.contains(*ch))
+        .any(|t| t.starts_with('/') || t.contains(".."))
     {
-        return false;
+        return None;
     }
-    let banned = [
-        "rm ",
-        "rmdir",
-        "curl",
-        "wget",
-        "sudo",
-        "chmod",
-        "chown",
-        "mv ",
-        "://",
-        "shutil.rmtree",
-        "os.remove",
-        "os.unlink",
-        "os.system",
-        "subprocess",
-    ];
-    !banned.iter().any(|w| c.contains(w))
+    Some(toks)
+}
+
+/// The Python package dir (one containing `__main__.py`) at `root`, for a `-m <pkg>` invocation. None if absent.
+fn python_package(root: &Path) -> Option<String> {
+    std::fs::read_dir(root).ok().and_then(|rd| {
+        rd.filter_map(|e| e.ok())
+            .find(|e| e.path().join("__main__.py").is_file())
+            .and_then(|e| e.file_name().into_string().ok())
+    })
+}
+
+/// A traceback whose terminal exception is `ModuleNotFoundError`/`ImportError` — a SETUP / missing-dependency
+/// failure, NOT a code-defect repro. Excluded from the crash class so a snapshot lacking third-party deps
+/// never reads as a reproduced defect.
+fn is_import_error_only(output: &str) -> bool {
+    let last = output
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    last.contains("ModuleNotFoundError") || last.contains("ImportError")
 }
 
 /// The runnable entry path from a parsed package.json: `bin` (string or first object value), else `main`,
@@ -4732,13 +4788,15 @@ fn find_chrome_headless() -> Option<std::path::PathBuf> {
 /// Run ONE repro command in `cwd` with a hard timeout, capturing combined stdout+stderr and success. A
 /// timeout or spawn error yields `("", false)` — NOT a crash (empty output has no traceback), so a hang is
 /// never mistaken for a reproduced defect.
-async fn run_repro_once(cmd: &str, cwd: &Path) -> (String, bool) {
-    let mut c = tokio::process::Command::new("sh");
-    c.arg("-c")
-        .arg(cmd)
+async fn run_repro_once(argv: &[String], cwd: &Path) -> (String, bool) {
+    let mut c = tokio::process::Command::new(&argv[0]);
+    c.args(&argv[1..])
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
+    // Own process group so a repro that spawns children can be reaped as a unit and cannot outlive us.
+    #[cfg(unix)]
+    c.process_group(0);
     match tokio::time::timeout(std::time::Duration::from_secs(30), c.output()).await {
         Ok(Ok(o)) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -4755,10 +4813,7 @@ async fn run_repro_once(cmd: &str, cwd: &Path) -> (String, bool) {
 /// browser-verify surfaces a code error), or inconclusive. Returns `(class, reproduced)`. Fail-safe: an unsafe
 /// command or any snapshot error -> not reproduced. The snapshot is a local TempDir deleted the moment this
 /// returns, so nothing is left behind.
-async fn reproduce_finding(cmd: &str, real_root: &Path) -> (&'static str, bool) {
-    if !repro_command_is_safe(cmd) {
-        return ("unsafe", false);
-    }
+async fn reproduce_finding(argv: &[String], real_root: &Path) -> (&'static str, bool) {
     let Ok(tmp) = tempfile::TempDir::new() else {
         return ("inconclusive", false);
     };
@@ -4766,15 +4821,34 @@ async fn reproduce_finding(cmd: &str, real_root: &Path) -> (&'static str, bool) 
         return ("inconclusive", false);
     }
     let shadow = tmp.path();
-    let (out1, ok1) = run_repro_once(cmd, shadow).await;
-    if looks_like_python_traceback(&out1, ok1) {
-        // Determinism check: a real defect reproduces every time; a one-off flake does not drive anything.
-        let (out2, ok2) = run_repro_once(cmd, shadow).await;
-        if looks_like_python_traceback(&out2, ok2) {
+    // BASELINE (must-fix from the adversarial review): if the app's OWN `--help` can't run cleanly in the
+    // snapshot, the snapshot is not a sound baseline (missing third-party deps / broken setup), so any crash
+    // below would be a SETUP artifact, not the finding. Bail to inconclusive rather than count a false repro.
+    if let Some(pkg) = python_package(shadow) {
+        let baseline = [
+            "python3".to_string(),
+            "-m".to_string(),
+            pkg,
+            "--help".to_string(),
+        ];
+        let (bout, bok) = run_repro_once(&baseline, shadow).await;
+        if looks_like_python_traceback(&bout, bok) {
+            return ("baseline-broken", false);
+        }
+    }
+    // CRASH class: a deterministic traceback that is NOT a mere import/setup failure (run TWICE — a one-off
+    // flake is not a repro).
+    let (out1, ok1) = run_repro_once(argv, shadow).await;
+    if looks_like_python_traceback(&out1, ok1) && !is_import_error_only(&out1) {
+        let (out2, ok2) = run_repro_once(argv, shadow).await;
+        if looks_like_python_traceback(&out2, ok2) && !is_import_error_only(&out2) {
             return ("crash", true);
         }
         return ("flaky", false);
     }
+    // BROWSER class: a static-web tree whose browser-verify surfaces a real code error (ReferenceError /
+    // SyntaxError). Tree-level (not tied to the specific finding), but browser-verify only flags genuine code
+    // defects, so a positive is a real bug — advisory in Stage 1; a per-finding tie is Stage 2's concern.
     if !run_browser_verify(shadow).await.is_empty() {
         return ("browser", true);
     }
@@ -4788,28 +4862,24 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
     if !matches!(lang, TargetLang::Python) {
         return String::new();
     }
-    let Some(pkg) = std::fs::read_dir(root).ok().and_then(|rd| {
-        rd.filter_map(|e| e.ok())
-            .find(|e| e.path().join("__main__.py").is_file())
-            .and_then(|e| e.file_name().into_string().ok())
-    }) else {
+    // Run in a SNAPSHOT, not the live tree: `--help` still imports the package (executes produced module-level
+    // code), which should not touch the real working tree.
+    let Ok(tmp) = tempfile::TempDir::new() else {
         return String::new();
     };
-    let mut cmd = tokio::process::Command::new("python3");
-    cmd.arg("-m")
-        .arg(&pkg)
-        .arg("--help")
-        .current_dir(root)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    match tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output()).await {
-        Ok(Ok(o)) => {
-            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
-            s.push_str(&String::from_utf8_lossy(&o.stderr));
-            s
-        }
-        _ => String::new(),
+    if copy_tree_excluding(root, tmp.path()).is_err() {
+        return String::new();
     }
+    let Some(pkg) = python_package(tmp.path()) else {
+        return String::new();
+    };
+    let argv = [
+        "python3".to_string(),
+        "-m".to_string(),
+        pkg,
+        "--help".to_string(),
+    ];
+    run_repro_once(&argv, tmp.path()).await.0
 }
 
 /// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
@@ -8620,8 +8690,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     let authored = smoke_fix_dispatcher
                         .author_repro(&repro_model, finding, &help, &smoke_all_files)
                         .await;
-                    let (class, ok) = match &authored {
-                        Some(c) => reproduce_finding(c, &repro_root).await,
+                    let (class, ok) = match authored.as_deref().and_then(safe_repro_argv) {
+                        Some(argv) => reproduce_finding(&argv, &repro_root).await,
+                        None if authored.is_some() => ("unsafe-or-unparsed", false),
                         None => ("unauthored", false),
                     };
                     if ok {
