@@ -4581,7 +4581,16 @@ fn find_chrome_headless() -> Option<std::path::PathBuf> {
                         .unwrap_or(false)
                 })
                 .collect();
-            revs.sort();
+            // Sort by the NUMERIC trailing revision id (not byte-lexicographic — else rev 1000 would sort
+            // before 999, and the '-' vs '_' prefix byte would group by prefix) so `.rev()` truly yields the
+            // newest revision first.
+            revs.sort_by_key(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|n| n.rsplit('-').next())
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .unwrap_or(0)
+            });
             for rev in revs.into_iter().rev() {
                 for sub in subpaths {
                     let cand = rev.join(sub);
@@ -4611,12 +4620,16 @@ fn find_chrome_headless() -> Option<std::path::PathBuf> {
 }
 
 /// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
-/// headless chromium is available, load index.html and return ONLY genuine code-defect console errors
-/// (ReferenceError / SyntaxError / "is not defined") — the class that ships a broken web app silently (e.g. a
-/// module export never imported). FAIL-OPEN (no browser / spawn error / timeout -> empty, never a finding);
-/// network/fetch/favicon/undefined-access noise is HARD-EXCLUDED so a fine app that fetches a resource under
-/// file:// is never false-flagged. REPORT-ONLY — the caller emits an advisory event and does NOT drive the
-/// COMPLETE corrective fix (a phantom fix on a working-but-needs-server app is the worst outcome).
+/// headless chromium is available, load index.html (served over localhost) and return console lines matching
+/// a CODE-DEFECT signature (contains "ReferenceError" / "SyntaxError" / "is not defined") — the class that
+/// ships a broken web app silently (e.g. a module export never imported). The NARROW positive filter is the
+/// primary false-flag guard (it already admits none of the fetch/net/favicon load-failure lines, which carry
+/// no such token); the explicit noise exclusion is belt-and-suspenders should the positive filter ever be
+/// broadened. Deliberate recall gap: a break that manifests as a bare "Cannot read properties of undefined"
+/// (TypeError, no code-defect token) is NOT flagged, to keep a fine app that needs a server from false-failing.
+/// FAIL-OPEN (no browser / spawn error / server-not-ready / timeout -> empty, never a finding). REPORT-ONLY —
+/// the caller emits an advisory event and does NOT drive the COMPLETE corrective fix (a phantom fix on a
+/// working-but-needs-server app is the worst outcome).
 async fn run_browser_verify(root: &Path) -> Vec<String> {
     let index = root.join("index.html");
     if !index.is_file() {
@@ -4656,7 +4669,25 @@ async fn run_browser_verify(root: &Path) -> Vec<String> {
     let Ok(mut child) = server.spawn() else {
         return Vec::new(); // no python3 -> fail-open
     };
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await; // let the server bind
+    // Poll until the server is actually accepting connections (not a blind sleep): this waits out a slow
+    // cold-start AND detects a lost-port bind failure (the free port from the dropped TcpListener could be
+    // grabbed between drop and python binding) — if it never comes up we fail OPEN rather than smoke a dead
+    // port (which would emit only net::ERR, get excluded, and silently report "no findings").
+    let mut ready = false;
+    for _ in 0..80 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !ready {
+        let _ = child.kill().await;
+        return Vec::new(); // server never came up -> fail-open
+    }
     let url = format!("http://127.0.0.1:{port}/index.html");
     let mut cmd = tokio::process::Command::new(chrome);
     cmd.args([
@@ -6734,8 +6765,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         files: &[String],
     ) -> bool {
         // Read-only SKEPTIC (a DIFFERENT model than raised the finding): hand it the finding + the real
-        // files and ask it to REFUTE. Only an independent CONFIRM|HIGH survives; fail-closed on anything
-        // else (REFUTE / LOW / timeout / parse fail) so an unverified finding can never drive a fix.
+        // files and ask it to REFUTE. Only a CONFIRM|HIGH survives; fail-closed on anything else (REFUTE /
+        // LOW / timeout / parse fail) so an unverified finding can never drive a fix. NOTE: for a
+        // domain-conventions finding the refuter is DELIBERATELY given the same DOMAIN_PITFALLS ground truth
+        // below — so it is model-independent but NOT fact-independent, on purpose: without the fact a
+        // same-fleet refuter carrying the same wrong prior would refute the true convention violation.
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let mut files_block = String::new();
         for f in files {
