@@ -1859,8 +1859,14 @@ impl Scheduler {
             // Findings accumulate in the dispatcher; run_swarm drains + re-verifies them after the sink. The
             // IdleSlotGuard releases the claimed device. Off by default (pick_sink_review returns None).
             if let Some(pr) = &self.pre_reviewer {
-                let pick = { state.lock().await.pick_sink_review() };
-                if let Some((model_id, dim, goal, claimed_device)) = pick {
+                // Fill ALL currently-free nodes this tick (not one) — pick_sink_review claims a device each
+                // call and returns None once none is free, so this saturates the idle nodes during the sink
+                // instead of leaving them idle between the ~15s tick and a ~90s review finishing.
+                loop {
+                    let pick = { state.lock().await.pick_sink_review() };
+                    let Some((model_id, dim, goal, claimed_device)) = pick else {
+                        break;
+                    };
                     let pr = pr.clone();
                     let st = state.clone();
                     tokio::spawn(async move {
