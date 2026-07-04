@@ -2039,6 +2039,71 @@ mod tests {
     }
 
     #[test]
+    fn review_fix_scoping_and_smells() {
+        // GOOSE_SWARM_REVIEW_FIX is OFF by default AND NOT in the assured bundle.
+        assert!(!resolve_gate(None, true, false)); // assured on, not in bundle -> off
+        assert!(resolve_gate(Some("1".to_string()), false, false)); // explicit on works
+                                                                    // is_test_path: test files are never promotable fix targets.
+        assert!(is_test_path("tests/test_calc.py"));
+        assert!(is_test_path("pkg/test_x.py"));
+        assert!(is_test_path("conftest.py"));
+        assert!(is_test_path("a/b_test.py"));
+        assert!(!is_test_path("invoicip/calc.py"));
+        assert!(!is_test_path("pkg/testing_utils.py")); // starts with "testing", not a test file
+                                                        // has_suppression_smell: NET-added exception swallowing / exit masking is rejected.
+        assert!(has_suppression_smell(
+            "x = 1\n",
+            "try:\n    x=1\nexcept: pass\n"
+        ));
+        assert!(has_suppression_smell(
+            "return g()\n",
+            "try:\n    return g()\nexcept Exception: pass\n"
+        ));
+        assert!(!has_suppression_smell("x=1\n", "x=2\n")); // a real edit
+        assert!(!has_suppression_smell(
+            "except: pass\n",
+            "except: pass\ny=1\n"
+        )); // pre-existing, not net-added
+    }
+
+    #[test]
+    fn frozen_bytes_grade_equals_promote() {
+        // The load-bearing invariant: grading a real-clone OVERLAID with the frozen bytes is byte-identical to
+        // PROMOTING the frozen bytes onto real — so what is graded is exactly what ships.
+        let real = tempfile::TempDir::new().unwrap();
+        std::fs::write(real.path().join("a.py"), b"print(1)\n").unwrap();
+        std::fs::write(real.path().join("b.py"), b"x=2\n").unwrap();
+        let shadow = tempfile::TempDir::new().unwrap();
+        copy_tree_excluding(real.path(), shadow.path()).unwrap();
+        std::fs::write(shadow.path().join("a.py"), b"print(42)\n").unwrap();
+        let diff = tree_diff(real.path(), shadow.path());
+        assert_eq!(diff.changed, vec!["a.py".to_string()]);
+        assert!(diff.created.is_empty() && diff.deleted.is_empty());
+        let frozen = read_files_bytes(shadow.path(), &diff.changed);
+        let g = tempfile::TempDir::new().unwrap();
+        copy_tree_excluding(real.path(), g.path()).unwrap();
+        write_frozen_bytes(g.path(), &frozen).unwrap();
+        let r2 = tempfile::TempDir::new().unwrap();
+        copy_tree_excluding(real.path(), r2.path()).unwrap();
+        write_frozen_bytes(r2.path(), &frozen).unwrap();
+        for f in ["a.py", "b.py"] {
+            assert_eq!(
+                std::fs::read(g.path().join(f)).unwrap(),
+                std::fs::read(r2.path().join(f)).unwrap(),
+                "{f} differs between graded clone and promoted tree"
+            );
+        }
+        assert_eq!(
+            std::fs::read(g.path().join("a.py")).unwrap(),
+            b"print(42)\n"
+        );
+        // path guard: a parent-escape is rejected.
+        assert!(
+            write_frozen_bytes(g.path(), &[("../evil.py".to_string(), b"x".to_vec())]).is_err()
+        );
+    }
+
+    #[test]
     fn extract_file_prefers_source_over_test_and_none_when_absent() {
         let f = "tests/test_cli.py:9: in test_add\n    from spendlog.cli import main\n\
                  spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
@@ -5250,6 +5315,195 @@ impl GooseAgentDispatcher {
         Some(line.to_string())
     }
 
+    /// Read-only peek at a speculative task's shadow path (locks, clones the PathBuf, drops the guard before
+    /// returning — never held across an await).
+    fn shadow_path(&self, task_id: &str) -> Option<PathBuf> {
+        self.spec_shadows
+            .lock()
+            .unwrap()
+            .get(task_id)
+            .map(|(t, _)| t.path().to_path_buf())
+    }
+
+    /// Lever B Stage 2 — attempt ONE bounded fix for a reproduced crash finding and promote it ONLY if it is
+    /// proven good. DEFAULT = REJECT; the first failing check returns accepted:false and leaves the real tree
+    /// byte-unchanged. Dispatch a speculative fix, FREEZE the diff bytes, grade a real-clone overlaid with
+    /// exactly those bytes (so graded==promoted), require the repro to FLIP (exit-0, no traceback, 3x) + a
+    /// CONCLUSIVELY green smoke gate, then promote the frozen bytes and re-verify on the real tree, reverting
+    /// on any failure. Crash-class Python only; browser is never dispatched here (it cannot meet this bar).
+    #[allow(clippy::too_many_arguments)]
+    async fn attempt_review_fix(
+        &self,
+        task_id: String,
+        target: (String, String),
+        finding: &str,
+        argv: &[String],
+        real_root: &Path,
+        manifest: &[String],
+        remaining: std::time::Duration,
+    ) -> ReviewFixVerdict {
+        let reject = |reason: &'static str, df: usize, dl: usize| ReviewFixVerdict {
+            attempted: true,
+            accepted: false,
+            reason,
+            diff_files: df,
+            diff_lines: dl,
+        };
+        // STEP 0 — dispatch ONE bounded speculative fix. A timeout or error is NEVER a flip.
+        let (device_id, model_id) = target;
+        let owned = match extract_file_from_finding(finding) {
+            Some(f) if manifest.iter().any(|m| m == &f) => vec![f],
+            _ => Vec::new(),
+        };
+        let mut desc = smoke_fix_description(&[finding.to_string()], TargetLang::Python);
+        desc.push_str(&format!(
+            "\n\nThe defect REPRODUCES by running: {}\nFIX THE ROOT CAUSE. Do NOT silence it with \
+             try/except or sys.exit, do NOT edit/skip/xfail tests, do NOT delete the entry point.",
+            argv.join(" ")
+        ));
+        let req = DispatchRequest {
+            task_id: task_id.clone(),
+            description: desc,
+            device_id,
+            model_id,
+            context_slice: String::new(),
+            attempt: 0,
+            owned_files: owned,
+            all_files: manifest.to_vec(),
+            prior_hint: None,
+            speculative: true,
+        };
+        let fix_budget = std::time::Duration::from_secs(fix_cap_secs()).min(remaining);
+        let dispatched = tokio::time::timeout(fix_budget, self.run(req)).await;
+        if !matches!(dispatched, Ok(Ok(_))) {
+            self.discard_speculative(&task_id).await;
+            return reject("fix-timeout-or-error", 0, 0);
+        }
+
+        let verdict = 'gate: {
+            // STEP 1 — capture the diff + FREEZE the promotable bytes.
+            let Some(s) = self.shadow_path(&task_id) else {
+                break 'gate reject("no-shadow", 0, 0);
+            };
+            let diff = tree_diff(real_root, &s);
+            let (df, dl) = (diff.changed.len(), diff.lines_delta);
+            if !diff.created.is_empty() {
+                break 'gate reject("diff-created", df, dl);
+            }
+            if !diff.deleted.is_empty() {
+                break 'gate reject("diff-deleted", df, dl);
+            }
+            if diff.changed.is_empty() {
+                break 'gate reject("diff-noop", df, dl);
+            }
+            if df > review_fix_max_files() {
+                break 'gate reject("diff-unbounded-files", df, dl);
+            }
+            if dl > review_fix_max_lines() {
+                break 'gate reject("diff-unbounded-lines", df, dl);
+            }
+            for f in &diff.changed {
+                if !manifest.iter().any(|m| m == f) || is_test_path(f) {
+                    break 'gate reject("diff-out-of-scope", df, dl);
+                }
+                let old = std::fs::read_to_string(real_root.join(f)).unwrap_or_default();
+                let new = std::fs::read_to_string(s.join(f)).unwrap_or_default();
+                if has_suppression_smell(&old, &new) {
+                    break 'gate reject("suppression-smell", df, dl);
+                }
+            }
+            let promote_bytes = read_files_bytes(&s, &diff.changed);
+
+            // STEP 2 — grade clone G = real overlaid with EXACTLY the frozen bytes (so graded == promoted).
+            let Ok(gtmp) = tempfile::TempDir::new() else {
+                break 'gate reject("grade-clone-failed", df, dl);
+            };
+            if copy_tree_excluding(real_root, gtmp.path()).is_err()
+                || write_frozen_bytes(gtmp.path(), &promote_bytes).is_err()
+            {
+                break 'gate reject("grade-clone-failed", df, dl);
+            }
+            let g = gtmp.path();
+
+            // STEP 3 — baseline sound on G (the fix didn't remove/break the entry).
+            let Some(pkg) = python_package(g) else {
+                break 'gate reject("baseline-entry-missing", df, dl);
+            };
+            let baseline = [
+                "python3".to_string(),
+                "-m".to_string(),
+                pkg,
+                "--help".to_string(),
+            ];
+            let (bout, bok) = run_repro_once(&baseline, g).await;
+            if !bok || looks_like_python_traceback(&bout, bok) {
+                break 'gate reject("baseline-broken", df, dl);
+            }
+
+            // STEP 4 — the repro must FLIP: exit-0 + no traceback, THREE times (any flake biases to REJECT).
+            for _ in 0..3 {
+                let (o, ok) = run_repro_once(argv, g).await;
+                if !ok || looks_like_python_traceback(&o, ok) {
+                    break 'gate reject("no-flip", df, dl);
+                }
+            }
+
+            // STEP 5 — full smoke gate CONCLUSIVELY green on G (never the vacuous passed()).
+            let sm = run_smoke_gate(g, TargetLang::Python).await;
+            if !(sm.findings.is_empty()
+                && matches!(sm.collect, Some(CollectVerdict::Ok))
+                && matches!(sm.tests, Some(TestRunVerdict::Pass))
+                && sm.entry_ok == Some(true))
+            {
+                break 'gate reject("smoke-inconclusive-or-red", df, dl);
+            }
+
+            // STEP 6 — promote the FROZEN bytes to real, re-verify on real, REVERT on any failure. Uncancelled.
+            let snapshot = read_files_bytes(real_root, &diff.changed);
+            if write_frozen_bytes(real_root, &promote_bytes).is_err() {
+                let _ = write_frozen_bytes(real_root, &snapshot);
+                break 'gate reject("promote-write-failed", df, dl);
+            }
+            let mut post_ok = true;
+            for _ in 0..3 {
+                let (o, ok) = run_repro_once(argv, real_root).await;
+                if !ok || looks_like_python_traceback(&o, ok) {
+                    post_ok = false;
+                    break;
+                }
+            }
+            if post_ok {
+                let sm2 = run_smoke_gate(real_root, TargetLang::Python).await;
+                post_ok = sm2.findings.is_empty()
+                    && matches!(sm2.collect, Some(CollectVerdict::Ok))
+                    && matches!(sm2.tests, Some(TestRunVerdict::Pass))
+                    && sm2.entry_ok == Some(true);
+            }
+            if post_ok {
+                for (rel, bytes) in &promote_bytes {
+                    if std::fs::read(real_root.join(rel)).ok().as_deref() != Some(bytes.as_slice())
+                    {
+                        post_ok = false;
+                        break;
+                    }
+                }
+            }
+            if !post_ok {
+                let _ = write_frozen_bytes(real_root, &snapshot);
+                break 'gate reject("post-verify-failed", df, dl);
+            }
+            ReviewFixVerdict {
+                attempted: true,
+                accepted: true,
+                reason: "promoted",
+                diff_files: df,
+                diff_lines: dl,
+            }
+        };
+        self.discard_speculative(&task_id).await;
+        verdict
+    }
+
     /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
     /// Returns the parsed children (the scheduler re-validates the partition before applying), or None if
     /// the reply can't be parsed into >= 2 children — the judge then falls back to its normal review.
@@ -6006,6 +6260,165 @@ fn copy_tree_excluding(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Lever B Stage 2 diff helpers (pure/deterministic, no model, unit-tested).
+/// Recursive slash-normalized relative file paths under `root`, using the same SKIP set as copy_tree_excluding.
+fn list_tree_files(root: &Path) -> std::collections::BTreeSet<String> {
+    const SKIP: &[&str] = &[
+        "node_modules",
+        "target",
+        "dist",
+        ".git",
+        ".swarm",
+        ".venv",
+        "__pycache__",
+        "build",
+    ];
+    fn walk(dir: &Path, base: &Path, out: &mut std::collections::BTreeSet<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            match e.file_type() {
+                Ok(ft) if ft.is_dir() => {
+                    if !SKIP.contains(&name.as_str()) {
+                        walk(&e.path(), base, out);
+                    }
+                }
+                Ok(ft) if ft.is_file() => {
+                    if let Ok(rel) = e.path().strip_prefix(base) {
+                        out.insert(rel.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// Symmetric line-multiset difference size between two file blobs — a magnitude heuristic bounding edit SIZE
+/// (a pure reorder over-counts -> harmless false-reject, per the design caveat); it is not a semantic measure.
+fn line_multiset_delta(a: &[u8], b: &[u8]) -> usize {
+    use std::collections::HashMap;
+    let sa = String::from_utf8_lossy(a);
+    let sb = String::from_utf8_lossy(b);
+    let mut counts: HashMap<&str, i64> = HashMap::new();
+    for l in sa.lines() {
+        *counts.entry(l).or_insert(0) += 1;
+    }
+    for l in sb.lines() {
+        *counts.entry(l).or_insert(0) -= 1;
+    }
+    counts.values().map(|v| v.unsigned_abs() as usize).sum()
+}
+
+struct TreeDiff {
+    changed: Vec<String>,
+    created: Vec<String>,
+    deleted: Vec<String>,
+    lines_delta: usize,
+}
+
+/// Diff the real tree vs a post-fix shadow over the UNION of both file sets.
+fn tree_diff(real: &Path, shadow: &Path) -> TreeDiff {
+    let rf = list_tree_files(real);
+    let sf = list_tree_files(shadow);
+    let created: Vec<String> = sf.difference(&rf).cloned().collect();
+    let deleted: Vec<String> = rf.difference(&sf).cloned().collect();
+    let mut changed = Vec::new();
+    let mut lines_delta = 0usize;
+    for f in rf.intersection(&sf) {
+        let a = std::fs::read(real.join(f)).unwrap_or_default();
+        let b = std::fs::read(shadow.join(f)).unwrap_or_default();
+        if a != b {
+            changed.push(f.clone());
+            lines_delta += line_multiset_delta(&a, &b);
+        }
+    }
+    changed.sort();
+    TreeDiff {
+        changed,
+        created,
+        deleted,
+        lines_delta,
+    }
+}
+
+/// A test-file path (never a promotable fix target — neutering the pytest oracle would let a bad fix pass).
+fn is_test_path(rel: &str) -> bool {
+    let base = rel.rsplit('/').next().unwrap_or(rel);
+    rel.split('/').any(|seg| seg == "test" || seg == "tests")
+        || base.starts_with("test_")
+        || base.ends_with("_test.py")
+        || base == "conftest.py"
+}
+
+/// Did the fix ADD exception-swallowing / exit-masking (net more suppression patterns in the new content than
+/// the old)? A match REJECTS the fix — defense-in-depth against silencing a crash instead of fixing it.
+fn has_suppression_smell(real_content: &str, shadow_content: &str) -> bool {
+    fn count(s: &str) -> usize {
+        s.lines()
+            .filter(|l| {
+                let t = l.trim();
+                t == "except:"
+                    || (t.starts_with("except") && (t.ends_with(": pass") || t.ends_with(":pass")))
+                    || (t.starts_with("except") && t.contains("return") && !t.contains("raise"))
+                    || t.contains("sys.exit(0)")
+                    || t.contains("os._exit(")
+                    || t.contains("sys.excepthook")
+            })
+            .count()
+    }
+    count(shadow_content) > count(real_content)
+}
+
+/// Read the current bytes of each rel path under `root` (skips unreadable). Used to FREEZE the promotable
+/// bytes and to snapshot the real originals for an exact revert.
+fn read_files_bytes(root: &Path, rels: &[String]) -> Vec<(String, Vec<u8>)> {
+    rels.iter()
+        .filter_map(|r| std::fs::read(root.join(r)).ok().map(|b| (r.clone(), b)))
+        .collect()
+}
+
+/// Write a FROZEN byte buffer (rel -> bytes) into `root` with copy_owned_files' path guards (reject
+/// absolute/`..`; the canonicalized parent must resolve inside `root`). All-or-error: any guard failure or IO
+/// error returns Err so the caller never trusts a partial write.
+fn write_frozen_bytes(root: &Path, files: &[(String, Vec<u8>)]) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    for (rel, bytes) in files {
+        let relp = Path::new(rel);
+        if relp.is_absolute()
+            || relp
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::new(ErrorKind::InvalidInput, "unsafe path"));
+        }
+        let dst = root.join(relp);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+            match (parent.canonicalize(), root.canonicalize()) {
+                (Ok(cp), Ok(ct)) if cp.starts_with(&ct) => {}
+                _ => return Err(Error::new(ErrorKind::InvalidInput, "escapes root")),
+            }
+        }
+        std::fs::write(&dst, bytes)?;
+    }
+    Ok(())
+}
+
+/// Outcome of one Lever B Stage 2 fix attempt (for the review_fix event + the summary count).
+struct ReviewFixVerdict {
+    attempted: bool,
+    accepted: bool,
+    reason: &'static str,
+    diff_files: usize,
+    diff_lines: usize,
 }
 
 /// SPECULATIVE promote: copy ONLY `files` (the winning twin's owned, relative paths) from its shadow `from`
@@ -7555,6 +7968,30 @@ fn fix_cap_secs() -> u64 {
         .clamp(120, 3600)
 }
 
+/// Lever B Stage 2 (GOOSE_SWARM_REVIEW_FIX) knobs. The phase cap bounds fix-attempt COMPLETION across all
+/// survivors (not just starts); max-files / max-lines bound how large a promotable diff may be.
+fn review_fix_phase_cap_secs() -> u64 {
+    std::env::var("GOOSE_SWARM_REVIEW_FIX_CAP_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1800)
+        .clamp(300, 3600)
+}
+fn review_fix_max_files() -> usize {
+    std::env::var("GOOSE_SWARM_REVIEW_FIX_MAX_FILES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3)
+        .clamp(1, 10)
+}
+fn review_fix_max_lines() -> usize {
+    std::env::var("GOOSE_SWARM_REVIEW_FIX_MAX_LINES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(60)
+        .clamp(10, 400)
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
@@ -7682,6 +8119,8 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
             "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
             "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
             "browser_verify": browser_verify_enabled(),
+            "review_repro": swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false),
+            "review_fix": swarm_gate("GOOSE_SWARM_REVIEW_FIX", false),
         },
     }));
 
@@ -8685,13 +9124,19 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 let repro_lang = detect_language(&opts.prompt, &smoke_all_files);
                 let help = entry_help(&repro_root, repro_lang).await;
                 let repro_model = fleet_models[0].clone();
+                let review_fix_on = swarm_gate("GOOSE_SWARM_REVIEW_FIX", false);
+                let review_fix_deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(review_fix_phase_cap_secs());
+                let min_attempt_budget = std::time::Duration::from_secs(fix_cap_secs() + 360);
                 let mut reproduced = 0usize;
-                for finding in &survivors {
+                let mut fixed = 0usize;
+                for (i, finding) in survivors.iter().enumerate() {
                     let authored = smoke_fix_dispatcher
                         .author_repro(&repro_model, finding, &help, &smoke_all_files)
                         .await;
-                    let (class, ok) = match authored.as_deref().and_then(safe_repro_argv) {
-                        Some(argv) => reproduce_finding(&argv, &repro_root).await,
+                    let argv_opt = authored.as_deref().and_then(safe_repro_argv);
+                    let (class, ok) = match &argv_opt {
+                        Some(argv) => reproduce_finding(argv, &repro_root).await,
                         None if authored.is_some() => ("unsafe-or-unparsed", false),
                         None => ("unauthored", false),
                     };
@@ -8705,6 +9150,50 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         "class": class,
                         "reproduced": ok,
                     }));
+                    // STAGE 2 FIX-GATE (GOOSE_SWARM_REVIEW_FIX): a reproduced CRASH (Python) drives ONE bounded
+                    // fix, promoted ONLY if proven good (repro-flip + conclusive smoke + revert-guarded). Browser
+                    // is never dispatched (it cannot meet the bar). Default OFF, not in the assured bundle.
+                    if review_fix_on
+                        && ok
+                        && class == "crash"
+                        && matches!(repro_lang, TargetLang::Python)
+                    {
+                        let remaining = review_fix_deadline
+                            .saturating_duration_since(std::time::Instant::now());
+                        if remaining < min_attempt_budget {
+                            sink.write_value(serde_json::json!({
+                                "event": "review_fix", "finding": finding, "attempted": false,
+                                "reason": "phase-cap",
+                            }));
+                            break;
+                        }
+                        if let (Some(t), Some(argv)) = (smoke_fix_target.clone(), argv_opt.as_ref())
+                        {
+                            let v = smoke_fix_dispatcher
+                                .attempt_review_fix(
+                                    format!("review-fix::{i}"),
+                                    t,
+                                    finding,
+                                    argv,
+                                    &repro_root,
+                                    &smoke_all_files,
+                                    remaining,
+                                )
+                                .await;
+                            if v.accepted {
+                                fixed += 1;
+                            }
+                            sink.write_value(serde_json::json!({
+                                "event": "review_fix",
+                                "finding": finding,
+                                "attempted": v.attempted,
+                                "accepted": v.accepted,
+                                "reason": v.reason,
+                                "diff_files": v.diff_files,
+                                "diff_lines": v.diff_lines,
+                            }));
+                        }
+                    }
                 }
                 eprintln!(
                     "{} {} of {} survivor(s) REPRODUCED by a repro command",
@@ -8712,6 +9201,16 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     reproduced,
                     survivors.len(),
                 );
+                if review_fix_on {
+                    eprintln!(
+                        "{} {} bounded fix(es) promoted (repro-flip + smoke re-gate + revert-guarded)",
+                        style("review fix:").cyan().bold(),
+                        fixed,
+                    );
+                    sink.write_value(serde_json::json!({
+                        "event": "review_fix_summary", "reproduced": reproduced, "accepted": fixed,
+                    }));
+                }
             }
         }
     }
