@@ -135,7 +135,11 @@ impl Dag {
             }
         }
         if removed != self.tasks.len() {
-            bail!("plan has a dependency cycle ({} of {} tasks orderable)", removed, self.tasks.len());
+            bail!(
+                "plan has a dependency cycle ({} of {} tasks orderable)",
+                removed,
+                self.tasks.len()
+            );
         }
         Ok(())
     }
@@ -257,7 +261,10 @@ impl Dag {
         }
         for (id, deps) in wiring {
             for d in deps {
-                self.dependents.entry(d.clone()).or_default().push(id.clone());
+                self.dependents
+                    .entry(d.clone())
+                    .or_default()
+                    .push(id.clone());
                 if let Some(n) = self.tasks.get_mut(&d) {
                     n.fan_out += 1;
                 }
