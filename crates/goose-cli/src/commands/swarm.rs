@@ -2059,6 +2059,26 @@ mod tests {
             "return g()\n",
             "try:\n    return g()\nexcept Exception: pass\n"
         ));
+        // The CANONICAL multi-line swallow (two physical lines) MUST be caught (was the critical evasion).
+        assert!(has_suppression_smell(
+            "def f():\n    return g()\n",
+            "def f():\n    try:\n        return g()\n    except Exception:\n        return 0\n"
+        ));
+        // contextlib.suppress + exit-0 masks (any variant).
+        assert!(has_suppression_smell(
+            "x=g()\n",
+            "with contextlib.suppress(Exception):\n    x=g()\n"
+        ));
+        assert!(has_suppression_smell(
+            "v=parse()\n",
+            "try:\n    v=parse()\nexcept ValueError:\n    exit(0)\n"
+        ));
+        assert!(has_suppression_smell("raise E\n", "sys.exit()\n"));
+        // A legitimate re-raise is NOT a smell (net-added except offset by net-added raise).
+        assert!(!has_suppression_smell(
+            "return g()\n",
+            "try:\n    return g()\nexcept KeyError:\n    raise ValueError('bad')\n"
+        ));
         assert!(!has_suppression_smell("x=1\n", "x=2\n")); // a real edit
         assert!(!has_suppression_smell(
             "except: pass\n",
@@ -5413,6 +5433,10 @@ impl GooseAgentDispatcher {
                 }
             }
             let promote_bytes = read_files_bytes(&s, &diff.changed);
+            // Every changed file MUST freeze, or graded != promoted and the revert set would be incomplete.
+            if promote_bytes.len() != diff.changed.len() {
+                break 'gate reject("freeze-incomplete", df, dl);
+            }
 
             // STEP 2 — grade clone G = real overlaid with EXACTLY the frozen bytes (so graded == promoted).
             let Ok(gtmp) = tempfile::TempDir::new() else {
@@ -5460,9 +5484,18 @@ impl GooseAgentDispatcher {
 
             // STEP 6 — promote the FROZEN bytes to real, re-verify on real, REVERT on any failure. Uncancelled.
             let snapshot = read_files_bytes(real_root, &diff.changed);
+            // The snapshot MUST cover every changed file, or a revert could not restore it exactly (a
+            // present-but-unreadable real file would be dropped). If not, refuse to promote.
+            if snapshot.len() != diff.changed.len() {
+                break 'gate reject("snapshot-incomplete", df, dl);
+            }
             if write_frozen_bytes(real_root, &promote_bytes).is_err() {
-                let _ = write_frozen_bytes(real_root, &snapshot);
-                break 'gate reject("promote-write-failed", df, dl);
+                let reason = if revert_and_verify(real_root, &snapshot) {
+                    "promote-write-failed"
+                } else {
+                    "revert-incomplete"
+                };
+                break 'gate reject(reason, df, dl);
             }
             let mut post_ok = true;
             for _ in 0..3 {
@@ -5489,8 +5522,12 @@ impl GooseAgentDispatcher {
                 }
             }
             if !post_ok {
-                let _ = write_frozen_bytes(real_root, &snapshot);
-                break 'gate reject("post-verify-failed", df, dl);
+                let reason = if revert_and_verify(real_root, &snapshot) {
+                    "post-verify-failed"
+                } else {
+                    "revert-incomplete"
+                };
+                break 'gate reject(reason, df, dl);
             }
             ReviewFixVerdict {
                 attempted: true,
@@ -6358,23 +6395,48 @@ fn is_test_path(rel: &str) -> bool {
         || base == "conftest.py"
 }
 
-/// Did the fix ADD exception-swallowing / exit-masking (net more suppression patterns in the new content than
-/// the old)? A match REJECTS the fix — defense-in-depth against silencing a crash instead of fixing it.
+/// Did the fix ADD exception-swallowing / exit-masking? Defense-in-depth against silencing a crash instead of
+/// fixing it. Detects the MULTI-LINE except form (the canonical swallow — `except X:` then a body, over two
+/// physical lines) by counting every `except` clause (single or multi-line) and treating a NET-added except
+/// not matched by a NET-added `raise` (a re-raise) as a swallow; plus contextlib.suppress and exit-0 masks
+/// (sys.exit()/exit(0)/os._exit(...)). A match REJECTS the fix. Precision-over-recall: a legitimate recovery
+/// handler that does not re-raise is (safely) also rejected -> the finding stays advisory.
 fn has_suppression_smell(real_content: &str, shadow_content: &str) -> bool {
-    fn count(s: &str) -> usize {
+    fn excepts(s: &str) -> usize {
         s.lines()
             .filter(|l| {
-                let t = l.trim();
-                t == "except:"
-                    || (t.starts_with("except") && (t.ends_with(": pass") || t.ends_with(":pass")))
-                    || (t.starts_with("except") && t.contains("return") && !t.contains("raise"))
+                let t = l.trim_start();
+                t == "except:" || t.starts_with("except ") || t.starts_with("except:")
+            })
+            .count()
+    }
+    fn raises(s: &str) -> usize {
+        s.lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t == "raise" || t.starts_with("raise ")
+            })
+            .count()
+    }
+    fn masks(s: &str) -> usize {
+        s.lines()
+            .filter(|l| {
+                // Collapse ALL whitespace so `sys . exit ( 0 )` matches too.
+                let t: String = l.split_whitespace().collect();
+                t.contains("contextlib.suppress")
+                    || t.contains("suppress(")
+                    || t.contains("sys.exit()")
                     || t.contains("sys.exit(0)")
+                    || t.contains("exit(0)")
                     || t.contains("os._exit(")
                     || t.contains("sys.excepthook")
             })
             .count()
     }
-    count(shadow_content) > count(real_content)
+    let d_except = excepts(shadow_content).saturating_sub(excepts(real_content));
+    let d_raise = raises(shadow_content).saturating_sub(raises(real_content));
+    let d_mask = masks(shadow_content).saturating_sub(masks(real_content));
+    d_except > d_raise || d_mask > 0
 }
 
 /// Read the current bytes of each rel path under `root` (skips unreadable). Used to FREEZE the promotable
@@ -6410,6 +6472,18 @@ fn write_frozen_bytes(root: &Path, files: &[(String, Vec<u8>)]) -> std::io::Resu
         std::fs::write(&dst, bytes)?;
     }
     Ok(())
+}
+
+/// Restore `snapshot` bytes to `root` and VERIFY every file matches — returns false if the revert could not
+/// fully restore (so the caller surfaces "revert-incomplete" rather than falsely claiming the tree is
+/// byte-unchanged). Belt-and-suspenders for a rare IO fault mid-revert.
+fn revert_and_verify(root: &Path, snapshot: &[(String, Vec<u8>)]) -> bool {
+    if write_frozen_bytes(root, snapshot).is_err() {
+        return false;
+    }
+    snapshot
+        .iter()
+        .all(|(rel, bytes)| std::fs::read(root.join(rel)).ok().as_deref() == Some(bytes.as_slice()))
 }
 
 /// Outcome of one Lever B Stage 2 fix attempt (for the review_fix event + the summary count).
@@ -9125,9 +9199,14 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 let help = entry_help(&repro_root, repro_lang).await;
                 let repro_model = fleet_models[0].clone();
                 let review_fix_on = swarm_gate("GOOSE_SWARM_REVIEW_FIX", false);
+                // Reserve enough for ONE attempt to COMPLETE (dispatch fix_cap + the uncancelled STEP 2-6
+                // grade/verify/promote work ~600s). The effective deadline is never below one attempt's
+                // budget, so no valid phase-cap config silently disables review-fix and the completion
+                // overshoot is bounded by the reserved headroom.
+                let min_attempt_budget = std::time::Duration::from_secs(fix_cap_secs() + 600);
                 let review_fix_deadline = std::time::Instant::now()
-                    + std::time::Duration::from_secs(review_fix_phase_cap_secs());
-                let min_attempt_budget = std::time::Duration::from_secs(fix_cap_secs() + 360);
+                    + std::time::Duration::from_secs(review_fix_phase_cap_secs())
+                        .max(min_attempt_budget);
                 let mut reproduced = 0usize;
                 let mut fixed = 0usize;
                 for (i, finding) in survivors.iter().enumerate() {
