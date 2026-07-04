@@ -22,3 +22,7 @@ FINDINGS:
 1. planning_min=22.6 (26% of an 85.6min run) — the biggest overhead lever. Investigate: skeleton (serial 27B) vs parallel detailing time. Planning quality is critical -> tune carefully, don't cut blindly.
 2. complete_result reports remaining_findings=1 but the final complete_verify round had findings=0 (passed=true). Reporting DISCREPANCY (cosmetic but confusing to an operator reading the report). Candidate small COMPLETE-pillar fix — verify against code.
 3. Per-device: mac-gabee 54 vs mihai-mlx 1 — preferred-model routing + judge/reviews concentrate on one node (known behavior).
+
+## polish-3 AMENDMENT (add dedup to kept green csvkit-lite) — assessed 2026-07-04
+DELIVERABLE: EXCELLENT — exit 0, 49 pytest pass (36 preserved + ~13 new dedup), regression_ok=1. NEW dedup correct (removes dup rows keep-first; --cols dedups on a subset). OLD commands preserved (stats correctly rejects non-numeric — not a regression). 8 existing files preserved + dedup added. JUDGE+CONTRACTS+COMPLETE handled MODIFICATION cleanly (extended, did not rewrite).
+FIX #1 VALIDATED LIVE (A/B): post-fix binary judged the sink (integrate-verify) EXACTLY 1 time (vs polish-2 pre-fix binary's many re-judges); total judge_verdict 4 vs polish-2's 55. The scoped skip works on a real run -> valuable + positive, breaks nothing. "Validate by enabling" bar MET.
