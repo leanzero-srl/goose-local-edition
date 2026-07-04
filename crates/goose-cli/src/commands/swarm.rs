@@ -4454,11 +4454,35 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
             }
         }
     };
+    // Run the test suite IF a REAL test script is declared (parity with the Python pytest / Rust cargo
+    // test paths). Skip a missing script AND the `npm init` placeholder ("no test specified") so a
+    // test-less TS CLI is never false-flagged; fail-OPEN on npm missing / timeout (a watch-mode script
+    // that never exits just times out -> inconclusive, not a finding).
+    let has_real_test = pkg
+        .get("scripts")
+        .and_then(|s| s.get("test"))
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| !t.contains("no test specified"));
+    let tests = if has_real_test {
+        let mut c = tokio::process::Command::new("npm");
+        c.arg("test").current_dir(root);
+        match smoke_output(c, 240).await {
+            Some(out) if !out.status.success() => {
+                let tail = tail_lines(&combined_output(&out), 40);
+                findings.push(format!("`npm test` has failing tests:\n{tail}"));
+                Some(TestRunVerdict::Failures(tail))
+            }
+            Some(_) => Some(TestRunVerdict::Pass),
+            None => None,
+        }
+    } else {
+        None
+    };
     SmokeResult {
         ran: true,
         py_files: 0,
         collect: None,
-        tests: None,
+        tests,
         entry_package: None,
         entry_ok,
         findings,
