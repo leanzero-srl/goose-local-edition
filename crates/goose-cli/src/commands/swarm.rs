@@ -6843,6 +6843,20 @@ fn complete_parallel() -> bool {
         .unwrap_or(false)
 }
 
+/// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
+/// worker timeout is IDLE-based, so an agent that ACTIVELY over-generates (a reasoning model thinking for
+/// many minutes without writing a file) is never re-routed — observed: a serial complete-fix burned ~35min
+/// on one node while two idled. This bounds each serial fix; on timeout the run future is dropped and the
+/// next round's deterministic verify gates the (partial) result. GOOSE_SWARM_FIX_CAP_SECS overrides
+/// (default 1200 = 20min, matching the fleet-parallel fix path); clamped to 120..=3600.
+fn fix_cap_secs() -> u64 {
+    std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1200)
+        .clamp(120, 3600)
+}
+
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
@@ -7680,7 +7694,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         prior_hint: None,
                         speculative: false,
                     };
-                    let _ = smoke_fix_dispatcher.run(req).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(fix_cap_secs()),
+                        smoke_fix_dispatcher.run(req),
+                    )
+                    .await;
                 }
             } else {
                 eprintln!("complete: fix round {round} against the distilled failure ...");
@@ -7696,7 +7714,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     prior_hint: None,
                     speculative: false,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(fix_cap_secs()),
+                    smoke_fix_dispatcher.run(fix_req),
+                )
+                .await;
             }
         }
         complete_failed = !final_passed;
@@ -7764,7 +7786,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     prior_hint: None,
                     speculative: false,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(fix_cap_secs()),
+                    smoke_fix_dispatcher.run(fix_req),
+                )
+                .await;
                 let after =
                     run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
                 let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
@@ -7952,7 +7978,11 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     prior_hint: None,
                     speculative: false,
                 };
-                let _ = smoke_fix_dispatcher.run(fix_req).await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(fix_cap_secs()),
+                    smoke_fix_dispatcher.run(fix_req),
+                )
+                .await;
                 let after = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
                 let after_new: Vec<String> = after
                     .findings
