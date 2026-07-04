@@ -2281,7 +2281,45 @@ const REVIEW_DIMENSIONS: &[ReviewDimension] = &[
         brief: "a boundary or failure mode the passing test suite never exercises — empty input, a negative \
                 or zero value, a missing file/key, or a malformed argument — is unhandled or crashes.",
     },
+    ReviewDimension {
+        id: "domain-conventions",
+        brief: "the code contradicts a KNOWN-CORRECT domain convention (calendar/cron/timezone, 0- vs \
+                1-indexing, inclusive- vs exclusive ranges, money precision, off-by-one, units) — a \
+                SELF-CONSISTENT domain error the code AND its tests both encode the same wrong way, so a \
+                green suite + a same-fleet review hide it. Checked against injected external ground truth.",
+    },
 ];
+
+/// EXTERNAL GROUND TRUTH injected into the `domain-conventions` review (and its verify). Each line is a
+/// KNOWN-CORRECT convention the weak fleet routinely misremembers, so the reviewer checks the produced code
+/// AGAINST a fact the code+tests never generated — breaking the self-consistency that lets a shared domain
+/// bug (e.g. cronmate matching a cron dow field against `dt.weekday()`) pass 79 tests + review + complete.
+/// Empirically verified: a local 27B given this list + cronmate flagged the exact dow off-by-one.
+const DOMAIN_PITFALLS: &str = "\
+1. CRON day-of-week is 0=Sunday..6=Saturday (7 also = Sunday). Python datetime.weekday() is 0=Monday..6=Sunday. \
+Matching a cron dow field directly against dt.weekday() is an OFF-BY-ONE; correct is dt.isoweekday() % 7. \
+CRON minute 0-59, hour 0-23, day-of-month 1-31, month 1-12 (1-indexed, not 0).
+2. Timezone: a naive datetime is NOT UTC. Never mix naive and aware datetimes. Wall-clock scheduling must \
+account for DST — adding timedelta(days=1) to an aware local time can shift the wall hour by +/-1h; round-trip \
+through zoneinfo. Unix time is SECONDS since 1970 UTC; JS Date.now()/many APIs are MILLISECONDS (1000x error).
+3. 0-indexing vs 1-indexing: day-of-month, months, ISO weeks, human 'Nth' are 1-based; list/array offsets are \
+0-based. Do not index a 1-based value straight into a 0-based array.
+4. Range inclusivity: range(a,b) and Python slices are END-EXCLUSIVE; cron 'a-b', SQL BETWEEN, and most human \
+'from a to b' are END-INCLUSIVE. An inclusive upper bound needs range(a, b+1). Time buckets are usually [start,end).
+5. Money/currency MUST NOT be a binary float (0.1+0.2 != 0.3). Use integer minor units (cents) or Decimal with \
+an explicit rounding mode. round() in Python 3 is banker's rounding (round half to even): round(0.5)==0.
+6. Off-by-one at boundaries: <= vs <, first/last element, fencepost (N items -> N-1 gaps), inclusive date-diff \
+(today..today is 1 day inclusive), pagination page N offset = (N-1)*size.
+7. Leap years: Feb has 29 days when year%4==0 AND (year%100!=0 OR year%400==0); a year is not always 365 days.
+8. String length: len(s) counts Unicode code points, not bytes (len(s.encode('utf-8'))) and not graphemes; \
+truncating by bytes can split a multibyte sequence. Case-insensitive compare needs casefold(), not lower().
+9. Integer vs true division: Python '/' is float, '//' floors toward -inf (-7//2 == -4); C/Go/Rust int '/' \
+truncates toward zero; modulo sign follows the dividend in C, the divisor in Python. Choose deliberately for negatives.
+10. Mutable default args (def f(x, acc=[])) are created ONCE and shared across calls; use a None sentinel. \
+Default string sort is lexicographic/codepoint, not numeric ('10' < '2') and not locale/case-insensitive.
+11. Week start: Sunday in the US locale, Monday in ISO-8601. Business-day math skips weekends (and often \
+holidays); day+1 is not always the next business day. Percentages: 5% is 0.05, basis points are /10000.\
+";
 
 /// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
 /// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
@@ -6646,13 +6684,26 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // For the domain-conventions dimension, inject the EXTERNAL GROUND TRUTH: the reviewer checks the
+        // code against a fact the code+tests never generated, which is what breaks self-consistency and lets
+        // it catch a shared domain-convention bug a green suite hides.
+        let conventions_block = if dim_id == "domain-conventions" {
+            format!(
+                "\n\nKNOWN-CORRECT DOMAIN CONVENTIONS (AUTHORITATIVE external truth — check the code \
+                 SPECIFICALLY against EACH; a contradiction is a REAL defect EVEN IF the code looks \
+                 internally consistent and the tests pass, because the tests may encode the same mistake):\n\
+                 {DOMAIN_PITFALLS}"
+            )
+        } else {
+            String::new()
+        };
         let system = format!(
             "You correctness-review a COMPLETED multi-module build along ONE dimension ONLY: {dim_brief} A \
-             passing test suite does NOT prove this defect is absent. Read the files against the GOAL and \
-             report ANY concrete defect of THIS dimension only. Reply with EXACTLY one line \
-             `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable corrections (what is \
-             wrong + which file), empty when OK. Be conservative — only ISSUES when you can point to a real \
-             defect of this dimension."
+             passing test suite does NOT prove this defect is absent.{conventions_block} Read the files \
+             against the GOAL and report ANY concrete defect of THIS dimension only. Reply with EXACTLY one \
+             line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable corrections \
+             (what is wrong + which file + the correct rule), empty when OK. Be conservative — only ISSUES \
+             when you can point to a real defect of this dimension."
         );
         let user = format!(
             "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
@@ -6699,17 +6750,34 @@ impl TaskDispatcher for GooseAgentDispatcher {
         if files_block.is_empty() {
             return false; // no code to verify against -> cannot confirm
         }
-        let system = "You verify ONE code-review finding by CHECKING IT AGAINST THE ACTUAL CODE — do NOT \
-            rubber-stamp it, and do NOT reflexively reject it. The finding names a file and a defect: go read \
-            THAT file and see whether the defect is really present as described. CONFIRM if you can LOCATE the \
-            defect in the files shown — point to the exact construct (e.g. the argument really uses \
-            store_true, the module really is never imported, the command name really differs from the spec). \
-            REFUTE only if the finding is factually WRONG, already handled in the code, or not actually a \
-            defect. Reply EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM or REFUTE; confidence is \
-            HIGH or LOW. Use CONFIRM|HIGH when you LOCATED the defect in the code; REFUTE|HIGH when you \
-            checked and it is genuinely not a defect; use LOW only when the files shown are insufficient to \
-            tell. A real, locatable defect must be CONFIRMED — being unsure is not a reason to refute."
-            .to_string();
+        // LOAD-BEARING: if the finding is a DOMAIN-CONVENTIONS one, give the refuter the SAME external ground
+        // truth. Without it the refuter is a same-fleet 27B carrying the very wrong prior this feature exists
+        // to defeat (dt.weekday() "looks right"), so it would REFUTE|HIGH the true finding and fail-closed
+        // would discard it — killing the recall. With the fact, the refuter CONFIRMS the real violation.
+        let conventions_block = if finding.contains("[domain-conventions]") {
+            format!(
+                " The finding cites a DOMAIN CONVENTION. The following conventions are KNOWN-CORRECT external \
+                 truth — if the code contradicts one, the finding is CORRECT and you must CONFIRM it, EVEN IF \
+                 the code looks internally consistent and its tests pass (the tests may encode the same \
+                 mistake); do NOT refute a real convention violation just because the code is self-consistent:\
+                 \n{DOMAIN_PITFALLS}"
+            )
+        } else {
+            String::new()
+        };
+        let system = format!(
+            "You verify ONE code-review finding by CHECKING IT AGAINST THE ACTUAL CODE — do NOT rubber-stamp \
+             it, and do NOT reflexively reject it. The finding names a file and a defect: go read THAT file \
+             and see whether the defect is really present as described. CONFIRM if you can LOCATE the defect \
+             in the files shown — point to the exact construct (e.g. the argument really uses store_true, the \
+             module really is never imported, the command name really differs from the spec). REFUTE only if \
+             the finding is factually WRONG, already handled in the code, or not actually a defect.\
+             {conventions_block} Reply EXACTLY one line `VERDICT|confidence`: VERDICT is CONFIRM or REFUTE; \
+             confidence is HIGH or LOW. Use CONFIRM|HIGH when you LOCATED the defect in the code; REFUTE|HIGH \
+             when you checked and it is genuinely not a defect; use LOW only when the files shown are \
+             insufficient to tell. A real, locatable defect must be CONFIRMED — being unsure is not a reason \
+             to refute."
+        );
         let user = format!(
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
         );
