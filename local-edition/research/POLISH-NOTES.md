@@ -71,3 +71,12 @@ STATUS: 10 deliverables assessed — 8 CLI correct, 1 web honestly-flagged-broke
 The edge-cases review dimension flagged a TRUE, spec-relevant bug: cmd_explain/cmd_next don't catch ValueError from parse()/strptime -> malformed input crashes with a raw traceback (confirmed by running: `next 'garbage'`, `--from 'not-a-date'`, `explain ''` all traceback; the spec wants clean errors, which cmd_validate has). But review_verify REFUTED it (candidates=1, survivors=0, refuted=1) -> a real finding was lost, and COMPLETE never fixed it.
 ASSESSMENT: a VERIFY-CALIBRATION data point — the adversarial verify is deliberately FAIL-CLOSED (refute-when-unsure) to avoid false-fixes (the worse error direction), so refuting a borderline/mild finding is the intended conservative behavior. But this one was accurate + spec-relevant, so it's a mild OVER-refutation. Do NOT recalibrate off ONE data point (risks swinging to over-CONFIRM -> false-fixes). WATCH for a pattern across runs: if review_verify systematically refutes real findings, the review pillar under-delivers -> then recalibrate. For now: recorded, not fixed.
 Meanwhile the REVIEW pillar MISSED the dow bug (looked at 11 modules, 217 'weekday' refs, caught the error-handling issue but not the convention error) — reinforces the self-consistent-domain-error limit.
+
+## EXPLORATORY TESTING — domain-conventions VALIDATED end-to-end (2026-07-04)
+After the adversarial-review fixes (64028bd8d), tested both shipped features.
+DOMAIN-CONVENTIONS (test-dc weekdates + direct 27B probes):
+- WIRED: test-dc REVIEW-FANOUT ran '5 dimensions' (4 orig + domain-conventions).
+- NO FALSE-POSITIVE: weekdates came out CORRECT (33 tests; which/next/count all match the real calendar — 2026-07-06=Monday, next Sundays 07-05/07-12) -> domain-conventions flagged 0 findings. Correctly silent on a correct app.
+- CATCHES (empirical on the real 27B + cronmate's buggy schedule.py): review with DOMAIN_PITFALLS -> 'ISSUE|schedule.py line 25 uses dt.weekday() for cron dow (Mon=0) but cron dow is Sun=0 -> off-by-one; use dt.isoweekday()%7'. The exact bug all pillars missed.
+- LOAD-BEARING VERIFY CONFIRMS: verify_finding with DOMAIN_PITFALLS injected -> CONFIRM|HIGH on the dow finding (the same-fleet refuter, given the ground truth, confirms instead of refuting with its own wrong prior). So a real domain-conventions finding FIRES + SURVIVES verify.
+=> domain-conventions produces GOOD RESULTS: catches self-consistent domain bugs, survives verify, no false-positive. Process: poller torn down cleanly at swarm end.
