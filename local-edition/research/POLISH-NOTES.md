@@ -11,3 +11,14 @@ Per-device dispatch: mac-gabee 29 (judge-inflated), worksmacstudio 12, local-mih
 
 ## Fix #1 SHIPPED (eb7161e86 + test-fix): JUDGE — skip re-judging the owns-nothing sink
 scheduler.rs pick_judge_target now skips RE-judging a task with no owned files (keeps its first judge); the re-judge cooldown became a JudgeConfig knob (rejudge_cooldown_secs default 60). Adversarially cleared (workflow w6nllng8r, both skeptics HIGH conf): the BLANKET k-ok backoff was REJECTED (unsound — disarms the judge behavioral gates on file-owning workers; worker_timeout is idle-based so it can't catch ACTIVE looping). The scoped fix loses nothing for the sink (its deterministic gates are already disarmed, its verdict always non-actionable "ok") and returns ~1 idle node to sink-review. Test: judge_skips_rejudging_owns_nothing_sink (deterministic sink<=1). Lesson: timing-based judge-firing-count assertions flake under concurrent test load — assert the DETERMINISTIC cap, not a >=N count.
+
+## polish-2 (calcpipe, deep tokenizer->parser->evaluator chain) — assessed 2026-07-04
+DELIVERABLE: EXCELLENT — 54 pytest pass; calcpipe CORRECT (2+3*4=14 precedence, (2+3)*4=20 parens, sqrt(16)=4.0 functions, -5+3=-2 unary). PILLARS HEALTHY:
+- COMPLETE fixed a REAL parser.py defect (round0 findings=1 fail -> round1 findings=0 pass -> green). Correct behavior.
+- DYNAMIC REPLAN fired (round0 added test-tokenizer+test-functions to fill idle nodes on the serial chain). Working.
+- SINK idle-fill fired: prewarmed=3, found 3, ALL 3 REFUTED by adversarial verify -> 0 survivors (correct fail-closed, no false fixes).
+- Node utilization on the deep serial chain: 74% >=2 nodes, 25% single-node (largely inherent chokepoint cost, mitigated by replan). owned_files disjoint, types = shared base.
+FINDINGS:
+1. planning_min=22.6 (26% of an 85.6min run) — the biggest overhead lever. Investigate: skeleton (serial 27B) vs parallel detailing time. Planning quality is critical -> tune carefully, don't cut blindly.
+2. complete_result reports remaining_findings=1 but the final complete_verify round had findings=0 (passed=true). Reporting DISCREPANCY (cosmetic but confusing to an operator reading the report). Candidate small COMPLETE-pillar fix — verify against code.
+3. Per-device: mac-gabee 54 vs mihai-mlx 1 — preferred-model routing + judge/reviews concentrate on one node (known behavior).
