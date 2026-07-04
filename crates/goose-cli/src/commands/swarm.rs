@@ -3450,6 +3450,7 @@ impl GooseAgentDispatcher {
         research_findings: &str,
         best_of_n: usize,
         homogeneous: bool,
+        need_confidence: bool,
     ) -> Result<(String, Option<u8>, String)> {
         let homo_hint = if homogeneous {
             "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
@@ -3645,7 +3646,13 @@ impl GooseAgentDispatcher {
         // Hoisted out of `if n > 1` so the confidence + the model's stated uncertainties are RETURNED to the
         // caller (the GOOSE_SWARM_ASK gate consumes them). n==1 keeps its old latency (no verbalized call)
         // and yields the inert agreement default — the ask gate forces best_of_n>=2 anyway.
-        let (plan_conf, uncertainties): (Option<u8>, String) = if n > 1 {
+        // The verbalized-confidence critique is a SEPARATE serial planner (27B) generation that gates
+        // detailing as a barrier. Its ONLY consumer is the GOOSE_SWARM_ASK_FLOOR gate; on the default path
+        // (ask floor unset, `need_confidence == false`) the returned plan_conf is discarded, so running it
+        // is pure wasted latency on the plan critical path (evidence: it produced a parseable score in only
+        // 6/102 runs, usually running long/timing out). Skip it unless the ask gate will actually consume
+        // it — the cheap best-of-N `agreement_conf` still fills plan_conf, so plan CONTENT is byte-identical.
+        let (plan_conf, uncertainties): (Option<u8>, String) = if n > 1 && need_confidence {
             let verbalized = self
                 .verbalized_confidence(planner_model, user_prompt, &skeleton)
                 .await;
@@ -7298,6 +7305,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     &research_findings,
                     best_of_n,
                     cfg.homogeneous_models,
+                    ask_floor.is_some(),
                 )
                 .await
             {
