@@ -3849,16 +3849,20 @@ impl GooseAgentDispatcher {
             // interchangeable units there are busy through the whole run; the planner scales the layout to
             // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
             format!(
-                "and shape the plan so that at every stage there are at least about {worker_count} \
-                 independent, ready-to-run subtasks — enough to keep all {worker_count} identical, \
-                 interchangeable worker devices busy — scaling how finely you decompose to the FLEET SIZE \
-                 ({worker_count}), never to a fixed number (a 2-unit and a 100-unit fleet want very \
-                 different widths). This matters most in the TAIL: a single end-of-run test subtask runs \
-                 alone while the other devices idle, so split tests into independent per-module subtasks \
-                 (each depending on ONLY the module it covers, never the entry-point or integrate-verify) \
-                 whenever that adds ready work to fill otherwise-idle units — split more on a larger fleet, \
-                 less on a small one. Only add a subtask when it can genuinely run concurrently on an idle \
-                 device; extra subtasks with nothing to parallelize just cost slow-model time."
+                "and organize the TESTS to keep all {worker_count} identical, interchangeable worker units \
+                 busy. The parallelism comes ENTIRELY from the dependencies, so this is the rule that \
+                 matters: make ONE unit-test subtask PER MODULE, named `test-<module>`, that imports and \
+                 tests ONLY that single module and therefore depends_on ONLY that one module — e.g. a \
+                 `parser` module gets a `test-parser` subtask (files `test_parser`, depends_on [`parser`]). \
+                 Such a test starts the instant its module is built and runs WHILE the other modules and the \
+                 entry-point are still being built; that overlap is the whole point. Do NOT organize tests \
+                 by app-level behavior (no `tests-validation`/`tests-output`/`tests-integration` subtasks) \
+                 and NEVER let a test subtask depend on the entry-point/cli or on the whole app — those can \
+                 only run at the very end while units sit idle, defeating the purpose; end-to-end behavior \
+                 is ALREADY checked by integrate-verify, so you never need a separate integration-test \
+                 subtask. Scale the number of per-module test subtasks to the fleet ({worker_count} units): \
+                 more independent module-tests keep a larger fleet busy; a tiny 1-module app just keeps \
+                 tests in ONE subtask (nothing to parallelize)."
             )
         } else {
             "and related tests into ONE test subtask.".to_string()
