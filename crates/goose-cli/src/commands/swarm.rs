@@ -5413,15 +5413,33 @@ impl GooseAgentDispatcher {
                 break 'gate reject("no-shadow", 0, 0);
             };
             let diff = tree_diff(real_root, &s);
-            let (df, dl) = (diff.changed.len(), diff.lines_delta);
-            if !diff.created.is_empty() {
-                break 'gate reject("diff-created", df, dl);
+            // IGNORE test-file changes entirely: they are NEVER promoted, so a fix can neither neuter the
+            // oracle (an edit to an existing test is dropped, and the REAL unchanged tests still run in the
+            // smoke gate) nor add a self-serving test that only its own fix passes. Only NON-test SOURCE
+            // changes are graded + promoted. A weak model that also touches a test no longer loses the whole
+            // fix — the enable-prove showed it strays to tests every time, which the old reject-on-test made
+            // unfixable. (A fix that touched ONLY tests promotes nothing -> diff-noop.)
+            let not_test = |f: &&String| !is_test_path(f);
+            let changed: Vec<String> = diff.changed.iter().filter(not_test).cloned().collect();
+            let created: Vec<String> = diff.created.iter().filter(not_test).cloned().collect();
+            let deleted: Vec<String> = diff.deleted.iter().filter(not_test).cloned().collect();
+            let dl: usize = changed
+                .iter()
+                .map(|f| {
+                    let a = std::fs::read(real_root.join(f)).unwrap_or_default();
+                    let b = std::fs::read(s.join(f)).unwrap_or_default();
+                    line_multiset_delta(&a, &b)
+                })
+                .sum();
+            let df = changed.len();
+            if !created.is_empty() {
+                break 'gate reject("diff-created", df, dl); // new SOURCE module -> un-promotable in v1
             }
-            if !diff.deleted.is_empty() {
+            if !deleted.is_empty() {
                 break 'gate reject("diff-deleted", df, dl);
             }
-            if diff.changed.is_empty() {
-                break 'gate reject("diff-noop", df, dl);
+            if changed.is_empty() {
+                break 'gate reject("diff-noop", df, dl); // no source change (only tests touched, or nothing)
             }
             if df > review_fix_max_files() {
                 break 'gate reject("diff-unbounded-files", df, dl);
@@ -5429,8 +5447,8 @@ impl GooseAgentDispatcher {
             if dl > review_fix_max_lines() {
                 break 'gate reject("diff-unbounded-lines", df, dl);
             }
-            for f in &diff.changed {
-                if !manifest.iter().any(|m| m == f) || is_test_path(f) {
+            for f in &changed {
+                if !manifest.iter().any(|m| m == f) {
                     break 'gate reject("diff-out-of-scope", df, dl);
                 }
                 let old = std::fs::read_to_string(real_root.join(f)).unwrap_or_default();
@@ -5439,9 +5457,9 @@ impl GooseAgentDispatcher {
                     break 'gate reject("suppression-smell", df, dl);
                 }
             }
-            let promote_bytes = read_files_bytes(&s, &diff.changed);
+            let promote_bytes = read_files_bytes(&s, &changed);
             // Every changed file MUST freeze, or graded != promoted and the revert set would be incomplete.
-            if promote_bytes.len() != diff.changed.len() {
+            if promote_bytes.len() != changed.len() {
                 break 'gate reject("freeze-incomplete", df, dl);
             }
 
@@ -5490,10 +5508,10 @@ impl GooseAgentDispatcher {
             }
 
             // STEP 6 — promote the FROZEN bytes to real, re-verify on real, REVERT on any failure. Uncancelled.
-            let snapshot = read_files_bytes(real_root, &diff.changed);
+            let snapshot = read_files_bytes(real_root, &changed);
             // The snapshot MUST cover every changed file, or a revert could not restore it exactly (a
             // present-but-unreadable real file would be dropped). If not, refuse to promote.
-            if snapshot.len() != diff.changed.len() {
+            if snapshot.len() != changed.len() {
                 break 'gate reject("snapshot-incomplete", df, dl);
             }
             if write_frozen_bytes(real_root, &promote_bytes).is_err() {
