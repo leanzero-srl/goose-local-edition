@@ -3845,20 +3845,23 @@ impl GooseAgentDispatcher {
         // module) so tests become ready early and run in parallel with the cli build, instead of one
         // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
         let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
-            // Utilization principle (not a fixed threshold): the fleet is IDENTICAL units with no fixed
-            // roles, so shape the plan to keep ALL of them busy through the WHOLE run — you decide the
-            // test layout that does that, per this app.
-            "and shape the test layout to keep EVERY worker device busy through the run's TAIL. The devices \
-             are identical and any can build any subtask; your job is to leave none idle. Watch the tail: the \
-             modules build in parallel first, then the entry-point and tests — if tests are ONE big \
-             end-of-run subtask they run alone while the rest of the fleet sits idle. So use judgment: when \
-             the app has enough independent modules to fill the otherwise-idle devices, give each module its \
-             OWN test subtask depending on ONLY that module (they then run in parallel with the entry-point \
-             build); when there is nothing to parallelize (one or two modules), keep tests in ONE subtask so \
-             you do not add slow-model overhead for no gain. Split for parallelism ONLY where it fills idle \
-             fleet capacity — that judgment is yours to make from the app's structure."
+            // Utilization principle, FLEET-RELATIVE (never a fixed count): keep however many identical,
+            // interchangeable units there are busy through the whole run; the planner scales the layout to
+            // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
+            format!(
+                "and shape the plan so that at every stage there are at least about {worker_count} \
+                 independent, ready-to-run subtasks — enough to keep all {worker_count} identical, \
+                 interchangeable worker devices busy — scaling how finely you decompose to the FLEET SIZE \
+                 ({worker_count}), never to a fixed number (a 2-unit and a 100-unit fleet want very \
+                 different widths). This matters most in the TAIL: a single end-of-run test subtask runs \
+                 alone while the other devices idle, so split tests into independent per-module subtasks \
+                 (each depending on ONLY the module it covers, never the entry-point or integrate-verify) \
+                 whenever that adds ready work to fill otherwise-idle units — split more on a larger fleet, \
+                 less on a small one. Only add a subtask when it can genuinely run concurrently on an idle \
+                 device; extra subtasks with nothing to parallelize just cost slow-model time."
+            )
         } else {
-            "and related tests into ONE test subtask."
+            "and related tests into ONE test subtask.".to_string()
         };
         let system = format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
