@@ -2098,7 +2098,7 @@ mod tests {
         std::fs::write(shadow.path().join("a.py"), b"print(42)\n").unwrap();
         let diff = tree_diff(real.path(), shadow.path());
         assert_eq!(diff.changed, vec!["a.py".to_string()]);
-        assert!(diff.created.is_empty() && diff.deleted.is_empty());
+        assert!(diff.deleted.is_empty());
         let frozen = read_files_bytes(shadow.path(), &diff.changed);
         let g = tempfile::TempDir::new().unwrap();
         copy_tree_excluding(real.path(), g.path()).unwrap();
@@ -5413,16 +5413,17 @@ impl GooseAgentDispatcher {
                 break 'gate reject("no-shadow", 0, 0);
             };
             let diff = tree_diff(real_root, &s);
-            // IGNORE test-file changes entirely: they are NEVER promoted, so a fix can neither neuter the
-            // oracle (an edit to an existing test is dropped, and the REAL unchanged tests still run in the
-            // smoke gate) nor add a self-serving test that only its own fix passes. Only NON-test SOURCE
-            // changes are graded + promoted. A weak model that also touches a test no longer loses the whole
-            // fix — the enable-prove showed it strays to tests every time, which the old reject-on-test made
-            // unfixable. (A fix that touched ONLY tests promotes nothing -> diff-noop.)
-            let not_test = |f: &&String| !is_test_path(f);
-            let changed: Vec<String> = diff.changed.iter().filter(not_test).cloned().collect();
-            let created: Vec<String> = diff.created.iter().filter(not_test).cloned().collect();
-            let deleted: Vec<String> = diff.deleted.iter().filter(not_test).cloned().collect();
+            // Scope the promotable set to MANIFEST SOURCE files (owned, non-test). Anything OUTSIDE the
+            // manifest — the swarm's own run.log, a .pytest_cache written during the smoke phase, any stray —
+            // is INVISIBLE here: never graded, never promoted, so it can neither pollute the diff nor block a
+            // fix (the enable-prove hit exactly this: run.log kept growing and read as an out-of-scope change).
+            // Test files are also excluded, so a fix can neither NEUTER the oracle (the REAL tests still run in
+            // the smoke gate) nor add a self-serving test. A NEW file is simply not promoted (v1 ships no new
+            // modules; a fix that needs one fails the smoke re-gate). A manifest source file the fix DELETED is
+            // a reject.
+            let in_scope = |f: &&String| !is_test_path(f) && manifest.iter().any(|m| m == *f);
+            let changed: Vec<String> = diff.changed.iter().filter(in_scope).cloned().collect();
+            let deleted: Vec<String> = diff.deleted.iter().filter(in_scope).cloned().collect();
             let dl: usize = changed
                 .iter()
                 .map(|f| {
@@ -5432,14 +5433,11 @@ impl GooseAgentDispatcher {
                 })
                 .sum();
             let df = changed.len();
-            if !created.is_empty() {
-                break 'gate reject("diff-created", df, dl); // new SOURCE module -> un-promotable in v1
-            }
             if !deleted.is_empty() {
                 break 'gate reject("diff-deleted", df, dl);
             }
             if changed.is_empty() {
-                break 'gate reject("diff-noop", df, dl); // no source change (only tests touched, or nothing)
+                break 'gate reject("diff-noop", df, dl); // no in-scope source change (only tests/artifacts)
             }
             if df > review_fix_max_files() {
                 break 'gate reject("diff-unbounded-files", df, dl);
@@ -5448,9 +5446,6 @@ impl GooseAgentDispatcher {
                 break 'gate reject("diff-unbounded-lines", df, dl);
             }
             for f in &changed {
-                if !manifest.iter().any(|m| m == f) {
-                    break 'gate reject("diff-out-of-scope", df, dl);
-                }
                 let old = std::fs::read_to_string(real_root.join(f)).unwrap_or_default();
                 let new = std::fs::read_to_string(s.join(f)).unwrap_or_default();
                 if has_suppression_smell(&old, &new) {
@@ -6381,16 +6376,16 @@ fn line_multiset_delta(a: &[u8], b: &[u8]) -> usize {
 
 struct TreeDiff {
     changed: Vec<String>,
-    created: Vec<String>,
     deleted: Vec<String>,
 }
 
-/// Diff the real tree vs a post-fix shadow over the UNION of both file sets (line-delta is recomputed by the
-/// caller over the promoted, test-filtered subset).
+/// Diff the real tree vs a post-fix shadow. `changed` = files present in BOTH with differing bytes; `deleted`
+/// = present in real but not the shadow. Created files (in the shadow only) are intentionally omitted — the
+/// caller scopes to the manifest, and v1 promotes no new modules. Line-delta is recomputed by the caller over
+/// the promoted subset.
 fn tree_diff(real: &Path, shadow: &Path) -> TreeDiff {
     let rf = list_tree_files(real);
     let sf = list_tree_files(shadow);
-    let created: Vec<String> = sf.difference(&rf).cloned().collect();
     let deleted: Vec<String> = rf.difference(&sf).cloned().collect();
     let mut changed = Vec::new();
     for f in rf.intersection(&sf) {
@@ -6401,11 +6396,7 @@ fn tree_diff(real: &Path, shadow: &Path) -> TreeDiff {
         }
     }
     changed.sort();
-    TreeDiff {
-        changed,
-        created,
-        deleted,
-    }
+    TreeDiff { changed, deleted }
 }
 
 /// A test-file path (never a promotable fix target — neutering the pytest oracle would let a bad fix pass).
