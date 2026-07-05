@@ -341,6 +341,12 @@ pub enum SwarmCommand {
         #[command(subcommand)]
         command: Option<PoolCommand>,
     },
+    /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
+    /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
+    #[command(
+        about = "Serve the swarm as an MCP extension over stdio (goose session --with-extension)"
+    )]
+    Serve,
 }
 
 /// Options for a `goose swarm run`.
@@ -418,6 +424,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             None => pool_menu(),
             Some(pc) => pool_op(pc),
         },
+        SwarmCommand::Serve => crate::commands::swarm_serve::run().await,
     }
 }
 
