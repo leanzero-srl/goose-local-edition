@@ -6383,23 +6383,21 @@ struct TreeDiff {
     changed: Vec<String>,
     created: Vec<String>,
     deleted: Vec<String>,
-    lines_delta: usize,
 }
 
-/// Diff the real tree vs a post-fix shadow over the UNION of both file sets.
+/// Diff the real tree vs a post-fix shadow over the UNION of both file sets (line-delta is recomputed by the
+/// caller over the promoted, test-filtered subset).
 fn tree_diff(real: &Path, shadow: &Path) -> TreeDiff {
     let rf = list_tree_files(real);
     let sf = list_tree_files(shadow);
     let created: Vec<String> = sf.difference(&rf).cloned().collect();
     let deleted: Vec<String> = rf.difference(&sf).cloned().collect();
     let mut changed = Vec::new();
-    let mut lines_delta = 0usize;
     for f in rf.intersection(&sf) {
         let a = std::fs::read(real.join(f)).unwrap_or_default();
         let b = std::fs::read(shadow.join(f)).unwrap_or_default();
         if a != b {
             changed.push(f.clone());
-            lines_delta += line_multiset_delta(&a, &b);
         }
     }
     changed.sort();
@@ -6407,7 +6405,6 @@ fn tree_diff(real: &Path, shadow: &Path) -> TreeDiff {
         changed,
         created,
         deleted,
-        lines_delta,
     }
 }
 
