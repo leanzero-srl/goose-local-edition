@@ -3845,9 +3845,12 @@ impl GooseAgentDispatcher {
         // module) so tests become ready early and run in parallel with the cli build, instead of one
         // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
         let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
-            "and split tests into ONE small test subtask PER leaf module (file `test_<module>`), each \
-             depends_on ONLY the single module it tests — NEVER the cli/entry-point subtask or \
-             integrate-verify; only the cli/entry's OWN test may depend on the cli subtask."
+            // Adaptive: per-module tests only pay off when there are >=3 leaf modules to fill an
+            // otherwise-idle device during the cli build (A/B: won on 3-4 modules, cost overhead on 1-2).
+            "and IF the app has 3 OR MORE independent leaf modules, split tests into ONE small test subtask \
+             PER leaf module (file `test_<module>`), each depends_on ONLY the single module it tests — NEVER \
+             the cli/entry-point subtask or integrate-verify; only the cli/entry's OWN test may depend on the \
+             cli subtask. If the app has only 1-2 leaf modules, keep related tests in ONE test subtask."
         } else {
             "and related tests into ONE test subtask."
         };
