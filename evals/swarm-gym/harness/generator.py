@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -72,6 +73,11 @@ def open_session(
     if existing and existing.get("app_slug"):
         slug = existing["app_slug"]
     workspace = apps_dir / slug
+    # Fresh explore session: clear any files left in apps/<slug> by a PRIOR session on the same slug.
+    # Reusing the dir lets a leftover (e.g. an orphan test module) pollute this run — the swarm's
+    # COMPLETE gate burns rounds trying to fix a file it never authored. continue-existing keeps its dir.
+    if existing is None and workspace.exists():
+        shutil.rmtree(workspace)
     return _to_taskspec(data, archetype, slug, workspace, persona, seed, turn=1)
 
 
