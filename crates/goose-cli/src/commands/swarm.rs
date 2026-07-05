@@ -3845,12 +3845,18 @@ impl GooseAgentDispatcher {
         // module) so tests become ready early and run in parallel with the cli build, instead of one
         // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
         let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
-            // Adaptive: per-module tests only pay off when there are >=3 leaf modules to fill an
-            // otherwise-idle device during the cli build (A/B: won on 3-4 modules, cost overhead on 1-2).
-            "and IF the app has 3 OR MORE independent leaf modules, split tests into ONE small test subtask \
-             PER leaf module (file `test_<module>`), each depends_on ONLY the single module it tests — NEVER \
-             the cli/entry-point subtask or integrate-verify; only the cli/entry's OWN test may depend on the \
-             cli subtask. If the app has only 1-2 leaf modules, keep related tests in ONE test subtask."
+            // Utilization principle (not a fixed threshold): the fleet is IDENTICAL units with no fixed
+            // roles, so shape the plan to keep ALL of them busy through the WHOLE run — you decide the
+            // test layout that does that, per this app.
+            "and shape the test layout to keep EVERY worker device busy through the run's TAIL. The devices \
+             are identical and any can build any subtask; your job is to leave none idle. Watch the tail: the \
+             modules build in parallel first, then the entry-point and tests — if tests are ONE big \
+             end-of-run subtask they run alone while the rest of the fleet sits idle. So use judgment: when \
+             the app has enough independent modules to fill the otherwise-idle devices, give each module its \
+             OWN test subtask depending on ONLY that module (they then run in parallel with the entry-point \
+             build); when there is nothing to parallelize (one or two modules), keep tests in ONE subtask so \
+             you do not add slow-model overhead for no gain. Split for parallelism ONLY where it fills idle \
+             fleet capacity — that judgment is yours to make from the app's structure."
         } else {
             "and related tests into ONE test subtask."
         };
