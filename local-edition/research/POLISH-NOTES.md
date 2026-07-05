@@ -90,3 +90,14 @@ OVERALL VERDICT — both shipped features produce GOOD RESULTS end-to-end, adver
 
 ## LEVER D (assured profile) — PROVEN on real runs (2026-07-04)
 GOOSE_SWARM_ASSURED=1 (no other flags) -> run_started assured:true + gates ALL true (complete/goals/contracts/review/review_fanout/review_verify/sink_review/smoke/browser_verify). Precedence: ASSURED=1 REVIEW_VERIFY=0 -> review_verify:false, rest true (explicit env overrides the profile). Byte-identical default pinned by the unit test. Committed ee9da303b. No negative. Next: Lever B.
+
+## LEVER B STAGE 2 — FUNCTIONAL END-TO-END (2026-07-05, after 6 enable-prove rounds)
+Reproduction-gated fix (GOOSE_SWARM_REVIEW_FIX) PROVEN: on a seeded unhandled crash (statz mean([]) ZeroDivisionError), the swarm reproduced it (27B authored 'python3 -m statz mean'), the 27B fixed it (`if not xs: return 0`), and the 6-step gate PROMOTED it (accepted=true reason=promoted, df=1 dl=2). Verified by RUNNING: mean(1 2 3)=2.0, mean([])=0 exit0 no crash, 5 tests pass. graded==promoted, bounded diff, smoke green.
+6 rounds fixed 5 REAL robustness issues, each found only by running (unit tests + reasoning missed all):
+1. verify FALSE-REFUTED real crashes -> starved the gate -> repro now off ALL fanout findings (self-validating stronger oracle).
+2. phase-cap deadline==budget skipped every attempt -> +300s headroom.
+3. weak 27B strays beyond its file -> scoped fix prompt (edit only owned file).
+4. 27B bundles a test-add (design forbade test edits, unworkable) -> FILTER tests out of promote set (dropped not rejected; real tests still validate; safer than reject).
+5. swarm run.log grew during the run -> read as out-of-scope -> scope the diff to MANIFEST source files (artifacts/caches/strays invisible).
+Also caught + fixed 8 pre-run adversarial-review findings incl a CRITICAL multi-line-except suppression evasion. The no-bad-promote floor held every round.
+KNOWN v1 bias (not a blocker): the exit-0 FLIP accepts a return-sentinel fix (mean([])->0) but would reject a raise-clean-error fix (nonzero exit) as no-flip -> fail-safe, lower recall for that style. Candidate relaxation: 3-state run_repro_once (Completed vs TimedOut) + accept no-traceback-AND-completed, relying on smoke+smell. Default OFF, not in assured.
