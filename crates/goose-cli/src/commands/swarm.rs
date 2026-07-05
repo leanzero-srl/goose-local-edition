@@ -1295,6 +1295,112 @@ fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLa
     stripped
 }
 
+/// GOOSE_SWARM_PARALLEL_TESTS backstop. With per-module tests requested, the weak model sometimes still
+/// leaves a stray `cli`/entry dependency on a leaf-module test, re-serializing it behind the cli build and
+/// erasing the parallelism. This narrowly drops ONLY the cli/entry (and integrate-verify) edge from a test
+/// subtask that UNIQUELY tests a single non-cli module, and PRESERVES every sibling/shared-module dep (so a
+/// test that genuinely imports a shared module is never broken — the failure mode of a naive drop-all). A
+/// monolithic/ambiguous test (spanning modules, or testing the cli itself) is left UNCHANGED. Returns the
+/// number of edges relaxed. Only ever called when the flag is ON; the default path never invokes it.
+fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn base(f: &str) -> String {
+        let name = f.rsplit('/').next().unwrap_or(f);
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        stem.strip_prefix("test_").unwrap_or(stem).to_string()
+    }
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    fn is_cli_like(s: &serde_json::Value) -> bool {
+        let idl = id_of(s).to_lowercase();
+        if idl.contains("cli") || idl.contains("entry") || idl.contains("main") {
+            return true;
+        }
+        files_of(s).iter().any(|f| {
+            let b = f.rsplit('/').next().unwrap_or(f);
+            b.contains("__main__") || b == "cli.py" || b == "main.py" || b == "cli.js"
+        })
+    }
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        id.contains("test") || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(f)))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // The ONLY edges we ever drop: cli/entry subtasks + integrate-verify.
+    let drop_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| is_cli_like(s) || id_of(s) == "integrate-verify")
+        .map(id_of)
+        .collect();
+    // module base-name -> owning NON-test subtask id.
+    let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for s in arr {
+        if is_test(s) || id_of(s) == "integrate-verify" {
+            continue;
+        }
+        let id = id_of(s);
+        for f in files_of(s) {
+            if !lang.is_test_file(&f) {
+                owner.entry(base(&f)).or_insert_with(|| id.clone());
+            }
+        }
+    }
+    // Test subtasks that UNIQUELY test a single non-cli module -> safe to relax.
+    let mut relax_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for s in arr {
+        if !is_test(s) || is_cli_like(s) {
+            continue; // leave non-tests + the cli's own test alone
+        }
+        let owners: std::collections::HashSet<&String> = files_of(s)
+            .iter()
+            .filter_map(|f| owner.get(&base(f)))
+            .collect();
+        if owners.len() == 1 {
+            let oid = owners.into_iter().next().unwrap();
+            if !drop_ids.contains(oid) {
+                relax_ids.insert(id_of(s));
+            }
+        }
+    }
+    if relax_ids.is_empty() {
+        return 0;
+    }
+    let mut relaxed = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if !relax_ids.contains(&id_of(s)) {
+                continue;
+            }
+            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                let before = deps.len();
+                deps.retain(|d| d.as_str().map(|x| !drop_ids.contains(x)).unwrap_or(true));
+                relaxed += before - deps.len();
+            }
+        }
+    }
+    relaxed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,6 +1437,66 @@ mod tests {
             vec!["core", "cli-entry"],
             "real module/entry deps stay; tests dep removed"
         );
+    }
+
+    #[test]
+    fn relax_test_module_deps_truth_table() {
+        fn deps(plan: &serde_json::Value, id: &str) -> String {
+            plan["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == id)
+                .unwrap()["depends_on"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|d| d.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"store","depends_on":[],"files":["store.py"]},
+                {"id":"shared","depends_on":[],"files":["shared.py"]},
+                {"id":"cli-entry","depends_on":["store","shared"],"files":["cli.py","__main__.py"]},
+                {"id":"test-store","depends_on":["store","cli-entry"],"files":["test_store.py"]},
+                {"id":"test-shared-user","depends_on":["shared","cli-entry"],"files":["test_shared.py"]},
+                {"id":"test-cli","depends_on":["cli-entry"],"files":["test_cli.py"]},
+                {"id":"tests","depends_on":["store","cli-entry"],"files":["test_store.py","test_cli.py"]},
+                {"id":"integrate-verify","depends_on":["store","shared","cli-entry"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = relax_test_module_deps(&mut plan, TargetLang::Python);
+        // uniquely-leaf test: cli edge dropped, its module dep kept
+        assert_eq!(deps(&plan, "test-store"), "store");
+        // THE regression guard: a leaf test that genuinely imports a sibling keeps the sibling, drops only cli
+        assert_eq!(deps(&plan, "test-shared-user"), "shared");
+        // the cli's OWN test keeps its cli dep (self is cli)
+        assert_eq!(deps(&plan, "test-cli"), "cli-entry");
+        // monolithic/ambiguous test (spans store+cli) left untouched
+        assert_eq!(deps(&plan, "tests"), "store,cli-entry");
+        // integrate-verify never touched
+        assert_eq!(deps(&plan, "integrate-verify"), "store,shared,cli-entry");
+        assert_eq!(n, 2, "exactly the two stray cli edges relaxed");
+    }
+
+    #[test]
+    fn relax_test_module_deps_noop_on_monolithic_plan() {
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core","depends_on":[],"files":["core.py"]},
+                {"id":"cli-entry","depends_on":["core"],"files":["cli.py"]},
+                {"id":"tests","depends_on":["cli-entry"],"files":["tests/test_core.py","tests/test_cli.py"]},
+                {"id":"integrate-verify","depends_on":["core","cli-entry","tests"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let before = plan.clone();
+        let n = relax_test_module_deps(&mut plan, TargetLang::Python);
+        assert_eq!(n, 0, "no uniquely-leaf per-module test -> nothing relaxed");
+        assert_eq!(plan, before, "monolithic plan left byte-identical");
     }
 
     #[tokio::test]
@@ -3675,12 +3841,22 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
+        // GOOSE_SWARM_PARALLEL_TESTS: emit one test subtask PER leaf module (each depends_on only its own
+        // module) so tests become ready early and run in parallel with the cli build, instead of one
+        // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
+        let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
+            "and split tests into ONE small test subtask PER leaf module (file `test_<module>`), each \
+             depends_on ONLY the single module it tests — NEVER the cli/entry-point subtask or \
+             integrate-verify; only the cli/entry's OWN test may depend on the cli subtask."
+        } else {
+            "and related tests into ONE test subtask."
+        };
         let system = format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
             There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
             aim for about 2x to 3x {worker_count} total (e.g. ~6-9 for a 3-device fleet), NOT one per command/function. GROUP \
-            several related commands or functions into ONE module subtask, and related tests into ONE test subtask. These models \
+            several related commands or functions into ONE module subtask, {tests_directive} These models \
             are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
             parallelism past the fleet width — a handful of well-scoped subtasks finishes far sooner than 18 micro-ones. Still keep \
             subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
@@ -3922,6 +4098,17 @@ impl GooseAgentDispatcher {
             eprintln!(
                 "  · integrate-verify no longer waits on the test subtask(s) ({stripped} dep(s) stripped) — a failing test will not hide whether the app actually runs"
             );
+        }
+        // GOOSE_SWARM_PARALLEL_TESTS backstop: strip a stray cli/entry (or integrate-verify) edge the weak
+        // model may have left on a per-leaf-module test, so those tests run in parallel with the cli build.
+        // Narrow — only for a test that uniquely maps to one non-cli module; sibling/shared deps are preserved.
+        if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
+            let relaxed = relax_test_module_deps(&mut v, lang);
+            if relaxed > 0 {
+                eprintln!(
+                    "  · parallel-tests: relaxed {relaxed} stray cli/entry dep(s) off per-module test subtask(s)"
+                );
+            }
         }
         let items: Vec<(usize, String, String, String)> = v
             .get("subtasks")
