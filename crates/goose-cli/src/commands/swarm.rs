@@ -5695,8 +5695,14 @@ impl GooseAgentDispatcher {
         desc.push_str(&format!(
             "\n\nThe defect REPRODUCES by running: {argv_str}\nFIX THE ROOT CAUSE in {scope} — and edit that \
              file ONLY. Do NOT create, add to, or modify ANY test file (no new tests, no edits to existing \
-             tests — the tests are the oracle). Do NOT touch any other module. Do NOT silence the crash with a \
-             bare try/except or sys.exit, and do NOT delete the entry point. Keep the change minimal.",
+             tests — the tests are the oracle). Do NOT touch any other module, and do NOT delete the entry \
+             point. The CORRECT fix is a SPECIFIC guard on the exact bad input — e.g. `if b == 0:` returning \
+             or printing a clean error, or `except ZeroDivisionError:` handling that one exception — what is \
+             BANNED is only a BARE `except: pass` or a blanket sys.exit that HIDES the error without handling \
+             it. A clean error message with a nonzero exit IS a valid fix; only an UNCAUGHT traceback is the \
+             crash. MANDATORY self-check before you finish: RUN `{argv_str}` yourself and confirm it NO LONGER \
+             prints an uncaught traceback ('Traceback (most recent call last)'); if it still tracebacks your \
+             fix is WRONG — iterate on that exact command until it is handled. Keep the change minimal.",
             argv_str = argv.join(" ")
         ));
         let req = DispatchRequest {
