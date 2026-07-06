@@ -3862,7 +3862,11 @@ impl GooseAgentDispatcher {
                  is ALREADY checked by integrate-verify, so you never need a separate integration-test \
                  subtask. Scale the number of per-module test subtasks to the fleet ({worker_count} units): \
                  more independent module-tests keep a larger fleet busy; a tiny 1-module app just keeps \
-                 tests in ONE subtask (nothing to parallelize)."
+                 tests in ONE subtask (nothing to parallelize). Make each per-module test THOROUGH: because \
+                 these tests run for FREE in parallel with the rest of the build, spend that capacity on \
+                 QUALITY — cover the module's happy path AND its edge cases, invalid/error inputs and \
+                 boundary conditions, each asserting the concrete expected value (never shape-only), so the \
+                 module is genuinely proven correct, not just imported."
             )
         } else {
             "and related tests into ONE test subtask.".to_string()
