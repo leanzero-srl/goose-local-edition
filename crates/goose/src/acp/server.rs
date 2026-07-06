@@ -2086,6 +2086,33 @@ fn status_message_from_system_notification(
     }
 }
 
+/// Conversion to the sdk-types wire mirror carried by `message_usage`.
+fn message_usage_update(
+    message_id: Option<String>,
+    usage: &crate::conversation::message::MessageUsage,
+) -> MessageUsageUpdate {
+    use crate::conversation::token_usage::CostSource;
+
+    MessageUsageUpdate {
+        message_id,
+        usage: MessageUsageData {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            total_tokens: usage.total_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            cost: usage.cost,
+            cost_source: usage.cost_source.map(|source| match source {
+                CostSource::ProviderReported => CostSourceData::ProviderReported,
+                CostSource::Estimated => CostSourceData::Estimated,
+            }),
+            elapsed_ms: usage.elapsed_ms,
+            time_to_first_token_ms: usage.time_to_first_token_ms,
+            is_compaction: usage.is_compaction,
+        },
+    }
+}
+
 fn message_update_meta(message_id: Option<&str>, created: i64, steer: bool) -> Meta {
     let mut goose = serde_json::Map::new();
     goose.insert("created".to_string(), serde_json::json!(created));
@@ -2658,6 +2685,16 @@ impl GooseAcpAgent {
                             args.session_id.clone(),
                             update,
                         ))?;
+                    }
+                }
+                Ok(crate::agents::AgentEvent::MessageUsage { message_id, usage }) => {
+                    if self.supports_goose_custom_notifications() {
+                        cx.send_notification(GooseSessionNotification {
+                            session_id: session_id.clone(),
+                            update: GooseSessionUpdate::MessageUsage(message_usage_update(
+                                message_id, &usage,
+                            )),
+                        })?;
                     }
                 }
                 Ok(_) => {}
