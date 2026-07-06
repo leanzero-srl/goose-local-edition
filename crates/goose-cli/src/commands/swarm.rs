@@ -8606,15 +8606,29 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // models are weak, so asking beats guessing. Unset/0 = OFF = today's behavior exactly (eval/upstream
     // untouched). Setting it forces best_of_n>=2 so the calibrated cross-draft agreement signal is real
     // (it returns an inert neutral 60 for a single draft).
-    let base_floor: Option<u8> = std::env::var("GOOSE_SWARM_ASK_FLOOR")
+    let base_floor: Option<u8> = match std::env::var("GOOSE_SWARM_ASK_FLOOR")
         .ok()
         .and_then(|v| v.trim().parse::<u8>().ok())
-        .filter(|f| *f > 0)
-        .map(|f| f.min(100)); // documented 1-100; clamp so the weak-bump can never dip below the literal floor
-                              // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
-                              // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
-                              // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
-                              // params is fuzzy); the bump is small + capped at 100.
+    {
+        Some(f) if f > 0 => Some(f.min(100)), // explicit floor wins (documented 1-100; clamp)
+        Some(_) => None,                      // explicit 0 = OFF
+        None => {
+            // Default ON at a moderate floor ONLY when a human is at the terminal — on a weak local planner,
+            // asking a crisp clarifying question beats committing to a low-confidence guess. HEADLESS runs
+            // (pipes / CI / the eval harness / a scripted `swarm run`) have no one to answer, so they stay OFF
+            // and byte-identical to before — the confidence-asking never blocks an autonomous run.
+            use std::io::IsTerminal;
+            if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+                Some(70)
+            } else {
+                None
+            }
+        }
+    }; // clamp so the weak-bump can never dip below the literal floor
+       // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
+       // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
+       // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
+       // params is fuzzy); the bump is small + capped at 100.
     let ask_scale = base_floor.is_some()
         && std::env::var("GOOSE_SWARM_ASK_SCALE")
             .map(|v| {
