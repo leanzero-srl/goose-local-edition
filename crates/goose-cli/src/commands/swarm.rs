@@ -3844,7 +3844,7 @@ impl GooseAgentDispatcher {
         // GOOSE_SWARM_PARALLEL_TESTS: emit one test subtask PER leaf module (each depends_on only its own
         // module) so tests become ready early and run in parallel with the cli build, instead of one
         // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
-        let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
+        let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true) {
             // Utilization principle, FLEET-RELATIVE (never a fixed count): keep however many identical,
             // interchangeable units there are busy through the whole run; the planner scales the layout to
             // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
@@ -4118,7 +4118,7 @@ impl GooseAgentDispatcher {
         // GOOSE_SWARM_PARALLEL_TESTS backstop: strip a stray cli/entry (or integrate-verify) edge the weak
         // model may have left on a per-leaf-module test, so those tests run in parallel with the cli build.
         // Narrow — only for a test that uniquely maps to one non-cli module; sibling/shared deps are preserved.
-        if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", false) {
+        if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true) {
             let relaxed = relax_test_module_deps(&mut v, lang);
             if relaxed > 0 {
                 eprintln!(
