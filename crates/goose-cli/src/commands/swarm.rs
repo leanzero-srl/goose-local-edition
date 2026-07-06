@@ -5566,7 +5566,13 @@ impl GooseAgentDispatcher {
     /// CONCLUSIVELY green smoke gate, then promote the frozen bytes and re-verify on the real tree, reverting
     /// on any failure. Crash-class Python only; browser is never dispatched here (it cannot meet this bar).
     #[allow(clippy::too_many_arguments)]
-    async fn attempt_review_fix(
+    /// Compute a verified, promotable fix on the SHADOW tree WITHOUT writing the real tree — STEP 0 (dispatch
+    /// one bounded speculative fix) + STEP 1–5 (freeze the in-scope diff, grade on a private clone, then
+    /// baseline / repro-flip-3x / conclusive-smoke on that clone). Read-only on `real_root`, so several of
+    /// these run concurrently on distinct `task_id`s. Returns the promotable candidate or the reject verdict.
+    /// The shadow is discarded before returning — nothing past the STEP 1 freeze reads it (STEP 2 clones
+    /// `real_root`; STEP 3–5 use that clone), so the promote can run later from the frozen bytes alone.
+    async fn shadow_review_fix(
         &self,
         task_id: String,
         target: (String, String),
@@ -5575,7 +5581,7 @@ impl GooseAgentDispatcher {
         real_root: &Path,
         manifest: &[String],
         remaining: std::time::Duration,
-    ) -> ReviewFixVerdict {
+    ) -> Result<ReviewFixCandidate, ReviewFixVerdict> {
         let reject = |reason: &'static str, df: usize, dl: usize| ReviewFixVerdict {
             attempted: true,
             accepted: false,
@@ -5618,13 +5624,13 @@ impl GooseAgentDispatcher {
         let dispatched = tokio::time::timeout(fix_budget, self.run(req)).await;
         if !matches!(dispatched, Ok(Ok(_))) {
             self.discard_speculative(&task_id).await;
-            return reject("fix-timeout-or-error", 0, 0);
+            return Err(reject("fix-timeout-or-error", 0, 0));
         }
 
-        let verdict = 'gate: {
+        let outcome: Result<ReviewFixCandidate, ReviewFixVerdict> = 'gate: {
             // STEP 1 — capture the diff + FREEZE the promotable bytes.
             let Some(s) = self.shadow_path(&task_id) else {
-                break 'gate reject("no-shadow", 0, 0);
+                break 'gate Err(reject("no-shadow", 0, 0));
             };
             let diff = tree_diff(real_root, &s);
             // Scope the promotable set to MANIFEST SOURCE files (owned, non-test). Anything OUTSIDE the
@@ -5648,44 +5654,44 @@ impl GooseAgentDispatcher {
                 .sum();
             let df = changed.len();
             if !deleted.is_empty() {
-                break 'gate reject("diff-deleted", df, dl);
+                break 'gate Err(reject("diff-deleted", df, dl));
             }
             if changed.is_empty() {
-                break 'gate reject("diff-noop", df, dl); // no in-scope source change (only tests/artifacts)
+                break 'gate Err(reject("diff-noop", df, dl)); // no in-scope source change (only tests/artifacts)
             }
             if df > review_fix_max_files() {
-                break 'gate reject("diff-unbounded-files", df, dl);
+                break 'gate Err(reject("diff-unbounded-files", df, dl));
             }
             if dl > review_fix_max_lines() {
-                break 'gate reject("diff-unbounded-lines", df, dl);
+                break 'gate Err(reject("diff-unbounded-lines", df, dl));
             }
             for f in &changed {
                 let old = std::fs::read_to_string(real_root.join(f)).unwrap_or_default();
                 let new = std::fs::read_to_string(s.join(f)).unwrap_or_default();
                 if has_suppression_smell(&old, &new) {
-                    break 'gate reject("suppression-smell", df, dl);
+                    break 'gate Err(reject("suppression-smell", df, dl));
                 }
             }
             let promote_bytes = read_files_bytes(&s, &changed);
             // Every changed file MUST freeze, or graded != promoted and the revert set would be incomplete.
             if promote_bytes.len() != changed.len() {
-                break 'gate reject("freeze-incomplete", df, dl);
+                break 'gate Err(reject("freeze-incomplete", df, dl));
             }
 
             // STEP 2 — grade clone G = real overlaid with EXACTLY the frozen bytes (so graded == promoted).
             let Ok(gtmp) = tempfile::TempDir::new() else {
-                break 'gate reject("grade-clone-failed", df, dl);
+                break 'gate Err(reject("grade-clone-failed", df, dl));
             };
             if copy_tree_excluding(real_root, gtmp.path()).is_err()
                 || write_frozen_bytes(gtmp.path(), &promote_bytes).is_err()
             {
-                break 'gate reject("grade-clone-failed", df, dl);
+                break 'gate Err(reject("grade-clone-failed", df, dl));
             }
             let g = gtmp.path();
 
             // STEP 3 — baseline sound on G (the fix didn't remove/break the entry).
             let Some(pkg) = python_package(g) else {
-                break 'gate reject("baseline-entry-missing", df, dl);
+                break 'gate Err(reject("baseline-entry-missing", df, dl));
             };
             let baseline = [
                 "python3".to_string(),
@@ -5695,14 +5701,14 @@ impl GooseAgentDispatcher {
             ];
             let (bout, bok) = run_repro_once(&baseline, g).await;
             if !bok || looks_like_python_traceback(&bout, bok) {
-                break 'gate reject("baseline-broken", df, dl);
+                break 'gate Err(reject("baseline-broken", df, dl));
             }
 
             // STEP 4 — the repro must FLIP: exit-0 + no traceback, THREE times (any flake biases to REJECT).
             for _ in 0..3 {
                 let (o, ok) = run_repro_once(argv, g).await;
                 if !ok || looks_like_python_traceback(&o, ok) {
-                    break 'gate reject("no-flip", df, dl);
+                    break 'gate Err(reject("no-flip", df, dl));
                 }
             }
 
@@ -5713,66 +5719,119 @@ impl GooseAgentDispatcher {
                 && matches!(sm.tests, Some(TestRunVerdict::Pass))
                 && sm.entry_ok == Some(true))
             {
-                break 'gate reject("smoke-inconclusive-or-red", df, dl);
+                break 'gate Err(reject("smoke-inconclusive-or-red", df, dl));
             }
 
-            // STEP 6 — promote the FROZEN bytes to real, re-verify on real, REVERT on any failure. Uncancelled.
-            let snapshot = read_files_bytes(real_root, &changed);
-            // The snapshot MUST cover every changed file, or a revert could not restore it exactly (a
-            // present-but-unreadable real file would be dropped). If not, refuse to promote.
-            if snapshot.len() != changed.len() {
-                break 'gate reject("snapshot-incomplete", df, dl);
+            // Verified on the grade clone; the frozen bytes are everything the promote needs. The shadow tree
+            // is no longer read (STEP 6 works from `real_root` + these frozen bytes), so it is safe to discard.
+            Ok(ReviewFixCandidate {
+                argv: argv.to_vec(),
+                changed,
+                promote_bytes,
+                df,
+                dl,
+            })
+        };
+        self.discard_speculative(&task_id).await;
+        outcome
+    }
+
+    /// STEP 6 — promote a verified candidate's FROZEN bytes to the real tree, re-verify on real, REVERT on any
+    /// failure. This is the ONLY writer of the real tree in Lever B Stage 2, and it is UNCANCELLED — callers
+    /// MUST await it directly (never inside a `select!`/timeout) so a tear can never leave the tree
+    /// promoted-but-unverified. Run these SEQUENTIALLY: it re-reads the current real tree at promote time, so
+    /// running one at a time validates each fix against the cumulative result of the earlier ones.
+    async fn promote_review_fix(
+        &self,
+        cand: &ReviewFixCandidate,
+        real_root: &Path,
+    ) -> ReviewFixVerdict {
+        let (df, dl) = (cand.df, cand.dl);
+        let reject = |reason: &'static str| ReviewFixVerdict {
+            attempted: true,
+            accepted: false,
+            reason,
+            diff_files: df,
+            diff_lines: dl,
+        };
+        let (changed, promote_bytes, argv) = (&cand.changed, &cand.promote_bytes, &cand.argv);
+        // STEP 6 — promote the FROZEN bytes to real, re-verify on real, REVERT on any failure. Uncancelled.
+        let snapshot = read_files_bytes(real_root, changed);
+        // The snapshot MUST cover every changed file, or a revert could not restore it exactly (a
+        // present-but-unreadable real file would be dropped). If not, refuse to promote.
+        if snapshot.len() != changed.len() {
+            return reject("snapshot-incomplete");
+        }
+        if write_frozen_bytes(real_root, promote_bytes).is_err() {
+            let reason = if revert_and_verify(real_root, &snapshot) {
+                "promote-write-failed"
+            } else {
+                "revert-incomplete"
+            };
+            return reject(reason);
+        }
+        let mut post_ok = true;
+        for _ in 0..3 {
+            let (o, ok) = run_repro_once(argv, real_root).await;
+            if !ok || looks_like_python_traceback(&o, ok) {
+                post_ok = false;
+                break;
             }
-            if write_frozen_bytes(real_root, &promote_bytes).is_err() {
-                let reason = if revert_and_verify(real_root, &snapshot) {
-                    "promote-write-failed"
-                } else {
-                    "revert-incomplete"
-                };
-                break 'gate reject(reason, df, dl);
-            }
-            let mut post_ok = true;
-            for _ in 0..3 {
-                let (o, ok) = run_repro_once(argv, real_root).await;
-                if !ok || looks_like_python_traceback(&o, ok) {
+        }
+        if post_ok {
+            let sm2 = run_smoke_gate(real_root, TargetLang::Python).await;
+            post_ok = sm2.findings.is_empty()
+                && matches!(sm2.collect, Some(CollectVerdict::Ok))
+                && matches!(sm2.tests, Some(TestRunVerdict::Pass))
+                && sm2.entry_ok == Some(true);
+        }
+        if post_ok {
+            for (rel, bytes) in promote_bytes {
+                if std::fs::read(real_root.join(rel)).ok().as_deref() != Some(bytes.as_slice()) {
                     post_ok = false;
                     break;
                 }
             }
-            if post_ok {
-                let sm2 = run_smoke_gate(real_root, TargetLang::Python).await;
-                post_ok = sm2.findings.is_empty()
-                    && matches!(sm2.collect, Some(CollectVerdict::Ok))
-                    && matches!(sm2.tests, Some(TestRunVerdict::Pass))
-                    && sm2.entry_ok == Some(true);
-            }
-            if post_ok {
-                for (rel, bytes) in &promote_bytes {
-                    if std::fs::read(real_root.join(rel)).ok().as_deref() != Some(bytes.as_slice())
-                    {
-                        post_ok = false;
-                        break;
-                    }
-                }
-            }
-            if !post_ok {
-                let reason = if revert_and_verify(real_root, &snapshot) {
-                    "post-verify-failed"
-                } else {
-                    "revert-incomplete"
-                };
-                break 'gate reject(reason, df, dl);
-            }
-            ReviewFixVerdict {
-                attempted: true,
-                accepted: true,
-                reason: "promoted",
-                diff_files: df,
-                diff_lines: dl,
-            }
-        };
-        self.discard_speculative(&task_id).await;
-        verdict
+        }
+        if !post_ok {
+            let reason = if revert_and_verify(real_root, &snapshot) {
+                "post-verify-failed"
+            } else {
+                "revert-incomplete"
+            };
+            return reject(reason);
+        }
+        ReviewFixVerdict {
+            attempted: true,
+            accepted: true,
+            reason: "promoted",
+            diff_files: df,
+            diff_lines: dl,
+        }
+    }
+
+    /// Serial one-finding fix = compute on the shadow, then (if promotable) promote to real. Behaviour-identical
+    /// to the pre-split single function; the parallel wave reuses the two halves directly.
+    #[allow(clippy::too_many_arguments)]
+    async fn attempt_review_fix(
+        &self,
+        task_id: String,
+        target: (String, String),
+        finding: &str,
+        argv: &[String],
+        real_root: &Path,
+        manifest: &[String],
+        remaining: std::time::Duration,
+    ) -> ReviewFixVerdict {
+        match self
+            .shadow_review_fix(
+                task_id, target, finding, argv, real_root, manifest, remaining,
+            )
+            .await
+        {
+            Err(v) => v,
+            Ok(c) => self.promote_review_fix(&c, real_root).await,
+        }
     }
 
     /// M3: ask the idle judge model to PARTITION an over-long task's files into 2–4 independent children.
@@ -6720,6 +6779,17 @@ struct ReviewFixVerdict {
     reason: &'static str,
     diff_files: usize,
     diff_lines: usize,
+}
+
+/// A verified, promotable Lever B fix computed on the SHADOW tree — everything `promote_review_fix` needs to
+/// apply it to the real tree, so the shadow can be dropped before promotion. Produced by `shadow_review_fix`
+/// (read-only on the real tree), consumed by `promote_review_fix` (the sole real-tree writer).
+struct ReviewFixCandidate {
+    argv: Vec<String>,
+    changed: Vec<String>,
+    promote_bytes: Vec<(String, Vec<u8>)>,
+    df: usize,
+    dl: usize,
 }
 
 /// SPECULATIVE promote: copy ONLY `files` (the winning twin's owned, relative paths) from its shadow `from`
