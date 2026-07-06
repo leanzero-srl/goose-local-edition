@@ -2360,6 +2360,49 @@ mod tests {
     }
 
     #[test]
+    fn review_fix_parallel_wave_degrade_and_gate() {
+        // Gate: GOOSE_SWARM_REVIEW_FIX_PARALLEL is OFF by default AND NOT in the assured bundle, so a
+        // flag-off run takes the byte-identical serial path.
+        assert!(!resolve_gate(None, false, false)); // nothing set -> off (default path unchanged)
+        assert!(!resolve_gate(None, true, false)); // assured on, not in bundle -> still off
+        assert!(resolve_gate(Some("1".to_string()), false, false)); // explicit on works
+                                                                    // Degrade decision: fan out ONLY when the flag is on AND >=2 parallel-eligible findings (a lone
+                                                                    // finding has nothing to overlap, so it stays serial).
+        assert!(!run_parallel_fix_wave(false, 5)); // flag off -> never fan
+        assert!(!run_parallel_fix_wave(true, 0)); // nothing eligible
+        assert!(!run_parallel_fix_wave(true, 1)); // one finding -> serial
+        assert!(run_parallel_fix_wave(true, 2)); // two disjoint-file crashes -> fan
+        assert!(run_parallel_fix_wave(true, 9));
+        // Eligibility partition (the disjointness gate the wave relies on): a single-distinct-file crash is
+        // parallel-eligible; two findings on the SAME file collapse to one group (NOT eligible -> serial);
+        // a file-less finding is unassigned -> serial. Only b.py is a single-finding group here.
+        let findings = vec![
+            "pkg/a.py:1: in x\n    boom\nE   ValueError".to_string(),
+            "pkg/b.py:2: in y\n    boom\nE   KeyError".to_string(),
+            "pkg/a.py:9: in z\n    boom\nE   IndexError".to_string(), // same file as #1 -> serial group
+            "no python3 -m app entry point found".to_string(),        // file-less -> unassigned
+        ];
+        let (groups, unassigned) = group_findings_by_file(&findings);
+        let eligible = groups.iter().filter(|g| g.findings.len() == 1).count();
+        let serial_groups = groups.iter().filter(|g| g.findings.len() > 1).count();
+        assert_eq!(
+            eligible, 1,
+            "only b.py is a single-finding group -> parallel-eligible"
+        );
+        assert_eq!(
+            serial_groups, 1,
+            "a.py has two findings -> one serial group"
+        );
+        assert_eq!(
+            unassigned.len(),
+            1,
+            "the file-less finding is unassigned -> serial"
+        );
+        // With only 1 eligible, the wave degrades to serial.
+        assert!(!run_parallel_fix_wave(true, eligible));
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -8325,6 +8368,22 @@ fn complete_parallel() -> bool {
         .unwrap_or(false)
 }
 
+/// GOOSE_SWARM_REVIEW_FIX_PARALLEL (default OFF, NOT in the assured bundle): fan the Lever B Stage-2 review
+/// FIX across the fleet — compute one shadow fix per single-distinct-file crash finding CONCURRENTLY (each
+/// read-only on the real tree), then promote the frozen bytes SEQUENTIALLY with a changed-set disjointness
+/// guard. Off => the serial per-finding fix path runs verbatim (byte-identical). `swarm_gate` so it can later
+/// join the assured bundle by flipping the bool.
+fn review_fix_parallel() -> bool {
+    swarm_gate("GOOSE_SWARM_REVIEW_FIX_PARALLEL", false)
+}
+
+/// Pure degrade decision for the parallel review-fix wave: only fan out when the flag is on AND there are at
+/// least two parallel-eligible (single-distinct-file) crash findings — one finding has nothing to overlap, so
+/// it takes the serial path. Unit-tested; keeps the wave off unless it can actually fill idle units.
+fn run_parallel_fix_wave(flag: bool, parallel_eligible: usize) -> bool {
+    flag && parallel_eligible >= 2
+}
+
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
 /// worker timeout is IDLE-based, so an agent that ACTIVELY over-generates (a reasoning model thinking for
 /// many minutes without writing a file) is never re-routed — observed: a serial complete-fix burned ~35min
@@ -9525,6 +9584,10 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 let review_fix_deadline = std::time::Instant::now() + phase_cap;
                 let mut reproduced = 0usize;
                 let mut fixed = 0usize;
+                // When GOOSE_SWARM_REVIEW_FIX_PARALLEL is on, DEFER the per-finding fixes and run them as one
+                // fanned wave AFTER the repro pass (below). The serial inline path is byte-identical when off.
+                let parallel_fix = review_fix_on && review_fix_parallel();
+                let mut crash_hits: Vec<(usize, String, Vec<String>)> = Vec::new();
                 for (i, finding) in findings.iter().enumerate() {
                     let authored = smoke_fix_dispatcher
                         .author_repro(&repro_model, finding, &help, &smoke_all_files)
@@ -9553,6 +9616,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         && class == "crash"
                         && matches!(repro_lang, TargetLang::Python)
                     {
+                        if parallel_fix {
+                            // Collect for the post-pass wave; the shared phase cap is applied there.
+                            if let Some(argv) = argv_opt.as_ref() {
+                                if smoke_fix_target.is_some() {
+                                    crash_hits.push((i, finding.clone(), argv.clone()));
+                                }
+                            }
+                            continue;
+                        }
                         let remaining = review_fix_deadline
                             .saturating_duration_since(std::time::Instant::now());
                         if remaining < min_attempt_budget {
@@ -9585,6 +9657,155 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                                 "accepted": v.accepted,
                                 "reason": v.reason,
                                 "diff_files": v.diff_files,
+                                "diff_lines": v.diff_lines,
+                            }));
+                        }
+                    }
+                }
+                // PARALLEL REVIEW-FIX WAVE (GOOSE_SWARM_REVIEW_FIX_PARALLEL): compute one shadow fix per
+                // single-distinct-file crash finding CONCURRENTLY (read-only on the real tree), then promote the
+                // frozen bytes SEQUENTIALLY under a CHANGED-SET disjointness guard. A candidate whose changed
+                // files are all still un-promoted is applied from its frozen bytes; any candidate that would
+                // overlap an already-promoted file has STALE bytes, so it is dropped and re-run serially against
+                // the current tree (attempt_review_fix re-verifies cumulatively). Multi-finding same-file groups
+                // and file-less findings also serialize. Never weaker than the serial path.
+                if parallel_fix {
+                    let hit_findings: Vec<String> =
+                        crash_hits.iter().map(|(_, f, _)| f.clone()).collect();
+                    let (groups, unassigned) = group_findings_by_file(&hit_findings);
+                    let meta_of: std::collections::HashMap<&String, (&Vec<String>, usize)> =
+                        crash_hits.iter().map(|(i, f, a)| (f, (a, *i))).collect();
+                    let mut eligible: Vec<(usize, String, Vec<String>)> = Vec::new();
+                    let mut serial_rest: Vec<(usize, String, Vec<String>)> = Vec::new();
+                    for g in &groups {
+                        if g.findings.len() == 1 {
+                            if let Some((a, i)) = meta_of.get(&g.findings[0]) {
+                                eligible.push((*i, g.findings[0].clone(), (*a).clone()));
+                            }
+                        } else {
+                            for f in &g.findings {
+                                if let Some((a, i)) = meta_of.get(f) {
+                                    serial_rest.push((*i, f.clone(), (*a).clone()));
+                                }
+                            }
+                        }
+                    }
+                    for f in &unassigned {
+                        if let Some((a, i)) = meta_of.get(f) {
+                            serial_rest.push((*i, f.clone(), (*a).clone()));
+                        }
+                    }
+                    if run_parallel_fix_wave(true, eligible.len()) {
+                        // Compute each eligible candidate on its OWN shadow (read-only on the real tree).
+                        let me = smoke_fix_dispatcher.clone();
+                        let root = repro_root.clone();
+                        let files = smoke_all_files.clone();
+                        let tgt = smoke_fix_target.clone();
+                        let per = std::time::Duration::from_secs(fix_cap_secs() + 600);
+                        let computed = fanout_over_fleet(
+                            fleet_models.clone(),
+                            eligible,
+                            move |(i, finding, argv), model| {
+                                let me = me.clone();
+                                let root = root.clone();
+                                let files = files.clone();
+                                let dev = tgt.as_ref().map(|(d, _)| d.clone()).unwrap_or_default();
+                                async move {
+                                    let res = me
+                                        .shadow_review_fix(
+                                            format!("review-fix::{i}"),
+                                            (dev, model),
+                                            &finding,
+                                            &argv,
+                                            &root,
+                                            &files,
+                                            per,
+                                        )
+                                        .await;
+                                    (i, finding, argv, res)
+                                }
+                            },
+                        )
+                        .await;
+                        // SEQUENTIAL promote under the changed-set disjointness guard.
+                        let mut promoted_files: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
+                        let mut shards = 0usize;
+                        for (i, finding, argv, res) in computed {
+                            match res {
+                                Err(v) => {
+                                    sink.write_value(serde_json::json!({
+                                        "event": "review_fix", "finding": finding,
+                                        "attempted": v.attempted, "accepted": v.accepted,
+                                        "reason": v.reason, "diff_files": v.diff_files,
+                                        "diff_lines": v.diff_lines,
+                                    }));
+                                }
+                                Ok(cand)
+                                    if cand.changed.iter().all(|f| !promoted_files.contains(f)) =>
+                                {
+                                    let v = smoke_fix_dispatcher
+                                        .promote_review_fix(&cand, &repro_root)
+                                        .await;
+                                    if v.accepted {
+                                        fixed += 1;
+                                        shards += 1;
+                                        for f in &cand.changed {
+                                            promoted_files.insert(f.clone());
+                                        }
+                                    }
+                                    sink.write_value(serde_json::json!({
+                                        "event": "review_fix", "finding": finding,
+                                        "attempted": v.attempted, "accepted": v.accepted,
+                                        "reason": v.reason, "diff_files": v.diff_files,
+                                        "diff_lines": v.diff_lines,
+                                    }));
+                                }
+                                Ok(_) => {
+                                    // Overlaps an already-promoted file -> frozen bytes are stale; re-run serial.
+                                    serial_rest.push((i, finding, argv));
+                                }
+                            }
+                        }
+                        sink.write_value(serde_json::json!({
+                            "event": "review_fix_wave", "parallel_wave": true,
+                            "shards": shards, "serial_rest": serial_rest.len(),
+                        }));
+                    } else {
+                        // <2 eligible -> nothing to fan; fold the eligible ones into the serial list.
+                        serial_rest.extend(eligible);
+                    }
+                    // Serial tail: overlaps + multi-finding groups + file-less findings, each re-verifying on the
+                    // cumulative tree (identical safety to the serial path). Bounded by the shared phase cap.
+                    for (i, finding, argv) in serial_rest {
+                        let remaining = review_fix_deadline
+                            .saturating_duration_since(std::time::Instant::now());
+                        if remaining < min_attempt_budget {
+                            sink.write_value(serde_json::json!({
+                                "event": "review_fix", "finding": finding, "attempted": false,
+                                "reason": "phase-cap",
+                            }));
+                            break;
+                        }
+                        if let Some(t) = smoke_fix_target.clone() {
+                            let v = smoke_fix_dispatcher
+                                .attempt_review_fix(
+                                    format!("review-fix-serial::{i}"),
+                                    t,
+                                    &finding,
+                                    &argv,
+                                    &repro_root,
+                                    &smoke_all_files,
+                                    remaining,
+                                )
+                                .await;
+                            if v.accepted {
+                                fixed += 1;
+                            }
+                            sink.write_value(serde_json::json!({
+                                "event": "review_fix", "finding": finding,
+                                "attempted": v.attempted, "accepted": v.accepted,
+                                "reason": v.reason, "diff_files": v.diff_files,
                                 "diff_lines": v.diff_lines,
                             }));
                         }
