@@ -2403,6 +2403,33 @@ mod tests {
     }
 
     #[test]
+    fn repro_crash_fixed_accepts_clean_error_rejects_crash_and_hang() {
+        // A computed exit-0 result -> fixed.
+        assert!(repro_crash_fixed("42.0\n", true));
+        // A CLEAN handled error (nonzero exit, NO traceback, real output) -> fixed. This is the relaxation:
+        // rejecting divide-by-zero with a clean message IS a valid fix, not only computing a fallback.
+        assert!(repro_crash_fixed("Error: cannot divide by zero\n", false));
+        assert!(repro_crash_fixed(
+            "usage: numkit ratio A B\nratio: B must be non-zero\n",
+            false
+        ));
+        // STILL crashing (uncaught traceback) -> NOT fixed.
+        assert!(!repro_crash_fixed(
+            "Traceback (most recent call last):\n  File \"ratio.py\", line 3, in compute\nZeroDivisionError: division by zero",
+            false
+        ));
+        // A HANG / spawn-failure (empty output, nonzero exit) -> NOT fixed (not a real handled error).
+        assert!(!repro_crash_fixed("", false));
+        assert!(!repro_crash_fixed("   \n", false));
+        // Exit-0 with a traceback string in stdout is impossible for looks_like_python_traceback (needs
+        // nonzero), so an exit-0 run is always treated as non-crashing here.
+        assert!(repro_crash_fixed(
+            "Traceback (most recent call last): (as data)\n",
+            true
+        ));
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -4782,6 +4809,19 @@ fn looks_like_python_traceback(output: &str, success: bool) -> bool {
         })
 }
 
+/// A Lever B repro is FIXED when the CRASH is gone — the command no longer prints an uncaught traceback.
+/// A CLEAN handled error (nonzero exit, NO traceback, with real output) COUNTS as fixed: a bad-input repro
+/// (divide-by-zero, empty-collection) is legitimately fixed by rejecting the input cleanly, not only by
+/// computing an exit-0 result — the codebase defines a crash as an uncaught traceback (see
+/// `looks_like_python_traceback` / `looks_like_runtime_crash`), so requiring exit-0 was stricter than "no
+/// crash" and rejected valid clean-error fixes. A HANG / spawn-failure (empty output, nonzero exit) is NOT a
+/// fix. Because `looks_like_python_traceback` already treats an exit-0 run as non-crashing, this is: no
+/// traceback AND (exit-0 OR produced some output). The full smoke re-gate remains the backstop for a fix that
+/// merely swaps the crash for a broken command.
+fn repro_crash_fixed(output: &str, ok: bool) -> bool {
+    !looks_like_python_traceback(output, ok) && (ok || !output.trim().is_empty())
+}
+
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
 /// (`python`/`python3`/`pytest`, possibly path-qualified) with NO shell chaining, redirection, substitution,
 /// pipe, network, or deletion is allowed to run — even inside the throwaway snapshot. Anything else is
@@ -5755,10 +5795,11 @@ impl GooseAgentDispatcher {
                 break 'gate Err(reject("baseline-broken", df, dl));
             }
 
-            // STEP 4 — the repro must FLIP: exit-0 + no traceback, THREE times (any flake biases to REJECT).
+            // STEP 4 — the repro must FLIP: the crash is gone (no uncaught traceback; a clean handled error
+            // counts, a hang does not), THREE times (any flake biases to REJECT).
             for _ in 0..3 {
                 let (o, ok) = run_repro_once(argv, g).await;
-                if !ok || looks_like_python_traceback(&o, ok) {
+                if !repro_crash_fixed(&o, ok) {
                     break 'gate Err(reject("no-flip", df, dl));
                 }
             }
@@ -5824,7 +5865,7 @@ impl GooseAgentDispatcher {
         let mut post_ok = true;
         for _ in 0..3 {
             let (o, ok) = run_repro_once(argv, real_root).await;
-            if !ok || looks_like_python_traceback(&o, ok) {
+            if !repro_crash_fixed(&o, ok) {
                 post_ok = false;
                 break;
             }
