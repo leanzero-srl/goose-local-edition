@@ -2651,8 +2651,16 @@ const REVIEW_DIMENSIONS: &[ReviewDimension] = &[
     },
     ReviewDimension {
         id: "edge-cases",
-        brief: "a boundary or failure mode the passing test suite never exercises — empty input, a negative \
-                or zero value, a missing file/key, or a malformed argument — is unhandled or crashes.",
+        brief: "an input the passing tests never exercise makes the program CRASH with an UNHANDLED exception. \
+                Trace each command's real code path and flag where an input reaches an UNGUARDED operation of \
+                these specific crash classes: a division / mean / average whose denominator or count can be \
+                ZERO (ZeroDivisionError); first / max / min / [0] / index of a list or file that can be EMPTY \
+                (IndexError / 'max() arg is an empty sequence' ValueError); a dict or row lookup of a key that \
+                may be MISSING (KeyError); int() / float() of text that may be NON-NUMERIC (ValueError); a \
+                value that may be None used where a number or string is required. For EACH real one, name the \
+                EXACT command and the concrete input that triggers it (e.g. `ratio 5 0`, or a command run on an \
+                empty file / empty list) so it can be reproduced. A clean argparse usage error (exit 2, no \
+                traceback) or an already-caught exception is NOT a crash — only an uncaught traceback counts.",
     },
     ReviewDimension {
         id: "domain-conventions",
