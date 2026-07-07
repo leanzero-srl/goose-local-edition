@@ -2470,6 +2470,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_subcommands_extracts_argparse_choices() {
+        // The argparse subparser choices block on the usage line.
+        let help = "usage: unitconv [-h] {convert,units} ...\n\npositional arguments:\n  {convert,units}\n    convert  convert a value\n    units    list units\n";
+        assert_eq!(parse_subcommands(help), vec!["convert", "units"]);
+        // No subcommands (a flat CLI) -> empty.
+        assert!(parse_subcommands("usage: tool [-h] FILE\n").is_empty());
+        // Junk tokens filtered (only identifier-ish kept).
+        assert_eq!(
+            parse_subcommands("usage: x [-h] {a,b-c,d_e} ..."),
+            vec!["a", "b-c", "d_e"]
+        );
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -4963,6 +4977,29 @@ fn review_file_excerpt(content: &str) -> String {
     format!("{head}\n\n... [middle elided — large file; head + tail shown] ...\n\n{tail}")
 }
 
+/// Extract argparse SUBCOMMAND names from a top-level `--help` output — the `{convert,units}` subparser-choices
+/// block (usually on the usage line). Enables fetching per-subcommand help so a repro-author can supply a
+/// subcommand's REQUIRED args (top-level --help lists the subcommands but NOT their arguments). Returns empty
+/// for a non-subcommand CLI. Tolerant: only clean identifier-ish tokens; a false `{text,json}` choices block
+/// just yields tokens whose sub-help run argparse-errors and is filtered by the caller.
+fn parse_subcommands(help: &str) -> Vec<String> {
+    let Some(inner) = help
+        .split_once('{')
+        .and_then(|(_, rest)| rest.split_once('}').map(|(inner, _)| inner))
+    else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .collect()
+}
+
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
 /// (`python`/`python3`/`pytest`, possibly path-qualified) with NO shell chaining, redirection, substitution,
 /// pipe, network, or deletion is allowed to run — even inside the throwaway snapshot. Anything else is
@@ -5407,10 +5444,30 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
     let argv = [
         "python3".to_string(),
         "-m".to_string(),
-        pkg,
+        pkg.clone(),
         "--help".to_string(),
     ];
-    run_repro_once(&argv, tmp.path()).await.0
+    let top = run_repro_once(&argv, tmp.path()).await.0;
+    // Enrich with PER-SUBCOMMAND help: top-level --help lists the subcommands but not their required args, so a
+    // repro-author aiming at a SUBCOMMAND crash omits the args and the app argparse-errors before it reproduces.
+    // Fetch `<pkg> <sub> --help` for each parsed subcommand (capped); drop any that argparse-errors (a false
+    // {choices} block yields an "error: invalid choice", filtered here) so only real subcommand help is added.
+    let mut out = top.clone();
+    for sub in parse_subcommands(&top).into_iter().take(8) {
+        let sub_argv = [
+            "python3".to_string(),
+            "-m".to_string(),
+            pkg.clone(),
+            sub.clone(),
+            "--help".to_string(),
+        ];
+        let h = run_repro_once(&sub_argv, tmp.path()).await.0;
+        let ht = h.trim();
+        if !ht.is_empty() && !ht.contains("error:") && !looks_like_python_traceback(&h, false) {
+            out.push_str(&format!("\n\n### `python3 -m {pkg} {sub} --help`\n{ht}"));
+        }
+    }
+    out
 }
 
 /// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
