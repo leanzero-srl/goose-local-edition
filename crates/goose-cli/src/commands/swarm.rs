@@ -5735,6 +5735,11 @@ impl GooseAgentDispatcher {
         .and_then(|r| r.ok())
         .map(|o| o.text)
         .unwrap_or_default();
+        // A weak author that burns its 2 turns returns the agent-loop max-turns filler; that is NOT a repro
+        // command (it wastes the repro attempt as unsafe-or-unparsed) — treat it as NONE.
+        if is_agent_loop_filler(&text) {
+            return None;
+        }
         let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
         let line = line
             .trim_start_matches("```sh")
@@ -8082,6 +8087,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         .and_then(|r| r.ok())
         .map(|o| o.text)
         .unwrap_or_default();
+        // A weak reviewer that burns its 2 turns returns the agent-loop max-turns filler — never a real
+        // finding of this dimension (the `|` parse already routes it to OK, but be explicit + robust).
+        if is_agent_loop_filler(&text) {
+            return None;
+        }
         let (status, findings) = text.trim().split_once('|').unwrap_or(("OK", ""));
         let findings = findings.trim();
         if status.to_uppercase().contains("ISSUE") && !findings.is_empty() {
