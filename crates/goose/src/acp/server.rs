@@ -3194,7 +3194,6 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
             config_dir: Paths::config_dir(),
             goose_platform: GoosePlatform::GooseCli,
             additional_source_roots: Vec::new(),
-            scheduler: None,
         },
     );
     let agent = server.create_agent().await?;
