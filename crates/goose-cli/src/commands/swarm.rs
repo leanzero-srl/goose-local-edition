@@ -3933,7 +3933,8 @@ impl GooseAgentDispatcher {
         } else {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
-        let lang = detect_language(user_prompt, &[]);
+        let existing_files = existing_files_manifest(&self.working_dir);
+        let lang = detect_language(user_prompt, &existing_files);
         let lang_directive = lang.directive();
         let entry_clause = lang.entry_clause();
         let test_cmd = lang.test_cmd();
@@ -4037,7 +4038,10 @@ impl GooseAgentDispatcher {
             module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
             FAILURE: wire it. Reports PASS/FAIL honestly. \
             Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
-        let user_msg = format!("{research_block}Plan this task: {user_prompt}");
+        let user_msg = format!(
+            "{}{research_block}Plan this task: {user_prompt}",
+            existing_files_block(&existing_files)
+        );
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
         let draft_models: Vec<String> = std::iter::once(planner_model.to_string())
@@ -4368,7 +4372,8 @@ impl GooseAgentDispatcher {
         worker_count: usize,
         research_findings: &str,
     ) -> Result<(String, Option<u8>, String)> {
-        let lang = detect_language(user_prompt, &[]);
+        let existing_files = existing_files_manifest(&self.working_dir);
+        let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
             There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
@@ -4406,7 +4411,10 @@ impl GooseAgentDispatcher {
             .run_agent_timed(
                 planner_model,
                 system,
-                format!("{research_block}Plan this task: {user_prompt}"),
+                format!(
+                    "{}{research_block}Plan this task: {user_prompt}",
+                    existing_files_block(&existing_files)
+                ),
                 response,
                 15,
                 &[],
@@ -4890,6 +4898,35 @@ fn integrate_verify_spec(lang: TargetLang) -> String {
         lang.test_cmd(),
         lang.entry_run_example()
     )
+}
+
+/// The existing on-disk .py files (relative to the app root) for the ARCHITECT (T3). On an AMENDMENT the
+/// planner must EDIT these in place and match their layout; without a real manifest the weak model switched a
+/// package dir to flat files, creating duplicate orphan modules (gradebook-2 split-brain). Empty on greenfield.
+fn existing_files_manifest(root: &Path) -> Vec<String> {
+    collect_py_files(root)
+        .iter()
+        .filter_map(|p| {
+            p.strip_prefix(root)
+                .ok()
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+        })
+        .collect()
+}
+
+/// Prompt block listing the existing project files so the architect's "if the manifest below already lists
+/// project files" clause is grounded in reality. Empty string on greenfield (no manifest -> build fresh).
+fn existing_files_block(existing: &[String]) -> String {
+    if existing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "## Existing project files — this is an AMENDMENT: EDIT these in place and MATCH this exact \
+             layout (do NOT switch a package directory to flat files or vice-versa, or you create duplicate \
+             orphan modules):\n{}\n\n",
+            existing.join("\n")
+        )
+    }
 }
 
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
