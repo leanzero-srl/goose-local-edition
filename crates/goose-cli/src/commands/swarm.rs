@@ -2430,6 +2430,29 @@ mod tests {
     }
 
     #[test]
+    fn is_agent_loop_filler_catches_max_turns_message_and_empty() {
+        // The exact goose core agent-loop max-turns filler (agent.rs MAX_TURNS_MESSAGE) — the string that
+        // leaked into detailer specs (logstat-2, ledgr-2) and repro/verify verdicts.
+        assert!(is_agent_loop_filler(
+            "I've reached the maximum number of actions I can do without user input. Would you like me to continue?"
+        ));
+        assert!(is_agent_loop_filler(
+            "  Final output tool has not been called yet. Continuing agent loop.  "
+        ));
+        // Empty / whitespace -> filler (subsumes the old empty-only guard).
+        assert!(is_agent_loop_filler(""));
+        assert!(is_agent_loop_filler("   \n\t"));
+        // A REAL detailed subtask spec -> NOT filler (must be kept, not replaced by the brief).
+        assert!(!is_agent_loop_filler(
+            "Implement parser.py: tokenize the input into (ts, level, fields) records; skip malformed lines; \
+             numeric field values parse as numbers. Files: logstat/parser.py."
+        ));
+        assert!(!is_agent_loop_filler(
+            "def compute_ratio(a, b): guard b==0 with a clean error"
+        ));
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -4295,7 +4318,10 @@ impl GooseAgentDispatcher {
                 )
                 .await
                 {
-                    Ok(Ok(o)) if !o.text.trim().is_empty() => o.text,
+                    // Accept the detailed spec only if it is a real detail — NOT the agent-loop max-turns
+                    // filler (which a weak worker returns when it exhausts its 6 turns); fall back to the
+                    // proven-good skeleton brief otherwise, so filler never becomes a worker's whole spec.
+                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => o.text,
                     _ => brief,
                 };
                 eprintln!(
@@ -4820,6 +4846,19 @@ fn looks_like_python_traceback(output: &str, success: bool) -> bool {
 /// merely swaps the crash for a broken command.
 fn repro_crash_fixed(output: &str, ok: bool) -> bool {
     !looks_like_python_traceback(output, ok) && (ok || !output.trim().is_empty())
+}
+
+/// The goose core agent loop returns a FIXED meta-message when a weak worker exhausts its turn budget
+/// without calling final_output ("I've reached the maximum number of actions I can do without user input.
+/// Would you like me to continue?", agent.rs MAX_TURNS_MESSAGE). That filler is NOT a usable result: the
+/// detailer must fall back to the skeleton brief rather than write it as a subtask spec, and a repro-author /
+/// reviewer must not treat it as an authored command / verdict. True when the text is empty or is that filler.
+fn is_agent_loop_filler(s: &str) -> bool {
+    let t = s.trim().to_lowercase();
+    t.is_empty()
+        || t.contains("reached the maximum number of actions")
+        || t.contains("would you like me to continue")
+        || t.contains("continuing agent loop")
 }
 
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
