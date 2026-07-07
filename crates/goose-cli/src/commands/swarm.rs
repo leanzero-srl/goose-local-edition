@@ -2453,6 +2453,23 @@ mod tests {
     }
 
     #[test]
+    fn review_file_excerpt_keeps_small_whole_and_large_tail() {
+        // A small file (< 6000 chars) is shown WHOLE.
+        let small = "import argparse\n\ndef main():\n    pass\n";
+        assert_eq!(review_file_excerpt(small), small);
+        // A large file keeps its TAIL (the argparse dispatch the old head-truncation hid).
+        let big = format!(
+            "# top of file\n{}\ndef main():\n    args = p.parse_args()\n    DISPATCH_TAIL_MARKER(args)\n",
+            "x = 1  # filler line\n".repeat(500)
+        );
+        let ex = review_file_excerpt(&big);
+        assert!(ex.contains("# top of file"));
+        assert!(ex.contains("DISPATCH_TAIL_MARKER"));
+        assert!(ex.contains("middle elided"));
+        assert!(ex.chars().count() < big.chars().count());
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -4927,6 +4944,23 @@ fn existing_files_block(existing: &[String]) -> String {
             existing.join("\n")
         )
     }
+}
+
+/// File excerpt for the review / verify prompt. A small file is shown WHOLE; a large file shows its HEAD and
+/// its TAIL (where a CLI's argparse dispatch + command wiring lives) with the middle elided. The old flat
+/// 2000-char head-truncation hid the dispatch tail of every real entry point (logstat/ledgr/gradebook
+/// __main__.py are 3.9-5.2KB), fabricating "unwired/unreachable" false positives and missing tail crashes.
+fn review_file_excerpt(content: &str) -> String {
+    const WHOLE: usize = 6000;
+    const HEAD: usize = 3500;
+    const TAIL: usize = 2500;
+    let chars: Vec<char> = content.chars().collect();
+    if chars.len() <= WHOLE {
+        return content.to_string();
+    }
+    let head: String = chars[..HEAD].iter().collect();
+    let tail: String = chars[chars.len() - TAIL..].iter().collect();
+    format!("{head}\n\n... [middle elided — large file; head + tail shown] ...\n\n{tail}")
 }
 
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
@@ -8039,7 +8073,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 if c.trim().is_empty() {
                     continue;
                 }
-                let body: String = c.chars().take(2000).collect();
+                let body = review_file_excerpt(&c);
                 files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
             }
         }
@@ -8121,7 +8155,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 if c.trim().is_empty() {
                     continue;
                 }
-                let body: String = c.chars().take(2000).collect();
+                let body = review_file_excerpt(&c);
                 files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
             }
         }
