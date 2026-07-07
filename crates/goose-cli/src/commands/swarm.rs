@@ -4196,11 +4196,7 @@ impl GooseAgentDispatcher {
             if !has_iv && arr.len() > 1 {
                 let ids: Vec<serde_json::Value> =
                     arr.iter().filter_map(|s| s.get("id").cloned()).collect();
-                let iv_desc = format!(
-                    "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). INVOCATION: when you run the BUILT entry directly, the spec LEADING program/bin name is the program ITSELF, never an argument — spec `app build x` runs as `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x`; mis-prefixing the bin name makes a WORKING app look broken. For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
-                    lang.test_cmd(),
-                    lang.entry_run_example()
-                );
+                let iv_desc = integrate_verify_spec(lang);
                 arr.push(serde_json::json!({
                     "id": "integrate-verify",
                     "description": iv_desc,
@@ -4336,6 +4332,30 @@ impl GooseAgentDispatcher {
         .await;
         for (idx, desc) in results {
             v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
+        }
+        // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
+        // architect included it in the skeleton (it did in 6/6 runs, so the detailer — high variance — was
+        // authoring the one end-to-end gate). Keep a substantive spec-specific detail as EXTRA checks under it.
+        if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+            for s in arr.iter_mut() {
+                if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
+                    let detailed = s
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let canonical = integrate_verify_spec(lang);
+                    s["description"] = serde_json::Value::String(
+                        if detailed.trim().len() > 240 && !is_agent_loop_filler(&detailed) {
+                            format!(
+                                "{canonical}\n\nAlso run these concrete plan-enumerated checks:\n{detailed}"
+                            )
+                        } else {
+                            canonical
+                        },
+                    );
+                }
+            }
         }
         Ok((v.to_string(), plan_conf, uncertainties))
     }
@@ -4859,6 +4879,17 @@ fn is_agent_loop_filler(s: &str) -> bool {
         || t.contains("reached the maximum number of actions")
         || t.contains("would you like me to continue")
         || t.contains("continuing agent loop")
+}
+
+/// The canonical integrate-verify SINK spec — the one gate that BUILDS + RUNS the whole program end-to-end on
+/// golden inputs (not just pytest). Built here (T2) so BOTH the inject-when-missing path AND the post-detailing
+/// override use the SAME strong spec, instead of leaving the one end-to-end gate to the high-variance detailer.
+fn integrate_verify_spec(lang: TargetLang) -> String {
+    format!(
+        "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). INVOCATION: when you run the BUILT entry directly, the spec LEADING program/bin name is the program ITSELF, never an argument — spec `app build x` runs as `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x`; mis-prefixing the bin name makes a WORKING app look broken. For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
+        lang.test_cmd(),
+        lang.entry_run_example()
+    )
 }
 
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
