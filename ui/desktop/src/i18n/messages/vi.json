@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Trò chuyện"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Backend bên ngoài"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Bàn phím"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Lời nhắc"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Phiên làm việc"
   },
   "settingsView.title": {
     "defaultMessage": "Cài đặt"

@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Conversa"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Backend externo"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Teclado"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Prompts"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Sessão"
   },
   "settingsView.title": {
     "defaultMessage": "Definições"

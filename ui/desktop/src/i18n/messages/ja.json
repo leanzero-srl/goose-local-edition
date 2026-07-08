@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "チャット"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "外部バックエンド"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "キーボード"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "プロンプト"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "セッション"
   },
   "settingsView.title": {
     "defaultMessage": "設定"

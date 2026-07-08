@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Sohbet"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Harici Arka Uç"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Klavye"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "İstemler"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Oturum"
   },
   "settingsView.title": {
     "defaultMessage": "Ayarlar"

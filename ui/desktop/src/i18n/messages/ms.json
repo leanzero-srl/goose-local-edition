@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Sembang"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Backend Luaran"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Papan Kekunci"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Gesaan"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Sesi"
   },
   "settingsView.title": {
     "defaultMessage": "Tetapan"

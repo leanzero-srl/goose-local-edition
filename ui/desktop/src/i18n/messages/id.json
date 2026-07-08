@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Obrolan"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Backend Eksternal"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Keyboard"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Prompt"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Sesi"
   },
   "settingsView.title": {
     "defaultMessage": "Pengaturan"

@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "Чат"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "Внешний бэкенд"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "Клавиатура"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "Промпты"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "Сеанс"
   },
   "settingsView.title": {
     "defaultMessage": "Настройки"

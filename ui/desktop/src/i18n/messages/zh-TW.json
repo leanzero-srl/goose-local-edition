@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "聊天"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "外部後端"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "鍵盤"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "提示"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "工作階段"
   },
   "settingsView.title": {
     "defaultMessage": "設定"

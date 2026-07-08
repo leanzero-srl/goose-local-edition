@@ -4034,6 +4034,9 @@
   "settingsView.tabChat": {
     "defaultMessage": "채팅"
   },
+  "settingsView.tabExternalBackend": {
+    "defaultMessage": "외부 백엔드"
+  },
   "settingsView.tabKeyboard": {
     "defaultMessage": "키보드"
   },
@@ -4045,9 +4048,6 @@
   },
   "settingsView.tabPrompts": {
     "defaultMessage": "프롬프트"
-  },
-  "settingsView.tabSession": {
-    "defaultMessage": "세션"
   },
   "settingsView.title": {
     "defaultMessage": "설정"
