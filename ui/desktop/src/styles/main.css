@@ -243,6 +243,11 @@
   --color-block-teal: #2e8bff;
   --color-accent-local: #2e8bff;
 
+  /* Route the accent into real chrome: focus rings turn azure when Local Edition is active. The theme
+     applies --color-ring-primary as an INLINE style on <html>, so !important is required to override it. */
+  --color-ring-primary: #2e8bff !important;
+  --color-ring: #2e8bff !important;
+
   /* Node-identity formation ramp — 6 saturated hues, disjoint from the status triad. */
   --color-node-1: #17c4c4;
   --color-node-2: #2e8bff;
