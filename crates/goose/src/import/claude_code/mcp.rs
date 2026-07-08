@@ -137,7 +137,18 @@ pub fn server_to_extension(name: &str, server: &Value) -> Option<McpConversion> 
                 .to_string(),
             envs: Envs::new(envs_map),
             env_keys,
-            headers: HashMap::new(),
+            // Preserve http auth/routing headers. Claude stores them plaintext and goose's StreamableHttp
+            // headers are likewise plaintext, so dropping them would import an authenticated server as
+            // broken (unauthenticated). Non-string header values are skipped.
+            headers: server
+                .get("headers")
+                .and_then(Value::as_object)
+                .map(|h| {
+                    h.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default(),
             timeout: Some(300),
             socket: None,
             bundled: None,
@@ -282,5 +293,25 @@ mod tests {
         // sse → None (skip)
         let sse = serde_json::json!({"type":"sse","url":"https://ex.com/sse"});
         assert!(server_to_extension("legacy", &sse).is_none());
+    }
+
+    #[test]
+    fn http_preserves_auth_headers() {
+        // An authenticated remote server must import WITH its headers, not as a broken unauthenticated one.
+        let http = serde_json::json!({
+            "type": "http",
+            "url": "https://ex.com/mcp",
+            "headers": {"Authorization": "Bearer sk-9", "X-Api-Version": "2"}
+        });
+        match server_to_extension("api", &http).unwrap().config {
+            ExtensionConfig::StreamableHttp { headers, .. } => {
+                assert_eq!(
+                    headers.get("Authorization"),
+                    Some(&"Bearer sk-9".to_string())
+                );
+                assert_eq!(headers.get("X-Api-Version"), Some(&"2".to_string()));
+            }
+            _ => panic!("expected StreamableHttp"),
+        }
     }
 }
