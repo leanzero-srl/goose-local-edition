@@ -233,6 +233,31 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   GOOSE LOCAL EDITION — scoped to .local-edition (set on <html> by EditionContext).
+   Additive palette (the formation ramp is the signature) + a single azure accent that
+   replaces the corporate teal focus ring. Solid, saturated colors only — no washed tints,
+   no color-mix. Composes with .dark for free. Absent unless Local Edition is active.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.local-edition {
+  /* Signature accent: a migratory-dusk azure (goose's own), replacing the block teal focus ring. */
+  --color-block-teal: #2e8bff;
+  --color-accent-local: #2e8bff;
+
+  /* Node-identity formation ramp — 6 saturated hues, disjoint from the status triad. */
+  --color-node-1: #17c4c4;
+  --color-node-2: #2e8bff;
+  --color-node-3: #6a5cff;
+  --color-node-4: #b14cff;
+  --color-node-5: #ff3ea5;
+  --color-node-6: #ff5c7a;
+
+  /* Semantic status triad (orthogonal to the node ramp). */
+  --color-status-ok: #2ecc71;
+  --color-status-warn: #f5a623;
+  --color-status-err: #ff3b30;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    6. BASE LAYER + FONTS + ANIMATIONS + COMPONENTS
    Everything below is standard Tailwind @layer base / component styles.
    ═══════════════════════════════════════════════════════════════════════════ */
