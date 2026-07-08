@@ -10,6 +10,7 @@ import ChatInput from './ChatInput';
 import { ChatInputCard } from './ChatInputCard';
 import { ScrollArea, ScrollAreaHandle } from './ui/scroll-area';
 import { useFileDrop } from '../hooks/useFileDrop';
+import { useEdition } from '../contexts/EditionContext';
 import { ChatState } from '../types/chatState';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
@@ -81,6 +82,7 @@ export default function BaseChat({
   const [hasNotAcceptedRecipe, setHasNotAcceptedRecipe] = useState<boolean>();
   const [hasRecipeSecurityWarnings, setHasRecipeSecurityWarnings] = useState(false);
   const isMobile = useIsMobile();
+  const { isLocal } = useEdition();
   const navContext = useNavigationContextSafe();
   const setView = useNavigation();
   const isNavCollapsed = !navContext?.isNavExpanded;
@@ -414,6 +416,16 @@ export default function BaseChat({
                 goose
               </span>
             </a>
+            {isLocal && (
+              <span
+                className="text-[10px] font-bold uppercase tracking-wide text-white px-1.5 py-px no-drag"
+                style={{ backgroundColor: '#2e8bff', borderRadius: 2 }}
+                data-testid="local-edition-badge"
+                title="Goose Local Edition"
+              >
+                local
+              </span>
+            )}
             <EnvironmentBadge className="translate-y-px" />
           </div>
 
