@@ -16,6 +16,7 @@ import UpdateSection from './UpdateSection';
 import { COST_TRACKING_ENABLED, UPDATES_ENABLED } from '../../../updates';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import ThemeSelector from '../../GooseSidebar/ThemeSelector';
+import EditionSelector from '../../GooseSidebar/EditionSelector';
 import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
@@ -60,6 +61,12 @@ const i18n = defineMessages({
   costTrackingDesc: {
     id: 'settings.costTracking.description',
     defaultMessage: 'Show model pricing and usage costs',
+  },
+  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Edition' },
+  editionDesc: {
+    id: 'settings.edition.description',
+    defaultMessage:
+      'Goose Local Edition tailors the interface for local/swarm models. This changes only the look, never model capability.',
   },
   themeTitle: { id: 'settings.theme.title', defaultMessage: 'Theme' },
   themeDesc: {
@@ -463,6 +470,16 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-lg">
+        <CardHeader className="pb-0">
+          <CardTitle className="mb-1">{intl.formatMessage(i18n.editionTitle)}</CardTitle>
+          <CardDescription>{intl.formatMessage(i18n.editionDesc)}</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4 px-4">
+          <EditionSelector className="w-auto" hideTitle horizontal />
         </CardContent>
       </Card>
 
