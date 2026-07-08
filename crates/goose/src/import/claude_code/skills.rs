@@ -128,16 +128,37 @@ fn replace_dir(src: &Path, dst: &Path) -> Result<()> {
     copy_dir_all(src, dst)
 }
 
-/// Recursively copy a directory tree.
+/// Heavy/regenerable directories a skill may embed — skipped on copy (they are reinstalled, not carried).
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    ".venv",
+    "target",
+    "__pycache__",
+    "dist",
+    "build",
+];
+
+/// Recursively copy a directory tree, skipping heavy build dirs and symlinks. A skill can embed a whole
+/// `node_modules` (with broken symlinks) that would otherwise fail the entire copy — those are skipped so
+/// the skill's own files (SKILL.md, scripts, docs) always land.
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
+        let name = entry.file_name();
+        if SKIP_DIRS.iter().any(|d| name.as_os_str() == *d) {
+            continue;
+        }
         let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let to = dst.join(&name);
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Skip symlinks: a broken link would abort the whole copy, and a skill needs its real files.
+            continue;
+        } else if file_type.is_dir() {
             copy_dir_all(&from, &to)?;
-        } else {
+        } else if file_type.is_file() {
             fs::copy(&from, &to)?;
         }
     }
