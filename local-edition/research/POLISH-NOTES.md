@@ -309,3 +309,6 @@ HONEST PER-COMPONENT VERDICT:
 BENCHMARK (goose USES the memories/skills/MCPs Claude Code has): MET, proven end-to-end.
 IMPORT'S HONEST COST: not free — needed 2 fixes (copy node_modules/symlink-skip; memory scope to avoid 123K bloat). At the fixed 26K the memory earns its place for general goose without hurting the swarm.
 DECISION: benchmark met + swarm NOT hurt (quality=baseline, stable) -> KEEP + MERGE le-build -> local-edition. Then restart the EVOLVE-GOOSE swarm-quality loop WITH imports active.
+
+## EVOLVE LOOP RESUMED WITH IMPORTS — budgetcli 2 turns FULL PASS (2026-07-08)
+budgetcli (first app of the restarted loop, imports active in swarm workers): turn-1 PASS (golden + robustness), turn-2 amendment PASS (top/unset-budget correct, top 99 no IndexError, T3/T4 edit-in-place NO orphan, 45 tests). 0 stream-errors both turns, no material latency, no stall. CONFIRMS the verdict: imports @26K are NEUTRAL for the swarm (baseline quality maintained across 2 full turns, T3/T4 hold, stable) — no help (user's memory/skills irrelevant to generic CLIs), no harm. The 9-fix-era swarm quality (golden-correct apps + robustness mold + layout correctors) is INTACT with imports active. Loop continues: keep running exploratories, watch for any NEW deficiency, mold gated fixes.
