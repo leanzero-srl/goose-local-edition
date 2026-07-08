@@ -1928,6 +1928,7 @@ const validSettingKeys: Set<string> = new Set([
   'showPricing',
   'seenAnnouncementIds',
   'disableAutoDownload',
+  'edition',
 ]);
 
 ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {

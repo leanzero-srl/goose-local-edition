@@ -47,6 +47,9 @@ export interface Settings {
   responseStyle: string;
   showPricing: boolean;
   seenAnnouncementIds: string[];
+
+  // Goose Local Edition — the local/swarm-model UX skin (presentation only, never gates capability).
+  edition: 'standard' | 'local';
 }
 
 export type SettingKey = keyof Settings;
@@ -87,6 +90,7 @@ export const defaultSettings: Settings = {
   responseStyle: 'concise',
   showPricing: true,
   seenAnnouncementIds: [],
+  edition: 'standard',
 };
 
 export function getKeyboardShortcuts(settings: Settings): KeyboardShortcuts {

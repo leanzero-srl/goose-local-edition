@@ -5,10 +5,12 @@ import { ConfigProvider } from './components/ConfigContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import SuspenseLoader from './suspense-loader';
 import { applyThemeTokens } from './theme/theme-tokens';
+import { applyEditionToDocument, getCachedEdition } from './contexts/EditionContext';
 import { currentLocale, currentMessageLocale, loadMessages } from './i18n';
 
-// Apply theme tokens to :root before first paint.
+// Apply theme tokens + the Local Edition class to :root before first paint (no flash).
 applyThemeTokens();
+applyEditionToDocument(getCachedEdition());
 
 const App = lazy(() => import('./App'));
 
