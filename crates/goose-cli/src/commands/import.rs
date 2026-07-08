@@ -7,8 +7,10 @@
 
 use anyhow::Result;
 use goose::import::claude_code::{
-    self, ActionClass, ImportOptions, ImportPlan, ImportType, TypeSet,
+    self, ActionClass, ApplyContext, ApplyOutcome, ConflictPolicy, ImportOptions, ImportPlan,
+    ImportReport, ImportType, TypeSet,
 };
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 /// Options for `goose import claude-code`.
@@ -41,6 +43,18 @@ pub struct ImportClaudeCodeArgs {
     /// Import every supported type (the default when no type flag is given)
     #[arg(long)]
     pub all: bool,
+
+    /// Actually apply the import (default is preview-only)
+    #[arg(long)]
+    pub apply: bool,
+
+    /// Skip the interactive confirm (required to --apply on a non-interactive terminal)
+    #[arg(long)]
+    pub yes: bool,
+
+    /// How to treat an existing target: merge (default) | overwrite | skip
+    #[arg(long, value_name = "POLICY")]
+    pub conflict: Option<String>,
 }
 
 impl ImportClaudeCodeArgs {
@@ -77,19 +91,91 @@ pub async fn run_claude_code(args: ImportClaudeCodeArgs) -> Result<()> {
             .clone()
             .unwrap_or_else(ImportOptions::default_claude_json),
         types: args.type_set(),
-        dry_run: true, // Phase 1: preview only.
+        dry_run: !args.apply,
     };
 
     let plan = claude_code::plan(&opts)?;
-    render_plan(&plan, &opts);
+    render_plan(&plan, &opts, args.apply);
+
+    if !args.apply || plan.is_empty() {
+        return Ok(());
+    }
+
+    // Confirm before writing (custom prompt — never a native dialog).
+    if !args.yes {
+        if !std::io::stdout().is_terminal() {
+            println!("  refusing to apply without --yes on a non-interactive terminal (preview shown above).");
+            println!();
+            return Ok(());
+        }
+        print!("  Proceed with import? [y/N] ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).ok();
+        if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("  cancelled — nothing was imported.");
+            println!();
+            return Ok(());
+        }
+    }
+
+    let conflict = match args.conflict.as_deref() {
+        Some("overwrite") => ConflictPolicy::Overwrite,
+        Some("skip") => ConflictPolicy::Skip,
+        _ => ConflictPolicy::Merge,
+    };
+    let ctx = ApplyContext::production(conflict);
+    let report = claude_code::apply(&plan, &opts, &ctx, true)?;
+    render_report(&report);
     Ok(())
 }
 
-/// Render the grouped action table.
-fn render_plan(plan: &ImportPlan, opts: &ImportOptions) {
+/// Render the post-apply outcome summary, grouped by type.
+fn render_report(report: &ImportReport) {
+    println!();
+    println!("  imported ·");
+    for ty in ImportType::display_order() {
+        let created = report.count_type_outcome(ty, ApplyOutcome::Created);
+        let updated = report.count_type_outcome(ty, ApplyOutcome::Updated);
+        let unchanged = report.count_type_outcome(ty, ApplyOutcome::Unchanged);
+        let skipped = report.count_type_outcome(ty, ApplyOutcome::SkippedExists)
+            + report.count_type_outcome(ty, ApplyOutcome::Skipped);
+        let failed = report.count_type_outcome(ty, ApplyOutcome::Failed);
+        let total = created + updated + unchanged + skipped + failed;
+        if total == 0 {
+            continue;
+        }
+        let mut parts = Vec::new();
+        if created > 0 {
+            parts.push(format!("{created} new"));
+        }
+        if updated > 0 {
+            parts.push(format!("{updated} updated"));
+        }
+        if unchanged > 0 {
+            parts.push(format!("{unchanged} unchanged"));
+        }
+        if skipped > 0 {
+            parts.push(format!("{skipped} skipped"));
+        }
+        if failed > 0 {
+            parts.push(format!("{failed} FAILED"));
+        }
+        println!("  {:<14}{}", ty.label(), parts.join(" · "));
+    }
     println!();
     println!(
-        "  import · claude-code   (preview — from {})",
+        "  done. run `goose session` to use the imported skills, memory, hints, and MCP servers."
+    );
+    println!();
+}
+
+/// Render the grouped action table.
+fn render_plan(plan: &ImportPlan, opts: &ImportOptions, apply: bool) {
+    println!();
+    let mode = if apply { "plan" } else { "preview" };
+    println!(
+        "  import · claude-code   ({mode} — from {})",
         opts.from.display()
     );
 
@@ -147,8 +233,12 @@ fn render_plan(plan: &ImportPlan, opts: &ImportOptions) {
         );
     }
     println!();
-    println!("  preview only — applying the plan is not wired yet. Re-run with a future --apply to import.");
-    println!();
+    if !apply {
+        println!(
+            "  preview only — re-run with --apply to import (or --dry-run to keep previewing)."
+        );
+        println!();
+    }
 }
 
 /// The class shown for a type: CONVERT/LOSSY/SKIP if any action carries it, else the first action's class.
