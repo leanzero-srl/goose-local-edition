@@ -505,6 +505,11 @@ impl CliSession {
     }
 
     async fn run_interactive(&mut self, prompt: Option<String>) -> Result<()> {
+        // Goose Local Edition greeting (only when the resolved edition is Local).
+        if crate::edition::resolve_edition(false).is_local() {
+            output::render_local_banner();
+        }
+
         if let Some(prompt) = prompt {
             let msg = Message::user().with_text(&prompt);
             self.process_message(msg, CancellationToken::default(), true)

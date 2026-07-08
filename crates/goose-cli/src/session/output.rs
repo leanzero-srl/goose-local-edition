@@ -580,6 +580,18 @@ fn is_file_tool_name(name: &str) -> bool {
     matches!(name, "write" | "edit")
 }
 
+/// The Goose Local Edition session greeting — a small formation glyph + the LOCAL lockup in the signature
+/// accent, then a muted swarm-readiness line. Shown once at the start of an interactive Local Edition
+/// session. Reinterprets Claude Code's calm-empty-prompt into goose's swarm identity (not a clone).
+pub fn render_local_banner() {
+    use crate::theme::palette::{ACCENT, BOLD, DIM, RESET};
+    println!(
+        "\n  {BOLD}{}⬢ local goose{RESET}  {}· local edition · swarm ready{RESET}\n",
+        ACCENT.fg(),
+        DIM.fg(),
+    );
+}
+
 pub fn render_error(message: &str) {
     println!("\n  {} {}\n", style("error:").red().bold(), message);
 }
