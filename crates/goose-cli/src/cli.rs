@@ -738,6 +738,16 @@ enum SkillsCommand {
 }
 
 #[derive(Subcommand)]
+enum ImportCommand {
+    /// Import your Claude Code setup (skills, memory, hints, MCP servers) into goose
+    #[command(
+        name = "claude-code",
+        about = "Import Claude Code skills, memory, hints, and MCP servers into goose"
+    )]
+    ClaudeCode(crate::commands::import::ImportClaudeCodeArgs),
+}
+
+#[derive(Subcommand)]
 enum RecipeCommand {
     /// Validate a recipe file
     #[command(about = "Validate a recipe")]
@@ -981,6 +991,13 @@ enum Command {
     Recipe {
         #[command(subcommand)]
         command: RecipeCommand,
+    },
+
+    /// Import setup from another agent (Claude Code)
+    #[command(about = "Import skills, memory, hints, and MCP servers from Claude Code")]
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
     },
 
     /// Skill utilities
@@ -1363,6 +1380,7 @@ fn get_command_name(command: &Option<Command>) -> &'static str {
         #[cfg(feature = "update")]
         Some(Command::Update { .. }) => "update",
         Some(Command::Recipe { .. }) => "recipe",
+        Some(Command::Import { .. }) => "import",
         Some(Command::Skills { .. }) => "skills",
         Some(Command::Plugin { .. }) => "plugin",
         Some(Command::Term { .. }) => "term",
@@ -2330,6 +2348,9 @@ pub async fn cli() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Recipe { command }) => handle_recipe_subcommand(command),
+        Some(Command::Import { command }) => match command {
+            ImportCommand::ClaudeCode(args) => crate::commands::import::run_claude_code(args).await,
+        },
         Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
         Some(Command::Plugin { command }) => handle_plugin_subcommand(command),
         Some(Command::Term { command }) => handle_term_subcommand(command).await,
