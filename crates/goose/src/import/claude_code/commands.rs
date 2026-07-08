@@ -202,6 +202,7 @@ mod tests {
             claude_json: tmp.path().join("nope.json"),
             types: TypeSet::only([ImportType::Commands]),
             dry_run: false,
+            all_projects: false,
         };
         (tmp, opts)
     }

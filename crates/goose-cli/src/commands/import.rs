@@ -56,6 +56,11 @@ pub struct ImportClaudeCodeArgs {
     /// How to treat an existing target: merge (default) | overwrite | skip
     #[arg(long, value_name = "POLICY")]
     pub conflict: Option<String>,
+
+    /// Import memory from EVERY Claude project (default: only the primary project's memory, since goose
+    /// injects all memory into every prompt — importing all projects bloats it to 100K+ tokens)
+    #[arg(long)]
+    pub all_projects: bool,
 }
 
 impl ImportClaudeCodeArgs {
@@ -93,6 +98,7 @@ pub async fn run_claude_code(args: ImportClaudeCodeArgs) -> Result<()> {
             .unwrap_or_else(ImportOptions::default_claude_json),
         types: args.type_set(),
         dry_run: !args.apply,
+        all_projects: args.all_projects,
     };
 
     let plan = claude_code::plan(&opts)?;

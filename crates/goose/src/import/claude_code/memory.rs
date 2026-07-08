@@ -28,11 +28,40 @@ pub fn plan_memory(opts: &ImportOptions, plan: &mut ImportPlan) -> Result<()> {
     let mut projs: Vec<_> = fs::read_dir(&projects)?.flatten().collect();
     projs.sort_by_key(|e| e.file_name());
 
+    // Collect each project's memory dir + its note count.
+    let mut mem_dirs: Vec<(std::path::PathBuf, usize)> = Vec::new();
     for proj in projs {
         let mem_dir = proj.path().join("memory");
         if !mem_dir.is_dir() {
             continue;
         }
+        let count = fs::read_dir(&mem_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+            .filter(|e| {
+                !e.file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("MEMORY.md")
+            })
+            .count();
+        if count > 0 {
+            mem_dirs.push((mem_dir, count));
+        }
+    }
+
+    // Default (no --all-projects): import only the PRIMARY project's memory (the one with the most notes).
+    // goose's memory extension injects EVERY memory into the system prompt, so importing all projects would
+    // bloat it to 100K+ tokens; the primary project holds the user's general/global memory.
+    if !opts.all_projects {
+        if let Some((primary, _)) = mem_dirs.iter().max_by_key(|(_, c)| *c) {
+            let primary = primary.clone();
+            mem_dirs.retain(|(d, _)| *d == primary);
+        }
+    }
+
+    for (mem_dir, _) in mem_dirs {
         let mut notes: Vec<_> = fs::read_dir(&mem_dir)?.flatten().collect();
         notes.sort_by_key(|e| e.file_name());
 
@@ -265,6 +294,7 @@ mod tests {
             claude_json: tmp.path().join("nope.json"),
             types: TypeSet::only([ImportType::Memory]),
             dry_run: false,
+            all_projects: false,
         };
         (tmp, opts)
     }
