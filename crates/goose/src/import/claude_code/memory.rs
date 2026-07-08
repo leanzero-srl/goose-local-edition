@@ -198,9 +198,34 @@ fn note_to_entry(raw: &str, fallback_name: &str) -> (String, String) {
         .to_string();
     let description = get_str("description").unwrap_or_default();
 
-    let content = clean_content(&format!("{description}\n{body}"));
+    let content = cap_entry(
+        &clean_content(&format!("{description}\n{body}")),
+        MEMORY_ENTRY_CAP,
+    );
     let entry = format!("# {mtype} {IMPORT_TAG}\n{content}");
     (category, entry)
+}
+
+/// Per-entry char cap for imported memory. goose's memory extension injects EVERY memory into every
+/// session's system prompt, so a few verbose project-log notes (15K+ chars each) would dominate the budget.
+/// Capping each entry keeps the concise curated memories (the majority) whole while trimming only the long
+/// outliers to their essential head (description + leading body — the part that carries the recall signal).
+const MEMORY_ENTRY_CAP: usize = 2500;
+
+/// Trim `content` to at most ~`cap` chars, cutting at the last line boundary before the cap (never mid-line,
+/// never mid-char) so the head — the description and leading body — survives intact.
+fn cap_entry(content: &str, cap: usize) -> String {
+    if content.len() <= cap {
+        return content.to_string();
+    }
+    let mut boundary = cap;
+    while boundary > 0 && !content.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let head = content.get(..boundary).unwrap_or(content);
+    let cut = head.rfind('\n').unwrap_or(boundary);
+    let kept = content.get(..cut).unwrap_or(head);
+    format!("{}\n…(trimmed on import)", kept.trim_end())
 }
 
 /// Clean a note body into the memory-entry content: flatten `[[links]]`, drop blank lines (a blank line
@@ -372,5 +397,33 @@ mod tests {
             .split("\n\n")
             .filter(|e| !e.trim().is_empty())
             .collect()
+    }
+
+    #[test]
+    fn cap_entry_trims_only_long_notes_at_a_line_boundary() {
+        // A concise memory (under the cap) is left byte-identical.
+        let short = "one line\nanother line";
+        assert_eq!(cap_entry(short, MEMORY_ENTRY_CAP), short);
+
+        // A verbose note is trimmed to <= cap (+ marker), cut on a line boundary, never mid-line.
+        let long = (0..500)
+            .map(|i| format!("line number {i} with some words"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = cap_entry(&long, MEMORY_ENTRY_CAP);
+        assert!(capped.len() <= MEMORY_ENTRY_CAP + 40);
+        assert!(capped.ends_with("…(trimmed on import)"));
+        assert!(capped.starts_with("line number 0"));
+        // the last surviving content line is whole (not split by the cut)
+        let body_line = capped.lines().rev().nth(1).unwrap();
+        assert!(body_line.starts_with("line number ") && body_line.ends_with("words"));
+    }
+
+    #[test]
+    fn cap_entry_is_char_boundary_safe() {
+        // Multi-byte content near the cut point must not panic (… and ⬢ are 3-byte).
+        let long = "…⬢ ".repeat(2000);
+        let capped = cap_entry(&long, MEMORY_ENTRY_CAP);
+        assert!(capped.len() <= MEMORY_ENTRY_CAP + 40);
     }
 }
