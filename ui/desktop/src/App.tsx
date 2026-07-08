@@ -41,6 +41,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { useConfig } from './components/ConfigContext';
 import { ModelAndProviderProvider } from './components/ModelAndProviderContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { EditionProvider } from './contexts/EditionContext';
 import { FeaturesProvider } from './contexts/FeaturesContext';
 import PermissionSettingsView from './components/settings/permission/PermissionSetting';
 
@@ -671,16 +672,18 @@ export function AppInner() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <FeaturesProvider>
-        <ModelAndProviderProvider>
-          <HashRouter>
-            <AppInner />
-          </HashRouter>
-          <AnnouncementModal />
-          <TelemetryConsentPrompt />
-        </ModelAndProviderProvider>
-      </FeaturesProvider>
-    </ThemeProvider>
+    <EditionProvider>
+      <ThemeProvider>
+        <FeaturesProvider>
+          <ModelAndProviderProvider>
+            <HashRouter>
+              <AppInner />
+            </HashRouter>
+            <AnnouncementModal />
+            <TelemetryConsentPrompt />
+          </ModelAndProviderProvider>
+        </FeaturesProvider>
+      </ThemeProvider>
+    </EditionProvider>
   );
 }
