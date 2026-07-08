@@ -1,9 +1,10 @@
 //! `goose import claude-code` — bring your Claude Code setup (skills, memory, hints, MCP servers) into goose.
 //!
 //! This is a *config/setup* importer, distinct from `goose session import` (which ingests Claude Code
-//! *conversation transcripts*). Phase 1 is preview-only: it renders the action plan (`--dry-run` is
-//! implied) so you can see exactly what would be imported and how each artifact maps. Applying the plan
-//! arrives next.
+//! *conversation transcripts*). By default it previews the action plan (what would be imported and how each
+//! artifact maps); `--apply` executes it behind a confirm, writing skills, memory, hints, and MCP servers
+//! into goose and reporting the outcome. The import is idempotent (a provenance manifest) and preserves your
+//! own existing goose config.
 
 use anyhow::Result;
 use goose::import::claude_code::{
