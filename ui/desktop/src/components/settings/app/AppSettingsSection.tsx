@@ -17,6 +17,7 @@ import { COST_TRACKING_ENABLED, UPDATES_ENABLED } from '../../../updates';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import ThemeSelector from '../../GooseSidebar/ThemeSelector';
 import EditionSelector from '../../GooseSidebar/EditionSelector';
+import FanInCard from '../../swarm/FanInCard';
 import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
@@ -67,6 +68,10 @@ const i18n = defineMessages({
     id: 'settings.edition.description',
     defaultMessage:
       'Goose Local Edition tailors the interface for local/swarm models. This changes only the look, never model capability.',
+  },
+  editionPreview: {
+    id: 'settings.edition.preview',
+    defaultMessage: 'Local Edition — the swarm fan-in view',
   },
   themeTitle: { id: 'settings.theme.title', defaultMessage: 'Theme' },
   themeDesc: {
@@ -478,8 +483,21 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
           <CardTitle className="mb-1">{intl.formatMessage(i18n.editionTitle)}</CardTitle>
           <CardDescription>{intl.formatMessage(i18n.editionDesc)}</CardDescription>
         </CardHeader>
-        <CardContent className="pt-4 px-4">
+        <CardContent className="pt-4 px-4 space-y-3">
           <EditionSelector className="w-auto" hideTitle horizontal />
+          <div>
+            <div className="text-xs text-text-secondary mb-1">
+              {intl.formatMessage(i18n.editionPreview)}
+            </div>
+            <FanInCard
+              dispatch="preview"
+              lanes={[
+                { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
+                { device: 'm3-ultra', action: 'grep callsites → 14 hits', status: 'running' },
+                { device: 'studio-2', action: 'cargo test → 47 passed', status: 'done' },
+              ]}
+            />
+          </div>
         </CardContent>
       </Card>
 
