@@ -6,6 +6,7 @@
 //! Apply/validate arrive in Phase 2.
 
 pub mod hints;
+pub mod manifest;
 pub mod mcp;
 pub mod memory;
 pub mod skills;
@@ -176,6 +177,124 @@ impl ImportOptions {
     pub fn default_claude_json() -> PathBuf {
         dirs::home_dir().unwrap_or_default().join(".claude.json")
     }
+}
+
+/// How an existing target artifact is treated when an import would touch it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictPolicy {
+    /// Reconcile by provenance hash: unchanged → no-op, changed → replace. (default)
+    Merge,
+    /// Replace the target wholesale.
+    Overwrite,
+    /// Leave any existing target untouched.
+    Skip,
+}
+
+/// The result of applying a single action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyOutcome {
+    Created,
+    Updated,
+    Unchanged,
+    SkippedExists,
+    Skipped,
+    Failed,
+}
+
+impl ApplyOutcome {
+    pub fn label(self) -> &'static str {
+        match self {
+            ApplyOutcome::Created => "created",
+            ApplyOutcome::Updated => "updated",
+            ApplyOutcome::Unchanged => "unchanged",
+            ApplyOutcome::SkippedExists => "exists (skipped)",
+            ApplyOutcome::Skipped => "skipped",
+            ApplyOutcome::Failed => "failed",
+        }
+    }
+}
+
+/// One executed action, for the post-apply report.
+#[derive(Debug, Clone)]
+pub struct AppliedAction {
+    pub import_type: ImportType,
+    pub name: String,
+    pub outcome: ApplyOutcome,
+    pub detail: Option<String>,
+}
+
+/// The result of an apply run.
+#[derive(Debug, Clone, Default)]
+pub struct ImportReport {
+    pub applied: Vec<AppliedAction>,
+}
+
+impl ImportReport {
+    pub fn record(
+        &mut self,
+        import_type: ImportType,
+        name: impl Into<String>,
+        outcome: ApplyOutcome,
+        detail: Option<String>,
+    ) {
+        self.applied.push(AppliedAction {
+            import_type,
+            name: name.into(),
+            outcome,
+            detail,
+        });
+    }
+
+    pub fn count_outcome(&self, outcome: ApplyOutcome) -> usize {
+        self.applied.iter().filter(|a| a.outcome == outcome).count()
+    }
+
+    pub fn count_type_outcome(&self, ty: ImportType, outcome: ApplyOutcome) -> usize {
+        self.applied
+            .iter()
+            .filter(|a| a.import_type == ty && a.outcome == outcome)
+            .count()
+    }
+}
+
+/// Where imported artifacts are written. In production these are the real goose homes
+/// (`~/.agents/skills`, the config dir); in tests they are temp dirs, so apply is fully sandboxable
+/// without touching the user's real config.
+#[derive(Debug, Clone)]
+pub struct ApplyContext {
+    /// Where skills are written (`~/.agents/skills`, or `<wd>/.agents/skills` in tests).
+    pub skills_dir: PathBuf,
+    /// The goose config dir (holds `.goosehints`, `memory/`, `.import/`).
+    pub config_dir: PathBuf,
+    pub conflict: ConflictPolicy,
+}
+
+impl ApplyContext {
+    /// The context pointing at the real goose homes.
+    pub fn production(conflict: ConflictPolicy) -> Self {
+        let skills_dir = crate::skills::global_skills_dir()
+            .unwrap_or_else(|| crate::config::paths::Paths::config_dir().join("skills"));
+        ApplyContext {
+            skills_dir,
+            config_dir: crate::config::paths::Paths::config_dir(),
+            conflict,
+        }
+    }
+
+    pub fn goosehints(&self) -> PathBuf {
+        self.config_dir.join(".goosehints")
+    }
+
+    pub fn memory_dir(&self) -> PathBuf {
+        self.config_dir.join("memory")
+    }
+}
+
+/// A short, stable content hash used as an import provenance marker (idempotency + reconcile key).
+pub fn content_hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// READ-ONLY scan of the Claude Code config → an [`ImportPlan`]. Writes nothing.
