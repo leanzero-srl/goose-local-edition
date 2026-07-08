@@ -72,6 +72,11 @@ impl From<ServePlatform> for GoosePlatform {
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+
+    /// Use Goose Local Edition — the local/swarm-model UX skin. Overrides GOOSE_LOCAL_EDITION and the
+    /// persisted `edition` config; without it the edition is derived (a local/swarm provider implies Local).
+    #[arg(long, global = true)]
+    pub local: bool,
 }
 
 #[derive(Args, Debug, Clone)]
