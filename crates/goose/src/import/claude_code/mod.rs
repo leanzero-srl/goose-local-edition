@@ -315,6 +315,57 @@ pub fn plan(opts: &ImportOptions) -> Result<ImportPlan> {
     Ok(plan)
 }
 
+/// Apply an import plan. Skills/hints/memory are written into `ctx`'s directories (fully sandboxable — a
+/// temp dir in tests, the real goose homes in production). MCP extensions + the `memory` builtin touch the
+/// GLOBAL goose config, so they are written only when `live` is true; otherwise the conversion is recorded
+/// in the report without mutating anything global. Returns the [`ImportReport`].
+pub fn apply(
+    plan: &ImportPlan,
+    opts: &ImportOptions,
+    ctx: &ApplyContext,
+    live: bool,
+) -> Result<ImportReport> {
+    let mut manifest = manifest::Manifest::load(&ctx.config_dir);
+    let mut report = ImportReport::default();
+
+    if opts.types.contains(ImportType::Skills) {
+        skills::apply_skills(plan, ctx, &mut manifest, &mut report)?;
+    }
+    if opts.types.contains(ImportType::Hints) {
+        hints::apply_hints(plan, ctx, &mut manifest, &mut report)?;
+    }
+    if opts.types.contains(ImportType::Memory) {
+        memory::apply_memory(plan, ctx, &mut manifest, &mut report)?;
+        if live && report.count_type_outcome(ImportType::Memory, ApplyOutcome::Failed) == 0 {
+            enable_memory_builtin();
+        }
+    }
+    if opts.types.contains(ImportType::Mcp) {
+        mcp::apply_mcp(opts, live, &mut manifest, &mut report)?;
+    }
+
+    manifest.save(&ctx.config_dir)?;
+    Ok(report)
+}
+
+/// Enable goose's `memory` builtin, so imported memory is actually injected into the session (goose does
+/// not inject memory unless the builtin is enabled). GLOBAL config write — live path only.
+fn enable_memory_builtin() {
+    use crate::agents::extension::ExtensionConfig;
+    use crate::config::extensions::{set_extension, ExtensionEntry};
+    set_extension(ExtensionEntry {
+        enabled: true,
+        config: ExtensionConfig::Builtin {
+            name: "memory".to_string(),
+            description: "Stores and retrieves categorized memories".to_string(),
+            display_name: Some("Memory".to_string()),
+            timeout: Some(300),
+            bundled: Some(true),
+            available_tools: Vec::new(),
+        },
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
