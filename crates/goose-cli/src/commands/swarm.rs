@@ -10426,7 +10426,31 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("node speed (avg ms/task): {line}");
+            if crate::edition::resolve_edition(false).is_local() {
+                // Goose Local Edition: render the fleet's execute phase as a formation fan-in — one node
+                // lane per device (solid formation-hue chip), with its task count + avg speed.
+                use crate::theme::formation::{render_fan_in, NodeLane, NodeStatus};
+                let actions: Vec<String> = speeds
+                    .iter()
+                    .map(|(d, ms)| {
+                        let n = report.per_device.get(d).map(|s| s.dispatched).unwrap_or(0);
+                        format!("{n} tasks · {ms}ms avg")
+                    })
+                    .collect();
+                let lanes: Vec<NodeLane> = speeds
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (d, _))| NodeLane {
+                        index: i,
+                        device: d.as_str(),
+                        action: actions[i].as_str(),
+                        status: NodeStatus::Done,
+                    })
+                    .collect();
+                print!("{}", render_fan_in("execute", &lanes));
+            } else {
+                println!("node speed (avg ms/task): {line}");
+            }
         }
         for id in &report.done {
             if let Some(r) = report.results.get(id) {
