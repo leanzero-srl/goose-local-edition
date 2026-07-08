@@ -183,6 +183,11 @@ pub struct ImportOptions {
     pub types: TypeSet,
     /// Plan only; write nothing. (Phase 1 is always effectively dry-run.)
     pub dry_run: bool,
+    /// Import memory from EVERY Claude project. Off by default: goose's memory extension injects ALL
+    /// memories into every session's system prompt (unlike Claude Code's selective recall), so importing
+    /// every project's memory bloats the prompt to 100K+ tokens and slows the model. By default only the
+    /// primary project's memory is imported (see `memory::plan_memory`).
+    pub all_projects: bool,
 }
 
 impl ImportOptions {
@@ -456,6 +461,7 @@ mod tests {
             claude_json,
             types: TypeSet::planned(),
             dry_run: true,
+            all_projects: false,
         };
         (tmp, opts)
     }
@@ -504,6 +510,7 @@ mod tests {
             claude_json: tmp.path().join("nope.json"),
             types: TypeSet::planned(),
             dry_run: true,
+            all_projects: false,
         };
         assert!(plan(&opts).unwrap().is_empty());
     }

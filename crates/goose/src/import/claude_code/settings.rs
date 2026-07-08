@@ -102,6 +102,7 @@ mod tests {
             claude_json: tmp.path().join("nope.json"),
             types: TypeSet::only([ImportType::Settings, ImportType::Subagents]),
             dry_run: false,
+            all_projects: false,
         };
         let p = plan(&opts).unwrap();
 

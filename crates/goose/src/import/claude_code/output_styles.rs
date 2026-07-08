@@ -160,6 +160,7 @@ mod tests {
             claude_json: tmp.path().join("nope.json"),
             types: TypeSet::only([ImportType::OutputStyles]),
             dry_run: false,
+            all_projects: false,
         };
         let ctx = ApplyContext {
             skills_dir: tmp.path().join("skills"),
