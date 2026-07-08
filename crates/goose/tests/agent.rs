@@ -1988,6 +1988,105 @@ mod tests {
 
             Ok(())
         }
+
+        /// Regression for the Anthropic 400: signed thinking arriving in a
+        /// separate chunk before the tool calls must be stored once per
+        /// tool-call message and never as an extra standalone message. When the
+        /// Anthropic formatter serializes the persisted history, each assistant
+        /// turn must carry exactly one thinking block — a duplicate signed block
+        /// is rejected with `thinking blocks ... cannot be modified`.
+        #[tokio::test]
+        async fn test_signed_thinking_not_duplicated_for_anthropic() -> Result<()> {
+            use goose_providers::formats::anthropic::format_messages as anthropic_format;
+
+            let temp_dir = tempfile::tempdir()?;
+            let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+            let config = AgentConfig::new(
+                session_manager.clone(),
+                PermissionManager::instance(),
+                None,
+                GooseMode::Auto,
+                true,
+                GoosePlatform::GooseCli,
+            );
+            let agent = Agent::with_config(config);
+            let provider = Arc::new(MultiToolThinkingProvider::new());
+
+            let session = session_manager
+                .create_session(
+                    PathBuf::default(),
+                    "anthropic-signed-thinking-test".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+
+            let session_id = session.id.clone();
+            agent
+                .update_provider(provider, ModelConfig::new("mock-model"), &session_id)
+                .await?;
+
+            let session_config = SessionConfig {
+                id: session_id.clone(),
+                schedule_id: None,
+                max_turns: Some(2),
+                retry_config: None,
+            };
+
+            let reply_stream = agent
+                .reply(
+                    Message::user().with_text("Use both tools"),
+                    session_config,
+                    None,
+                )
+                .await?;
+            tokio::pin!(reply_stream);
+            while let Some(event) = reply_stream.next().await {
+                event?;
+            }
+
+            let reloaded = session_manager.get_session(&session_id, true).await?;
+            let messages = reloaded
+                .conversation
+                .expect("should have conversation")
+                .messages()
+                .to_vec();
+
+            // No standalone thinking-only assistant message should be persisted —
+            // thinking lives on the tool-call messages.
+            let standalone_thinking = messages.iter().any(|m| {
+                m.role == rmcp::model::Role::Assistant
+                    && !m.content.is_empty()
+                    && m.content
+                        .iter()
+                        .all(|c| matches!(c, MessageContent::Thinking(_)))
+            });
+            assert!(
+                !standalone_thinking,
+                "thinking must not be persisted as a standalone message: {messages:#?}"
+            );
+
+            // Every serialized Anthropic assistant message must contain at most
+            // one thinking block; a duplicate is what triggers the 400.
+            let spec = anthropic_format(&messages);
+            for msg in &spec {
+                if msg.get("role") == Some(&serde_json::json!("assistant")) {
+                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                        let thinking_blocks = content
+                            .iter()
+                            .filter(|c| c.get("type") == Some(&serde_json::json!("thinking")))
+                            .count();
+                        assert!(
+                            thinking_blocks <= 1,
+                            "assistant message has {thinking_blocks} thinking blocks, \
+                             Anthropic rejects duplicates: {msg}"
+                        );
+                    }
+                }
+            }
+
+            Ok(())
+        }
     }
 
     #[cfg(test)]

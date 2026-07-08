@@ -2291,9 +2291,16 @@ impl Agent {
                                     }
                                 }
 
-                                // Preserve thinking/reasoning content from the original response.
-                                // Gemini (and other thinking models) require thinking to be echoed back.
-                                // Kimi/DeepSeek require reasoning_content on assistant tool call messages.
+                                // Thinking/reasoning belongs on the tool-call messages, not also
+                                // as a separate standalone message: Gemini and Kimi/DeepSeek
+                                // require it echoed on each assistant tool-call message, and the
+                                // provider formatters reconstruct per-provider shape from there.
+                                // Storing it both standalone AND on the tool-call message
+                                // duplicates it; once merge_consecutive_messages glues the adjacent
+                                // standalone and tool-call messages together, the duplicate signed
+                                // blocks make Anthropic reject the turn with a 400. So the thinking
+                                // is carried onto the split request messages below and never kept
+                                // as a redundant standalone message.
                                 let direct_thinking: Vec<MessageContent> = response
                                     .content
                                     .iter()
@@ -2306,36 +2313,25 @@ impl Agent {
                                     })
                                     .cloned()
                                     .collect();
-                                if !direct_thinking.is_empty() {
-                                    let thinking_msg = Message::new(
-                                        response.role.clone(),
-                                        response.created,
-                                        direct_thinking.clone(),
-                                    )
-                                    .with_id(format!("msg_{}", Uuid::new_v4()));
-                                    messages_to_add.push(thinking_msg);
-                                }
-                                // When thinking arrived in an earlier stream chunk (stored as a
-                                // thinking-only message) and this chunk has only tool calls,
-                                // reuse that thinking so each split request_msg carries it.
+                                // When thinking arrived in an earlier stream chunk it was stored as
+                                // a standalone thinking-only message; reuse that thinking on the
+                                // tool-call messages and drop the standalone so it isn't duplicated.
                                 let response_thinking = if direct_thinking.is_empty() {
-                                    messages_to_add
-                                        .messages()
-                                        .iter()
-                                        .rev()
-                                        .find(|m| {
-                                            m.role == response.role
-                                                && !m.content.is_empty()
-                                                && m.content.iter().all(|c| {
-                                                    matches!(
-                                                        c,
-                                                        MessageContent::Thinking(_)
-                                                            | MessageContent::RedactedThinking(_)
-                                                    )
-                                                })
-                                        })
-                                        .map(|m| m.content.clone())
-                                        .unwrap_or_default()
+                                    let prior = messages_to_add.messages().iter().rposition(|m| {
+                                        m.role == response.role
+                                            && !m.content.is_empty()
+                                            && m.content.iter().all(|c| {
+                                                matches!(
+                                                    c,
+                                                    MessageContent::Thinking(_)
+                                                        | MessageContent::RedactedThinking(_)
+                                                )
+                                            })
+                                    });
+                                    match prior {
+                                        Some(idx) => messages_to_add.remove(idx).content,
+                                        None => Vec::new(),
+                                    }
                                 } else {
                                     direct_thinking
                                 };
