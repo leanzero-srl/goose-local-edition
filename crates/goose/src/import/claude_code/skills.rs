@@ -5,10 +5,15 @@
 //! dedup, so the imported copy wins) and normalizing the frontmatter. The copy + normalize happens in
 //! apply (Phase 2); here we only enumerate.
 
-use super::{Action, ActionClass, ImportOptions, ImportPlan, ImportType};
+use super::manifest::Manifest;
+use super::{
+    content_hash, Action, ActionClass, ApplyContext, ApplyOutcome, ConflictPolicy, ImportOptions,
+    ImportPlan, ImportReport, ImportType,
+};
 use crate::skills::{global_skills_dir, parse_skill_frontmatter};
 use anyhow::Result;
 use std::fs;
+use std::path::Path;
 
 /// Enumerate the skills under `<from>/skills` as DIRECT actions. Read-only.
 pub fn plan_skills(opts: &ImportOptions, plan: &mut ImportPlan) -> Result<()> {
@@ -47,4 +52,192 @@ pub fn plan_skills(opts: &ImportOptions, plan: &mut ImportPlan) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Apply the planned skill imports: copy each skill directory to `ctx.skills_dir/<name>`, reconciling by
+/// the source SKILL.md content-hash recorded in the manifest (idempotent), honoring the conflict policy.
+pub fn apply_skills(
+    plan: &ImportPlan,
+    ctx: &ApplyContext,
+    manifest: &mut Manifest,
+    report: &mut ImportReport,
+) -> Result<()> {
+    for action in plan.by_type(ImportType::Skills) {
+        let Some(skill_md) = action.source.as_ref() else {
+            continue;
+        };
+        let Some(src_dir) = skill_md.parent() else {
+            continue;
+        };
+        let dst_dir = ctx.skills_dir.join(&action.name);
+        let hash = content_hash(&fs::read(skill_md).unwrap_or_default());
+        let dst_target = dst_dir.display().to_string();
+
+        let exists = dst_dir.exists();
+        let outcome = if exists {
+            match ctx.conflict {
+                ConflictPolicy::Skip => {
+                    report.record(
+                        ImportType::Skills,
+                        &action.name,
+                        ApplyOutcome::SkippedExists,
+                        None,
+                    );
+                    continue;
+                }
+                ConflictPolicy::Merge
+                    if manifest.hash_for(ImportType::Skills, &action.name)
+                        == Some(hash.as_str()) =>
+                {
+                    // We wrote this exact source before and it hasn't changed — nothing to do.
+                    report.record(
+                        ImportType::Skills,
+                        &action.name,
+                        ApplyOutcome::Unchanged,
+                        None,
+                    );
+                    continue;
+                }
+                _ => ApplyOutcome::Updated,
+            }
+        } else {
+            ApplyOutcome::Created
+        };
+
+        // Replace the destination with a fresh verbatim copy.
+        if let Err(e) = replace_dir(src_dir, &dst_dir) {
+            report.record(
+                ImportType::Skills,
+                &action.name,
+                ApplyOutcome::Failed,
+                Some(e.to_string()),
+            );
+            continue;
+        }
+        manifest.upsert(ImportType::Skills, &action.name, &dst_target, &hash);
+        report.record(ImportType::Skills, &action.name, outcome, None);
+    }
+    Ok(())
+}
+
+/// Remove `dst` (if present) and recursively copy `src` into it.
+fn replace_dir(src: &Path, dst: &Path) -> Result<()> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)?;
+    }
+    copy_dir_all(src, dst)
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::import::claude_code::{plan, ImportOptions, TypeSet};
+
+    fn skill_fixture() -> (tempfile::TempDir, ImportOptions) {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join(".claude");
+        for (name, desc) in [("alpha", "does alpha"), ("beta", "does beta")] {
+            let d = claude.join("skills").join(name);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(
+                d.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {desc}\n---\nbody for {name}"),
+            )
+            .unwrap();
+            // an extra asset that must be carried verbatim
+            fs::write(d.join("helper.py"), "print('x')").unwrap();
+        }
+        let opts = ImportOptions {
+            from: claude,
+            claude_json: tmp.path().join("nope.json"),
+            types: TypeSet::only([ImportType::Skills]),
+            dry_run: false,
+        };
+        (tmp, opts)
+    }
+
+    #[test]
+    fn apply_copies_skills_and_goose_discovers_them() {
+        let (tmp, opts) = skill_fixture();
+        // Use a project-scoped skills dir so goose's real discover_skills() finds them.
+        let wd = tmp.path().join("workdir");
+        let ctx = ApplyContext {
+            skills_dir: wd.join(".agents").join("skills"),
+            config_dir: tmp.path().join("cfg"),
+            conflict: ConflictPolicy::Merge,
+        };
+        let p = plan(&opts).unwrap();
+        let mut manifest = Manifest::default();
+        let mut report = ImportReport::default();
+        apply_skills(&p, &ctx, &mut manifest, &mut report).unwrap();
+
+        assert_eq!(report.count_outcome(ApplyOutcome::Created), 2);
+        // verbatim asset carried
+        assert!(ctx.skills_dir.join("alpha").join("helper.py").is_file());
+        // goose's REAL discovery sees the imported skills
+        let discovered = crate::skills::discover_skills(Some(&wd));
+        let names: Vec<_> = discovered.iter().map(|s| s.name.clone()).collect();
+        assert!(
+            names.contains(&"alpha".to_string()),
+            "goose should discover alpha: {names:?}"
+        );
+        assert!(
+            names.contains(&"beta".to_string()),
+            "goose should discover beta"
+        );
+
+        // IDEMPOTENT: a second apply is all Unchanged, no re-copy.
+        let mut report2 = ImportReport::default();
+        apply_skills(&p, &ctx, &mut manifest, &mut report2).unwrap();
+        assert_eq!(report2.count_outcome(ApplyOutcome::Unchanged), 2);
+        assert_eq!(report2.count_outcome(ApplyOutcome::Created), 0);
+    }
+
+    #[test]
+    fn conflict_skip_leaves_existing_untouched() {
+        let (tmp, opts) = skill_fixture();
+        let ctx = ApplyContext {
+            skills_dir: tmp.path().join("skills-out"),
+            config_dir: tmp.path().join("cfg"),
+            conflict: ConflictPolicy::Skip,
+        };
+        // pre-create alpha with sentinel content
+        let alpha = ctx.skills_dir.join("alpha");
+        fs::create_dir_all(&alpha).unwrap();
+        fs::write(alpha.join("SKILL.md"), "SENTINEL").unwrap();
+
+        let p = plan(&opts).unwrap();
+        let mut manifest = Manifest::default();
+        let mut report = ImportReport::default();
+        apply_skills(&p, &ctx, &mut manifest, &mut report).unwrap();
+
+        assert_eq!(
+            report.count_type_outcome(ImportType::Skills, ApplyOutcome::SkippedExists),
+            1
+        );
+        assert_eq!(
+            report.count_type_outcome(ImportType::Skills, ApplyOutcome::Created),
+            1
+        ); // beta
+        assert_eq!(
+            fs::read_to_string(alpha.join("SKILL.md")).unwrap(),
+            "SENTINEL"
+        );
+    }
 }
