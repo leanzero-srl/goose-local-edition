@@ -298,3 +298,14 @@ Live import into REAL config: 11 skills, hints, playwright MCP, memory. PROVEN g
 - MCP: playwright ext enabled:true in config.yaml. HINTS: .goosehints has the fenced CLAUDE.md.
 FIXES that made it work: copy skips node_modules/symlinks (all 11 skills clean, e61aef210); memory SCOPED to primary project (2bea81f82) — 178 memories=486K chars=~123K tokens ALWAYS-injected caused model TIMEOUT/stream-error; scoped to primary project's 32 memories=~26K tokens, now works. --all-projects flag to opt into all.
 VERDICT (import IMPROVES goose for GENERAL use): skills=GOOD, hints=GOOD, mcp=GOOD, memory=GOOD after scope fix (goose answers from it). NUANCE: the user's memory/skills are about their REAL work (UI/atlassian/leanzero), mostly IRRELEVANT to the SWARM's generic-CLI-building task — so for the swarm the imports are a regression check (does 26K bloat hurt?), with add-depth/quality memories maybe helping. Fleet run next.
+
+## ===== PHASE 9 VERDICT (2026-07-08) — KEEP + MERGE =====
+FLEET RUN with imports active: budgetcli (heavy-spec, hidden crash edges) built cleanly WITH the imported memory/skills/mcp in the workers. Result: FULL PASS by running — golden values correct (remaining 50.00, report 100/50/50, 2-decimal money), 38 tests, ALL hidden crash edges clean (no-budget-cat/malformed-amount/corrupt-db/empty-db, no tracebacks) = SAME quality as the pre-import baseline (unitconv/phonebook/csvstat). SWARM STABILITY: 0 stream-errors, plan_loaded normally, no stall, no loop-warns at 26K memory injection. NO REGRESSION.
+HONEST PER-COMPONENT VERDICT:
+ - SKILLS import: IMPROVED (general goose) — goose skills list shows all 11 w/ token counts; NEUTRAL for swarm (user's skills are atlassian/leanzero, irrelevant to generic CLIs).
+ - MEMORY import: IMPROVED (general goose) AFTER the scope fix — goose ANSWERED a UI-rule from imported memory end-to-end; was HARMFUL at 178-memory/123K-token (model timeout/stream-error), FIXED to primary-project/32/26K. NEUTRAL for swarm (irrelevant to CLI-building, but stable at 26K).
+ - HINTS import: IMPROVED (general goose) — CLAUDE.md in .goosehints, always-injected.
+ - MCP import: IMPROVED (general goose) — playwright available; NEUTRAL for swarm.
+BENCHMARK (goose USES the memories/skills/MCPs Claude Code has): MET, proven end-to-end.
+IMPORT'S HONEST COST: not free — needed 2 fixes (copy node_modules/symlink-skip; memory scope to avoid 123K bloat). At the fixed 26K the memory earns its place for general goose without hurting the swarm.
+DECISION: benchmark met + swarm NOT hurt (quality=baseline, stable) -> KEEP + MERGE le-build -> local-edition. Then restart the EVOLVE-GOOSE swarm-quality loop WITH imports active.
