@@ -2484,6 +2484,39 @@ mod tests {
     }
 
     #[test]
+    fn normalize_plan_files_to_package_truth_table() {
+        use std::collections::HashSet;
+        let pkg = "gradebook";
+        let existing: HashSet<String> = ["stats.py", "__main__.py", "__init__.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // COLLISION: a bare module that exists in the package -> pinned to <pkg>/<name>.
+        let mut v = serde_json::json!({"subtasks":[
+            {"id":"stats","files":["stats.py"]},                 // collision -> gradebook/stats.py
+            {"id":"newf","files":["ranking.py"]},                // NEW module (not in pkg) -> untouched
+            {"id":"test","files":["tests/test_stats.py"]},       // dir-prefixed -> untouched
+            {"id":"cli","files":["gradebook/__main__.py"]},      // already pkg-prefixed -> untouched
+            {"id":"conf","files":["conftest.py"]}                // root file, NOT in pkg -> untouched
+        ]});
+        let n = normalize_plan_files_to_package(&mut v, pkg, &existing);
+        assert_eq!(n, 1); // only stats.py collided
+        let f = |i: usize| v["subtasks"][i]["files"][0].as_str().unwrap().to_string();
+        assert_eq!(f(0), "gradebook/stats.py"); // collision rewritten
+        assert_eq!(f(1), "ranking.py"); // new module untouched
+        assert_eq!(f(2), "tests/test_stats.py"); // dir-prefixed untouched
+        assert_eq!(f(3), "gradebook/__main__.py"); // already-prefixed untouched
+        assert_eq!(f(4), "conftest.py"); // root non-collision untouched
+                                         // NO package (greenfield / empty existing set) -> no-op.
+        let mut v2 = serde_json::json!({"subtasks":[{"id":"s","files":["stats.py"]}]});
+        assert_eq!(
+            normalize_plan_files_to_package(&mut v2, pkg, &HashSet::new()),
+            0
+        );
+        assert_eq!(v2["subtasks"][0]["files"][0].as_str().unwrap(), "stats.py");
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -4262,6 +4295,33 @@ impl GooseAgentDispatcher {
                 );
             }
         }
+        // T4: deterministic layout-normalizer (backstop to T3's file manifest). On an AMENDMENT where a package
+        // already exists on disk, force a subtask's BARE module path onto the package ONLY when it COLLIDES with
+        // an existing <pkg>/<name>.py — so a planner that switches package->flat cannot create a duplicate
+        // orphan module (the gradebook-2 split-brain). New files / already-dir-prefixed paths are untouched;
+        // no-op on greenfield (no package yet).
+        if let Some(pkg) = python_package(&self.working_dir) {
+            let existing_pkg_files: std::collections::HashSet<String> =
+                std::fs::read_dir(self.working_dir.join(&pkg))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(|e| {
+                        let p = e.path();
+                        if p.extension().and_then(|x| x.to_str()) == Some("py") {
+                            p.file_name().map(|n| n.to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+            let n = normalize_plan_files_to_package(&mut v, &pkg, &existing_pkg_files);
+            if n > 0 {
+                eprintln!(
+                    "  · layout-normalize: pinned {n} bare module path(s) onto the existing {pkg}/ package"
+                );
+            }
+        }
         let items: Vec<(usize, String, String, String)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
@@ -4998,6 +5058,36 @@ fn parse_subcommands(help: &str) -> Vec<String> {
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
         .collect()
+}
+
+/// Deterministic layout-normalizer (T4): rewrite a subtask's BARE module path (e.g. `stats.py`) to the existing
+/// package layout (`<pkg>/stats.py`) ONLY when a file of that basename already EXISTS in the package
+/// (`existing_pkg_files`) — so a weak planner that switches an existing package to flat paths cannot create a
+/// duplicate orphan module (the gradebook-2 split-brain). Left UNTOUCHED: a bare name NOT in the package (a
+/// genuinely new module), any already-dir-prefixed path (contains '/'), and non-string entries. Pure +
+/// disk-free for unit testing. Returns the number of paths rewritten.
+fn normalize_plan_files_to_package(
+    v: &mut serde_json::Value,
+    pkg: &str,
+    existing_pkg_files: &std::collections::HashSet<String>,
+) -> usize {
+    let mut changed = 0;
+    let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return 0;
+    };
+    for st in subtasks {
+        let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
+            continue;
+        };
+        for f in files {
+            let Some(path) = f.as_str() else { continue };
+            if !path.contains('/') && existing_pkg_files.contains(path) {
+                *f = serde_json::Value::String(format!("{pkg}/{path}"));
+                changed += 1;
+            }
+        }
+    }
+    changed
 }
 
 /// SAFETY gate for a MODEL-authored repro command (Lever B): only an app/test invocation
