@@ -96,6 +96,27 @@ mod tests {
     use crate::theme::palette::STATUS_TRIAD;
 
     #[test]
+    fn fan_in_execute_phase_visual() {
+        // Mirrors exactly what swarm.rs builds from report.per_device at end of the execute phase.
+        let actions = [
+            "7 tasks · 4210ms avg",
+            "5 tasks · 5130ms avg",
+            "4 tasks · 6820ms avg",
+        ];
+        let lanes: Vec<NodeLane> = ["m4-max", "m3-ultra", "studio-2"]
+            .iter()
+            .enumerate()
+            .map(|(i, d)| NodeLane {
+                index: i,
+                device: d,
+                action: actions[i],
+                status: NodeStatus::Done,
+            })
+            .collect();
+        println!("\n{}", render_fan_in("execute", &lanes));
+    }
+
+    #[test]
     fn fan_in_renders_chips_and_disjoint_hues() {
         let lanes = [
             NodeLane {
