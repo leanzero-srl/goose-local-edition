@@ -61,7 +61,7 @@ impl ImportClaudeCodeArgs {
     /// Resolve the requested type set from the flags. No type flag ⇒ all planned types.
     fn type_set(&self) -> TypeSet {
         if self.all || !(self.skills || self.memory || self.mcp) {
-            return TypeSet::planned();
+            return TypeSet::all();
         }
         let mut types = Vec::new();
         if self.skills {

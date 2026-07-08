@@ -5,10 +5,13 @@
 //! so `goose import claude-code --dry-run` can show the full action table before anything happens.
 //! Apply/validate arrive in Phase 2.
 
+pub mod commands;
 pub mod hints;
 pub mod manifest;
 pub mod mcp;
 pub mod memory;
+pub mod output_styles;
+pub mod settings;
 pub mod skills;
 
 use anyhow::Result;
@@ -135,14 +138,28 @@ impl ImportPlan {
 pub struct TypeSet(HashSet<ImportType>);
 
 impl TypeSet {
-    /// The families supported by the current phase's planners (skills/memory/hints/mcp).
-    /// Later phases widen this as their planners land.
+    /// The core write-back families (skills/memory/hints/mcp) — the highest-confidence set.
     pub fn planned() -> Self {
         TypeSet(HashSet::from([
             ImportType::Skills,
             ImportType::Memory,
             ImportType::Hints,
             ImportType::Mcp,
+        ]))
+    }
+
+    /// Every supported family, including the CONVERT (commands/output-styles) and report-only
+    /// (settings/subagents) types. This is the default when the user names no specific type.
+    pub fn all() -> Self {
+        TypeSet(HashSet::from([
+            ImportType::Skills,
+            ImportType::Memory,
+            ImportType::Hints,
+            ImportType::Mcp,
+            ImportType::Commands,
+            ImportType::OutputStyles,
+            ImportType::Settings,
+            ImportType::Subagents,
         ]))
     }
 
@@ -312,6 +329,15 @@ pub fn plan(opts: &ImportOptions) -> Result<ImportPlan> {
     if opts.types.contains(ImportType::Mcp) {
         mcp::plan_mcp(opts, &mut plan)?;
     }
+    if opts.types.contains(ImportType::Commands) {
+        commands::plan_commands(opts, &mut plan)?;
+    }
+    if opts.types.contains(ImportType::OutputStyles) {
+        output_styles::plan_output_styles(opts, &mut plan)?;
+    }
+    if opts.types.contains(ImportType::Settings) || opts.types.contains(ImportType::Subagents) {
+        settings::plan_settings(opts, &mut plan)?;
+    }
     Ok(plan)
 }
 
@@ -342,6 +368,20 @@ pub fn apply(
     }
     if opts.types.contains(ImportType::Mcp) {
         mcp::apply_mcp(opts, live, &mut manifest, &mut report)?;
+    }
+    if opts.types.contains(ImportType::Commands) {
+        commands::apply_commands(plan, ctx, &mut manifest, &mut report)?;
+    }
+    if opts.types.contains(ImportType::OutputStyles) {
+        output_styles::apply_output_styles(plan, ctx, &mut manifest, &mut report)?;
+    }
+    // Report-only types: acknowledge the planned skips in the apply report (nothing is written).
+    for ty in [ImportType::Settings, ImportType::Subagents] {
+        if opts.types.contains(ty) {
+            for action in plan.by_type(ty) {
+                report.record(ty, &action.name, ApplyOutcome::Skipped, action.note.clone());
+            }
+        }
     }
 
     manifest.save(&ctx.config_dir)?;
