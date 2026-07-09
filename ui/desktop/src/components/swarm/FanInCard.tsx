@@ -1,4 +1,5 @@
 import React from 'react';
+import { Check, X, Loader2 } from 'lucide-react';
 
 /**
  * Desktop twin of the CLI swarm fan-in unit — Goose Local Edition's signature.
@@ -21,10 +22,23 @@ const STATUS_COLOR: Record<NodeStatus, string> = {
   done: '#2ecc71',
   error: '#ff3b30',
 };
-const STATUS_GLYPH: Record<NodeStatus, string> = {
-  running: '●',
-  done: '✔',
-  error: '✕',
+/**
+ * SVG icons, not unicode glyphs. `✔`/`●`/`✕` get emoji-presentation on some platforms, which IGNORES the
+ * CSS color and renders as a faint monochrome glyph in dark mode. Lucide SVGs always honor `color`.
+ */
+const STATUS_ICON: Record<
+  NodeStatus,
+  React.ComponentType<{
+    size?: number;
+    strokeWidth?: number;
+    className?: string;
+    style?: React.CSSProperties;
+    'data-testid'?: string;
+  }>
+> = {
+  running: Loader2,
+  done: Check,
+  error: X,
 };
 
 export interface NodeLane {
@@ -71,9 +85,18 @@ const FanInCard: React.FC<FanInCardProps> = ({ dispatch, lanes, className = '' }
             </span>
             <span className="w-24 shrink-0 truncate text-text-secondary">{lane.device}</span>
             <span className="flex-1 truncate">{lane.action}</span>
-            <span style={{ color: STATUS_COLOR[lane.status] }} data-testid="node-status">
-              {STATUS_GLYPH[lane.status]}
-            </span>
+            {(() => {
+              const Icon = STATUS_ICON[lane.status];
+              return (
+                <Icon
+                  size={16}
+                  strokeWidth={3}
+                  data-testid="node-status"
+                  className={lane.status === 'running' ? 'animate-spin' : ''}
+                  style={{ color: STATUS_COLOR[lane.status] }}
+                />
+              );
+            })()}
           </div>
         ))}
       </div>
