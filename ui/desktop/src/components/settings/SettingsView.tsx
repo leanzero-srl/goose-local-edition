@@ -17,15 +17,18 @@ import {
   Keyboard,
   HardDrive,
   KeyRound,
+  Boxes,
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import ChatSettingsSection from './chat/ChatSettingsSection';
 import KeyboardShortcutsSection from './keyboard/KeyboardShortcutsSection';
 import AuthSettingsSection from './auth/AuthSettingsSection';
 import LocalInferenceSection from './localInference/LocalInferenceSection';
+import SwarmSettingsSection from './swarm/SwarmSettingsSection';
 import { CONFIGURATION_ENABLED } from '../../updates';
 import { trackSettingsTabViewed } from '../../utils/analytics';
 import { useFeatures } from '../../contexts/FeaturesContext';
+import { useEdition } from '../../contexts/EditionContext';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -85,6 +88,8 @@ export default function SettingsView({
   const [activeTab, setActiveTab] = useState('models');
   const hasTrackedInitialTab = useRef(false);
   const { localInference } = useFeatures();
+  const { edition } = useEdition();
+  const isLocalEdition = edition === 'local';
   const intl = useIntl();
 
   const handleTabChange = (tab: string) => {
@@ -184,6 +189,16 @@ export default function SettingsView({
                       {intl.formatMessage(i18n.tabLocalInference)}
                     </TabsTrigger>
                   )}
+                  {isLocalEdition && (
+                    <TabsTrigger
+                      value="swarm"
+                      className="flex gap-2"
+                      data-testid="settings-swarm-tab"
+                    >
+                      <Boxes className="h-4 w-4" />
+                      Swarm
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="chat" className="flex gap-2" data-testid="settings-chat-tab">
                     <MessageSquare className="h-4 w-4" />
                     {intl.formatMessage(i18n.tabChat)}
@@ -237,6 +252,15 @@ export default function SettingsView({
                     className="mt-0 focus-visible:outline-none focus-visible:ring-0"
                   >
                     <LocalInferenceSection />
+                  </TabsContent>
+                )}
+
+                {isLocalEdition && (
+                  <TabsContent
+                    value="swarm"
+                    className="mt-0 focus-visible:outline-none focus-visible:ring-0"
+                  >
+                    <SwarmSettingsSection />
                   </TabsContent>
                 )}
 

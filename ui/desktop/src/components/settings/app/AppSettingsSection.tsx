@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import ThemeSelector from '../../GooseSidebar/ThemeSelector';
 import EditionSelector from '../../GooseSidebar/EditionSelector';
 import FanInCard from '../../swarm/FanInCard';
+import { useFleet } from '../../swarm/useFleet';
 import BlockLogoBlack from './icons/block-lockup_black.png';
 import BlockLogoWhite from './icons/block-lockup_white.png';
 import TelemetrySettings from './TelemetrySettings';
@@ -339,6 +340,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
   };
 
   const intl = useIntl();
+  const fleet = useFleet();
   const selectedLanguage =
     LANGUAGE_OPTIONS.find((option) => option.value === language) ?? LANGUAGE_OPTIONS[0];
 
@@ -486,17 +488,31 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
         <CardContent className="pt-4 px-4 space-y-3">
           <EditionSelector className="w-auto" hideTitle horizontal />
           <div>
-            <div className="text-xs text-text-secondary mb-1">
-              {intl.formatMessage(i18n.editionPreview)}
+            <div className="text-xs text-text-secondary mb-1 flex items-center justify-between">
+              <span>{intl.formatMessage(i18n.editionPreview)}</span>
+              <span style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
+                {fleet.online
+                  ? `LM Link · ${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
+                  : 'fleet offline'}
+              </span>
             </div>
-            <FanInCard
-              dispatch="preview"
-              lanes={[
-                { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
-                { device: 'm3-ultra', action: 'grep callsites → 14 hits', status: 'running' },
-                { device: 'studio-2', action: 'cargo test → 47 passed', status: 'done' },
-              ]}
-            />
+            {fleet.online && fleet.lanes.length > 0 ? (
+              <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
+            ) : (
+              <div>
+                <FanInCard
+                  dispatch="example"
+                  lanes={[
+                    { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
+                    { device: 'm3-ultra', action: 'grep callsites → 14 hits', status: 'running' },
+                    { device: 'studio-2', action: 'cargo test → 47 passed', status: 'done' },
+                  ]}
+                />
+                <div className="text-xs text-text-secondary mt-1">
+                  Example — start LM Studio (LM Link) at localhost:1234 to see your real fleet here.
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
