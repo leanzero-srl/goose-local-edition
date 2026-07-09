@@ -30,3 +30,14 @@ weakness when given time (the fix landed ~14min post-build, jsonl logging lagged
 REVIEW_FIX on; it converts near-pass -> full-pass on the recurring gap. NOTE: the harness then sat
 stuck-idle post-complete (jsonl frozen ~19min) even though the fix had landed — the run doesn't
 cleanly terminate/emit DONE, so teardown-after-verify remains necessary.
+
+## MOLD-THE-MODEL WIN (logstat): explicit error-path requirement → first-build clean
+The recurring error-path weakness (missing file, malformed input) — which habits SHIPPED as a latent
+bug and csvstat only fixed via review-fix — was closed in the FIRST build once made an EXPLICIT
+weight-3 requirement (R6 missing FILE clean, R7 malformed line unparseable). Verified: 0 tracebacks
+across count/filter/range/tail, 26 pytest pass. The model reached for IDIOMATIC guards when told to
+(argparse choices for --level, a custom argparse type validating the timestamp) rather than bespoke
+try/except. CONCLUSION: for a known model weakness, the highest-leverage lever is naming it explicitly
+in the spec — not hoping review-fix catches it. The graduated gate is now a SPEC requirement, not just
+a judging gate. Progression across the session: hidden→latent-bug (habits) → hidden→review-fix-caught
+(csvstat) → explicit→first-build-clean (logstat).
