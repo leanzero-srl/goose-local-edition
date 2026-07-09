@@ -126,6 +126,22 @@ function Segmented<T extends string>({
   );
 }
 
+/**
+ * Local-Edition switch. The shared Switch `default` variant makes the thumb `bg-background-primary`, which
+ * equals the dark track in dark mode = invisible. Use the `mono` variant (visible thumb) with a solid azure
+ * ON state (per the hard UI rule: solid saturated color, never faded).
+ */
+function SwarmSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Switch
+      variant="mono"
+      checked={checked}
+      onCheckedChange={onChange}
+      className="data-[state=checked]:!bg-[#2e8bff] dark:data-[state=checked]:!bg-[#2e8bff]"
+    />
+  );
+}
+
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border border-border-primary" style={{ borderRadius: 3 }}>
@@ -234,10 +250,10 @@ export default function SwarmSettingsSection() {
                   <Segmented options={RESEARCH_MODES} value={(cfg.research_planning ?? 'on') as ResearchMode} onChange={(v) => set({ research_planning: v })} />
                 </Row>
                 <Row label="Parallel planning" hint="write subtask specs across the fleet at once">
-                  <Switch checked={!!cfg.parallel_planning} onCheckedChange={(v) => set({ parallel_planning: v })} />
+                  <SwarmSwitch checked={!!cfg.parallel_planning} onChange={(v) => set({ parallel_planning: v })} />
                 </Row>
                 <Row label="Dynamic replan" hint="re-plan mid-run when the tree drifts">
-                  <Switch checked={!!cfg.dynamic_replan} onCheckedChange={(v) => set({ dynamic_replan: v })} />
+                  <SwarmSwitch checked={!!cfg.dynamic_replan} onChange={(v) => set({ dynamic_replan: v })} />
                 </Row>
                 <Row label="Max research questions" hint="scoping questions before planning">
                   <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
@@ -272,10 +288,10 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row label="Planner also works" hint="planner node also runs worker tasks">
-                  <Switch checked={!!cfg.planner_also_works} onCheckedChange={(v) => set({ planner_also_works: v })} />
+                  <SwarmSwitch checked={!!cfg.planner_also_works} onChange={(v) => set({ planner_also_works: v })} />
                 </Row>
                 <Row label="Allow model load" hint="let the swarm spin up non-resident models (off = warm fleet only)">
-                  <Switch checked={!!cfg.allow_model_load} onCheckedChange={(v) => set({ allow_model_load: v })} />
+                  <SwarmSwitch checked={!!cfg.allow_model_load} onChange={(v) => set({ allow_model_load: v })} />
                 </Row>
               </Group>
             </>
