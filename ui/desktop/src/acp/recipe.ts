@@ -92,6 +92,20 @@ export async function saveRecipe(
   }
 }
 
+/**
+ * AI-author a recipe from a live session's conversation. The agent distills the chat into a Recipe
+ * server-side; the returned RecipeDto is meant to be reviewed/edited in the create modal before save.
+ */
+export async function createRecipeFromSession(sessionId: string): Promise<RecipeDto> {
+  try {
+    const client = await getAcpClient();
+    const res = await client.goose.recipesCreate_unstable({ sessionId });
+    return res.recipe;
+  } catch (error) {
+    throw normalizeAcpError(error, 'Failed to create a recipe from this conversation');
+  }
+}
+
 export async function listRecipes(): Promise<RecipeListEntryDto[]> {
   const pending = inFlightListRecipes;
   if (pending) {

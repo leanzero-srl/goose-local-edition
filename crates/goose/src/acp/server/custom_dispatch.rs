@@ -547,6 +547,14 @@ impl GooseAcpAgent {
         self.on_save_recipe(req).await
     }
 
+    #[custom_method(CreateRecipeRequest)]
+    async fn dispatch_create_recipe(
+        &self,
+        req: CreateRecipeRequest,
+    ) -> Result<CreateRecipeResponse, agent_client_protocol::Error> {
+        self.on_create_recipe(req).await
+    }
+
     #[custom_method(ParseRecipeRequest)]
     async fn dispatch_parse_recipe(
         &self,

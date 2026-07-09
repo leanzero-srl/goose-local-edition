@@ -1785,6 +1785,19 @@ export const zSaveRecipeResponse_unstable = z.object({
     file_path: z.string()
 });
 
+/**
+ * AI-author a recipe from the given session's conversation. The agent distills the chat into a
+ * Recipe server-side (LLM completion) and returns it for review/edit in the UI — it is NOT saved to
+ * disk here (the client opens the create/edit modal so the user can review before saving).
+ */
+export const zCreateRecipeRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zCreateRecipeResponse_unstable = z.object({
+    recipe: zRecipeDto
+});
+
 export const zParseRecipeRequest_unstable = z.object({
     content: z.string()
 });
@@ -2806,6 +2819,7 @@ export const zExtRequest = z.object({
             zScheduleRecipeRequest_unstable,
             zSetRecipeSlashCommandRequest_unstable,
             zSaveRecipeRequest_unstable,
+            zCreateRecipeRequest_unstable,
             zParseRecipeRequest_unstable,
             zRecipeToYamlRequest_unstable,
             zListSchedulesRequest_unstable,
@@ -2910,6 +2924,7 @@ export const zExtResponse = z.union([
                 zScanRecipeResponse_unstable,
                 zListRecipesResponse_unstable,
                 zSaveRecipeResponse_unstable,
+                zCreateRecipeResponse_unstable,
                 zParseRecipeResponse_unstable,
                 zRecipeToYamlResponse_unstable,
                 zListSchedulesResponse_unstable,

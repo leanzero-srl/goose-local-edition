@@ -26,6 +26,8 @@ import type {
   ConfigReadResponse_unstable,
   ConfigRemoveRequest_unstable,
   ConfigUpsertRequest_unstable,
+  CreateRecipeRequest_unstable,
+  CreateRecipeResponse_unstable,
   CreateScheduleRequest_unstable,
   CreateScheduleResponse_unstable,
   CreateSourceRequest_unstable,
@@ -204,6 +206,7 @@ import {
   zCanonicalModelInfoResponse_unstable,
   zConfigReadAllResponse_unstable,
   zConfigReadResponse_unstable,
+  zCreateRecipeResponse_unstable,
   zCreateScheduleResponse_unstable,
   zCreateSourceResponse_unstable,
   zCustomProviderCreateResponse_unstable,
@@ -961,6 +964,18 @@ export class GooseExtClient {
     return zSaveRecipeResponse_unstable.parse(
       raw,
     ) as SaveRecipeResponse_unstable;
+  }
+
+  async recipesCreate_unstable(
+    params: CreateRecipeRequest_unstable,
+  ): Promise<CreateRecipeResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/recipes/create",
+      params,
+    );
+    return zCreateRecipeResponse_unstable.parse(
+      raw,
+    ) as CreateRecipeResponse_unstable;
   }
 
   async recipesParse_unstable(

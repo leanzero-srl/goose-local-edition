@@ -326,6 +326,11 @@
       "responseType": "SaveRecipeResponse_unstable"
     },
     {
+      "method": "_goose/unstable/recipes/create",
+      "requestType": "CreateRecipeRequest_unstable",
+      "responseType": "CreateRecipeResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/recipes/parse",
       "requestType": "ParseRecipeRequest_unstable",
       "responseType": "ParseRecipeResponse_unstable"

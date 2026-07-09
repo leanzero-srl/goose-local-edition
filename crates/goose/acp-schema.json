@@ -4288,6 +4288,33 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/recipes/save"
     },
+    "CreateRecipeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "AI-author a recipe from the given session's conversation. The agent distills the chat into a\nRecipe server-side (LLM completion) and returns it for review/edit in the UI — it is NOT saved to\ndisk here (the client opens the create/edit modal so the user can review before saving).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/recipes/create"
+    },
+    "CreateRecipeResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "recipe": {
+          "$ref": "#/$defs/RecipeDto"
+        }
+      },
+      "required": [
+        "recipe"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/recipes/create"
+    },
     "ParseRecipeRequest_unstable": {
       "type": "object",
       "properties": {
@@ -7303,6 +7330,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/CreateRecipeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/recipes/create",
+                  "title": "CreateRecipeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/ParseRecipeRequest_unstable"
                     }
                   ],
@@ -8103,6 +8139,14 @@
                         }
                       ],
                       "title": "SaveRecipeResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/CreateRecipeResponse_unstable"
+                        }
+                      ],
+                      "title": "CreateRecipeResponse_unstable"
                     },
                     {
                       "allOf": [
