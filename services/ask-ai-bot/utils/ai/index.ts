@@ -54,7 +54,7 @@ export async function answerQuestion({
       stopWhen: stepCountIs(MAX_STEPS),
     });
 
-    for await (const event of result.fullStream) {
+    for await (const event of result.stream) {
       if (event.type === "tool-call") {
         if (statusMessage) {
           try {
@@ -150,7 +150,7 @@ export async function answerQuestion({
   } catch (error) {
     logger.error("Failed to answer question:", error);
     await thread.send(
-      "Sorry, I encountered an error while researching your question. Please try again.",
+      "Sorry, I encountered an error while researching your question. Reply to this message or @mention me to try again.",
     );
     throw error;
   }
