@@ -43,11 +43,11 @@ describe('FanInCard', () => {
     // sharp radius (not a childish-rounded pill)
     expect(card.style.borderRadius).toBe('3px');
     // one SVG status icon per lane, each with an explicit (dark-mode-safe) color — never a bare glyph
-    const statuses = getAllByTestId('node-status') as unknown as SVGElement[];
+    const statuses = getAllByTestId('node-status') as unknown as Element[];
     expect(statuses).toHaveLength(3);
     for (const s of statuses) {
       expect(s.tagName.toLowerCase()).toBe('svg');
-      expect((s as unknown as HTMLElement).style.color.replace(/\s/g, '')).not.toBe('');
+      expect((s as HTMLElement).style.color.replace(/\s/g, '')).not.toBe('');
     }
     const text = container.textContent ?? '';
     expect(text).not.toContain('⏺'); // not Claude Code's glyph
