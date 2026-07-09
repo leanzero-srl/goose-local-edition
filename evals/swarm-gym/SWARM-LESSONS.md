@@ -58,3 +58,15 @@ invalid-path an EXPLICIT R8 and handled it cleanly. So: EVERY error boundary you
 an EXPLICIT weighted requirement — the model reliably guards what's named and reliably misses what's
 merely hidden. Running tally: explicit error-path reqs → clean 3/3 (logstat, jsonpath, tomlq); the
 only error-path misses (habits, iniedit, tomlq-H3) were all on NON-explicit/hidden boundaries.
+
+## NUANCE (csvsql): explicit error-path lever is strong but NOT a guarantee on complex apps
+csvsql (a mini SQL engine — the hardest app so far) handled 2 of 3 EXPLICIT weight-3 error boundaries
+first-build (R6 missing-file clean, R8 invalid-query clean with great parser messages) but MISSED the
+3rd (R7 malformed/ragged CSV -> uncaught TypeError), plus a hidden H2 (numeric-compare-on-'N/A' ->
+ValueError). Query engine itself was excellent + 53 pytest pass. Takeaway: naming a boundary explicitly
+strongly raises the odds it's handled, but on a COMPLEX app the model's attention is finite and a guard
+can still slip — the harder the core logic (here a SQL parser), the more an error-path req can be
+crowded out. So for complex apps, consider ALSO an explicit deterministic check that exercises the
+ragged/malformed input, not just the requirement text. Running tally: explicit error-path reqs clean on
+the simpler read-only-query apps (logstat/jsonpath/tomlq); first miss on an explicit boundary was csvsql
+R7 (the most complex app).
