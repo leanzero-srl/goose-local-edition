@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, Copy, Edit2, FileJson, LoaderCircle } from 'lucide-react';
+import {
+  ChefHat,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Edit2,
+  FileJson,
+  LoaderCircle,
+} from 'lucide-react';
 import { toast } from 'react-toastify';
 import { AppEvents } from '../constants/events';
 import { defineMessages, useIntl } from '../i18n';
 import { acpExportSession, acpForkSession, acpRenameSession } from '../acp/sessions';
 import { getSessionDisplayName } from '../sessions';
+import CreateEditRecipeModal from './recipes/CreateEditRecipeModal';
+import { createRecipeFromSession } from '../recipe/recipe_management';
+import type { Recipe } from '../recipe';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { cn } from '../utils';
@@ -33,6 +44,14 @@ const i18n = defineMessages({
   viewJson: {
     id: 'sessionActionsHeader.viewJson',
     defaultMessage: 'View session JSON',
+  },
+  makeRecipe: {
+    id: 'sessionActionsHeader.makeRecipe',
+    defaultMessage: 'Make recipe from this conversation',
+  },
+  makeRecipeError: {
+    id: 'sessionActionsHeader.makeRecipeError',
+    defaultMessage: 'Could not create a recipe from this conversation',
   },
   renameTitle: {
     id: 'sessionActionsHeader.renameTitle',
@@ -324,8 +343,23 @@ export default function SessionActionsHeader({
   const [isJsonLoading, setIsJsonLoading] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
   const [fullTextSelection, setFullTextSelection] = useState<FullTextSelection | null>(null);
+  const [isMakingRecipe, setIsMakingRecipe] = useState(false);
+  const [createdRecipe, setCreatedRecipe] = useState<Recipe | null>(null);
 
   const title = useMemo(() => (session ? getSessionDisplayName(session) : ''), [session]);
+
+  const handleMakeRecipe = useCallback(async () => {
+    if (!session || isMakingRecipe) return;
+    setIsMakingRecipe(true);
+    try {
+      const recipe = await createRecipeFromSession(session.id);
+      setCreatedRecipe(recipe);
+    } catch (error) {
+      toast.error(errorMessage(error, intl.formatMessage(i18n.makeRecipeError)));
+    } finally {
+      setIsMakingRecipe(false);
+    }
+  }, [session, isMakingRecipe, intl]);
 
   useEffect(() => {
     if (session && isRenameOpen) {
@@ -481,6 +515,14 @@ export default function SessionActionsHeader({
               )}
               {intl.formatMessage(i18n.viewJson)}
             </DropdownMenuItem>
+            <DropdownMenuItem disabled={isMakingRecipe} onSelect={() => void handleMakeRecipe()}>
+              {isMakingRecipe ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <ChefHat className="size-4" />
+              )}
+              {intl.formatMessage(i18n.makeRecipe)}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -568,6 +610,15 @@ export default function SessionActionsHeader({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {createdRecipe && (
+        <CreateEditRecipeModal
+          isOpen={createdRecipe !== null}
+          onClose={() => setCreatedRecipe(null)}
+          recipe={createdRecipe}
+          isCreateMode
+        />
+      )}
     </>
   );
 }

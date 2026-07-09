@@ -1,4 +1,5 @@
 import {
+  createRecipeFromSession as acpCreateRecipeFromSession,
   deleteRecipe as acpDeleteRecipe,
   listRecipes as acpListRecipes,
   recipeToYaml as acpRecipeToYaml,
@@ -8,6 +9,11 @@ import {
 } from '../acp/recipe';
 import { stripEmptyExtensions } from '.';
 import type { Recipe, RecipeManifest } from '.';
+
+/** AI-author a recipe from a live session's conversation, for review/edit in the create modal. */
+export const createRecipeFromSession = async (sessionId: string): Promise<Recipe> => {
+  return acpCreateRecipeFromSession(sessionId);
+};
 
 export const saveRecipe = async (
   recipe: Recipe,

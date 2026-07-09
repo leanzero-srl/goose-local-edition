@@ -334,6 +334,21 @@ pub struct SaveRecipeResponse {
     pub file_path: String,
 }
 
+/// AI-author a recipe from the given session's conversation. The agent distills the chat into a
+/// Recipe server-side (LLM completion) and returns it for review/edit in the UI — it is NOT saved to
+/// disk here (the client opens the create/edit modal so the user can review before saving).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "_goose/unstable/recipes/create", response = CreateRecipeResponse)]
+pub struct CreateRecipeRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+pub struct CreateRecipeResponse {
+    pub recipe: RecipeDto,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/recipes/parse", response = ParseRecipeResponse)]
 pub struct ParseRecipeRequest {

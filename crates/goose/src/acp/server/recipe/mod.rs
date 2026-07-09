@@ -2,18 +2,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::conversation::Conversation;
 use agent_client_protocol::schema::v1::Meta;
 use agent_client_protocol::{
     Client, ConnectionTo, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, UntypedMessage,
 };
 use fs_err as fs;
 use goose_sdk_types::custom_requests::{
-    DecodeRecipeRequest, DecodeRecipeResponse, DeleteRecipeRequest, EmptyResponse,
-    EncodeRecipeRequest, EncodeRecipeResponse, ListRecipesRequest, ListRecipesResponse,
-    ParseRecipeRequest, ParseRecipeResponse, RecipeDto, RecipeParameterDto, RecipeParamsAction,
-    RecipeParamsResponse, RecipeToYamlRequest, RecipeToYamlResponse, RequestRecipeParams,
-    SaveRecipeRequest, SaveRecipeResponse, ScanRecipeRequest, ScanRecipeResponse,
-    ScheduleRecipeRequest, SetRecipeSlashCommandRequest, REQUEST_RECIPE_PARAMS_METHOD,
+    CreateRecipeRequest, CreateRecipeResponse, DecodeRecipeRequest, DecodeRecipeResponse,
+    DeleteRecipeRequest, EmptyResponse, EncodeRecipeRequest, EncodeRecipeResponse,
+    ListRecipesRequest, ListRecipesResponse, ParseRecipeRequest, ParseRecipeResponse, RecipeDto,
+    RecipeParameterDto, RecipeParamsAction, RecipeParamsResponse, RecipeToYamlRequest,
+    RecipeToYamlResponse, RequestRecipeParams, SaveRecipeRequest, SaveRecipeResponse,
+    ScanRecipeRequest, ScanRecipeResponse, ScheduleRecipeRequest, SetRecipeSlashCommandRequest,
+    REQUEST_RECIPE_PARAMS_METHOD,
 };
 use tokio::sync::oneshot;
 
@@ -264,6 +266,46 @@ impl GooseAcpAgent {
             file_name,
             file_path,
         })
+    }
+
+    /// AI-author a recipe from a live session's conversation. Distills the chat into a Recipe via the
+    /// agent's LLM (`Agent::create_recipe`), applies the same security-scan + validate gate as save,
+    /// and returns it as a DTO for review/edit in the UI — it does NOT write to disk (the client opens
+    /// the create/edit modal so the user can review before saving).
+    pub(super) async fn on_create_recipe(
+        &self,
+        req: CreateRecipeRequest,
+    ) -> Result<CreateRecipeResponse, agent_client_protocol::Error> {
+        let agent = self.get_session_agent(&req.session_id).await?;
+        let session = self
+            .session_manager
+            .get_session(&req.session_id, true)
+            .await
+            .map_err(|e| {
+                agent_client_protocol::Error::internal_error()
+                    .data(format!("Failed to load session: {e}"))
+            })?;
+        let conversation = session
+            .conversation
+            .unwrap_or_else(|| Conversation::new_unvalidated(Vec::new()));
+
+        let recipe = agent
+            .create_recipe(&req.session_id, conversation)
+            .await
+            .map_err(|e| {
+                agent_client_protocol::Error::internal_error()
+                    .data(format!("Failed to author recipe: {e}"))
+            })?;
+
+        if recipe.check_for_security_warnings() {
+            return Err(agent_client_protocol::Error::invalid_params().data(
+                "The generated recipe contains hidden characters that could be malicious. Review it before saving.",
+            ));
+        }
+        validate_recipe_without_dir(&recipe)?;
+
+        let recipe = recipe_to_dto(recipe)?;
+        Ok(CreateRecipeResponse { recipe })
     }
 
     pub(super) async fn on_parse_recipe(
