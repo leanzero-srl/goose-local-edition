@@ -173,3 +173,4 @@ The LOW-confidence "GPU-leak on cancel" was MISATTRIBUTED. The swarm uses LM Stu
 ---
 ## EXPLORATION LOOP + REFLECT-IN-UI — WORKING (2026-07-09)
 invtrack (1st exploratory of the reflected loop): FULL PASS by running — 66 tests, golden (widget 6 not-LOW / bolt LOW), low=bolt-only, robustness 4/4 clean (H1 item-not-found, H2 malformed argparse + corrupt-db EXPLICIT 'Corrupted store', H3 below-zero clamped-to-0+clean-message). Baseline quality; mold intact on warm fleet. REFLECTED: explore-invtrack user session created in sessions.db (id 8d9d212f, 2 msgs brief+verdict) -> appears in desktop CHATS; 825 workers stay Hidden. reflect_run.py mechanism PROVEN end-to-end. Harness stuck-idle post-complete (pre_review) -> verified by running + torn down.
+gradebook FULL PASS (54 tests, golden Ann 85=B/Cyril 90=A, robustness 6/6 incl no-ZeroDiv + out-of-range reject + corrupt-db explicit) -> reflected as explore-gradebook. 5 apps all full pass.
