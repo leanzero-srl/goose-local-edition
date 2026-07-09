@@ -38,6 +38,12 @@ export const Select = (props: React.ComponentProps<typeof ReactSelect>) => {
       tabSelectsValue={true}
       openMenuOnFocus={false}
       styles={{
+        // When menuPortalTarget is used (e.g. a Select inside a modal), the portal container
+        // needs its own high z-index so the dropdown stacks above the modal overlay.
+        menuPortal: (base) => ({
+          ...base,
+          zIndex: 9999,
+        }),
         menu: (base) => ({
           ...base,
           pointerEvents: 'auto',

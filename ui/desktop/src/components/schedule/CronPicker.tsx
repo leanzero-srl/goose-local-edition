@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { ScheduledJobDto } from '@aaif/goose-sdk';
 import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
+import { Select } from '../ui/Select';
 import {
   buildCronForPeriod,
   describeCron,
@@ -59,6 +60,8 @@ const i18n = defineMessages({
   atMinute: { id: 'cronPicker.atMinute', defaultMessage: 'at minute' },
   atSecond: { id: 'cronPicker.atSecond', defaultMessage: 'at second' },
 });
+
+type SelectOption = { value: string; label: string };
 
 interface CronPickerProps {
   schedule: ScheduledJobDto | null;
@@ -186,7 +189,44 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
     customCron,
   ]);
 
-  const selectClassName = 'px-2 py-1 border rounded bg-white dark:bg-gray-800 dark:border-gray-600';
+  const periodOptions: SelectOption[] = [
+    { value: 'minute', label: intl.formatMessage(i18n.minute) },
+    { value: 'hour', label: intl.formatMessage(i18n.hour) },
+    { value: 'day', label: intl.formatMessage(i18n.day) },
+    { value: 'week', label: intl.formatMessage(i18n.week) },
+    { value: 'month', label: intl.formatMessage(i18n.month) },
+    { value: 'quarter', label: intl.formatMessage(i18n.quarter) },
+    { value: 'year', label: intl.formatMessage(i18n.year) },
+    { value: 'custom', label: intl.formatMessage(i18n.custom) },
+  ];
+  const monthOptions: SelectOption[] = [
+    { value: '1', label: intl.formatMessage(i18n.january) },
+    { value: '2', label: intl.formatMessage(i18n.february) },
+    { value: '3', label: intl.formatMessage(i18n.march) },
+    { value: '4', label: intl.formatMessage(i18n.april) },
+    { value: '5', label: intl.formatMessage(i18n.may) },
+    { value: '6', label: intl.formatMessage(i18n.june) },
+    { value: '7', label: intl.formatMessage(i18n.july) },
+    { value: '8', label: intl.formatMessage(i18n.august) },
+    { value: '9', label: intl.formatMessage(i18n.september) },
+    { value: '10', label: intl.formatMessage(i18n.october) },
+    { value: '11', label: intl.formatMessage(i18n.november) },
+    { value: '12', label: intl.formatMessage(i18n.december) },
+  ];
+  const quarterMonthOptions: SelectOption[] = monthOptions.slice(0, 3);
+  const dayOfWeekOptions: SelectOption[] = [
+    { value: '0', label: intl.formatMessage(i18n.sunday) },
+    { value: '1', label: intl.formatMessage(i18n.monday) },
+    { value: '2', label: intl.formatMessage(i18n.tuesday) },
+    { value: '3', label: intl.formatMessage(i18n.wednesday) },
+    { value: '4', label: intl.formatMessage(i18n.thursday) },
+    { value: '5', label: intl.formatMessage(i18n.friday) },
+    { value: '6', label: intl.formatMessage(i18n.saturday) },
+  ];
+  const amPmOptions: SelectOption[] = [
+    { value: 'AM', label: 'AM' },
+    { value: 'PM', label: 'PM' },
+  ];
 
   return (
     <div className="space-y-4">
@@ -194,26 +234,21 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
         <span className="text-sm font-medium">
           {intl.formatMessage(period === 'custom' ? i18n.mode : i18n.every)}
         </span>
-        <select
-          value={period}
-          onChange={(e) => {
-            const nextPeriod = e.target.value as Period;
-            if (nextPeriod === 'custom' && period !== 'custom') {
-              setCustomCron(getCurrentCron(period, getValidDayOfMonth(dayOfMonth, maxDayOfMonth)));
-            }
-            setPeriod(nextPeriod);
-          }}
-          className={selectClassName}
-        >
-          <option value="minute">{intl.formatMessage(i18n.minute)}</option>
-          <option value="hour">{intl.formatMessage(i18n.hour)}</option>
-          <option value="day">{intl.formatMessage(i18n.day)}</option>
-          <option value="week">{intl.formatMessage(i18n.week)}</option>
-          <option value="month">{intl.formatMessage(i18n.month)}</option>
-          <option value="quarter">{intl.formatMessage(i18n.quarter)}</option>
-          <option value="year">{intl.formatMessage(i18n.year)}</option>
-          <option value="custom">{intl.formatMessage(i18n.custom)}</option>
-        </select>
+        <div className="w-40">
+          <Select
+            options={periodOptions}
+            value={periodOptions.find((o) => o.value === period) ?? null}
+            onChange={(opt) => {
+              const nextPeriod = (opt as SelectOption).value as Period;
+              if (nextPeriod === 'custom' && period !== 'custom') {
+                setCustomCron(getCurrentCron(period, getValidDayOfMonth(dayOfMonth, maxDayOfMonth)));
+              }
+              setPeriod(nextPeriod);
+            }}
+            isSearchable={false}
+            menuPortalTarget={document.body}
+          />
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -236,15 +271,15 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2">
               <span className="text-sm">{intl.formatMessage(i18n.startingMonth)}</span>
-              <select
-                value={quarterStartMonth}
-                onChange={(e) => setQuarterStartMonth(e.target.value)}
-                className={selectClassName}
-              >
-                <option value="1">{intl.formatMessage(i18n.january)}</option>
-                <option value="2">{intl.formatMessage(i18n.february)}</option>
-                <option value="3">{intl.formatMessage(i18n.march)}</option>
-              </select>
+              <div className="w-40">
+                <Select
+                  options={quarterMonthOptions}
+                  value={quarterMonthOptions.find((o) => o.value === quarterStartMonth) ?? null}
+                  onChange={(opt) => setQuarterStartMonth((opt as SelectOption).value)}
+                  isSearchable={false}
+                  menuPortalTarget={document.body}
+                />
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm">{intl.formatMessage(i18n.onDay)}</span>
@@ -263,24 +298,15 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
         {period === 'year' && (
           <div className="flex items-center gap-2">
             <span className="text-sm">{intl.formatMessage(i18n.inMonth)}</span>
-            <select
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className={selectClassName}
-            >
-              <option value="1">{intl.formatMessage(i18n.january)}</option>
-              <option value="2">{intl.formatMessage(i18n.february)}</option>
-              <option value="3">{intl.formatMessage(i18n.march)}</option>
-              <option value="4">{intl.formatMessage(i18n.april)}</option>
-              <option value="5">{intl.formatMessage(i18n.may)}</option>
-              <option value="6">{intl.formatMessage(i18n.june)}</option>
-              <option value="7">{intl.formatMessage(i18n.july)}</option>
-              <option value="8">{intl.formatMessage(i18n.august)}</option>
-              <option value="9">{intl.formatMessage(i18n.september)}</option>
-              <option value="10">{intl.formatMessage(i18n.october)}</option>
-              <option value="11">{intl.formatMessage(i18n.november)}</option>
-              <option value="12">{intl.formatMessage(i18n.december)}</option>
-            </select>
+            <div className="w-40">
+              <Select
+                options={monthOptions}
+                value={monthOptions.find((o) => o.value === month) ?? null}
+                onChange={(opt) => setMonth((opt as SelectOption).value)}
+                isSearchable={false}
+                menuPortalTarget={document.body}
+              />
+            </div>
           </div>
         )}
 
@@ -301,19 +327,15 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
         {period === 'week' && (
           <div className="flex items-center gap-2">
             <span className="text-sm">{intl.formatMessage(i18n.on)}</span>
-            <select
-              value={dayOfWeek}
-              onChange={(e) => setDayOfWeek(e.target.value)}
-              className={selectClassName}
-            >
-              <option value="0">{intl.formatMessage(i18n.sunday)}</option>
-              <option value="1">{intl.formatMessage(i18n.monday)}</option>
-              <option value="2">{intl.formatMessage(i18n.tuesday)}</option>
-              <option value="3">{intl.formatMessage(i18n.wednesday)}</option>
-              <option value="4">{intl.formatMessage(i18n.thursday)}</option>
-              <option value="5">{intl.formatMessage(i18n.friday)}</option>
-              <option value="6">{intl.formatMessage(i18n.saturday)}</option>
-            </select>
+            <div className="w-40">
+              <Select
+                options={dayOfWeekOptions}
+                value={dayOfWeekOptions.find((o) => o.value === dayOfWeek) ?? null}
+                onChange={(opt) => setDayOfWeek((opt as SelectOption).value)}
+                isSearchable={false}
+                menuPortalTarget={document.body}
+              />
+            </div>
           </div>
         )}
 
@@ -341,14 +363,15 @@ export const CronPicker: React.FC<CronPickerProps> = ({ schedule, onChange, isVa
               onChange={(e) => setMinute(e.target.value.padStart(2, '0'))}
               className="w-16 px-2 py-1 border rounded"
             />
-            <select
-              value={isPM ? 'PM' : 'AM'}
-              onChange={(e) => setIsPM(e.target.value === 'PM')}
-              className={selectClassName}
-            >
-              <option value="AM">AM</option>
-              <option value="PM">PM</option>
-            </select>
+            <div className="w-24">
+              <Select
+                options={amPmOptions}
+                value={amPmOptions.find((o) => o.value === (isPM ? 'PM' : 'AM')) ?? null}
+                onChange={(opt) => setIsPM((opt as SelectOption).value === 'PM')}
+                isSearchable={false}
+                menuPortalTarget={document.body}
+              />
+            </div>
           </div>
         )}
 
