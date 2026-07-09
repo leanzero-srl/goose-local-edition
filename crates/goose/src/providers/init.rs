@@ -32,6 +32,7 @@ use super::{
     pi_acp::PiAcpProvider,
     provider_registry::ProviderRegistry,
     snowflake::SnowflakeProvider,
+    swarm::SwarmProvider,
     tetrate::TetrateProvider,
     xai::XaiProvider,
     xai_oauth::XaiOAuthProvider,
@@ -82,6 +83,7 @@ async fn init_registry() -> RwLock<ProviderRegistry> {
             Some(registrations::claude_acp_inventory()),
         );
         registry.register::<ClaudeCodeProvider>(true);
+        registry.register::<SwarmProvider>(true);
         registry.register_with_inventory::<CodexAcpProvider>(
             false,
             Some(registrations::codex_acp_inventory()),

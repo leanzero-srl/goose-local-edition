@@ -38,6 +38,7 @@ pub mod gemini_cli;
 pub mod gemini_oauth;
 pub mod githubcopilot;
 pub mod google;
+pub mod swarm;
 pub mod http_status {
     pub use goose_providers::http_status::*;
 }
