@@ -90,6 +90,10 @@ export default function SettingsView({
   const { localInference } = useFeatures();
   const { edition } = useEdition();
   const isLocalEdition = edition === 'local';
+  // The Swarm tab is the local-fleet config surface. It is relevant whenever the user works with local
+  // models — the Local Edition look OR the local-inference capability — not just the cosmetic Edition
+  // toggle. Swarm is a first-class provider now, so its settings must be reachable on their own merit.
+  const showSwarm = isLocalEdition || localInference;
   const intl = useIntl();
 
   const handleTabChange = (tab: string) => {
@@ -189,7 +193,7 @@ export default function SettingsView({
                       {intl.formatMessage(i18n.tabLocalInference)}
                     </TabsTrigger>
                   )}
-                  {isLocalEdition && (
+                  {showSwarm && (
                     <TabsTrigger
                       value="swarm"
                       className="flex gap-2"
@@ -255,7 +259,7 @@ export default function SettingsView({
                   </TabsContent>
                 )}
 
-                {isLocalEdition && (
+                {showSwarm && (
                   <TabsContent
                     value="swarm"
                     className="mt-0 focus-visible:outline-none focus-visible:ring-0"

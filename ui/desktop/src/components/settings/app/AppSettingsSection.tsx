@@ -64,11 +64,11 @@ const i18n = defineMessages({
     id: 'settings.costTracking.description',
     defaultMessage: 'Show model pricing and usage costs',
   },
-  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Edition' },
+  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Edition (appearance)' },
   editionDesc: {
     id: 'settings.edition.description',
     defaultMessage:
-      'Goose Local Edition tailors the interface for local/swarm models. This changes only the look, never model capability.',
+      "Local Edition is a look only — a compact, fleet-focused theme. It does not decide whether you use the swarm: to build with your local fleet, pick Swarm in the model selector like any other model. The Swarm settings tab is available whenever you run local models, regardless of this setting.",
   },
   editionPreview: {
     id: 'settings.edition.preview',
