@@ -2,16 +2,17 @@ use goose_sdk_types::custom_requests::{
     CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest, EmptyResponse,
     InspectRunningJobRequest, InspectRunningJobResponse, KillRunningJobRequest,
     KillRunningJobResponse, ListScheduleSessionsRequest, ListScheduleSessionsResponse,
-    ListSchedulesRequest, ListSchedulesResponse, PauseScheduleRequest, RunScheduleNowRequest,
-    RunScheduleNowResponse, RunScheduleNowStatus, ScheduledJobDto, UnpauseScheduleRequest,
-    UpdateScheduleRequest, UpdateScheduleResponse,
+    ListSchedulesRequest, ListSchedulesResponse, LoopConfigDto, PauseScheduleRequest,
+    RunScheduleNowRequest, RunScheduleNowResponse, RunScheduleNowStatus, ScheduledJobDto,
+    UnpauseScheduleRequest, UpdateScheduleRequest, UpdateScheduleResponse,
 };
 use tokio::fs;
 
 use super::{build_session_info, GooseAcpAgent, ResultExt};
 use crate::recipe::validate_recipe::validate_recipe_template_from_content;
 use crate::recipe::Recipe;
-use crate::scheduler::{get_default_scheduled_recipes_dir, ScheduledJob, SchedulerError};
+use crate::agents::types::SuccessCheck;
+use crate::scheduler::{get_default_scheduled_recipes_dir, LoopConfig, ScheduledJob, SchedulerError};
 
 fn validate_schedule_id(id: &str) -> Result<(), agent_client_protocol::Error> {
     let is_valid = !id.is_empty()
@@ -107,6 +108,28 @@ fn run_schedule_now_error(
     }
 }
 
+fn loop_config_to_dto(config: LoopConfig) -> LoopConfigDto {
+    let stop_check_command = config.stop_check.map(|check| {
+        let SuccessCheck::Shell { command } = check;
+        command
+    });
+    LoopConfigDto {
+        max_iterations: config.max_iterations,
+        stop_check_command,
+        state_artifact: config.state_artifact,
+    }
+}
+
+fn loop_config_from_dto(dto: LoopConfigDto) -> LoopConfig {
+    LoopConfig {
+        max_iterations: dto.max_iterations,
+        stop_check: dto
+            .stop_check_command
+            .map(|command| SuccessCheck::Shell { command }),
+        state_artifact: dto.state_artifact,
+    }
+}
+
 fn scheduled_job_to_dto(job: ScheduledJob) -> ScheduledJobDto {
     ScheduledJobDto {
         id: job.id,
@@ -117,6 +140,7 @@ fn scheduled_job_to_dto(job: ScheduledJob) -> ScheduledJobDto {
         paused: job.paused,
         current_session_id: job.current_session_id,
         job_start_time: job.process_start_time.map(|value| value.to_rfc3339()),
+        loop_config: job.loop_config.map(loop_config_to_dto),
     }
 }
 
@@ -198,7 +222,7 @@ impl GooseAcpAgent {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
-            loop_config: None,
+            loop_config: req.loop_config.map(loop_config_from_dto),
         };
 
         self.agent_manager

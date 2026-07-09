@@ -5,6 +5,7 @@ import {
   History,
   MessageSquarePlus,
   Puzzle,
+  Repeat,
   Settings,
   Zap,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'apps', path: '/apps', label: 'Apps', icon: AppWindow },
   { id: 'scheduler', path: '/schedules', label: 'Scheduler', icon: Clock },
+  { id: 'loop', path: '/loop', label: 'Loop', icon: Repeat },
   { id: 'extensions', path: '/extensions', label: 'Extensions', icon: Puzzle },
   { id: 'sessions', path: '/sessions', label: 'Session History', icon: History },
 ];
@@ -61,6 +63,10 @@ const navItemMessages = defineMessages({
   scheduler: {
     id: 'navigation.itemScheduler',
     defaultMessage: 'Scheduler',
+  },
+  loop: {
+    id: 'navigation.itemLoop',
+    defaultMessage: 'Loop',
   },
   extensions: {
     id: 'navigation.itemExtensions',

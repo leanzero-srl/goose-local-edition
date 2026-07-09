@@ -4423,6 +4423,16 @@
             "string",
             "null"
           ]
+        },
+        "loopConfig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -4431,6 +4441,32 @@
         "cron",
         "currentlyRunning",
         "paused"
+      ]
+    },
+    "LoopConfigDto": {
+      "type": "object",
+      "properties": {
+        "maxIterations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopCheckCommand": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "stateArtifact": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "maxIterations"
       ]
     },
     "ListScheduleSessionsRequest_unstable": {
@@ -4531,6 +4567,17 @@
         },
         "cron": {
           "type": "string"
+        },
+        "loop_config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
