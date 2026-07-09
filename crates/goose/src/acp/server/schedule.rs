@@ -198,6 +198,7 @@ impl GooseAcpAgent {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         self.agent_manager

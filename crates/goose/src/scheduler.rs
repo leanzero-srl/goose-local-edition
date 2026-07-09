@@ -12,6 +12,8 @@ use tokio::sync::Mutex;
 use tokio_cron_scheduler::{job::JobId, Job, JobScheduler as TokioJobScheduler};
 use tokio_util::sync::CancellationToken;
 
+use crate::agents::retry::execute_success_checks;
+use crate::agents::types::{RetryConfig, SuccessCheck};
 use crate::agents::AgentEvent;
 use crate::agents::{Agent, SessionConfig};
 use crate::config::paths::Paths;
@@ -103,6 +105,19 @@ impl From<anyhow::Error> for SchedulerError {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, utoipa::ToSchema)]
+pub struct LoopConfig {
+    /// Hard cap on iterations regardless of the stop check.
+    pub max_iterations: u32,
+    /// Shell success-check evaluated after each iteration; when it passes (exit 0), the loop stops.
+    #[serde(default)]
+    pub stop_check: Option<SuccessCheck>,
+    /// Optional file path (relative to the job cwd) the recipe writes each iteration; its contents are
+    /// carried forward as context into the next iteration. If absent, the last assistant message is carried.
+    #[serde(default)]
+    pub state_artifact: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct ScheduledJob {
     pub id: String,
     pub source: String,
@@ -123,6 +138,8 @@ pub struct ScheduledJob {
     /// against the source tree rather than the scheduler's internal storage directory.
     #[serde(default)]
     pub recipe_base_dir: Option<String>,
+    #[serde(default)]
+    pub loop_config: Option<LoopConfig>,
 }
 
 async fn persist_jobs(
@@ -390,6 +407,7 @@ impl Scheduler {
                         process_start_time: None,
                         parameters: vec![],
                         recipe_base_dir: None,
+                        loop_config: None,
                     };
                     self.add_scheduled_job(job, false).await
                 }
@@ -841,7 +859,6 @@ impl Scheduler {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 async fn execute_job(
     job: ScheduledJob,
     jobs: Arc<Mutex<JobsMap>>,
@@ -872,6 +889,63 @@ async fn execute_job(
     )
     .map_err(|e| anyhow!(e.to_string()))?;
 
+    match job.loop_config.clone() {
+        None => {
+            let (session_id, _state) =
+                run_job_iteration(&job, &jobs, &job_id, cancel_token, &recipe, None).await?;
+            Ok(session_id)
+        }
+        Some(lc) => {
+            let max = lc.max_iterations.max(1);
+            let mut seed: Option<String> = None;
+            let mut last_session_id = job.id.to_string();
+            for i in 0..max {
+                if cancel_token.is_cancelled() {
+                    break;
+                }
+                let (session_id, state_out) = run_job_iteration(
+                    &job,
+                    &jobs,
+                    &job_id,
+                    cancel_token.clone(),
+                    &recipe,
+                    seed.clone(),
+                )
+                .await?;
+                last_session_id = session_id;
+                if let Some(ref check) = lc.stop_check {
+                    let rc = RetryConfig {
+                        max_retries: 1,
+                        checks: Vec::new(),
+                        on_failure: None,
+                        timeout_seconds: Some(300),
+                        on_failure_timeout_seconds: None,
+                    };
+                    let passed = execute_success_checks(std::slice::from_ref(check), &rc)
+                        .await
+                        .unwrap_or(false);
+                    if passed {
+                        tracing::info!("Loop stop-check passed after iteration {}", i + 1);
+                        break;
+                    }
+                }
+                seed = Some(state_out);
+            }
+            Ok(last_session_id)
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_job_iteration(
+    job: &ScheduledJob,
+    jobs: &Arc<Mutex<JobsMap>>,
+    job_id: &str,
+    cancel_token: CancellationToken,
+    recipe: &Recipe,
+    seed_state: Option<String>,
+) -> Result<(String, String)> {
+    let recipe_path = Path::new(&job.source);
     let agent = Agent::new();
 
     let config = Config::global();
@@ -907,7 +981,7 @@ async fn execute_job(
         .await?;
 
     let mut jobs_guard = jobs.lock().await;
-    if let Some((_, job_def)) = jobs_guard.get_mut(job_id.as_str()) {
+    if let Some((_, job_def)) = jobs_guard.get_mut(job_id) {
         job_def.current_session_id = Some(session.id.clone());
     }
     drop(jobs_guard);
@@ -949,7 +1023,7 @@ async fn execute_job(
         }
     });
 
-    let prompt_text = recipe
+    let mut prompt_text = recipe
         .prompt
         .as_deref()
         .filter(|s| !s.trim().is_empty())
@@ -959,11 +1033,18 @@ async fn execute_job(
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
         })
-        .ok_or_else(|| {
-            anyhow!("Recipe must specify at least one of `instructions` or `prompt`.")
-        })?;
+        .ok_or_else(|| anyhow!("Recipe must specify at least one of `instructions` or `prompt`."))?
+        .to_string();
+    if let Some(s) = &seed_state {
+        if !s.trim().is_empty() {
+            prompt_text.push_str(
+                "\n\n---\nState carried from the previous iteration (continue from here):\n",
+            );
+            prompt_text.push_str(s);
+        }
+    }
 
-    let user_message = Message::user().with_text(prompt_text);
+    let user_message = Message::user().with_text(&prompt_text);
     let mut conversation = Conversation::new_unvalidated(vec![user_message.clone()]);
 
     let session_config = SessionConfig {
@@ -1005,7 +1086,7 @@ async fn execute_job(
         .session_manager
         .update(&session.id)
         .schedule_id(Some(job.id.clone()))
-        .recipe(Some(recipe))
+        .recipe(Some(recipe.clone()))
         .apply()
         .await?;
 
@@ -1071,7 +1152,29 @@ async fn execute_job(
         });
     }
 
-    Ok(session.id)
+    let state_out: String = if let Some(artifact) = job
+        .loop_config
+        .as_ref()
+        .and_then(|lc| lc.state_artifact.as_ref())
+    {
+        let path = std::env::current_dir().unwrap_or_default().join(artifact);
+        // Bound the carried state so a large artifact can't blow the next iteration's context window.
+        fs::read_to_string(&path)
+            .unwrap_or_default()
+            .chars()
+            .take(8000)
+            .collect::<String>()
+    } else {
+        conversation
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.role == rmcp::model::Role::Assistant)
+            .map(|m| m.as_concat_text().chars().take(8000).collect::<String>())
+            .unwrap_or_default()
+    };
+
+    Ok((session.id, state_out))
 }
 
 #[async_trait]
@@ -1181,6 +1284,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         scheduler.add_scheduled_job(job, true).await.unwrap();
@@ -1215,6 +1319,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         scheduler.add_scheduled_job(job, true).await.unwrap();
@@ -1244,6 +1349,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         scheduler
@@ -1291,6 +1397,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         scheduler.add_scheduled_job(job, false).await.unwrap();
@@ -1344,6 +1451,7 @@ mod tests {
             process_start_time: Some(started_at),
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
         fs::write(
             &storage_path,
@@ -1407,6 +1515,7 @@ mod tests {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
+            loop_config: None,
         };
 
         // Schedule the job and let it run — should not panic
