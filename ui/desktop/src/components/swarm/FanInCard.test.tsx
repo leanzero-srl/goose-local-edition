@@ -31,8 +31,10 @@ describe('FanInCard', () => {
     }
   });
 
-  it('is a sharp full-border card with no left-rail accent and goose glyphs', () => {
-    const { getByTestId, container } = render(<FanInCard dispatch="dispatch" lanes={lanes} />);
+  it('is a sharp full-border card with no left-rail accent and SVG status icons colored per status', () => {
+    const { getByTestId, getAllByTestId, container } = render(
+      <FanInCard dispatch="dispatch" lanes={lanes} />
+    );
     const card = getByTestId('fan-in-card');
     // full border, not a left rail
     expect(card.className).toContain('border ');
@@ -40,12 +42,15 @@ describe('FanInCard', () => {
     expect(card.className).not.toMatch(/border-l-/);
     // sharp radius (not a childish-rounded pill)
     expect(card.style.borderRadius).toBe('3px');
-    // goose status glyphs, not Claude Code's ⏺
+    // one SVG status icon per lane, each with an explicit (dark-mode-safe) color — never a bare glyph
+    const statuses = getAllByTestId('node-status') as unknown as SVGElement[];
+    expect(statuses).toHaveLength(3);
+    for (const s of statuses) {
+      expect(s.tagName.toLowerCase()).toBe('svg');
+      expect((s as unknown as HTMLElement).style.color.replace(/\s/g, '')).not.toBe('');
+    }
     const text = container.textContent ?? '';
-    expect(text).toContain('✔');
-    expect(text).toContain('●');
-    expect(text).toContain('✕');
-    expect(text).not.toContain('⏺');
+    expect(text).not.toContain('⏺'); // not Claude Code's glyph
     expect(text).toContain('fan-in');
   });
 });
