@@ -49,3 +49,12 @@ high-quality/specific ('index 9 out of range for array of length 2', 'expected a
 'Empty segment in path'). Two-for-two (logstat, jsonpath) confirms: naming the known error-path
 weakness explicitly in the spec reliably closes it at build time AND yields good diagnostics. The
 graduated gate as a SPEC requirement is now a proven, repeatable lever — keep it in every spec.
+
+## REINFORCED (tomlq): explicit error-path reqs land, HIDDEN ones are hit-or-miss
+tomlq: both EXPLICIT weight-3 error paths (R6 missing file, R7 malformed TOML) clean first-build,
+51 pytest pass, all TOML types incl datetime correct — but the ONE hidden error path I did NOT make
+explicit (H3 malformed path 'a..b') raised an uncaught ValueError. Contrast jsonpath, which made
+invalid-path an EXPLICIT R8 and handled it cleanly. So: EVERY error boundary you want handled must be
+an EXPLICIT weighted requirement — the model reliably guards what's named and reliably misses what's
+merely hidden. Running tally: explicit error-path reqs → clean 3/3 (logstat, jsonpath, tomlq); the
+only error-path misses (habits, iniedit, tomlq-H3) were all on NON-explicit/hidden boundaries.
