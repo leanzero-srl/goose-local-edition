@@ -48,7 +48,18 @@ pub struct SwarmProvider {
 
 impl SwarmProvider {
     fn resolve_command() -> String {
-        std::env::var("SWARM_COMMAND").unwrap_or_else(|_| "goose".to_string())
+        if let Ok(cmd) = std::env::var("SWARM_COMMAND") {
+            return cmd;
+        }
+        // In the desktop the running process is `goosed`; the `goose` CLI is usually a sibling binary.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(sibling) = exe.parent().map(|d| d.join("goose")) {
+                if sibling.is_file() {
+                    return sibling.to_string_lossy().into_owned();
+                }
+            }
+        }
+        "goose".to_string()
     }
 
     /// The brief for a run = the text of the last user message.
