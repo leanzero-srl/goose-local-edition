@@ -89,4 +89,6 @@ esac
 
 step "Launching Goose desktop"
 echo "  (leave this window open; close it or press Ctrl-C to quit the app)"
-exec just run-ui
+# Use run-ui-only: this launcher already owns the backend-build decision above, and `just run-ui`
+# would rebuild the backend unconditionally — defeating --fast and the smart staleness skip.
+exec just run-ui-only
