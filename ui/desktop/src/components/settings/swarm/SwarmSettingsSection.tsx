@@ -5,6 +5,17 @@ import { Input } from '../../ui/input';
 import { useConfig } from '../../ConfigContext';
 import FanInCard from '../../swarm/FanInCard';
 import { useFleet } from '../../swarm/useFleet';
+import {
+  type SwarmConfig,
+  DEFAULTS,
+  GOLDEN,
+  RESEARCH_MODES,
+  type ResearchMode,
+  PRESETS,
+  detectPreset,
+  presetPatch,
+  type PresetId,
+} from './golden';
 
 /**
  * Goose Local Edition — Swarm settings. Surfaces the `swarm:` config (previously CLI-only, editable only
@@ -12,45 +23,6 @@ import { useFleet } from '../../swarm/useFleet';
  * `swarm` key via the existing config API — no new backend. Honors the hard UI rules: sharp/flat, full
  * borders (never a left rail), solid saturated color + bold numbers, custom controls (no native <select>).
  */
-
-const RESEARCH_MODES = ['off', 'on', 'auto'] as const;
-type ResearchMode = (typeof RESEARCH_MODES)[number];
-
-interface SwarmConfig {
-  endpoint?: string;
-  planner_model?: string;
-  worker_max_turns?: number;
-  max_attempts?: number;
-  worker_timeout_secs?: number;
-  context_cap?: number | null;
-  research_planning?: ResearchMode;
-  parallel_planning?: boolean;
-  dynamic_replan?: boolean;
-  max_research_questions?: number;
-  best_of_n_skeletons?: number;
-  planner_also_works?: boolean;
-  allow_model_load?: boolean;
-  temperature?: number | null;
-  top_p?: number | null;
-  top_k?: number | null;
-  repeat_penalty?: number | null;
-  [k: string]: unknown; // preserve fields we don't edit (devices, etc.)
-}
-
-const DEFAULTS: SwarmConfig = {
-  endpoint: 'http://localhost:1234',
-  planner_model: 'qwen/qwen3.6-27b',
-  worker_max_turns: 40,
-  max_attempts: 3,
-  worker_timeout_secs: 420,
-  research_planning: 'on',
-  parallel_planning: true,
-  dynamic_replan: true,
-  max_research_questions: 4,
-  best_of_n_skeletons: 1,
-  planner_also_works: true,
-  allow_model_load: false,
-};
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -153,6 +125,67 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+/**
+ * Preset bar — one click to apply the GOLDEN formula (the tested tuning that builds passing apps) or the
+ * faithful Defaults. Applying only touches the portable tuning keys (PRESET_KEYS), never the fleet identity
+ * (devices/speed_weights/endpoint). A solid azure fill marks the active preset; a solid amber chip flags a
+ * diverged "Custom" config. Custom control per the hard UI rules — never a native <select>.
+ */
+function PresetBar({
+  active,
+  onApply,
+}: {
+  active: PresetId;
+  onApply: (id: 'golden' | 'default') => void;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 border border-border-primary px-3 py-2"
+      style={{ borderRadius: 3 }}
+    >
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-text-primary">Preset</div>
+        <div className="text-xs text-text-secondary truncate">
+          {active === 'golden'
+            ? 'Golden formula — the tested tuning that builds passing apps'
+            : active === 'default'
+              ? 'Defaults — faithful to goose’s built-in values'
+              : 'Custom — your own tuning'}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {active === 'custom' && (
+          <span
+            className="text-xs font-semibold px-2 py-0.5 text-background-primary"
+            style={{ backgroundColor: '#f5a623', borderRadius: 3 }}
+          >
+            Custom
+          </span>
+        )}
+        {PRESETS.map((p) => {
+          const on = active === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onApply(p.id)}
+              className={`px-3 py-1 text-xs font-semibold border border-border-primary ${
+                on ? 'text-background-primary' : 'text-text-primary hover:bg-background-secondary'
+              }`}
+              style={{
+                borderRadius: 3,
+                backgroundColor: on ? (p.id === 'golden' ? '#2e8bff' : '#5b6472') : 'transparent',
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SwarmSettingsSection() {
   const { read, upsert } = useConfig();
   const fleet = useFleet();
@@ -186,6 +219,12 @@ export default function SwarmSettingsSection() {
     },
     [upsert]
   );
+
+  const applyPreset = useCallback(
+    (id: 'golden' | 'default') => set(presetPatch(id === 'golden' ? GOLDEN : DEFAULTS)),
+    [set]
+  );
+  const activePreset = detectPreset(cfg);
 
   return (
     <section id="swarm" className="space-y-4 pr-4 pb-8">
@@ -230,6 +269,8 @@ export default function SwarmSettingsSection() {
             <div className="text-sm text-text-secondary">Loading swarm config…</div>
           ) : (
             <>
+              <PresetBar active={activePreset} onApply={applyPreset} />
+
               <Group title="Reliability">
                 <Row label="Worker max turns" hint="cap per worker before it must finish">
                   <NumberField value={cfg.worker_max_turns} onCommit={(v) => set({ worker_max_turns: v ?? 40 })} />
@@ -237,11 +278,17 @@ export default function SwarmSettingsSection() {
                 <Row label="Max attempts" hint="retries per subtask">
                   <NumberField value={cfg.max_attempts} onCommit={(v) => set({ max_attempts: v ?? 3 })} />
                 </Row>
-                <Row label="Worker timeout (s)" hint="hang failsafe per worker call">
-                  <NumberField value={cfg.worker_timeout_secs} onCommit={(v) => set({ worker_timeout_secs: v ?? 420 })} />
+                <Row label="Worker timeout (s)" hint="no-progress re-route failsafe per worker (0 = off)">
+                  <NumberField value={cfg.worker_timeout_secs} onCommit={(v) => set({ worker_timeout_secs: v ?? 900 })} />
+                </Row>
+                <Row label="Planner timeout (s)" hint="hang failsafe for planner-side calls">
+                  <NumberField value={cfg.planner_timeout_secs} onCommit={(v) => set({ planner_timeout_secs: v ?? 900 })} />
                 </Row>
                 <Row label="Context cap (tokens)" hint="blank = off">
                   <NumberField value={cfg.context_cap ?? null} placeholder="off" onCommit={(v) => set({ context_cap: v })} />
+                </Row>
+                <Row label="Max tool-response chars" hint="hard cap on any tool result fed to a worker (blank = 30000)">
+                  <NumberField value={cfg.max_tool_response_chars ?? null} placeholder="30000" onCommit={(v) => set({ max_tool_response_chars: v })} />
                 </Row>
               </Group>
 
@@ -255,8 +302,17 @@ export default function SwarmSettingsSection() {
                 <Row label="Dynamic replan" hint="re-plan mid-run when the tree drifts">
                   <SwarmSwitch checked={!!cfg.dynamic_replan} onChange={(v) => set({ dynamic_replan: v })} />
                 </Row>
+                <Row label="Max replans" hint="cap on dynamic-replan rounds">
+                  <NumberField value={cfg.max_replans} onCommit={(v) => set({ max_replans: v ?? 2 })} />
+                </Row>
+                <Row label="Research scouts" hint="parallel fixed-lens scouts vs serial scoping">
+                  <SwarmSwitch checked={cfg.research_scouts !== false} onChange={(v) => set({ research_scouts: v })} />
+                </Row>
                 <Row label="Max research questions" hint="scoping questions before planning">
                   <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
+                </Row>
+                <Row label="Scout budget (s)" hint="per-scout wall-clock budget">
+                  <NumberField value={cfg.scout_budget_secs} onCommit={(v) => set({ scout_budget_secs: v ?? 120 })} />
                 </Row>
                 <Row label="Best-of-N skeletons" hint="candidate plans; pick the structurally-best">
                   <NumberField value={cfg.best_of_n_skeletons} onCommit={(v) => set({ best_of_n_skeletons: v ?? 1 })} />
@@ -272,6 +328,9 @@ export default function SwarmSettingsSection() {
                 </Row>
                 <Row label="Top K">
                   <NumberField value={cfg.top_k ?? null} placeholder="default" onCommit={(v) => set({ top_k: v })} />
+                </Row>
+                <Row label="Min P">
+                  <NumberField value={cfg.min_p ?? null} placeholder="default" onCommit={(v) => set({ min_p: v })} />
                 </Row>
                 <Row label="Repeat penalty">
                   <NumberField value={cfg.repeat_penalty ?? null} placeholder="default" onCommit={(v) => set({ repeat_penalty: v })} />
@@ -289,6 +348,12 @@ export default function SwarmSettingsSection() {
                 </Row>
                 <Row label="Planner also works" hint="planner node also runs worker tasks">
                   <SwarmSwitch checked={!!cfg.planner_also_works} onChange={(v) => set({ planner_also_works: v })} />
+                </Row>
+                <Row label="Planner weight" hint="worker weight for the planner when it pitches in">
+                  <NumberField value={cfg.planner_weight} onCommit={(v) => set({ planner_weight: v ?? 1 })} />
+                </Row>
+                <Row label="Homogeneous models" hint="all workers same weights/tokenizer → planner splits more aggressively">
+                  <SwarmSwitch checked={!!cfg.homogeneous_models} onChange={(v) => set({ homogeneous_models: v })} />
                 </Row>
                 <Row label="Allow model load" hint="let the swarm spin up non-resident models (off = warm fleet only)">
                   <SwarmSwitch checked={!!cfg.allow_model_load} onChange={(v) => set({ allow_model_load: v })} />
