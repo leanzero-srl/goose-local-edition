@@ -20,6 +20,7 @@ pub use extensions::{
     get_extension_by_name, get_warnings, is_extension_enabled, remove_extension,
     resolve_extensions_for_new_session, set_extension, set_extension_enabled, ExtensionEntry,
 };
+pub use goose_providers::goose_mode::AgentMode;
 pub use goose_providers::goose_mode::GooseMode;
 pub use permission::PermissionManager;
 pub use signup_openrouter::configure_openrouter;

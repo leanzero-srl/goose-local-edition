@@ -22,6 +22,7 @@ use crate::agents::extension_manager::{
     get_parameter_names, ExtensionManager, ExtensionManagerCapabilities,
 };
 use crate::agents::final_output_tool::{FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_TOOL_NAME};
+use crate::agents::platform_extensions::CREATE_TOOL_TOOL_NAME_COMPLETE;
 use crate::agents::platform_extensions::MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE;
 use crate::agents::platform_tools::PLATFORM_MANAGE_SCHEDULE_TOOL_NAME;
 use crate::agents::prompt_manager::PromptManager;
@@ -2151,7 +2152,13 @@ impl Agent {
                                     let mut enable_extension_request_ids = vec![];
                                     for request in &remaining_requests {
                                         if let Ok(tool_call) = &request.tool_call {
-                                            if tool_call.name == MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE {
+                                            // Both manage_extensions and create_tool mutate the live
+                                            // tool set, so either must trigger a same-turn tool refresh
+                                            // (otherwise a just-authored tool isn't callable until the
+                                            // next user turn).
+                                            if tool_call.name == MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE
+                                                || tool_call.name == CREATE_TOOL_TOOL_NAME_COMPLETE
+                                            {
                                                 enable_extension_request_ids.push(request.id.clone());
                                             }
                                         }
