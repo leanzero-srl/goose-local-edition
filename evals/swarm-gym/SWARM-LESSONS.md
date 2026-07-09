@@ -41,3 +41,11 @@ try/except. CONCLUSION: for a known model weakness, the highest-leverage lever i
 in the spec — not hoping review-fix catches it. The graduated gate is now a SPEC requirement, not just
 a judging gate. Progression across the session: hidden→latent-bug (habits) → hidden→review-fix-caught
 (csvstat) → explicit→first-build-clean (logstat).
+
+## CONFIRMED (jsonpath): mold-the-model win REPEATS (2nd consecutive)
+jsonpath = full pass on the FIRST build with explicit weight-3 error-path reqs (R6 missing file, R7
+malformed JSON, R8 invalid path). Not only clean (0 tracebacks, 66 pytest) but the error MESSAGES were
+high-quality/specific ('index 9 out of range for array of length 2', 'expected array, got string',
+'Empty segment in path'). Two-for-two (logstat, jsonpath) confirms: naming the known error-path
+weakness explicitly in the spec reliably closes it at build time AND yields good diagnostics. The
+graduated gate as a SPEC requirement is now a proven, repeatable lever — keep it in every spec.
