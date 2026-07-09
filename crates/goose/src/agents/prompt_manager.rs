@@ -10,7 +10,7 @@ use crate::agents::{extension::ExtensionInfo, moim};
 use crate::hints::load_hints::build_gitignore;
 use crate::hints::{get_context_filenames, load_hint_files, SubdirectoryHintTracker};
 use crate::{
-    config::{Config, GooseMode},
+    config::{AgentMode, Config, GooseMode},
     prompt_template,
     utils::sanitize_unicode_tags,
 };
@@ -44,6 +44,7 @@ struct SystemPromptContext {
     max_extensions: usize,
     max_tools: usize,
     code_execution_mode: bool,
+    agent_mode_active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     moim_system_prompt_block: Option<String>,
 }
@@ -57,6 +58,7 @@ pub struct SystemPromptBuilder<'a, M> {
     subagents_enabled: bool,
     hints: Option<String>,
     code_execution_mode: bool,
+    agent_mode: AgentMode,
     goose_mode: Option<GooseMode>,
 }
 
@@ -89,6 +91,11 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
 
     pub fn with_code_execution_mode(mut self, enabled: bool) -> Self {
         self.code_execution_mode = enabled;
+        self
+    }
+
+    pub fn with_agent_mode(mut self, mode: AgentMode) -> Self {
+        self.agent_mode = mode;
         self
     }
 
@@ -154,6 +161,7 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
             max_extensions: MAX_EXTENSIONS,
             max_tools: MAX_TOOLS,
             code_execution_mode: self.code_execution_mode,
+            agent_mode_active: matches!(self.agent_mode, AgentMode::Agent),
             moim_system_prompt_block: moim::system_prompt_block(),
         };
 
@@ -268,6 +276,7 @@ impl PromptManager {
             subagents_enabled: false,
             hints: None,
             code_execution_mode: false,
+            agent_mode: AgentMode::default(),
             goose_mode: None,
         }
     }

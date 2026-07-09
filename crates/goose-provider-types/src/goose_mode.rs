@@ -32,3 +32,30 @@ pub enum GooseMode {
     #[strum(message = "Chat only, no tool calls")]
     Chat,
 }
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumMessage,
+    EnumString,
+    IntoStaticStr,
+    VariantNames,
+    ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum AgentMode {
+    #[default]
+    #[strum(message = "Standard assistant; uses the tools it is given")]
+    Builder,
+    #[strum(message = "May author its own reusable tools when a capability is missing")]
+    Agent,
+}

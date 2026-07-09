@@ -1,7 +1,7 @@
-use crate::agents::extension::PlatformExtensionContext;
+use crate::agents::extension::{ExtensionConfig, PlatformExtensionContext};
 use crate::agents::mcp_client::{Error, McpClientTrait};
 use crate::agents::tool_execution::ToolCallContext;
-use crate::config::get_extension_by_name;
+use crate::config::{get_extension_by_name, set_extension, AgentMode, Config, ExtensionEntry};
 use anyhow::Result;
 use async_trait::async_trait;
 use indoc::indoc;
@@ -67,6 +67,27 @@ pub const LIST_RESOURCES_TOOL_NAME: &str = "list_resources";
 pub const SEARCH_AVAILABLE_EXTENSIONS_TOOL_NAME: &str = "search_available_extensions";
 pub const MANAGE_EXTENSIONS_TOOL_NAME: &str = "manage_extensions";
 pub const MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE: &str = "extensionmanager__manage_extensions";
+pub const CREATE_TOOL_TOOL_NAME: &str = "create_tool";
+pub const CREATE_TOOL_TOOL_NAME_COMPLETE: &str = "extensionmanager__create_tool";
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateToolParams {
+    /// Unique snake_case name of the tool to create.
+    pub name: String,
+    /// Description of what the tool does and when to use it.
+    pub description: String,
+    /// JSON Schema object describing the tool's arguments.
+    pub input_schema: serde_json::Value,
+    /// A complete, self-contained Python MCP server that exposes exactly one
+    /// tool whose name and arguments match `name` and `input_schema`.
+    pub code: String,
+    /// Optional extra Python package dependencies the server needs.
+    #[serde(default)]
+    pub dependencies: Option<Vec<String>>,
+    /// Whether to persist the tool so it auto-loads in future sessions.
+    #[serde(default)]
+    pub persist: bool,
+}
 
 pub struct ExtensionManagerClient {
     info: InitializeResult,
@@ -199,6 +220,59 @@ impl ExtensionManagerClient {
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))
     }
 
+    async fn handle_create_tool(
+        &self,
+        arguments: Option<JsonObject>,
+    ) -> Result<Vec<Content>, ExtensionManagerToolError> {
+        let arguments = arguments.ok_or(ExtensionManagerToolError::MissingParameter {
+            param_name: "arguments".to_string(),
+        })?;
+
+        let params: CreateToolParams =
+            serde_json::from_value(serde_json::Value::Object(arguments))?;
+
+        let extension_manager = self
+            .context
+            .extension_manager
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .ok_or(ExtensionManagerToolError::ManagerUnavailable)?;
+
+        let config = ExtensionConfig::InlinePython {
+            name: params.name.clone(),
+            description: params.description.clone(),
+            code: params.code.clone(),
+            timeout: None,
+            dependencies: params.dependencies.clone(),
+            available_tools: Vec::new(),
+        };
+
+        extension_manager
+            .add_extension(config.clone(), None, None, None)
+            .await
+            .map_err(|e| ExtensionManagerToolError::OperationFailed {
+                message: format!("Failed to register tool '{}': {}", params.name, e),
+            })?;
+
+        if params.persist {
+            set_extension(ExtensionEntry {
+                enabled: true,
+                config,
+            });
+        }
+
+        let persisted = if params.persist {
+            " and persisted for future sessions"
+        } else {
+            " for this session"
+        };
+
+        Ok(vec![Content::text(format!(
+            "The tool '{}' has been created and registered live{}. It is now callable.",
+            params.name, persisted
+        ))])
+    }
+
     async fn handle_list_resources(
         &self,
         session_id: &str,
@@ -310,6 +384,44 @@ impl ExtensionManagerClient {
                 Some(false),
             )),
         ];
+
+        // Only offer self-built tooling when the agent is in Agent mode.
+        let agent_mode = Config::global().get_goose_agent_mode().unwrap_or_default();
+        if matches!(agent_mode, AgentMode::Agent) {
+            tools.push(
+                Tool::new(
+                    CREATE_TOOL_TOOL_NAME.to_string(),
+                    indoc! {r#"
+            Author a new reusable tool for yourself when no existing tool provides
+            a capability you need.
+
+            Provide the tool's `name` (unique snake_case), a `description`, an
+            `input_schema` (JSON Schema for the tool's arguments), and `code`: a
+            complete, self-contained Python MCP server (using fastmcp / mcp) that
+            exposes exactly one tool whose name and arguments match `name` and
+            `input_schema`. Optionally pass `dependencies` (extra Python packages)
+            and `persist` (true to keep the tool available in future sessions).
+
+            The tool is registered live and becomes callable immediately in this session.
+        "#}
+                    .to_string(),
+                    Arc::new(
+                        serde_json::to_value(schema_for!(CreateToolParams))
+                            .expect("Failed to serialize schema")
+                            .as_object()
+                            .expect("Schema must be an object")
+                            .clone(),
+                    ),
+                )
+                .annotate(ToolAnnotations::from_raw(
+                    Some("Create a new tool".to_string()),
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                )),
+            );
+        }
 
         if let Some(weak_ref) = &self.context.extension_manager {
             if let Some(extension_manager) = weak_ref.upgrade() {
@@ -424,6 +536,7 @@ impl McpClientTrait for ExtensionManagerClient {
                 self.handle_search_available_extensions().await
             }
             MANAGE_EXTENSIONS_TOOL_NAME => self.handle_manage_extensions(arguments).await,
+            CREATE_TOOL_TOOL_NAME => self.handle_create_tool(arguments).await,
             LIST_RESOURCES_TOOL_NAME => self.handle_list_resources(session_id, arguments).await,
             READ_RESOURCE_TOOL_NAME => self.handle_read_resource(session_id, arguments).await,
             _ => Err(ExtensionManagerToolError::UnknownTool {

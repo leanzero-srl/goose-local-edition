@@ -224,6 +224,10 @@ impl Agent {
 
         let goose_mode = *self.current_goose_mode.lock().await;
 
+        let agent_mode = crate::config::Config::global()
+            .get_goose_agent_mode()
+            .unwrap_or_default();
+
         let prompt_manager = self.prompt_manager.lock().await;
         let mut system_prompt = prompt_manager
             .builder()
@@ -231,6 +235,7 @@ impl Agent {
             .with_frontend_instructions(self.frontend_instructions.lock().await.clone())
             .with_extension_and_tool_counts(extension_count, tool_count)
             .with_code_execution_mode(code_execution_active)
+            .with_agent_mode(agent_mode)
             .with_hints(working_dir)
             .with_goose_mode(goose_mode)
             .build();

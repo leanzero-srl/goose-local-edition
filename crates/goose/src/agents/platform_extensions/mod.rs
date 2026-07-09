@@ -17,6 +17,7 @@ use crate::agents::mcp_client::McpClientTrait;
 use crate::session::Session;
 use once_cell::sync::Lazy;
 
+pub use ext_manager::CREATE_TOOL_TOOL_NAME_COMPLETE;
 pub use ext_manager::MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE;
 
 // These are used by integration tests in crates/goose/tests/
