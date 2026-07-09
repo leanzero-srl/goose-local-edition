@@ -8,7 +8,14 @@ import { NodeLane, NodeStatus } from './FanInCard';
  * `/api/v0/models` endpoint (returns each model's id, arch, state).
  */
 
-const DEFAULT_ENDPOINT = 'http://localhost:1234/api/v0/models';
+// Use 127.0.0.1, not localhost: the app CSP allows `connect-src http://127.0.0.1:*` but treats
+// `localhost` as a different (blocked) origin. Same LM Studio server, either way.
+const DEFAULT_ENDPOINT = 'http://127.0.0.1:1234/api/v0/models';
+
+/** Rewrite localhost -> 127.0.0.1 so the fetch is not blocked by the app CSP. */
+function cspSafe(url: string): string {
+  return url.replace('localhost', '127.0.0.1');
+}
 
 export interface FleetState {
   lanes: NodeLane[];
@@ -52,7 +59,7 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState
 
     const tick = async () => {
       try {
-        const res = await fetchWithTimeout(endpoint, 3000);
+        const res = await fetchWithTimeout(cspSafe(endpoint), 3000);
         const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
         const loaded = (data.data ?? []).filter(
           (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
