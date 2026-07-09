@@ -70,3 +70,16 @@ crowded out. So for complex apps, consider ALSO an explicit deterministic check 
 ragged/malformed input, not just the requirement text. Running tally: explicit error-path reqs clean on
 the simpler read-only-query apps (logstat/jsonpath/tomlq); first miss on an explicit boundary was csvsql
 R7 (the most complex app).
+
+## REFINEMENT (calc): explicit error boundaries land best when IN THE CORE LOGIC PATH
+calc (fresh parser/evaluator domain) landed ALL 3 explicit error boundaries clean first-build
+(R5 malformed, R6 div-by-zero, R7 unknown-name) with excellent parser-style error messages, + all
+functional correct (precedence/right-assoc/functions/constants), 86 pytest pass. Contrast csvsql where
+R7 (ragged CSV) slipped. The difference: calc's 3 boundaries are all IN the parse/eval path the model
+built with care; csvsql's R7 lived in the PERIPHERAL csv reader, separate from the SELECT feature it
+focused on. REFINED LEVER: an explicit error-path req lands most reliably when the boundary sits inside
+the core feature logic; boundaries in peripheral/support components (file readers, format parsers you
+didn't emphasize) are more likely to slip even when explicit — so for those, add a deterministic check
+that RUNS the malformed input. Also seen: the swarm sometimes writes a TEST that contradicts the spec
+(calc's unary-vs-power test asserted the wrong precedence while the code was right) — a judge must read
+the code+spec, not trust the app's own tests alone.
