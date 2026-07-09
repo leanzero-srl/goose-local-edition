@@ -20,3 +20,13 @@ headers-only, corrupt-JSON caught) but consistently misses the FILE-ACCESS / INP
 (missing file, malformed input validated at write). GRADUATED GATE: every judge MUST test (1) a missing
 input file, (2) malformed input at the boundary, and every spec should explicitly require a clean error
 (not a traceback) for both. This is the sharpest, most repeatable qwopus-27b weakness so far.
+
+## POSITIVE (csvstat): review-fix phase CAUGHT the recurring error-path bug
+GOOSE_SWARM_REVIEW_REPRO/FIX amended csvstat/__main__.py after the initial build, adding a
+try/except FileNotFoundError/ValueError boundary around reader.read_csv — fixing the exact
+missing-file H2b gap the initial build missed (verified: missing file now -> clean 'error:', 0
+tracebacks; 44 pytest still pass). So the adversarial review-fix loop DOES close the error-path
+weakness when given time (the fix landed ~14min post-build, jsonl logging lagged). Signal: keep
+REVIEW_FIX on; it converts near-pass -> full-pass on the recurring gap. NOTE: the harness then sat
+stuck-idle post-complete (jsonl frozen ~19min) even though the fix had landed — the run doesn't
+cleanly terminate/emit DONE, so teardown-after-verify remains necessary.
