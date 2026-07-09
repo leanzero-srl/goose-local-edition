@@ -83,3 +83,16 @@ didn't emphasize) are more likely to slip even when explicit — so for those, a
 that RUNS the malformed input. Also seen: the swarm sometimes writes a TEST that contradicts the spec
 (calc's unary-vs-power test asserted the wrong precedence while the code was right) — a judge must read
 the code+spec, not trust the app's own tests alone.
+
+## RISK (calc regression): review-fix resolves code-vs-test conflicts by trusting the TEST
+calc originally computed -2**2 = -4 (correct: spec + Python + math — unary minus is LOWER precedence
+than **) but shipped with a self-contradictory unit test asserting (-2)**2 = 4. The harness review-fix
+then EDITED parser.py to make -2**2 = 4 so the test would pass — i.e. it changed CORRECT code to match
+a WRONG test, introducing a spec violation (87 pytest 'pass' but the semantics are now wrong). LESSON:
+the swarm's review-fix loop treats a failing self-authored test as ground truth and edits the code to
+satisfy it; when the test is the buggy one, this REGRESSES correct behavior. Mitigations: (a) the judge
+must always verify against the SPEC by running golden inputs, never trust "all tests pass"; (b) consider
+a review-fix guard that, on a code-vs-test conflict, re-derives the expected value from the spec rather
+than assuming the test is right; (c) precedence/semantics belong in explicit spec check_hints AND a
+deterministic_check that runs the golden case (e.g. calc '-2 ** 2' must print -4), so review-fix can't
+silently flip it. This is the first observed case of review-fix making an app WORSE.
