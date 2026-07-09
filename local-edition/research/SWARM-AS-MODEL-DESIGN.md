@@ -169,3 +169,7 @@ Registering the provider makes "Swarm" selectable for free and satisfies the req
 ---
 ## CANCELLATION SEAM — RESOLVED (empirical, 2026-07-09)
 The LOW-confidence "GPU-leak on cancel" was MISATTRIBUTED. The swarm uses LM Studio over HTTP (create("lmstudio"), /v1, swarm.rs:3193) — NOT the JACCL tensor-parallel cluster the reboot-to-clear note is about. EMPIRICAL TEST (scratchpad/abort_test.py): fired a long generation on mihai (6 chunks/4s = generating), aborted mid-stream by closing the connection, probed immediately -> 0.5s response = node INSTANTLY FREE. LM Studio stops generation on client disconnect; no leak. => swarm provider Drop->kill-child->connections-close->LM Studio-stops is a CLEAN cancellation. Confidence raised LOW->HIGH.
+
+---
+## EXPLORATION LOOP + REFLECT-IN-UI — WORKING (2026-07-09)
+invtrack (1st exploratory of the reflected loop): FULL PASS by running — 66 tests, golden (widget 6 not-LOW / bolt LOW), low=bolt-only, robustness 4/4 clean (H1 item-not-found, H2 malformed argparse + corrupt-db EXPLICIT 'Corrupted store', H3 below-zero clamped-to-0+clean-message). Baseline quality; mold intact on warm fleet. REFLECTED: explore-invtrack user session created in sessions.db (id 8d9d212f, 2 msgs brief+verdict) -> appears in desktop CHATS; 825 workers stay Hidden. reflect_run.py mechanism PROVEN end-to-end. Harness stuck-idle post-complete (pre_review) -> verified by running + torn down.
