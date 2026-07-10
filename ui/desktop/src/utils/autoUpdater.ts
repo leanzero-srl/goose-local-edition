@@ -368,11 +368,13 @@ export function setupAutoUpdater(tray?: Tray) {
   log.info(`App path: ${app.getAppPath()}`);
   log.info(`Resources path: ${process.resourcesPath}`);
 
-  // Set the feed URL for GitHub releases
+  // Set the feed URL for GitHub releases.
+  // local-edition fork: updates come from our own fork's releases, not upstream.
+  // Overridable at build/run time via GITHUB_OWNER / GITHUB_REPO.
   const feedConfig = {
     provider: 'github' as const,
-    owner: 'aaif-goose',
-    repo: 'goose',
+    owner: process.env.GITHUB_OWNER || 'leanzero-srl',
+    repo: process.env.GITHUB_REPO || 'goose-local-edition',
     releaseType: 'release' as const,
   };
 

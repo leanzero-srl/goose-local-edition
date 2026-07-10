@@ -23,7 +23,9 @@
       "@modelcontextprotocol/ext-apps",
       "electron",
       "electron-winstaller",
-      "esbuild"
+      "esbuild",
+      "fs-xattr",
+      "macos-alias"
     ]
   }
 }

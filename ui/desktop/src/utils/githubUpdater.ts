@@ -27,8 +27,8 @@ interface UpdateCheckResult {
 }
 
 export class GitHubUpdater {
-  private readonly owner = process.env.GITHUB_OWNER || 'aaif-goose';
-  private readonly repo = process.env.GITHUB_REPO || 'goose';
+  private readonly owner = process.env.GITHUB_OWNER || 'leanzero-srl';
+  private readonly repo = process.env.GITHUB_REPO || 'goose-local-edition';
   private readonly bundleName = process.env.GOOSE_BUNDLE_NAME || 'Goose';
   private readonly apiUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/releases/latest`;
 

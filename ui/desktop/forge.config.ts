@@ -55,6 +55,19 @@ if (process.env.APPLE_TEAM_ID) {
     appleIdPassword: process.env.APPLE_ID_PASSWORD,
     teamId: process.env.APPLE_TEAM_ID,
   };
+} else if (process.env.GOOSE_LOCAL_SIGN_IDENTITY) {
+  // local-edition: sign every recompile with a STABLE self-signed Code Signing
+  // cert so Squirrel.Mac accepts auto-updates across builds (an ad-hoc `--sign -`
+  // signature is keyed to each build's hash and is rejected on the next version).
+  // Uses @electron/osx-sign (signs nested helpers/frameworks correctly) — NOT
+  // `codesign --deep`. No notarization: that needs a paid Apple Developer ID and
+  // only governs Gatekeeper on first launch on OTHER machines, not the update check.
+  cfg.osxSign = {
+    identity: process.env.GOOSE_LOCAL_SIGN_IDENTITY,
+    identityValidation: false,
+    entitlements: 'entitlements.plist',
+    'entitlements-inherit': 'entitlements.plist',
+  };
 }
 
 module.exports = {
@@ -65,8 +78,8 @@ module.exports = {
       name: '@electron-forge/publisher-github',
       config: {
         repository: {
-          owner: process.env.GITHUB_OWNER || 'aaif-goose',
-          name: process.env.GITHUB_REPO || 'goose',
+          owner: process.env.GITHUB_OWNER || 'leanzero-srl',
+          name: process.env.GITHUB_REPO || 'goose-local-edition',
         },
         prerelease: false,
         draft: true,
@@ -82,6 +95,19 @@ module.exports = {
         options: {
           icon: 'src/images/icon.ico',
         },
+      },
+    },
+    // macOS drag-to-install disk image. Additive to maker-zip (which stays as the
+    // Squirrel/auto-update artifact — the DMG never participates in auto-update).
+    // darwin-only: electron-installer-dmg errors on non-macOS hosts.
+    {
+      name: '@electron-forge/maker-dmg',
+      platforms: ['darwin'],
+      config: {
+        name: 'Goose',
+        icon: 'src/images/icon.icns',
+        // Default DMG contents already place Goose.app + an /Applications symlink
+        // (drag-to-install), so no explicit `contents` array is needed.
       },
     },
     {
