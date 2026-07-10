@@ -5,7 +5,7 @@ import { LeanZero } from '../../icons';
 import { Switch } from '../../ui/switch';
 import { createSkillSource } from '../../../acp/sources';
 import { addConfigExtension } from '../../../acp/extensions';
-import { acpUpsertConfig } from '../../../acp/config';
+import { acpUpsertConfig, acpReadConfig } from '../../../acp/config';
 import type { ExtensionConfig } from '../../../types/extensions';
 import { getInitialWorkingDir } from '../../../utils/workingDir';
 import GooseImportSection from './GooseImportSection';
@@ -330,8 +330,14 @@ export default function ImportView() {
       try {
         const envKeys = Object.keys(srv.envValues).filter((k) => srv.envValues[k]);
         // The extension mapping drops env VALUES, so store each as a secret and list its key in env_keys.
+        // Env keys live in the GLOBAL config namespace, so a server env like ANTHROPIC_API_KEY would
+        // clobber your provider key. Never overwrite an existing key — keep the current value and just
+        // reference it in env_keys.
         for (const k of envKeys) {
-          await acpUpsertConfig(k, srv.envValues[k], true);
+          const existing = await acpReadConfig(k, true).catch(() => null);
+          if (existing == null) {
+            await acpUpsertConfig(k, srv.envValues[k], true);
+          }
         }
         const config: ExtensionConfig =
           srv.transport === 'http'
