@@ -29,6 +29,7 @@ interface ClaudeSkill {
   description: string;
   body: string;
   supportingCount: number;
+  hasName: boolean; // whether the source SKILL.md declared a frontmatter name (goose skips it if not)
 }
 
 type ItemStatus = 'idle' | 'importing' | 'done' | 'skipped' | 'error';
@@ -98,6 +99,26 @@ function slugifySkillName(name: string): string {
   );
 }
 
+/** goose skips a SKILL.md whose frontmatter has no `name`. After dir-copying a nameless skill, inject the
+ *  name (and description) so goose actually discovers it. No-op if the copied file already declares a name. */
+async function ensureCopiedSkillHasName(
+  skillMdPath: string,
+  name: string,
+  description: string
+): Promise<void> {
+  const res = await window.electron.readFile(skillMdPath);
+  if (!res.found || !res.file) return;
+  if (parseFrontmatter(res.file).fm.name) return; // already has one
+  const content = res.file;
+  const opener = content.match(/^\uFEFF?\s*---\s*\n/);
+  const hasClosingFence = !!opener && /\n---\s*\n?/.test(content.slice(opener[0].length));
+  const next =
+    opener && hasClosingFence
+      ? content.replace(/^(\uFEFF?\s*)---\s*\n/, `$1---\nname: ${name}\n`)
+      : `---\nname: ${name}${description ? `\ndescription: '${description.replace(/'/g, "''")}'` : ''}\n---\n\n${content}`;
+  await window.electron.writeFile(skillMdPath, next);
+}
+
 async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
   const names = await window.electron.listFiles(CLAUDE_SKILLS_DIR).catch(() => [] as string[]);
   const skills: ClaudeSkill[] = [];
@@ -127,6 +148,7 @@ async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
       description: fm.description || '',
       body: body.trim(),
       supportingCount,
+      hasName: Boolean(fm.name),
     });
   }
   return skills.sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -278,11 +300,13 @@ export default function ImportView() {
       try {
         if (skill.supportingCount > 0) {
           // Preserve docs/scripts/templates by copying the directory (the create API drops them).
-          const out = await window.electron.copyDir(
-            `${CLAUDE_SKILLS_DIR}/${skill.dirName}`,
-            `${destBase}/${skill.name}`
-          );
+          const dest = `${destBase}/${skill.name}`;
+          const out = await window.electron.copyDir(`${CLAUDE_SKILLS_DIR}/${skill.dirName}`, dest);
           if (!out.ok) throw new Error(out.error || 'copy failed');
+          // A copied SKILL.md with no frontmatter name is silently skipped by goose discovery — inject one.
+          if (!skill.hasName) {
+            await ensureCopiedSkillHasName(`${dest}/SKILL.md`, skill.name, skill.description);
+          }
         } else {
           await createSkillSource({
             name: skill.name,
@@ -331,25 +355,46 @@ export default function ImportView() {
       const rk = `mcp:${srv.name}`;
       setResults((r) => ({ ...r, [rk]: { status: 'importing' } }));
       try {
+        // Store a secret only if the key is not already set — env keys live in the GLOBAL config namespace,
+        // so a server env like ANTHROPIC_API_KEY must never clobber your provider key.
+        const upsertSecret = async (key: string, value: string) => {
+          const existing = await acpReadConfig(key, true).catch(() => null);
+          if (existing == null) await acpUpsertConfig(key, value, true);
+        };
+
         const envKeys = Object.keys(srv.envValues).filter((k) => srv.envValues[k]);
         // The extension mapping drops env VALUES, so store each as a secret and list its key in env_keys.
-        // Env keys live in the GLOBAL config namespace, so a server env like ANTHROPIC_API_KEY would
-        // clobber your provider key. Never overwrite an existing key — keep the current value and just
-        // reference it in env_keys.
         for (const k of envKeys) {
-          const existing = await acpReadConfig(k, true).catch(() => null);
-          if (existing == null) {
-            await acpUpsertConfig(k, srv.envValues[k], true);
+          await upsertSecret(k, srv.envValues[k]);
+        }
+
+        // For http: move credential-bearing header VALUES into the keyring and reference them via ${KEY}
+        // placeholders — goose substitutes those into headers at runtime (extension_manager), keeping the
+        // secret out of plaintext config.yaml.
+        const headers: Record<string, string> = {};
+        const headerKeys: string[] = [];
+        if (srv.transport === 'http') {
+          for (const [hName, hValue] of Object.entries(srv.headers)) {
+            if (!hValue) {
+              headers[hName] = hValue;
+              continue;
+            }
+            const key = `${srv.name}_${hName}`.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+            await upsertSecret(key, hValue);
+            headers[hName] = `\${${key}}`;
+            headerKeys.push(key);
           }
         }
+
+        const allEnvKeys = [...envKeys, ...headerKeys];
         const config: ExtensionConfig =
           srv.transport === 'http'
             ? {
                 type: 'streamable_http',
                 name: srv.name,
                 uri: srv.url ?? '',
-                headers: srv.headers,
-                ...(envKeys.length ? { env_keys: envKeys } : {}),
+                headers,
+                ...(allEnvKeys.length ? { env_keys: allEnvKeys } : {}),
               }
             : {
                 type: 'stdio',
@@ -531,10 +576,11 @@ export default function ImportView() {
                             unsupported (sse)
                           </span>
                         )}
-                        {Object.keys(srv.envValues).length > 0 && (
+                        {(Object.keys(srv.envValues).length > 0 ||
+                          Object.values(srv.headers).some(Boolean)) && (
                           <span
                             className="text-[10px] text-text-secondary shrink-0"
-                            title="env values are imported as secrets"
+                            title="env/header values are imported into the keyring as secrets"
                           >
                             sets secrets
                           </span>
