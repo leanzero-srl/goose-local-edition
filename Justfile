@@ -132,6 +132,30 @@ package-ui:
     codesign --force --deep --sign - --entitlements ui/desktop/entitlements.plist ui/desktop/out/Goose-darwin-arm64/Goose.app
     @echo "Done! Launch with: open ui/desktop/out/Goose-darwin-arm64/Goose.app"
 
+# local-edition: build a SIGNED desktop release for our own fork's auto-update feed
+# (leanzero-srl/goose-local-edition), and stage the update artifacts.
+# One-time prereq: create a self-signed "Goose Local Dev" Code Signing cert in your
+# login keychain (Keychain Access -> Certificate Assistant -> Create a Certificate;
+# Name: "Goose Local Dev", Identity Type: Self Signed Root, Certificate Type: Code Signing).
+# Unlike `package-ui` (ad-hoc `--sign -`, which Squirrel rejects across versions), this
+# signs every build with the SAME stable cert so auto-update validates build-to-build.
+# Usage: just release-fork 1.41.1
+release-fork version:
+    @just release-binary
+    @echo "Bumping ui/desktop version to {{version}}..."
+    cd ui/desktop && npm version --no-git-tag-version --allow-same-version {{version}}
+    @echo "Building + signing with the stable self-signed cert (via @electron/osx-sign)..."
+    cd ui/desktop && GOOSE_LOCAL_SIGN_IDENTITY="Goose Local Dev" pnpm run bundle:default
+    @echo "Generating update manifest (latest-mac.yml)..."
+    cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
+    @echo ""
+    @echo "Staged in ui/desktop/out/ :  Goose-darwin-arm64/{Goose-darwin-arm64.zip,latest-mac.yml}  +  make/Goose.dmg"
+    @echo "Publish to the fork release (needs 'gh' + a GITHUB_TOKEN with repo scope):"
+    @echo "  gh release create v{{version}} --repo leanzero-srl/goose-local-edition --title v{{version}} --notes 'local build' \\"
+    @echo "    ui/desktop/out/Goose-darwin-arm64/Goose-darwin-arm64.zip \\"
+    @echo "    ui/desktop/out/Goose-darwin-arm64/latest-mac.yml \\"
+    @echo "    ui/desktop/out/make/Goose.dmg"
+
 # Run UI with latest (Windows version)
 run-ui-windows:
     @just release-windows

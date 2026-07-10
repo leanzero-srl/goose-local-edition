@@ -74,18 +74,29 @@ function writeManifest({ directory, version }) {
     },
   ];
 
-  const entries = files.map(({ sourceName, updateName }) => {
-    const sourcePath = path.join(directory, sourceName);
-    const updatePath = path.join(directory, updateName);
-    copyIfDifferent(sourcePath, updatePath);
+  // Skip an arch whose source zip was not produced (e.g. an arm64-only local
+  // `make`) instead of throwing — the manifest just omits that arch's entry.
+  // At least one arch must be present.
+  const entries = files
+    .filter(({ sourceName }) => fs.existsSync(path.join(directory, sourceName)))
+    .map(({ sourceName, updateName }) => {
+      const sourcePath = path.join(directory, sourceName);
+      const updatePath = path.join(directory, updateName);
+      copyIfDifferent(sourcePath, updatePath);
 
-    const stats = fs.statSync(updatePath);
-    return {
-      url: updateName,
-      sha512: sha512(updatePath),
-      size: stats.size,
-    };
-  });
+      const stats = fs.statSync(updatePath);
+      return {
+        url: updateName,
+        sha512: sha512(updatePath),
+        size: stats.size,
+      };
+    });
+
+  if (entries.length === 0) {
+    throw new Error(
+      `No arch zip found in ${directory} (expected Goose.zip and/or Goose_intel_mac.zip)`
+    );
+  }
 
   const manifest = [
     `version: ${yamlString(version)}`,

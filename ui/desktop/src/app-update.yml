@@ -1,4 +1,4 @@
 provider: github
-owner: aaif-goose
-repo: goose
+owner: leanzero-srl
+repo: goose-local-edition
 updaterCacheDirName: goose-updater
