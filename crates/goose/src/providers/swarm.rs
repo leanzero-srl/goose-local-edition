@@ -33,7 +33,7 @@ use rmcp::model::Tool;
 
 const SWARM_PROVIDER_NAME: &str = "swarm";
 const SWARM_DEFAULT_MODEL: &str = "swarm";
-const SWARM_DOC_URL: &str = "https://block.github.io/goose/";
+const SWARM_DOC_URL: &str = "https://leanzero.atlascrafted.com/portfolio/goose-local-edition";
 
 /// A subprocess-backed swarm provider. Holds the `goose` binary path and the session working directory to
 /// scaffold into (threaded via [`ProviderDef::from_env_with_working_dir`] — without it the swarm would write
@@ -139,7 +139,7 @@ impl goose_providers::base::ProviderDescriptor for SwarmProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             SWARM_PROVIDER_NAME,
-            "Swarm",
+            "Swarm LeanZero",
             "Runs your local model fleet (LM Studio / LM Link) as a multi-agent build. A message is a build \
              brief, not a chat turn — the swarm plans, fans out across your nodes, and writes files to this \
              project. Configure the fleet + tunables in the Swarm settings.",

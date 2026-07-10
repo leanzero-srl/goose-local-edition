@@ -1,6 +1,8 @@
-import { Sliders, Bot, LoaderCircle, Settings } from 'lucide-react';
+import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
+import { LeanZero } from '../../../icons';
+import { LEANZERO_DOCS_URL, LEANZERO_WEBSITE_URL, SWARM_PROVIDER_ID } from '../../../../branding';
 import { SwitchModelModal } from '../subcomponents/SwitchModelModal';
 import { View } from '../../../../utils/navigationUtils';
 import {
@@ -33,6 +35,18 @@ const i18n = defineMessages({
   changeModel: {
     id: 'modelsBottomBar.changeModel',
     defaultMessage: 'Change Model',
+  },
+  changeProvider: {
+    id: 'modelsBottomBar.changeProvider',
+    defaultMessage: 'Change Provider',
+  },
+  swarmDocs: {
+    id: 'modelsBottomBar.swarmDocs',
+    defaultMessage: 'Documentation',
+  },
+  leanzeroWebsite: {
+    id: 'modelsBottomBar.leanzeroWebsite',
+    defaultMessage: 'LeanZero website',
   },
   localModelSettings: {
     id: 'modelsBottomBar.localModelSettings',
@@ -74,6 +88,7 @@ export default function ModelsBottomBar({
   const { currentModel: configModel, currentProvider: configProvider } = useModelAndProvider();
   const currentModel = sessionModel ?? configModel;
   const currentProvider = sessionProvider ?? configProvider;
+  const isSwarm = currentProvider === SWARM_PROVIDER_ID;
 
   const intl = useIntl();
   const [displayProvider, setDisplayProvider] = useState<string | null>(null);
@@ -180,9 +195,24 @@ export default function ModelsBottomBar({
             </div>
           )}
           <DropdownMenuItem onClick={() => setIsAddModelModalOpen(true)}>
-            <span>{intl.formatMessage(i18n.changeModel)}</span>
+            <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
             <Sliders className="ml-auto h-4 w-4 rotate-90" />
           </DropdownMenuItem>
+          {isSwarm && (
+            <>
+              <DropdownMenuItem onClick={() => window.electron.openExternal(LEANZERO_DOCS_URL)}>
+                <span>{intl.formatMessage(i18n.swarmDocs)}</span>
+                <BookOpen className="ml-auto h-4 w-4" />
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => window.electron.openExternal(LEANZERO_WEBSITE_URL)}>
+                <span className="flex items-center gap-1.5">
+                  <LeanZero className="h-4 w-4" />
+                  {intl.formatMessage(i18n.leanzeroWebsite)}
+                </span>
+                <ExternalLink className="ml-auto h-4 w-4" />
+              </DropdownMenuItem>
+            </>
+          )}
           {currentProvider === 'local' && currentModel && (
             <DropdownMenuItem onClick={() => setIsLocalModelSettingsOpen(true)}>
               <span>{intl.formatMessage(i18n.localModelSettings)}</span>

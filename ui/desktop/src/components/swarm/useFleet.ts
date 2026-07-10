@@ -19,9 +19,37 @@ function cspSafe(url: string): string {
 
 export interface FleetState {
   lanes: NodeLane[];
+  /** Raw LM Studio model identifiers of the loaded, non-embedding models (e.g. 'mihai-qwopus3.6-27b-coder-mlx').
+   *  The swarm's planner_model is matched by EXACT equality against these, so a picker must offer them verbatim. */
+  models: string[];
   online: boolean;
   loading: boolean;
   endpoint: string;
+}
+
+/**
+ * One-shot read of the fleet's real context window. LM Studio's /api/v0/models returns per-model
+ * `loaded_context_length` (what the model was actually loaded with) and `max_context_length` (its ceiling).
+ * Returns the MIN across loaded non-embedding models — the honest ceiling the whole fleet can rely on — or
+ * null if the endpoint is unreachable or reports no usable length (caller then keeps its own default).
+ */
+export async function fetchSwarmContextLimit(endpoint = DEFAULT_ENDPOINT): Promise<number | null> {
+  try {
+    const res = await fetchWithTimeout(cspSafe(endpoint), 3000);
+    const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
+    const loaded = (data.data ?? []).filter(
+      (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
+    );
+    const limits = loaded
+      .map((m) => {
+        const ctx = m['loaded_context_length'] ?? m['max_context_length'];
+        return typeof ctx === 'number' && ctx > 0 ? ctx : null;
+      })
+      .filter((n): n is number => n != null);
+    return limits.length ? Math.min(...limits) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Derive a node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-). */
@@ -49,6 +77,7 @@ async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
 export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState {
   const [state, setState] = useState<FleetState>({
     lanes: [],
+    models: [],
     online: false,
     loading: true,
     endpoint,
@@ -64,6 +93,7 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState
         const loaded = (data.data ?? []).filter(
           (m) => m['state'] === 'loaded' && m['type'] !== 'embeddings'
         );
+        const models: string[] = loaded.map((m) => String(m['id'] ?? '')).filter(Boolean);
         const lanes: NodeLane[] = loaded.map((m) => {
           const id = String(m['id'] ?? '');
           const arch = m['arch'] ? ` · ${String(m['arch'])}` : '';
@@ -73,9 +103,9 @@ export function useFleet(pollMs = 5000, endpoint = DEFAULT_ENDPOINT): FleetState
             status: 'done' as NodeStatus, // resident + loaded = ready to serve
           };
         });
-        if (alive) setState({ lanes, online: true, loading: false, endpoint });
+        if (alive) setState({ lanes, models, online: true, loading: false, endpoint });
       } catch {
-        if (alive) setState({ lanes: [], online: false, loading: false, endpoint });
+        if (alive) setState({ lanes: [], models: [], online: false, loading: false, endpoint });
       }
     };
 
