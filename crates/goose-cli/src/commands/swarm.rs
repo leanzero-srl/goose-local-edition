@@ -2140,6 +2140,16 @@ mod tests {
     }
 
     #[test]
+    fn complete_stall_rounds_defaults_off_and_clamps() {
+        assert_eq!(complete_stall_rounds_from(None), 0); // default OFF -> byte-identical to today
+        assert_eq!(complete_stall_rounds_from(Some("2".to_string())), 2);
+        assert_eq!(complete_stall_rounds_from(Some("99".to_string())), 6); // clamped high
+        assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
+        assert_eq!(complete_stall_rounds_from(Some(" 3 ".to_string())), 3); // trimmed
+        assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 0); // unparseable -> OFF
+    }
+
+    #[test]
     fn assured_gate_precedence_and_byte_identical_default() {
         // Default path (assured OFF): unset -> false, byte-identical to the old env().unwrap_or(false).
         assert!(!resolve_gate(None, false, true));
@@ -8712,6 +8722,21 @@ fn complete_rounds() -> u32 {
     complete_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_ROUNDS").ok())
 }
 
+/// GOOSE_SWARM_COMPLETE_STALL_ROUNDS: early-exit the push-to-completion fix loop after N consecutive
+/// fix rounds that made NO change to the deterministic oracle's findings (i.e. the fix is not moving
+/// the app). Default 0 = OFF (byte-identical to today); clamped to [0,6]. Grounded in the observation
+/// that every fix that ever landed dropped findings on the FIRST fix round — no run ever showed findings
+/// go flat-then-drop — so exiting after N no-progress rounds cannot cut a fix that would have landed.
+fn complete_stall_rounds_from(v: Option<String>) -> u32 {
+    v.and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(6)
+}
+
+fn complete_stall_rounds() -> u32 {
+    complete_stall_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_STALL_ROUNDS").ok())
+}
+
 /// GOOSE_SWARM_COMPLETE_PARALLEL (default OFF): fan the push-to-completion FIX step across the fleet's
 /// models — one fix agent per failing FILE, each writing only its own file (shadow isolation), instead of
 /// one serial fix on a single node. Off => the serial v1 fix path runs verbatim.
@@ -9508,6 +9533,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
         let mut final_verified = false;
         let mut last_findings: Vec<String> = Vec::new();
+        // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS, default 0 = OFF).
+        let stall_cap = complete_stall_rounds();
+        let mut stall = 0u32;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
         for round in 0..=rounds {
@@ -9592,6 +9620,34 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                     );
                 }
                 break;
+            }
+            // Stall early-exit: if this round's deterministic findings are identical to the previous
+            // round's, the last fix made no progress. After `stall_cap` consecutive no-progress rounds,
+            // stop instead of burning the remaining budget on a failure the loop cannot move. Fires only
+            // on round>0 with unchanged non-empty findings; `final_passed` stays false, so a still-red app
+            // is never falsely reported green. OFF by default (stall_cap == 0).
+            if stall_cap > 0 && round > 0 && verdict.findings == last_findings {
+                stall += 1;
+                if stall >= stall_cap {
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_stall_exit",
+                        "round": round,
+                        "stall_rounds": stall,
+                        "findings": verdict.findings.len(),
+                    }));
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "complete: {stall} consecutive fix round(s) made no change to the {} \
+                             finding(s) — early-exit (stall cap)",
+                            verdict.findings.len()
+                        ))
+                        .yellow()
+                    );
+                    break;
+                }
+            } else {
+                stall = 0;
             }
             last_findings = verdict.findings.clone();
             eprintln!(
