@@ -43,7 +43,7 @@ interface ImportResult {
  *  (`description: >-` / `|` folded/literal multiline) — several real skills use them, and a naive parser
  *  would capture the literal ">-". Nested keys (indented, e.g. under `metadata:`) are ignored. */
 function parseFrontmatter(text: string): { fm: Record<string, string>; body: string } {
-  const src = text.replace(/^﻿/, '').replace(/^\s*\n/, ''); // strip BOM + leading blank lines
+  const src = text.replace(/^\uFEFF/, '').replace(/^\s*\n/, ''); // strip BOM + leading blank lines
   const m = src.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
   if (!m) return { fm: {}, body: text };
   const lines = m[1].split('\n');
@@ -74,6 +74,16 @@ function parseFrontmatter(text: string): { fm: Record<string, string>; body: str
     }
   }
   return { fm, body: m[2] };
+}
+
+/** True when an import error means "the item already exists". ACP JSON-RPC errors carry that text in
+ *  `.data` (a string), NOT `.message` (which is the generic "Invalid params"), so check both — otherwise a
+ *  duplicate body-only skill is mis-reported as "failed" instead of "already present". */
+function isAlreadyExists(e: unknown): boolean {
+  const rec = e as { message?: unknown; data?: unknown };
+  const dataStr = typeof rec?.data === 'string' ? rec.data : JSON.stringify(rec?.data ?? '');
+  const msg = e instanceof Error ? e.message : String(e);
+  return /already exists|\bexists\b/i.test(`${msg} ${dataStr}`);
 }
 
 /** Goose skill names must match ^[a-z0-9-]+$, <=64 chars, no leading/trailing hyphen. */
@@ -282,7 +292,7 @@ export default function ImportView() {
         setResults((r) => ({ ...r, [skill.dirName]: { status: 'done' } }));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        const alreadyExists = /exist/i.test(msg);
+        const alreadyExists = isAlreadyExists(e);
         if (alreadyExists) skipped += 1;
         else failed += 1;
         setResults((r) => ({
