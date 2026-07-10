@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Trash2, Check, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
@@ -100,6 +100,7 @@ interface SessionRowProps {
 
 const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClick, onRenamed }) => {
   const intl = useIntl();
+  const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const isStreaming = status?.streamState === 'streaming';
@@ -111,6 +112,9 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
     setConfirming(false);
     try {
       await acpDeleteSession(session.id);
+      // If we're deleting the session we're currently viewing, leave it first — otherwise the URL still
+      // carries ?resumeSessionId=<id> and the pair route re-adds the just-deleted session as a ghost.
+      if (active) navigate('/');
       // The sidebar hook listens for SESSION_DELETED and drops the row + refetches.
       window.dispatchEvent(
         new CustomEvent(AppEvents.SESSION_DELETED, { detail: { sessionId: session.id } })

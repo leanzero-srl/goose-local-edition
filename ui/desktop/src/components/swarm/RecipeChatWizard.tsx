@@ -87,10 +87,16 @@ export function RecipeChatWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Bumped on every open/close transition; an in-flight request captures the current value and bails out
+  // of its setState if the generation changed — so a late reply can't repopulate a closed/reopened chat.
+  const genRef = useRef(0);
+  const prevOpen = useRef(false);
 
-  // Seed the opening question once, when the modal first opens.
   useEffect(() => {
-    if (isOpen && messages.length === 0) {
+    if (isOpen && !prevOpen.current) {
+      // Fresh open: seed the greeting and clear everything (including busy/saving, in case a prior request
+      // was still in flight when the modal was last closed).
+      genRef.current++;
       setMessages([
         {
           role: 'assistant',
@@ -98,14 +104,22 @@ export function RecipeChatWizard({
             "Tell me what you'd like this agent to do each time it runs, and I'll shape it into a recipe. What's the task?",
         },
       ]);
-    }
-    if (!isOpen) {
+      setInput('');
+      setDraft(null);
+      setError(null);
+      setBusy(false);
+      setSaving(false);
+    } else if (!isOpen && prevOpen.current) {
+      genRef.current++;
+      setBusy(false);
+      setSaving(false);
       setMessages([]);
       setInput('');
       setDraft(null);
       setError(null);
     }
-  }, [isOpen, messages.length]);
+    prevOpen.current = isOpen;
+  }, [isOpen]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -156,15 +170,18 @@ export function RecipeChatWizard({
 
   // Interview turn: the model asks the next question. It never writes the recipe here.
   const ask = async (history: ChatMsg[]): Promise<void> => {
+    const gen = genRef.current;
     setBusy(true);
     setError(null);
     try {
       const reply = await complete(SYSTEM_PROMPT, history);
+      if (genRef.current !== gen) return;
       setMessages((prev) => [...prev, { role: 'assistant', content: visibleText(reply) }]);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(fleetError(e));
     } finally {
-      setBusy(false);
+      if (genRef.current === gen) setBusy(false);
     }
   };
 
@@ -180,10 +197,12 @@ export function RecipeChatWizard({
   // Draft: a schema-constrained call that ALWAYS yields a valid recipe — no truncated / malformed blocks.
   const draftNow = async () => {
     if (busy) return;
+    const gen = genRef.current;
     setBusy(true);
     setError(null);
     try {
       const reply = await complete(DRAFT_SYSTEM, messages, RECIPE_SCHEMA);
+      if (genRef.current !== gen) return;
       const o = JSON.parse(reply) as Partial<Draft>;
       const title = (o.title ?? '').trim();
       const instructions = (o.instructions ?? '').trim();
@@ -196,9 +215,10 @@ export function RecipeChatWizard({
         { role: 'assistant', content: 'Drafted your recipe — review and edit it below, then save.' },
       ]);
     } catch (e) {
+      if (genRef.current !== gen) return;
       setError(fleetError(e));
     } finally {
-      setBusy(false);
+      if (genRef.current === gen) setBusy(false);
     }
   };
 
@@ -334,7 +354,7 @@ export function RecipeChatWizard({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   send();
                 }
