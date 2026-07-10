@@ -122,6 +122,12 @@ type ElectronAPI = {
   } | null>;
   getBinaryPath: (binaryName: string) => Promise<string>;
   readFile: (directory: string) => Promise<FileResponse>;
+  readSwarmRun: (workingDir: string) => Promise<{
+    runId: string;
+    mtime: number;
+    events: Array<Record<string, unknown>>;
+    activity: Record<string, unknown>;
+  } | null>;
   writeFile: (directory: string, content: string) => Promise<boolean>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
   listFiles: (dirPath: string, extension?: string) => Promise<string[]>;
@@ -217,6 +223,7 @@ const electronAPI: ElectronAPI = {
   selectImportSessionFile: () => ipcRenderer.invoke('select-import-session-file'),
   getBinaryPath: (binaryName: string) => ipcRenderer.invoke('get-binary-path', binaryName),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
+  readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   ensureDirectory: (dirPath: string) => ipcRenderer.invoke('ensure-directory', dirPath),
