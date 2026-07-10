@@ -2214,6 +2214,71 @@ ipcMain.handle('select-import-session-file', async () => {
   }
 });
 
+// Goose Local Edition — read the latest swarm RUN for a working directory so the desktop can render the
+// per-node turn loops live. A `goose swarm run` writes a structured event stream to
+// <workingDir>/.swarm/run-<id>.jsonl and a per-turn digest per worker to <workingDir>/.swarm/activity/<task>.json.
+// This returns the newest run's parsed events + the activity digests; the renderer folds them into node lanes.
+ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
+  try {
+    if (!workingDir || typeof workingDir !== 'string') return null;
+    const swarmDir = path.join(expandTilde(workingDir), '.swarm');
+    const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
+    const runFiles = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
+    if (runFiles.length === 0) return null;
+
+    const withMtime = await Promise.all(
+      runFiles.map(async (f) => {
+        const m = await fs
+          .stat(path.join(swarmDir, f))
+          .then((s) => s.mtimeMs)
+          .catch(() => 0);
+        return { f, m };
+      })
+    );
+    withMtime.sort((a, b) => b.m - a.m);
+    const runFile = withMtime[0].f;
+    const mtime = withMtime[0].m;
+
+    const raw = await fs.readFile(path.join(swarmDir, runFile), 'utf8').catch(() => '');
+    const events = raw
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+      .map((l) => {
+        try {
+          return JSON.parse(l) as Record<string, unknown>;
+        } catch {
+          return null; // tolerate a partial last line while the run is writing
+        }
+      })
+      .filter((e): e is Record<string, unknown> => e !== null);
+
+    const activityDir = path.join(swarmDir, 'activity');
+    const actEntries = await fs.readdir(activityDir).catch(() => [] as string[]);
+    const activity: Record<string, unknown> = {};
+    await Promise.all(
+      actEntries
+        .filter((f) => f.endsWith('.json'))
+        .map(async (f) => {
+          try {
+            const c = await fs.readFile(path.join(activityDir, f), 'utf8');
+            activity[f.replace(/\.json$/, '')] = JSON.parse(c);
+          } catch {
+            /* a digest mid-write — skip it this poll */
+          }
+        })
+    );
+
+    return {
+      runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
+      mtime,
+      events,
+      activity,
+    };
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('check-ollama', async () => {
   try {
     return new Promise((resolve) => {

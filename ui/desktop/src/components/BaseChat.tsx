@@ -36,6 +36,7 @@ import { Goose, LeanZero } from './icons';
 import { LEANZERO_WEBSITE_URL } from '../branding';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
+import SwarmRunPanel from './swarm/SwarmRunPanel';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -510,6 +511,8 @@ export default function BaseChat({
             </div>
           )}
         </div>
+
+        {isLocal && <SwarmRunPanel workingDir={session?.working_dir} className="mx-4 mb-2" />}
 
         <ChatInputCard
           className={cn(
