@@ -236,6 +236,10 @@ impl Provider for SwarmProvider {
         }
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // A swarm run drives the whole fleet and can take minutes. When the user hits Stop in the
+        // UI, the agent drops this request future; without kill_on_drop the child `goose swarm run`
+        // is orphaned and keeps dispatching to the fleet. kill_on_drop makes Stop actually stop it.
+        cmd.kill_on_drop(true);
 
         let output = cmd.output().await.map_err(|e| {
             ProviderError::RequestFailed(format!(

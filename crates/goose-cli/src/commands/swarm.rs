@@ -1491,6 +1491,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn summarize_tool_call_extracts_the_intent_field() {
+        // shell: the whole command line is the summary.
+        assert_eq!(
+            summarize_tool_call("developer__shell", &serde_json::json!({"command": "pytest -q tests/"})),
+            "pytest -q tests/"
+        );
+        // text_editor: verb + path.
+        assert_eq!(
+            summarize_tool_call(
+                "developer__text_editor",
+                &serde_json::json!({"command": "write", "path": "src/main.py", "file_text": "x"})
+            ),
+            "write src/main.py"
+        );
+        // path-only tools fall back to the path.
+        assert_eq!(
+            summarize_tool_call("some__reader", &serde_json::json!({"path": "notes.md"})),
+            "notes.md"
+        );
+        // query-style tools surface the query; newlines/extra whitespace are flattened.
+        assert_eq!(
+            summarize_tool_call("web__search", &serde_json::json!({"query": "a\n  b   c"})),
+            "a b c"
+        );
+        // No known field: compact JSON, never empty.
+        assert!(!summarize_tool_call("x__y", &serde_json::json!({"foo": 1})).is_empty());
+        // Overlong summaries are capped with an ellipsis.
+        let long = "x ".repeat(300);
+        let s = summarize_tool_call("developer__shell", &serde_json::json!({"command": long}));
+        assert!(s.chars().count() <= 200, "summary must be capped");
+        assert!(s.ends_with('…'));
+    }
+
+    #[test]
     fn integrate_verify_does_not_block_on_tests() {
         // A failing `tests` subtask must not block integrate-verify (UNIQ6: tests failed -> integrate-verify
         // never ran -> the app's real bug went uncaught + the run looked failed for the wrong reason).
@@ -2803,6 +2837,44 @@ fn is_mcp_tool(name: &str) -> bool {
         && !name.starts_with("platform__")
 }
 
+/// A short, human-readable summary of a tool call's arguments for the desktop run panel: the shell
+/// line, the edited path, the search query — whatever field carries the intent. Falls back to a
+/// compact JSON dump. Single-lined and capped so the digest stays small.
+fn summarize_tool_call(_name: &str, args: &serde_json::Value) -> String {
+    let obj = args.as_object();
+    let get = |k: &str| {
+        obj.and_then(|o| o.get(k))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+    let raw = if let Some(command) = get("command") {
+        // developer__text_editor: command is a verb (view/write/str_replace) paired with a path;
+        // developer__shell: command IS the shell line and there is no path.
+        match get("path") {
+            Some(path) => format!("{command} {path}"),
+            None => command,
+        }
+    } else if let Some(path) = get("path") {
+        path
+    } else if let Some(q) = get("query")
+        .or_else(|| get("pattern"))
+        .or_else(|| get("uri"))
+        .or_else(|| get("url"))
+        .or_else(|| get("text"))
+    {
+        q
+    } else {
+        serde_json::to_string(args).unwrap_or_default()
+    };
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let n = flat.chars().count();
+    if n > 200 {
+        format!("{}…", flat.chars().take(199).collect::<String>())
+    } else {
+        flat
+    }
+}
+
 /// Per-run JSONL event sink. All writes go through one locked, line-flushed writer; a monotonic
 /// `seq` gives a total order even though scheduler events and CLI-native events interleave.
 struct JsonlSink {
@@ -3540,8 +3612,11 @@ impl GooseAgentDispatcher {
 
         let mut texts: Vec<String> = Vec::new();
         let mut final_output: Option<String> = None;
-        let mut pending: HashMap<String, (String, bool)> = HashMap::new();
+        let mut pending: HashMap<String, (String, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
+        // Parallel history to tool_calls that also keeps a short summary of each call's arguments
+        // (the shell line, edited path, query…) so the desktop run panel can show what actually ran.
+        let mut call_records: Vec<(String, String, Option<bool>)> = Vec::new();
         // Per-turn activity heartbeat for the judge (worker calls only). Reset to 0 at the start of every
         // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
         // just means the judge falls back to its time-based checks.
@@ -3628,16 +3703,20 @@ impl GooseAgentDispatcher {
                                         );
                                     }
                                     let mcp = is_mcp_tool(&name);
-                                    pending.insert(req.id.clone(), (name, mcp));
+                                    let args_val = serde_json::to_value(&tc.arguments)
+                                        .unwrap_or(serde_json::Value::Null);
+                                    let summary = summarize_tool_call(&name, &args_val);
+                                    pending.insert(req.id.clone(), (name, mcp, summary));
                                 }
                             }
                             MessageContent::ToolResponse(resp) => {
-                                if let Some((name, is_mcp)) = pending.remove(&resp.id) {
+                                if let Some((name, is_mcp, summary)) = pending.remove(&resp.id) {
                                     let ok = resp
                                         .tool_result
                                         .as_ref()
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
+                                    call_records.push((name.clone(), summary, Some(ok)));
                                     tool_calls.push(ToolCallRecord {
                                         name,
                                         is_mcp,
@@ -3678,17 +3757,48 @@ impl GooseAgentDispatcher {
                 } else {
                     lt
                 };
+                // Rich per-call history + fuller reasoning for the desktop run panel. The judge only
+                // reads `recent`/`last_text`/`tool_calls`/`errors` above, so these extra keys are inert
+                // to it; unknown-key-tolerant JSON readers ignore them.
+                let calls: Vec<serde_json::Value> = call_records
+                    .iter()
+                    .rev()
+                    .take(24)
+                    .rev()
+                    .map(|(name, summary, ok)| {
+                        serde_json::json!({ "name": name, "summary": summary, "ok": ok })
+                    })
+                    .collect();
+                let reasoning: String = {
+                    let joined = texts
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .rev()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let rn = joined.chars().count();
+                    if rn > 1600 {
+                        joined.chars().skip(rn - 1600).collect()
+                    } else {
+                        joined
+                    }
+                };
                 let digest = serde_json::json!({
                     "tool_calls": tool_calls.len(),
                     "errors": errors,
                     "recent": recent,
                     "last_text": last_text,
+                    "calls": calls,
+                    "reasoning": reasoning,
                 });
                 let _ = std::fs::write(p, digest.to_string());
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
-        for (_id, (name, is_mcp)) in pending {
+        for (_id, (name, is_mcp, summary)) in pending {
+            call_records.push((name.clone(), summary, None));
             tool_calls.push(ToolCallRecord {
                 name,
                 is_mcp,
