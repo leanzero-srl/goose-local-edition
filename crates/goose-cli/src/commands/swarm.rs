@@ -2150,6 +2150,30 @@ mod tests {
     }
 
     #[test]
+    fn boundary_probe_from_defaults_off_and_parses() {
+        assert!(!boundary_probe_from(None)); // default OFF -> spec byte-identical to today
+        assert!(!boundary_probe_from(Some("0".to_string())));
+        assert!(!boundary_probe_from(Some("off".to_string())));
+        assert!(!boundary_probe_from(Some("false".to_string())));
+        assert!(boundary_probe_from(Some("1".to_string())));
+        assert!(boundary_probe_from(Some(" on ".to_string()))); // trimmed
+        assert!(boundary_probe_from(Some("TRUE".to_string()))); // case-insensitive
+        assert!(!boundary_probe_from(Some("maybe".to_string()))); // unknown -> OFF
+    }
+
+    #[test]
+    fn integrate_verify_spec_boundary_clause_is_additive_and_gated() {
+        let off = integrate_verify_spec_inner(TargetLang::Python, false);
+        let on = integrate_verify_spec_inner(TargetLang::Python, true);
+        // Default path: the clause is absent, so the spec is byte-identical to before this feature.
+        assert!(!off.contains("SILENT-ACCEPT CHECK"));
+        // Enabled path: the clause is appended, and ONLY appended (the base is an exact prefix).
+        assert!(on.contains("SILENT-ACCEPT CHECK"));
+        assert!(on.starts_with(&off));
+        assert_eq!(on.len(), off.len() + BOUNDARY_PROBE_CLAUSE.len());
+    }
+
+    #[test]
     fn assured_gate_precedence_and_byte_identical_default() {
         // Default path (assured OFF): unset -> false, byte-identical to the old env().unwrap_or(false).
         assert!(!resolve_gate(None, false, true));
@@ -4990,15 +5014,48 @@ fn is_agent_loop_filler(s: &str) -> bool {
         || t.contains("continuing agent loop")
 }
 
+/// GOOSE_SWARM_BOUNDARY_PROBE (default OFF): whether to append the SILENT-ACCEPT clause to the integrate-verify
+/// spec. The existing robustness probe only guards TRACEBACKS (`looks_like_python_traceback`), so an app that
+/// silently swallows an out-of-domain input (empty stdout, exit 0) passes today — urlparse accepted an unknown
+/// URL field, printed nothing, exited 0, and neither the crash gate nor the completion gate saw a problem. This
+/// clause makes the weak worker treat empty-output-and-success on an UNDEFINED input as a bug. Fenced to the
+/// spec's own undefined domain so it never rejects free-form input the spec is designed to transform. Ships
+/// gated for A/B on {calc,basex,slugify,urlparse} + an open-domain control before any default flip.
+fn boundary_probe_from(v: Option<String>) -> bool {
+    v.map(|s| {
+        matches!(
+            s.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        )
+    })
+    .unwrap_or(false)
+}
+
+fn boundary_probe_enabled() -> bool {
+    boundary_probe_from(std::env::var("GOOSE_SWARM_BOUNDARY_PROBE").ok())
+}
+
+/// Appended to the integrate-verify spec only when GOOSE_SWARM_BOUNDARY_PROBE is on. Purely additive.
+const BOUNDARY_PROBE_CLAUSE: &str = " SILENT-ACCEPT CHECK: an out-of-domain input the spec does NOT define a result for — an unknown option/field/subcommand/unit, or a value outside the spec's stated domain — must NOT print EMPTY output and exit 0. Silently swallowing an input it cannot handle (nothing on stdout, success exit) is a BUG just like a crash: run each command once with such an input and confirm it EITHER produces the spec's defined result OR fails with a clean nonzero-exit `error: <message>`, NEVER nothing-and-success. Fence this to the spec's UNDEFINED domain only: do NOT reject free-form input the spec is DESIGNED to transform (arbitrary text into a slug, any integer into a format) — that input is in-domain and stays exit 0.";
+
 /// The canonical integrate-verify SINK spec — the one gate that BUILDS + RUNS the whole program end-to-end on
 /// golden inputs (not just pytest). Built here (T2) so BOTH the inject-when-missing path AND the post-detailing
 /// override use the SAME strong spec, instead of leaving the one end-to-end gate to the high-variance detailer.
 fn integrate_verify_spec(lang: TargetLang) -> String {
-    format!(
+    integrate_verify_spec_inner(lang, boundary_probe_enabled())
+}
+
+fn integrate_verify_spec_inner(lang: TargetLang, boundary_probe: bool) -> String {
+    let base = format!(
         "Integrate every module and VERIFY the whole program works end-to-end: run the test suite ({}), then BUILD + ACTUALLY RUN the program's ADVERTISED entry point ({}) AND run EVERY command/usage the SPEC advertises — the exact example invocations from the goal, with the SAME subcommands and argument shapes the spec shows (do NOT redesign the interface into flags). INVOCATION: when you run the BUILT entry directly, the spec LEADING program/bin name is the program ITSELF, never an argument — spec `app build x` runs as `node dist/cli.js build x` or `python3 -m app build x`, NEVER `node dist/cli.js app build x`; mis-prefixing the bin name makes a WORKING app look broken. For EACH command do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies and confirm the ACTUAL output equals the SPECIFIC value the spec implies (not just exit 0); for a MULTI-OUTPUT command (--count N / a list of N) confirm all N are correct AND genuinely distinct at the right granularity where the semantics require it (e.g. the next N occurrences). Do NOT invent an expected output to pass the check. FIX any build error, missing build config (e.g. a tsconfig.json the build needs), runtime crash, OR wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE. Then PROBE ROBUSTNESS: run each command ONCE with a plausibly-BAD input the spec does not explicitly list — a nonexistent name/value, an out-of-range or empty argument, a malformed value — and confirm it prints a CLEAN error with a nonzero exit, NOT an uncaught Python Traceback. If ANY command tracebacks on bad input, wrap the entry point's command dispatch in a SPECIFIC try/except (catch the domain error type it raises) that prints a clean `error: <message>` to stderr and exits nonzero — NEVER a bare `except:`/`except: pass` or a blanket `sys.exit` that hides real bugs. A CLI that tracebacks on a user typo is broken. If the program READS a PERSISTED file or database, ALSO probe it against a MALFORMED/corrupt version of that file (e.g. invalid JSON) AND a MISSING one: a corrupt store must give a clean error and a missing store must start empty cleanly — NEVER an uncaught JSONDecodeError/parse traceback. Guard the LOAD path (which every read command shares), not only the command arguments. A green test suite does NOT prove the CLI runs or is correct, and running the source directly does NOT prove the BUILT/advertised entry works.",
         lang.test_cmd(),
         lang.entry_run_example()
-    )
+    );
+    if boundary_probe {
+        format!("{base}{BOUNDARY_PROBE_CLAUSE}")
+    } else {
+        base
+    }
 }
 
 /// The existing on-disk .py files (relative to the app root) for the ARCHITECT (T3). On an AMENDMENT the
