@@ -20,14 +20,34 @@ import { saveRecipe } from '../../recipe/recipe_management';
 const AZURE = '#2e8bff';
 const CHAT_URL = 'http://127.0.0.1:1234/v1/chat/completions';
 
-const SYSTEM_PROMPT = `You help a user create a "recipe" for an autonomous agent — a reusable instruction set the agent runs every time its loop fires.
-Have a SHORT, friendly conversation to understand the task, then produce the recipe.
-Guidelines:
-- Ask ONE short clarifying question at a time (1-2 sentences). Focus on: what the agent should do each run, the specific target or scope, and what a good result looks like.
-- After the user has answered a couple of questions, or whenever they ask you to draft it, STOP asking and output the recipe.
-- Output the recipe as a single line "Here's your recipe:" followed by a fenced code block \`\`\`json containing exactly {"title": string, "description": string, "instructions": string}.
-  - title: 3-6 words. description: one sentence. instructions: specific, multi-step, imperative directions the agent follows every run.
-- Never output the json block in your first message; ask at least one question first.`;
+// The conversation is an INTERVIEW only — the model asks questions and never writes the recipe or any
+// JSON. The recipe itself is produced by a separate, schema-constrained call (draftRecipe) so a weak local
+// model can't emit a truncated / malformed code block into the chat.
+const SYSTEM_PROMPT = `You are helping a user create a "recipe" for an autonomous agent — a reusable instruction set the agent runs every time its loop fires. Your only job right now is to INTERVIEW them.
+- Ask ONE short, friendly clarifying question at a time (1-2 sentences). Cover, over a few turns: what the agent should do each run, the specific target or scope, and what a good result looks like.
+- Do NOT write the recipe yourself, and do NOT output JSON, code blocks, or backticks.
+- Once you have enough (usually after 2-3 answers), reply with one short sentence telling the user to click the "Draft the recipe now" button below.`;
+
+const DRAFT_SYSTEM = `From the conversation, produce a recipe for the autonomous agent. Return a title (a short name, 3-6 words), a one-sentence description, and instructions: specific, multi-step, imperative directions the agent follows on every run — concrete and actionable, referencing the details the user gave.`;
+
+// LM Studio (OpenAI-compatible) honours response_format json_schema, forcing valid structured output.
+const RECIPE_SCHEMA = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'recipe',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string' },
+        description: { type: 'string' },
+        instructions: { type: 'string' },
+      },
+      required: ['title', 'description', 'instructions'],
+    },
+  },
+};
 
 type ChatRole = 'user' | 'assistant';
 interface ChatMsg {
@@ -41,30 +61,11 @@ interface Draft {
   instructions: string;
 }
 
-/** Pull a {title, description, instructions} recipe out of a model reply — fenced json, bare json, or none. */
-function extractDraft(text: string): Draft | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidates = [fenced?.[1], text.match(/\{[\s\S]*\}/)?.[0]].filter(Boolean) as string[];
-  for (const raw of candidates) {
-    try {
-      const o = JSON.parse(raw);
-      const title = typeof o.title === 'string' ? o.title.trim() : '';
-      const instructions = typeof o.instructions === 'string' ? o.instructions.trim() : '';
-      if (title && instructions) {
-        const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim() : title;
-        return { title, description, instructions };
-      }
-    } catch {
-      /* not this candidate */
-    }
-  }
-  return null;
-}
-
-/** The visible text of a reply, with any recipe json block stripped so the chat stays readable. */
+/** The visible text of an interview reply. The model is told not to emit code, but strip any stray fence
+ *  defensively so the chat never shows raw ```json to the user. */
 function visibleText(text: string): string {
-  const stripped = text.replace(/```(?:json)?\s*[\s\S]*?```/gi, '').trim();
-  return stripped || 'Here’s your recipe — review it below.';
+  const stripped = text.replace(/```(?:json)?\s*[\s\S]*?(```|$)/gi, '').trim();
+  return stripped || 'Tell me a bit more, or click “Draft the recipe now”.';
 }
 
 export function RecipeChatWizard({
@@ -112,13 +113,9 @@ export function RecipeChatWizard({
 
   if (!isOpen) return null;
 
-  const callFleet = async (history: ChatMsg[]): Promise<void> => {
-    if (!model) {
-      setError('No fleet model is loaded. Start LM Studio and load a model, then try again.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
+  // One chat completion. `format` optionally forces structured JSON output (used to draft the recipe).
+  const complete = async (system: string, history: ChatMsg[], format?: unknown): Promise<string> => {
+    if (!model) throw new Error('no-model');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120_000);
     try {
@@ -127,10 +124,11 @@ export function RecipeChatWizard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
-          temperature: 0.4,
-          max_tokens: 1024,
+          messages: [{ role: 'system', content: system }, ...history],
+          temperature: format ? 0.3 : 0.5,
+          max_tokens: 1200,
           stream: false,
+          ...(format ? { response_format: format } : {}),
         }),
         signal: controller.signal,
       });
@@ -138,14 +136,34 @@ export function RecipeChatWizard({
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const reply = data.choices?.[0]?.message?.content ?? '';
       if (!reply.trim()) throw new Error('the fleet returned an empty reply');
-      const found = extractDraft(reply);
-      if (found) setDraft(found);
-      setMessages((prev) => [...prev, { role: 'assistant', content: visibleText(reply) }]);
-    } catch (e) {
-      const msg = e instanceof Error && e.name === 'AbortError' ? 'the fleet took too long to respond' : e instanceof Error ? e.message : String(e);
-      setError(`Couldn’t reach the fleet — ${msg}.`);
+      return reply;
     } finally {
       clearTimeout(timer);
+    }
+  };
+
+  const fleetError = (e: unknown): string => {
+    const msg =
+      e instanceof Error && e.name === 'AbortError'
+        ? 'the fleet took too long (is it busy building? free it up and retry)'
+        : e instanceof Error && e.message === 'no-model'
+          ? 'no fleet model is loaded — start LM Studio and load a model'
+          : e instanceof Error
+            ? e.message
+            : String(e);
+    return `Couldn’t reach the fleet — ${msg}.`;
+  };
+
+  // Interview turn: the model asks the next question. It never writes the recipe here.
+  const ask = async (history: ChatMsg[]): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const reply = await complete(SYSTEM_PROMPT, history);
+      setMessages((prev) => [...prev, { role: 'assistant', content: visibleText(reply) }]);
+    } catch (e) {
+      setError(fleetError(e));
+    } finally {
       setBusy(false);
     }
   };
@@ -156,17 +174,32 @@ export function RecipeChatWizard({
     const next = [...messages, { role: 'user' as const, content: text }];
     setMessages(next);
     setInput('');
-    void callFleet(next);
+    void ask(next);
   };
 
-  const draftNow = () => {
+  // Draft: a schema-constrained call that ALWAYS yields a valid recipe — no truncated / malformed blocks.
+  const draftNow = async () => {
     if (busy) return;
-    const next = [
-      ...messages,
-      { role: 'user' as const, content: 'Please draft the recipe now as the json block, using what we have discussed.' },
-    ];
-    setMessages(next);
-    void callFleet(next);
+    setBusy(true);
+    setError(null);
+    try {
+      const reply = await complete(DRAFT_SYSTEM, messages, RECIPE_SCHEMA);
+      const o = JSON.parse(reply) as Partial<Draft>;
+      const title = (o.title ?? '').trim();
+      const instructions = (o.instructions ?? '').trim();
+      if (!title || !instructions) {
+        throw new Error('the fleet returned an incomplete recipe — add a bit more detail and retry');
+      }
+      setDraft({ title, description: (o.description ?? '').trim() || title, instructions });
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Drafted your recipe — review and edit it below, then save.' },
+      ]);
+    } catch (e) {
+      setError(fleetError(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const save = async () => {
@@ -322,7 +355,7 @@ export function RecipeChatWizard({
           </div>
           <div className="flex items-center justify-between">
             <button
-              onClick={draftNow}
+              onClick={() => void draftNow()}
               disabled={busy || messages.length < 2}
               className="text-xs px-2.5 py-1 border border-border-primary text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1"
               style={{ borderRadius: 3 }}
