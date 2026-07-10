@@ -2141,24 +2141,25 @@ mod tests {
 
     #[test]
     fn complete_stall_rounds_defaults_off_and_clamps() {
-        assert_eq!(complete_stall_rounds_from(None), 0); // default OFF -> byte-identical to today
+        assert_eq!(complete_stall_rounds_from(None), 2); // default ON at 2 (flipped 2026-07-10)
         assert_eq!(complete_stall_rounds_from(Some("2".to_string())), 2);
         assert_eq!(complete_stall_rounds_from(Some("99".to_string())), 6); // clamped high
         assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
         assert_eq!(complete_stall_rounds_from(Some(" 3 ".to_string())), 3); // trimmed
-        assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 0); // unparseable -> OFF
+        assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 2); // unparseable -> default 2
     }
 
     #[test]
-    fn boundary_probe_from_defaults_off_and_parses() {
-        assert!(!boundary_probe_from(None)); // default OFF -> spec byte-identical to today
+    fn boundary_probe_from_defaults_on_and_parses() {
+        assert!(boundary_probe_from(None)); // default ON (flipped 2026-07-10)
         assert!(!boundary_probe_from(Some("0".to_string())));
         assert!(!boundary_probe_from(Some("off".to_string())));
         assert!(!boundary_probe_from(Some("false".to_string())));
+        assert!(!boundary_probe_from(Some("no".to_string())));
         assert!(boundary_probe_from(Some("1".to_string())));
         assert!(boundary_probe_from(Some(" on ".to_string()))); // trimmed
         assert!(boundary_probe_from(Some("TRUE".to_string()))); // case-insensitive
-        assert!(!boundary_probe_from(Some("maybe".to_string()))); // unknown -> OFF
+        assert!(boundary_probe_from(Some("maybe".to_string()))); // unknown -> default ON
     }
 
     #[test]
@@ -5014,21 +5015,21 @@ fn is_agent_loop_filler(s: &str) -> bool {
         || t.contains("continuing agent loop")
 }
 
-/// GOOSE_SWARM_BOUNDARY_PROBE (default OFF): whether to append the SILENT-ACCEPT clause to the integrate-verify
+/// GOOSE_SWARM_BOUNDARY_PROBE (default ON): whether to append the SILENT-ACCEPT clause to the integrate-verify
 /// spec. The existing robustness probe only guards TRACEBACKS (`looks_like_python_traceback`), so an app that
 /// silently swallows an out-of-domain input (empty stdout, exit 0) passes today — urlparse accepted an unknown
 /// URL field, printed nothing, exited 0, and neither the crash gate nor the completion gate saw a problem. This
 /// clause makes the weak worker treat empty-output-and-success on an UNDEFINED input as a bug. Fenced to the
-/// spec's own undefined domain so it never rejects free-form input the spec is designed to transform. Ships
-/// gated for A/B on {calc,basex,slugify,urlparse} + an open-domain control before any default flip.
+/// spec's own undefined domain so it never rejects free-form input the spec is designed to transform. Flipped
+/// ON by default (2026-07-10); set the env to 0/off/false/no to disable.
 fn boundary_probe_from(v: Option<String>) -> bool {
     v.map(|s| {
-        matches!(
+        !matches!(
             s.trim().to_lowercase().as_str(),
-            "1" | "on" | "true" | "yes"
+            "0" | "off" | "false" | "no"
         )
     })
-    .unwrap_or(false)
+    .unwrap_or(true)
 }
 
 fn boundary_probe_enabled() -> bool {
@@ -8785,8 +8786,10 @@ fn complete_rounds() -> u32 {
 /// that every fix that ever landed dropped findings on the FIRST fix round — no run ever showed findings
 /// go flat-then-drop — so exiting after N no-progress rounds cannot cut a fix that would have landed.
 fn complete_stall_rounds_from(v: Option<String>) -> u32 {
+    // Default ON at 2 (flipped 2026-07-10): after 2 completion rounds that make no change to the
+    // findings, early-exit. Set the env to 0 to disable.
     v.and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
+        .unwrap_or(2)
         .min(6)
 }
 
