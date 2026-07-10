@@ -17,9 +17,11 @@ import {
   Keyboard,
   HardDrive,
   KeyRound,
+  DownloadCloud,
 } from 'lucide-react';
 import { LeanZero } from '../icons';
 import { SWARM_DISPLAY_NAME } from '../../branding';
+import ImportView from './import/ImportView';
 import { useState, useEffect, useRef } from 'react';
 import ChatSettingsSection from './chat/ChatSettingsSection';
 import KeyboardShortcutsSection from './keyboard/KeyboardShortcutsSection';
@@ -135,6 +137,13 @@ export default function SettingsView({
     }
   }, [localInference, activeTab]);
 
+  // Reset active tab if the Import tab (Local Edition only) becomes unavailable
+  useEffect(() => {
+    if (!isLocalEdition && activeTab === 'import') {
+      setActiveTab('models');
+    }
+  }, [isLocalEdition, activeTab]);
+
   useEffect(() => {
     if (!hasTrackedInitialTab.current) {
       trackSettingsTabViewed(activeTab);
@@ -204,6 +213,16 @@ export default function SettingsView({
                       {SWARM_DISPLAY_NAME}
                     </TabsTrigger>
                   )}
+                  {isLocalEdition && (
+                    <TabsTrigger
+                      value="import"
+                      className="flex gap-2"
+                      data-testid="settings-import-tab"
+                    >
+                      <DownloadCloud className="h-4 w-4" />
+                      Import
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="chat" className="flex gap-2" data-testid="settings-chat-tab">
                     <MessageSquare className="h-4 w-4" />
                     {intl.formatMessage(i18n.tabChat)}
@@ -266,6 +285,15 @@ export default function SettingsView({
                     className="mt-0 focus-visible:outline-none focus-visible:ring-0"
                   >
                     <SwarmSettingsSection />
+                  </TabsContent>
+                )}
+
+                {isLocalEdition && (
+                  <TabsContent
+                    value="import"
+                    className="mt-0 focus-visible:outline-none focus-visible:ring-0"
+                  >
+                    <ImportView />
                   </TabsContent>
                 )}
 
