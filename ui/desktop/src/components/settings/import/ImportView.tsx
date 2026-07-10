@@ -8,6 +8,7 @@ import { addConfigExtension } from '../../../acp/extensions';
 import { acpUpsertConfig } from '../../../acp/config';
 import type { ExtensionConfig } from '../../../types/extensions';
 import { getInitialWorkingDir } from '../../../utils/workingDir';
+import GooseImportSection from './GooseImportSection';
 
 /**
  * Goose Local Edition — Import hub. Scans a source (Claude Code today) for artifacts and lets the user
@@ -557,6 +558,13 @@ export default function ImportView() {
         )}
         </>
       )}
+
+      <div className="pt-2 border-t border-border-primary mt-4">
+        <p className="text-xs text-text-secondary mb-2">
+          Migrate your own Goose recipes and loops from another setup.
+        </p>
+        <GooseImportSection />
+      </div>
     </div>
   );
 }
