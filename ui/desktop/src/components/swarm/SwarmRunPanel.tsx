@@ -1,12 +1,14 @@
-import React from 'react';
-import { Check, X, Loader2 } from 'lucide-react';
-import { useSwarmRun, type TurnStatus } from './useSwarmRun';
+import React, { useState } from 'react';
+import { Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench } from 'lucide-react';
+import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall } from './useSwarmRun';
 
 /**
- * Goose Local Edition — LIVE swarm run turn loops. One row per task: the node identity chip, the node's
- * device, the model, the worker's latest reasoning + recent tool calls, and a status glyph. Fed by
- * useSwarmRun (reads <cwd>/.swarm). Sharp full-border card (never a left rail), solid saturated status
- * colors, matching the FanInCard fleet view. Renders nothing when there is no run to show.
+ * Goose Local Edition — LIVE swarm run turn loops, verbose. One expandable lane per task: the node
+ * identity chip, device, model, and status in the header; on expand, the worker's full reasoning and
+ * the actual TOOL CALLS it made (the shell line, edited path, query…) with per-call ok/err. Fed by
+ * useSwarmRun (reads <cwd>/.swarm). Running lanes auto-expand so live activity is visible at a glance.
+ * A run whose files have gone quiet for STALE_MS is shown as interrupted rather than a live spinner.
+ * Sharp full-border card (never a left rail), solid saturated status colors. Renders nothing when idle.
  */
 
 // Node identity ramp — matches FanInCard so a node reads the same across the fleet + run views.
@@ -16,11 +18,10 @@ const STATUS_COLOR: Record<TurnStatus, string> = {
   done: '#2ecc71',
   error: '#ff3b30',
 };
-const STATUS_ICON: Record<TurnStatus, React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>> = {
-  running: Loader2,
-  done: Check,
-  error: X,
-};
+const STALE_MS = 120_000;
+const CALL_OK = '#2ecc71';
+const CALL_ERR = '#ff3b30';
+const CALL_PENDING = '#8a8a8a';
 
 /** Stable node letter/hue per device so the same node keeps its identity across rows and polls. */
 function deviceIndex(device: string, order: string[]): number {
@@ -36,11 +37,142 @@ function ago(mtime: number | null): string {
   return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
 }
 
+function callColor(ok: boolean | null): string {
+  if (ok === true) return CALL_OK;
+  if (ok === false) return CALL_ERR;
+  return CALL_PENDING;
+}
+
+const CallRow: React.FC<{ call: SwarmCall }> = ({ call }) => (
+  <div className="flex items-start gap-2 py-0.5">
+    <span
+      className="mt-1 h-1.5 w-1.5 shrink-0"
+      style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
+      aria-hidden
+    />
+    <span
+      className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
+      style={{ borderRadius: 2 }}
+    >
+      {call.name.replace(/^developer__/, '')}
+    </span>
+    <span
+      className="flex-1 font-mono text-xs text-text-primary break-words"
+      style={call.ok === false ? { color: CALL_ERR } : undefined}
+      title={call.summary}
+    >
+      {call.summary || '—'}
+    </span>
+  </div>
+);
+
+const LaneRow: React.FC<{
+  lane: TurnLane;
+  deviceOrder: string[];
+  stale: boolean;
+  open: boolean;
+  onToggle: () => void;
+}> = ({ lane, deviceOrder, stale, open, onToggle }) => {
+  const idx = deviceIndex(lane.device, deviceOrder);
+  const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
+  const letter = String.fromCharCode(65 + (idx % 26));
+
+  const live = lane.status === 'running' && !stale;
+  const interrupted = lane.status === 'running' && stale;
+  const Icon = interrupted ? CircleSlash : lane.status === 'done' ? Check : lane.status === 'error' ? X : Loader2;
+  const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
+
+  const calls = lane.calls ?? [];
+  const reasoning = lane.reasoning?.trim() || lane.lastText?.trim() || '';
+  const hasBody = reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0;
+
+  return (
+    <div data-testid="turn-lane">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-background-primary/40 transition-colors"
+      >
+        {hasBody ? (
+          open ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+          )
+        ) : (
+          <span className="w-3.5 shrink-0" />
+        )}
+        <span className="font-bold shrink-0" style={{ color: hue }} aria-label={`node ${letter}`}>
+          ⬢{letter}
+        </span>
+        <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
+        <span className="flex-1 truncate text-xs font-mono text-text-primary">{lane.taskId}</span>
+        {lane.model && (
+          <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
+            {lane.model}
+          </span>
+        )}
+        <span className="text-xs text-text-secondary tabular-nums shrink-0 flex items-center gap-1">
+          {typeof lane.toolCalls === 'number' && lane.toolCalls > 0 ? (
+            <span className="flex items-center gap-0.5">
+              <Wrench className="h-3 w-3" />
+              {lane.toolCalls}
+            </span>
+          ) : null}
+          {lane.errors ? <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span> : null}
+          {typeof lane.elapsedMs === 'number' ? <span>{Math.round(lane.elapsedMs / 1000)}s</span> : null}
+        </span>
+        <Icon
+          size={15}
+          strokeWidth={3}
+          className={`shrink-0 ${live ? 'animate-spin' : ''}`}
+          style={{ color: iconColor }}
+        />
+      </button>
+
+      {open && hasBody && (
+        <div className="px-3 pb-3 pl-9 space-y-2">
+          {reasoning && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">Reasoning</div>
+              <div
+                className="text-xs text-text-primary whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-background-primary border border-border-primary px-2 py-1.5"
+                style={{ borderRadius: 3 }}
+              >
+                {reasoning}
+              </div>
+            </div>
+          )}
+
+          {calls.length > 0 ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+                Tool calls · {lane.toolCalls ?? calls.length}
+              </div>
+              <div
+                className="max-h-56 overflow-y-auto bg-background-primary border border-border-primary px-2 py-1"
+                style={{ borderRadius: 3 }}
+              >
+                {calls.map((c, i) => (
+                  <CallRow key={i} call={c} />
+                ))}
+              </div>
+            </div>
+          ) : lane.recent && lane.recent.length > 0 ? (
+            <div className="text-xs text-text-secondary font-mono break-words">{lane.recent.join(' · ')}</div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
   workingDir,
   className = '',
 }) => {
   const run = useSwarmRun(workingDir);
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
   if (!run.present || run.lanes.length === 0) return null;
 
@@ -48,6 +180,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   const deviceOrder: string[] = [];
   for (const l of run.lanes) if (!deviceOrder.includes(l.device)) deviceOrder.push(l.device);
 
+  const stale = run.mtime != null && Date.now() - run.mtime > STALE_MS;
   const { running, done, failed, tasks } = run.totals;
 
   return (
@@ -60,8 +193,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         <span className="text-xs font-semibold">Swarm LeanZero — turn loops</span>
         <span className="text-xs text-text-secondary tabular-nums">
           {running > 0 && (
-            <span style={{ color: STATUS_COLOR.running }} className="font-semibold">
-              {running} running
+            <span
+              style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }}
+              className="font-semibold"
+            >
+              {running} {stale ? 'interrupted' : 'running'}
             </span>
           )}
           {running > 0 && ' · '}
@@ -79,47 +215,20 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         </span>
       </div>
 
-      <div className="max-h-72 overflow-y-auto divide-y divide-border-primary">
+      <div className="max-h-[28rem] overflow-y-auto divide-y divide-border-primary">
         {run.lanes.map((lane) => {
-          const idx = deviceIndex(lane.device, deviceOrder);
-          const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
-          const letter = String.fromCharCode(65 + (idx % 26));
-          const Icon = STATUS_ICON[lane.status];
-          // Prefer a meaningful reasoning snippet; the activity digest's last_text is often a stray
-          // fragment (".", "2"), so fall back to the recent tool calls when it is too short to be useful.
-          const text = lane.lastText?.trim() ?? '';
-          const detail =
-            (text.length > 4 ? text : '') ||
-            (lane.recent && lane.recent.length > 0 ? lane.recent.join(' · ') : '') ||
-            (lane.status === 'running' ? 'working…' : lane.status);
+          const open = overrides[lane.taskId] ?? (lane.status === 'running');
           return (
-            <div key={lane.taskId} className="px-3 py-2" data-testid="turn-lane">
-              <div className="flex items-center gap-2">
-                <span className="font-bold shrink-0" style={{ color: hue }} aria-label={`node ${letter}`}>
-                  ⬢{letter}
-                </span>
-                <span className="w-20 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
-                <span className="flex-1 truncate text-xs font-mono text-text-primary">{lane.taskId}</span>
-                <span className="text-xs text-text-secondary tabular-nums shrink-0">
-                  {typeof lane.toolCalls === 'number' ? `${lane.toolCalls}⚙` : ''}
-                  {lane.errors ? (
-                    <span style={{ color: STATUS_COLOR.error }}> {lane.errors}✕</span>
-                  ) : null}
-                  {typeof lane.elapsedMs === 'number' ? ` ${Math.round(lane.elapsedMs / 1000)}s` : ''}
-                </span>
-                <Icon
-                  size={15}
-                  strokeWidth={3}
-                  className={`shrink-0 ${lane.status === 'running' ? 'animate-spin' : ''}`}
-                  style={{ color: STATUS_COLOR[lane.status] }}
-                />
-              </div>
-              {detail && (
-                <div className="pl-6 pr-6 mt-0.5 text-xs text-text-secondary line-clamp-2 break-words">
-                  {detail}
-                </div>
-              )}
-            </div>
+            <LaneRow
+              key={lane.taskId}
+              lane={lane}
+              deviceOrder={deviceOrder}
+              stale={stale}
+              open={open}
+              onToggle={() =>
+                setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? lane.status === 'running') }))
+              }
+            />
           );
         })}
       </div>

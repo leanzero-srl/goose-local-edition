@@ -2255,12 +2255,19 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     const activityDir = path.join(swarmDir, 'activity');
     const actEntries = await fs.readdir(activityDir).catch(() => [] as string[]);
     const activity: Record<string, unknown> = {};
+    // A worker rewrites its activity digest every turn but the run log only gets a line on task
+    // events, so the freshest activity mtime is the real liveness signal — fold it into `mtime` so a
+    // long-running task is not mistaken for stalled, and a killed run correctly goes stale.
+    let freshest = mtime;
     await Promise.all(
       actEntries
         .filter((f) => f.endsWith('.json'))
         .map(async (f) => {
           try {
-            const c = await fs.readFile(path.join(activityDir, f), 'utf8');
+            const p = path.join(activityDir, f);
+            const st = await fs.stat(p);
+            if (st.mtimeMs > freshest) freshest = st.mtimeMs;
+            const c = await fs.readFile(p, 'utf8');
             activity[f.replace(/\.json$/, '')] = JSON.parse(c);
           } catch {
             /* a digest mid-write — skip it this poll */
@@ -2270,7 +2277,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
 
     return {
       runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
-      mtime,
+      mtime: freshest,
       events,
       activity,
     };

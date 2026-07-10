@@ -2542,7 +2542,23 @@ impl GooseAcpAgent {
         let mut chain_buffer: Vec<(String, String)> = Vec::new();
         let mut stream_error = None;
 
-        while let Some(event) = stream.next().await {
+        loop {
+            let event = tokio::select! {
+                biased;
+                // Stop pressed: break so `stream` is dropped promptly. That drops the in-flight
+                // provider future instead of waiting for it to finish — the swarm provider spawns
+                // `goose swarm run` with kill_on_drop, so this is what actually stops a running
+                // fleet build. A cooperative is_cancelled() check alone never fires while the first
+                // stream.next() is blocked for the whole run.
+                _ = cancel_token.cancelled() => {
+                    was_cancelled = true;
+                    break;
+                }
+                maybe_event = stream.next() => match maybe_event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             if cancel_token.is_cancelled() {
                 was_cancelled = true;
                 break;
@@ -2648,6 +2664,10 @@ impl GooseAcpAgent {
                 }
             }
         }
+
+        // Drop the reply stream now (not at end of scope) so a cancelled run's in-flight provider
+        // future — and any child process it spawned with kill_on_drop — is torn down immediately.
+        drop(stream);
 
         {
             let mut sessions = self.sessions.lock().await;

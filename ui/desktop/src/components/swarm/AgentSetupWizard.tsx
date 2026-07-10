@@ -5,7 +5,7 @@ import { LeanZero } from '../icons';
 import { LoopModal, type NewLoopPayload } from '../loop/LoopModal';
 import { acpCreateSchedule, acpListSchedules, acpRunScheduleNow } from '../../acp/schedules';
 import { listSkillSources } from '../../acp/sources';
-import { startNewSession } from '../../sessions';
+import RecipeWizard from './RecipeWizard';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import type { setViewType } from '../../hooks/useNavigation';
 
@@ -13,7 +13,8 @@ import type { setViewType } from '../../hooks/useNavigation';
  * Goose Local Edition — the Agent persona setup wizard. The autonomous Agent runs a LOOP built from a
  * RECIPE, with SKILLS it can call. This ties the app's existing Loop / Recipe / Skills features together:
  *  - Create the loop by hand (reuses LoopModal — recipe + schedule + iterations).
- *  - Or build the recipe WITH the swarm (seeds a chat that drafts one).
+ *  - Or draft a recipe with a GUIDED wizard (RecipeWizard asks the questions in-UI and saves it). The
+ *    swarm provider is a build orchestrator, not a conversational model, so it cannot run a Q&A itself.
  *  - Skills surface as /commands; link out to manage them.
  * Sharp full-border modal (no left rail, no faded tints, solid azure), matching the Local Edition look.
  */
@@ -32,6 +33,7 @@ export function AgentSetupWizard({
   workingDir?: string;
 }) {
   const [loopModalOpen, setLoopModalOpen] = useState(false);
+  const [recipeWizardOpen, setRecipeWizardOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdLoopId, setCreatedLoopId] = useState<string | null>(null);
@@ -91,19 +93,6 @@ export function AgentSetupWizard({
     }
   };
 
-  const buildWithSwarm = async () => {
-    const prompt =
-      'Help me build a goose recipe for an autonomous agent. Ask me what I want it to do repeatedly, ' +
-      'then draft a recipe (title, description, instructions) I can save and run in a loop. When the recipe ' +
-      'is ready, tell me to use "Make recipe" to save it.';
-    try {
-      await startNewSession(prompt, setView, dir);
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const goToSkills = () => {
     setView('skills');
     onClose();
@@ -111,8 +100,8 @@ export function AgentSetupWizard({
 
   return (
     <>
-      {/* Hidden while LoopModal (z-40) is open so it isn't buried under this z-70 overlay. */}
-      {!loopModalOpen && (
+      {/* Hidden while LoopModal (z-40) or the RecipeWizard is open so this z-70 overlay isn't in the way. */}
+      {!loopModalOpen && !recipeWizardOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
         <div
           className="bg-background-primary border border-border-primary shadow-lg w-[540px] max-h-[85vh] flex flex-col"
@@ -139,8 +128,8 @@ export function AgentSetupWizard({
             <p className="text-text-secondary text-xs">
               The Agent runs on its own: a <span className="text-text-primary font-medium">loop</span> built from
               a <span className="text-text-primary font-medium">recipe</span>, iterating across your fleet, with{' '}
-              <span className="text-text-primary font-medium">skills</span> it can call. Set it up by hand, or
-              have the swarm draft the recipe for you.
+              <span className="text-text-primary font-medium">skills</span> it can call. Draft a recipe with a
+              guided wizard, or create the loop directly.
             </p>
 
             {/* Recipe + Loop */}
@@ -160,12 +149,12 @@ export function AgentSetupWizard({
                   <ArrowRight className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={buildWithSwarm}
+                  onClick={() => setRecipeWizardOpen(true)}
                   className="w-full flex items-center justify-between px-3 py-2 text-xs border border-border-primary text-text-primary hover:border-text-secondary transition-colors"
                   style={{ borderRadius: 3 }}
                 >
                   <span className="flex items-center gap-2">
-                    <Wand2 className="h-4 w-4" /> Build the recipe with the swarm
+                    <Wand2 className="h-4 w-4" /> Draft a recipe (guided — answer a few questions)
                   </span>
                   <ArrowRight className="h-4 w-4" />
                 </button>
@@ -257,6 +246,12 @@ export function AgentSetupWizard({
         onSubmit={handleCreateLoop}
         isLoadingExternally={submitting}
         apiErrorExternally={error}
+      />
+
+      <RecipeWizard
+        isOpen={recipeWizardOpen}
+        onClose={() => setRecipeWizardOpen(false)}
+        onSaved={() => setRecipeWizardOpen(false)}
       />
     </>
   );

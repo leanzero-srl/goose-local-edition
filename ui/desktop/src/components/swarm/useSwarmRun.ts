@@ -10,6 +10,12 @@ import { useEffect, useRef, useState } from 'react';
 
 export type TurnStatus = 'running' | 'done' | 'error';
 
+export interface SwarmCall {
+  name: string;
+  summary: string;
+  ok: boolean | null;
+}
+
 export interface TurnLane {
   taskId: string;
   device: string;
@@ -17,6 +23,8 @@ export interface TurnLane {
   status: TurnStatus;
   lastText?: string;
   recent?: string[];
+  reasoning?: string;
+  calls?: SwarmCall[];
   toolCalls?: number;
   errors?: number;
   elapsedMs?: number;
@@ -48,7 +56,14 @@ const EMPTY: SwarmRunState = {
   loading: true,
 };
 
-type Digest = { tool_calls?: number; errors?: number; recent?: string[]; last_text?: string };
+type Digest = {
+  tool_calls?: number;
+  errors?: number;
+  recent?: string[];
+  last_text?: string;
+  reasoning?: string;
+  calls?: SwarmCall[];
+};
 
 function foldEvents(
   events: Array<Record<string, unknown>>,
@@ -106,6 +121,8 @@ function foldEvents(
       ...t,
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
+      reasoning: act?.reasoning ?? t.reasoning,
+      calls: act?.calls ?? t.calls,
       toolCalls: act?.tool_calls ?? t.toolCalls,
       errors: act?.errors ?? t.errors,
     };
