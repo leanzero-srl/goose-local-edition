@@ -18,7 +18,10 @@ const STATUS_COLOR: Record<TurnStatus, string> = {
   done: '#2ecc71',
   error: '#ff3b30',
 };
-const STALE_MS = 120_000;
+// A worker rewrites its digest each turn, but a single long tool call (cargo build, a big pytest run)
+// produces no write while it runs. Keep this above realistic single-tool durations so a live worker isn't
+// mislabelled "interrupted"; a genuinely dead run still goes stale within this window.
+const STALE_MS = 300_000;
 const CALL_OK = '#2ecc71';
 const CALL_ERR = '#ff3b30';
 const CALL_PENDING = '#8a8a8a';
