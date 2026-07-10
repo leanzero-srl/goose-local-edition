@@ -36,6 +36,9 @@ import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmContextLimit } from './swarm/useFleet';
+import { PersonaChooser } from './swarm/PersonaChooser';
+import { usePersona } from './swarm/usePersona';
+import AgentSetupWizard from './swarm/AgentSetupWizard';
 import { defineMessages, useIntl } from '../i18n';
 import TurndownService from 'turndown';
 import type { NextChatExtensionDraft } from '../utils/nextChatExtensions';
@@ -297,6 +300,9 @@ export default function ChatInput({
   );
   const effectiveModel = modelOverride?.model ?? sessionModel ?? configModel;
   const effectiveProvider = modelOverride?.provider ?? sessionProvider ?? configProvider;
+  const isSwarmProvider = effectiveProvider === 'swarm';
+  const { persona, setPersona } = usePersona();
+  const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
   // Clear override when the underlying data catches up (session props for
   // active chats, config defaults for Hub / no-session contexts).
@@ -1678,6 +1684,35 @@ export default function ChatInput({
             />
           </div>
         </Tooltip>
+
+        {/* Left: persona chooser (Local Edition swarm only) */}
+        {isSwarmProvider && !isBottomBarNarrow && (
+          <PersonaChooser
+            value={persona}
+            onChange={(p) => {
+              setPersona(p);
+              if (p === 'agent') setAgentWizardOpen(true);
+            }}
+          />
+        )}
+        {isSwarmProvider && persona === 'agent' && !isBottomBarNarrow && (
+          <button
+            type="button"
+            onClick={() => setAgentWizardOpen(true)}
+            className="text-xs text-text-primary/70 hover:text-text-primary transition-colors underline underline-offset-2"
+            title="Configure the autonomous Agent (loop, recipe, skills)"
+          >
+            set up
+          </button>
+        )}
+        {agentWizardOpen && (
+          <AgentSetupWizard
+            isOpen={agentWizardOpen}
+            onClose={() => setAgentWizardOpen(false)}
+            setView={setView}
+            workingDir={currentWorkingDir}
+          />
+        )}
 
         {/* Left: working directory (leaf folder name only) */}
         {!isBottomBarNarrow && (
