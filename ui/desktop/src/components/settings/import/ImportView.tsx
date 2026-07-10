@@ -4,6 +4,9 @@ import { toast } from 'react-toastify';
 import { LeanZero } from '../../icons';
 import { Switch } from '../../ui/switch';
 import { createSkillSource } from '../../../acp/sources';
+import { addConfigExtension } from '../../../acp/extensions';
+import { acpUpsertConfig } from '../../../acp/config';
+import type { ExtensionConfig } from '../../../types/extensions';
 import { getInitialWorkingDir } from '../../../utils/workingDir';
 
 /**
@@ -15,6 +18,7 @@ import { getInitialWorkingDir } from '../../../utils/workingDir';
 
 const AZURE = '#2e8bff';
 const CLAUDE_SKILLS_DIR = '~/.claude/skills';
+const CLAUDE_JSON = '~/.claude.json';
 
 interface ClaudeSkill {
   dirName: string;
@@ -105,6 +109,56 @@ async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
   return skills.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
+interface McpServerScan {
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args: string[];
+  url?: string;
+  headers: Record<string, string>;
+  envValues: Record<string, string>; // env var name -> value (stored as secrets on import)
+  supported: boolean; // goose dropped the sse transport
+}
+
+/** Read ~/.claude.json and map its `mcpServers` block into a normalized scan list. Claude's shape:
+ *  `{ "<name>": { type?: 'stdio'|'http'|'sse', command?, args?, env?, url?, headers? } }`. `type` may be
+ *  absent (command => stdio, url => http). `env`/`headers` may be an object, or `[]` when empty. */
+async function scanClaudeMcp(): Promise<McpServerScan[]> {
+  const res = await window.electron.readFile(CLAUDE_JSON);
+  if (!res.found || !res.file) return [];
+  let json: unknown;
+  try {
+    json = JSON.parse(res.file);
+  } catch {
+    return [];
+  }
+  const servers = (json as { mcpServers?: Record<string, Record<string, unknown>> })?.mcpServers;
+  if (!servers || typeof servers !== 'object') return [];
+  const asRecord = (v: unknown): Record<string, string> =>
+    v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
+  return Object.entries(servers).map(([name, s]) => {
+    const declared = String(s.type ?? '').toLowerCase();
+    const command = typeof s.command === 'string' ? s.command : undefined;
+    const url = typeof s.url === 'string' ? s.url : undefined;
+    const transport: McpServerScan['transport'] =
+      declared === 'sse'
+        ? 'sse'
+        : declared === 'http' || (url && declared !== 'stdio')
+          ? 'http'
+          : 'stdio';
+    return {
+      name,
+      transport,
+      command,
+      args: Array.isArray(s.args) ? (s.args as unknown[]).map(String) : [],
+      url,
+      headers: asRecord(s.headers),
+      envValues: asRecord(s.env),
+      supported: transport !== 'sse',
+    };
+  });
+}
+
 function SectionCard({
   title,
   count,
@@ -140,13 +194,17 @@ export default function ImportView() {
   const [scope, setScope] = useState<'global' | 'project'>('global');
   const [results, setResults] = useState<Record<string, ImportResult>>({});
   const [importing, setImporting] = useState(false);
+  const [mcpServers, setMcpServers] = useState<McpServerScan[]>([]);
+  const [selectedMcp, setSelectedMcp] = useState<Set<string>>(new Set());
 
   const rescan = useCallback(async () => {
     setLoading(true);
     try {
-      const found = await scanClaudeSkills();
+      const [found, mcp] = await Promise.all([scanClaudeSkills(), scanClaudeMcp()]);
       setSkills(found);
       setSelected(new Set(found.map((s) => s.dirName))); // default: all selected
+      setMcpServers(mcp);
+      setSelectedMcp(new Set(mcp.filter((m) => m.supported).map((m) => m.name)));
     } finally {
       setLoading(false);
     }
@@ -218,7 +276,64 @@ export default function ImportView() {
     else toast.success(msg);
   };
 
+  const toggleMcp = (name: string) => {
+    setSelectedMcp((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const importSelectedMcp = async () => {
+    setImporting(true);
+    let ok = 0;
+    let failed = 0;
+    const chosen = mcpServers.filter((m) => selectedMcp.has(m.name) && m.supported);
+    for (const srv of chosen) {
+      const rk = `mcp:${srv.name}`;
+      setResults((r) => ({ ...r, [rk]: { status: 'importing' } }));
+      try {
+        const envKeys = Object.keys(srv.envValues).filter((k) => srv.envValues[k]);
+        // The extension mapping drops env VALUES, so store each as a secret and list its key in env_keys.
+        for (const k of envKeys) {
+          await acpUpsertConfig(k, srv.envValues[k], true);
+        }
+        const config: ExtensionConfig =
+          srv.transport === 'http'
+            ? {
+                type: 'streamable_http',
+                name: srv.name,
+                uri: srv.url ?? '',
+                headers: srv.headers,
+                ...(envKeys.length ? { env_keys: envKeys } : {}),
+              }
+            : {
+                type: 'stdio',
+                name: srv.name,
+                cmd: srv.command ?? '',
+                args: srv.args,
+                ...(envKeys.length ? { env_keys: envKeys } : {}),
+              };
+        await addConfigExtension(config, true);
+        ok += 1;
+        setResults((r) => ({ ...r, [rk]: { status: 'done' } }));
+      } catch (e) {
+        failed += 1;
+        setResults((r) => ({
+          ...r,
+          [rk]: { status: 'error', message: e instanceof Error ? e.message : String(e) },
+        }));
+      }
+    }
+    setImporting(false);
+    const msg = `Added ${ok} MCP server${ok === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`;
+    if (failed) toast.error(msg);
+    else toast.success(msg);
+  };
+
   const selectedCount = skills.filter((s) => selected.has(s.dirName)).length;
+  const selectedMcpCount = mcpServers.filter((m) => selectedMcp.has(m.name) && m.supported).length;
 
   return (
     <div className="space-y-4 pr-4 pb-8 max-w-3xl">
@@ -266,14 +381,16 @@ export default function ImportView() {
 
       {loading ? (
         <div className="text-sm text-text-secondary">Scanning ~/.claude…</div>
-      ) : skills.length === 0 ? (
+      ) : skills.length === 0 && mcpServers.length === 0 ? (
         <div
           className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center"
           style={{ borderRadius: 3 }}
         >
-          No Claude Code skills found in ~/.claude/skills.
+          Nothing found in ~/.claude to import.
         </div>
       ) : (
+        <>
+        {skills.length > 0 && (
         <SectionCard title="Skills" count={skills.length}>
           <div className="px-3 py-1 divide-y divide-border-primary">
             {skills.map((skill) => {
@@ -317,6 +434,70 @@ export default function ImportView() {
             </button>
           </div>
         </SectionCard>
+        )}
+
+        {mcpServers.length > 0 && (
+          <SectionCard title="MCP servers" count={mcpServers.length}>
+            <div className="px-3 py-1 divide-y divide-border-primary">
+              {mcpServers.map((srv) => {
+                const isSel = selectedMcp.has(srv.name) && srv.supported;
+                const res = results[`mcp:${srv.name}`];
+                const detail =
+                  srv.transport === 'http'
+                    ? srv.url
+                    : `${srv.command ?? ''} ${srv.args.join(' ')}`.trim();
+                return (
+                  <div key={srv.name} className="flex items-center gap-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary truncate">{srv.name}</span>
+                        <span className="text-[10px] text-text-secondary shrink-0">{srv.transport}</span>
+                        {!srv.supported && (
+                          <span className="text-[10px] shrink-0" style={{ color: '#ff3b30' }}>
+                            unsupported (sse)
+                          </span>
+                        )}
+                        {Object.keys(srv.envValues).length > 0 && (
+                          <span
+                            className="text-[10px] text-text-secondary shrink-0"
+                            title="env values are imported as secrets"
+                          >
+                            sets secrets
+                          </span>
+                        )}
+                      </div>
+                      {detail && (
+                        <div className="text-xs text-text-secondary truncate font-mono">{detail}</div>
+                      )}
+                    </div>
+                    <div className="w-6 flex justify-center shrink-0">
+                      {res ? STATUS_ICON[res.status] : null}
+                    </div>
+                    <Switch
+                      checked={isSel}
+                      onCheckedChange={() => toggleMcp(srv.name)}
+                      variant="mono"
+                      disabled={!srv.supported}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between px-3 py-2 border-t border-border-primary">
+              <span className="text-xs text-text-secondary">{selectedMcpCount} selected</span>
+              <button
+                onClick={() => void importSelectedMcp()}
+                disabled={importing || selectedMcpCount === 0}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                style={{ backgroundColor: AZURE, borderRadius: 3 }}
+              >
+                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Add {selectedMcpCount} server{selectedMcpCount === 1 ? '' : 's'}
+              </button>
+            </div>
+          </SectionCard>
+        )}
+        </>
       )}
     </div>
   );
