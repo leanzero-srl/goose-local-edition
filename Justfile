@@ -144,17 +144,27 @@ release-fork version:
     @just release-binary
     @echo "Bumping ui/desktop version to {{version}}..."
     cd ui/desktop && npm version --no-git-tag-version --allow-same-version {{version}}
-    @echo "Building + signing with the stable self-signed cert (via @electron/osx-sign)..."
-    cd ui/desktop && GOOSE_LOCAL_SIGN_IDENTITY="Goose Local Dev" pnpm run bundle:default
+    @echo "Building (electron-forge make)..."
+    cd ui/desktop && pnpm run make
+    @echo "Signing the WHOLE bundle with the stable self-signed cert + local entitlements..."
+    @echo "  (@electron/osx-sign ignores the entitlements path and applies defaults WITHOUT"
+    @echo "   disable-library-validation, so the self-signed no-Team-ID build crashes on launch;"
+    @echo "   this explicit re-sign forces entitlements.local.plist onto every nested binary.)"
+    cd ui/desktop && codesign --force --deep --options runtime --entitlements entitlements.local.plist --sign "Goose Local Dev" out/Goose-darwin-arm64/Goose.app
+    @echo "Re-zipping the signed app (auto-update artifact) + rebuilding the DMG FROM the signed app..."
+    cd ui/desktop && rm -f out/Goose-darwin-arm64/Goose.zip && ditto -c -k --sequesterRsrc --keepParent out/Goose-darwin-arm64/Goose.app out/Goose-darwin-arm64/Goose.zip
+    cd ui/desktop && rm -rf out/dmgstage && mkdir -p out/dmgstage && ditto out/Goose-darwin-arm64/Goose.app out/dmgstage/Goose.app && ln -s /Applications out/dmgstage/Applications && rm -f out/make/Goose-{{version}}.dmg && hdiutil create -volname Goose -srcfolder out/dmgstage -ov -format UDZO out/make/Goose-{{version}}.dmg
     @echo "Generating update manifest (latest-mac.yml)..."
     cd ui/desktop && node scripts/generate-mac-update-manifest.js --version {{version}} --directory out/Goose-darwin-arm64
     @echo ""
-    @echo "Staged in ui/desktop/out/ :  Goose-darwin-arm64/{Goose-darwin-arm64.zip,latest-mac.yml}  +  make/Goose.dmg"
+    @echo ">>> LAUNCH-CHECK BEFORE PUBLISHING (a valid signature is NOT the same as a launchable app):"
+    @echo "    open ui/desktop/out/make/Goose-{{version}}.dmg   # drag to /Applications, then launch it"
+    @echo "Staged: ui/desktop/out/Goose-darwin-arm64/{Goose-darwin-arm64.zip,latest-mac.yml} + out/make/Goose-{{version}}.dmg"
     @echo "Publish to the fork release (needs 'gh' + a GITHUB_TOKEN with repo scope):"
     @echo "  gh release create v{{version}} --repo leanzero-srl/goose-local-edition --title v{{version}} --notes 'local build' \\"
     @echo "    ui/desktop/out/Goose-darwin-arm64/Goose-darwin-arm64.zip \\"
     @echo "    ui/desktop/out/Goose-darwin-arm64/latest-mac.yml \\"
-    @echo "    ui/desktop/out/make/Goose.dmg"
+    @echo "    ui/desktop/out/make/Goose-{{version}}.dmg"
 
 # Run UI with latest (Windows version)
 run-ui-windows:

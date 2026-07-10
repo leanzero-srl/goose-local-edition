@@ -65,8 +65,12 @@ if (process.env.APPLE_TEAM_ID) {
   cfg.osxSign = {
     identity: process.env.GOOSE_LOCAL_SIGN_IDENTITY,
     identityValidation: false,
-    entitlements: 'entitlements.plist',
-    'entitlements-inherit': 'entitlements.plist',
+    // Self-signed certs have no Team ID, so the hardened runtime's library
+    // validation rejects the nested Electron Framework ("different Team IDs")
+    // and the app crashes on launch. entitlements.local.plist adds
+    // com.apple.security.cs.disable-library-validation to allow it to load.
+    entitlements: 'entitlements.local.plist',
+    'entitlements-inherit': 'entitlements.local.plist',
   };
 }
 
