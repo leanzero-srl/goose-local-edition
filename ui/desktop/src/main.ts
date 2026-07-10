@@ -26,7 +26,7 @@ import os from 'node:os';
 import { execFileSync, spawn, execFile } from 'child_process';
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
-import { startGooseServe } from './gooseServe';
+import { startGooseServe, findGooseBinaryPath } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
@@ -2413,6 +2413,50 @@ ipcMain.handle('list-files', async (_event, dirPath, extension) => {
   } catch (error) {
     console.error('Error listing files:', error);
     return [];
+  }
+});
+
+// Recursively copy a directory (used by the Claude Code import tool to relocate a skill directory,
+// preserving its supporting files — docs/, scripts/, templates/ — which the sources create API drops).
+ipcMain.handle('copy-dir', async (_event, src: string, dest: string) => {
+  try {
+    const s = expandTilde(src);
+    const d = expandTilde(dest);
+    await fs.cp(s, d, { recursive: true, force: true, errorOnExist: false });
+    return { ok: true };
+  } catch (error) {
+    console.error('Error copying directory:', error);
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// Run `goose import claude-code <flags>` (memory/hints from ~/.claude/CLAUDE.md + auto-memory notes, or MCP
+// from ~/.claude.json). --yes is MANDATORY: with no TTY the importer otherwise prints a preview and returns
+// without importing. Reuses the live binary locator so it works in a packaged app.
+ipcMain.handle('import-claude-code', async (_event, args: string[]) => {
+  try {
+    const goosePath = findGooseBinaryPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    });
+    const env = { ...process.env, PATH: `${path.dirname(goosePath)}:${process.env.PATH ?? ''}` };
+    return await new Promise((resolve) => {
+      execFile(
+        goosePath,
+        ['import', 'claude-code', ...args, '--apply', '--yes'],
+        { env, timeout: 120000 },
+        (err, stdout, stderr) => {
+          resolve({
+            ok: !err,
+            stdout: String(stdout ?? ''),
+            stderr: String(stderr ?? ''),
+            error: err ? err.message : null,
+          });
+        }
+      );
+    });
+  } catch (error) {
+    return { ok: false, stdout: '', stderr: '', error: error instanceof Error ? error.message : String(error) };
   }
 });
 
