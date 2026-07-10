@@ -146,20 +146,20 @@ interface McpServerScan {
 /** Read ~/.claude.json and map its `mcpServers` block into a normalized scan list. Claude's shape:
  *  `{ "<name>": { type?: 'stdio'|'http'|'sse', command?, args?, env?, url?, headers? } }`. `type` may be
  *  absent (command => stdio, url => http). `env`/`headers` may be an object, or `[]` when empty. */
-async function scanClaudeMcp(): Promise<McpServerScan[]> {
+async function scanClaudeMcp(): Promise<{ servers: McpServerScan[]; parseError: boolean }> {
   const res = await window.electron.readFile(CLAUDE_JSON);
-  if (!res.found || !res.file) return [];
+  if (!res.found || !res.file) return { servers: [], parseError: false };
   let json: unknown;
   try {
     json = JSON.parse(res.file);
   } catch {
-    return [];
+    return { servers: [], parseError: true }; // present but malformed — surface it, don't look "absent"
   }
   const servers = (json as { mcpServers?: Record<string, Record<string, unknown>> })?.mcpServers;
-  if (!servers || typeof servers !== 'object') return [];
+  if (!servers || typeof servers !== 'object') return { servers: [], parseError: false };
   const asRecord = (v: unknown): Record<string, string> =>
     v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
-  return Object.entries(servers).map(([name, s]) => {
+  const list = Object.entries(servers).map(([name, s]) => {
     const declared = String(s.type ?? '').toLowerCase();
     const command = typeof s.command === 'string' ? s.command : undefined;
     const url = typeof s.url === 'string' ? s.url : undefined;
@@ -182,6 +182,7 @@ async function scanClaudeMcp(): Promise<McpServerScan[]> {
       supported: transport !== 'sse' && usable,
     };
   });
+  return { servers: list, parseError: false };
 }
 
 function SectionCard({
@@ -220,6 +221,7 @@ export default function ImportView() {
   const [results, setResults] = useState<Record<string, ImportResult>>({});
   const [importing, setImporting] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServerScan[]>([]);
+  const [mcpParseError, setMcpParseError] = useState(false);
   const [selectedMcp, setSelectedMcp] = useState<Set<string>>(new Set());
   const [memory, setMemory] = useState<{ present: boolean; bytes: number }>({
     present: false,
@@ -236,8 +238,9 @@ export default function ImportView() {
       ]);
       setSkills(found);
       setSelected(new Set(found.map((s) => s.dirName))); // default: all selected
-      setMcpServers(mcp);
-      setSelectedMcp(new Set(mcp.filter((m) => m.supported).map((m) => m.name)));
+      setMcpServers(mcp.servers);
+      setMcpParseError(mcp.parseError);
+      setSelectedMcp(new Set(mcp.servers.filter((m) => m.supported).map((m) => m.name)));
       setMemory({ present: !!mem.found, bytes: mem.found && mem.file ? mem.file.length : 0 });
     } finally {
       setLoading(false);
@@ -442,7 +445,7 @@ export default function ImportView() {
 
       {loading ? (
         <div className="text-sm text-text-secondary">Scanning ~/.claude…</div>
-      ) : skills.length === 0 && mcpServers.length === 0 && !memory.present ? (
+      ) : skills.length === 0 && mcpServers.length === 0 && !memory.present && !mcpParseError ? (
         <div
           className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center"
           style={{ borderRadius: 3 }}
@@ -451,6 +454,16 @@ export default function ImportView() {
         </div>
       ) : (
         <>
+        {mcpParseError && (
+          <div
+            className="flex items-center gap-2 text-xs px-3 py-2 border border-border-primary"
+            style={{ color: '#f5a623', borderRadius: 3 }}
+          >
+            <FileWarning className="h-4 w-4 shrink-0" />
+            ~/.claude.json is present but couldn't be parsed — MCP servers may be hidden. Fix the JSON and
+            Rescan.
+          </div>
+        )}
         {skills.length > 0 && (
         <SectionCard title="Skills" count={skills.length}>
           <div className="px-3 py-1 divide-y divide-border-primary">
