@@ -3,7 +3,7 @@ import { FolderOpen, Check, X, Loader2, Repeat } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { Switch } from '../../ui/switch';
 import { parseRecipeFromFile } from '../../../recipe';
-import { saveRecipe } from '../../../recipe/recipe_management';
+import { saveRecipe, listSavedRecipes } from '../../../recipe/recipe_management';
 import { acpCreateSchedule } from '../../../acp/schedules';
 
 /**
@@ -17,7 +17,7 @@ import { acpCreateSchedule } from '../../../acp/schedules';
  */
 
 const AZURE = '#2e8bff';
-type ItemStatus = 'idle' | 'importing' | 'done' | 'error';
+type ItemStatus = 'idle' | 'importing' | 'done' | 'skipped' | 'error';
 
 interface RecipeScan {
   file: string;
@@ -25,7 +25,8 @@ interface RecipeScan {
 }
 interface OnDiskLoopConfig {
   max_iterations?: number;
-  stop_check?: { Shell?: { command?: string } } | null;
+  // serde serializes SuccessCheck internally-tagged: {"type":"Shell","command":"..."} — NOT {Shell:{...}}.
+  stop_check?: { type?: string; command?: string } | null;
   state_artifact?: string | null;
 }
 interface LoopScan {
@@ -38,6 +39,7 @@ const STATUS_ICON: Record<ItemStatus, React.ReactNode> = {
   idle: null,
   importing: <Loader2 className="h-4 w-4 animate-spin" style={{ color: AZURE }} />,
   done: <Check className="h-4 w-4" style={{ color: '#2ecc71' }} strokeWidth={3} />,
+  skipped: <span className="text-[10px] text-text-secondary">present</span>,
   error: <X className="h-4 w-4" style={{ color: '#ff3b30' }} strokeWidth={3} />,
 };
 
@@ -75,12 +77,9 @@ export default function GooseImportSection() {
       setRecipes(recipeFiles);
       setSelRecipes(new Set(recipeFiles.map((r) => r.file)));
 
-      // schedule.json can live in the config dir or a sibling data dir — try a few.
-      const scheduleRaw = await firstReadable([
-        `${dir}/schedule.json`,
-        `${dir}/../schedule.json`,
-        `${dir}/scheduler/schedule.json`,
-      ]);
+      // schedule.json must be inside the chosen folder (no `..` traversal), so scheduled_recipes/ resolves
+      // consistently under the same dir at import time.
+      const scheduleRaw = await firstReadable([`${dir}/schedule.json`]);
       const parsedLoops: LoopScan[] = [];
       if (scheduleRaw) {
         try {
@@ -117,6 +116,9 @@ export default function GooseImportSection() {
     setBusy(true);
     let ok = 0;
     let failed = 0;
+    // Idempotent: overwrite a same-titled recipe rather than creating a duplicate file each click.
+    const existing = await listSavedRecipes().catch(() => []);
+    const idByTitle = new Map(existing.map((e) => [e.recipe?.title, e.id] as const));
     for (const r of recipes.filter((x) => selRecipes.has(x.file))) {
       const rk = `recipe:${r.file}`;
       setResults((s) => ({ ...s, [rk]: 'importing' }));
@@ -124,7 +126,7 @@ export default function GooseImportSection() {
         const content = await window.electron.readFile(`${sourceDir}/recipes/${r.file}`);
         if (!content.found || !content.file) throw new Error('unreadable');
         const recipe = await parseRecipeFromFile(content.file);
-        await saveRecipe(recipe, null);
+        await saveRecipe(recipe, idByTitle.get(recipe.title) ?? null);
         ok += 1;
         setResults((s) => ({ ...s, [rk]: 'done' }));
       } catch {
@@ -143,6 +145,7 @@ export default function GooseImportSection() {
     setBusy(true);
     let ok = 0;
     let failed = 0;
+    let skipped = 0;
     for (const l of loops.filter((x) => selLoops.has(x.id))) {
       const rk = `loop:${l.id}`;
       setResults((s) => ({ ...s, [rk]: 'importing' }));
@@ -161,19 +164,25 @@ export default function GooseImportSection() {
           cron: l.cron,
           loop_config: {
             maxIterations: l.loop.max_iterations ?? 1,
-            stopCheckCommand: l.loop.stop_check?.Shell?.command,
+            stopCheckCommand: l.loop.stop_check?.command,
             stateArtifact: l.loop.state_artifact ?? undefined,
           },
         });
         ok += 1;
         setResults((s) => ({ ...s, [rk]: 'done' }));
-      } catch {
-        failed += 1;
-        setResults((s) => ({ ...s, [rk]: 'error' }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/exist|already/i.test(msg)) {
+          skipped += 1;
+          setResults((s) => ({ ...s, [rk]: 'skipped' }));
+        } else {
+          failed += 1;
+          setResults((s) => ({ ...s, [rk]: 'error' }));
+        }
       }
     }
     setBusy(false);
-    const msg = `Imported ${ok} loop${ok === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`;
+    const msg = `Imported ${ok} loop${ok === 1 ? '' : 's'}${skipped ? `, ${skipped} already present` : ''}${failed ? `, ${failed} failed` : ''}`;
     if (failed) toast.error(msg);
     else toast.success(msg);
   };

@@ -43,7 +43,8 @@ interface ImportResult {
  *  (`description: >-` / `|` folded/literal multiline) — several real skills use them, and a naive parser
  *  would capture the literal ">-". Nested keys (indented, e.g. under `metadata:`) are ignored. */
 function parseFrontmatter(text: string): { fm: Record<string, string>; body: string } {
-  const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+  const src = text.replace(/^﻿/, '').replace(/^\s*\n/, ''); // strip BOM + leading blank lines
+  const m = src.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
   if (!m) return { fm: {}, body: text };
   const lines = m[1].split('\n');
   const fm: Record<string, string> = {};
@@ -82,14 +83,15 @@ function slugifySkillName(name: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-')
       .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 64) || 'skill'
+      .slice(0, 64)
+      .replace(/^-|-$/g, '') || 'skill' // strip AFTER slice so truncation can't leave a dangling hyphen
   );
 }
 
 async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
   const names = await window.electron.listFiles(CLAUDE_SKILLS_DIR).catch(() => [] as string[]);
   const skills: ClaudeSkill[] = [];
+  const usedSlugs = new Set<string>();
   for (const dirName of names) {
     const res = await window.electron.readFile(`${CLAUDE_SKILLS_DIR}/${dirName}/SKILL.md`);
     if (!res.found || !res.file) continue; // not a skill dir
@@ -99,9 +101,18 @@ async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
       .catch(() => [] as string[]);
     const supportingCount = entries.filter((e) => e !== 'SKILL.md').length;
     const displayName = fm.name || dirName;
+    // Disambiguate so two Claude dirs that slugify the same never clobber each other on import.
+    const base = slugifySkillName(displayName);
+    let slug = base;
+    let n = 2;
+    while (usedSlugs.has(slug)) {
+      const sfx = `-${n++}`;
+      slug = base.slice(0, 64 - sfx.length) + sfx;
+    }
+    usedSlugs.add(slug);
     skills.push({
       dirName,
-      name: slugifySkillName(displayName),
+      name: slug,
       displayName,
       description: fm.description || '',
       body: body.trim(),
@@ -148,6 +159,8 @@ async function scanClaudeMcp(): Promise<McpServerScan[]> {
         : declared === 'http' || (url && declared !== 'stdio')
           ? 'http'
           : 'stdio';
+    // Not importable unless the transport's mandatory field is present (stdio needs command, http needs url).
+    const usable = transport === 'stdio' ? Boolean(command) : transport === 'http' ? Boolean(url) : false;
     return {
       name,
       transport,
@@ -156,7 +169,7 @@ async function scanClaudeMcp(): Promise<McpServerScan[]> {
       url,
       headers: asRecord(s.headers),
       envValues: asRecord(s.env),
-      supported: transport !== 'sse',
+      supported: transport !== 'sse' && usable,
     };
   });
 }
@@ -384,7 +397,7 @@ export default function ImportView() {
         </div>
         <button
           onClick={() => void rescan()}
-          disabled={loading}
+          disabled={loading || importing}
           className="shrink-0 flex items-center gap-1 text-xs border border-border-primary px-2 py-1 text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50"
           style={{ borderRadius: 3 }}
         >

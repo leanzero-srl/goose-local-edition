@@ -2422,7 +2422,12 @@ ipcMain.handle('copy-dir', async (_event, src: string, dest: string) => {
   try {
     const s = expandTilde(src);
     const d = expandTilde(dest);
-    await fs.cp(s, d, { recursive: true, force: true, errorOnExist: false });
+    // Refuse to clobber an existing skill dir (symmetric with the create path, which errors on a name
+    // collision). The 'exists' message lets the renderer classify it as 'skipped', not a silent overwrite.
+    if (fsSync.existsSync(d)) {
+      return { ok: false, error: `destination already exists: ${d}` };
+    }
+    await fs.cp(s, d, { recursive: true, force: false, errorOnExist: true });
     return { ok: true };
   } catch (error) {
     console.error('Error copying directory:', error);
@@ -2439,7 +2444,11 @@ ipcMain.handle('import-claude-code', async (_event, args: string[]) => {
       isPackaged: app.isPackaged,
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
     });
-    const env = { ...process.env, PATH: `${path.dirname(goosePath)}:${process.env.PATH ?? ''}` };
+    const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+    const env = {
+      ...process.env,
+      [pathKey]: `${path.dirname(goosePath)}${path.delimiter}${process.env[pathKey] ?? ''}`,
+    };
     return await new Promise((resolve) => {
       execFile(
         goosePath,
