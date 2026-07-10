@@ -32,7 +32,8 @@ import {
 } from '../types/message';
 import { substituteParameters } from '../utils/parameterSubstitution';
 import { useAutoSubmit } from '../hooks/useAutoSubmit';
-import { Goose } from './icons';
+import { Goose, LeanZero } from './icons';
+import { LEANZERO_WEBSITE_URL } from '../branding';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
 
@@ -424,6 +425,23 @@ export default function BaseChat({
                 title="Goose Local Edition"
               >
                 local
+              </span>
+            )}
+            {isLocal && (
+              <span
+                className="no-drag flex flex-row items-center gap-1 text-[11px] leading-none text-text-secondary"
+                title="Goose Local Edition — powered by LeanZero"
+              >
+                <span>powered by</span>
+                <a
+                  href={LEANZERO_WEBSITE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-row items-center gap-1 font-medium text-text-primary hover:opacity-80 transition-opacity"
+                >
+                  <LeanZero className="size-3" />
+                  LeanZero
+                </a>
               </span>
             )}
             <EnvironmentBadge className="translate-y-px" />

@@ -17,8 +17,9 @@ import {
   Keyboard,
   HardDrive,
   KeyRound,
-  Boxes,
 } from 'lucide-react';
+import { LeanZero } from '../icons';
+import { SWARM_DISPLAY_NAME } from '../../branding';
 import { useState, useEffect, useRef } from 'react';
 import ChatSettingsSection from './chat/ChatSettingsSection';
 import KeyboardShortcutsSection from './keyboard/KeyboardShortcutsSection';
@@ -199,8 +200,8 @@ export default function SettingsView({
                       className="flex gap-2"
                       data-testid="settings-swarm-tab"
                     >
-                      <Boxes className="h-4 w-4" />
-                      Swarm
+                      <LeanZero className="h-4 w-4" />
+                      {SWARM_DISPLAY_NAME}
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="chat" className="flex gap-2" data-testid="settings-chat-tab">

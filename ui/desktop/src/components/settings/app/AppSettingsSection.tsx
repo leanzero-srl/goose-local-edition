@@ -64,15 +64,15 @@ const i18n = defineMessages({
     id: 'settings.costTracking.description',
     defaultMessage: 'Show model pricing and usage costs',
   },
-  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Edition (appearance)' },
+  editionTitle: { id: 'settings.edition.title', defaultMessage: 'Goose Local Edition' },
   editionDesc: {
     id: 'settings.edition.description',
     defaultMessage:
-      "Local Edition is a look only — a compact, fleet-focused theme. It does not decide whether you use the swarm: to build with your local fleet, pick Swarm in the model selector like any other model. The Swarm settings tab is available whenever you run local models, regardless of this setting.",
+      "The Goose Local Edition skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting.",
   },
   editionPreview: {
     id: 'settings.edition.preview',
-    defaultMessage: 'Local Edition — the swarm fan-in view',
+    defaultMessage: 'Swarm LeanZero — the fan-in view',
   },
   themeTitle: { id: 'settings.theme.title', defaultMessage: 'Theme' },
   themeDesc: {

@@ -35,6 +35,7 @@ import { getNavigationShortcutText } from '../utils/keyboardShortcuts';
 import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
+import { fetchSwarmContextLimit } from './swarm/useFleet';
 import { defineMessages, useIntl } from '../i18n';
 import TurndownService from 'turndown';
 import type { NextChatExtensionDraft } from '../utils/nextChatExtensions';
@@ -590,6 +591,15 @@ export default function ChatInput({
         provider = configModelAndProvider.provider;
       }
       if (!model || !provider) {
+        setIsTokenLimitLoaded(true);
+        return;
+      }
+
+      // Swarm: the local LM Studio fleet. Its context window is whatever the resident models were loaded
+      // with (LM Studio reports it), not the generic 128k fallback for unknown models — read it live.
+      if (provider === 'swarm') {
+        const swarmLimit = await fetchSwarmContextLimit();
+        setTokenLimit(swarmLimit ?? TOKEN_LIMIT_DEFAULT);
         setIsTokenLimitLoaded(true);
         return;
       }

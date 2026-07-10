@@ -41,6 +41,7 @@ import Time from './Time';
 import { Gear } from './Gear';
 import Youtube from './Youtube';
 import { Goose } from './Goose';
+import { LeanZero } from './LeanZero';
 import Anthropic from './Anthropic';
 import { ArrowRight } from './ArrowRight';
 import { Key } from './Key';
@@ -107,6 +108,7 @@ export {
   Watch6,
   Youtube,
   Goose,
+  LeanZero,
   Anthropic,
   ArrowRight,
   Key,

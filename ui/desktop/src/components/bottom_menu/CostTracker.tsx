@@ -94,6 +94,12 @@ export function CostTracker({
     return null;
   }
 
+  // The swarm runs on the local fleet — there is no per-token price, so a cost
+  // readout is meaningless. Hide it entirely rather than showing a fake 0.0000.
+  if (currentProvider === 'swarm') {
+    return null;
+  }
+
   const calculateCost = (): number => {
     return accumulatedCost ?? 0;
   };

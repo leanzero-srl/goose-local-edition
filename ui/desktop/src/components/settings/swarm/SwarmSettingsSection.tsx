@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ChevronDown, Check } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import { Switch } from '../../ui/switch';
 import { Input } from '../../ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../ui/dropdown-menu';
 import { useConfig } from '../../ConfigContext';
 import FanInCard from '../../swarm/FanInCard';
 import { useFleet } from '../../swarm/useFleet';
@@ -126,6 +133,52 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 /**
+ * Custom model dropdown (never a native <select>) listing the LIVE LM Studio fleet ids. The swarm matches
+ * planner_model by EXACT equality against a resident model identifier, so the options are the raw ids
+ * verbatim; a value that is not currently resident still shows (the swarm then auto-picks the best resident).
+ */
+function ModelPicker({
+  value,
+  options,
+  online,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  online: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center justify-between gap-2 w-56 border border-border-primary px-2.5 py-1 text-xs text-text-primary hover:border-text-secondary transition-colors"
+          style={{ borderRadius: 3 }}
+        >
+          <span className="truncate">{value || 'auto (best resident)'}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto w-56">
+        {options.length > 0 ? (
+          options.map((opt) => (
+            <DropdownMenuItem key={opt} onClick={() => onChange(opt)} className="text-xs">
+              <span className="truncate">{opt}</span>
+              {opt === value && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <div className="px-2 py-1.5 text-xs text-text-secondary">
+            {online ? 'No models loaded' : 'Start LM Studio to list models'}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * Preset bar — one click to apply the GOLDEN formula (the tested tuning that builds passing apps) or the
  * faithful Defaults. Applying only touches the portable tuning keys (PRESET_KEYS), never the fleet identity
  * (devices/speed_weights/endpoint). A solid azure fill marks the active preset; a solid amber chip flags a
@@ -230,7 +283,7 @@ export default function SwarmSettingsSection() {
     <section id="swarm" className="space-y-4 pr-4 pb-8">
       <Card className="rounded-lg">
         <CardHeader className="pb-0">
-          <CardTitle className="mb-1">Swarm — fleet</CardTitle>
+          <CardTitle className="mb-1">Swarm LeanZero — fleet</CardTitle>
           <CardDescription>
             Your local model fleet (LM Studio / LM Link), live. The swarm auto-pools whatever is resident.
           </CardDescription>
@@ -259,7 +312,7 @@ export default function SwarmSettingsSection() {
 
       <Card className="rounded-lg">
         <CardHeader className="pb-0">
-          <CardTitle className="mb-1">Swarm — tunables</CardTitle>
+          <CardTitle className="mb-1">Swarm LeanZero — tunables</CardTitle>
           <CardDescription>
             The knobs that were CLI-only (`goose swarm pool`). Changes save to your goose config immediately.
           </CardDescription>
@@ -338,12 +391,12 @@ export default function SwarmSettingsSection() {
               </Group>
 
               <Group title="Pool & planner">
-                <Row label="Planner model" hint="model id for planning/architecting">
-                  <Input
-                    className="w-56 text-right"
-                    style={{ borderRadius: 3 }}
-                    defaultValue={cfg.planner_model}
-                    onBlur={(e) => set({ planner_model: e.target.value })}
+                <Row label="Planner model" hint="pick a live LM Studio model for planning/architecting">
+                  <ModelPicker
+                    value={cfg.planner_model ?? ''}
+                    options={fleet.models}
+                    online={fleet.online}
+                    onChange={(v) => set({ planner_model: v })}
                   />
                 </Row>
                 <Row label="Planner also works" hint="planner node also runs worker tasks">
