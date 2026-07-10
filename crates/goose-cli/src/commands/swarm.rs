@@ -1494,7 +1494,10 @@ mod tests {
     fn summarize_tool_call_extracts_the_intent_field() {
         // shell: the whole command line is the summary.
         assert_eq!(
-            summarize_tool_call("developer__shell", &serde_json::json!({"command": "pytest -q tests/"})),
+            summarize_tool_call(
+                "developer__shell",
+                &serde_json::json!({"command": "pytest -q tests/"})
+            ),
             "pytest -q tests/"
         );
         // text_editor: verb + path.
@@ -1522,6 +1525,34 @@ mod tests {
         let s = summarize_tool_call("developer__shell", &serde_json::json!({"command": long}));
         assert!(s.chars().count() <= 200, "summary must be capped");
         assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn clip_tail_keeps_the_informative_end() {
+        assert_eq!(clip_tail("short output", 400), "short output");
+        let long: String = "x".repeat(500);
+        let c = clip_tail(&long, 400);
+        assert_eq!(c.chars().count(), 401, "400 chars + a leading ellipsis");
+        assert!(c.starts_with('…'));
+    }
+
+    #[test]
+    fn build_reasoning_drops_trivial_fragments() {
+        // The lone dots / backticks / stray words coder models emit between tool calls are dropped —
+        // so the panel never shows a reasoning box holding just ".".
+        assert_eq!(
+            build_reasoning(&[".".into(), "`.".into(), " result".into(), "backs".into()]),
+            ""
+        );
+        // A real narration sentence survives.
+        assert_eq!(
+            build_reasoning(&[
+                ".".into(),
+                "Writing the tokenizer module now.".into(),
+                "`".into()
+            ]),
+            "Writing the tokenizer module now."
+        );
     }
 
     #[test]
@@ -2875,6 +2906,56 @@ fn summarize_tool_call(_name: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// Keep the last `max` chars of a snippet, with a leading ellipsis when clipped. Tail, not head, because
+/// the informative part of tool output (the pass/fail line, the traceback, the printed value) is at the end.
+fn clip_tail(s: &str, max: usize) -> String {
+    let s = s.trim();
+    let n = s.chars().count();
+    if n > max {
+        format!("…{}", s.chars().skip(n - max).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// The text a tool call produced (its output), tail-capped for the run panel — this is the real "what
+/// happened": pytest results, a traceback, a printed value. Empty for image/resource-only results.
+fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> String {
+    let Ok(r) = result else {
+        return String::new();
+    };
+    let joined = r
+        .content
+        .iter()
+        .filter_map(|c| match &c.raw {
+            rmcp::model::RawContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    clip_tail(&joined, 400)
+}
+
+/// Build the worker's live reasoning from its text chunks, dropping the trivial fragments (a lone ".",
+/// "`", a stray word) these coder models emit between tool calls — so the run panel shows real narration
+/// or nothing, never a box holding a single dot. Keeps the last few substantive chunks, tail-capped.
+fn build_reasoning(texts: &[String]) -> String {
+    let substantive: Vec<&str> = texts
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| t.chars().count() >= 16 && t.contains(char::is_whitespace))
+        .collect();
+    let joined = substantive
+        .iter()
+        .rev()
+        .take(4)
+        .rev()
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    clip_tail(&joined, 1200)
+}
+
 /// Per-run JSONL event sink. All writes go through one locked, line-flushed writer; a monotonic
 /// `seq` gives a total order even though scheduler events and CLI-native events interleave.
 struct JsonlSink {
@@ -3614,9 +3695,10 @@ impl GooseAgentDispatcher {
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
-        // Parallel history to tool_calls that also keeps a short summary of each call's arguments
-        // (the shell line, edited path, query…) so the desktop run panel can show what actually ran.
-        let mut call_records: Vec<(String, String, Option<bool>)> = Vec::new();
+        // Parallel history to tool_calls that keeps, per call: a short summary of its arguments (the shell
+        // line, edited path, query…) AND a snippet of its output, so the desktop run panel shows both what
+        // ran and what it produced. (name, arg-summary, ok, result-snippet).
+        let mut call_records: Vec<(String, String, Option<bool>, String)> = Vec::new();
         // Per-turn activity heartbeat for the judge (worker calls only). Reset to 0 at the start of every
         // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
         // just means the judge falls back to its time-based checks.
@@ -3716,7 +3798,8 @@ impl GooseAgentDispatcher {
                                         .as_ref()
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
-                                    call_records.push((name.clone(), summary, Some(ok)));
+                                    let result = tool_result_text(&resp.tool_result);
+                                    call_records.push((name.clone(), summary, Some(ok), result));
                                     tool_calls.push(ToolCallRecord {
                                         name,
                                         is_mcp,
@@ -3765,26 +3848,11 @@ impl GooseAgentDispatcher {
                     .rev()
                     .take(24)
                     .rev()
-                    .map(|(name, summary, ok)| {
-                        serde_json::json!({ "name": name, "summary": summary, "ok": ok })
+                    .map(|(name, summary, ok, result)| {
+                        serde_json::json!({ "name": name, "summary": summary, "ok": ok, "result": result })
                     })
                     .collect();
-                let reasoning: String = {
-                    let joined = texts
-                        .iter()
-                        .rev()
-                        .take(8)
-                        .rev()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let rn = joined.chars().count();
-                    if rn > 1600 {
-                        joined.chars().skip(rn - 1600).collect()
-                    } else {
-                        joined
-                    }
-                };
+                let reasoning: String = build_reasoning(&texts);
                 let digest = serde_json::json!({
                     "tool_calls": tool_calls.len(),
                     "errors": errors,
@@ -3798,7 +3866,7 @@ impl GooseAgentDispatcher {
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
         for (_id, (name, is_mcp, summary)) in pending {
-            call_records.push((name.clone(), summary, None));
+            call_records.push((name.clone(), summary, None, String::new()));
             tool_calls.push(ToolCallRecord {
                 name,
                 is_mcp,

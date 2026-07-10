@@ -44,25 +44,35 @@ function callColor(ok: boolean | null): string {
 }
 
 const CallRow: React.FC<{ call: SwarmCall }> = ({ call }) => (
-  <div className="flex items-start gap-2 py-0.5">
-    <span
-      className="mt-1 h-1.5 w-1.5 shrink-0"
-      style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
-      aria-hidden
-    />
-    <span
-      className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
-      style={{ borderRadius: 2 }}
-    >
-      {call.name.replace(/^developer__/, '')}
-    </span>
-    <span
-      className="flex-1 font-mono text-xs text-text-primary break-words"
-      style={call.ok === false ? { color: CALL_ERR } : undefined}
-      title={call.summary}
-    >
-      {call.summary || '—'}
-    </span>
+  <div className="py-0.5">
+    <div className="flex items-start gap-2">
+      <span
+        className="mt-1 h-1.5 w-1.5 shrink-0"
+        style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
+        aria-hidden
+      />
+      <span
+        className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
+        style={{ borderRadius: 2 }}
+      >
+        {call.name.replace(/^developer__/, '')}
+      </span>
+      <span
+        className="flex-1 font-mono text-xs text-text-primary break-words"
+        style={call.ok === false ? { color: CALL_ERR } : undefined}
+        title={call.summary}
+      >
+        {call.summary || '—'}
+      </span>
+    </div>
+    {call.result && call.result.trim().length > 0 && (
+      <div
+        className="ml-[1.15rem] mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-words max-h-28 overflow-y-auto px-2 py-1 bg-background-secondary border border-border-primary text-text-secondary"
+        style={{ borderRadius: 2 }}
+      >
+        {call.result.trim()}
+      </div>
+    )}
   </div>
 );
 
@@ -83,7 +93,10 @@ const LaneRow: React.FC<{
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
   const calls = lane.calls ?? [];
-  const reasoning = lane.reasoning?.trim() || lane.lastText?.trim() || '';
+  // Only surface reasoning that is real narration. Old-schema runs fall back to last_text, which for
+  // these coder models is often a stray "." / "`" / one-word fragment — never show a box holding that.
+  const rawReasoning = lane.reasoning?.trim() || lane.lastText?.trim() || '';
+  const reasoning = rawReasoning.length >= 12 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
   const hasBody = reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0;
 
   return (
