@@ -19,6 +19,7 @@ import { getInitialWorkingDir } from '../../../utils/workingDir';
 const AZURE = '#2e8bff';
 const CLAUDE_SKILLS_DIR = '~/.claude/skills';
 const CLAUDE_JSON = '~/.claude.json';
+const CLAUDE_MD = '~/.claude/CLAUDE.md';
 
 interface ClaudeSkill {
   dirName: string;
@@ -196,15 +197,24 @@ export default function ImportView() {
   const [importing, setImporting] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServerScan[]>([]);
   const [selectedMcp, setSelectedMcp] = useState<Set<string>>(new Set());
+  const [memory, setMemory] = useState<{ present: boolean; bytes: number }>({
+    present: false,
+    bytes: 0,
+  });
 
   const rescan = useCallback(async () => {
     setLoading(true);
     try {
-      const [found, mcp] = await Promise.all([scanClaudeSkills(), scanClaudeMcp()]);
+      const [found, mcp, mem] = await Promise.all([
+        scanClaudeSkills(),
+        scanClaudeMcp(),
+        window.electron.readFile(CLAUDE_MD),
+      ]);
       setSkills(found);
       setSelected(new Set(found.map((s) => s.dirName))); // default: all selected
       setMcpServers(mcp);
       setSelectedMcp(new Set(mcp.filter((m) => m.supported).map((m) => m.name)));
+      setMemory({ present: !!mem.found, bytes: mem.found && mem.file ? mem.file.length : 0 });
     } finally {
       setLoading(false);
     }
@@ -332,6 +342,27 @@ export default function ImportView() {
     else toast.success(msg);
   };
 
+  const importMemory = async () => {
+    setResults((r) => ({ ...r, memory: { status: 'importing' } }));
+    setImporting(true);
+    try {
+      // Shells `goose import claude-code --memory --apply --yes` — idempotent, provenance-fenced;
+      // brings CLAUDE.md into ~/.config/goose/.goosehints + auto-memory notes into memory/.
+      const out = await window.electron.importClaudeCode(['--memory']);
+      if (!out.ok) throw new Error(out.stderr || out.error || 'import failed');
+      setResults((r) => ({ ...r, memory: { status: 'done' } }));
+      toast.success('Imported CLAUDE.md into goose hints + memory');
+    } catch (e) {
+      setResults((r) => ({
+        ...r,
+        memory: { status: 'error', message: e instanceof Error ? e.message : String(e) },
+      }));
+      toast.error('Memory import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const selectedCount = skills.filter((s) => selected.has(s.dirName)).length;
   const selectedMcpCount = mcpServers.filter((m) => selectedMcp.has(m.name) && m.supported).length;
 
@@ -381,7 +412,7 @@ export default function ImportView() {
 
       {loading ? (
         <div className="text-sm text-text-secondary">Scanning ~/.claude…</div>
-      ) : skills.length === 0 && mcpServers.length === 0 ? (
+      ) : skills.length === 0 && mcpServers.length === 0 && !memory.present ? (
         <div
           className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center"
           style={{ borderRadius: 3 }}
@@ -494,6 +525,33 @@ export default function ImportView() {
                 {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 Add {selectedMcpCount} server{selectedMcpCount === 1 ? '' : 's'}
               </button>
+            </div>
+          </SectionCard>
+        )}
+
+        {memory.present && (
+          <SectionCard title="Memory" count={1}>
+            <div className="px-3 py-2 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-text-primary">CLAUDE.md → goose hints + memory</div>
+                <div className="text-xs text-text-secondary">
+                  {(memory.bytes / 1024).toFixed(1)} KB of global instructions · idempotent, re-runnable
+                </div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="w-6 flex justify-center">
+                  {results.memory ? STATUS_ICON[results.memory.status] : null}
+                </div>
+                <button
+                  onClick={() => void importMemory()}
+                  disabled={importing}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{ backgroundColor: AZURE, borderRadius: 3 }}
+                >
+                  {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Import memory
+                </button>
+              </div>
             </div>
           </SectionCard>
         )}
