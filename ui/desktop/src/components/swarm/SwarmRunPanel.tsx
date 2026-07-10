@@ -85,8 +85,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
           const letter = String.fromCharCode(65 + (idx % 26));
           const Icon = STATUS_ICON[lane.status];
+          // Prefer a meaningful reasoning snippet; the activity digest's last_text is often a stray
+          // fragment (".", "2"), so fall back to the recent tool calls when it is too short to be useful.
+          const text = lane.lastText?.trim() ?? '';
           const detail =
-            lane.lastText?.trim() ||
+            (text.length > 4 ? text : '') ||
             (lane.recent && lane.recent.length > 0 ? lane.recent.join(' · ') : '') ||
             (lane.status === 'running' ? 'working…' : lane.status);
           return (
