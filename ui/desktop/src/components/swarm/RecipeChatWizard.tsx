@@ -1,0 +1,348 @@
+import { useEffect, useRef, useState } from 'react';
+import { X, Send, Loader2, Check, Sparkles, Pencil } from 'lucide-react';
+import { toast } from 'react-toastify';
+import { LeanZero } from '../icons';
+import { useFleet } from './useFleet';
+import type { Recipe } from '../../recipe';
+import { saveRecipe } from '../../recipe/recipe_management';
+
+/**
+ * Goose Local Edition — build a recipe by TALKING TO THE FLEET. A warm local model (LM Studio, the same
+ * nodes that power the swarm) interviews the user a couple of turns, then drafts a recipe the user reviews,
+ * edits, and saves. This is the "work with the swarm to build it" path, distinct from the by-hand form and
+ * from the build orchestrator (which produces apps, not recipes, and cannot hold a conversation).
+ *
+ * The model is driven directly over LM Studio's OpenAI-compatible endpoint on 127.0.0.1 (the app CSP allows
+ * that origin; `localhost` is blocked). Weak local models don't always follow a protocol, so there is always
+ * a "Draft the recipe now" escape hatch that forces the JSON, and the parsed draft is fully editable.
+ */
+
+const AZURE = '#2e8bff';
+const CHAT_URL = 'http://127.0.0.1:1234/v1/chat/completions';
+
+const SYSTEM_PROMPT = `You help a user create a "recipe" for an autonomous agent — a reusable instruction set the agent runs every time its loop fires.
+Have a SHORT, friendly conversation to understand the task, then produce the recipe.
+Guidelines:
+- Ask ONE short clarifying question at a time (1-2 sentences). Focus on: what the agent should do each run, the specific target or scope, and what a good result looks like.
+- After the user has answered a couple of questions, or whenever they ask you to draft it, STOP asking and output the recipe.
+- Output the recipe as a single line "Here's your recipe:" followed by a fenced code block \`\`\`json containing exactly {"title": string, "description": string, "instructions": string}.
+  - title: 3-6 words. description: one sentence. instructions: specific, multi-step, imperative directions the agent follows every run.
+- Never output the json block in your first message; ask at least one question first.`;
+
+type ChatRole = 'user' | 'assistant';
+interface ChatMsg {
+  role: ChatRole;
+  content: string;
+}
+
+interface Draft {
+  title: string;
+  description: string;
+  instructions: string;
+}
+
+/** Pull a {title, description, instructions} recipe out of a model reply — fenced json, bare json, or none. */
+function extractDraft(text: string): Draft | null {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [fenced?.[1], text.match(/\{[\s\S]*\}/)?.[0]].filter(Boolean) as string[];
+  for (const raw of candidates) {
+    try {
+      const o = JSON.parse(raw);
+      const title = typeof o.title === 'string' ? o.title.trim() : '';
+      const instructions = typeof o.instructions === 'string' ? o.instructions.trim() : '';
+      if (title && instructions) {
+        const description = typeof o.description === 'string' && o.description.trim() ? o.description.trim() : title;
+        return { title, description, instructions };
+      }
+    } catch {
+      /* not this candidate */
+    }
+  }
+  return null;
+}
+
+/** The visible text of a reply, with any recipe json block stripped so the chat stays readable. */
+function visibleText(text: string): string {
+  const stripped = text.replace(/```(?:json)?\s*[\s\S]*?```/gi, '').trim();
+  return stripped || 'Here’s your recipe — review it below.';
+}
+
+export function RecipeChatWizard({
+  isOpen,
+  onClose,
+  onSaved,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSaved: (recipe: Recipe) => void;
+}) {
+  const fleet = useFleet();
+  const model = fleet.models.find((m) => /coder/i.test(m)) ?? fleet.models[0] ?? null;
+
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Seed the opening question once, when the modal first opens.
+  useEffect(() => {
+    if (isOpen && messages.length === 0) {
+      setMessages([
+        {
+          role: 'assistant',
+          content:
+            "Tell me what you'd like this agent to do each time it runs, and I'll shape it into a recipe. What's the task?",
+        },
+      ]);
+    }
+    if (!isOpen) {
+      setMessages([]);
+      setInput('');
+      setDraft(null);
+      setError(null);
+    }
+  }, [isOpen, messages.length]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages, busy, draft]);
+
+  if (!isOpen) return null;
+
+  const callFleet = async (history: ChatMsg[]): Promise<void> => {
+    if (!model) {
+      setError('No fleet model is loaded. Start LM Studio and load a model, then try again.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    try {
+      const res = await fetch(CHAT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
+          temperature: 0.4,
+          max_tokens: 1024,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`fleet returned ${res.status}`);
+      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const reply = data.choices?.[0]?.message?.content ?? '';
+      if (!reply.trim()) throw new Error('the fleet returned an empty reply');
+      const found = extractDraft(reply);
+      if (found) setDraft(found);
+      setMessages((prev) => [...prev, { role: 'assistant', content: visibleText(reply) }]);
+    } catch (e) {
+      const msg = e instanceof Error && e.name === 'AbortError' ? 'the fleet took too long to respond' : e instanceof Error ? e.message : String(e);
+      setError(`Couldn’t reach the fleet — ${msg}.`);
+    } finally {
+      clearTimeout(timer);
+      setBusy(false);
+    }
+  };
+
+  const send = () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next = [...messages, { role: 'user' as const, content: text }];
+    setMessages(next);
+    setInput('');
+    void callFleet(next);
+  };
+
+  const draftNow = () => {
+    if (busy) return;
+    const next = [
+      ...messages,
+      { role: 'user' as const, content: 'Please draft the recipe now as the json block, using what we have discussed.' },
+    ];
+    setMessages(next);
+    void callFleet(next);
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const recipe: Recipe = {
+        version: '1.0.0',
+        title: draft.title.trim(),
+        description: draft.description.trim() || draft.title.trim(),
+        instructions: draft.instructions.trim(),
+      };
+      await saveRecipe(recipe, null);
+      toast.success(`Recipe "${recipe.title}" saved`);
+      onSaved(recipe);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputClass =
+    'w-full bg-background-primary border border-border-primary px-2.5 py-1.5 text-sm text-text-primary focus:border-text-secondary outline-none';
+
+  return (
+    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4">
+      <div
+        className="bg-background-primary border border-border-primary shadow-lg w-[620px] max-h-[88vh] flex flex-col"
+        style={{ borderRadius: 3 }}
+        data-testid="recipe-chat-wizard"
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
+          <div className="flex items-center gap-2">
+            <span className="flex items-center justify-center h-6 w-6" style={{ backgroundColor: AZURE }}>
+              <LeanZero className="h-4 w-4 text-white" />
+            </span>
+            <h3 className="text-sm font-semibold text-text-primary">Build a recipe with the fleet</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border border-border-primary"
+              style={fleet.online ? { borderRadius: 2, borderColor: AZURE, color: AZURE } : { borderRadius: 2 }}
+              title={model ?? 'no model loaded'}
+            >
+              <span className="h-1.5 w-1.5" style={{ backgroundColor: fleet.online ? '#2ecc71' : '#ff3b30', borderRadius: 1 }} />
+              {model ? model.split('-')[0] : 'offline'}
+            </span>
+            <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Conversation */}
+        <div ref={scrollRef} className="px-4 py-3 overflow-y-auto space-y-3 flex-1 min-h-[220px]">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[80%] px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                  m.role === 'assistant' ? 'bg-background-secondary border border-border-primary' : ''
+                }`}
+                style={
+                  m.role === 'user'
+                    ? { backgroundColor: AZURE, color: '#fff', borderRadius: 3 }
+                    : { borderRadius: 3 }
+                }
+              >
+                {m.role === 'assistant' && (
+                  <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+                    <Sparkles className="h-3 w-3" /> fleet
+                  </span>
+                )}
+                <span className={m.role === 'assistant' ? 'text-text-primary' : ''}>{m.content}</span>
+              </div>
+            </div>
+          ))}
+          {busy && (
+            <div className="flex justify-start">
+              <div className="flex items-center gap-2 text-xs text-text-secondary px-3 py-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> the fleet is thinking…
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Draft review card */}
+        {draft && (
+          <div className="mx-4 mb-2 border border-border-primary" style={{ borderRadius: 3 }}>
+            <div className="px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 text-white" style={{ backgroundColor: AZURE }}>
+              <Pencil className="h-3.5 w-3.5" /> Draft recipe — review &amp; edit before saving
+            </div>
+            <div className="p-3 space-y-2">
+              <input
+                value={draft.title}
+                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                placeholder="Title"
+                className={inputClass}
+                style={{ borderRadius: 3 }}
+              />
+              <input
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                placeholder="One-line description"
+                className={inputClass}
+                style={{ borderRadius: 3 }}
+              />
+              <textarea
+                value={draft.instructions}
+                onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+                rows={5}
+                placeholder="Instructions the agent follows every run"
+                className={inputClass}
+                style={{ borderRadius: 3, resize: 'vertical' }}
+              />
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mx-4 mb-2 text-xs px-3 py-2 border" style={{ borderColor: '#ff3b30', color: '#ff3b30', borderRadius: 3 }}>
+            {error}
+          </div>
+        )}
+
+        {/* Input + actions */}
+        <div className="px-4 py-3 border-t border-border-primary space-y-2">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={1}
+              placeholder="Answer the fleet…  (Enter to send)"
+              className={`${inputClass} flex-1`}
+              style={{ borderRadius: 3, resize: 'none' }}
+            />
+            <button
+              onClick={send}
+              disabled={busy || !input.trim()}
+              className="flex items-center gap-1 text-xs font-semibold px-3 py-2 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ backgroundColor: AZURE, borderRadius: 3 }}
+            >
+              <Send className="h-3.5 w-3.5" /> Send
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={draftNow}
+              disabled={busy || messages.length < 2}
+              className="text-xs px-2.5 py-1 border border-border-primary text-text-primary hover:border-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1"
+              style={{ borderRadius: 3 }}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Draft the recipe now
+            </button>
+            <button
+              onClick={() => void save()}
+              disabled={!draft || saving}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              style={{ backgroundColor: draft ? '#2ecc71' : '#6b7280', borderRadius: 3 }}
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Save recipe
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default RecipeChatWizard;

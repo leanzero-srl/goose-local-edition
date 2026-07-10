@@ -134,8 +134,8 @@ export function RecipeWizard({
 
           {error && (
             <div
-              className="text-xs px-3 py-2"
-              style={{ color: '#ff3b30', backgroundColor: 'rgba(255,59,48,0.1)', borderRadius: 3 }}
+              className="text-xs px-3 py-2 border"
+              style={{ color: '#ff3b30', borderColor: '#ff3b30', borderRadius: 3 }}
             >
               {error}
             </div>

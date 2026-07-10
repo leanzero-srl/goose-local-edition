@@ -6,15 +6,19 @@ import { LoopModal, type NewLoopPayload } from '../loop/LoopModal';
 import { acpCreateSchedule, acpListSchedules, acpRunScheduleNow } from '../../acp/schedules';
 import { listSkillSources } from '../../acp/sources';
 import RecipeWizard from './RecipeWizard';
+import RecipeChatWizard from './RecipeChatWizard';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import type { setViewType } from '../../hooks/useNavigation';
 
 /**
  * Goose Local Edition — the Agent persona setup wizard. The autonomous Agent runs a LOOP built from a
- * RECIPE, with SKILLS it can call. This ties the app's existing Loop / Recipe / Skills features together:
- *  - Create the loop by hand (reuses LoopModal — recipe + schedule + iterations).
- *  - Or draft a recipe with a GUIDED wizard (RecipeWizard asks the questions in-UI and saves it). The
- *    swarm provider is a build orchestrator, not a conversational model, so it cannot run a Q&A itself.
+ * RECIPE, with SKILLS it can call. Ties the app's Loop / Recipe / Skills features together, offering both
+ * ways the user asked for to make a recipe:
+ *  - Build a recipe WITH THE FLEET (RecipeChatWizard) — a warm local model interviews the user and drafts
+ *    it. The swarm *provider* is a build orchestrator and can't hold a conversation, so this talks to LM
+ *    Studio directly instead.
+ *  - Or draft one BY HAND (RecipeWizard) — fill the fields in a form.
+ *  - Create a loop from a recipe (LoopModal — recipe + schedule + iterations).
  *  - Skills surface as /commands; link out to manage them.
  * Sharp full-border modal (no left rail, no faded tints, solid azure), matching the Local Edition look.
  */
@@ -34,6 +38,7 @@ export function AgentSetupWizard({
 }) {
   const [loopModalOpen, setLoopModalOpen] = useState(false);
   const [recipeWizardOpen, setRecipeWizardOpen] = useState(false);
+  const [recipeChatOpen, setRecipeChatOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdLoopId, setCreatedLoopId] = useState<string | null>(null);
@@ -100,8 +105,8 @@ export function AgentSetupWizard({
 
   return (
     <>
-      {/* Hidden while LoopModal (z-40) or the RecipeWizard is open so this z-70 overlay isn't in the way. */}
-      {!loopModalOpen && !recipeWizardOpen && (
+      {/* Hidden while a child modal (loop / by-hand recipe / fleet chat) is open so this z-70 overlay isn't in the way. */}
+      {!loopModalOpen && !recipeWizardOpen && !recipeChatOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
         <div
           className="bg-background-primary border border-border-primary shadow-lg w-[540px] max-h-[85vh] flex flex-col"
@@ -128,8 +133,8 @@ export function AgentSetupWizard({
             <p className="text-text-secondary text-xs">
               The Agent runs on its own: a <span className="text-text-primary font-medium">loop</span> built from
               a <span className="text-text-primary font-medium">recipe</span>, iterating across your fleet, with{' '}
-              <span className="text-text-primary font-medium">skills</span> it can call. Draft a recipe with a
-              guided wizard, or create the loop directly.
+              <span className="text-text-primary font-medium">skills</span> it can call. Build a recipe by
+              chatting with your fleet, or fill one in by hand, then wrap it in a loop.
             </p>
 
             {/* Recipe + Loop */}
@@ -139,12 +144,12 @@ export function AgentSetupWizard({
               </div>
               <div className="p-3 space-y-2">
                 <button
-                  onClick={() => setLoopModalOpen(true)}
+                  onClick={() => setRecipeChatOpen(true)}
                   className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
                   style={{ backgroundColor: AZURE, borderRadius: 3 }}
                 >
                   <span className="flex items-center gap-2">
-                    <Repeat className="h-4 w-4" /> Create the loop (recipe + schedule + iterations)
+                    <Sparkles className="h-4 w-4" /> Build a recipe with the fleet (chat)
                   </span>
                   <ArrowRight className="h-4 w-4" />
                 </button>
@@ -154,13 +159,23 @@ export function AgentSetupWizard({
                   style={{ borderRadius: 3 }}
                 >
                   <span className="flex items-center gap-2">
-                    <Wand2 className="h-4 w-4" /> Draft a recipe (guided — answer a few questions)
+                    <Wand2 className="h-4 w-4" /> …or draft one by hand
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setLoopModalOpen(true)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs border border-border-primary text-text-primary hover:border-text-secondary transition-colors"
+                  style={{ borderRadius: 3 }}
+                >
+                  <span className="flex items-center gap-2">
+                    <Repeat className="h-4 w-4" /> Create a loop (recipe + schedule + iterations)
                   </span>
                   <ArrowRight className="h-4 w-4" />
                 </button>
 
                 {createdLoopId && (
-                  <div className="flex items-center justify-between px-3 py-2" style={{ backgroundColor: 'rgba(46,204,113,0.12)', borderRadius: 3 }}>
+                  <div className="flex items-center justify-between px-3 py-2 border" style={{ borderColor: '#2ecc71', borderRadius: 3 }}>
                     <span className="text-xs text-text-primary truncate">
                       Loop <span className="font-mono">{createdLoopId}</span> ready
                     </span>
@@ -221,7 +236,7 @@ export function AgentSetupWizard({
             </div>
 
             {error && (
-              <div className="text-xs px-3 py-2" style={{ color: '#ff3b30', backgroundColor: 'rgba(255,59,48,0.1)', borderRadius: 3 }}>
+              <div className="text-xs px-3 py-2 border" style={{ color: '#ff3b30', borderColor: '#ff3b30', borderRadius: 3 }}>
                 {error}
               </div>
             )}
@@ -252,6 +267,12 @@ export function AgentSetupWizard({
         isOpen={recipeWizardOpen}
         onClose={() => setRecipeWizardOpen(false)}
         onSaved={() => setRecipeWizardOpen(false)}
+      />
+
+      <RecipeChatWizard
+        isOpen={recipeChatOpen}
+        onClose={() => setRecipeChatOpen(false)}
+        onSaved={() => setRecipeChatOpen(false)}
       />
     </>
   );
