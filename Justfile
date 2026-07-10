@@ -143,7 +143,7 @@ package-ui:
 release-fork version:
     @just release-binary
     @echo "Bumping ui/desktop version to {{version}}..."
-    cd ui/desktop && npm version --no-git-tag-version --allow-same-version {{version}}
+    cd ui/desktop && node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
     @echo "Building (electron-forge make)..."
     cd ui/desktop && pnpm run make
     @echo "Signing the WHOLE bundle with the stable self-signed cert + local entitlements..."
