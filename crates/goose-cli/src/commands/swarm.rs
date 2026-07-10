@@ -925,9 +925,86 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
     Ok(())
 }
 
+/// Resolve the `lms` CLI binary. A Finder-launched desktop app does NOT inherit the shell PATH, so a bare
+/// `lms` is not found — the GUI swarm bailed with "no models loaded" despite a loaded fleet. Check an
+/// explicit override, then LM Studio's default install locations, else fall back to PATH.
+fn resolve_lms() -> String {
+    if let Ok(p) = std::env::var("SWARM_LMS_PATH") {
+        if !p.trim().is_empty() {
+            return p;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        for rel in [".lmstudio/bin/lms", ".cache/lm-studio/bin/lms"] {
+            let cand = std::path::Path::new(&home).join(rel);
+            if cand.is_file() {
+                return cand.to_string_lossy().into_owned();
+            }
+        }
+    }
+    "lms".to_string()
+}
+
+/// The LM Studio HTTP host for the fallback probe (LMSTUDIO_HOST, else the default local server).
+fn lms_http_host() -> String {
+    std::env::var("LMSTUDIO_HOST")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "http://localhost:1234".to_string())
+}
+
+/// Node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-).
+fn device_from_lms_id(id: &str) -> Option<String> {
+    let bare = id.rsplit('/').next().unwrap_or(id);
+    bare.split_once('-').map(|(prefix, _)| prefix.to_string())
+}
+
+/// Discover loaded models straight from the LM Studio HTTP server (native /api/v0/models) — the fallback
+/// for when the `lms` CLI is missing/unreachable (a Finder-launched desktop app has no lms on PATH). The
+/// HTTP server MUST be up for the swarm to call the models at all, so it is the robust source. Uses `curl`
+/// (a system binary present on the minimal GUI PATH) to avoid a blocking HTTP call inside the async
+/// runtime. Returns loaded, non-embedding models as LmsProcess entries (device derived from the id prefix).
+fn probe_lms_http() -> Vec<LmsProcess> {
+    let url = format!("{}/api/v0/models", lms_http_host().trim_end_matches('/'));
+    let Ok(out) = ProcCommand::new("curl")
+        .args(["-s", "--max-time", "6", &url])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        return Vec::new();
+    };
+    let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter(|m| {
+            m.get("state").and_then(|v| v.as_str()) == Some("loaded")
+                && m.get("type").and_then(|v| v.as_str()) != Some("embeddings")
+        })
+        .filter_map(|m| {
+            let id = m
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if id.is_empty() {
+                return None;
+            }
+            Some(LmsProcess {
+                device: device_from_lms_id(&id),
+                identifier: id,
+                status: "loaded".to_string(),
+                parallel: None,
+            })
+        })
+        .collect()
+}
+
 fn probe_fleet() {
     println!("\n{}", style("lms ps:").bold());
-    match ProcCommand::new("lms").arg("ps").output() {
+    match ProcCommand::new(resolve_lms()).arg("ps").output() {
         Ok(out) => print!("{}", String::from_utf8_lossy(&out.stdout)),
         Err(e) => println!("  (lms ps failed: {e})"),
     }
@@ -954,7 +1031,7 @@ fn probe_fleet() {
 
 /// Count currently-loaded instances of a model across the fleet (`lms ps`).
 fn loaded_instance_count(model_id: &str) -> usize {
-    match ProcCommand::new("lms").arg("ps").output() {
+    match ProcCommand::new(resolve_lms()).arg("ps").output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter(|l| l.contains(model_id))
@@ -970,7 +1047,7 @@ fn ensure_loaded(model_id: &str, instances: u32) {
     let want = instances.max(1) as usize;
     let have = loaded_instance_count(model_id);
     for _ in have..want {
-        let _ = ProcCommand::new("lms")
+        let _ = ProcCommand::new(resolve_lms())
             .args(["load", model_id, "-y", "--ttl", "3600"])
             .output();
     }
@@ -1031,11 +1108,19 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
 }
 
 fn probe_lms_processes() -> Result<Vec<LmsProcess>> {
-    let out = ProcCommand::new("lms")
-        .arg("ps")
-        .output()
-        .map_err(|e| anyhow!("lms ps failed: {e}"))?;
-    parse_lms_ps(&String::from_utf8_lossy(&out.stdout))
+    // Primary: the `lms` CLI (richest — carries DEVICE + PARALLEL). Resolve its real path since a
+    // Finder-launched app has no lms on PATH.
+    if let Ok(out) = ProcCommand::new(resolve_lms()).arg("ps").output() {
+        if out.status.success() {
+            if let Ok(procs) = parse_lms_ps(&String::from_utf8_lossy(&out.stdout)) {
+                if !procs.is_empty() {
+                    return Ok(procs);
+                }
+            }
+        }
+    }
+    // Fallback: the LM Studio HTTP server (no lms CLI needed). Empty if the server is unreachable too.
+    Ok(probe_lms_http())
 }
 
 fn short_model(identifier: &str) -> String {
@@ -2626,6 +2711,25 @@ mod tests {
             .filter(|p| p.device.as_deref() == Some("Local"))
             .count();
         assert_eq!(local, 2, "the macbook (Local) hosts two distinct models");
+    }
+
+    #[test]
+    fn device_from_lms_id_takes_node_prefix() {
+        assert_eq!(
+            device_from_lms_id("mihai-qwopus3.6-27b-coder-mlx").as_deref(),
+            Some("mihai")
+        );
+        assert_eq!(
+            device_from_lms_id("workhorse-qwopus3.6-27b-coder-mlx").as_deref(),
+            Some("workhorse")
+        );
+        // publisher/ prefix is stripped before taking the node prefix
+        assert_eq!(
+            device_from_lms_id("lmstudio-community/gabee-model").as_deref(),
+            Some("gabee")
+        );
+        // no dash -> no derivable device
+        assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
     }
 
     #[test]
@@ -8862,6 +8966,9 @@ fn review_fix_max_lines() -> usize {
 
 pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
+    // Set the LM Studio host up front so the fleet probe's HTTP fallback (used when the `lms` CLI is not
+    // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
+    std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
