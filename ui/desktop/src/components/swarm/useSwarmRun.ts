@@ -14,6 +14,8 @@ export interface SwarmCall {
   name: string;
   summary: string;
   ok: boolean | null;
+  /** A snippet of what the call produced — test output, a traceback, a printed value. */
+  result?: string;
 }
 
 export interface TurnLane {

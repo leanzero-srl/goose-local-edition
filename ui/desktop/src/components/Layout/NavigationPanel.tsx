@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Check, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toast } from 'react-toastify';
 import { useNavigationContext } from './NavigationContext';
 import { useConfig } from '../ConfigContext';
 import { useNavigationSessions } from '../../hooks/useNavigationSessions';
@@ -14,7 +15,7 @@ import {
 import { AppEvents } from '../../constants/events';
 import { InlineEditText } from '../common/InlineEditText';
 import { SessionIndicators } from '../SessionIndicators';
-import { acpRenameSession, type SessionListItem } from '../../acp/sessions';
+import { acpRenameSession, acpDeleteSession, type SessionListItem } from '../../acp/sessions';
 import { cn } from '../../utils';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -37,6 +38,26 @@ const i18n = defineMessages({
   untitledSession: {
     id: 'navigationPanel.untitledSession',
     defaultMessage: 'Untitled session',
+  },
+  deleteChat: {
+    id: 'navigationPanel.deleteChat',
+    defaultMessage: 'Delete chat',
+  },
+  confirmDelete: {
+    id: 'navigationPanel.confirmDelete',
+    defaultMessage: 'Confirm delete',
+  },
+  cancel: {
+    id: 'navigationPanel.cancel',
+    defaultMessage: 'Cancel',
+  },
+  chatDeleted: {
+    id: 'navigationPanel.chatDeleted',
+    defaultMessage: 'Chat deleted',
+  },
+  deleteFailed: {
+    id: 'navigationPanel.deleteFailed',
+    defaultMessage: 'Could not delete chat',
   },
 });
 
@@ -80,15 +101,32 @@ interface SessionRowProps {
 const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClick, onRenamed }) => {
   const intl = useIntl();
   const [isEditing, setIsEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const isStreaming = status?.streamState === 'streaming';
   const hasError = status?.streamState === 'error';
   const hasUnread = status?.hasUnreadActivity ?? false;
 
+  const doDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirming(false);
+    try {
+      await acpDeleteSession(session.id);
+      // The sidebar hook listens for SESSION_DELETED and drops the row + refetches.
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_DELETED, { detail: { sessionId: session.id } })
+      );
+      toast.success(intl.formatMessage(i18n.chatDeleted));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : intl.formatMessage(i18n.deleteFailed));
+    }
+  };
+
   return (
     <div
       onClick={() => !isEditing && onClick()}
+      onMouseLeave={() => setConfirming(false)}
       className={cn(
-        'flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer text-sm',
+        'group flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer text-sm',
         'hover:bg-background-tertiary/60 transition-colors',
         active && 'bg-background-tertiary'
       )}
@@ -112,7 +150,46 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
         onEditStart={() => setIsEditing(true)}
         onEditEnd={() => setIsEditing(false)}
       />
-      <SessionIndicators isStreaming={isStreaming} hasUnread={hasUnread} hasError={hasError} />
+      {confirming ? (
+        <span className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={doDelete}
+            aria-label={intl.formatMessage(i18n.confirmDelete)}
+            title={intl.formatMessage(i18n.confirmDelete)}
+            className="flex items-center justify-center h-5 w-5 text-white"
+            style={{ backgroundColor: '#ff3b30', borderRadius: 3 }}
+          >
+            <Check className="h-3 w-3" strokeWidth={3} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirming(false);
+            }}
+            aria-label={intl.formatMessage(i18n.cancel)}
+            className="flex items-center justify-center h-5 w-5 text-text-secondary hover:text-text-primary border border-border-primary"
+            style={{ borderRadius: 3 }}
+          >
+            <X className="h-3 w-3" strokeWidth={3} />
+          </button>
+        </span>
+      ) : (
+        <>
+          <SessionIndicators isStreaming={isStreaming} hasUnread={hasUnread} hasError={hasError} />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirming(true);
+            }}
+            aria-label={intl.formatMessage(i18n.deleteChat)}
+            title={intl.formatMessage(i18n.deleteChat)}
+            disabled={isStreaming}
+            className="shrink-0 opacity-0 group-hover:opacity-100 text-text-secondary hover:text-[#ff3b30] transition-opacity disabled:hidden"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </>
+      )}
     </div>
   );
 };
