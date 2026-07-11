@@ -11,7 +11,7 @@ import {
 } from '../../ui/dropdown-menu';
 import { useConfig } from '../../ConfigContext';
 import FanInCard from '../../swarm/FanInCard';
-import { useFleet } from '../../swarm/useFleet';
+import { useFleet, deviceFromModelId } from '../../swarm/useFleet';
 import {
   type SwarmConfig,
   DEFAULTS,
@@ -70,6 +70,26 @@ function NumberField({
         if (!Number.isNaN(n)) onCommit(n);
       }}
     />
+  );
+}
+
+// Custom −/number/+ stepper for a node's relative task-share weight (no native slider/select, per UI rules).
+function WeightStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const clamp = (v: number) => Math.max(1, Math.min(9, v));
+  const btn =
+    'h-6 w-6 flex items-center justify-center border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors leading-none';
+  return (
+    <div className="flex items-center gap-1.5">
+      <button onClick={() => onChange(clamp(value - 1))} className={btn} style={{ borderRadius: 3 }} aria-label="Less work">
+        −
+      </button>
+      <span className="w-4 text-center font-bold tabular-nums" style={{ color: '#2e8bff' }}>
+        {value}
+      </span>
+      <button onClick={() => onChange(clamp(value + 1))} className={btn} style={{ borderRadius: 3 }} aria-label="More work">
+        +
+      </button>
+    </div>
   );
 }
 
@@ -273,6 +293,17 @@ export default function SwarmSettingsSection() {
     [upsert]
   );
 
+  const setWeight = useCallback(
+    (node: string, w: number) => {
+      setCfg((prev) => {
+        const next = { ...prev, speed_weights: { ...(prev.speed_weights ?? {}), [node]: w } };
+        void upsert('swarm', next, false).catch(() => {});
+        return next;
+      });
+    },
+    [upsert]
+  );
+
   const applyPreset = useCallback(
     (id: 'golden' | 'default') => set(presetPatch(id === 'golden' ? GOLDEN : DEFAULTS)),
     [set]
@@ -304,7 +335,29 @@ export default function SwarmSettingsSection() {
               No fleet detected. Start LM Studio (LM Link) at {cfg.endpoint} to see your nodes.
             </div>
           )}
-          <div className="text-xs text-text-secondary">
+
+          {fleet.online && fleet.models.length > 0 && (
+            <div className="pt-2 mt-1 border-t border-border-primary space-y-1.5">
+              <div className="text-xs text-text-secondary">
+                Node weights — <span className="text-text-primary font-medium">higher = a bigger share of the tasks</span>.
+                Turn a slower machine down so it does less.
+              </div>
+              {fleet.models.map((m) => {
+                const node = deviceFromModelId(m);
+                const w = cfg.speed_weights?.[node] ?? 1;
+                return (
+                  <div key={m} className="flex items-center justify-between gap-3 py-0.5">
+                    <span className="text-sm font-mono text-text-primary truncate" title={m}>
+                      {node}
+                    </span>
+                    <WeightStepper value={w} onChange={(v) => setWeight(node, v)} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="text-xs text-text-secondary pt-1">
             Download and manage the models each node runs in the <span className="text-text-primary font-medium">Local Inference</span> tab.
           </div>
         </CardContent>
