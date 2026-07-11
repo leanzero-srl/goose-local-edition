@@ -294,9 +294,15 @@ export default function SwarmSettingsSection() {
   );
 
   const setWeight = useCallback(
-    (node: string, w: number) => {
+    (deviceId: string, fallbackKey: string, w: number) => {
       setCfg((prev) => {
-        const next = { ...prev, speed_weights: { ...(prev.speed_weights ?? {}), [node]: w } };
+        const sw = { ...(prev.speed_weights ?? {}) };
+        // Update the existing key that already matches this device in place (preserves the pool's scheme,
+        // e.g. "local"), else add a clean fallback key — so exactly one key matches each device (the
+        // scheduler's speed_weight_for uses first-substring-match; duplicates would be non-deterministic).
+        const existing = Object.keys(sw).find((k) => deviceId.includes(k));
+        sw[existing ?? fallbackKey] = w;
+        const next = { ...prev, speed_weights: sw };
         void upsert('swarm', next, false).catch(() => {});
         return next;
       });
@@ -309,6 +315,23 @@ export default function SwarmSettingsSection() {
     [set]
   );
   const activePreset = detectPreset(cfg);
+
+  // Node weight rows: the configured pool (its ids are what speed_weights keys match against), or the live
+  // fleet models when the pool is empty. weightFor mirrors the scheduler's speed_weight_for (first key the
+  // device id contains, else 1) so the UI shows the ACTUAL effective weight — including pool-set keys.
+  const configuredDevices = (Array.isArray(cfg.devices) ? cfg.devices : []) as Array<{
+    id: string;
+    model_id: string;
+  }>;
+  const weightRows =
+    configuredDevices.length > 0
+      ? configuredDevices.map((d) => ({ id: d.id, name: deviceFromModelId(d.model_id) || d.id }))
+      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m) }));
+  const weightFor = (id: string): number => {
+    const sw = cfg.speed_weights ?? {};
+    const key = Object.keys(sw).find((k) => id.includes(k));
+    return key ? (sw[key] ?? 1) : 1;
+  };
 
   return (
     <section id="swarm" className="space-y-4 pr-4 pb-8">
@@ -336,24 +359,20 @@ export default function SwarmSettingsSection() {
             </div>
           )}
 
-          {fleet.online && fleet.models.length > 0 && (
+          {weightRows.length > 0 && (
             <div className="pt-2 mt-1 border-t border-border-primary space-y-1.5">
               <div className="text-xs text-text-secondary">
                 Node weights — <span className="text-text-primary font-medium">higher = a bigger share of the tasks</span>.
                 Turn a slower machine down so it does less.
               </div>
-              {fleet.models.map((m) => {
-                const node = deviceFromModelId(m);
-                const w = cfg.speed_weights?.[node] ?? 1;
-                return (
-                  <div key={m} className="flex items-center justify-between gap-3 py-0.5">
-                    <span className="text-sm font-mono text-text-primary truncate" title={m}>
-                      {node}
-                    </span>
-                    <WeightStepper value={w} onChange={(v) => setWeight(node, v)} />
-                  </div>
-                );
-              })}
+              {weightRows.map((row) => (
+                <div key={row.id} className="flex items-center justify-between gap-3 py-0.5">
+                  <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
+                    {row.name}
+                  </span>
+                  <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, row.name, v)} />
+                </div>
+              ))}
             </div>
           )}
 
