@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, Send, Loader2, Check, Sparkles, Pencil } from 'lucide-react';
+import { X, Send, Loader2, Check, Sparkles, Pencil, ChevronDown } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useFleet } from './useFleet';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
@@ -78,7 +79,10 @@ export function RecipeChatWizard({
   onSaved: (recipe: Recipe) => void;
 }) {
   const fleet = useFleet();
-  const model = fleet.models.find((m) => /coder/i.test(m)) ?? fleet.models[0] ?? null;
+  const [picked, setPicked] = useState<string | null>(null);
+  const autoModel = fleet.models.find((m) => /coder/i.test(m)) ?? fleet.models[0] ?? null;
+  // Use the user's pick if it's still loaded, else fall back to the auto-chosen coder model.
+  const model = (picked && fleet.models.includes(picked) ? picked : null) ?? autoModel;
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -262,14 +266,37 @@ export function RecipeChatWizard({
             <h3 className="text-sm font-semibold text-text-primary">Build a recipe with the fleet</h3>
           </div>
           <div className="flex items-center gap-2">
-            <span
-              className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border border-border-primary"
-              style={fleet.online ? { borderRadius: 2, borderColor: AZURE, color: AZURE } : { borderRadius: 2 }}
-              title={model ?? 'no model loaded'}
-            >
-              <span className="h-1.5 w-1.5" style={{ backgroundColor: fleet.online ? '#2ecc71' : '#ff3b30', borderRadius: 1 }} />
-              {model ? model.split('-')[0] : 'offline'}
-            </span>
+            {fleet.online && fleet.models.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border"
+                    style={{ borderRadius: 2, borderColor: AZURE, color: AZURE }}
+                    title={model ? `${model} — click to switch node` : 'pick a node'}
+                  >
+                    <span className="h-1.5 w-1.5" style={{ backgroundColor: '#2ecc71', borderRadius: 1 }} />
+                    {model ? model.split('-')[0] : 'model'}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {fleet.models.map((m) => (
+                    <DropdownMenuItem key={m} onClick={() => setPicked(m)} className="text-xs font-mono">
+                      {m === model && <Check className="h-3 w-3 mr-1 shrink-0" style={{ color: AZURE }} />}
+                      {m}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <span
+                className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 border border-border-primary"
+                style={{ borderRadius: 2 }}
+              >
+                <span className="h-1.5 w-1.5" style={{ backgroundColor: '#ff3b30', borderRadius: 1 }} />
+                offline
+              </span>
+            )}
             <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Close">
               <X className="h-4 w-4" />
             </button>

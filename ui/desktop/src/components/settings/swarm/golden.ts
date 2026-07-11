@@ -34,7 +34,10 @@ export interface SwarmConfig {
   top_k?: number | null;
   min_p?: number | null;
   repeat_penalty?: number | null;
-  [k: string]: unknown; // preserve fields we don't edit (devices, speed_weights, worker_extensions, …)
+  /** Per-node task-share weights, keyed by a substring of the device id (e.g. {"gabee":1,"mihai":2}).
+   *  Higher = a larger share of tasks; the scheduler's speed_weight_for() substring-matches these. */
+  speed_weights?: Record<string, number>;
+  [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
 // Panel baseline = faithful to the Rust `Default for SwarmConfig` (swarm.rs:240-290).
