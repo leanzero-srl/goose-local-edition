@@ -266,13 +266,21 @@ export function AgentSetupWizard({
       <RecipeWizard
         isOpen={recipeWizardOpen}
         onClose={() => setRecipeWizardOpen(false)}
-        onSaved={() => setRecipeWizardOpen(false)}
+        onSaved={() => {
+          // Recipe saved: close the whole setup flow (not just this child) so the user isn't left
+          // staring at the still-open setup modal after a successful creation.
+          setRecipeWizardOpen(false);
+          onClose();
+        }}
       />
 
       <RecipeChatWizard
         isOpen={recipeChatOpen}
         onClose={() => setRecipeChatOpen(false)}
-        onSaved={() => setRecipeChatOpen(false)}
+        onSaved={() => {
+          setRecipeChatOpen(false);
+          onClose();
+        }}
       />
     </>
   );
