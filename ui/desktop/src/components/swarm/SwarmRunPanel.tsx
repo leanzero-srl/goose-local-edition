@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
-import { Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench } from 'lucide-react';
-import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall } from './useSwarmRun';
+import {
+  Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
+  Search, ListChecks, Play, FlaskConical, RotateCcw,
+} from 'lucide-react';
+import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall, type ActivityItem } from './useSwarmRun';
 
 /**
  * Goose Local Edition — LIVE swarm run turn loops, verbose. One expandable lane per task: the node
@@ -183,6 +186,52 @@ const LaneRow: React.FC<{
   );
 };
 
+const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>> = {
+  phase: Search,
+  plan: ListChecks,
+  dispatch: Play,
+  done: Check,
+  fail: X,
+  retry: RotateCcw,
+  review: FlaskConical,
+};
+const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
+  phase: '#2e8bff',
+  plan: '#6a5cff',
+  dispatch: '#17c4c4',
+  done: '#2ecc71',
+  fail: '#ff3b30',
+  retry: '#f5a623',
+  review: '#b14cff',
+};
+
+// The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
+// at the bottom; a spinner tail while the run is live.
+const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean }> = ({ items, live }) => {
+  if (items.length === 0) return null;
+  const recent = items.slice(-8);
+  return (
+    <div className="px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary">
+      {recent.map((it) => {
+        const Icon = ACTIVITY_ICON[it.kind];
+        return (
+          <div key={it.seq} className="flex items-start gap-2 text-xs">
+            <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color: ACTIVITY_COLOR[it.kind] }} />
+            <span className="text-text-primary">{it.text}</span>
+            {it.sub && <span className="text-text-secondary truncate">— {it.sub}</span>}
+          </div>
+        );
+      })}
+      {live && (
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <Loader2 size={13} className="animate-spin shrink-0" />
+          <span>working…</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
   workingDir,
   className = '',
@@ -190,7 +239,8 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   const run = useSwarmRun(workingDir);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
-  if (!run.present || run.lanes.length === 0) return null;
+  // Show whenever a run is present — including the PLANNING phase, before any worker executes (no lanes yet).
+  if (!run.present) return null;
 
   // Deterministic node ordering (first-seen device order) for stable letters/hues.
   const deviceOrder: string[] = [];
@@ -205,33 +255,52 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       className={`border border-border-primary bg-background-secondary text-text-primary text-sm ${className}`}
       style={{ borderRadius: 3 }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-primary">
-        <span className="text-xs font-semibold">Swarm LeanZero — turn loops</span>
-        <span className="text-xs text-text-secondary tabular-nums">
-          {running > 0 && (
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border-primary gap-2">
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-semibold shrink-0">Swarm LeanZero</span>
+          {run.inProgress && !stale && run.phase && (
             <span
-              style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }}
-              className="font-semibold"
+              className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+              style={{ backgroundColor: STATUS_COLOR.running, borderRadius: 2 }}
             >
-              {running} {stale ? 'interrupted' : 'running'}
+              <Loader2 size={10} className="animate-spin" /> {run.phase}
             </span>
           )}
-          {running > 0 && ' · '}
-          <span style={{ color: STATUS_COLOR.done }}>{done} done</span>
-          {failed > 0 && (
+          {stale && run.inProgress && (
+            <span className="text-[10px] px-1.5 py-0.5 shrink-0" style={{ color: CALL_PENDING }}>
+              interrupted
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-text-secondary tabular-nums shrink-0">
+          {tasks > 0 && (
             <>
+              {running > 0 && (
+                <span style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }} className="font-semibold">
+                  {running} {stale ? 'interrupted' : 'running'}
+                </span>
+              )}
+              {running > 0 && ' · '}
+              <span style={{ color: STATUS_COLOR.done }}>{done} done</span>
+              {failed > 0 && (
+                <>
+                  {' · '}
+                  <span style={{ color: STATUS_COLOR.error }} className="font-semibold">
+                    {failed} failed
+                  </span>
+                </>
+              )}
               {' · '}
-              <span style={{ color: STATUS_COLOR.error }} className="font-semibold">
-                {failed} failed
-              </span>
+              {tasks} tasks ·{' '}
             </>
           )}
-          {' · '}
-          {tasks} tasks · {ago(run.mtime)}
+          {ago(run.mtime)}
         </span>
       </div>
 
-      <div className="max-h-[28rem] overflow-y-auto divide-y divide-border-primary">
+      <ActivityFeed items={run.activity} live={run.inProgress && !stale} />
+
+      <div className="max-h-[24rem] overflow-y-auto divide-y divide-border-primary">
         {run.lanes.map((lane) => {
           const open = overrides[lane.taskId] ?? (lane.status === 'running');
           return (
