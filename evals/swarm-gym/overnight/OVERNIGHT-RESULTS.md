@@ -44,4 +44,28 @@ turn-loops the app shows, and result output is captured (no more "dummy" dots).
   - `diff <c1> <c2>` correctly reports "a.txt modified"
 - VERDICT: STRONG PASS. A genuinely working content-addressable store — SHA-256 objects, commit DAG,
   checkout, diff — the different-paradigm Rust archetype landed fully at real scale.
-## 4. ledger — Python double-entry accounting — (pending)
+## 4. ledger — Python double-entry accounting — STRONG PASS (spec-compliant CLI)
+- Built: 07:33, exit 0, **1028 LOC**, 9 modules (db/models/accounts/transactions/io/reports/balances/main).
+- **10/10 tests pass**, covering every hard requirement: test_txn_add_unbalanced_exits_nonzero (balanced-txn
+  enforcement), test_balance_sheet_balances (accounting equation), test_income_statement,
+  test_register_running_balance, test_export_import_roundtrip, test_cli_bad_date_exits_nonzero.
+- Golden CLI (ran it) matches the spec EXACTLY (Click-based, global --db): `account add Cash --type asset`,
+  `txn add --date --desc --debit Cash:100 --credit Revenue:100` -> "Transaction 1 added"; an unbalanced txn
+  is rejected ("Unbalanced transaction: debits 100.0 != credits 50.0"); `balance Cash` -> 100.00.
+- VERDICT: STRONG PASS — the cleanest of the four; correct double-entry logic + fully spec-compliant CLI.
+
+---
+## SUMMARY — 3/4 STRONG PASS, 1 FAIL
+| app | archetype | lang | LOC | result |
+|-----|-----------|------|-----|--------|
+| tracker | data app (issues+deps) | Python/SQLite | 1171 | PASS (works+tested; CLI-name drift) |
+| sheet | algorithmic engine | TypeScript | 993 | **FAIL** (computation broken) |
+| vcs | systems tool (content store) | Rust | 809 | PASS (works end-to-end) |
+| ledger | data app (accounting) | Python/SQLite | 1028 | PASS (works+tested; spec-exact CLI) |
+
+The local qwopus fleet builds genuinely working, tested, ~1000-LOC multi-module apps for the DATA and
+SYSTEMS archetypes. It hits a hard wall only on the DEEP ALGORITHMIC archetype (recursive-descent formula
+evaluation + dependency graph) — right structure + interface, broken evaluation. Fidelity gap seen even on
+passes: exact CLI naming drifts (tracker), though ledger nailed it. The result-snippet + reasoning capture
+made all of this observable in the run panel (files written w/ line counts, "ALL SMOKE TESTS PASSED",
+real tracebacks/errors) rather than empty dots.
