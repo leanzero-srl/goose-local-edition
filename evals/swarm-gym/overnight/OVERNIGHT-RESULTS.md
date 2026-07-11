@@ -55,7 +55,24 @@ turn-loops the app shows, and result output is captured (no more "dummy" dots).
 - VERDICT: STRONG PASS — the cleanest of the four; correct double-entry logic + fully spec-compliant CLI.
 
 ---
-## SUMMARY — 3/4 STRONG PASS, 1 FAIL
+## RIGOROUS RE-ASSESSMENT (2026-07-11, 8-agent find→verify workflow, ran every spec requirement)
+My first-pass verdicts were too generous — a deep per-app assessment that RAN every documented spec
+command (not just the app's own tests) found spec-contract violations the green suites hide:
+
+| app | verdict | reqs met | real bugs |
+|-----|---------|----------|-----------|
+| vcs | **STRONG-PASS** | 15/15 (golden) | only edge panics: cat-file on a short hash, log/ls-files on an empty repo |
+| tracker | **PARTIAL** | 14/24 | invented its own CLI (create/get/update vs add/show/set); `issue close` MISSING; a fabricated one-step-transition rule rejects a valid open→done; tests call internals so the CLI drift is invisible |
+| ledger | **PARTIAL** | 16/18 | balance-sheet never closes net income into equity (assets≠liab+equity once there's income/expense); raw tracebacks on dup account / bad import |
+| sheet | **PARTIAL** | 18/25 | INVERTS the spec's `=` formula rule (bare strings treated as formulas; `=`-prefixed print raw); #REF instead of #CYCLE for multi-cell cycles; empty-ref→0 not #REF; ZERO real tests |
+
+**The actionable finding:** the fleet builds genuinely working ENGINES/logic, but drifts on the exact SPEC
+CONTRACT — command names, the `=` convention, error codes — and its self-tests exercise INTERNAL functions
+rather than the documented CLI, so a green test suite masks the drift. Only vcs (Rust systems tool) matched
+the spec literally. Improvement target: have the swarm generate contract/CLI tests from the spec's literal
+commands, and verify against them — not just internal unit tests.
+
+## FIRST-PASS SUMMARY (kept for contrast — too lenient) — 3/4 STRONG PASS, 1 FAIL
 | app | archetype | lang | LOC | result |
 |-----|-----------|------|-----|--------|
 | tracker | data app (issues+deps) | Python/SQLite | 1171 | PASS (works+tested; CLI-name drift) |
