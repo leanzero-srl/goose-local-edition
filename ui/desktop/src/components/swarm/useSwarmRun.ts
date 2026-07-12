@@ -255,9 +255,10 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         const verdict = str(e['verdict']);
         const conf = num(e['confidence']);
         const hint = str(e['hint']);
-        // Only surface a judge verdict in verbose when it's actionable (not a routine "ok/observed") OR it
-        // carries a hint — those are the moments the AI judge catches spec-drift/looping/over-reading.
-        if (verdict !== 'ok' || hint) {
+        // Only surface a judge verdict in verbose when it's actionable (not a routine "ok/observed", and an
+        // empty/missing verdict is the ok case too) OR it carries a hint — those are the moments the AI
+        // judge catches spec-drift/looping/over-reading.
+        if ((verdict !== 'ok' && verdict !== '') || hint) {
           verbose({
             kind: 'judge',
             text: `Judge: ${str(e['task_id'])} → ${verdict || 'ok'}${conf != null ? ` (${Math.round(conf * 100)}%)` : ''}`,

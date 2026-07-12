@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
@@ -244,10 +244,18 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap
 // The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
 // at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean }> = ({ items, live, verbose }) => {
-  if (items.length === 0) return null;
+  const ref = useRef<HTMLDivElement>(null);
   const shown = verbose ? items : items.slice(-8);
+  const lastSeq = shown.length ? shown[shown.length - 1].seq : -1;
+  // In verbose the feed is a fixed-height scroller; pin it to the bottom as new activity streams in so the
+  // newest line is always visible (it otherwise stays scrolled to the oldest item).
+  useEffect(() => {
+    if (verbose && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [verbose, lastSeq, live]);
+  if (items.length === 0) return null;
   return (
     <div
+      ref={ref}
       className={`px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary ${verbose ? 'max-h-72 overflow-y-auto' : ''}`}
     >
       {shown.map((it) => (
