@@ -1,0 +1,10 @@
+Build a CLI persistent key-value store "kv" in Rust (no networking), built with cargo, using a log-structured storage file. Data lives in a store directory (path via a global --dir flag, default .kvstore in the cwd). Storage model: an append-only log file where each set/delete is a record; an in-memory index maps key -> the byte offset of its latest record; on startup the log is replayed to rebuild the index. Use these EXACT commands (match precisely):
+  'kv init' — create the store directory + empty log.
+  'kv set KEY VALUE' — append a set record; print nothing (exit 0).
+  'kv get KEY' — print the current value, or exit non-zero with a message if the key is absent or deleted.
+  'kv del KEY' — append a delete (tombstone) record; a subsequent get must report the key absent.
+  'kv list' — print all live keys (not deleted), one per line, sorted.
+  'kv keys --prefix P' — print live keys starting with prefix P, sorted.
+  'kv compact' — rewrite the log keeping only the latest live record per key (drop overwritten + tombstoned records); the store must behave identically after compaction and the log file must be smaller when there were overwrites/deletes.
+  'kv stats' — print the number of live keys, the number of log records, and the log file size in bytes.
+Validate inputs and exit non-zero on a missing store (get/set before init), an unknown key on get/del, or a bad argument. Include an integration test (tests/) that: init; sets several keys; overwrites one; deletes one; asserts get/list/keys reflect it; runs compact and asserts the store still returns the right values and the log shrank; and that get on an absent key exits non-zero. Provide Cargo.toml and make it build + run with cargo. Target roughly 900-1300 lines across clear modules (log, index, store, commands, cli).

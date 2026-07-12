@@ -1,0 +1,11 @@
+Build a CLI "csvql" in Python that runs a small SQL-like SELECT query over a CSV file (no external query libraries — implement the query engine yourself). The CSV's first row is the header (column names). Command surface (match these EXACTLY):
+  'csvql query FILE "QUERY"' — run QUERY against FILE and print the result rows as CSV (with a header row).
+  'csvql columns FILE' — print the column names, one per line.
+The QUERY language, which you must TOKENIZE and PARSE with a recursive-descent parser (do NOT use Python eval or the sqlite module):
+  SELECT <cols> FROM data [WHERE <cond>] [GROUP BY <col>] [ORDER BY <col> [ASC|DESC]] [LIMIT N]
+  - <cols> is '*' or a comma list of column names or aggregates: COUNT(*), SUM(col), AVG(col), MIN(col), MAX(col).
+  - <cond> supports comparisons =, !=, <, <=, >, >= on a column vs a number or a 'single-quoted string', combined with AND / OR and parentheses.
+  - numbers compare numerically; strings compare lexicographically; a column that is empty or non-numeric in a numeric comparison is treated as not-matching (never crash).
+  - GROUP BY groups rows by the column and the SELECT list may then mix the group column with aggregates.
+  - ORDER BY sorts by a column (numeric if the column is numeric, else lexicographic); LIMIT caps the output rows.
+Exit non-zero with a clear message on: a missing file, an unknown column, or a parse/syntax error in the query (report the position or token). Make it runnable as 'python -m csvql'. Include a pytest suite over a small fixture CSV that checks: a plain SELECT with WHERE (numeric and string), SELECT of specific columns, COUNT(*)/SUM/AVG, GROUP BY with an aggregate, ORDER BY ASC and DESC, LIMIT, and that a bad column and a syntax error both exit non-zero. Target roughly 900-1300 lines across clear modules (tokenizer, parser, evaluator, cli).
