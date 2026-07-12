@@ -16,3 +16,13 @@ rather than the documented CLI — so a green test suite MASKS the drift (tracke
 only vcs matched its spec). Candidate improvement: have the swarm derive CLI/contract tests from the spec's
 literal commands and verify against them, not just internal unit tests. (Larger swarm-quality change —
 raise with the user before starting.)
+
+## Builds should not default to $HOME as the working dir (2026-07-12)
+A UI-dispatched swarm BUILD uses the app's working dir, which defaults to $HOME. That (a) dumps generated
+app dirs (~/inv, ~/csvql, …) into the user's home, and (b) makes the ENTIRE home tree "inside the working
+directory", so workers (esp. integrate-verify) wander into unrelated sibling projects in home and verify the
+wrong thing (observed: integrate-verify ran `cd ~/wc2 && pytest` instead of the app it was building). The
+worker prompt already forbids cd/siblings, but home-as-workdir defeats it (siblings are children of the
+workdir). FIX: when the swarm provider dispatches a build and the working dir is the home directory, build in
+a dedicated project subdir (e.g. ~/goose-builds/<name> or a chosen/created project dir) instead of $HOME.
+The app already supports `--dir <path>`; the gap is the DEFAULT for builds.

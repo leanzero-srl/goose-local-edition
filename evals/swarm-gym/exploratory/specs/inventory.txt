@@ -1,0 +1,15 @@
+Build a CLI inventory manager "inv" in Python backed by SQLite. Persist to a SQLite file (path via a global --db flag, default inv.db in the cwd). ENTITIES: products (sku unique, name, category, unit_price, quantity, reorder_level) and suppliers (name unique, contact). Use these EXACT commands and flags (match them precisely):
+  'inv init' — create the database.
+  'inv product add --sku SKU --name NAME --category CAT --price P --qty Q [--reorder R]' — add a product; print "added <sku>"; reject a duplicate sku with a non-zero exit.
+  'inv product list [--category CAT] [--sort name|price|qty]' — list products, optionally filtered/sorted.
+  'inv product show SKU' — show one product; non-zero exit if unknown.
+  'inv product set SKU [--price P] [--reorder R] [--name NAME]' — update fields.
+  'inv supplier add --name NAME [--contact C]' and 'inv supplier list'.
+  'inv receive SKU --qty Q [--supplier NAME]' — increase stock by Q, record the movement.
+  'inv ship SKU --qty Q' — decrease stock by Q; REJECT with non-zero exit if Q exceeds the current quantity.
+  'inv adjust SKU --qty DELTA --reason TEXT' — apply a signed adjustment (DELTA may be negative).
+  'inv movements SKU' — list the stock movements for a product in time order (receive/ship/adjust with quantities).
+  'inv low-stock' — list products whose quantity is at or below their reorder_level.
+  'inv report value [--category CAT]' — total inventory value (sum of unit_price*quantity), optionally per category.
+  'inv export CSV_PATH' and 'inv import CSV_PATH' — round-trip products to/from CSV.
+Validate all inputs (numbers, unknown sku/supplier) and exit non-zero with a clear message on bad input. Make it runnable as 'python -m inv'. Include a pytest suite that: adds products + suppliers; receives and ships stock; asserts a ship exceeding quantity is rejected (non-zero); checks low-stock is correct; checks report value; and that export then re-import round-trips. Target roughly 1000-1500 lines across multiple modules.
