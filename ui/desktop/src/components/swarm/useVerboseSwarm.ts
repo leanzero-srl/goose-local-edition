@@ -12,10 +12,13 @@ const KEY = 'goose.swarm.verboseActivity';
 const EVT = 'goose-swarm-verbose-changed';
 
 function read(): boolean {
+  // Default ON: the swarm run panel should show the full picture out of the box. An explicit choice to go
+  // Compact ('0') is respected; only an absent preference defaults to verbose.
   try {
-    return localStorage.getItem(KEY) === '1';
+    const v = localStorage.getItem(KEY);
+    return v === null ? true : v === '1';
   } catch {
-    return false;
+    return true;
   }
 }
 
