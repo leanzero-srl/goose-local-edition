@@ -130,3 +130,19 @@ to measure how many of the 15 apps this bug bites.
   integrate-verify never dispatched → scheduler_stuck remaining:2). Also `shared-types` had spec_drift (the
   conftest `sample_data` fixture does db.commit() with no yield of inserted IDs). The library quality is
   actually STRONG; the harness bug (#7) is what makes it fail. Best evidence yet that #7 is the priority fix.
+- csvql (algorithmic): **FAIL** — 936 LOC, has entry point (python -m csvql, query/columns subcommands),
+  imports OK, `columns` subcommand WORKS (prints name/age). 11/14 tests fail. RE-VERIFIED — TWO independent
+  contract-drift bugs:
+  (1) ENGINE drift (dominant): csvql/cli.py:50 `writer.writerow(row.values())` assumes each result row is a
+      DICT, but evaluator.py yields rows as LISTS → `AttributeError: 'list' object has no attribute 'values'`
+      on EVERY query (even the spec-correct `csvql query FILE "SELECT * FROM data"` crashes). The cli worker
+      and evaluator worker disagreed on the row data type. Same class as bookclub's ctx.obj.
+  (2) TEST-HARNESS drift: the spec mandates `csvql query FILE "QUERY"` (FILE + QUERY separate); the `columns`
+      test correctly uses the subcommand, but the `query` tests invoke bare `csvql "SELECT * FROM \"<file>\""`
+      (file embedded in the SQL, no `query` subcommand) → argparse "invalid choice" exit 2. The test worker
+      used two different invocation styles and contradicted the spec for queries.
+  → REINFORCES BACKLOG #4: cross-module data-type/interface drift is THE dominant failure across archetypes
+    (bookclub ctx.obj, csvql row dict-vs-list + CLI-shape). The planner-emitted shared-types/interface
+    contract (GOOSE_SWARM_CONTRACTS) that every worker MUST import, plus a done-gate that runs one real
+    spec-exact command, would catch both. Note: the CLI here was actually spec-correct on shape; the ENGINE
+    row-type is the killer — a contract stub for "evaluator.run() -> list[dict] | list[list]" resolves it.
