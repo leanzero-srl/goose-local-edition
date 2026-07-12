@@ -47,16 +47,22 @@ reload windows, not a correctness bug in the happy path.
 
 ## Results log
 - inventory (data): STRONG PASS (prior) — 808 LOC, spec-exact CLI, 22/22.
-- bookclub (data): **FAIL** — 724 LOC, 16/22 tests fail, CLI crashes on init (ImportError: no module 'shelf.models';
-  no __main__.py entry). Broken package wiring / cross-module imports. NOTE: the smoke gate (new fix) CAUGHT it
-  (collect=errors "ModuleNotFoundError: shelf.models" + "no python3 -m <pkg> entry point — unrunnable"), but the
-  build shipped broken because smoke is ADVISORY (one corrective re-dispatch that didn't fix it). Built during the
-  fleet transient (workhorse as qwopus:2) with 2 retries.
-  → BACKLOG #3: UI builds should use the STRONGER gate (GOOSE_SWARM_COMPLETE: verify-by-running + iterate to green)
-    or smoke should hard-block "unrunnable" rather than ship. The advisory smoke detects but doesn't prevent.
-  → BACKLOG #4 (recurring): package/import wiring breaks (shelf.models import, csvql row-type) — cross-module
-    contract drift is the dominant failure. Candidate: a planner "shared-types/interface" contract the workers
-    must import, verified before completion.
+- bookclub (data): **FAIL** — 724 LOC, 20/37 tests fail. RE-VERIFIED end-to-end (my earlier "ImportError/no
+  __main__" verdict was STALE — the build actually finished more): imports OK, __main__.py present, `--help`
+  works. But EVERY real subcommand crashes: shelf/cli.py:18 `db_path = ctx.obj.get("db_path","shelf.db")` →
+  `AttributeError: 'NoneType' object has no attribute 'get'` because the group callback never initializes
+  ctx.obj (missing `ctx.ensure_object(dict)` / `ctx.obj = {...}`). 17 passing tests are pure model/db units;
+  the 20 failing are the CLI integration tests. Classic cross-module CONTRACT DRIFT: the group in commands.py
+  and the custom Group.invoke in cli.py disagree on who populates ctx.obj.
+  → CRITICAL SMOKE-GATE INSIGHT: `python3 -m shelf --help` returns exit 0 (Click short-circuits --help BEFORE
+    invoke), so a --help-only smoke probe passes on a fully-broken CLI. The smoke/complete gate MUST exercise
+    a REAL subcommand round-trip (e.g. add then list) against a temp db, not just --help. Folding into #3.
+  → BACKLOG #3: UI builds should use the STRONGER gate (GOOSE_SWARM_COMPLETE: verify-by-running a real command
+    + iterate to green), and the smoke probe must run a real subcommand, not --help. Advisory smoke detects but
+    doesn't prevent, and --help is too weak a probe.
+  → BACKLOG #4 (recurring): cross-module contract drift is the dominant failure (bookclub ctx.obj, csvql
+    row-type). Candidate: a planner "shared-types/interface" contract the workers must import + a done-gate that
+    runs a real command.
 
 ## BACKLOG ITEM #5 (goose extensions / Playwright) — stale /usr/local/bin/node 19.8.1 breaks npx extensions
 ROOT CAUSE (found): the Playwright MCP extension runs `npx -y @playwright/mcp@latest`, but the machine has a
