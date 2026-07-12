@@ -4,7 +4,7 @@ import {
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
 } from 'lucide-react';
 import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall, type ActivityItem } from './useSwarmRun';
-import { useVerboseSwarm } from './useVerboseSwarm';
+import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 
 /**
  * Goose Local Edition — LIVE swarm run turn loops, verbose. One expandable lane per task: the node
@@ -50,46 +50,128 @@ function callColor(ok: boolean | null): string {
   return CALL_PENDING;
 }
 
-const CallRow: React.FC<{ call: SwarmCall }> = ({ call }) => (
-  <div className="py-0.5">
-    <div className="flex items-start gap-2">
-      <span
-        className="mt-1 h-1.5 w-1.5 shrink-0"
-        style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
-        aria-hidden
-      />
-      <span
-        className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
-        style={{ borderRadius: 2 }}
+// A machine-emitted block (shell stdout/stderr, a printed value) rendered TRUE MONOSPACE with alignment
+// preserved, capped with a Show-all escape hatch (never truncate-and-lose) and a copy button.
+const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const lineCount = text.split('\n').length;
+  const big = lineCount > 24;
+  return (
+    <div>
+      <pre
+        className={`font-mono text-[11px] whitespace-pre-wrap break-words px-2 py-1 bg-background-secondary border border-border-primary ${!expanded && big ? 'max-h-64 overflow-hidden' : ''}`}
+        style={{ borderRadius: 2, color: failed ? '#ff8f88' : 'var(--text-secondary)' }}
       >
-        {call.name.replace(/^developer__/, '')}
-      </span>
-      <span
-        className="flex-1 font-mono text-xs text-text-primary break-words"
-        style={call.ok === false ? { color: CALL_ERR } : undefined}
-        title={call.summary}
-      >
-        {call.summary || '—'}
-      </span>
-    </div>
-    {call.result && call.result.trim().length > 0 && (
-      <div
-        className="ml-[1.15rem] mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-words px-2 py-1 bg-background-secondary border border-border-primary text-text-secondary"
-        style={{ borderRadius: 2 }}
-      >
-        {call.result.trim()}
+        {text}
+      </pre>
+      <div className="flex items-center gap-3 mt-0.5">
+        {big && (
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            className="text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+          >
+            {expanded ? 'Show less' : `Show all (${lineCount} lines)`}
+          </button>
+        )}
+        <button
+          onClick={() => {
+            void navigator.clipboard?.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          }}
+          className="text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+        >
+          {copied ? 'copied' : 'copy'}
+        </button>
       </div>
-    )}
-  </div>
-);
+    </div>
+  );
+};
+
+// One tool call as an action→observation unit: the command/target line (always), its full output on
+// expand. A failing call auto-expands so the error is zero-clicks away.
+const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, defaultOpen }) => {
+  const hasOutput = !!call.result && call.result.trim().length > 0;
+  const failed = call.ok === false;
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div className="py-0.5 border-b border-border-primary/30 last:border-0">
+      <button
+        type="button"
+        onClick={() => hasOutput && setOpen((o) => !o)}
+        className={`w-full flex items-start gap-2 text-left ${hasOutput ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+      >
+        <span
+          className="mt-1 h-1.5 w-1.5 shrink-0"
+          style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
+          aria-hidden
+        />
+        <span
+          className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
+          style={{ borderRadius: 2 }}
+        >
+          {call.name.replace(/^developer__/, '')}
+        </span>
+        <span
+          className="flex-1 font-mono text-xs break-words"
+          style={{ color: failed ? CALL_ERR : 'var(--text-primary)' }}
+          title={call.summary}
+        >
+          {call.summary || '—'}
+        </span>
+        {hasOutput &&
+          (open ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-text-secondary mt-0.5" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-text-secondary mt-0.5" />
+          ))}
+      </button>
+      {hasOutput && open && (
+        <div className="ml-[1.15rem] mt-1">
+          <MonoOutput text={call.result!.trim()} failed={failed} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// The worker's full narration, rendered as readable PROSE (not mono), capped with a Show-all escape hatch.
+// In developer mode it starts fully expanded (no cap).
+const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean }> = ({ text, forceOpen }) => {
+  const [expandedState, setExpanded] = useState(false);
+  const expanded = expandedState || !!forceOpen;
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const big = text.length > 1200;
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">Reasoning</div>
+      <div
+        className={`text-xs text-text-primary whitespace-pre-wrap break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
+        style={{ borderRadius: 3 }}
+      >
+        {text}
+      </div>
+      {big && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-0.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+        >
+          {expanded ? 'Show less' : `Show all (${words} words)`}
+        </button>
+      )}
+    </div>
+  );
+};
 
 const LaneRow: React.FC<{
   lane: TurnLane;
   deviceOrder: string[];
   stale: boolean;
   open: boolean;
+  dev?: boolean;
   onToggle: () => void;
-}> = ({ lane, deviceOrder, stale, open, onToggle }) => {
+}> = ({ lane, deviceOrder, stale, open, dev, onToggle }) => {
   const idx = deviceIndex(lane.device, deviceOrder);
   const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
   const letter = String.fromCharCode(65 + (idx % 26));
@@ -100,11 +182,13 @@ const LaneRow: React.FC<{
   const iconColor = interrupted ? CALL_PENDING : STATUS_COLOR[lane.status];
 
   const calls = lane.calls ?? [];
-  // Only surface reasoning that is real narration. Old-schema runs fall back to last_text, which for
-  // these coder models is often a stray "." / "`" / one-word fragment — never show a box holding that.
-  const rawReasoning = lane.reasoning?.trim() || lane.lastText?.trim() || '';
-  const reasoning = rawReasoning.length >= 12 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
+  // Prefer the FULL narration; fall back to the short digest, then last_text. fullReasoning is real prose,
+  // so no length/regex gate is needed — show whatever substantive text the worker produced.
+  const rawReasoning = lane.fullReasoning?.trim() || lane.reasoning?.trim() || lane.lastText?.trim() || '';
+  const reasoning = rawReasoning.length >= 8 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
   const hasBody = reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0;
+  // The first failing call auto-expands so the error is zero clicks away.
+  const firstFailIdx = calls.findIndex((c) => c.ok === false);
 
   return (
     <div data-testid="turn-lane">
@@ -152,17 +236,7 @@ const LaneRow: React.FC<{
 
       {open && hasBody && (
         <div className="px-3 pb-3 pl-9 space-y-2">
-          {reasoning && (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">Reasoning</div>
-              <div
-                className="text-xs text-text-primary whitespace-pre-wrap break-words bg-background-primary border border-border-primary px-2 py-1.5"
-                style={{ borderRadius: 3 }}
-              >
-                {reasoning}
-              </div>
-            </div>
-          )}
+          {reasoning && <ReasoningBlock text={reasoning} forceOpen={dev} />}
 
           {calls.length > 0 ? (
             <div>
@@ -174,7 +248,8 @@ const LaneRow: React.FC<{
                 style={{ borderRadius: 3 }}
               >
                 {calls.map((c, i) => (
-                  <CallRow key={i} call={c} />
+                  // Developer mode opens every call's output; otherwise only the first failure.
+                  <CallRow key={i} call={c} defaultOpen={dev || i === firstFailIdx} />
                 ))}
               </div>
             </div>
@@ -267,7 +342,14 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 }) => {
   const run = useSwarmRun(workingDir);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const [verbose, setVerbose] = useVerboseSwarm();
+  const [mode, setMode] = useSwarmLogMode();
+  const verbose = mode !== 'compact';
+  const dev = mode === 'developer';
+  const nextMode: Record<SwarmLogMode, SwarmLogMode> = {
+    compact: 'verbose',
+    verbose: 'developer',
+    developer: 'compact',
+  };
 
   // Show whenever a run is present — including the PLANNING phase, before any worker executes (no lanes yet).
   if (!run.present) return null;
@@ -328,16 +410,24 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
             {ago(run.mtime)}
           </span>
           <button
-            onClick={() => setVerbose(!verbose)}
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
+            onClick={() => setMode(nextMode[mode])}
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors capitalize"
             style={
-              verbose
-                ? { borderRadius: 2, borderColor: '#2e8bff', color: '#2e8bff' }
-                : { borderRadius: 2, borderColor: 'var(--border-primary)', color: 'var(--text-secondary)' }
+              dev
+                ? { borderRadius: 2, borderColor: '#b14cff', color: '#b14cff' }
+                : verbose
+                  ? { borderRadius: 2, borderColor: '#2e8bff', color: '#2e8bff' }
+                  : { borderRadius: 2, borderColor: 'var(--border-primary)', color: 'var(--text-secondary)' }
             }
-            title={verbose ? 'Verbose — showing every step' : 'Verbose off — headlines only'}
+            title={
+              dev
+                ? 'Developer — everything expanded + raw. Click for Compact.'
+                : verbose
+                  ? 'Verbose — the full timeline. Click for Developer.'
+                  : 'Compact — headlines only. Click for Verbose.'
+            }
           >
-            <AlignLeft size={11} /> {verbose ? 'Verbose' : 'Compact'}
+            <AlignLeft size={11} /> {mode}
           </button>
         </span>
       </div>
@@ -361,6 +451,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
               deviceOrder={deviceOrder}
               stale={stale}
               open={open}
+              dev={dev}
               onToggle={() => setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))}
             />
           );

@@ -496,6 +496,10 @@ export default function BaseChat({
                 <div className="block h-8" />
               </>
             ) : null}
+
+            {/* Inside the scroll area so the whole chat scrolls as ONE — the panel flows with the messages
+                at its natural height instead of overflowing a fixed bottom region. */}
+            {isLocal && <SwarmRunPanel workingDir={session?.working_dir} className="mb-2" />}
           </ScrollArea>
 
           {chatState !== ChatState.Idle && (
@@ -511,8 +515,6 @@ export default function BaseChat({
             </div>
           )}
         </div>
-
-        {isLocal && <SwarmRunPanel workingDir={session?.working_dir} className="mx-4 mb-2" />}
 
         <ChatInputCard
           className={cn(

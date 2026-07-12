@@ -2933,7 +2933,23 @@ fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> Strin
         })
         .collect::<Vec<_>>()
         .join("\n");
-    clip_tail(&joined, 400)
+    // Generous cap: the desktop run panel shows this as the tool's real output (pytest results, a
+    // traceback, a printed value). Enough to read what happened, tail-kept so the informative end (the
+    // pass/fail line) survives even for a long log.
+    clip_tail(&joined, 4000)
+}
+
+/// The worker's FULL narration — every substantive text chunk it produced, in order, joined. This is the
+/// "read the reasoning in plain" the run panel shows on expand (distinct from `build_reasoning`, which is
+/// the short last-few-chunks summary the judge reads). Tail-capped very generously.
+fn build_full_reasoning(texts: &[String]) -> String {
+    let joined = texts
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| t.chars().count() >= 6 && t.contains(char::is_whitespace))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    clip_tail(&joined, 24000)
 }
 
 /// Build the worker's live reasoning from its text chunks, dropping the trivial fragments (a lone ".",
@@ -3846,13 +3862,14 @@ impl GooseAgentDispatcher {
                 let calls: Vec<serde_json::Value> = call_records
                     .iter()
                     .rev()
-                    .take(24)
+                    .take(60)
                     .rev()
                     .map(|(name, summary, ok, result)| {
                         serde_json::json!({ "name": name, "summary": summary, "ok": ok, "result": result })
                     })
                     .collect();
                 let reasoning: String = build_reasoning(&texts);
+                let full_reasoning: String = build_full_reasoning(&texts);
                 let digest = serde_json::json!({
                     "tool_calls": tool_calls.len(),
                     "errors": errors,
@@ -3860,6 +3877,9 @@ impl GooseAgentDispatcher {
                     "last_text": last_text,
                     "calls": calls,
                     "reasoning": reasoning,
+                    // The full narration for the desktop panel's "reasoning in plain" view. The judge reads
+                    // only the small fields above; this extra key is inert to it.
+                    "full_reasoning": full_reasoning,
                 });
                 let _ = std::fs::write(p, digest.to_string());
             }
