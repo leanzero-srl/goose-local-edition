@@ -57,3 +57,18 @@ reload windows, not a correctness bug in the happy path.
   → BACKLOG #4 (recurring): package/import wiring breaks (shelf.models import, csvql row-type) — cross-module
     contract drift is the dominant failure. Candidate: a planner "shared-types/interface" contract the workers
     must import, verified before completion.
+
+## BACKLOG ITEM #5 (goose extensions / Playwright) — stale /usr/local/bin/node 19.8.1 breaks npx extensions
+ROOT CAUSE (found): the Playwright MCP extension runs `npx -y @playwright/mcp@latest`, but the machine has a
+STALE root-owned /usr/local/bin/node = v19.8.1 (from 2023) that shadows the newer nodes (/opt/homebrew node
+26.3.1, nvm 22.22.0). When goose spawns npx, it resolves to /usr/local/bin/node 19.8.1; Playwright requires
+>=20, so it quits with "You are running Node.js 19.8.1. Playwright requires Node.js 20 or higher." (the
+"1 extension failed" seen in every screenshot).
+IMMEDIATE FIX (applied): pointed the playwright extension config at /opt/homebrew/bin/npx (node 26.3.1) —
+verified @playwright/mcp starts cleanly under node 26 and node 22. config.yaml.bak saved.
+SYSTEM-HYGIENE (user, needs sudo): remove/update the stale node — `sudo rm /usr/local/bin/node
+/usr/local/bin/npx` (or `brew link --overwrite node`) so ALL tools stop picking up 19.8.1, not just goose.
+DURABLE GOOSE FIX (backlog): when spawning a stdio extension whose cmd is `npx`/`node`, goose should resolve
+a node that satisfies the requirement (or prepend the modern node dir ahead of /usr/local/bin in the
+extension PATH) rather than trusting whatever `node` PATH-resolves — so a stale system node can't silently
+break every npx-based extension. main.ts builds the extension env; this is where it'd go.
