@@ -231,6 +231,15 @@ impl Provider for SwarmProvider {
             .arg(&brief)
             .arg("--output-format")
             .arg("json");
+        // End-to-end verification for UI-dispatched builds. The smoke gate RUNS the produced program
+        // (e.g. `python3 -m <pkg>` / `pytest --collect-only`) and fires one corrective fix if it crashes,
+        // so a build that produced a broken entry point (e.g. a CLI that raises on every command) is caught
+        // before it is reported "done". This gate is off unless the env var is set or "assured" mode is on;
+        // CLI runs set it explicitly, but the UI provider did not — so UI builds silently skipped end-to-end
+        // verification and shipped broken CLIs. Default it on here; respect an explicit override.
+        if std::env::var("GOOSE_SWARM_SMOKE").is_err() {
+            cmd.env("GOOSE_SWARM_SMOKE", "1");
+        }
         if let Some(dir) = &self.working_dir {
             cmd.current_dir(dir);
         }

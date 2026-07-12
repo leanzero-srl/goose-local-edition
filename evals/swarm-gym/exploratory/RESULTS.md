@@ -8,8 +8,8 @@ tool output + judge verdicts). Sequential on the 3-node fleet. Each verified by 
 | app | archetype | lang | status | LOC | contract fidelity | verdict |
 |-----|-----------|------|--------|-----|-------------------|---------|
 | inventory | data app | Python/SQLite | done | 808 | **spec-EXACT** | STRONG PASS |
-| csvql | algorithmic engine | Python | building (isolated --dir) | — | — | — |
-| kvstore | systems tool | Rust | queued | — | — | — |
+| csvql | algorithmic engine | Python | done | 936 | CLI crashes | **FAIL** |
+| kvstore | systems tool | Rust | building (isolated, +smoke gate) | — | — | — |
 
 ## Observations
 
@@ -46,3 +46,23 @@ Golden spec-contract check (the point of this run): the EXACT documented command
 over the last overnight assessment (tracker/sheet invented their own CLI). LIKELY CAUSE: this spec listed the
 exact command names/flags with "match these EXACTLY"; being explicit in the spec lifts contract fidelity.
 Minor: movements shows "ship +30" (sign cosmetic; type column already says ship).
+
+### csvql — FAIL (broken CLI slipped through; the deep archetype + a verification gap)
+936 LOC, clean architecture (tokenizer/parser/ast/evaluator/cli). But the CLI CRASHES on every query:
+`cli.py:50` does `row.values()` while the evaluator returns rows as LISTS → AttributeError on all queries.
+Classic cross-module CONTRACT DRIFT (cli-worker and evaluator-worker disagreed on the row type). The 3
+"passing" unit tests only exercise the evaluator internals, so they never hit the broken CLI glue.
+
+WHY IT SLIPPED THROUGH — two root causes (read from the .swarm logs):
+1. **No end-to-end verification ran.** GOOSE_SWARM_SMOKE / GOOSE_SWARM_COMPLETE gate on an explicit env var
+   or "assured" mode; a UI-dispatched build (swarm PROVIDER) sets neither, so smoke+complete were OFF and
+   nothing ran `python3 -m csvql`. My CLI overnight runs set GOOSE_SWARM_SMOKE=1, so they DID catch such
+   crashes — UI builds silently got LESS verification. **FIX: the swarm provider now enables the smoke
+   end-to-end gate for UI builds.**
+2. **The scheduler got stuck.** The `parser` worker stalled 420s (weak model on a hard module) → retry →
+   `scheduler_stuck {remaining:1}`; integrate-verify never completed. The evaluator worker also
+   over_read→looped→salvaged. The parser+evaluator are the deep archetype's hard core (last time `sheet`
+   failed here too). Deeper issue; noted, not fixed this pass.
+
+VERDICT: FAIL. The value is the finding: UI builds must run the end-to-end gate (fix shipping now), and the
+deep algorithmic archetype still strains the fleet on the parser/evaluator.
