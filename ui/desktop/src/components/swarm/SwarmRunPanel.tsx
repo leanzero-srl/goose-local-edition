@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
@@ -74,7 +74,7 @@ const CallRow: React.FC<{ call: SwarmCall }> = ({ call }) => (
     </div>
     {call.result && call.result.trim().length > 0 && (
       <div
-        className="ml-[1.15rem] mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-words max-h-28 overflow-y-auto px-2 py-1 bg-background-secondary border border-border-primary text-text-secondary"
+        className="ml-[1.15rem] mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-words px-2 py-1 bg-background-secondary border border-border-primary text-text-secondary"
         style={{ borderRadius: 2 }}
       >
         {call.result.trim()}
@@ -156,7 +156,7 @@ const LaneRow: React.FC<{
             <div>
               <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">Reasoning</div>
               <div
-                className="text-xs text-text-primary whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-background-primary border border-border-primary px-2 py-1.5"
+                className="text-xs text-text-primary whitespace-pre-wrap break-words bg-background-primary border border-border-primary px-2 py-1.5"
                 style={{ borderRadius: 3 }}
               >
                 {reasoning}
@@ -170,7 +170,7 @@ const LaneRow: React.FC<{
                 Tool calls · {lane.toolCalls ?? calls.length}
               </div>
               <div
-                className="max-h-56 overflow-y-auto bg-background-primary border border-border-primary px-2 py-1"
+                className="bg-background-primary border border-border-primary px-2 py-1"
                 style={{ borderRadius: 3 }}
               >
                 {calls.map((c, i) => (
@@ -244,20 +244,10 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap
 // The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
 // at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean }> = ({ items, live, verbose }) => {
-  const ref = useRef<HTMLDivElement>(null);
   const shown = verbose ? items : items.slice(-8);
-  const lastSeq = shown.length ? shown[shown.length - 1].seq : -1;
-  // In verbose the feed is a fixed-height scroller; pin it to the bottom as new activity streams in so the
-  // newest line is always visible (it otherwise stays scrolled to the oldest item).
-  useEffect(() => {
-    if (verbose && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [verbose, lastSeq, live]);
   if (items.length === 0) return null;
   return (
-    <div
-      ref={ref}
-      className={`px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary ${verbose ? 'max-h-72 overflow-y-auto' : ''}`}
-    >
+    <div className="px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary">
       {shown.map((it) => (
         <ActivityLine key={it.seq} it={it} wrap={verbose} />
       ))}
@@ -358,7 +348,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         verbose={verbose}
       />
 
-      <div className="max-h-[24rem] overflow-y-auto divide-y divide-border-primary">
+      <div className="divide-y divide-border-primary">
         {run.lanes.map((lane) => {
           // In verbose, every lane defaults open (show all reasoning + tool calls); the user can still
           // collapse individual ones via the override.
