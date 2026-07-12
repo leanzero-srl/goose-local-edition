@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
-  Search, ListChecks, Play, FlaskConical, RotateCcw,
+  Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
 } from 'lucide-react';
 import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall, type ActivityItem } from './useSwarmRun';
+import { useVerboseSwarm } from './useVerboseSwarm';
 
 /**
  * Goose Local Edition — LIVE swarm run turn loops, verbose. One expandable lane per task: the node
@@ -194,6 +195,11 @@ const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: n
   fail: X,
   retry: RotateCcw,
   review: FlaskConical,
+  judge: Gavel,
+  prereview: Eye,
+  smoke: FlaskConical,
+  brief: FileText,
+  config: Cpu,
 };
 const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
   phase: '#2e8bff',
@@ -203,25 +209,50 @@ const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
   fail: '#ff3b30',
   retry: '#f5a623',
   review: '#b14cff',
+  judge: '#b14cff',
+  prereview: '#17c4c4',
+  smoke: '#2ecc71',
+  brief: '#8a8a8a',
+  config: '#8a8a8a',
+};
+const TONE_COLOR: Record<NonNullable<ActivityItem['tone']>, string> = {
+  info: '#8a8a8a',
+  good: '#2ecc71',
+  warn: '#f5a623',
+  bad: '#ff3b30',
+};
+
+// One line in the activity timeline. Tone (when set) tints the icon so judge warnings / failures stand out.
+const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap }) => {
+  const Icon = ACTIVITY_ICON[it.kind];
+  const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
+      <span className="text-text-primary shrink-0">{it.text}</span>
+      {it.sub && (
+        <span
+          className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${it.kind === 'brief' ? 'line-clamp-3' : ''}`}
+        >
+          — {it.sub}
+        </span>
+      )}
+    </div>
+  );
 };
 
 // The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
-// at the bottom; a spinner tail while the run is live.
-const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean }> = ({ items, live }) => {
+// at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
+const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean }> = ({ items, live, verbose }) => {
   if (items.length === 0) return null;
-  const recent = items.slice(-8);
+  const shown = verbose ? items : items.slice(-8);
   return (
-    <div className="px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary">
-      {recent.map((it) => {
-        const Icon = ACTIVITY_ICON[it.kind];
-        return (
-          <div key={it.seq} className="flex items-start gap-2 text-xs">
-            <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color: ACTIVITY_COLOR[it.kind] }} />
-            <span className="text-text-primary">{it.text}</span>
-            {it.sub && <span className="text-text-secondary truncate">— {it.sub}</span>}
-          </div>
-        );
-      })}
+    <div
+      className={`px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary ${verbose ? 'max-h-72 overflow-y-auto' : ''}`}
+    >
+      {shown.map((it) => (
+        <ActivityLine key={it.seq} it={it} wrap={verbose} />
+      ))}
       {live && (
         <div className="flex items-center gap-2 text-xs text-text-secondary">
           <Loader2 size={13} className="animate-spin shrink-0" />
@@ -238,6 +269,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 }) => {
   const run = useSwarmRun(workingDir);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [verbose, setVerbose] = useVerboseSwarm();
 
   // Show whenever a run is present — including the PLANNING phase, before any worker executes (no lanes yet).
   if (!run.present) return null;
@@ -272,37 +304,58 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
             </span>
           )}
         </span>
-        <span className="text-xs text-text-secondary tabular-nums shrink-0">
-          {tasks > 0 && (
-            <>
-              {running > 0 && (
-                <span style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }} className="font-semibold">
-                  {running} {stale ? 'interrupted' : 'running'}
-                </span>
-              )}
-              {running > 0 && ' · '}
-              <span style={{ color: STATUS_COLOR.done }}>{done} done</span>
-              {failed > 0 && (
-                <>
-                  {' · '}
-                  <span style={{ color: STATUS_COLOR.error }} className="font-semibold">
-                    {failed} failed
+        <span className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-text-secondary tabular-nums">
+            {tasks > 0 && (
+              <>
+                {running > 0 && (
+                  <span style={{ color: stale ? CALL_PENDING : STATUS_COLOR.running }} className="font-semibold">
+                    {running} {stale ? 'interrupted' : 'running'}
                   </span>
-                </>
-              )}
-              {' · '}
-              {tasks} tasks ·{' '}
-            </>
-          )}
-          {ago(run.mtime)}
+                )}
+                {running > 0 && ' · '}
+                <span style={{ color: STATUS_COLOR.done }}>{done} done</span>
+                {failed > 0 && (
+                  <>
+                    {' · '}
+                    <span style={{ color: STATUS_COLOR.error }} className="font-semibold">
+                      {failed} failed
+                    </span>
+                  </>
+                )}
+                {' · '}
+                {tasks} tasks ·{' '}
+              </>
+            )}
+            {ago(run.mtime)}
+          </span>
+          <button
+            onClick={() => setVerbose(!verbose)}
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
+            style={
+              verbose
+                ? { borderRadius: 2, borderColor: '#2e8bff', color: '#2e8bff' }
+                : { borderRadius: 2, borderColor: 'var(--border-primary)', color: 'var(--text-secondary)' }
+            }
+            title={verbose ? 'Verbose — showing every step' : 'Verbose off — headlines only'}
+          >
+            <AlignLeft size={11} /> {verbose ? 'Verbose' : 'Compact'}
+          </button>
         </span>
       </div>
 
-      <ActivityFeed items={run.activity} live={run.inProgress && !stale} />
+      <ActivityFeed
+        items={verbose ? run.verboseActivity : run.activity}
+        live={run.inProgress && !stale}
+        verbose={verbose}
+      />
 
       <div className="max-h-[24rem] overflow-y-auto divide-y divide-border-primary">
         {run.lanes.map((lane) => {
-          const open = overrides[lane.taskId] ?? (lane.status === 'running');
+          // In verbose, every lane defaults open (show all reasoning + tool calls); the user can still
+          // collapse individual ones via the override.
+          const defaultOpen = verbose || lane.status === 'running';
+          const open = overrides[lane.taskId] ?? defaultOpen;
           return (
             <LaneRow
               key={lane.taskId}
@@ -310,9 +363,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
               deviceOrder={deviceOrder}
               stale={stale}
               open={open}
-              onToggle={() =>
-                setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? lane.status === 'running') }))
-              }
+              onToggle={() => setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))}
             />
           );
         })}
