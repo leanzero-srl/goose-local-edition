@@ -11,6 +11,12 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 ## Results
 | app | archetype | LOC | tests | contract | verdict | key finding |
 |-----|-----------|-----|-------|----------|---------|-------------|
+| inventory | DATA | 808 | 22/22* | exact | STRONG PASS | correct accounting 699.30 |
+| bookclub | DATA | 724 | 17/37 | drift | FAIL | ctx.obj None → every subcmd crashes |
+| expense | DATA | 1422 | 65/65 | n/a | UNRUNNABLE | no CLI entry (scheduler #7) |
+| crm | DATA | 976 | 31/32 | ok | GOOD | export/import no round-trip; dict-repr list |
+| csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
+| kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
 ## Backlog (issues → fix at end of cycle)
 (accrues as builds complete)
@@ -172,3 +178,12 @@ must run a REAL command in the REAL language.
   main.rs=`fn main(){}`, orphaned modules, 0 tests. store-module over_read ×3 → terminal fail → fail_descendants
   killed cli-and-commands + integration-tests + integrate-verify. Shipped anyway because the Python-only smoke
   gate gave Rust a free pass (BACKLOG #8). Compiles clean (cargo build ok) which is why "it built" but is a no-op.
+- crm (data): **GOOD (near-pass)** — 976 LOC, runnable (python -m deals), 31/32 tests pass. Best DATA result
+  after inventory. Real round-trip works: init→contact add→list→opp add all exit 0. Two issues:
+  (1) export/import does NOT round-trip (the 1 failing test): export writes a sectioned CSV
+      (`SECTION,contacts\n<rows>\nSECTION,opportunities\n<rows>`) but `import` silently no-ops on that exact
+      format (exit 0, but `contact list` on the fresh db is empty). Self-contained contract drift inside
+      export_import.py — the writer and reader disagree. Family #4, milder (one module, not cross-worker).
+  (2) QUALITY nit: `contact list` prints the raw Python dict repr `{'id':1,'email':...}` instead of a
+      formatted table/line. Functional but ugly. Weak-model output-formatting shortcut.
+  No scheduler_stuck; entry built fine. Shows the fleet CAN produce a mostly-working modular app.
