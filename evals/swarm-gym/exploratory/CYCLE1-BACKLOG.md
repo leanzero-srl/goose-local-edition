@@ -46,7 +46,10 @@ from the prefix. Detection is otherwise ACCURATE to live state — this is robus
 reload windows, not a correctness bug in the happy path.
 
 ## Results log
-- inventory (data): STRONG PASS (prior) — 808 LOC, spec-exact CLI, 22/22.
+- inventory (data): STRONG PASS — 808 LOC, modular (inv/commands/{io,movement,product,supplier,reporting}).
+  RE-VERIFIED via real round-trip: init→product add→receive 100→ship 30→report value = "Total: 699.30"
+  (70 units × 9.99, correct accounting), all exit 0. Cosmetic nit only: `movements` ledger prints ship as
+  "+30" not "-30" (display sign; underlying stock math is correct). This is the archetype's gold standard.
 - bookclub (data): **FAIL** — 724 LOC, 20/37 tests fail. RE-VERIFIED end-to-end (my earlier "ImportError/no
   __main__" verdict was STALE — the build actually finished more): imports OK, __main__.py present, `--help`
   works. But EVERY real subcommand crashes: shelf/cli.py:18 `db_path = ctx.obj.get("db_path","shelf.db")` →
