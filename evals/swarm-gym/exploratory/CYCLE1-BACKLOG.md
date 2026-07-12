@@ -15,6 +15,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | bookclub | DATA | 724 | 17/37 | drift | FAIL | ctx.obj None → every subcmd crashes |
 | expense | DATA | 1422 | 65/65 | n/a | UNRUNNABLE | no CLI entry (scheduler #7) |
 | crm | DATA | 976 | 31/32 | ok | GOOD | export/import no round-trip; dict-repr list |
+| timesheet | DATA | 1400 | 36/36 | false-green | PARTIAL | tests bypass entry; --db broken; smoke self-healed |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
@@ -187,3 +188,18 @@ must run a REAL command in the REAL language.
   (2) QUALITY nit: `contact list` prints the raw Python dict repr `{'id':1,'email':...}` instead of a
       formatted table/line. Functional but ugly. Weak-model output-formatting shortcut.
   No scheduler_stuck; entry built fine. Shows the fleet CAN produce a mostly-working modular app.
+- timesheet (data): **PARTIAL (false-green tests)** — 1400 LOC, 9 modules, 36/36 pytest PASS, but the real
+  entry is spec-broken and the tests don't catch it. TWO findings:
+  (1) SMOKE GATE WIN (my GOOSE_SWARM_SMOKE fix, first observed working): a task produced broken_code
+      (IndentationError commands_io.py:72) → `smoke` reported collect:errors → a corrective fix fired →
+      `smoke_after_fix` collect:ok tests:pass. The gate self-healed a broken build. This is the intended
+      behavior and it worked.
+  (2) FALSE-GREEN / DUAL-FRAMEWORK drift: the entry (clock/cli.py) is ARGPARSE, but the tests use Click's
+      CliRunner driving the command GROUPS in-process with `obj={"db": path}` — a different framework AND a
+      different code path. Consequence: the real `python -m clock` entry has NO working `--db` (spec requires
+      "global --db"): `clock --db X init` → "invalid choice X"; `clock init --db X` → "unrecognized arguments".
+      You cannot point the CLI at a db on the command line at all. 36/36 tests pass anyway because they never
+      invoke the real entry. STRONGEST evidence for BACKLOG #3: the done-gate MUST run the REAL entry with a
+      REAL spec command incl. --db; unit tests can bypass the entry entirely and give false confidence.
+  → REFINES #8/#3: my smoke `entry_ok` check is too shallow (reported entry_ok:true here). It must run a real
+    spec subcommand with --db against a temp db, not just import/basic-entry.
