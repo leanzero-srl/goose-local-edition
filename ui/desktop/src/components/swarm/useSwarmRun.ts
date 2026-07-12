@@ -134,6 +134,12 @@ const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
+/** The build prompt is wrapped by goose's <turn-context>…</turn-context> preamble (time, cwd, todo
+ *  boilerplate). Strip it so the Brief shows just the user's actual spec. */
+function cleanBrief(prompt: string): string {
+  return prompt.replace(/^[\s\S]*?<\/turn-context>\s*/i, '').trim() || prompt.trim();
+}
+
 /** The judge's verdict maps to a tone: ok is good; a named failure mode (spec_drift/over_reading/looping…)
  *  is a warning the user should see. */
 function judgeTone(verdict: string): ActivityTone {
@@ -171,7 +177,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       case 'run_started': {
         const pool = arr(e['pool']).map((d) => nodeName(str((d as Record<string, unknown>)['id'])));
         meta = {
-          prompt: str(e['prompt']),
+          prompt: cleanBrief(str(e['prompt'])),
           plannerModel: str(e['planner_model']),
           endpoint: str(e['endpoint']),
           nodes: pool,
