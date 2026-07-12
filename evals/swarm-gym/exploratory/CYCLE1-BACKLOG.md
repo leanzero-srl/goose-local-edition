@@ -16,6 +16,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | expense | DATA | 1422 | 65/65 | n/a | UNRUNNABLE | no CLI entry (scheduler #7) |
 | crm | DATA | 976 | 31/32 | ok | GOOD | export/import no round-trip; dict-repr list |
 | timesheet | DATA | 1400 | 36/36 | false-green | PARTIAL | tests bypass entry; --db broken; smoke self-healed |
+| calc | ALGO | 716 | 47/47 | exact | STRONG PASS | right-assoc 512, vars, all errors exit≠0 |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
@@ -203,3 +204,9 @@ must run a REAL command in the REAL language.
       REAL spec command incl. --db; unit tests can bypass the entry entirely and give false confidence.
   → REFINES #8/#3: my smoke `entry_ok` check is too shallow (reported entry_ok:true here). It must run a real
     spec subcommand with --db against a temp db, not just import/basic-entry.
+- calc (algorithmic): **STRONG PASS** — 716 LOC, clean modules (tokenizer/parser/ast/evaluator/cli), 47/47
+  tests. RE-VERIFIED spec-exact via real entry `calc eval "EXPR"` / `calc run FILE`: precedence 2+3*4=14,
+  parens 20, right-assoc 2^3^2=512, unary minus, variadic max(1,9,4)=9, variables across statements
+  (run FILE → 5/10/11), and ALL error cases (div0, unknown var, wrong argc, unbalanced) exit non-zero.
+  2nd gold-standard app after inventory. Tests are in-process (import calc.*) but the real entry ALSO works,
+  so no false-green. Proof the fleet CAN build excellent apps when wiring/contract are right.
