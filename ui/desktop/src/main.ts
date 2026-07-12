@@ -404,6 +404,16 @@ if (process.env.ENABLE_PLAYWRIGHT) {
   app.commandLine.appendSwitch('remote-debugging-port', debugPort);
 }
 
+// Goose Local Edition — skip the macOS Keychain for Chromium's cookie-store encryption ("Goose Safe
+// Storage"). This is a self-signed local build with no stable Team ID, so the keychain ACL (bound to the
+// code signature) is invalidated on every rebuild and macOS re-prompts for the OS password on EVERY launch.
+// The item only guards Electron's own cookie store (a localhost-only app has ~nothing there); goose's real
+// secrets use the separate Rust keyring, which this does NOT affect. Result: no password prompt, ever.
+// Opt back into the keychain with GOOSE_USE_KEYCHAIN=1 if you ever want OS-backed cookie encryption.
+if (process.platform === 'darwin' && process.env.GOOSE_USE_KEYCHAIN !== '1') {
+  app.commandLine.appendSwitch('password-store', 'basic');
+}
+
 // In development mode, force registration as the default protocol client
 // In production, register normally
 if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
