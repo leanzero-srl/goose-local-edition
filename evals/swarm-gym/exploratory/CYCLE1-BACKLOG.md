@@ -72,3 +72,20 @@ DURABLE GOOSE FIX (backlog): when spawning a stdio extension whose cmd is `npx`/
 a node that satisfies the requirement (or prepend the modern node dir ahead of /usr/local/bin in the
 extension PATH) rather than trusting whatever `node` PATH-resolves — so a stale system node can't silently
 break every npx-based extension. main.ts builds the extension env; this is where it'd go.
+
+## BACKLOG ITEM #6 (swarm weights) — pool DISPATCH weight ignores speed_weights (all nodes = weight 1)
+OBSERVED: run_started pool for the expense build shows every node at weight:1, e.g.
+  mac-gabee-...(model gabee-qwopus3.6-27b-coder-mlx) w1 | local-mihai-... w1 | worksmacstudio-workhorse-... w1
+even though config has speed_weights {local:2, gabee:2, worksmacstudio:3}.
+ROOT CAUSE (read swarm.rs:1167-1183 reconcile_pool_with_fleet): the pool's dispatch `weight` is derived ONLY
+from a matching cfg.devices[].weight (by model_id) OR LM Studio PARALLEL OR 1. The `speed_weights` map is
+consulted ONLY in planner_rank (swarm.rs:1202) to pick the PLANNER model — it never feeds the pool dispatch
+weight. So the user's "slower machine does less work" request has no effect on how tasks are load-balanced.
+Also key-space is inconsistent: model NAMES are gabee/mihai/workhorse but lms-ps DEVICE (host) is
+mac/local/worksmacstudio; speed_weights mixes both (gabee is a model-name, local/worksmacstudio are hosts).
+FIX (task #58): in reconcile_pool_with_fleet, when no explicit cfg.devices[].weight override exists, fall
+back to the speed_weight matched by pattern against (host + identifier) — same haystack planner_rank uses —
+before defaulting to 1. Keep the explicit-override-wins precedence. Then worksmacstudio gets w3, gabee/local
+w2, and the scheduler's weighted round-robin actually sends the M3-Ultra more tasks. Add a unit test:
+speed_weights pattern → pool weight, explicit device weight still wins. This is the standing weights ask
+(memory: swarm-model-weights-request) — deliver it here.
