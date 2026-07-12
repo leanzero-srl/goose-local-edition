@@ -296,14 +296,16 @@ export default function SwarmSettingsSection() {
   );
 
   const setWeight = useCallback(
-    (deviceId: string, fallbackKey: string, w: number) => {
+    (deviceId: string, w: number) => {
       setCfg((prev) => {
         const sw = { ...(prev.speed_weights ?? {}) };
-        // Update the existing key that already matches this device in place (preserves the pool's scheme,
-        // e.g. "local"), else add a clean fallback key — so exactly one key matches each device (the
-        // scheduler's speed_weight_for uses first-substring-match; duplicates would be non-deterministic).
-        const existing = Object.keys(sw).find((k) => deviceId.includes(k));
-        sw[existing ?? fallbackKey] = w;
+        // Update the key that already matches this device — an exact device-id key first, else an existing
+        // substring key like "gabee" (the pool's scheme) — in place; otherwise write the FULL device id as
+        // the key. Both weightFor and the Rust scheduler match a key when the device id CONTAINS it, and a
+        // full id contains itself, so a newly written key always matches its device. (Keying by the model-
+        // derived node name did NOT match the device id and silently lost the setting.)
+        const existing = deviceId in sw ? deviceId : Object.keys(sw).find((k) => deviceId.includes(k));
+        sw[existing ?? deviceId] = w;
         const next = { ...prev, speed_weights: sw };
         void upsert('swarm', next, false).catch(() => {});
         return next;
@@ -331,6 +333,7 @@ export default function SwarmSettingsSection() {
       : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m) }));
   const weightFor = (id: string): number => {
     const sw = cfg.speed_weights ?? {};
+    if (id in sw) return sw[id] ?? 1; // exact device-id key wins (avoids substring collisions)
     const key = Object.keys(sw).find((k) => id.includes(k));
     return key ? (sw[key] ?? 1) : 1;
   };
@@ -372,7 +375,7 @@ export default function SwarmSettingsSection() {
                   <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
                     {row.name}
                   </span>
-                  <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, row.name, v)} />
+                  <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} />
                 </div>
               ))}
             </div>
