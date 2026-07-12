@@ -146,3 +146,29 @@ to measure how many of the 15 apps this bug bites.
     contract (GOOSE_SWARM_CONTRACTS) that every worker MUST import, plus a done-gate that runs one real
     spec-exact command, would catch both. Note: the CLI here was actually spec-correct on shape; the ENGINE
     row-type is the killer — a contract stub for "evaluator.run() -> list[dict] | list[list]" resolves it.
+
+## BACKLOG ITEM #8 (goose-swarm/cli GATE — HIGH VALUE) — smoke/complete gate is PYTHON-ONLY; Rust gets a free pass
+SEVERITY: high, confidence: HIGH (the smoke event payload proves it).
+OBSERVED on kvstore (systems/Rust): src/main.rs is literally `fn main() {}` (empty), src/index.rs (95 LOC)
+and src/log.rs (157 LOC) are real but ORPHANED (main.rs has no `mod`/CLI wiring), src/store.rs and
+src/commands.rs never created, 0 tests. Binary runs but does NOTHING (--help empty). Run report:
+done=[index-module, shared-types-and-log], FAILED=[cli-and-commands, integrate-verify, integration-tests,
+store-module] — 4 of 6 tasks failed INCLUDING integrate-verify, yet the app shipped.
+ROOT CAUSE: the smoke gate emitted `{ran:true, py_files:0, collect:null, tests:{kind:pass}, entry_package:null,
+entry_ok:true, findings:[]}`. It only knows Python (pytest --collect-only + `python -m <pkg>`); with py_files=0
+it reports entry_ok:true + tests pass + NO findings. So EVERY systems-archetype (Rust) build escapes the gate,
+and a completely empty `fn main(){}` is graded "entry ok". store-module terminal-failed via `over_reading` ×3
+(not salvaged — only Looping is salvaged) → fail_descendants killed cli-and-commands → main.rs stayed the empty
+scaffold stub.
+FIX (task #58): make the gate language-aware. If Cargo.toml exists: `cargo build` (compile), `cargo test`
+(assert not 0-tests when a tests/ target was planned), run the built binary `--help` AND one real spec
+subcommand asserting exit 0 AND non-empty output; treat an empty `fn main(){}` / no-op binary as FAIL. Also:
+a run whose integrate-verify (or the CLI/entry task) FAILED must NOT be reported shippable — hard-block, not
+advisory. This is the systems-archetype counterpart to bookclub's "--help too weak" (BACKLOG #3): the gate
+must run a REAL command in the REAL language.
+→ REINFORCES #3 (gate must verify-by-running a real command, per language) and the "unwired entry" class.
+
+- kvstore (systems/Rust): **FAIL (unrunnable, empty main)** — 253 LOC across index.rs/log.rs (real) but
+  main.rs=`fn main(){}`, orphaned modules, 0 tests. store-module over_read ×3 → terminal fail → fail_descendants
+  killed cli-and-commands + integration-tests + integrate-verify. Shipped anyway because the Python-only smoke
+  gate gave Rust a free pass (BACKLOG #8). Compiles clean (cargo build ok) which is why "it built" but is a no-op.
