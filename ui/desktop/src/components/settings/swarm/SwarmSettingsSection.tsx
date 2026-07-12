@@ -12,7 +12,7 @@ import {
 import { useConfig } from '../../ConfigContext';
 import FanInCard from '../../swarm/FanInCard';
 import { useFleet, deviceFromModelId } from '../../swarm/useFleet';
-import { useVerboseSwarm } from '../../swarm/useVerboseSwarm';
+import { useSwarmLogMode, SWARM_LOG_MODES } from '../../swarm/useVerboseSwarm';
 import {
   type SwarmConfig,
   DEFAULTS,
@@ -263,7 +263,7 @@ function PresetBar({
 export default function SwarmSettingsSection() {
   const { read, upsert } = useConfig();
   const fleet = useFleet();
-  const [verbose, setVerbose] = useVerboseSwarm();
+  const [logMode, setLogMode] = useSwarmLogMode();
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
 
@@ -383,10 +383,10 @@ export default function SwarmSettingsSection() {
 
           <div className="pt-2 mt-1 border-t border-border-primary">
             <Row
-              label="Verbose run panel"
-              hint="Show every step, tool call, and judge verdict in the run panel — not just headline phases"
+              label="Run panel detail"
+              hint="Compact = headline phases · Verbose = full timeline + reasoning + tool calls · Developer = everything expanded & raw"
             >
-              <SwarmSwitch checked={verbose} onChange={setVerbose} />
+              <Segmented options={SWARM_LOG_MODES} value={logMode} onChange={setLogMode} />
             </Row>
           </div>
 

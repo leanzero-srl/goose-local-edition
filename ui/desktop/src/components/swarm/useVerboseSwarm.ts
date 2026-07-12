@@ -1,38 +1,45 @@
 import { useEffect, useState } from 'react';
 
 /**
- * A UI display preference: show the swarm run panel VERBOSE (every dispatch, judge verdict + hint,
- * pre-review, completion, smoke result, full per-task tool calls) vs. compact (headline phases only).
- * Stored in localStorage — it's a pure view preference, not a swarm behavior knob, so it does NOT go in
- * the swarm config the CLI reads. A custom event keeps every mounted reader (settings toggle + the run
- * panel) in sync live, without a full config round-trip.
+ * How much of a swarm run the panel shows — a UI display preference (not a swarm behavior knob), so it lives
+ * in localStorage, not the swarm config the CLI reads. Three tiers:
+ *   - 'compact'   headline phases only (a few recent lines)
+ *   - 'verbose'   the full timeline + per-task reasoning + tool calls (expand to read)
+ *   - 'developer' everything expanded by default — all lanes open, all tool outputs open, full reasoning
+ *                 uncapped, raw fields — for watching a build in dev.
+ * A custom event keeps every mounted reader (the settings control + the run panel) in sync live.
  */
 
-const KEY = 'goose.swarm.verboseActivity';
-const EVT = 'goose-swarm-verbose-changed';
+export type SwarmLogMode = 'compact' | 'verbose' | 'developer';
+export const SWARM_LOG_MODES: SwarmLogMode[] = ['compact', 'verbose', 'developer'];
 
-function read(): boolean {
-  // Default ON: the swarm run panel should show the full picture out of the box. An explicit choice to go
-  // Compact ('0') is respected; only an absent preference defaults to verbose.
+const KEY = 'goose.swarm.logMode';
+const LEGACY_KEY = 'goose.swarm.verboseActivity'; // the old boolean flag
+const EVT = 'goose-swarm-logmode-changed';
+
+function read(): SwarmLogMode {
   try {
     const v = localStorage.getItem(KEY);
-    return v === null ? true : v === '1';
+    if (v === 'compact' || v === 'verbose' || v === 'developer') return v;
+    // Migrate the old boolean: '0' -> compact, anything else (incl. unset) -> verbose (the default).
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    return legacy === '0' ? 'compact' : 'verbose';
   } catch {
-    return true;
+    return 'verbose';
   }
 }
 
-export function setVerboseSwarm(v: boolean): void {
+export function setSwarmLogMode(mode: SwarmLogMode): void {
   try {
-    localStorage.setItem(KEY, v ? '1' : '0');
+    localStorage.setItem(KEY, mode);
   } catch {
     /* storage unavailable — non-fatal */
   }
-  window.dispatchEvent(new CustomEvent(EVT, { detail: v }));
+  window.dispatchEvent(new CustomEvent(EVT, { detail: mode }));
 }
 
-export function useVerboseSwarm(): [boolean, (v: boolean) => void] {
-  const [verbose, setLocal] = useState(read);
+export function useSwarmLogMode(): [SwarmLogMode, (m: SwarmLogMode) => void] {
+  const [mode, setLocal] = useState<SwarmLogMode>(read);
   useEffect(() => {
     const onChange = () => setLocal(read());
     window.addEventListener(EVT, onChange);
@@ -42,5 +49,5 @@ export function useVerboseSwarm(): [boolean, (v: boolean) => void] {
       window.removeEventListener('storage', onChange);
     };
   }, []);
-  return [verbose, setVerboseSwarm];
+  return [mode, setSwarmLogMode];
 }

@@ -26,6 +26,8 @@ export interface TurnLane {
   lastText?: string;
   recent?: string[];
   reasoning?: string;
+  /** The worker's full narration (all substantive text chunks) — the "reasoning in plain" the panel shows. */
+  fullReasoning?: string;
   calls?: SwarmCall[];
   toolCalls?: number;
   errors?: number;
@@ -347,6 +349,7 @@ type Digest = {
   recent?: string[];
   last_text?: string;
   reasoning?: string;
+  full_reasoning?: string;
   calls?: SwarmCall[];
 };
 
@@ -407,6 +410,7 @@ function foldEvents(
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
       reasoning: act?.reasoning ?? t.reasoning,
+      fullReasoning: act?.full_reasoning ?? t.fullReasoning,
       calls: act?.calls ?? t.calls,
       toolCalls: act?.tool_calls ?? t.toolCalls,
       errors: act?.errors ?? t.errors,
