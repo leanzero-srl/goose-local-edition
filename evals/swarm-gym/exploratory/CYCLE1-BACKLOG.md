@@ -44,3 +44,16 @@ FIX (cycle end): filter loaded ids whose suffix is a bare ":N" JIT duplicate (ke
 present); and map live model_ids back to a configured device by model_id/host rather than deriving the node
 from the prefix. Detection is otherwise ACCURATE to live state — this is robustness to transient LM Studio
 reload windows, not a correctness bug in the happy path.
+
+## Results log
+- inventory (data): STRONG PASS (prior) — 808 LOC, spec-exact CLI, 22/22.
+- bookclub (data): **FAIL** — 724 LOC, 16/22 tests fail, CLI crashes on init (ImportError: no module 'shelf.models';
+  no __main__.py entry). Broken package wiring / cross-module imports. NOTE: the smoke gate (new fix) CAUGHT it
+  (collect=errors "ModuleNotFoundError: shelf.models" + "no python3 -m <pkg> entry point — unrunnable"), but the
+  build shipped broken because smoke is ADVISORY (one corrective re-dispatch that didn't fix it). Built during the
+  fleet transient (workhorse as qwopus:2) with 2 retries.
+  → BACKLOG #3: UI builds should use the STRONGER gate (GOOSE_SWARM_COMPLETE: verify-by-running + iterate to green)
+    or smoke should hard-block "unrunnable" rather than ship. The advisory smoke detects but doesn't prevent.
+  → BACKLOG #4 (recurring): package/import wiring breaks (shelf.models import, csvql row-type) — cross-module
+    contract drift is the dominant failure. Candidate: a planner "shared-types/interface" contract the workers
+    must import, verified before completion.
