@@ -12,6 +12,7 @@ import {
 import { useConfig } from '../../ConfigContext';
 import FanInCard from '../../swarm/FanInCard';
 import { useFleet, deviceFromModelId } from '../../swarm/useFleet';
+import { useVerboseSwarm } from '../../swarm/useVerboseSwarm';
 import {
   type SwarmConfig,
   DEFAULTS,
@@ -262,6 +263,7 @@ function PresetBar({
 export default function SwarmSettingsSection() {
   const { read, upsert } = useConfig();
   const fleet = useFleet();
+  const [verbose, setVerbose] = useVerboseSwarm();
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
 
@@ -375,6 +377,15 @@ export default function SwarmSettingsSection() {
               ))}
             </div>
           )}
+
+          <div className="pt-2 mt-1 border-t border-border-primary">
+            <Row
+              label="Verbose run panel"
+              hint="Show every step, tool call, and judge verdict in the run panel — not just headline phases"
+            >
+              <SwarmSwitch checked={verbose} onChange={setVerbose} />
+            </Row>
+          </div>
 
           <div className="text-xs text-text-secondary pt-1">
             Download and manage the models each node runs in the <span className="text-text-primary font-medium">Local Inference</span> tab.
