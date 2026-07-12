@@ -7,8 +7,8 @@ tool output + judge verdicts). Sequential on the 3-node fleet. Each verified by 
 
 | app | archetype | lang | status | LOC | contract fidelity | verdict |
 |-----|-----------|------|--------|-----|-------------------|---------|
-| inventory | data app | Python/SQLite | building… | — | — | — |
-| csvql | algorithmic engine | Python | queued | — | — | — |
+| inventory | data app | Python/SQLite | done | 808 | **spec-EXACT** | STRONG PASS |
+| csvql | algorithmic engine | Python | building (isolated --dir) | — | — | — |
 | kvstore | systems tool | Rust | queued | — | — | — |
 
 ## Observations
@@ -36,3 +36,13 @@ Net: only #1 is a real defect. It is a working-directory hygiene issue, fixed fo
   window scrolls as one (user feedback: "too many scroll bars"). Commit d04c44466.
 - **Working-dir isolation** for the exploratory builds (`--dir ~/goose-builds/<app>`).
 - (Backlog) UI-dispatched builds should not default to `$HOME`.
+
+### inventory — STRONG PASS (spec-exact CLI)
+808 LOC, 10 modules (db/models/cli + commands/{product,supplier,movement,reporting,io}). 22/22 pytest pass.
+Golden spec-contract check (the point of this run): the EXACT documented commands + flags all work —
+`product add --sku --name --category --price --qty` → "added W-01"; duplicate sku rejected (exit 1);
+`receive`/`ship`/`adjust`/`movements`; `ship` exceeding qty rejected (exit 1); qty math correct (100+50-30=120);
+`report value` = 1198.80 (120×9.99); global `--db` before the subcommand. NO CLI drift — a clear improvement
+over the last overnight assessment (tracker/sheet invented their own CLI). LIKELY CAUSE: this spec listed the
+exact command names/flags with "match these EXACTLY"; being explicit in the spec lifts contract fidelity.
+Minor: movements shows "ship +30" (sign cosmetic; type column already says ship).
