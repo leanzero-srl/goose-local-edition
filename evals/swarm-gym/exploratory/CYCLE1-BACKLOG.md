@@ -28,3 +28,19 @@ be the intersection of configured+enabled devices and actually-loaded models. Th
 node going offline mid-session instead of 400-looping on it.
 Verified separately: the new writer's full_reasoning capture WORKS — it surfaced this exact 400 error in the
 worker's reasoning (the detail the run panel now shows).
+
+## BACKLOG ITEM #2 (swarm fleet detection) — transient JIT instances + prefix-derived node identity
+reconcile_pool_with_fleet() -> probe_lms_http() reads /api/v0/models and turns EVERY distinct loaded
+identifier into a pool node, deriving the node name from the model-id prefix (device_from_lms_id = text
+before the first '-'). Two weaknesses, seen live:
+1. LM Studio JIT auto-instances ("qwopus3.6-27b-coder:2", ":3", ...) are counted as separate nodes. They are
+   duplicate instances of an aliased model, not distinct machines — so a box with both its alias and a JIT
+   instance loaded yields 2 pool entries (oversubscription) + a phantom node named from the JIT prefix
+   ("qwopus3.6"). Observed: workhorse briefly loaded as "qwopus3.6-27b-coder:2" during a reload and the pool
+   used that instead of "workhorse-qwopus3.6-27b-coder-mlx".
+2. Node identity from the raw id prefix is fragile (works for gabee-/mihai-/workhorse- aliases, breaks for
+   JIT names). 
+FIX (cycle end): filter loaded ids whose suffix is a bare ":N" JIT duplicate (keep the aliased sibling if
+present); and map live model_ids back to a configured device by model_id/host rather than deriving the node
+from the prefix. Detection is otherwise ACCURATE to live state — this is robustness to transient LM Studio
+reload windows, not a correctness bug in the happy path.
