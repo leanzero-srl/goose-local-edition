@@ -98,3 +98,35 @@ before defaulting to 1. Keep the explicit-override-wins precedence. Then worksma
 w2, and the scheduler's weighted round-robin actually sends the M3-Ultra more tasks. Add a unit test:
 speed_weights pattern → pool weight, explicit device weight still wins. This is the standing weights ask
 (memory: swarm-model-weights-request) — deliver it here.
+
+## BACKLOG ITEM #7 (goose-swarm SCHEDULER — HIGHEST VALUE) — salvaged task never relaxes its dependents
+SEVERITY: high, confidence: HIGH (read the two code paths side by side; root cause is unambiguous).
+OBSERVED on expense: 65/65 tests pass, 6 clean modules — but NO entry point (spend/__main__.py, spend/cli.py
+both absent) so it is UNRUNNABLE, and the spec explicitly requires `python -m spend`. Run ended
+`scheduler_stuck {remaining: 2}`. The 2 stuck tasks were `cli-entry` (deps: the 4 module tasks) and
+`integrate-verify` (deps: cli-entry). Three module workers (transactions, import-export, balance-reports)
+went `looping` then `salvaged_spin`.
+ROOT CAUSE (crates/goose-swarm/src/scheduler.rs): the SUCCESS completion path (lines 579-590) decrements
+each dependent's `indegree_remaining` and promotes it to Ready when it hits 0. The SALVAGE path
+(complete(), ~lines 1117-1162) sets `self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done` (line
+1159) for `salvaged_spin` but DOES NOT run the dependent-relaxing loop. So a salvaged task is marked Done yet
+its dependents' indegree is never decremented → they stay Pending forever → no ready work but tasks remain →
+`scheduler_stuck`. The salvage was ADDED precisely so a spun-but-written task wouldn't fail its dependents
+(comment at scheduler.rs:30-34, "UNIQ9: entry spun on its final fix -> integrate-verify blocked"), but it
+only fixed the state, not the indegree relaxation — so dependents are still orphaned, just Pending instead of
+Failed. This is the dominant "BUILT-BUT-UNWIRED entry" failure class in disguise.
+FIX (task #58): factor the dependent-relaxing loop (579-590) into a helper `fn relax_dependents(&mut self,
+tid: &str)` and call it from BOTH the success path AND the salvage branch (after line 1159). Add a
+scheduler_mock test: a task with a dependent, salvaged via Looping, must leave the dependent Ready (indegree
+0), and the scheduler must then dispatch it — NOT emit scheduler_stuck. HIGH confidence this converts
+expense-class runs from unrunnable-library to runnable-app.
+NOTE: deliberately NOT fixed mid-cycle — keeping cycle-1 on one unchanged binary for a clean cycle-2 A/B and
+to measure how many of the 15 apps this bug bites.
+
+## Results log (cont.)
+- expense (data): **PARTIAL/FAIL (unrunnable)** — 1422 LOC, 6 modules + 6 test files, 65/65 pytest GREEN,
+  imports clean, correct module design. BUT no CLI entry point (no `python -m spend`), which the spec requires
+  → cannot be run as an app. Caused by BACKLOG #7 (scheduler salvage orphans dependents → cli-entry +
+  integrate-verify never dispatched → scheduler_stuck remaining:2). Also `shared-types` had spec_drift (the
+  conftest `sample_data` fixture does db.commit() with no yield of inserted IDs). The library quality is
+  actually STRONG; the harness bug (#7) is what makes it fail. Best evidence yet that #7 is the priority fix.
