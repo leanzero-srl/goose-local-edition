@@ -9,7 +9,7 @@ tool output + judge verdicts). Sequential on the 3-node fleet. Each verified by 
 |-----|-----------|------|--------|-----|-------------------|---------|
 | inventory | data app | Python/SQLite | done | 808 | **spec-EXACT** | STRONG PASS |
 | csvql | algorithmic engine | Python | done | 936 | CLI crashes | **FAIL** |
-| kvstore | systems tool | Rust | building (isolated, +smoke gate) | — | — | — |
+| kvstore | systems tool | Rust | done | 253 (stub) | incomplete | **FAIL** |
 
 ## Observations
 
@@ -66,3 +66,42 @@ WHY IT SLIPPED THROUGH — two root causes (read from the .swarm logs):
 
 VERDICT: FAIL. The value is the finding: UI builds must run the end-to-end gate (fix shipping now), and the
 deep algorithmic archetype still strains the fleet on the parser/evaluator.
+
+### kvstore — FAIL (incomplete stub; workers looped on the hard Rust modules)
+Only 253 LOC / 3 files (log/index/main) vs the ~1000 target — missing store/cli/commands entirely. The run
+report: 4 of 6 subtasks FAILED (cli-and-commands, store-module, integration-tests, integrate-verify); only
+index-module + shared-types-and-log completed. main.rs is a stub (no command handling). The `store-module`
+worker repeatedly hit judge `over_reading` ("produced no file yet, STOP deliberating") — it looped without
+writing. High-variance: last time a Rust systems tool (vcs) STRONG-passed; this harder log-structured spec
+(compaction, index replay) stalled the fleet.
+Note: the new smoke gate RAN but was vacuous for Rust — py_files=0, entry_ok=True without building/running
+the cargo binary. So the smoke fix helps Python builds but not Rust (follow-up below).
+
+---
+## FINAL CRUNCH — 1 STRONG PASS, 2 FAIL, and 4 concrete fixes
+
+| app | archetype | verdict |
+|-----|-----------|---------|
+| inventory | data (Python/SQLite) | STRONG PASS — spec-exact CLI, 22/22 tests |
+| csvql | algorithmic (Python) | FAIL — broken CLI (cross-module contract drift), no end-to-end gate |
+| kvstore | systems (Rust) | FAIL — incomplete stub, workers looped on the hard modules |
+
+### Observations → fixes
+1. **UI-dispatched builds skipped end-to-end verification** (smoke/complete gates need an env var / assured
+   mode the app never set) → a crash-on-every-command CLI shipped as "done". **FIXED**: the swarm provider
+   now enables GOOSE_SWARM_SMOKE for UI builds (commit in this session). [biggest fix]
+2. **Builds ran in $HOME**, so workers wandered into sibling projects (integrate-verify tested ~/wc2 not the
+   app). **FIXED** for this run via `--dir` isolation; PRODUCT BACKLOG: builds should not default to $HOME.
+3. **Run panel had 5 nested scrollbars** → **FIXED**: panel flows, chat scrolls as one (user feedback).
+4. **The fleet is archetype-dependent + high-variance**: data/CRUD (inventory) passes cleanly and hits the
+   spec contract EXACTLY when the spec names commands explicitly; the deep algorithmic (csvql parser/
+   evaluator) and a hard systems spec (kvstore log-store) both stalled — workers over_read/loop/stall (420s
+   timeout) on the hard modules, and retry/salvage isn't enough. The judge DETECTS it (over_reading/looping
+   verdicts) but can't rescue it. This is the standing ceiling.
+
+### Follow-ups (backlog, not done this pass — bigger/uncertain)
+- Extend the smoke gate to Rust (cargo build + run the binary); it's Python-centric today (kvstore slipped).
+- The parser/evaluator + log-store stalls: the corrective loop (retry, salvage) doesn't recover a looping
+  worker on hard modules. Candidate: a harder-model escalation or a stricter "write-first" nudge earlier.
+- Spec explicitness lifts contract fidelity (inventory proof) — worth encoding into the planner's subtask
+  specs (derive exact command signatures from the brief).
