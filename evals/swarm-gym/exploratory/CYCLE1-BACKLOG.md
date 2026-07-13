@@ -17,6 +17,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | crm | DATA | 976 | 31/32 | ok | GOOD | export/import no round-trip; dict-repr list |
 | timesheet | DATA | 1400 | 36/36 | false-green | PARTIAL | tests bypass entry; --db broken; smoke self-healed |
 | calc | ALGO | 716 | 47/47 | exact | STRONG PASS | right-assoc 512, vars, all errors exit≠0 |
+| jsonq | ALGO | 843 | 10/10 | mostly | GOOD | slice+chain returns empty; test misses it |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
@@ -210,3 +211,20 @@ must run a REAL command in the REAL language.
   (run FILE → 5/10/11), and ALL error cases (div0, unknown var, wrong argc, unbalanced) exit non-zero.
   2nd gold-standard app after inventory. Tests are in-process (import calc.*) but the real entry ALSO works,
   so no false-green. Proof the fleet CAN build excellent apps when wiring/contract are right.
+- jsonq (algorithmic): **GOOD (near-pass)** — 843 LOC, clean modules, 10/10 tests. Engine mostly spec-correct
+  via real `jsonq get FILE "PATH"`: child, index, wildcard `[*]`, numeric filter `[?(@.price>10)]`, string
+  filter `[?(@.name='Alice')]`, `keys`, and errors (missing file/bad path) all exit non-zero — all correct.
+  ONE bug: array SLICE doesn't STREAM. `$.items[1:3]` alone works (returns the 2-item array), but
+  `$.items[1:3].id` returns EMPTY — the slice yields a single array value instead of a stream of matched
+  elements, so a child access chained after a slice can't descend. `[*]` and filters stream correctly, which
+  is why only slice+chain breaks. TEST GAP: the suite tests `$.users[0:1]` alone, never slice+child, so it's
+  false-green on the spec's explicit chaining requirement.
+
+## META-PATTERN (recurring across apps) — model's own tests UNDER-COVER the spec → false green
+Seen on bookclub (CLI tests skip ctx.obj path via unit-only), timesheet (tests drive Click in-process, never
+the real argparse entry / --db), jsonq (slice tested alone, never slice+chain), csvql (query tests use wrong
+invocation shape). The weak model writes tests that pass but avoid the spec's HARDER cases (chaining, real
+entry, error paths). Implication for the done-gate (#3): do NOT trust "tests pass" — derive a handful of
+GOLDEN spec-contract checks from the spec's own examples (e.g. the spec literally lists `$.items[?(@.price >
+10)].id` and `2^3^2==512`) and run THOSE against the real entry. Spec examples are the ground truth the tests
+keep dodging.
