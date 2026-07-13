@@ -19,6 +19,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | calc | ALGO | 716 | 47/47 | exact | STRONG PASS | right-assoc 512, vars, all errors exit≠0 |
 | jsonq | ALGO | 843 | 10/10 | mostly | GOOD | slice+chain returns empty; test misses it |
 | tmpl | ALGO | 1045 | 24/24 | drift | FAIL | render empty via real entry (parser/renderer shape drift); scheduler #7 orphaned verify |
+| glob | ALGO | 472 | 0 (task died) | drift | FAIL | glob/re filter broken (match-all/none); test path works |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
@@ -244,3 +245,11 @@ keep dodging.
   (d) GATE GAP (#3 refinement): `tmpl render` EXITS 0 on empty output. An exit-code-only gate passes it. The
       done-gate MUST assert NON-EMPTY / expected output for a known input, not just exit 0.
   This single app is the strongest argument for fixing #7 + #4 + #3 together.
+- glob/gmatch (algorithmic): **FAIL** — 472 LOC (thin), entry + glob_matcher/regex_matcher, no tests (the
+  tests task died via over_reading; smoke+smoke_after_fix ran but can't catch a semantic bug). The `test`
+  subcommand matches CORRECTLY (`test glob "*.txt" file.txt`→MATCH exit0; file.md→NO exit1), but the `glob`
+  and `re` FILTER subcommands are broken: `*`/`.*` patterns match EVERYTHING (b.md matches `*.txt`; dog
+  matches `[abc]*`; ba matches `a.*b`) while `?`/`+`/class-only patterns match NOTHING (`foo?`, `[0-9]+`
+  return empty). Same drift family: the filter path and the test path apply matching differently — the correct
+  matcher exists (test proves it) but the filter loop doesn't use it right. Reinforces: golden-output gate
+  (the spec's own examples) would catch this; exit-0 + smoke does not.
