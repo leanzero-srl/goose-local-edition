@@ -394,3 +394,14 @@ NOTES:
 - STILL UNTESTED: the FULL Loop semantics (stop-check command + iteration cap) live in the desktop
   LoopView/LoopModal, not the CLI schedule. Need a CDP drive of the Loops UI to verify the stop-check halts and
   the cap bounds. Follow-on. The base scheduler + local-provider recipe execution is proven.
+
+## BACKLOG #6 CORRECTION (from live cycle-2 observation) — reverted; wrong lever
+Mihai's cycle-2 LM Studio screenshot: mihai 1+1 QUEUED, workhorse 1+2 QUEUED, gabee READY (idle). My #6 set
+the pool concurrency WEIGHT = speed_weight (3/2/1). LM Studio serves ONE request per model at a time, so
+weight>PARALLEL just QUEUES on a node while an idle node starves — worse concurrency. REVERTED: concurrency
+weight = node's real capacity (explicit override, else LM Studio PARALLEL, else 1) = 1 slot/node, no queuing.
+KEY: the scheduler ALREADY does "faster host does more work" via a SEPARATE speed_weight field consumed by
+pick_device's ROUTING (speed-weighted load share + least-loaded-wins + work-stealing) — untouched and correct.
+So the user's ask was already satisfied by routing; concurrency should never have been touched. SPLIT (#11)
+remains the real starvation fix (enough parallel tasks to fill 3 nodes). Lesson: `weight` = concurrency (cap
+at PARALLEL), `speed_weight` = routing share — never conflate them.
