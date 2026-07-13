@@ -254,6 +254,23 @@ impl Provider for SwarmProvider {
         if std::env::var("GOOSE_SWARM_SPLIT_SECS").is_err() {
             cmd.env("GOOSE_SWARM_SPLIT_SECS", "300");
         }
+        // Quality: two built-but-unenabled gates that the CLI/assured path uses but the UI provider did not.
+        // CONTRACTS freezes signature-only module interfaces before EXECUTE so parallel workers agree on the
+        // shape (the dominant cross-module drift: bookclub ctx.obj, csvql row dict-vs-list, tmpl parser/renderer).
+        // It is also the quality partner for SPLIT — more parallel children means more interfaces to agree on.
+        // COMPLETE verifies the produced app by RUNNING it (language-aware: pytest/`-m` for Python, cargo
+        // build+test+run for Rust) and fixes-until-green within a bounded round budget, refusing to ship a red
+        // app — the "detect AND prevent" the advisory smoke gate lacked (kvstore empty main, wal no-persistence,
+        // taskq won't-compile all shipped). Bounded so a doomed build can't spin: default 2 rounds + a hard cap.
+        if std::env::var("GOOSE_SWARM_CONTRACTS").is_err() {
+            cmd.env("GOOSE_SWARM_CONTRACTS", "1");
+        }
+        if std::env::var("GOOSE_SWARM_COMPLETE").is_err() {
+            cmd.env("GOOSE_SWARM_COMPLETE", "1");
+        }
+        if std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS").is_err() {
+            cmd.env("GOOSE_SWARM_COMPLETE_CAP_SECS", "1200");
+        }
         if let Some(dir) = &self.working_dir {
             cmd.current_dir(dir);
         }
