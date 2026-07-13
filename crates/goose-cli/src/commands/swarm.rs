@@ -3695,7 +3695,16 @@ impl GooseAgentDispatcher {
                     description: String::new(),
                     timeout: None,
                     bundled: Some(true),
-                    available_tools: vec![],
+                    // Whitelist the developer tools the worker actually uses; DROP `read_image` — it is only
+                    // for images and every worker call to it was 100% wasted (a source/text/dir path it then
+                    // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
+                    // model hallucinates it.
+                    available_tools: vec![
+                        "write".to_string(),
+                        "edit".to_string(),
+                        "shell".to_string(),
+                        "tree".to_string(),
+                    ],
                 },
                 &session_id,
             )
@@ -4907,6 +4916,47 @@ async fn py_syntax_error(path: &Path) -> Option<String> {
                 .to_string(),
         )
     }
+}
+
+/// Deterministic Rust compile gate for the DONE check: `cargo check --all-targets` on the crate; returns
+/// (owned_file, error) if an OWNED .rs file fails to compile, else None. `--all-targets` is required so
+/// owned `tests/*.rs` are compiled too. Scoped to OWNED files so a not-yet-written sibling module that
+/// breaks the crate never rejects THIS worker. Timeout / missing toolchain -> None (degrade gracefully).
+async fn rust_compile_error(cwd: &Path, owned: &[String]) -> Option<(String, String)> {
+    if !owned.iter().any(|f| f.ends_with(".rs")) || !cwd.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        tokio::process::Command::new("cargo")
+            .args([
+                "check",
+                "--all-targets",
+                "--quiet",
+                "--message-format=short",
+            ])
+            .current_dir(cwd)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if out.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for line in stderr.lines() {
+        if let Some((loc, msg)) = line.split_once(": error") {
+            let path_tok = loc.split(':').next().unwrap_or("");
+            if owned
+                .iter()
+                .any(|o| o.ends_with(".rs") && path_tok.ends_with(o.as_str()))
+            {
+                return Some((path_tok.to_string(), format!("error{}", msg.trim())));
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -8378,8 +8428,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              provides produces two copies that drift and one silently breaks.\n\
              \n\
              TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
-             - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool, and \
-             `read_image` is ONLY for images (png/jpeg/gif/webp) — never call it on source/text files.\n\
+             - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool.\n\
              - Keep tool OUTPUT SMALL: NEVER dump full `help()`/pydoc or whole large files into the chat — \
              use `head`, `grep`, or read only the specific lines/symbols you need. Large context is very \
              slow on local models and degrades quality.\n\
@@ -8534,6 +8583,29 @@ impl TaskDispatcher for GooseAgentDispatcher {
                                 )));
                             }
                         }
+                    }
+                }
+                // GOOSE_SWARM_COMPILE_GATE (default ON): a worker is not "done" if its owned Rust will not
+                // compile. Runs `cargo check --all-targets` ONCE at pre-accept; the rustc error becomes the
+                // GUIDED retry hint (reaches the worker as a SUPERVISOR NOTE). Separate env from the Python
+                // DONE_GATE so it is independently revertible and never touches the Python path. The retry
+                // budget bounds it — a worker that cannot fix it fails the task rather than looping. This
+                // closes the Rust half of "never ship a broken app" (the smoke oracle ran too late; the LLM
+                // judge never flagged non-compiling Rust — taskq shipped mis-escaped strings).
+                let compile_gate_on = std::env::var("GOOSE_SWARM_COMPILE_GATE")
+                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                    .unwrap_or(true);
+                if compile_gate_on {
+                    if let Some((f, err)) = rust_compile_error(&root, &req.owned_files).await {
+                        eprintln!(
+                            "  {} {} on {}: {f} does not compile — retry with the fix",
+                            style("✗").red().bold(),
+                            style(&req.task_id).bold(),
+                            req.device_id
+                        );
+                        return Err(DispatchError::ContentRetry(format!(
+                            "{f} does not compile: {err} — fix the syntax/type error before finishing; if unsure, write a SMALLER version that compiles."
+                        )));
                     }
                 }
                 eprintln!(
@@ -9811,6 +9883,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         "task_count": dag.tasks.len(),
         "tasks": dag.tasks.values().map(|n| serde_json::json!({
             "id": n.spec.id,
+            // The architect's one-line human description of what this subtask builds — surfaced in the run
+            // panel so a lane reads "Tokenize the template source into a token stream" instead of just "lexer".
+            "description": n.spec.description,
             "deps": n.spec.deps,
             "files": n.spec.owned_files,
             "difficulty": format!("{:?}", n.spec.difficulty).to_lowercase(),
