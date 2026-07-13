@@ -416,3 +416,9 @@ at PARALLEL), `speed_weight` = routing share — never conflate them.
   UTILIZATION NOTE: DAG widened 5→12 via SPLIT (good), no queuing. The serial-root phase still runs ~1 node
   (weak model builds a chokepoint root despite the anti-chokepoint prompt); lower SPLIT_SECS + a width corrector
   are the residual levers, batched for a follow-on.
+- expense-c2 (DATA): **UNRUNNABLE → RUNNABLE** ✅ — cycle 1 had scheduler_stuck (salvage orphaned cli-entry
+  → no `python -m spend`). Cycle 2: scheduler_stuck=0, entry point PRESENT (spend/__main__.py+cli.py),
+  `python -m spend` runs (init/account/category/add/balance all work, balance math correct), 52 tests pass,
+  COMPLETE gate verified:true. VALIDATES scheduler #7 fix decisively. Minor: 2 test-writing subtasks
+  (test-core-commands, test-reports-csv) failed but the app is functional and the written tests pass — not a
+  regression, a residual test-coverage gap.
