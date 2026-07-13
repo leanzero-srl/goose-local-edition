@@ -317,3 +317,13 @@ setback. Confidence LOW that it works first try on the local fleet (never exerci
   `<dir>/objects` + `<dir>/log`. Here the IMPL is spec-correct and the TEST is wrong (mirror of csvql). Still
   contract drift between two workers — reinforces #4. Rust CAN produce a working app (contra kvstore/taskq);
   the difference is this one compiled AND wired the entry.
+
+## BACKLOG #10 — CONCRETE HEADLESS TEST MECHANISM (found, ready to run when fleet is free)
+The bundled binary HAS `goose schedule {add,list,run-now,remove}` + a `--local` flag (swarm-model edition).
+A desktop Loop = a schedule + stop-check command + max-iterations (LoopModal builds a cron payload, default
+`0 0 14 * * *`, and calls acpCreateSchedule). Headless test path (no cron wait): author a minimal recipe YAML
+(version/title/instructions + a trivial 1-turn task), `goose schedule add … --recipe <file>`, then
+`goose schedule run-now <id>` and inspect the created session. For the LOOP-specific stop-check + iteration-cap
+semantics, drive the desktop LoopModal via CDP (that logic lives in LoopView, not necessarily the CLI schedule).
+Recipe schema confirmed from goose-self-test.yaml: version, title, description, author, activities, parameters
+(+ instructions/prompt). Will run this after cycle-1 builds finish so recipe iterations don't contend the fleet.
