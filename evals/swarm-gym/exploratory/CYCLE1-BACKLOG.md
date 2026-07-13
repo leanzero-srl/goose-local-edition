@@ -23,6 +23,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 | taskq | SYSTEMS | 995 | won't compile | n/a | FAIL | 5 syntax errors in log.rs (bad escapes); judge said ok, no Rust gate |
+| blobs | SYSTEMS | 1057 | 13/20 | test-wrong | GOOD | CLI works spec-correct; 7 tests assert wrong .blobs/ layout |
 
 ## Backlog (issues → fix at end of cycle)
 (accrues as builds complete)
@@ -308,3 +309,11 @@ TEST PLAN (do in cycle 2 / dedicated step, fleet-free so recipe runs don't conte
   5. Screenshot LoopView; check for the same visual/logging gaps the swarm panel had.
 EXPECTATION: unknown — this is genuinely untested; treat a first-run failure as expected signal, not a
 setback. Confidence LOW that it works first try on the local fleet (never exercised) — flagged honestly.
+- blobs (systems/Rust): **GOOD (near-pass) — best Rust result** — 1057 LOC, 5 modules + integration test,
+  COMPILES (5 warnings), main.rs properly wired. Real CLI works spec-correct end-to-end: init → put --name
+  greeting → cat greeting = "hello blob world" → names → ls (hash+size) all exit 0 and correct. 13/20 tests
+  pass. The 7 failures are TEST-vs-IMPL drift on store LAYOUT: the tests assert `<dir>/.blobs/objects` but the
+  spec says "global --dir, default .blobs" (i.e. --dir IS the store), so the impl correctly makes
+  `<dir>/objects` + `<dir>/log`. Here the IMPL is spec-correct and the TEST is wrong (mirror of csvql). Still
+  contract drift between two workers — reinforces #4. Rust CAN produce a working app (contra kvstore/taskq);
+  the difference is this one compiled AND wired the entry.
