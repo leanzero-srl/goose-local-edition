@@ -2051,6 +2051,28 @@ mod tests {
     }
 
     #[test]
+    fn clarify_answer_flips_detected_language_forcing_replan() {
+        // The ASK-answer fix folds the user's clarifications into the spec BEFORE language detection, so a
+        // runtime choice in the answer is honored. This is the exact miss it fixes: a vague spec defaults to
+        // Python, the user picks Rust, and previously the answer went only into research findings (which
+        // detect_language never reads) so the run silently stayed Python. Appending the Q&A block (which
+        // embeds "A: Rust ...") must flip the detected language — that flip is what forces the re-plan.
+        let spec =
+            "Build a small command-line developer utility that saves time in day-to-day work. \
+                    Pick something genuinely useful and make it good.";
+        assert_eq!(detect_language(spec, &[]), TargetLang::Python);
+        // The real Q&A block shape from ask_clarifying_questions (question + verbatim answer).
+        let qa = "\n\n[User clarifications incorporated into the spec]\n\n\
+                  USER CLARIFICATIONS (authoritative — they resolve ambiguity in the spec above; honor them):\n\
+                  Q: What runtime should it be?\nA: Rust (faster, single binary)\n";
+        let amended = format!("{spec}{qa}");
+        assert_eq!(detect_language(&amended, &[]), TargetLang::Rust);
+        // The fix's decision: a differing language BEFORE vs AFTER folding the answer is what triggers the
+        // forced re-plan (a reused Python-shaped plan cannot honor a switch to Rust).
+        assert_ne!(detect_language(&amended, &[]), detect_language(spec, &[]));
+    }
+
+    #[test]
     fn target_lang_profile_python_is_unchanged_others_translate() {
         // Python keeps the exact original scaffolding and an EMPTY directive (prompt byte-identical).
         assert!(TargetLang::Python.directive().is_empty());
@@ -9374,7 +9396,7 @@ fn review_fix_max_lines() -> usize {
         .clamp(10, 400)
 }
 
-pub async fn run_swarm(opts: RunOpts) -> Result<()> {
+pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut cfg = load_config();
     // Set the LM Studio host up front so the fleet probe's HTTP fallback (used when the `lms` CLI is not
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
@@ -9907,15 +9929,34 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 .await;
                 if !qa.is_empty() {
                     research_findings.push_str(&qa);
-                    if ask_replan {
+                    // Fold the answers into the SPEC too, not only the findings: target-language detection reads
+                    // the PROMPT (never the findings), so a language choice like "Rust" was previously invisible
+                    // and the run silently stayed on the Python default (the exact miss: user picked Rust, got
+                    // Python). A language change is STRUCTURAL — the reused plan's file names are the wrong
+                    // language and cannot be corrected by injecting worker text — so it FORCES a re-plan
+                    // (overriding the reuse default) to re-draft the skeleton in the chosen language. This is
+                    // safe: the ask fires before any worker writes a file, so the tree is still empty and the
+                    // amended spec (not stale files) drives detect_language on the re-plan.
+                    let lang_before = detect_language(&opts.prompt, &[]);
+                    opts.prompt
+                        .push_str("\n\n[User clarifications incorporated into the spec]\n");
+                    opts.prompt.push_str(&qa);
+                    let lang_after = detect_language(&opts.prompt, &[]);
+                    let lang_changed = lang_after != lang_before;
+                    if ask_replan || lang_changed {
                         eprintln!(
-                            "  {} re-planning with the user's clarifications",
-                            style("↻").cyan()
+                            "  {} re-planning with the user's clarifications{}",
+                            style("↻").cyan(),
+                            if lang_changed {
+                                format!(" (target language → {lang_after:?})")
+                            } else {
+                                String::new()
+                            }
                         );
                         continue;
                     }
                     eprintln!(
-                        "  {} keeping this plan; clarifications injected into every worker via research findings (default: skips the ~15min re-plan — set GOOSE_SWARM_ASK_REPLAN=1 to re-plan instead)",
+                        "  {} keeping this plan; clarifications injected into every worker via research findings + spec (set GOOSE_SWARM_ASK_REPLAN=1 to force a re-plan)",
                         style("✓").green()
                     );
                 }
