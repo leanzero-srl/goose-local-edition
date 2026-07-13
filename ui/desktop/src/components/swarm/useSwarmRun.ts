@@ -238,6 +238,29 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'phase', text: 'Defining quality pillars' });
         phase = 'Planning';
         break;
+      case 'low_confidence_ask': {
+        // Surface the confidence AS SOON AS the swarm asks (before plan_loaded), so the badge is visible at
+        // the exact moment it pauses for the user — not only after the re-plan.
+        const pc = num(e['plan_confidence']);
+        if (typeof pc === 'number') planConfidence = pc;
+        const nq = arr(e['questions']).length;
+        compact({
+          kind: 'plan',
+          text: `Paused — asking you ${nq} question${nq === 1 ? '' : 's'}`,
+          tone: 'warn',
+        });
+        verbose({
+          kind: 'plan',
+          text: `Low confidence (${typeof pc === 'number' ? pc : '?'}/100) — asking the user ${nq} clarifying question${nq === 1 ? '' : 's'} before building`,
+          tone: 'warn',
+        });
+        break;
+      }
+      case 'low_confidence_answered': {
+        compact({ kind: 'plan', text: 'Got your answers — re-planning', tone: 'good' });
+        verbose({ kind: 'plan', text: 'Answers received — re-planning with your input', tone: 'good' });
+        break;
+      }
       case 'plan_loaded': {
         const pc = num(e['plan_confidence']);
         if (typeof pc === 'number') planConfidence = pc;
