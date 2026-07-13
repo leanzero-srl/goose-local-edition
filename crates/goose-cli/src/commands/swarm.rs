@@ -1908,6 +1908,17 @@ mod tests {
         assert_eq!(tail_lines(s, 10), "a\nb\nc");
     }
 
+    #[test]
+    fn rust_empty_stub_entry_is_flagged() {
+        // exit-0 with no output = an unwired `fn main(){}` stub (kvstore's failure) -> flagged.
+        assert!(rust_entry_is_empty_stub(true, ""));
+        assert!(rust_entry_is_empty_stub(true, "   \n  "));
+        // a real CLI prints usage -> not a stub.
+        assert!(!rust_entry_is_empty_stub(true, "Usage: kv <COMMAND>\n"));
+        // a non-zero exit is a different failure mode (panic/error path), not the empty-stub case.
+        assert!(!rust_entry_is_empty_stub(false, ""));
+    }
+
     #[tokio::test]
     async fn fanout_caps_one_call_per_device() {
         use std::sync::atomic::AtomicUsize;
@@ -6051,6 +6062,14 @@ async fn run_browser_verify(root: &Path) -> Vec<String> {
     findings
 }
 
+/// An entry that runs cleanly on `--help` but prints NOTHING is an unwired stub (e.g. a scaffold
+/// `fn main() {}`): a real clap/argparse CLI always prints usage. Only treat exit-0-with-empty-output as a
+/// stub — a non-zero exit or any output is handled elsewhere. (kvstore shipped an empty `fn main(){}` that
+/// compiled and did not panic, so the gate passed a no-op binary; this closes that hole.)
+fn rust_entry_is_empty_stub(success: bool, combined: &str) -> bool {
+    success && combined.trim().is_empty()
+}
+
 async fn smoke_rust(root: &Path) -> SmokeResult {
     if !root.join("Cargo.toml").exists() {
         return SmokeResult::skipped();
@@ -6090,6 +6109,12 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                     "`cargo run -- --help` PANICS at runtime:\n{}",
                     tail_lines(&combined, 40)
                 ));
+                Some(false)
+            } else if rust_entry_is_empty_stub(out.status.success(), &combined) {
+                findings.push(
+                    "`cargo run -- --help` produced NO output — the entry is an unwired stub (likely a scaffold `fn main() {}`), not a real CLI. Wire the CLI to the modules and print usage."
+                        .to_string(),
+                );
                 Some(false)
             } else {
                 Some(true)
