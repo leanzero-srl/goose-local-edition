@@ -18,6 +18,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | timesheet | DATA | 1400 | 36/36 | false-green | PARTIAL | tests bypass entry; --db broken; smoke self-healed |
 | calc | ALGO | 716 | 47/47 | exact | STRONG PASS | right-assoc 512, vars, all errors exit≠0 |
 | jsonq | ALGO | 843 | 10/10 | mostly | GOOD | slice+chain returns empty; test misses it |
+| tmpl | ALGO | 1045 | 24/24 | drift | FAIL | render empty via real entry (parser/renderer shape drift); scheduler #7 orphaned verify |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 
@@ -228,3 +229,18 @@ entry, error paths). Implication for the done-gate (#3): do NOT trust "tests pas
 GOLDEN spec-contract checks from the spec's own examples (e.g. the spec literally lists `$.items[?(@.price >
 10)].id` and `2^3^2==512`) and run THOSE against the real entry. Spec examples are the ground truth the tests
 keep dodging.
+- tmpl (algorithmic): **FAIL (renders empty) — CAPSTONE, validates the whole backlog** — 1045 LOC, entry +
+  modules, 24/24 tests, `tmpl check` works. But `tmpl render FILE DATA` produces EMPTY output for EVERYTHING
+  (even a no-tag "just text" template), exit 0. FOUR failure classes compounded in one app:
+  (a) CONTRACT DRIFT (#4): the 24 tests call `Renderer().render([Variable(...), Text(...)], ctx)` with a
+      hand-built LIST of AST nodes; the CLI calls `Renderer().render(_parse_template(source), data)` where the
+      parser returns a DIFFERENT AST shape (a wrapper/root, not a bare list) → render() iterates nothing →
+      empty. Parser-output shape ≠ renderer-input shape. Same family as csvql (list vs dict).
+  (b) SCHEDULER #7 (2nd occurrence): `cli` looped ×2 → salvaged_spin → the salvage marked cli Done but did
+      NOT relax its dependents → integrate-verify + tests orphaned → scheduler_stuck remaining=2. The broken
+      render was never validated because its verify sink was orphaned by exactly bug #7.
+  (c) FALSE-GREEN (meta-pattern): tests exercise render() in-process with pre-built node lists, never the real
+      parse→render pipeline, so 24 green while the real entry is fully broken.
+  (d) GATE GAP (#3 refinement): `tmpl render` EXITS 0 on empty output. An exit-code-only gate passes it. The
+      done-gate MUST assert NON-EMPTY / expected output for a known input, not just exit 0.
+  This single app is the strongest argument for fixing #7 + #4 + #3 together.
