@@ -1,0 +1,13 @@
+version: 1.0.0
+title: Loop Test — Append Line
+description: A trivial one-turn recipe used to validate goose Loop creation/execution on the local fleet. Each run appends a single line to a counter file so a stop-check can detect iteration progress.
+author:
+  contact: evolve-loop-test
+instructions: |
+  You are running one iteration of a loop test. Do EXACTLY this and nothing else:
+  Use the shell tool to run:  mkdir -p /tmp/loop_test && echo "iteration" >> /tmp/loop_test/log.txt
+  Then report the current line count with:  wc -l < /tmp/loop_test/log.txt
+  Do not read other files, do not explain, do not do anything beyond those two shell commands. Then finish.
+prompt: Append one iteration line to /tmp/loop_test/log.txt and report the new line count, then stop.
+activities:
+  - Append one line to the loop counter file
