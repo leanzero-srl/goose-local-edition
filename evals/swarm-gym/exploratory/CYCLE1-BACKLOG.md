@@ -335,3 +335,28 @@ Recipe schema confirmed from goose-self-test.yaml: version, title, description, 
   nothing accumulates. 2/8 tests pass (init + verify-empty). Not contract drift — a genuine functional bug in
   the writer/reader persistence. The single-invocation illusion (append prints an LSN) hides that nothing is
   durable. A golden round-trip gate (append twice → read → expect 2 records) catches it instantly; exit-0 does not.
+
+## BACKLOG ITEM #11 (throughput / fleet starvation — user-flagged, HIGH value) — app provider drops GOOSE_SWARM_SPLIT
+SYMPTOM (Mihai's LM Studio screenshot): 1 node PROCESSING, 2 nodes READY/idle — fleet starved.
+MEASURED (from run jsonl, distinct-task-id concurrency, retries not double-counted): true_max_concurrent peaks
+at 2–3 (all 3 CAN be used — expense/blobs hit 3), but a large share of dispatches happen at concurrency=1
+(trie 5 serial vs 4 parallel; blobs 7 vs 5). So the scheduler + fleet detection are NOT broken — the fleet is
+just under-fed most of the wall-clock.
+ROOT CAUSE: the plans are coarse near-serial chains. trie's plan = 4 tasks: shared-types-and-store (root, runs
+ALONE) → commands-and-cli + integration-tests (width 2) → integrate-verify (ALONE). Two of three phases are
+single-task. The runtime lever that FIXES this — GOOSE_SWARM_SPLIT (propose_split partitions an over-long
+subtask's owned files into 2–4 INDEPENDENT children so several workers run in parallel; swarm.rs:6601,6718–6726
+"split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime") — is OFF for app
+builds. PROOF: zero split/child events across all 15 builds; only `scouts_planned`. The app PROVIDER
+(crates/goose/src/providers/swarm.rs:229–241) passes ONLY `--output-format json` + `GOOSE_SWARM_SMOKE=1` — it
+never sets GOOSE_SWARM_SPLIT. My earlier direct-CLI A/B runs DID pass `GOOSE_SWARM_SPLIT=1`. So the regression
+is real and it is a DROPPED FLAG on the app path, NOT anything CDP/scheduler/fleet-detection.
+FIX (task #58): in the provider, set GOOSE_SWARM_SPLIT=1 (and consider GOOSE_SWARM_SPLIT_SECS to tune the
+too-long threshold) the same way SMOKE is set — one line. Then fat serial tasks decompose and the fleet fills.
+HONEST CAVEAT (quality risk): more parallel children = more cross-task interfaces = MORE surface for the
+dominant contract-drift failure (#4). SPLIT should land TOGETHER WITH the CONTRACTS fix (#4, shared-type stubs
+every child imports) so we get the throughput WITHOUT the drift cost — this is the "throughput, same quality"
+invariant. Splitting alone on a weak model could trade starvation for drift. MED-HIGH confidence on the util
+win; the pairing with #4 is what keeps quality flat.
+DEEPER (separate): the planner itself emits narrow DAGs (lumps types+store into one big serial root). A
+wider-fan-out planner prompt would help beyond SPLIT, but SPLIT is the immediate designed lever.
