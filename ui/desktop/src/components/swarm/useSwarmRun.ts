@@ -109,6 +109,14 @@ export interface SwarmRunState {
   phase: string;
   /** True while a run is underway (started, not finished, and its files are still fresh). */
   inProgress: boolean;
+  /** Set when the planner's confidence is below the ask floor and the swarm is BLOCKED waiting for the user
+   *  to answer clarifying questions (via the run panel's clarify prompt, written to answerPath). */
+  clarify: {
+    pending: boolean;
+    questions: string[];
+    planConfidence?: number;
+    answerPath: string;
+  } | null;
   mtime: number | null;
   loading: boolean;
 }
@@ -125,6 +133,7 @@ const EMPTY: SwarmRunState = {
   smoke: null,
   phase: '',
   inProgress: false,
+  clarify: null,
   mtime: null,
   loading: true,
 };
@@ -481,6 +490,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           smoke,
           phase,
           inProgress: !finished,
+          clarify: data.clarify,
           mtime: data.mtime,
           loading: false,
         });

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
+  MessageCircleQuestion, Send,
 } from 'lucide-react';
 import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall, type ActivityItem } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
@@ -29,6 +30,8 @@ const STALE_MS = 300_000;
 const CALL_OK = '#2ecc71';
 const CALL_ERR = '#ff3b30';
 const CALL_PENDING = '#8a8a8a';
+const AMBER = '#f5a623';
+const BLUE = '#2e8bff';
 
 /** Stable node letter/hue per device so the same node keeps its identity across rows and polls. */
 function deviceIndex(device: string, order: string[]): number {
@@ -382,6 +385,97 @@ const PhaseSteps: React.FC<{ phase: string }> = ({ phase }) => {
   );
 };
 
+// When the planner's confidence is below the ask floor, the swarm BLOCKS and asks the user. This prompt is
+// the interactive answer surface: the user types answers and we write them to the handshake file, which
+// unblocks the run. Amber (solid, not faded) because the build is PAUSED waiting on the human.
+const ClarifyPrompt: React.FC<{
+  clarify: { pending: boolean; questions: string[]; planConfidence?: number; answerPath: string };
+}> = ({ clarify }) => {
+  const [answers, setAnswers] = useState<string[]>(() => clarify.questions.map(() => ''));
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const send = async () => {
+    setBusy(true);
+    setError(false);
+    const ok = await window.electron
+      .writeFile(clarify.answerPath, JSON.stringify({ answers }, null, 2))
+      .catch(() => false);
+    setBusy(false);
+    if (ok) setSent(true);
+    else setError(true);
+  };
+
+  if (sent) {
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2 text-xs text-white"
+        style={{ backgroundColor: STATUS_COLOR.done }}
+      >
+        <Check className="h-4 w-4 shrink-0" />
+        Answers sent — the swarm is re-planning with your input.
+      </div>
+    );
+  }
+
+  const anyAnswered = answers.some((a) => a.trim().length > 0);
+  return (
+    <div className="border-b border-border-primary">
+      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: AMBER }}>
+        <MessageCircleQuestion className="h-4 w-4 shrink-0" />
+        <span className="text-xs font-semibold">Goose needs your input to build this well</span>
+        {typeof clarify.planConfidence === 'number' ? (
+          <span className="text-[10px] opacity-90 tabular-nums">
+            planner confidence {clarify.planConfidence}/100
+          </span>
+        ) : null}
+      </div>
+      <div className="px-3 py-3 space-y-3 bg-background-secondary">
+        <p className="text-xs text-text-secondary">
+          The local planner isn&apos;t confident about how to break this app down. Answer what you can (skip
+          any you don&apos;t care about) and it will re-plan with your guidance instead of guessing.
+        </p>
+        {clarify.questions.map((q, i) => (
+          <div key={i} className="space-y-1">
+            <label className="block text-xs text-text-primary font-medium">
+              {i + 1}. {q}
+            </label>
+            <textarea
+              value={answers[i]}
+              onChange={(e) =>
+                setAnswers((a) => a.map((x, j) => (j === i ? e.target.value : x)))
+              }
+              rows={2}
+              placeholder="Your answer…"
+              className="w-full text-xs px-2 py-1.5 bg-background-primary text-text-primary border border-border-primary focus:outline-none focus:border-text-secondary resize-y"
+              style={{ borderRadius: 2 }}
+            />
+          </div>
+        ))}
+        {error ? (
+          <div className="text-xs" style={{ color: STATUS_COLOR.error }}>
+            Couldn&apos;t write the answers file — check that the build directory is still there, then retry.
+          </div>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={send}
+            disabled={busy || !anyAnswered}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 text-white disabled:opacity-50 transition-opacity"
+            style={{ backgroundColor: BLUE, borderRadius: 2 }}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Send answers &amp; continue
+          </button>
+          <span className="text-[10px] text-text-secondary">The build is paused until you answer.</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
   workingDir,
   className = '',
@@ -477,6 +571,8 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           </button>
         </span>
       </div>
+
+      {run.clarify?.pending ? <ClarifyPrompt clarify={run.clarify} /> : null}
 
       {run.inProgress && <PhaseSteps phase={run.phase} />}
 

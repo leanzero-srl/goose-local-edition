@@ -231,6 +231,14 @@ pub struct SwarmConfig {
     /// share of tasks). E.g. {"worksmacstudio":3,"mihai":2,"gabee":1}. Empty = equal split.
     #[serde(default)]
     pub speed_weights: std::collections::HashMap<String, u32>,
+    /// Confidence floor (1-100) for asking the USER clarifying questions before EXECUTE. When the planner's
+    /// confidence in its decomposition is below this, the swarm writes crisp questions to
+    /// `.swarm/clarify-questions.json`, emits `low_confidence_ask`, and BLOCKS on `.swarm/clarify-answers.json`
+    /// (the desktop clarify panel writes it, unblocking the run). None/0 = never ask. This is what wires the
+    /// (headless) desktop into the confidence-gated ask that was previously terminal-only. GOOSE_SWARM_ASK_FLOOR
+    /// env still overrides.
+    #[serde(default)]
+    pub ask_floor: Option<u8>,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -285,6 +293,7 @@ impl Default for SwarmConfig {
             scout_budget_secs: default_scout_budget_secs(),
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
+            ask_floor: None,
         }
     }
 }
@@ -9590,12 +9599,15 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         Some(f) if f > 0 => Some(f.min(100)), // explicit floor wins (documented 1-100; clamp)
         Some(_) => None,                      // explicit 0 = OFF
         None => {
-            // Default ON at a moderate floor ONLY when a human is at the terminal — on a weak local planner,
-            // asking a crisp clarifying question beats committing to a low-confidence guess. HEADLESS runs
-            // (pipes / CI / the eval harness / a scripted `swarm run`) have no one to answer, so they stay OFF
-            // and byte-identical to before — the confidence-asking never blocks an autonomous run.
+            // 1) The persisted swarm setting (config.yaml `ask_floor`) wins next — this is what lets the
+            //    HEADLESS desktop ask: the desktop clarify panel answers via the .swarm/clarify-answers.json
+            //    handshake, so a piped run can still involve the user. 2) Else, default ON at a moderate floor
+            //    ONLY when a human is at a real terminal. 3) Else OFF (a scripted/CI run with no one to answer
+            //    stays byte-identical to before and never blocks).
             use std::io::IsTerminal;
-            if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            if let Some(f) = cfg.ask_floor.filter(|&f| f > 0) {
+                Some(f.min(100))
+            } else if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
                 Some(70)
             } else {
                 None

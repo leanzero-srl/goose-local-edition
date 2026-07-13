@@ -127,6 +127,12 @@ type ElectronAPI = {
     mtime: number;
     events: Array<Record<string, unknown>>;
     activity: Record<string, unknown>;
+    clarify: {
+      pending: boolean;
+      questions: string[];
+      planConfidence?: number;
+      answerPath: string;
+    } | null;
   } | null>;
   writeFile: (directory: string, content: string) => Promise<boolean>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
