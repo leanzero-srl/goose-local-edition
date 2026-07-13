@@ -422,3 +422,6 @@ at PARALLEL), `speed_weight` = routing share — never conflate them.
   COMPLETE gate verified:true. VALIDATES scheduler #7 fix decisively. Minor: 2 test-writing subtasks
   (test-core-commands, test-reports-csv) failed but the app is functional and the written tests pass — not a
   regression, a residual test-coverage gap.
+- csvql-c2 (ALGO): **FAIL → PASS** ✅ — cycle 1 crashed (cli row.values() on evaluator's list rows). Cycle 2:
+  queries work (SELECT * returns rows; WHERE age>26 correctly filters), 13 tests pass, COMPLETE verified, 0
+  failed tasks. CONTRACTS (#4) resolved the row-type drift. CYCLE 2 SCORE: 3/3 conversions (bookclub, expense, csvql).
