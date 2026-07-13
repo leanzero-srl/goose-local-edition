@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
-  MessageCircleQuestion, Send, Gauge,
+  MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen,
 } from 'lucide-react';
 import {
   useSwarmRun,
@@ -11,8 +11,22 @@ import {
   type SwarmCall,
   type ActivityItem,
   type PlanTask,
+  type RunSummary,
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
+
+/**
+ * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
+ * says what it means (the icons were previously unlabelled). `label` is the short explanation; `children` is
+ * the single element it wraps. Rendered in a portal, so it is safe inside the lane's toggle button.
+ */
+const Tip: React.FC<{ label: React.ReactNode; children: React.ReactElement }> = ({ label, children }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>{children}</TooltipTrigger>
+    <TooltipContent className="max-w-xs">{label}</TooltipContent>
+  </Tooltip>
+);
 
 /**
  * Goose Local Edition — LIVE swarm run turn loops, verbose. One expandable lane per task: the node
@@ -39,6 +53,18 @@ const CALL_ERR = '#ff3b30';
 const CALL_PENDING = '#8a8a8a';
 const AMBER = '#f5a623';
 const BLUE = '#2e8bff';
+// A solid slate for a run that stopped without finishing — neutral (not an error) but dark enough for white
+// banner text (grey #8a8a8a fails contrast on white). Distinct from the amber "running" and red "failed".
+const STOPPED = '#4b5563';
+
+// Human duration from minutes: seconds under a minute, else "Nm Ss".
+function fmtDuration(min: number): string {
+  const totalSec = Math.max(0, Math.round(min * 60));
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
 
 /** Stable node letter/hue per device so the same node keeps its identity across rows and polls. */
 function deviceIndex(device: string, order: string[]): number {
@@ -196,9 +222,24 @@ const LaneRow: React.FC<{
   // so no length/regex gate is needed — show whatever substantive text the worker produced.
   const rawReasoning = lane.fullReasoning?.trim() || lane.reasoning?.trim() || lane.lastText?.trim() || '';
   const reasoning = rawReasoning.length >= 8 && /[a-zA-Z]{3,}/.test(rawReasoning) ? rawReasoning : '';
-  const hasBody = reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0;
+  const failLike = lane.status === 'error' || interrupted;
+  const laneError = failLike && lane.error ? lane.error.trim() : '';
+  const hasBody =
+    reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0 || laneError.length > 0;
   // The first failing call auto-expands so the error is zero clicks away.
   const firstFailIdx = calls.findIndex((c) => c.ok === false);
+
+  // Human-readable labels for the row's glyphs — so every icon says what it means on hover.
+  const secs = typeof lane.elapsedMs === 'number' ? Math.round(lane.elapsedMs / 1000) : null;
+  const attemptSuffix =
+    typeof lane.attempts === 'number' && lane.attempts > 1 ? ` after ${lane.attempts} attempts` : '';
+  const statusTip = interrupted
+    ? 'Stalled — no update for over 5 minutes (the run may have been stopped or crashed)'
+    : lane.status === 'done'
+      ? `Completed${secs != null ? ` in ${secs}s` : ''}${attemptSuffix}`
+      : lane.status === 'error'
+        ? `This task failed${attemptSuffix}${laneError ? ` — ${laneError.slice(0, 160)}` : ''}`
+        : 'Running now';
 
   return (
     <div data-testid="turn-lane">
@@ -216,43 +257,97 @@ const LaneRow: React.FC<{
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
-        <span className="font-bold shrink-0" style={{ color: hue }} aria-label={`node ${letter}`}>
-          ⬢{letter}
-        </span>
-        <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
+        <Tip
+          label={
+            <span>
+              Node {letter} — <span className="font-mono">{lane.device}</span>
+              {lane.model ? (
+                <>
+                  <br />
+                  model <span className="font-mono">{lane.model}</span>
+                </>
+              ) : null}
+            </span>
+          }
+        >
+          <span className="font-bold shrink-0" style={{ color: hue }} aria-label={`node ${letter}`}>
+            ⬢{letter}
+          </span>
+        </Tip>
+        <Tip label={<span className="font-mono">{lane.device}</span>}>
+          <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
+        </Tip>
         {/* Readable name: the architect's description ("Tokenize the template source") is the primary label;
             the terse id ("lexer") drops to a mono sub-tag so it's still identifiable but no longer cryptic. */}
-        <span className="flex-1 min-w-0 flex flex-col leading-tight">
-          <span className="truncate text-xs text-text-primary">{lane.description || lane.taskId}</span>
-          {lane.description ? (
-            <span className="truncate text-[10px] font-mono text-text-secondary">{lane.taskId}</span>
-          ) : null}
-        </span>
-        {lane.model && (
-          <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
-            {lane.model}
-          </span>
-        )}
-        <span className="text-xs text-text-secondary tabular-nums shrink-0 flex items-center gap-1">
-          {typeof lane.toolCalls === 'number' && lane.toolCalls > 0 ? (
-            <span className="flex items-center gap-0.5">
-              <Wrench className="h-3 w-3" />
-              {lane.toolCalls}
+        <Tip
+          label={
+            <span>
+              {lane.description || lane.taskId}
+              {lane.description ? (
+                <>
+                  <br />
+                  <span className="font-mono opacity-80">{lane.taskId}</span>
+                </>
+              ) : null}
             </span>
+          }
+        >
+          <span className="flex-1 min-w-0 flex flex-col leading-tight">
+            <span className="truncate text-xs text-text-primary">{lane.description || lane.taskId}</span>
+            {lane.description ? (
+              <span className="truncate text-[10px] font-mono text-text-secondary">{lane.taskId}</span>
+            ) : null}
+          </span>
+        </Tip>
+        {lane.model && (
+          <Tip label={<span className="font-mono">{lane.model}</span>}>
+            <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
+              {lane.model}
+            </span>
+          </Tip>
+        )}
+        <span className="text-xs text-text-secondary tabular-nums shrink-0 flex items-center gap-1.5">
+          {typeof lane.toolCalls === 'number' && lane.toolCalls > 0 ? (
+            <Tip label={`${lane.toolCalls} tool call${lane.toolCalls === 1 ? '' : 's'} in this task`}>
+              <span className="flex items-center gap-0.5">
+                <Wrench className="h-3 w-3" />
+                {lane.toolCalls}
+              </span>
+            </Tip>
           ) : null}
-          {lane.errors ? <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span> : null}
-          {typeof lane.elapsedMs === 'number' ? <span>{Math.round(lane.elapsedMs / 1000)}s</span> : null}
+          {lane.errors ? (
+            <Tip label={`${lane.errors} tool call${lane.errors === 1 ? '' : 's'} errored`}>
+              <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span>
+            </Tip>
+          ) : null}
+          {secs != null ? (
+            <Tip label={lane.status === 'running' ? `Running — ${secs}s so far` : `Took ${secs}s`}>
+              <span>{secs}s</span>
+            </Tip>
+          ) : null}
         </span>
-        <Icon
-          size={15}
-          strokeWidth={3}
-          className={`shrink-0 ${live ? 'animate-spin' : ''}`}
-          style={{ color: iconColor }}
-        />
+        <Tip label={statusTip}>
+          <span className="shrink-0 inline-flex">
+            <Icon
+              size={15}
+              strokeWidth={3}
+              className={`${live ? 'animate-spin' : ''}`}
+              style={{ color: iconColor }}
+            />
+          </span>
+        </Tip>
       </button>
 
       {open && hasBody && (
         <div className="px-3 pb-3 pl-9 space-y-2">
+          {laneError ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: STATUS_COLOR.error }}>
+                {interrupted ? 'Last error before it stalled' : 'Why it failed'}
+              </div>
+              <MonoOutput text={laneError} failed />
+            </div>
+          ) : null}
           {reasoning && <ReasoningBlock text={reasoning} forceOpen={dev || live} />}
 
           {calls.length > 0 ? (
@@ -360,20 +455,32 @@ const ConfidenceBadge: React.FC<{ value: number }> = ({ value }) => {
   const color = value >= 70 ? STATUS_COLOR.done : value >= 40 ? AMBER : STATUS_COLOR.error;
   const label = value >= 70 ? 'confident' : value >= 40 ? 'unsure' : 'guessing';
   return (
-    <span
-      className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
-      style={{ backgroundColor: color, borderRadius: 2 }}
-      title={`Planner confidence in how it decomposed this app (cross-draft agreement): ${value}/100 — ${label}.`}
+    <Tip
+      label={`Planner confidence in how it broke this app down — ${value}/100 (${label}). Below the ask floor, goose pauses to ask you before building.`}
     >
-      <Gauge className="h-2.5 w-2.5" />
-      conf {value}
-    </span>
+      <span
+        className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
+        style={{ backgroundColor: color, borderRadius: 2 }}
+      >
+        <Gauge className="h-2.5 w-2.5" />
+        conf {value}
+      </span>
+    </Tip>
   );
 };
 
 // The fixed pipeline every build moves through, so the free-text `phase` label reads as PROGRESS, not a
 // mystery. The active step is filled; passed steps get a check; upcoming steps stay muted.
 const PHASE_STEPS = ['Research', 'Plan', 'Contracts', 'Build', 'Verify', 'Done'] as const;
+// What each pipeline step actually is — the labels alone (esp. "Contracts") are opaque without this.
+const PHASE_TIPS: Record<(typeof PHASE_STEPS)[number], string> = {
+  Research: 'Scouts research the problem — libraries, architecture, edge cases — before any code is written.',
+  Plan: 'The planner drafts and picks a task breakdown, and scores its confidence in the decomposition.',
+  Contracts: 'Per-module interface stubs are drafted so nodes building in parallel agree on shared APIs.',
+  Build: 'Worker nodes build the tasks in parallel across the fleet.',
+  Verify: 'Integration, review, and an end-to-end smoke test that actually runs the program.',
+  Done: 'The run finished.',
+};
 function phaseStepIndex(phase: string): number {
   const p = phase.toLowerCase();
   if (/done|finished|complete/.test(p)) return 5;
@@ -384,26 +491,31 @@ function phaseStepIndex(phase: string): number {
   if (/research|scout|start/.test(p)) return 0;
   return 3;
 }
-const PhaseSteps: React.FC<{ phase: string }> = ({ phase }) => {
+const PhaseSteps: React.FC<{ phase: string; activeColor?: string }> = ({
+  phase,
+  activeColor = STATUS_COLOR.running,
+}) => {
   const active = phaseStepIndex(phase);
   return (
     <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border-primary overflow-x-auto">
       {PHASE_STEPS.map((step, i) => (
         <React.Fragment key={step}>
           {i > 0 && <span className="text-text-secondary text-[10px] shrink-0">›</span>}
-          <span
-            className={`text-[10px] px-1.5 py-0.5 whitespace-nowrap shrink-0 ${
-              i === active
-                ? 'text-white font-semibold'
-                : i < active
-                  ? 'text-text-secondary'
-                  : 'text-text-secondary opacity-60'
-            }`}
-            style={i === active ? { backgroundColor: STATUS_COLOR.running, borderRadius: 2 } : undefined}
-          >
-            {i < active ? '✓ ' : ''}
-            {step}
-          </span>
+          <Tip label={PHASE_TIPS[step]}>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 whitespace-nowrap shrink-0 inline-flex items-center gap-0.5 ${
+                i === active
+                  ? 'text-white font-semibold'
+                  : i < active
+                    ? 'text-text-primary'
+                    : 'text-text-secondary opacity-60'
+              }`}
+              style={i === active ? { backgroundColor: activeColor, borderRadius: 2 } : undefined}
+            >
+              {i < active ? <Check className="h-2.5 w-2.5" strokeWidth={3} style={{ color: STATUS_COLOR.done }} /> : null}
+              {step}
+            </span>
+          </Tip>
         </React.Fragment>
       ))}
     </div>
@@ -578,6 +690,54 @@ const ClarifyPrompt: React.FC<{
   );
 };
 
+// The clear ENDING a run was missing: a solid terminal banner so a finished/stopped run never sits in limbo
+// (tasks green, no "running", no "done"). Done = green, finished-with-failures = red, stopped-without-a-
+// completion-signal (killed/crashed) = solid slate. Carries the tally + total time + the output directory.
+const TerminalBanner: React.FC<{
+  outcome: 'done' | 'failed' | 'stopped';
+  summary: RunSummary | null;
+  totals: { done: number; failed: number; tasks: number };
+  durationLabel: string | null;
+  outputDir?: string;
+}> = ({ outcome, summary, totals, durationLabel, outputDir }) => {
+  const done = summary?.done ?? totals.done;
+  const failed = summary?.failed ?? totals.failed;
+  const tasks = totals.tasks;
+  const cfg = {
+    done: { color: STATUS_COLOR.done, Icon: Check, title: 'Build complete' },
+    failed: { color: STATUS_COLOR.error, Icon: AlertTriangle, title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed` },
+    stopped: { color: STOPPED, Icon: CircleSlash, title: 'Run stopped' },
+  }[outcome];
+  const { color, Icon, title } = cfg;
+  const parts = [
+    `${done}/${tasks} task${tasks === 1 ? '' : 's'} done`,
+    outcome !== 'failed' && failed ? `${failed} failed` : null,
+    durationLabel ? `in ${durationLabel}` : null,
+  ].filter(Boolean);
+  return (
+    <div className="border-b border-border-primary">
+      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: color }}>
+        <Icon className="h-4 w-4 shrink-0" strokeWidth={2.5} />
+        <span className="text-xs font-semibold">{title}</span>
+        <span className="text-[11px] opacity-90 tabular-nums">{parts.join(' · ')}</span>
+      </div>
+      {outcome === 'stopped' ? (
+        <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
+          It ended without a completion signal — stopped or crashed mid-build. What finished is shown below.
+        </div>
+      ) : null}
+      {outputDir ? (
+        <Tip label={<span className="font-mono break-all">{outputDir}</span>}>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary border-t border-border-primary/50 min-w-0 cursor-default">
+            <FolderOpen className="h-3 w-3 shrink-0" />
+            <span className="font-mono truncate">{outputDir}</span>
+          </div>
+        </Tip>
+      ) : null}
+    </div>
+  );
+};
+
 export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
   workingDir,
   className = '',
@@ -596,12 +756,33 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // Show whenever a run is present — including the PLANNING phase, before any worker executes (no lanes yet).
   if (!run.present) return null;
 
-  // Deterministic node ordering (first-seen device order) for stable letters/hues.
-  const deviceOrder: string[] = [];
-  for (const l of run.lanes) if (!deviceOrder.includes(l.device)) deviceOrder.push(l.device);
+  // Stable node identity: run.lanes RE-SORTS every poll (running first, then recency), so deriving letters
+  // from first-seen lane order made a node's letter/hue flicker between polls. Sort the distinct devices
+  // deterministically so ⬢A/hue is fixed for the whole run.
+  const deviceOrder: string[] = Array.from(new Set(run.lanes.map((l) => l.device))).sort();
 
   const stale = run.mtime != null && Date.now() - run.mtime > STALE_MS;
   const { running, done, failed, tasks } = run.totals;
+
+  // A run is OVER when it cleanly finished (run_finished) OR it went quiet with tasks in flight (killed /
+  // crashed) — but NOT when it is merely paused waiting on the user's clarify answer. This drives the
+  // terminal banner so an ended run never sits in the old limbo (green tasks, no "running", no "done").
+  const clarifyPending = !!run.clarify?.pending;
+  const ended = !clarifyPending && (run.finished || (stale && tasks > 0));
+  const outcome: 'done' | 'failed' | 'stopped' | null = !ended
+    ? null
+    : run.finished
+      ? (run.summary?.failed ?? failed) > 0
+        ? 'failed'
+        : 'done'
+      : 'stopped';
+  const durationMin =
+    run.summary?.totalMin != null
+      ? run.summary.totalMin
+      : run.startedAt != null && run.mtime != null
+        ? (run.mtime - run.startedAt) / 60000
+        : null;
+  const durationLabel = durationMin != null ? fmtDuration(durationMin) : null;
 
   return (
     <div
@@ -615,19 +796,27 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           {typeof run.planConfidence === 'number' ? (
             <ConfidenceBadge value={run.planConfidence} />
           ) : null}
-          {run.inProgress && !stale && run.phase && (
-            <span
-              className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-              style={{ backgroundColor: STATUS_COLOR.running, borderRadius: 2 }}
-            >
-              <Loader2 size={10} className="animate-spin" /> {run.phase}
-            </span>
-          )}
-          {stale && run.inProgress && (
-            <span className="text-[10px] px-1.5 py-0.5 shrink-0" style={{ color: CALL_PENDING }}>
-              interrupted
-            </span>
-          )}
+          {clarifyPending ? (
+            // Paused waiting on the human — NOT active work, so no spinner and a distinct amber "paused" chip
+            // (the old code showed a spinning "Planning" here, implying it was still churning).
+            <Tip label="The build is paused, waiting for your answers in the prompt below.">
+              <span
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                style={{ backgroundColor: AMBER, borderRadius: 2 }}
+              >
+                <MessageCircleQuestion size={10} /> Waiting for you
+              </span>
+            </Tip>
+          ) : run.inProgress && !stale && !ended && run.phase ? (
+            <Tip label={`Current phase: ${run.phase}`}>
+              <span
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                style={{ backgroundColor: STATUS_COLOR.running, borderRadius: 2 }}
+              >
+                <Loader2 size={10} className="animate-spin" /> {run.phase}
+              </span>
+            </Tip>
+          ) : null}
         </span>
         <span className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-text-secondary tabular-nums">
@@ -652,7 +841,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
                 {tasks} tasks ·{' '}
               </>
             )}
-            {ago(run.mtime)}
+            {run.mtime ? (
+              <Tip label={`Last activity: ${new Date(run.mtime).toLocaleString()}`}>
+                <span>{ago(run.mtime)}</span>
+              </Tip>
+            ) : null}
           </span>
           <button
             onClick={() => setMode(nextMode[mode])}
@@ -677,13 +870,36 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         </span>
       </div>
 
+      {ended && outcome ? (
+        <TerminalBanner
+          outcome={outcome}
+          summary={run.summary}
+          totals={{ done, failed, tasks }}
+          durationLabel={durationLabel}
+          outputDir={workingDir}
+        />
+      ) : null}
+
       {run.clarify?.pending ? <ClarifyPrompt clarify={run.clarify} plan={run.plan} /> : null}
 
-      {run.inProgress && <PhaseSteps phase={run.phase} />}
+      {(run.inProgress || ended) && (
+        <PhaseSteps
+          phase={run.phase}
+          activeColor={
+            ended
+              ? outcome === 'done'
+                ? STATUS_COLOR.done
+                : outcome === 'failed'
+                  ? STATUS_COLOR.error
+                  : STOPPED
+              : STATUS_COLOR.running
+          }
+        />
+      )}
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}
-        live={run.inProgress && !stale}
+        live={run.inProgress && !stale && !ended}
         verbose={verbose}
       />
 

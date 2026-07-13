@@ -35,6 +35,10 @@ export interface TurnLane {
   toolCalls?: number;
   errors?: number;
   elapsedMs?: number;
+  /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
+  attempts?: number;
+  /** The last retry's failure text, so a failed/interrupted lane can say WHY (was silently dropped before). */
+  error?: string;
   seq: number;
 }
 
@@ -87,6 +91,14 @@ export interface SmokeResult {
   entryOk: boolean | null;
   pyFiles: number;
 }
+/** The end-of-run tally from run_finished — done/failed task counts and the total wall-clock minutes. Present
+ *  only after a CLEAN finish; a run that died without run_finished has none (the panel falls back to counting
+ *  lanes + wall time from startedAt). */
+export interface RunSummary {
+  done: number;
+  failed: number;
+  totalMin: number | null;
+}
 
 export interface SwarmRunState {
   present: boolean;
@@ -112,6 +124,13 @@ export interface SwarmRunState {
   planConfidence: number | null;
   /** True while a run is underway (started, not finished, and its files are still fresh). */
   inProgress: boolean;
+  /** True once a clean run_finished event was seen — distinguishes a real completion from a run that just went
+   *  quiet (killed/crashed), which the panel renders as "Stopped" rather than "Done". */
+  finished: boolean;
+  /** End-of-run tally, present only after a clean finish (see RunSummary). */
+  summary: RunSummary | null;
+  /** Epoch ms of the run's first event, for computing wall time when there is no clean-finish total. */
+  startedAt: number | null;
   /** Set when the planner's confidence is below the ask floor and the swarm is BLOCKED waiting for the user
    *  to answer clarifying questions (via the run panel's clarify prompt, written to answerPath). */
   clarify: {
@@ -137,6 +156,9 @@ const EMPTY: SwarmRunState = {
   phase: '',
   planConfidence: null,
   inProgress: false,
+  finished: false,
+  summary: null,
+  startedAt: null,
   clarify: null,
   mtime: null,
   loading: true,
@@ -178,6 +200,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   phase: string;
   finished: boolean;
   planConfidence: number | null;
+  summary: RunSummary | null;
+  startedAt: number | null;
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
@@ -189,20 +213,35 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let plan: PlanTask[] = [];
   let planConfidence: number | null = null;
   let smoke: SmokeResult | null = null;
+  let summary: RunSummary | null = null;
+  let startedAt: number | null = null;
   const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
   const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
 
   for (const e of events) {
     const type = String(e['event'] ?? '');
+    // First event with a parseable timestamp anchors the run's start, so the terminal summary can show wall
+    // time even for a run that died without a run_finished (no phases.total_min to read).
+    if (startedAt == null && typeof e['ts'] === 'string') {
+      const ms = Date.parse(e['ts'] as string);
+      if (!Number.isNaN(ms)) startedAt = ms;
+    }
     switch (type) {
       case 'run_started': {
         const pool = arr(e['pool']).map((d) => nodeName(str((d as Record<string, unknown>)['id'])));
+        // `gates` is now an OBJECT of per-gate booleans, so `!!e['gates']` was always true. Treat gates as on
+        // when the assured bundle is on or ANY individual gate is enabled.
+        const gatesVal = e['gates'];
+        const anyGate =
+          typeof gatesVal === 'object' && gatesVal !== null
+            ? Object.values(gatesVal as Record<string, unknown>).some((v) => v === true)
+            : !!gatesVal;
         meta = {
           prompt: cleanBrief(str(e['prompt'])),
           plannerModel: str(e['planner_model']),
           endpoint: str(e['endpoint']),
           nodes: pool,
-          gates: !!e['gates'] || !!e['assured'],
+          gates: anyGate || !!e['assured'],
         };
         compact({ kind: 'phase', text: 'Starting the build' });
         verbose({ kind: 'phase', text: 'Starting the build' });
@@ -301,7 +340,28 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       case 'task_retry': {
         const t = `Retrying ${str(e['task_id'])}`;
         compact({ kind: 'retry', text: t, tone: 'warn' });
-        verbose({ kind: 'retry', text: t, tone: 'warn', sub: str(e['reason']) || undefined });
+        // The failure reason is on `error`, not `reason` — the old key was always empty, dropping the "why".
+        verbose({ kind: 'retry', text: t, tone: 'warn', sub: str(e['error']) || undefined });
+        break;
+      }
+      case 'replanned': {
+        // A dynamic-replan round that actually spliced in new tasks — the swarm noticed missing work and grew
+        // the plan. The routine "checked, nothing to add" rounds (added empty) are noise and stay hidden.
+        const added = arr(e['added']).map(String);
+        if (added.length > 0) {
+          const t = `Re-planned — added ${added.length} task${added.length === 1 ? '' : 's'}`;
+          compact({ kind: 'retry', text: t, tone: 'warn' });
+          verbose({ kind: 'retry', text: t, sub: added.join(', '), tone: 'warn' });
+        }
+        break;
+      }
+      case 'scheduler_stuck': {
+        // Terminal deadlock: tasks remain but none can be dispatched (an unsatisfiable dep / a sink that never
+        // unblocks). The run cannot finish — surface it loudly; it is effectively a failure end-state.
+        const rem = num(e['remaining']) ?? 0;
+        const t = `Scheduler stuck — ${rem} task${rem === 1 ? '' : 's'} blocked, run can't finish`;
+        compact({ kind: 'fail', text: t, tone: 'bad' });
+        verbose({ kind: 'fail', text: t, tone: 'bad' });
         break;
       }
       case 'judge_verdict': {
@@ -369,13 +429,20 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       case 'run_finished': {
         const report = (e['report'] ?? {}) as Record<string, unknown>;
         const done = arr(report['done']).length;
-        const failedN = arr(report['failed']).length;
-        compact({ kind: 'phase', text: 'Build complete', tone: failedN ? 'warn' : 'good' });
+        // Only CORE failures decide the verdict: a failed BONUS task (optional extra work) must not make the
+        // whole run read as "failed".
+        const bonus = new Set(arr(report['bonus']).map(String));
+        const coreFailed = arr(report['failed'])
+          .map(String)
+          .filter((id) => !bonus.has(id)).length;
+        const phases = (e['phases'] ?? {}) as Record<string, unknown>;
+        summary = { done, failed: coreFailed, totalMin: num(phases['total_min']) };
+        compact({ kind: 'phase', text: 'Build complete', tone: coreFailed ? 'warn' : 'good' });
         verbose({
           kind: 'phase',
           text: 'Build complete',
-          sub: `${done} done${failedN ? ` · ${failedN} failed` : ''}`,
-          tone: failedN ? 'warn' : 'good',
+          sub: `${done} done${coreFailed ? ` · ${coreFailed} failed` : ''}`,
+          tone: coreFailed ? 'warn' : 'good',
         });
         phase = 'Done';
         finished = true;
@@ -394,6 +461,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     phase,
     finished,
     planConfidence,
+    summary,
+    startedAt,
   };
 }
 
@@ -444,6 +513,9 @@ function foldEvents(
         device: String(e['from_device'] ?? prev?.device ?? '?'),
         model: prev?.model,
         status: 'running',
+        // Keep the retry's failure text so a lane that ultimately fails/stalls can explain why.
+        error: e['error'] ? String(e['error']) : prev?.error,
+        attempts: prev?.attempts,
         seq: seq++,
       });
     } else if (type === 'task_completed') {
@@ -461,6 +533,9 @@ function foldEvents(
         status,
         toolCalls,
         elapsedMs: typeof e['elapsed_ms'] === 'number' ? (e['elapsed_ms'] as number) : undefined,
+        attempts: typeof e['attempts'] === 'number' ? (e['attempts'] as number) : prev?.attempts,
+        // A failed completion keeps the last retry's reason; a clean one clears it.
+        error: status === 'error' ? prev?.error : undefined,
         seq: seq++,
       });
     }
@@ -516,7 +591,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           return;
         }
         const { lanes, totals } = foldEvents(data.events, data.activity);
-        const { activity, verbose, meta, plan, smoke, phase, finished, planConfidence } =
+        const { activity, verbose, meta, plan, smoke, phase, finished, planConfidence, summary, startedAt } =
           buildActivity(data.events);
         lastRunId.current = data.runId;
         setState({
@@ -532,6 +607,9 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           phase,
           planConfidence,
           inProgress: !finished,
+          finished,
+          summary,
+          startedAt,
           clarify: data.clarify,
           mtime: data.mtime,
           loading: false,
