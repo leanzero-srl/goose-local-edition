@@ -492,6 +492,26 @@ impl State {
         });
     }
 
+    /// Relax every dependent of a just-finished task: drop its indegree and promote it to Ready at zero.
+    /// MUST run for BOTH a normal success AND a finalize-spin salvage (both leave the task Done) — otherwise
+    /// a salvaged task leaves its dependents Pending forever, so the CLI/integrate-verify sink never
+    /// dispatches and the run ends `scheduler_stuck`. Observed on expense/tmpl: a working library or a
+    /// spun-but-written CLI shipped with the entry/verify tasks never run.
+    fn relax_dependents(&mut self, tid: &str) {
+        let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
+        for d in dependents {
+            let nd = self.dag.tasks.get_mut(&d).unwrap();
+            if nd.indegree_remaining > 0 {
+                nd.indegree_remaining -= 1;
+            }
+            if nd.indegree_remaining == 0 && nd.state == TaskState::Pending {
+                nd.state = TaskState::Ready;
+                let fan_out = nd.fan_out;
+                self.ready.push(Ranked { fan_out, id: d });
+            }
+        }
+    }
+
     fn complete(&mut self, tid: &str, attempt: u32, res: Result<TaskRunOutput, DispatchError>) {
         // Ignore a completion from an attempt the judge already superseded (killed + re-dispatched):
         // its device and file holds were released when the judge intervened, so this stale future must
@@ -576,18 +596,7 @@ impl State {
                     session_id,
                     tool_calls,
                 });
-                let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
-                for d in dependents {
-                    let nd = self.dag.tasks.get_mut(&d).unwrap();
-                    if nd.indegree_remaining > 0 {
-                        nd.indegree_remaining -= 1;
-                    }
-                    if nd.indegree_remaining == 0 && nd.state == TaskState::Pending {
-                        nd.state = TaskState::Ready;
-                        let fan_out = nd.fan_out;
-                        self.ready.push(Ranked { fan_out, id: d });
-                    }
-                }
+                self.relax_dependents(tid);
                 // SPECULATIVE abort-loser: this PRIMARY won -> abort + release any twin still racing this
                 // task. (When the TWIN won, resolve_speculation cleared `speculating` BEFORE calling
                 // complete(), so this is a no-op there.) Off by default -> the maps are empty -> no-op.
@@ -1157,7 +1166,11 @@ impl State {
                     elapsed_ms: 0,
                 });
             self.dag.tasks.get_mut(tid).unwrap().state = state;
-            if !salvage {
+            if salvage {
+                // A salvaged task is Done: relax its dependents exactly like a success, or the CLI/verify
+                // sink stays Pending forever and the run ends scheduler_stuck (backlog #7: expense/tmpl).
+                self.relax_dependents(tid);
+            } else {
                 self.fail_descendants(tid);
             }
             let attempts = self.attempt_log[tid].len() as u32;
