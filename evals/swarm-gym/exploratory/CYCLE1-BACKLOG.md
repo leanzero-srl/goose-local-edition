@@ -24,6 +24,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
 | taskq | SYSTEMS | 995 | won't compile | n/a | FAIL | 5 syntax errors in log.rs (bad escapes); judge said ok, no Rust gate |
 | blobs | SYSTEMS | 1057 | 13/20 | test-wrong | GOOD | CLI works spec-correct; 7 tests assert wrong .blobs/ layout |
+| wal | SYSTEMS | 997 | 2/8 | n/a | FAIL | append LSN stuck at 1; read/verify see 0 records (no persistence) |
 
 ## Backlog (issues → fix at end of cycle)
 (accrues as builds complete)
@@ -327,3 +328,10 @@ A desktop Loop = a schedule + stop-check command + max-iterations (LoopModal bui
 semantics, drive the desktop LoopModal via CDP (that logic lives in LoopView, not necessarily the CLI schedule).
 Recipe schema confirmed from goose-self-test.yaml: version, title, description, author, activities, parameters
 (+ instructions/prompt). Will run this after cycle-1 builds finish so recipe iterations don't contend the fleet.
+- wal (systems/Rust): **FAIL (no persistence)** — 997 LOC, lib.rs + 6 modules + 2 test files, COMPILES, entry
+  wired. But the core WAL is broken across process invocations: `append first` → LSN 1, `append second` → LSN
+  1 AGAIN (never advances), and `read`/`tail 1`/`verify` all see 0 records ("OK 0") despite 2 appends. Each CLI
+  command is a fresh process and append doesn't read the existing log's last LSN nor persist readably — so
+  nothing accumulates. 2/8 tests pass (init + verify-empty). Not contract drift — a genuine functional bug in
+  the writer/reader persistence. The single-invocation illusion (append prints an LSN) hides that nothing is
+  durable. A golden round-trip gate (append twice → read → expect 2 records) catches it instantly; exit-0 does not.
