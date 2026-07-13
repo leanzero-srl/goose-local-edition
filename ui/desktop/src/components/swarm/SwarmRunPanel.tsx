@@ -366,7 +366,7 @@ const ConfidenceBadge: React.FC<{ value: number }> = ({ value }) => {
       title={`Planner confidence in how it decomposed this app (cross-draft agreement): ${value}/100 — ${label}.`}
     >
       <Gauge className="h-2.5 w-2.5" />
-      {value}
+      conf {value}
     </span>
   );
 };
