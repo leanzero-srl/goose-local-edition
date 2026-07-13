@@ -806,7 +806,10 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // crashed) — but NOT when it is merely paused waiting on the user's clarify answer. This drives the
   // terminal banner so an ended run never sits in the old limbo (green tasks, no "running", no "done").
   const clarifyPending = !!run.clarify?.pending;
-  const ended = !clarifyPending && (run.finished || (stale && tasks > 0));
+  // A present run that has gone stale is over, regardless of how far it got — a run KILLED DURING PLANNING has
+  // zero dispatched tasks, so the old `stale && tasks > 0` gate left it stuck showing "planning" forever. The
+  // heartbeat makes `stale` precise (a live planner keeps ticking), so staleness alone is a safe end signal.
+  const ended = !clarifyPending && (run.finished || stale);
   const outcome: 'done' | 'failed' | 'stopped' | null = !ended
     ? null
     : run.finished
