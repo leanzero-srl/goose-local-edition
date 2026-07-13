@@ -1783,27 +1783,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_confidence_extracts_score_and_uncertainties() {
-        assert_eq!(
-            parse_confidence("72|missing error handling; no CLI test").unwrap(),
-            (72, "missing error handling; no CLI test".to_string())
-        );
-        assert_eq!(
-            parse_confidence("SCORE: 85 | parser edge cases").unwrap().0,
-            85
-        );
-        assert_eq!(parse_confidence("100").unwrap(), (100, String::new()));
-        // a stray "out of 100" must not be read as the score — first integer wins.
-        assert_eq!(
-            parse_confidence("I rate it 40 out of 100|risky").unwrap().0,
-            40
-        );
-        // clamp + no-digit guard.
-        assert_eq!(parse_confidence("130|over").unwrap().0, 100);
-        assert!(parse_confidence("no digits here").is_none());
-    }
-
-    #[test]
     fn parse_judge_reply_handles_qwen_formats() {
         // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
         for ok in [
@@ -4594,47 +4573,44 @@ impl GooseAgentDispatcher {
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
             }
         };
-        // M6 step2: a SEPARATE, deliberately harsh self-rating of the chosen plan. Verbalized confidence is
-        // systematically overconfident, so it is the SECONDARY signal (0.3) behind the calibrated
-        // cross-draft agreement (0.7). One extra planner call, only on the best-of-N path (the opt-in
-        // plan-quality experiment) so single-draft runs keep their old latency exactly.
-        // Hoisted out of `if n > 1` so the confidence + the model's stated uncertainties are RETURNED to the
-        // caller (the GOOSE_SWARM_ASK gate consumes them). n==1 keeps its old latency (no verbalized call)
-        // and yields the inert agreement default — the ask gate forces best_of_n>=2 anyway.
-        // The verbalized-confidence critique is a SEPARATE serial planner (27B) generation that gates
-        // detailing as a barrier. Its ONLY consumer is the GOOSE_SWARM_ASK_FLOOR gate; on the default path
-        // (ask floor unset, `need_confidence == false`) the returned plan_conf is discarded, so running it
-        // is pure wasted latency on the plan critical path (evidence: it produced a parseable score in only
-        // 6/102 runs, usually running long/timing out). Skip it unless the ask gate will actually consume
-        // it — the cheap best-of-N `agreement_conf` still fills plan_conf, so plan CONTENT is byte-identical.
+        // Second confidence signal: SPEC CLARITY. Cross-draft agreement measures whether the drafts
+        // CONVERGED, which is noisy — a genuinely ambiguous request ("build something useful") can score high
+        // just because the weak model happened to pick the same interpretation 3× (observed: the same vague
+        // spec scored 51 then 95). So agreement alone is not the right gate for the ASK feature. The old
+        // verbalized self-rating was meant to fix this but a weak model can't calibrate a 0-100 number (usable
+        // in only ~6/102 runs). We instead ENUMERATE the material open product-decisions — a task the model
+        // does reliably — and derive a confidence from the count. Combined with agreement via MIN: the run
+        // proceeds only when BOTH the drafts converged AND the spec pins the product down, so a
+        // vague-but-convergent spec now asks. Only on the best-of-N + ask-floor path (`need_confidence`); the
+        // default/cloud path skips it entirely (plan_conf = agreement_conf), so plan CONTENT is byte-identical.
+        // The enumerated decisions are RETURNED as `uncertainties` and seed the clarify questions.
         let (plan_conf, uncertainties): (Option<u8>, String) = if n > 1 && need_confidence {
-            let verbalized = self
-                .verbalized_confidence(planner_model, user_prompt, &skeleton)
+            let clarity = self
+                .spec_clarity_confidence(planner_model, user_prompt, &skeleton)
                 .await;
-            let final_conf = match (agreement_conf, verbalized.as_ref()) {
-                (Some(a), Some((v, _))) => {
-                    Some(((f32::from(a) * 0.7) + (f32::from(*v) * 0.3)).round() as u8)
-                }
+            let final_conf = match (agreement_conf, clarity.as_ref()) {
+                // Proceed only when BOTH signals are confident — the lower one governs.
+                (Some(a), Some((c, _))) => Some(a.min(*c)),
                 (Some(a), None) => Some(a),
-                (None, Some((v, _))) => Some(*v),
+                (None, Some((c, _))) => Some(*c),
                 (None, None) => Some(60),
             };
-            let unc = verbalized
-                .as_ref()
-                .map(|(_, u)| u.clone())
-                .unwrap_or_default();
-            if let Some((v, u)) = &verbalized {
+            let unc = clarity.as_ref().map(|(_, u)| u.clone()).unwrap_or_default();
+            if let Some((c, u)) = &clarity {
                 eprintln!(
-                    "  plan self-confidence {v}/100 (verbalized, discounted){}",
+                    "  spec-clarity confidence {c}/100{}",
                     if u.is_empty() {
-                        String::new()
+                        " (no material open decisions)".to_string()
                     } else {
-                        format!(" — uncertainties: {u}")
+                        format!(" — open decisions: {u}")
                     }
                 );
             }
             if let Some(fc) = final_conf {
-                eprintln!("  {} final plan confidence {fc}/100", style("◆").cyan());
+                eprintln!(
+                    "  {} final plan confidence {fc}/100 (min of agreement + spec-clarity)",
+                    style("◆").cyan()
+                );
             }
             (final_conf, unc)
         } else {
@@ -6741,35 +6717,91 @@ impl GooseAgentDispatcher {
     /// overconfident, so the prompt pushes the model to subtract for anything unverified; the caller weights
     /// this BELOW the calibrated cross-draft agreement. Returns (0–100, semicolon-joined uncertainties) or
     /// None on call/parse failure.
-    async fn verbalized_confidence(
+    /// Detect whether the SPEC (not the plan structure) leaves a MATERIAL product decision to guesswork — the
+    /// signal that actually warrants asking the user. A weak local model cannot calibrate a 0-100 self-rating
+    /// (the old verbalized approach parsed in only ~6% of runs); ENUMERATING the open decisions is a task it
+    /// does reliably. Confidence-to-PROCEED is derived from the count: a spec that fully determines the product
+    /// yields an empty list (100 = no veto); each genuinely-unknowable, no-sensible-default decision pulls it
+    /// down. The returned string is the decision list, reused to SEED the clarify questions. Combined with
+    /// structural cross-draft agreement via MIN at the call site, so a run proceeds only when BOTH the spec is
+    /// clear AND the drafts converged — a vague-but-convergent spec (high agreement, low clarity) now asks.
+    async fn spec_clarity_confidence(
         &self,
         model: &str,
         goal: &str,
         plan_json: &str,
     ) -> Option<(u8, String)> {
-        let system = "You critique a software PLAN's completeness and correctness. You are KNOWN to be \
-            OVERCONFIDENT — be brutally harsh and SUBTRACT for anything unverified, vague, or likely to break \
-            at integration. Reply with EXACTLY one line `SCORE|uncertainties`: SCORE is 0-100 (confidence \
-            that the plan, executed well, yields a COMPLETE and CORRECT program); uncertainties = the 1-3 \
-            biggest risks, semicolon-separated (empty if none)."
+        let system = "You judge whether a coding request pins down WHAT to build, or leaves it to guesswork. \
+            First: `product_specified` — TRUE only if the request names a specific tool with a specific \
+            purpose (e.g. \"a CLI markdown-to-HTML renderer\"); FALSE if it leaves the core product open (e.g. \
+            \"build something useful\", \"a handy utility\", \"pick a tool\") so you'd have to invent what it \
+            even is. Then: `material_open_decisions` — the SECONDARY decisions where the user's intent is \
+            genuinely unknowable, no sensible default exists, and guessing wrong builds the WRONG behavior. Do \
+            NOT list routine choices a competent developer would just default (which library, file layout, \
+            minor flags, output styling, common formats, error wording) — those are NOT material. If the \
+            request fixes the product and only routine defaults remain, set product_specified TRUE and return \
+            an EMPTY list. Then call the final_output tool."
             .to_string();
-        let plan: String = plan_json.chars().take(2500).collect();
+        let plan: String = plan_json.chars().take(1800).collect();
         let user = format!(
-            "GOAL: {goal}\n\nPLAN (subtask skeleton JSON):\n{plan}\n\nYour one-line score:"
+            "REQUEST: {goal}\n\nOne interpretation a planner inferred (skeleton, for context only):\n{plan}\n\n\
+             Judge product_specified, then list the MATERIAL open decisions (empty if only routine defaults remain)."
         );
-        // A one-line self-rating must be FAST. Cap it hard at 75s (NOT the 900s planner budget) so a weak
-        // model that hangs on this pass can't stall the whole plan — on timeout we fall back to the calibrated
-        // cross-draft agreement score, which is the primary signal anyway (this pass yields a usable score in
-        // only ~6% of runs). Fixes a 15-minute planning stall when ask_floor is on.
-        let text = tokio::time::timeout(
+        let response = Some(Response {
+            json_schema: Some(ambiguity_schema()),
+        });
+        // Enumeration is fast; cap hard at 75s (NOT the 900s planner budget) so a hung weak model can't stall
+        // planning — on timeout we fall back to the calibrated cross-draft agreement score (the primary signal).
+        let out = tokio::time::timeout(
             std::time::Duration::from_secs(75),
-            self.run_agent(model, system, user, None, 2, &[], 0, None),
+            self.run_agent(model, system, user, response, 4, &[], 0, None),
         )
         .await
         .ok()
-        .and_then(|r| r.ok())
-        .map(|o| o.text)?;
-        parse_confidence(&text)
+        .and_then(|r| r.ok())?;
+        let fo = out.final_output?;
+        #[derive(serde::Deserialize)]
+        struct Amb {
+            #[serde(default = "default_true")]
+            product_specified: bool,
+            #[serde(default)]
+            material_open_decisions: Vec<String>,
+        }
+        let parsed: Amb = serde_json::from_str(&fo).ok()?;
+        let decisions: Vec<String> = parsed
+            .material_open_decisions
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| d.chars().count() >= 4)
+            .collect();
+        // Confidence-to-PROCEED. The whole product being undefined is the STRONGEST ambiguity — a weak model
+        // reports it as one consolidated decision, so count alone underweights it; force a low score (20) so
+        // the ask fires EVEN IF cross-draft agreement happened to be high (the noise this signal exists to
+        // catch). Otherwise map by count: 0 = clear (100, no veto); 2+ unknowable decisions force the ask (50,
+        // below any reasonable floor); a single arguable one stays just above the default floor (72) so one
+        // over-enumeration alone never trips an ask.
+        let conf: u8 = if !parsed.product_specified {
+            20
+        } else {
+            match decisions.len() {
+                0 => 100,
+                1 => 72,
+                2 => 50,
+                _ => 30,
+            }
+        };
+        // When the product itself is open, make that the leading uncertainty so the clarify questions ask it.
+        let unc = if !parsed.product_specified {
+            let mut d = vec![
+                "what the tool should actually be (the request leaves the product open)"
+                    .to_string(),
+            ];
+            d.extend(decisions);
+            d.join("; ")
+        } else {
+            decisions.join("; ")
+        };
+        Some((conf, unc))
     }
 }
 
@@ -6804,22 +6836,29 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
     }
 }
 
-/// Parse the harsh self-rating reply `SCORE|uncertainties` (M6 step2). Tolerant: the score is the first
-/// integer found on the first digit-bearing line (clamped 0–100); uncertainties is whatever follows `|`.
-fn parse_confidence(reply: &str) -> Option<(u8, String)> {
-    let line = reply
-        .trim()
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))?;
-    let (score_part, unc) = match line.split_once('|') {
-        Some((a, b)) => (a, b.trim().to_string()),
-        None => (line, String::new()),
-    };
-    let first_num = score_part
-        .split(|c: char| !c.is_ascii_digit())
-        .find(|s| !s.is_empty())?;
-    let n: u32 = first_num.parse().ok()?;
-    Some((n.min(100) as u8, unc))
+/// Default for the spec-ambiguity probe's `product_specified` when the model omits it: assume the product IS
+/// specified, so a parse gap never spuriously forces an ask (conservative — under-ask beats over-ask here).
+fn default_true() -> bool {
+    true
+}
+
+/// Structured-output schema for the spec-ambiguity probe. `product_specified` is the strongest signal —
+/// false means the request never says WHAT to build (the whole product is open), which a weak model tends to
+/// report as a single consolidated decision even though it should force the ask. `material_open_decisions`
+/// lists the secondary decisions that lack a sensible default (empty when only routine defaults remain).
+fn ambiguity_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["product_specified", "material_open_decisions"],
+        "properties": {
+            "product_specified": {"type": "boolean"},
+            "material_open_decisions": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        }
+    })
 }
 
 #[async_trait]
