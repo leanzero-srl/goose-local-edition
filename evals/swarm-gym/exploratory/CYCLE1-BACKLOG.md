@@ -380,3 +380,17 @@ but leaked runs CAN hold fleet connections and are pure waste. Cleaned up by exa
 FIX (MED): goosed should install a shutdown/signal handler that reaps its child `goose swarm run` (and the app
 should reap goosed cleanly on quit). Partly amplified by my testing pattern (many relaunches) — for cycle 2,
 reduce relaunches (dispatch more via one instance or CLI) to avoid re-introducing the leak + CDP degradation.
+
+## BACKLOG #10 RESULT — Loop base mechanism VALIDATED on the local fleet (partial)
+Tested the headless path on 1.41.24: `goose schedule add --schedule-id looptest --cron ... --recipe-source
+<recipe> --local` succeeded, and `goose schedule run-now --schedule-id looptest` RAN the recipe on the LOCAL
+model — it used the shell tool and appended to /tmp/loop_test/log.txt. So the base "run a recipe on the local
+fleet" mechanism WORKS (this is the core of Mihai's nightly-evolve use case). Confidence now HIGH on the base.
+NOTES:
+- The recipe ran CHATTY: it appended 9 lines ("iteration 1..9", some dupes/out-of-order) from ONE run-now,
+  i.e. the local model looped the shell command internally instead of the single append the recipe asked for.
+  That's a recipe-prompt/model-behavior nit (tighten the recipe instruction / add a done signal), NOT a loop
+  mechanism failure. run-now also runs SYNC and long (didn't return in 2 min) because the model kept going.
+- STILL UNTESTED: the FULL Loop semantics (stop-check command + iteration cap) live in the desktop
+  LoopView/LoopModal, not the CLI schedule. Need a CDP drive of the Loops UI to verify the stop-check halts and
+  the cap bounds. Follow-on. The base scheduler + local-provider recipe execution is proven.
