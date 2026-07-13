@@ -39,6 +39,12 @@ Change:
   - REAL-COMMAND probe for Python too (fixes #3/bookclub): don't rely on `python -m pkg --help` (Click/argparse
     short-circuit --help before the ctx.obj bug); run one real spec subcommand round-trip against a temp db and
     assert exit 0. `--help` exit 0 is necessary, not sufficient.
+  - ASSERT OUTPUT, NOT JUST EXIT CODE (from the tmpl capstone): `tmpl render` EXITS 0 while producing EMPTY
+    output (parser/renderer shape drift). An exit-0-only gate passes a fully-broken app. The gate must run a
+    spec example with a KNOWN expected output (the specs literally embed golden cases: calc `2+3*4==14`,
+    jsonq `$.items[?(@.price>10)].id`, tmpl `Hello {{name}}` → non-empty) and assert the output is non-empty /
+    matches. Golden spec-contract checks derived from the spec's own examples are the ground truth the model's
+    tests keep dodging (bookclub CLI, timesheet entry, jsonq slice+chain, tmpl render).
   - HARD-BLOCK semantics: if integrate-verify or the CLI/entry task is in report.failed, the run is NOT
     shippable — surface loudly (and, under GOOSE_SWARM_COMPLETE, fire one corrective re-dispatch). Advisory
     smoke detects but doesn't prevent; the empty-main app proves detection alone is not enough.
