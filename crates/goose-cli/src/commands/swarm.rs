@@ -1134,35 +1134,6 @@ fn short_model(identifier: &str) -> String {
         .collect()
 }
 
-/// The configured `speed_weight` for a live node, matched by substring against `<host> <identifier>` (the
-/// same haystack the planner-pick uses) — case-insensitive so "WorksMacStudio.lan" still matches a
-/// "worksmacstudio" pattern. None when nothing matches, so the caller can fall through.
-fn speed_weight_for(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> Option<u32> {
-    if cfg.speed_weights.is_empty() {
-        return None;
-    }
-    let hay = format!("{} {}", device.unwrap_or(""), identifier).to_lowercase();
-    cfg.speed_weights
-        .iter()
-        .find(|(pat, _)| hay.contains(&pat.to_lowercase()))
-        .map(|(_, w)| *w)
-}
-
-/// Pick a node's DISPATCH weight (how many concurrent tasks it gets). An EXPLICIT device weight wins, but a
-/// device weight of 1 is treated as "unset default" so the configured `speed_weight` — the documented
-/// "slower machine does less work" knob — actually shapes dispatch instead of being ignored (backlog #6:
-/// every node showed weight 1 because the default device weight shadowed speed_weights). Then LM Studio
-/// PARALLEL, then 1.
-fn pool_dispatch_weight(user_w: Option<u32>, speed_w: Option<u32>, parallel: Option<u32>) -> u32 {
-    user_w
-        .filter(|&w| w != 1)
-        .or(speed_w)
-        .or(user_w)
-        .or(parallel)
-        .unwrap_or(1)
-        .max(1)
-}
-
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
@@ -1209,8 +1180,14 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
                         );
                     }
                 }
-                let speed_w = speed_weight_for(cfg, p.device.as_deref(), &p.identifier);
-                pool_dispatch_weight(user_w, speed_w, p.parallel)
+                // Concurrency = the node's real capacity: an explicit device override, else LM Studio's
+                // PARALLEL, else 1. NOT the speed_weight — LM Studio serves one request per model at a time,
+                // so weight > PARALLEL just QUEUES requests on that node and STARVES an idle one (observed:
+                // workhorse w3 got 3 tasks, 2 queued, while gabee sat READY). "Faster host does MORE work" is
+                // handled separately by pick_device's speed_weight-weighted ROUTING (DeviceCfg.speed_weight),
+                // which spreads proportionally more tasks to the fast node OVER TIME via work-stealing (it
+                // finishes first and grabs the next ready task) — the correct lever, without oversubscribing.
+                user_w.or(p.parallel).unwrap_or(1).max(1)
             },
             enabled: true,
             instances: 1,
@@ -2837,56 +2814,6 @@ mod tests {
         );
         // no dash -> no derivable device
         assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
-    }
-
-    #[test]
-    fn pool_dispatch_weight_lets_speed_weight_win_over_default() {
-        // backlog #6: a default device weight (1) must NOT shadow the configured speed_weight.
-        assert_eq!(
-            pool_dispatch_weight(Some(1), Some(3), Some(9)),
-            3,
-            "speed_weight beats default-1 device"
-        );
-        assert_eq!(
-            pool_dispatch_weight(None, Some(2), None),
-            2,
-            "speed_weight used when no device weight"
-        );
-        // an EXPLICIT (non-default) device weight still wins over speed_weight.
-        assert_eq!(
-            pool_dispatch_weight(Some(4), Some(3), None),
-            4,
-            "explicit device override wins"
-        );
-        // no device weight, no speed_weight -> LM Studio PARALLEL, else 1.
-        assert_eq!(pool_dispatch_weight(None, None, Some(5)), 5);
-        assert_eq!(pool_dispatch_weight(Some(1), None, None), 1);
-        assert_eq!(pool_dispatch_weight(None, None, None), 1);
-    }
-
-    #[test]
-    fn speed_weight_matches_host_or_model_case_insensitively() {
-        let mut cfg = empty_cfg();
-        cfg.speed_weights.insert("worksmacstudio".into(), 3);
-        cfg.speed_weights.insert("local".into(), 2);
-        // host "WorksMacStudio.lan" matches the lowercase pattern.
-        assert_eq!(
-            speed_weight_for(
-                &cfg,
-                Some("WorksMacStudio.lan"),
-                "workhorse-qwopus3.6-27b-coder-mlx"
-            ),
-            Some(3)
-        );
-        assert_eq!(
-            speed_weight_for(&cfg, Some("local"), "mihai-qwopus3.6-27b-coder-mlx"),
-            Some(2)
-        );
-        // nothing matches -> None (caller falls through).
-        assert_eq!(
-            speed_weight_for(&cfg, Some("mac"), "gabee-qwopus3.6-27b-coder-mlx"),
-            None
-        );
     }
 
     #[test]
