@@ -79,3 +79,23 @@ extensions. Immediate config workaround (cmd → /opt/homebrew/bin/npx) already 
 1 (scheduler) → 2 (gate) first: they convert the most unrunnable-but-good apps to runnable and stop shipping
 no-ops. Then 3 (contracts) for the drift class. Then 4 (weights), 5 (pool), 6 (extensions). Rebuild the DMG
 after the goose-side fixes land (milestone task #59), then cycle 2 validates on the fixed binary.
+
+## STATUS (cycle-1 fix phase)
+DONE + gated + pushed:
+- #7 scheduler salvage relaxes dependents — relax_dependents helper, regression test (fails without fix). HIGH.
+- #11 SPLIT enabled in provider (GOOSE_SWARM_SPLIT=1 + SPLIT_SECS=300) — fleet starvation. HIGH.
+- #8 smoke_rust flags empty-output entry stub (kvstore empty main) — unit-tested. HIGH.
+- #6 speed_weights shape DISPATCH weight (pool_dispatch_weight + speed_weight_for) — unit-tested. MED-HIGH.
+- #4 CONTRACTS + COMPLETE enabled in provider (the built-but-off assured gates): freeze module interfaces
+  (drift) + verify-by-running/fix-until-green language-aware gate (kvstore/wal/taskq would be caught+fixed).
+  Folds in #3/#8's "blocking+corrective". REVIEW left off (highest cost/lowest confidence). MED-HIGH.
+
+DISCOVERY that reframed the plan: CONTRACTS and COMPLETE (and REVIEW/SMOKE) are a pre-built ASSURED bundle
+gated by swarm_gate(..., in_assured_bundle=true); the UI provider only ever set SMOKE. So the biggest cycle-1
+failures were largely "quality gates were off," not "the model can't build." Cycle 2 validates them ON.
+
+DEFERRED (robustness/cleanup, not correctness-critical for cycle-2 validation; follow-on batch):
+- #1/#2 pool robustness (drop unloaded devices, dedup JIT ":N") — only bites when a node drops mid-session.
+- #5 durable extension node-PATH injection — the config WRAPPER fix is applied+verified; durable is core.
+- #9 worker tool-call waste (python->python3 etc.) — touches the shared shell tool, out of clean surface.
+- #12 goosed reaps child swarm runs on shutdown — leak amplified by relaunch-heavy testing; cleaned by hand.
