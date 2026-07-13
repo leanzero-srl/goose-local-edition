@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
-  MessageCircleQuestion, Send,
+  MessageCircleQuestion, Send, Gauge,
 } from 'lucide-react';
 import { useSwarmRun, type TurnStatus, type TurnLane, type SwarmCall, type ActivityItem } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
@@ -346,6 +346,24 @@ const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: bo
   );
 };
 
+// How sure the planner was about HOW to break this app down, from cross-draft agreement (not the model's
+// self-report). Solid green ≥70 (confident), amber 40-69 (unsure), red <40 (guessing) — so a low number is a
+// visible flag that goose was uncertain, which is exactly when the ask gate fires.
+const ConfidenceBadge: React.FC<{ value: number }> = ({ value }) => {
+  const color = value >= 70 ? STATUS_COLOR.done : value >= 40 ? AMBER : STATUS_COLOR.error;
+  const label = value >= 70 ? 'confident' : value >= 40 ? 'unsure' : 'guessing';
+  return (
+    <span
+      className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
+      style={{ backgroundColor: color, borderRadius: 2 }}
+      title={`Planner confidence in how it decomposed this app (cross-draft agreement): ${value}/100 — ${label}.`}
+    >
+      <Gauge className="h-2.5 w-2.5" />
+      {value}
+    </span>
+  );
+};
+
 // The fixed pipeline every build moves through, so the free-text `phase` label reads as PROGRESS, not a
 // mystery. The active step is filled; passed steps get a check; upcoming steps stay muted.
 const PHASE_STEPS = ['Research', 'Plan', 'Contracts', 'Build', 'Verify', 'Done'] as const;
@@ -510,6 +528,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-primary gap-2">
         <span className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-semibold shrink-0">Swarm LeanZero</span>
+          {typeof run.planConfidence === 'number' ? (
+            <ConfidenceBadge value={run.planConfidence} />
+          ) : null}
           {run.inProgress && !stale && run.phase && (
             <span
               className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"

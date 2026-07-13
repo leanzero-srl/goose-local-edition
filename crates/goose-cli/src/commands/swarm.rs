@@ -9673,7 +9673,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     // the gate is never silently inert (the solo planner returns no confidence).
     let use_parallel = cfg.parallel_planning || ask_floor.is_some();
     let mut asked = false;
-    let (plan_json, dag) = loop {
+    let (plan_json, dag, plan_conf) = loop {
         let (pj, plan_conf, uncertainties) = if use_parallel {
             phase_banner(
                 "PLAN",
@@ -9795,7 +9795,7 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                 }
             }
         }
-        break (pj, dag);
+        break (pj, dag, plan_conf);
     };
 
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
@@ -9893,6 +9893,9 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
     sink.write_value(serde_json::json!({
         "event": "plan_loaded",
         "task_count": dag.tasks.len(),
+        // Cross-draft-agreement plan confidence (0-100) — surfaced so the run panel can show HOW SURE the
+        // planner was about this decomposition, not just what it produced. null when not computed.
+        "plan_confidence": plan_conf,
         "tasks": dag.tasks.values().map(|n| serde_json::json!({
             "id": n.spec.id,
             // The architect's one-line human description of what this subtask builds — surfaced in the run

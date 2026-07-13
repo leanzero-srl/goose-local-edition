@@ -107,6 +107,9 @@ export interface SwarmRunState {
   smoke: SmokeResult | null;
   /** Friendly current-phase label (Planning research / Building / Verifying / Done…). */
   phase: string;
+  /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
+   *  null before planning finishes / when not computed. */
+  planConfidence: number | null;
   /** True while a run is underway (started, not finished, and its files are still fresh). */
   inProgress: boolean;
   /** Set when the planner's confidence is below the ask floor and the swarm is BLOCKED waiting for the user
@@ -132,6 +135,7 @@ const EMPTY: SwarmRunState = {
   plan: [],
   smoke: null,
   phase: '',
+  planConfidence: null,
   inProgress: false,
   clarify: null,
   mtime: null,
@@ -173,6 +177,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   smoke: SmokeResult | null;
   phase: string;
   finished: boolean;
+  planConfidence: number | null;
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
@@ -182,6 +187,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let vseq = 0;
   let meta: RunMeta | null = null;
   let plan: PlanTask[] = [];
+  let planConfidence: number | null = null;
   let smoke: SmokeResult | null = null;
   const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
   const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
@@ -233,6 +239,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         phase = 'Planning';
         break;
       case 'plan_loaded': {
+        const pc = num(e['plan_confidence']);
+        if (typeof pc === 'number') planConfidence = pc;
         const tasks = arr(e['tasks']) as Array<Record<string, unknown>>;
         plan = tasks.map((t) => ({
           id: str(t['id']),
@@ -354,7 +362,16 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         break;
     }
   }
-  return { activity: feed.slice(-30), verbose: vfeed.slice(-200), meta, plan, smoke, phase, finished };
+  return {
+    activity: feed.slice(-30),
+    verbose: vfeed.slice(-200),
+    meta,
+    plan,
+    smoke,
+    phase,
+    finished,
+    planConfidence,
+  };
 }
 
 type Digest = {
@@ -476,7 +493,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           return;
         }
         const { lanes, totals } = foldEvents(data.events, data.activity);
-        const { activity, verbose, meta, plan, smoke, phase, finished } = buildActivity(data.events);
+        const { activity, verbose, meta, plan, smoke, phase, finished, planConfidence } =
+          buildActivity(data.events);
         lastRunId.current = data.runId;
         setState({
           present: true,
@@ -489,6 +507,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           plan,
           smoke,
           phase,
+          planConfidence,
           inProgress: !finished,
           clarify: data.clarify,
           mtime: data.mtime,
