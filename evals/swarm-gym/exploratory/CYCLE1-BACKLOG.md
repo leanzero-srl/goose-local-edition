@@ -368,3 +368,15 @@ wider-fan-out planner prompt would help beyond SPLIT, but SPLIT is the immediate
   20/21 green while a spec-exact contract check would fail. Same false-green family as timesheet (tests follow
   impl, both drift from spec). 1 real failure: range_empty edge case. Reinforces the golden-spec-contract gate:
   the exact command names in the spec must be verified, not the model's own tests.
+
+## BACKLOG ITEM #12 (process leak) — app orphans goosed backends + swarm runs on quit
+FOUND while checking why the fleet looked busy after cycle 1: 2 orphaned `goose swarm run` (crm 11.5h old, wal
+2.5h old — both COMPLETED builds) + 6 orphaned `goose serve` (goosed) backends, ALL re-parented to launchd
+(pid 1), i.e. their app instances died but the children survived. Cause: `osascript quit` (and window close)
+SIGKILLs goosed before its kill_on_drop / shutdown can reap the child swarm run; each relaunch leaks one
+backend. Over a relaunch-heavy session (15 builds → ~15 relaunches) this piled up 6+ leaked backends + 2 leaked
+runs. They were at 0% CPU (hung, not actively churning) so likely not the PRIMARY starvation cause (#11 is),
+but leaked runs CAN hold fleet connections and are pure waste. Cleaned up by exact-pid kill.
+FIX (MED): goosed should install a shutdown/signal handler that reaps its child `goose swarm run` (and the app
+should reap goosed cleanly on quit). Partly amplified by my testing pattern (many relaunches) — for cycle 2,
+reduce relaunches (dispatch more via one instance or CLI) to avoid re-introducing the leak + CDP degradation.
