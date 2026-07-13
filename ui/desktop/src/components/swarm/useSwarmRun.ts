@@ -20,6 +20,9 @@ export interface SwarmCall {
 
 export interface TurnLane {
   taskId: string;
+  /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
+   *  readable name the panel shows, so a lane isn't just the terse id "lexer". */
+  description?: string;
   device: string;
   model?: string;
   status: TurnStatus;
@@ -66,6 +69,7 @@ export interface ActivityItem {
 
 export interface PlanTask {
   id: string;
+  description?: string;
   files: string[];
   deps: string[];
   difficulty: string;
@@ -223,6 +227,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         const tasks = arr(e['tasks']) as Array<Record<string, unknown>>;
         plan = tasks.map((t) => ({
           id: str(t['id']),
+          description: t['description'] ? str(t['description']) : undefined,
           files: arr(t['files']).map(String),
           deps: arr(t['deps']).map(String),
           difficulty: str(t['difficulty']),
@@ -358,10 +363,19 @@ function foldEvents(
   activity: Record<string, unknown>
 ): { lanes: TurnLane[]; totals: SwarmRunTotals } {
   const tasks = new Map<string, TurnLane>();
+  const descriptions = new Map<string, string>();
   let seq = 0;
 
   for (const e of events) {
     const type = String(e['event'] ?? '');
+    if (type === 'plan_loaded') {
+      const ts = Array.isArray(e['tasks']) ? (e['tasks'] as Array<Record<string, unknown>>) : [];
+      for (const t of ts) {
+        const d = t['description'] ? String(t['description']) : '';
+        if (d) descriptions.set(String(t['id'] ?? ''), d);
+      }
+      continue;
+    }
     const taskId = String(e['task_id'] ?? '');
     if (!taskId) continue;
 
@@ -407,6 +421,7 @@ function foldEvents(
     const act = activity[t.taskId] as Digest | undefined;
     return {
       ...t,
+      description: descriptions.get(t.taskId) ?? t.description,
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
       reasoning: act?.reasoning ?? t.reasoning,

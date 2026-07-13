@@ -210,7 +210,14 @@ const LaneRow: React.FC<{
           ⬢{letter}
         </span>
         <span className="w-16 shrink-0 truncate text-text-secondary text-xs">{lane.device}</span>
-        <span className="flex-1 truncate text-xs font-mono text-text-primary">{lane.taskId}</span>
+        {/* Readable name: the architect's description ("Tokenize the template source") is the primary label;
+            the terse id ("lexer") drops to a mono sub-tag so it's still identifiable but no longer cryptic. */}
+        <span className="flex-1 min-w-0 flex flex-col leading-tight">
+          <span className="truncate text-xs text-text-primary">{lane.description || lane.taskId}</span>
+          {lane.description ? (
+            <span className="truncate text-[10px] font-mono text-text-secondary">{lane.taskId}</span>
+          ) : null}
+        </span>
         {lane.model && (
           <span className="hidden sm:inline shrink-0 max-w-[9rem] truncate text-[10px] font-mono text-text-secondary">
             {lane.model}
@@ -236,7 +243,7 @@ const LaneRow: React.FC<{
 
       {open && hasBody && (
         <div className="px-3 pb-3 pl-9 space-y-2">
-          {reasoning && <ReasoningBlock text={reasoning} forceOpen={dev} />}
+          {reasoning && <ReasoningBlock text={reasoning} forceOpen={dev || live} />}
 
           {calls.length > 0 ? (
             <div>
@@ -336,6 +343,45 @@ const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: bo
   );
 };
 
+// The fixed pipeline every build moves through, so the free-text `phase` label reads as PROGRESS, not a
+// mystery. The active step is filled; passed steps get a check; upcoming steps stay muted.
+const PHASE_STEPS = ['Research', 'Plan', 'Contracts', 'Build', 'Verify', 'Done'] as const;
+function phaseStepIndex(phase: string): number {
+  const p = phase.toLowerCase();
+  if (/done|finished|complete/.test(p)) return 5;
+  if (/verif|integrat/.test(p)) return 4;
+  if (/contract/.test(p)) return 2;
+  if (/build|execut|dispatch|working/.test(p)) return 3;
+  if (/plan/.test(p)) return 1;
+  if (/research|scout|start/.test(p)) return 0;
+  return 3;
+}
+const PhaseSteps: React.FC<{ phase: string }> = ({ phase }) => {
+  const active = phaseStepIndex(phase);
+  return (
+    <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border-primary overflow-x-auto">
+      {PHASE_STEPS.map((step, i) => (
+        <React.Fragment key={step}>
+          {i > 0 && <span className="text-text-secondary text-[10px] shrink-0">›</span>}
+          <span
+            className={`text-[10px] px-1.5 py-0.5 whitespace-nowrap shrink-0 ${
+              i === active
+                ? 'text-white font-semibold'
+                : i < active
+                  ? 'text-text-secondary'
+                  : 'text-text-secondary opacity-60'
+            }`}
+            style={i === active ? { backgroundColor: STATUS_COLOR.running, borderRadius: 2 } : undefined}
+          >
+            {i < active ? '✓ ' : ''}
+            {step}
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+};
+
 export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
   workingDir,
   className = '',
@@ -431,6 +477,8 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           </button>
         </span>
       </div>
+
+      {run.inProgress && <PhaseSteps phase={run.phase} />}
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}
