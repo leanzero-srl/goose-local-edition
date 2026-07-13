@@ -240,6 +240,20 @@ impl Provider for SwarmProvider {
         if std::env::var("GOOSE_SWARM_SMOKE").is_err() {
             cmd.env("GOOSE_SWARM_SMOKE", "1");
         }
+        // Fleet utilization: without splitting, the architect's coarse near-serial plans (a big shared-types
+        // root -> a couple modules -> a lone cli -> a lone integrate-verify) leave 1-2 of 3 fleet nodes idle
+        // most of the wall-clock (observed: peak concurrency 2-3 but most dispatches at concurrency 1). The
+        // split mechanism partitions an over-long, multi-file task into 2-4 independent children so several
+        // workers run in parallel. It is off by default (CLI A/B runs set it; the UI provider did not, which
+        // is why app-dispatched builds starved the fleet). Enable it here, and lower the too-long threshold
+        // from the conservative 900s default to 300s: measured task durations are median 219s / p75 406s, so
+        // 900s split almost nothing while 300s splits the fat multi-file tasks that actually cause the idle.
+        if std::env::var("GOOSE_SWARM_SPLIT").is_err() {
+            cmd.env("GOOSE_SWARM_SPLIT", "1");
+        }
+        if std::env::var("GOOSE_SWARM_SPLIT_SECS").is_err() {
+            cmd.env("GOOSE_SWARM_SPLIT_SECS", "300");
+        }
         if let Some(dir) = &self.working_dir {
             cmd.current_dir(dir);
         }
