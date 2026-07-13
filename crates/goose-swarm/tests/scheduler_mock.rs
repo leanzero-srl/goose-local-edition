@@ -567,6 +567,62 @@ async fn judge_kills_and_redispatches_stuck_worker() {
     );
 }
 
+/// Backlog #7 regression: a non-test task that LOOPS to exhaustion is SALVAGED (marked Done because its owned
+/// file was written), and that salvage MUST relax its dependents. Before the fix the salvage set state=Done
+/// but never decremented the dependents' indegree, so a downstream sink (the CLI / integrate-verify task)
+/// stayed Pending forever and the run ended `scheduler stuck` — a working library shipped with no entry point
+/// (observed on expense/tmpl). This asserts the dependent now dispatches and completes.
+#[tokio::test]
+async fn salvaged_looping_task_relaxes_dependents() {
+    // The salvage gate requires the looping task's owned file to exist non-empty on disk; use an absolute
+    // path under the temp dir so the check passes regardless of the run cwd.
+    let owned = std::env::temp_dir().join("goose_wf7_salvage_owned.rs");
+    std::fs::write(&owned, "fn main() {}\n").unwrap();
+    let owned_str = owned.to_string_lossy().to_string();
+
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    // slow_all: the target loops on EVERY attempt, so after the intervention cap it terminal-fails -> salvage.
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "app".to_string(),
+        delay: Duration::from_millis(15),
+        slow_all: true,
+    });
+    // app (the looping, salvageable non-test task) -> verify (the sink that must still run after the salvage).
+    let dag = Dag::from_specs(vec![
+        spec("app", &[], &[&owned_str]),
+        spec("verify", &["app"], &[]),
+    ])
+    .unwrap();
+    let judge = Arc::new(KillJudge {
+        target: "app".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        rejudge_cooldown_secs: 0,
+        terminal_min_secs: 0,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    let _ = std::fs::remove_file(&owned);
+    assert!(
+        report.done.contains(&"app".to_string()),
+        "the looping task is salvaged to Done (its owned file was written)"
+    );
+    assert!(
+        report.done.contains(&"verify".to_string()),
+        "backlog #7: the salvage must relax dependents so the verify sink dispatches and completes (not stuck)"
+    );
+    assert!(report.failed.is_empty(), "no task fails");
+}
+
 /// Counts how many times the judge inspects each task; always passes (never kills).
 struct CountJudge {
     counts: Arc<Mutex<HashMap<String, u32>>>,
