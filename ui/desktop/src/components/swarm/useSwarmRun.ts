@@ -116,7 +116,7 @@ export interface SwarmRunState {
    *  to answer clarifying questions (via the run panel's clarify prompt, written to answerPath). */
   clarify: {
     pending: boolean;
-    questions: string[];
+    questions: Array<{ question: string; options: string[] }>;
     planConfidence?: number;
     answerPath: string;
   } | null;
