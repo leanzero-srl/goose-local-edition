@@ -405,3 +405,14 @@ pick_device's ROUTING (speed-weighted load share + least-loaded-wins + work-stea
 So the user's ask was already satisfied by routing; concurrency should never have been touched. SPLIT (#11)
 remains the real starvation fix (enough parallel tasks to fill 3 nodes). Lesson: `weight` = concurrency (cap
 at PARALLEL), `speed_weight` = routing share — never conflate them.
+
+## CYCLE 2 A/B RESULTS (on 1.41.25, all fixes ON)
+- bookclub-c2 (DATA): **FAIL → STRONG PASS** ✅ — cycle 1 was FAIL (ctx.obj None → every subcommand crashed,
+  20/37 tests fail). Cycle 2: clean argparse CLI, 26/26 tests, real round-trip works (init→add→list→stats all
+  correct). VALIDATES: CONTRACTS (#4 — no interface drift), COMPLETE gate (#4 — complete_verify passed:true
+  verified:true 0 findings, i.e. verified-by-running), SPLIT (#11 — plan 5 tasks widened to 12 finished via
+  split children = more parallel work), weight revert (#6 — live sampler: 0 LM Studio queued, ≤1 in-flight/node
+  across 8 samples). ALL 12 tasks done, 0 failed (no scheduler_stuck). First A/B is a decisive win.
+  UTILIZATION NOTE: DAG widened 5→12 via SPLIT (good), no queuing. The serial-root phase still runs ~1 node
+  (weak model builds a chokepoint root despite the anti-chokepoint prompt); lower SPLIT_SECS + a width corrector
+  are the residual levers, batched for a follow-on.
