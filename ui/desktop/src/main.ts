@@ -2293,14 +2293,23 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     // user; `pending` = questions exist AND no answers written yet. answerPath is where the panel writes back.
     let clarify: {
       pending: boolean;
-      questions: string[];
+      questions: Array<{ question: string; options: string[] }>;
       planConfidence?: number;
       answerPath: string;
     } | null = null;
     try {
       const qraw = await fs.readFile(path.join(swarmDir, 'clarify-questions.json'), 'utf8');
       const q = JSON.parse(qraw) as { questions?: unknown; plan_confidence?: unknown };
-      const questions = Array.isArray(q.questions) ? q.questions.map(String) : [];
+      const questions = (Array.isArray(q.questions) ? q.questions : [])
+        .map((it) => {
+          if (typeof it === 'string') return { question: it, options: [] as string[] };
+          const o = it as { question?: unknown; options?: unknown };
+          return {
+            question: String(o.question ?? ''),
+            options: Array.isArray(o.options) ? o.options.map(String) : [],
+          };
+        })
+        .filter((x) => x.question.length > 0);
       if (questions.length > 0) {
         const answered = await fs
           .stat(path.join(swarmDir, 'clarify-answers.json'))

@@ -4019,7 +4019,7 @@ impl GooseAgentDispatcher {
         uncertainties: &str,
         conf: u8,
         max_q: u32,
-    ) -> Vec<String> {
+    ) -> Vec<ClarifyQuestion> {
         let unc = if uncertainties.trim().is_empty() {
             "(none stated)".to_string()
         } else {
@@ -4032,7 +4032,11 @@ impl GooseAgentDispatcher {
              change HOW the program is built — its scope, inputs/outputs, file formats, or acceptance criteria \
              — NOT trivia or anything already pinned down by the task. Ask ONLY what the USER alone can decide \
              — do NOT ask facts that can be looked up in docs or on the web (the swarm researches those itself). \
-             Each question must be answerable in one sentence and END WITH '?'. If the task is genuinely self- \
+             Each question must be answerable in one sentence and END WITH '?'. FOR EACH QUESTION, also provide \
+             2-4 concrete pickable OPTIONS in `options` — the most likely/common answer FIRST — so the user can \
+             just click a choice (they can still type their own). Options must be short, concrete, and mutually \
+             distinct (e.g. for a storage question: [\"SQLite file\",\"JSON file\",\"plain-text lines\"]). Use an \
+             empty options list ONLY when the question is truly open-ended. If the task is genuinely self- \
              contained and nothing would change the build, return an EMPTY questions list — do NOT invent \
              make-work. Then call the final_output tool."
         );
@@ -4055,7 +4059,7 @@ impl GooseAgentDispatcher {
         #[derive(serde::Deserialize)]
         struct Qs {
             #[serde(default)]
-            questions: Vec<String>,
+            questions: Vec<ClarifyQuestion>,
         }
         let parsed: Qs = match serde_json::from_str(&fo) {
             Ok(p) => p,
@@ -4064,11 +4068,21 @@ impl GooseAgentDispatcher {
         parsed
             .questions
             .into_iter()
-            .map(|q| q.trim().to_string())
+            .map(|mut q| {
+                q.question = q.question.trim().to_string();
+                q.options = q
+                    .options
+                    .into_iter()
+                    .map(|o| o.trim().to_string())
+                    .filter(|o| !o.is_empty())
+                    .take(4)
+                    .collect();
+                q
+            })
             // Enforce the interrogative contract the prompt demands: a real question ends with '?'.
             // Declarative junk (headers, statements) falls through to the next cascade tier instead of
             // being surfaced to the user as a "question".
-            .filter(|q| q.chars().count() >= 8 && q.ends_with('?'))
+            .filter(|q| q.question.chars().count() >= 8 && q.question.ends_with('?'))
             .take(max_q as usize)
             .collect()
     }
@@ -6743,8 +6757,12 @@ impl GooseAgentDispatcher {
         let user = format!(
             "GOAL: {goal}\n\nPLAN (subtask skeleton JSON):\n{plan}\n\nYour one-line score:"
         );
+        // A one-line self-rating must be FAST. Cap it hard at 75s (NOT the 900s planner budget) so a weak
+        // model that hangs on this pass can't stall the whole plan — on timeout we fall back to the calibrated
+        // cross-draft agreement score, which is the primary signal anyway (this pass yields a usable score in
+        // only ~6% of runs). Fixes a 15-minute planning stall when ask_floor is on.
         let text = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(75),
             self.run_agent(model, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -8949,6 +8967,15 @@ fn ask_floor_weak_bump(active_b: Option<u32>) -> u8 {
 }
 
 /// Schema for the GOOSE_SWARM_ASK clarifying-question generator: a flat list of interrogative strings.
+/// One clarify/review question. `options` are 2-4 concrete CHOICES the user can pick with one click (they can
+/// always type their own instead); empty when the question is genuinely open-ended.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct ClarifyQuestion {
+    question: String,
+    #[serde(default)]
+    options: Vec<String>,
+}
+
 fn clarify_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -8957,7 +8984,16 @@ fn clarify_schema() -> serde_json::Value {
         "properties": {
             "questions": {
                 "type": "array",
-                "items": {"type": "string"}
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["question", "options"],
+                    "properties": {
+                        "question": {"type": "string"},
+                        // 2-4 concrete pickable answers (a common default first), or [] if truly open.
+                        "options": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
             }
         }
     })
@@ -9054,7 +9090,7 @@ fn phase_banner(label: &str, why: &str) {
 /// event, and BLOCK-poll for `.swarm/clarify-answers.json` (the harness answers AS the human) up to
 /// `wait_secs`, then proceed. Returns a Q&A block to fold into the planner findings, or "" if unanswered.
 async fn ask_clarifying_questions(
-    questions: &[String],
+    questions: &[ClarifyQuestion],
     cwd: &Path,
     plan_conf: u8,
     wait_secs: u64,
@@ -9075,7 +9111,7 @@ async fn ask_clarifying_questions(
             "plan_confidence": plan_conf,
             "questions": questions,
             "answer_file": ".swarm/clarify-answers.json",
-            "how_to_answer": "Write a JSON array of answer strings (one per question, same order), or {\"answers\":[...]}, to answer_file. The swarm is BLOCKED on it and will re-plan with your answers.",
+            "how_to_answer": "Write {\"answers\":[...one string per question, same order; pick an option or your own words...], \"guidance\":\"...free-form: anything else to change about the plan...\"} to answer_file (a bare JSON array of answers also works). The swarm is BLOCKED on it and will re-plan with your answers + guidance.",
         }))
         .unwrap_or_default(),
     ) {
@@ -9091,6 +9127,7 @@ async fn ask_clarifying_questions(
     }));
 
     let mut answers: Vec<String> = Vec::new();
+    let mut guidance = String::new();
     // INTERACTIVE only when BOTH stdin AND stdout are real terminals. A capture harness that pipes stdout
     // (or the autonomous loop / evals) is detached -> the file handshake, never a timeout-less cliclack
     // prompt that could hang forever on a PTY-backed child. GOOSE_SWARM_ASK_FILE=1 forces the file path.
@@ -9110,8 +9147,13 @@ async fn ask_clarifying_questions(
             .bold()
         );
         for q in questions {
-            let a: String = cliclack::input(q.as_str())
-                .default_input("")
+            let prompt = if q.options.is_empty() {
+                q.question.clone()
+            } else {
+                format!("{} [{}]", q.question, q.options.join(" / "))
+            };
+            let a: String = cliclack::input(prompt)
+                .default_input(q.options.first().map(String::as_str).unwrap_or(""))
                 .interact()
                 .unwrap_or_default();
             answers.push(a);
@@ -9131,20 +9173,30 @@ async fn ask_clarifying_questions(
         let mut waited = 0u64;
         loop {
             if let Ok(s) = std::fs::read_to_string(&apath) {
+                let val = serde_json::from_str::<serde_json::Value>(&s).ok();
+                if let Some(g) = val
+                    .as_ref()
+                    .and_then(|v| v.get("guidance"))
+                    .and_then(|g| g.as_str())
+                {
+                    guidance = g.trim().to_string();
+                }
                 let parsed: Option<Vec<String>> =
                     serde_json::from_str::<Vec<String>>(&s).ok().or_else(|| {
-                        serde_json::from_str::<serde_json::Value>(&s)
-                            .ok()
-                            .and_then(|val| {
-                                val.get("answers").and_then(|a| a.as_array()).map(|arr| {
-                                    arr.iter()
-                                        .map(|x| x.as_str().unwrap_or("").to_string())
-                                        .collect()
-                                })
+                        val.as_ref().and_then(|val| {
+                            val.get("answers").and_then(|a| a.as_array()).map(|arr| {
+                                arr.iter()
+                                    .map(|x| x.as_str().unwrap_or("").to_string())
+                                    .collect()
                             })
+                        })
                     });
-                if let Some(a) = parsed {
-                    answers = a;
+                // Unblock as soon as the user submits per-question answers OR free-form guidance (they may
+                // skip the questions entirely and just tell goose what to change).
+                if parsed.is_some() || !guidance.is_empty() {
+                    if let Some(a) = parsed {
+                        answers = a;
+                    }
                     eprintln!(
                         "{}",
                         style("clarifications received — continuing with the answers").green()
@@ -9172,9 +9224,16 @@ async fn ask_clarifying_questions(
     for (i, q) in questions.iter().enumerate() {
         let a = answers.get(i).map(|s| s.trim()).unwrap_or("");
         if !a.is_empty() {
-            block.push_str(&format!("Q: {q}\nA: {a}\n"));
+            block.push_str(&format!("Q: {}\nA: {a}\n", q.question));
             any = true;
         }
+    }
+    if !guidance.trim().is_empty() {
+        block.push_str(&format!(
+            "The user also gave this free-form direction — treat it as a top-priority requirement: {}\n",
+            guidance.trim()
+        ));
+        any = true;
     }
     if any {
         sink.write_value(serde_json::json!({ "event": "low_confidence_answered" }));
@@ -9762,13 +9821,20 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
                         .map(|s| s.trim().to_string())
                         .filter(|s| s.len() >= 4)
                         .take(ask_max_q)
+                        .map(|s| ClarifyQuestion {
+                            question: s,
+                            options: Vec::new(),
+                        })
                         .collect();
                 }
                 if questions.is_empty() {
-                    questions.push(format!(
-                        "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
-                        opts.prompt
-                    ));
+                    questions.push(ClarifyQuestion {
+                        question: format!(
+                            "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
+                            opts.prompt
+                        ),
+                        options: Vec::new(),
+                    });
                 }
                 // Always engage the handshake when below floor (the harness IS the human).
                 let qa = ask_clarifying_questions(
