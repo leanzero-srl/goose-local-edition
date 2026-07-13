@@ -25,6 +25,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | taskq | SYSTEMS | 995 | won't compile | n/a | FAIL | 5 syntax errors in log.rs (bad escapes); judge said ok, no Rust gate |
 | blobs | SYSTEMS | 1057 | 13/20 | test-wrong | GOOD | CLI works spec-correct; 7 tests assert wrong .blobs/ layout |
 | wal | SYSTEMS | 997 | 2/8 | n/a | FAIL | append LSN stuck at 1; read/verify see 0 records (no persistence) |
+| trie | SYSTEMS | 838 | 20/21 | spec-shape | GOOD | logic sound; insert/remove≠spec set/del, no --dir; tests match impl |
 
 ## Backlog (issues → fix at end of cycle)
 (accrues as builds complete)
@@ -360,3 +361,10 @@ invariant. Splitting alone on a weak model could trade starvation for drift. MED
 win; the pairing with #4 is what keeps quality flat.
 DEEPER (separate): the planner itself emits narrow DAGs (lumps types+store into one big serial root). A
 wider-fan-out planner prompt would help beyond SPLIT, but SPLIT is the immediate designed lever.
+- trie (systems/Rust): **GOOD (spec-shape drift) — 2nd-best Rust** — 838 LOC, 4 modules, COMPILES, 20/21 tests.
+  Trie logic is SOUND (insert/get/prefix/remove all correct via real CLI). But the CLI DEVIATES from the spec
+  contract: implemented `insert`/`remove` (spec said `set`/`del`), and takes DIR POSITIONALLY (`trie init DIR`)
+  instead of the spec's "global --dir". The tests were written to match the IMPL's names, not the spec, so
+  20/21 green while a spec-exact contract check would fail. Same false-green family as timesheet (tests follow
+  impl, both drift from spec). 1 real failure: range_empty edge case. Reinforces the golden-spec-contract gate:
+  the exact command names in the spec must be verified, not the model's own tests.
