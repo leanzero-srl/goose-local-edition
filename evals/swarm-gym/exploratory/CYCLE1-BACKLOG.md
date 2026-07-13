@@ -22,6 +22,7 @@ SYSTEMS (Rust): kvstore ✗(prev FAIL), taskq, blobs, wal, trie
 | glob | ALGO | 472 | 0 (task died) | drift | FAIL | glob/re filter broken (match-all/none); test path works |
 | csvql | ALGO | 936 | 3/14 | drift | FAIL | rows list vs cli row.values() dict |
 | kvstore | SYSTEMS | 253 | 0 | n/a | FAIL | empty fn main(){}, shipped (gate #8) |
+| taskq | SYSTEMS | 995 | won't compile | n/a | FAIL | 5 syntax errors in log.rs (bad escapes); judge said ok, no Rust gate |
 
 ## Backlog (issues → fix at end of cycle)
 (accrues as builds complete)
@@ -253,3 +254,12 @@ keep dodging.
   return empty). Same drift family: the filter path and the test path apply matching differently — the correct
   matcher exists (test proves it) but the filter loop doesn't use it right. Reinforces: golden-output gate
   (the spec's own examples) would catch this; exit-0 + smoke does not.
+- taskq (systems/Rust): **FAIL (won't compile)** — 995 LOC, 5 real modules + integration test, main.rs
+  properly wired (mod decls). But `cargo build` FAILS with 5 errors in src/log.rs (E0765 unterminated string;
+  `unknown start of token: \`; `prefix 'n'/'tmp' unknown`) — the model wrote stray backslashes / `\n` outside
+  string literals. ALL 8 LLM judge verdicts were "ok" and NO smoke ran (Python-only gate, py_files:0). So
+  non-compiling Rust shipped with a clean bill of health.
+  → SHARPENS #8: the pre-done gate has `py_syntax_error` (ast.parse) for Python but NO equivalent for Rust.
+    Add a deterministic `cargo build`/`cargo check` gate for any Cargo.toml project, run BEFORE a Rust task is
+    accepted (mirror py_syntax_error's placement) so a compile error is a content-retry with the compiler
+    error as the hint — not an "ok". The LLM judge cannot be trusted to compile-check.
