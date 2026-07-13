@@ -125,6 +125,7 @@ type ElectronAPI = {
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     mtime: number;
+    heartbeat: number | null;
     events: Array<Record<string, unknown>>;
     activity: Record<string, unknown>;
     clarify: {
