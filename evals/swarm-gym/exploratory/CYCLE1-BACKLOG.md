@@ -85,14 +85,24 @@ STALE root-owned /usr/local/bin/node = v19.8.1 (from 2023) that shadows the newe
 26.3.1, nvm 22.22.0). When goose spawns npx, it resolves to /usr/local/bin/node 19.8.1; Playwright requires
 >=20, so it quits with "You are running Node.js 19.8.1. Playwright requires Node.js 20 or higher." (the
 "1 extension failed" seen in every screenshot).
-IMMEDIATE FIX (applied): pointed the playwright extension config at /opt/homebrew/bin/npx (node 26.3.1) —
-verified @playwright/mcp starts cleanly under node 26 and node 22. config.yaml.bak saved.
-SYSTEM-HYGIENE (user, needs sudo): remove/update the stale node — `sudo rm /usr/local/bin/node
-/usr/local/bin/npx` (or `brew link --overwrite node`) so ALL tools stop picking up 19.8.1, not just goose.
-DURABLE GOOSE FIX (backlog): when spawning a stdio extension whose cmd is `npx`/`node`, goose should resolve
-a node that satisfies the requirement (or prepend the modern node dir ahead of /usr/local/bin in the
-extension PATH) rather than trusting whatever `node` PATH-resolves — so a stale system node can't silently
-break every npx-based extension. main.ts builds the extension env; this is where it'd go.
+FIRST ATTEMPT (WRONG — corrected): pointed cmd at /opt/homebrew/bin/npx. This DOES NOT WORK: that npx is a
+`#!/usr/bin/env node` script, so it re-resolves `node` via PATH; and even `cmd: node <npx-cli.js>` fails
+because npx spawns the @playwright/mcp bin as a CHILD which is ALSO `#!/usr/bin/env node` → re-resolves node
+via PATH → stale 19.8.1 again. Proven empirically: under `PATH=/usr/local/bin:/usr/bin:/bin` (the app's Finder
+PATH order), `env node` = v19.8.1 and npm/playwright reject it. Also goose FORBIDS setting PATH via extension
+`envs` (extension.rs:81 DISALLOWED_KEYS includes PATH — anti-hijacking), so envs:{PATH} can't fix it either.
+WORKING FIX (applied + verified end-to-end): make cmd a shell wrapper that fixes PATH BEFORE exec:
+  cmd: /bin/sh
+  args: ["-c", "export PATH=/opt/homebrew/bin:$PATH; exec npx -y '@playwright/mcp@latest' --browser=chrome --user-data-dir=/tmp/cw-chrome"]
+Setting PATH inside the wrapper means npx AND the child playwright bin both find node 26. Verified: under the
+stale `PATH=/usr/local/bin:...`, the exact wrapper command starts @playwright/mcp v0.0.78 clean, node=v26.3.1,
+NO 19.8.1. config.yaml.bak2 saved. Takes effect next app launch; app-level chat-session check still PENDING.
+SYSTEM-HYGIENE (user, needs sudo — the only fix that helps ALL tools, not just goose): remove/update the stale
+node — `sudo rm /usr/local/bin/node /usr/local/bin/npx /usr/local/bin/npm` (or `brew link --overwrite node`).
+DURABLE GOOSE FIX (backlog): when goose spawns a stdio extension, PREPEND a known-good node dir to the CHILD's
+PATH in the env it builds (main.ts extension env / the Rust extension spawn) — goose sets the spawn PATH itself
+so it is NOT subject to the user-facing DISALLOWED_KEYS ban. This makes every npx/node extension immune to a
+stale system node without a per-extension wrapper. This is the real durable fix.
 
 ## BACKLOG ITEM #6 (swarm weights) — pool DISPATCH weight ignores speed_weights (all nodes = weight 1)
 OBSERVED: run_started pool for the expense build shows every node at weight:1, e.g.
@@ -263,3 +273,38 @@ keep dodging.
     Add a deterministic `cargo build`/`cargo check` gate for any Cargo.toml project, run BEFORE a Rust task is
     accepted (mirror py_syntax_error's placement) so a compile error is a content-retry with the compiler
     error as the hint — not an "ok". The LLM judge cannot be trusted to compile-check.
+
+## BACKLOG ITEM #9 (worker efficiency) — 15% of worker tool calls fail; two distinct causes
+DATA: across the 12 builds, 86 of 589 tool calls (14.6%) came back ok:false. Breakdown:
+  (a) MOST are `shell` calls running pytest that report FAILING tests — these are SYMPTOMS of the app bugs
+      already in the backlog (contract drift #4 etc.), i.e. the worker's own test-fix loop seeing red. Fixing
+      the root causes (#4/#7/#8) removes these. Not a new bug, but the high rate tracks app quality.
+  (b) AVOIDABLE weak-model operational noise (a new class, ~a dozen calls):
+      - `bash: python: command not found (code 127)` — worker calls `python`, not `python3`.
+      - shell-quoting blowups in inline debug snippets: `bash: syntax error near unexpected token )` from
+        `python3 -c "tokens = lex(\"{{ 'hello world' }}\")"` (nested quotes).
+      - `write` tool called with `missing field 'path'`; `edit` "No match found"; `read_image` on a DIRECTORY
+        ("Is a directory (os error 21)").
+FIX CANDIDATES (throughput = the master goal): a light harness guard/hint layer — normalize `python`→`python3`
+in the shell tool (or PATH-shim), validate write/edit args with a corrective retry hint instead of a hard
+fail, and a system-prompt nudge to avoid nested-quote inline snippets (write a temp file instead). Low risk,
+recovers wasted turns. Confidence MED — needs care not to mask real errors.
+
+## BACKLOG ITEM #10 (UNTESTED FEATURE — user-flagged) — Loop creation + execution never validated
+Mihai flagged: the exploration has NO loop test → likely I never created one. Correct — every run so far was a
+one-shot swarm build, never a Loop. A goose LOOP (ui/desktop/src/components/loop/{LoopModal,LoopView}.tsx) =
+"runs a recipe repeatedly on a SCHEDULE until a STOP CHECK command passes OR the iteration cap is reached."
+Created from: a name, a recipe (YAML file or goose://recipe deep link), a schedule, max-iterations, and a
+stop-check shell command. Backed by the scheduler (acpListSchedules). This is EXACTLY Mihai's nightly-evolve
+use case, so it MUST work on the LOCAL fleet.
+TEST PLAN (do in cycle 2 / dedicated step, fleet-free so recipe runs don't contend with builds):
+  1. Author a tiny recipe YAML (a trivial task the local model can do in 1 turn) + a stop-check that passes
+     after N iterations (e.g. a file-counter).
+  2. Create a Loop via the desktop LoopModal (drive with CDP) AND/OR the underlying schedule API — capture
+     which path works.
+  3. Verify: it RUNS the recipe repeatedly, RESPECTS the stop-check (halts when it passes), RESPECTS the
+     max-iterations cap, and LoopView shows live iteration progress.
+  4. Verify it uses the LOCAL provider (not cloud) and survives a model hiccup.
+  5. Screenshot LoopView; check for the same visual/logging gaps the swarm panel had.
+EXPECTATION: unknown — this is genuinely untested; treat a first-run failure as expected signal, not a
+setback. Confidence LOW that it works first try on the local fleet (never exercised) — flagged honestly.
