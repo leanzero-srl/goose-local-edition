@@ -91,13 +91,22 @@ export interface SmokeResult {
   entryOk: boolean | null;
   pyFiles: number;
 }
-/** The end-of-run tally from run_finished — done/failed task counts and the total wall-clock minutes. Present
- *  only after a CLEAN finish; a run that died without run_finished has none (the panel falls back to counting
- *  lanes + wall time from startedAt). */
+/** Per-node aggregate for the completion summary — how much each fleet node actually did. */
+export interface DeviceStat {
+  node: string;
+  device: string;
+  dispatched: number;
+  toolCalls: number;
+  busyMs: number;
+}
+/** The end-of-run tally from run_finished — done/failed task counts, total wall-clock minutes, and the
+ *  per-node breakdown. Present only after a CLEAN finish; a run that died without run_finished has none (the
+ *  panel falls back to counting lanes + wall time from startedAt). */
 export interface RunSummary {
   done: number;
   failed: number;
   totalMin: number | null;
+  perDevice: DeviceStat[];
 }
 
 export interface SwarmRunState {
@@ -436,7 +445,21 @@ function buildActivity(events: Array<Record<string, unknown>>): {
           .map(String)
           .filter((id) => !bonus.has(id)).length;
         const phases = (e['phases'] ?? {}) as Record<string, unknown>;
-        summary = { done, failed: coreFailed, totalMin: num(phases['total_min']) };
+        const perDevRaw = (report['per_device'] ?? {}) as Record<string, unknown>;
+        const perDevice: DeviceStat[] = Object.entries(perDevRaw)
+          .map(([device, v]) => {
+            const d = (v ?? {}) as Record<string, unknown>;
+            return {
+              node: nodeName(device),
+              device,
+              dispatched: num(d['dispatched']) ?? 0,
+              toolCalls: num(d['tool_calls']) ?? 0,
+              busyMs: num(d['busy_ms']) ?? 0,
+            };
+          })
+          .filter((d) => d.dispatched > 0 || d.toolCalls > 0)
+          .sort((a, b) => a.node.localeCompare(b.node));
+        summary = { done, failed: coreFailed, totalMin: num(phases['total_min']), perDevice };
         compact({ kind: 'phase', text: 'Build complete', tone: coreFailed ? 'warn' : 'good' });
         verbose({
           kind: 'phase',

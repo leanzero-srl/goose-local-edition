@@ -699,7 +699,8 @@ const TerminalBanner: React.FC<{
   totals: { done: number; failed: number; tasks: number };
   durationLabel: string | null;
   outputDir?: string;
-}> = ({ outcome, summary, totals, durationLabel, outputDir }) => {
+  deviceOrder: string[];
+}> = ({ outcome, summary, totals, durationLabel, outputDir, deviceOrder }) => {
   const done = summary?.done ?? totals.done;
   const failed = summary?.failed ?? totals.failed;
   const tasks = totals.tasks;
@@ -724,6 +725,34 @@ const TerminalBanner: React.FC<{
       {outcome === 'stopped' ? (
         <div className="px-3 py-1.5 text-[11px] text-text-secondary bg-background-secondary">
           It ended without a completion signal — stopped or crashed mid-build. What finished is shown below.
+        </div>
+      ) : null}
+      {summary && summary.perDevice.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary/50">
+          {summary.perDevice.map((d) => {
+            const hue = FORMATION_RAMP[deviceIndex(d.device, deviceOrder) % FORMATION_RAMP.length];
+            return (
+              <Tip
+                key={d.device}
+                label={
+                  <span className="font-mono">
+                    {d.device}
+                    <br />
+                    {d.dispatched} dispatch{d.dispatched === 1 ? '' : 'es'} · {d.toolCalls} tool calls · {fmtDuration(d.busyMs / 60000)} busy
+                  </span>
+                }
+              >
+                <span className="inline-flex items-center gap-1 tabular-nums cursor-default">
+                  <span className="font-semibold" style={{ color: hue }}>
+                    {d.node}
+                  </span>
+                  <span className="text-text-secondary">
+                    {d.dispatched}t · {d.toolCalls}🔧 · {fmtDuration(d.busyMs / 60000)}
+                  </span>
+                </span>
+              </Tip>
+            );
+          })}
         </div>
       ) : null}
       {outputDir ? (
@@ -877,6 +906,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           totals={{ done, failed, tasks }}
           durationLabel={durationLabel}
           outputDir={workingDir}
+          deviceOrder={deviceOrder}
         />
       ) : null}
 
