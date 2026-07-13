@@ -2288,11 +2288,41 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
         })
     );
 
+    // Clarify handshake: when planner confidence is below the ask floor the swarm writes
+    // clarify-questions.json and BLOCKS on clarify-answers.json. Surface it so the run panel can prompt the
+    // user; `pending` = questions exist AND no answers written yet. answerPath is where the panel writes back.
+    let clarify: {
+      pending: boolean;
+      questions: string[];
+      planConfidence?: number;
+      answerPath: string;
+    } | null = null;
+    try {
+      const qraw = await fs.readFile(path.join(swarmDir, 'clarify-questions.json'), 'utf8');
+      const q = JSON.parse(qraw) as { questions?: unknown; plan_confidence?: unknown };
+      const questions = Array.isArray(q.questions) ? q.questions.map(String) : [];
+      if (questions.length > 0) {
+        const answered = await fs
+          .stat(path.join(swarmDir, 'clarify-answers.json'))
+          .then(() => true)
+          .catch(() => false);
+        clarify = {
+          pending: !answered,
+          questions,
+          planConfidence: typeof q.plan_confidence === 'number' ? q.plan_confidence : undefined,
+          answerPath: path.join(swarmDir, 'clarify-answers.json'),
+        };
+      }
+    } catch {
+      /* no clarify gate this run */
+    }
+
     return {
       runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
       mtime: freshest,
       events,
       activity,
+      clarify,
     };
   } catch {
     return null;

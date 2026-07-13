@@ -388,6 +388,15 @@ export default function SwarmSettingsSection() {
             >
               <Segmented options={SWARM_LOG_MODES} value={logMode} onChange={setLogMode} />
             </Row>
+            <Row
+              label="Ask when uncertain"
+              hint="When the planner isn't confident in how to break the app down, pause and ask YOU a few clarifying questions in the run panel instead of guessing. Best for a weak local planner."
+            >
+              <SwarmSwitch
+                checked={(cfg.ask_floor ?? 0) > 0}
+                onChange={(v) => set({ ask_floor: v ? 70 : 0 })}
+              />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">

@@ -37,6 +37,9 @@ export interface SwarmConfig {
   /** Per-node task-share weights, keyed by a substring of the device id (e.g. {"gabee":1,"mihai":2}).
    *  Higher = a larger share of tasks; the scheduler's speed_weight_for() substring-matches these. */
   speed_weights?: Record<string, number>;
+  /** Confidence floor (1-100) below which the swarm asks the USER clarifying questions before building,
+   *  instead of guessing. 0 / undefined = never ask. Surfaced live in the run panel's clarify prompt. */
+  ask_floor?: number;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
