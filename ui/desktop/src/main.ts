@@ -2326,9 +2326,21 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       /* no clarify gate this run */
     }
 
+    // Liveness heartbeat (`.swarm/heartbeat`, touched every ~5s while the engine runs). Kept SEPARATE from
+    // `mtime` (which reflects real task activity, for the "Xs ago" label): a fresh heartbeat means the engine
+    // is alive even mid-long-tool-call, so the panel can flag "stopped" within seconds of a kill without
+    // false-positives. Null when the run predates heartbeats — the panel then falls back to mtime staleness.
+    let heartbeat: number | null = null;
+    try {
+      heartbeat = (await fs.stat(path.join(swarmDir, 'heartbeat'))).mtimeMs;
+    } catch {
+      /* no heartbeat file (older run) */
+    }
+
     return {
       runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
       mtime: freshest,
+      heartbeat,
       events,
       activity,
       clarify,

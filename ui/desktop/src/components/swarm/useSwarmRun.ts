@@ -149,6 +149,10 @@ export interface SwarmRunState {
     answerPath: string;
   } | null;
   mtime: number | null;
+  /** Epoch ms of the engine's last liveness heartbeat (touched every ~5s while running), or null for a run
+   *  with no heartbeat file. Lets the panel detect a killed engine in seconds without false "stopped" during
+   *  a legitimately long tool call (which leaves task files quiet but keeps the heartbeat ticking). */
+  heartbeat: number | null;
   loading: boolean;
 }
 
@@ -170,6 +174,7 @@ const EMPTY: SwarmRunState = {
   startedAt: null,
   clarify: null,
   mtime: null,
+  heartbeat: null,
   loading: true,
 };
 
@@ -635,6 +640,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           startedAt,
           clarify: data.clarify,
           mtime: data.mtime,
+          heartbeat: data.heartbeat,
           loading: false,
         });
       } catch {

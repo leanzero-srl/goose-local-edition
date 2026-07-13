@@ -9452,6 +9452,27 @@ pub async fn run_swarm(opts: RunOpts) -> Result<()> {
         None => Arc::new(NullSink),
     };
 
+    // Liveness heartbeat: touch `.swarm/heartbeat` every few seconds for the whole run. This lets a reader
+    // (the desktop panel) tell a KILLED/HUNG engine (heartbeat goes stale in seconds) apart from a worker
+    // still inside one long tool call (task files quiet for minutes, but the engine — and this ticker — are
+    // alive), so the UI can flag "stopped" quickly without false-positives on legitimate long tasks. The
+    // guard aborts the ticker on EVERY run_swarm exit path (Drop), so it never outlives the run.
+    struct HeartbeatGuard(tokio::task::JoinHandle<()>);
+    impl Drop for HeartbeatGuard {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _heartbeat = log_path.as_ref().and_then(|p| p.parent()).map(|dir| {
+        let hb = dir.join("heartbeat");
+        HeartbeatGuard(tokio::spawn(async move {
+            loop {
+                let _ = std::fs::write(&hb, chrono::Utc::now().to_rfc3339());
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }))
+    });
+
     // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
     eprintln!(
         "{} working dir: {}",

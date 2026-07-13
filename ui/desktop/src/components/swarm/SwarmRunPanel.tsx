@@ -48,6 +48,9 @@ const STATUS_COLOR: Record<TurnStatus, string> = {
 // produces no write while it runs. Keep this above realistic single-tool durations so a live worker isn't
 // mislabelled "interrupted"; a genuinely dead run still goes stale within this window.
 const STALE_MS = 300_000;
+// With a liveness heartbeat present, a dead engine is detectable in seconds (the ticker touches every ~5s),
+// so a much shorter window is safe and doesn't false-positive on long tool calls.
+const HEARTBEAT_STALE_MS = 45_000;
 const CALL_OK = '#2ecc71';
 const CALL_ERR = '#ff3b30';
 const CALL_PENDING = '#8a8a8a';
@@ -491,9 +494,10 @@ function phaseStepIndex(phase: string): number {
   if (/research|scout|start/.test(p)) return 0;
   return 3;
 }
-const PhaseSteps: React.FC<{ phase: string; activeColor?: string }> = ({
+const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean }> = ({
   phase,
   activeColor = STATUS_COLOR.running,
+  live = false,
 }) => {
   const active = phaseStepIndex(phase);
   return (
@@ -505,7 +509,7 @@ const PhaseSteps: React.FC<{ phase: string; activeColor?: string }> = ({
             <span
               className={`text-[10px] px-1.5 py-0.5 whitespace-nowrap shrink-0 inline-flex items-center gap-0.5 ${
                 i === active
-                  ? 'text-white font-semibold'
+                  ? `text-white font-semibold${live ? ' animate-pulse' : ''}`
                   : i < active
                     ? 'text-text-primary'
                     : 'text-text-secondary opacity-60'
@@ -790,7 +794,12 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // deterministically so ⬢A/hue is fixed for the whole run.
   const deviceOrder: string[] = Array.from(new Set(run.lanes.map((l) => l.device))).sort();
 
-  const stale = run.mtime != null && Date.now() - run.mtime > STALE_MS;
+  // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
+  // last-activity mtime with the old conservative window (runs that predate heartbeats).
+  const stale =
+    run.heartbeat != null
+      ? Date.now() - run.heartbeat > HEARTBEAT_STALE_MS
+      : run.mtime != null && Date.now() - run.mtime > STALE_MS;
   const { running, done, failed, tasks } = run.totals;
 
   // A run is OVER when it cleanly finished (run_finished) OR it went quiet with tasks in flight (killed /
@@ -915,6 +924,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       {(run.inProgress || ended) && (
         <PhaseSteps
           phase={run.phase}
+          live={run.inProgress && !stale && !ended && !clarifyPending}
           activeColor={
             ended
               ? outcome === 'done'
