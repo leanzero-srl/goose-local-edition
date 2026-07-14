@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
-  MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen,
+  MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info,
 } from 'lucide-react';
 import {
   useSwarmRun,
@@ -12,6 +12,7 @@ import {
   type ActivityItem,
   type PlanTask,
   type RunSummary,
+  type ConfidenceBreakdown,
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
@@ -384,6 +385,7 @@ const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: n
   done: Check,
   fail: X,
   retry: RotateCcw,
+  retarget: TrendingUp,
   review: FlaskConical,
   judge: Gavel,
   prereview: Eye,
@@ -398,6 +400,7 @@ const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
   done: '#2ecc71',
   fail: '#ff3b30',
   retry: '#f5a623',
+  retarget: '#6a5cff',
   review: '#b14cff',
   judge: '#b14cff',
   prereview: '#17c4c4',
@@ -451,24 +454,179 @@ const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: bo
   );
 };
 
-// How sure the planner was about HOW to break this app down, from cross-draft agreement (not the model's
-// self-report). Solid green ≥70 (confident), amber 40-69 (unsure), red <40 (guessing) — so a low number is a
-// visible flag that goose was uncertain, which is exactly when the ask gate fires.
-const ConfidenceBadge: React.FC<{ value: number }> = ({ value }) => {
-  const color = value >= 70 ? STATUS_COLOR.done : value >= 40 ? AMBER : STATUS_COLOR.error;
-  const label = value >= 70 ? 'confident' : value >= 40 ? 'unsure' : 'guessing';
-  return (
-    <Tip
-      label={`Planner confidence in how it broke this app down — ${value}/100 (${label}). Below the ask floor, goose pauses to ask you before building.`}
+// Threshold color for a confidence value: solid green >=70 (confident), amber 40-69 (unsure), red <40.
+const confColor = (v: number): string =>
+  v >= 70 ? STATUS_COLOR.done : v >= 40 ? AMBER : STATUS_COLOR.error;
+
+// One labelled sub-bar (agreement / spec-clarity): a solid fill in the value's threshold color over a
+// bordered track (not a faded tint), so the LOWER (binding) signal visibly reads as the culprit.
+const ConfBar: React.FC<{ label: string; value: number }> = ({ label, value }) => (
+  <div className="flex items-center gap-2 text-[11px]">
+    <span className="w-20 shrink-0 text-text-secondary">{label}</span>
+    <div
+      className="flex-1 h-1.5 bg-background-primary border border-border-primary overflow-hidden"
+      style={{ borderRadius: 2 }}
     >
-      <span
-        className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
-        style={{ backgroundColor: color, borderRadius: 2 }}
+      <div
+        className="h-full"
+        style={{ width: `${Math.max(0, Math.min(100, value))}%`, backgroundColor: confColor(value) }}
+      />
+    </div>
+    <span className="w-6 text-right tabular-nums" style={{ color: confColor(value) }}>
+      {value}
+    </span>
+  </div>
+);
+
+// Shared breakdown body — reused by the header-expand panel AND the ClarifyPrompt (one visual language). The
+// min number, the two sub-bars, WHAT'S HOLDING IT BACK (the binding/lower signal), WHAT WOULD RAISE IT
+// (honest, research-backed), and a climb trail/sparkline when the meter has moved.
+const ConfidenceBreakdownBody: React.FC<{
+  conf: ConfidenceBreakdown;
+  trail?: number[];
+  hasPendingQuestions: boolean;
+}> = ({ conf, trail, hasPendingQuestions }) => {
+  const bindingAgreement = conf.agreement <= conf.specClarity;
+  const showDecisions = !bindingAgreement && conf.openDecisions.length > 0;
+  const holdingBack = bindingAgreement
+    ? conf.agreementReason || 'The planning drafts disagree on how to structure the build.'
+    : conf.productSpecified
+      ? 'Some requirements are still ambiguous.'
+      : "The product itself isn't fully specified yet.";
+  const raiseIt = bindingAgreement
+    ? 'Goose re-drafts toward a single consensus plan to reconcile the structure — designed to converge, though a small/weak fleet may not fully agree.'
+    : hasPendingQuestions
+      ? 'Answer the questions below — each resolves an open decision. Goose can also research the undecided points.'
+      : 'Researching the undecided points to firm up the spec.';
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <Gauge className="h-4 w-4" style={{ color: confColor(conf.final) }} />
+        <span className="text-lg font-semibold tabular-nums" style={{ color: confColor(conf.final) }}>
+          {conf.final}
+        </span>
+        <span className="text-[11px] text-text-secondary">/100 plan confidence</span>
+      </div>
+      <div className="space-y-1.5">
+        <ConfBar label="Agreement" value={conf.agreement} />
+        <ConfBar label="Spec clarity" value={conf.specClarity} />
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+          What&apos;s holding it back
+        </div>
+        {showDecisions ? (
+          <ul className="space-y-0.5">
+            {conf.openDecisions.map((d, i) => (
+              <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+                <span className="text-text-secondary shrink-0">·</span>
+                <span>{d}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="text-[11px] text-text-primary">{holdingBack}</div>
+        )}
+      </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+          What would raise it
+        </div>
+        <div className="text-[11px] text-text-primary">{raiseIt}</div>
+      </div>
+      {trail && trail.length >= 2 ? (
+        <div className="flex items-center gap-2">
+          <div className="flex items-end gap-0.5 h-6">
+            {trail.map((v, i) => (
+              <div
+                key={i}
+                style={{
+                  width: 4,
+                  height: `${Math.max(6, v * 0.24)}px`,
+                  backgroundColor: confColor(v),
+                  borderRadius: 1,
+                }}
+              />
+            ))}
+          </div>
+          <span className="text-[10px] tabular-nums text-text-secondary">
+            {trail.map((v, i) => (
+              <React.Fragment key={i}>
+                {i > 0 ? ' → ' : ''}
+                <span style={i === trail.length - 1 ? { color: confColor(v) } : undefined}>{v}</span>
+              </React.Fragment>
+            ))}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// Full-width breakdown section that drops in under the header when the badge is expanded. Informational (no
+// loud colored strip), sharp corners, no left rail.
+const ConfidencePanel: React.FC<{
+  conf: ConfidenceBreakdown;
+  trail?: number[];
+  hasPendingQuestions: boolean;
+}> = (p) => (
+  <div className="border-b border-border-primary bg-background-secondary px-3 py-3">
+    <ConfidenceBreakdownBody {...p} />
+  </div>
+);
+
+// Compact header pill — the live meter (advances as the swarm retargets). Click to expand the breakdown; a
+// +Δ chip appears when the meter has climbed over the run.
+const ConfidenceBadge: React.FC<{
+  value: number;
+  trail?: number[];
+  expanded?: boolean;
+  onToggle?: () => void;
+  hasBreakdown?: boolean;
+}> = ({ value, trail, expanded, onToggle, hasBreakdown }) => {
+  const color = confColor(value);
+  const label = value >= 70 ? 'confident' : value >= 40 ? 'unsure' : 'guessing';
+  const climb = trail && trail.length >= 2 ? trail[trail.length - 1] - trail[0] : 0;
+  const pill = (
+    <span
+      className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
+      style={{ backgroundColor: color, borderRadius: 2 }}
+    >
+      <Gauge className="h-2.5 w-2.5" />
+      conf {value}
+      {hasBreakdown ? (
+        expanded ? (
+          <ChevronDown className="h-2.5 w-2.5" />
+        ) : (
+          <ChevronRight className="h-2.5 w-2.5" />
+        )
+      ) : null}
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-1 shrink-0">
+      <Tip
+        label={`Planner confidence in how it broke this app down — ${value}/100 (${label}).${hasBreakdown ? ' Click for the breakdown.' : ''} Below the ask floor, goose pauses to ask you before building.`}
       >
-        <Gauge className="h-2.5 w-2.5" />
-        conf {value}
-      </span>
-    </Tip>
+        {hasBreakdown ? (
+          <button type="button" onClick={onToggle} className="flex">
+            {pill}
+          </button>
+        ) : (
+          pill
+        )}
+      </Tip>
+      {climb > 0 ? (
+        <Tip label={`Confidence climbed ${trail![0]} → ${trail![trail!.length - 1]} as goose retargeted it.`}>
+          <span
+            className="text-[10px] tabular-nums flex items-center gap-0.5 shrink-0"
+            style={{ color: STATUS_COLOR.done }}
+          >
+            <TrendingUp className="h-2.5 w-2.5" /> +{climb}
+          </span>
+        </Tip>
+      ) : null}
+    </span>
   );
 };
 
@@ -532,8 +690,9 @@ const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean
 const ClarifyPrompt: React.FC<{
   clarify: {
     pending: boolean;
-    questions: Array<{ question: string; options: string[] }>;
+    questions: Array<{ question: string; options: string[]; rationale?: string; resolves?: string }>;
     planConfidence?: number;
+    confidence?: ConfidenceBreakdown | null;
     answerPath: string;
   };
   plan: PlanTask[];
@@ -588,6 +747,12 @@ const ClarifyPrompt: React.FC<{
           your own, or just tell it what to change — it re-plans with your input.
         </p>
 
+        {clarify.confidence ? (
+          <div className="border border-border-primary px-2 py-2" style={{ borderRadius: 3 }}>
+            <ConfidenceBreakdownBody conf={clarify.confidence} hasPendingQuestions />
+          </div>
+        ) : null}
+
         {plan.length > 0 ? (
           <div className="border border-border-primary" style={{ borderRadius: 2 }}>
             <button
@@ -620,6 +785,14 @@ const ClarifyPrompt: React.FC<{
             <div className="text-xs text-text-primary font-medium">
               {i + 1}. {q.question}
             </div>
+            {q.resolves ? (
+              <div className="text-[11px] text-text-secondary flex items-start gap-1.5">
+                <Info className="h-3 w-3 mt-0.5 shrink-0" style={{ color: BLUE }} />
+                <span>
+                  resolves: <span className="text-text-primary">{q.resolves}</span>
+                </span>
+              </div>
+            ) : null}
             {q.options.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {q.options.map((opt) => {
@@ -777,6 +950,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 }) => {
   const run = useSwarmRun(workingDir);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [confOpen, setConfOpen] = useState(false);
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';
@@ -835,7 +1009,13 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         <span className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-semibold shrink-0">Swarm LeanZero</span>
           {typeof run.planConfidence === 'number' ? (
-            <ConfidenceBadge value={run.planConfidence} />
+            <ConfidenceBadge
+              value={run.planConfidence}
+              trail={run.confidenceTrail}
+              expanded={confOpen}
+              onToggle={() => setConfOpen((o) => !o)}
+              hasBreakdown={!!run.confidence}
+            />
           ) : null}
           {clarifyPending ? (
             // Paused waiting on the human — NOT active work, so no spinner and a distinct amber "paused" chip
@@ -910,6 +1090,14 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           </button>
         </span>
       </div>
+
+      {confOpen && run.confidence ? (
+        <ConfidencePanel
+          conf={run.confidence}
+          trail={run.confidenceTrail}
+          hasPendingQuestions={!!run.clarify?.pending}
+        />
+      ) : null}
 
       {ended && outcome ? (
         <TerminalBanner

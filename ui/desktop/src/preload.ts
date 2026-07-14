@@ -130,8 +130,16 @@ type ElectronAPI = {
     activity: Record<string, unknown>;
     clarify: {
       pending: boolean;
-      questions: Array<{ question: string; options: string[] }>;
+      questions: Array<{ question: string; options: string[]; resolves?: string }>;
       planConfidence?: number;
+      confidence?: {
+        final: number;
+        agreement: number;
+        agreementReason: string;
+        specClarity: number;
+        productSpecified: boolean;
+        openDecisions: string[];
+      } | null;
       answerPath: string;
     } | null;
   } | null>;
