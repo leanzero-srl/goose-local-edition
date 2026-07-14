@@ -1877,6 +1877,48 @@ mod tests {
     }
 
     #[test]
+    fn breakdown_json_absent_on_cloud_path() {
+        // No sub-signal computed (solo/cloud path) -> no key -> plan_loaded stays byte-identical.
+        assert!(breakdown_json(&PlanConf::default()).is_none());
+        let pc = PlanConf {
+            final_conf: Some(43),
+            agreement: Some(53),
+            agreement_reason: "3 drafts agree: count spread 1, file-overlap 24%".into(),
+            spec_clarity: Some(43),
+            product_specified: true,
+            open_decisions: vec!["which storage backend".into()],
+        };
+        let b = breakdown_json(&pc).expect("breakdown present when a signal exists");
+        assert_eq!(b["final"], 43);
+        assert_eq!(b["agreement"], 53);
+        assert_eq!(b["spec_clarity"], 43);
+        assert_eq!(b["product_specified"], true);
+        assert_eq!(b["open_decisions"][0], "which storage backend");
+    }
+
+    #[test]
+    fn clarify_question_resolves_optional_and_omitted_when_empty() {
+        // Old JSON without `resolves` still deserializes (default empty).
+        let q: ClarifyQuestion =
+            serde_json::from_str(r#"{"question":"Which DB?","options":["SQLite"]}"#).unwrap();
+        assert_eq!(q.resolves, "");
+        // Empty resolves is omitted on serialize (byte-identical wire for old consumers).
+        let s = serde_json::to_string(&q).unwrap();
+        assert!(
+            !s.contains("resolves"),
+            "empty resolves must be omitted: {s}"
+        );
+        // Non-empty resolves round-trips.
+        let q2 = ClarifyQuestion {
+            question: "Which DB?".into(),
+            options: vec![],
+            resolves: "storage backend".into(),
+        };
+        let s2 = serde_json::to_string(&q2).unwrap();
+        assert!(s2.contains("\"resolves\":\"storage backend\""));
+    }
+
+    #[test]
     fn parse_judge_reply_handles_qwen_formats() {
         // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
         for ok in [
@@ -3301,6 +3343,35 @@ fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
 /// Verbalized self-confidence is overconfident, but agreement across independent drafts is a calibrated
 /// signal — when the drafts diverge, the model doesn't really know how to decompose this (a cue to
 /// research more before committing). Pure-Rust, 0–100, plus a one-line reason.
+/// The full plan-confidence breakdown behind the single `final_conf` scalar, exposed (via an additive
+/// `plan_confidence_breakdown` event key) so the UI can show WHICH signal is low and what would raise it.
+/// `agreement`/`spec_clarity` are `None` where that signal wasn't computed (solo plan / cloud path).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PlanConf {
+    final_conf: Option<u8>,
+    agreement: Option<u8>,
+    agreement_reason: String,
+    spec_clarity: Option<u8>,
+    product_specified: bool,
+    open_decisions: Vec<String>,
+}
+
+/// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
+/// path emits no new key and stays byte-identical.
+fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
+    if pc.agreement.is_none() && pc.spec_clarity.is_none() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "final": pc.final_conf,
+        "agreement": pc.agreement,
+        "agreement_reason": pc.agreement_reason,
+        "spec_clarity": pc.spec_clarity,
+        "product_specified": pc.product_specified,
+        "open_decisions": pc.open_decisions,
+    }))
+}
+
 /// Canonical ROLE for a source file, used by role-normalized cross-draft agreement: basename, lowercased,
 /// extension stripped, with the UNAMBIGUOUS entry-point synonyms folded to one role. Deliberately
 /// conservative — it does NOT merge distinct compilation stages (lexer/parser/ast stay separate), so it
@@ -4186,9 +4257,13 @@ impl GooseAgentDispatcher {
              2-4 concrete pickable OPTIONS in `options` — the most likely/common answer FIRST — so the user can \
              just click a choice (they can still type their own). Options must be short, concrete, and mutually \
              distinct (e.g. for a storage question: [\"SQLite file\",\"JSON file\",\"plain-text lines\"]). Use an \
-             empty options list ONLY when the question is truly open-ended. If the task is genuinely self- \
-             contained and nothing would change the build, return an EMPTY questions list — do NOT invent \
-             make-work. Then call the final_output tool."
+             empty options list ONLY when the question is truly open-ended. FOR EACH QUESTION also set \
+             `resolves` to the ONE specific open decision it settles (quote it from the uncertainties above) so \
+             the user sees exactly why you're asking. Write like a senior engineer deciding with a teammate: \
+             one clear decision per question, mutually-exclusive options with the SAFEST/most-common default \
+             FIRST, and NEVER ask something a competent developer would just pick by default. If the task is \
+             genuinely self-contained and nothing would change the build, return an EMPTY questions list — do \
+             NOT invent make-work. Then call the final_output tool."
         );
         let user = format!(
             "Task: {user_prompt}\n\nThe model's stated uncertainties: {unc}\n\nThe drafted plan (excerpt):\n{plan_excerpt}"
@@ -4220,6 +4295,7 @@ impl GooseAgentDispatcher {
             .into_iter()
             .map(|mut q| {
                 q.question = q.question.trim().to_string();
+                q.resolves = q.resolves.trim().to_string();
                 q.options = q
                     .options
                     .into_iter()
@@ -4522,7 +4598,7 @@ impl GooseAgentDispatcher {
         best_of_n: usize,
         homogeneous: bool,
         need_confidence: bool,
-    ) -> Result<(String, Option<u8>, String)> {
+    ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
         // plan_agreement penalizes. Under converge, steer the fixed weak model toward the SIMPLEST CANONICAL
@@ -4720,13 +4796,14 @@ impl GooseAgentDispatcher {
         // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
         // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
         // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
-        let (skeleton, agreement_conf): (String, Option<u8>) = if n == 1 {
+        let (skeleton, agreement_conf, agreement_reason): (String, Option<u8>, String) = if n == 1 {
             (
                 candidates
                     .into_iter()
                     .next()
                     .ok_or_else(|| anyhow!("architect produced no skeleton"))?,
                 None,
+                String::new(),
             )
         } else {
             let mut best: Option<(i64, String)> = None;
@@ -4764,7 +4841,7 @@ impl GooseAgentDispatcher {
                         "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
                         style("✓").green().bold()
                     );
-                    (json, Some(conf))
+                    (json, Some(conf), reason)
                 }
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
             }
@@ -4780,25 +4857,29 @@ impl GooseAgentDispatcher {
         // vague-but-convergent spec now asks. Only on the best-of-N + ask-floor path (`need_confidence`); the
         // default/cloud path skips it entirely (plan_conf = agreement_conf), so plan CONTENT is byte-identical.
         // The enumerated decisions are RETURNED as `uncertainties` and seed the clarify questions.
-        let (plan_conf, uncertainties): (Option<u8>, String) = if n > 1 && need_confidence {
+        let (plan_conf, uncertainties): (PlanConf, String) = if n > 1 && need_confidence {
             let clarity = self
                 .spec_clarity_confidence(planner_model, user_prompt, &skeleton)
                 .await;
             let final_conf = match (agreement_conf, clarity.as_ref()) {
                 // Proceed only when BOTH signals are confident — the lower one governs.
-                (Some(a), Some((c, _))) => Some(a.min(*c)),
+                (Some(a), Some((c, _, _))) => Some(a.min(*c)),
                 (Some(a), None) => Some(a),
-                (None, Some((c, _))) => Some(*c),
+                (None, Some((c, _, _))) => Some(*c),
                 (None, None) => Some(60),
             };
-            let unc = clarity.as_ref().map(|(_, u)| u.clone()).unwrap_or_default();
-            if let Some((c, u)) = &clarity {
+            let (spec_clarity, open_decisions, product_specified) = match &clarity {
+                Some((c, d, p)) => (Some(*c), d.clone(), *p),
+                None => (None, Vec::new(), true), // probe failed/timed out → no spec-clarity veto
+            };
+            let unc = open_decisions.join("; ");
+            if let Some((c, _, _)) = &clarity {
                 eprintln!(
                     "  spec-clarity confidence {c}/100{}",
-                    if u.is_empty() {
+                    if unc.is_empty() {
                         " (no material open decisions)".to_string()
                     } else {
-                        format!(" — open decisions: {u}")
+                        format!(" — open decisions: {unc}")
                     }
                 );
             }
@@ -4808,9 +4889,25 @@ impl GooseAgentDispatcher {
                     style("◆").cyan()
                 );
             }
-            (final_conf, unc)
+            let pc = PlanConf {
+                final_conf,
+                agreement: agreement_conf,
+                agreement_reason,
+                spec_clarity,
+                product_specified,
+                open_decisions,
+            };
+            (pc, unc)
         } else {
-            (agreement_conf, String::new())
+            let pc = PlanConf {
+                final_conf: agreement_conf,
+                agreement: agreement_conf,
+                agreement_reason,
+                spec_clarity: None,
+                product_specified: true,
+                open_decisions: Vec::new(),
+            };
+            (pc, String::new())
         };
         let mut v: serde_json::Value = serde_json::from_str(&skeleton)?;
         // Deterministically ensure a final integrate-verify sink: the weak architect sometimes OMITS it
@@ -5015,14 +5112,14 @@ impl GooseAgentDispatcher {
         Ok((v.to_string(), plan_conf, uncertainties))
     }
 
-    pub async fn plan(
+    pub(crate) async fn plan(
         &self,
         planner_model: &str,
         user_prompt: &str,
         plan_schema: serde_json::Value,
         worker_count: usize,
         research_findings: &str,
-    ) -> Result<(String, Option<u8>, String)> {
+    ) -> Result<(String, PlanConf, String)> {
         let existing_files = existing_files_manifest(&self.working_dir);
         let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
@@ -5075,7 +5172,7 @@ impl GooseAgentDispatcher {
             .final_output
             .ok_or_else(|| anyhow!("planner did not produce a final_output plan"))?;
         // Solo planner has no cross-draft confidence; the ask gate forces the best-of-N path instead.
-        Ok((plan, None, String::new()))
+        Ok((plan, PlanConf::default(), String::new()))
     }
 }
 
@@ -6921,12 +7018,14 @@ impl GooseAgentDispatcher {
     /// down. The returned string is the decision list, reused to SEED the clarify questions. Combined with
     /// structural cross-draft agreement via MIN at the call site, so a run proceeds only when BOTH the spec is
     /// clear AND the drafts converged — a vague-but-convergent spec (high agreement, low clarity) now asks.
+    /// Returns `(confidence, decisions, product_specified)`: the decisions Vec + the product flag are exposed
+    /// (for the confidence breakdown); the caller rebuilds the joined `uncertainties` string byte-identically.
     async fn spec_clarity_confidence(
         &self,
         model: &str,
         goal: &str,
         plan_json: &str,
-    ) -> Option<(u8, String)> {
+    ) -> Option<(u8, Vec<String>, bool)> {
         let system = "You judge whether a coding request pins down WHAT to build, or leaves it to guesswork. \
             First: `product_specified` — TRUE only if the request names a specific tool with a specific \
             purpose (e.g. \"a CLI markdown-to-HTML renderer\"); FALSE if it leaves the core product open (e.g. \
@@ -6987,17 +7086,17 @@ impl GooseAgentDispatcher {
             }
         };
         // When the product itself is open, make that the leading uncertainty so the clarify questions ask it.
-        let unc = if !parsed.product_specified {
+        let decisions_out = if !parsed.product_specified {
             let mut d = vec![
                 "what the tool should actually be (the request leaves the product open)"
                     .to_string(),
             ];
             d.extend(decisions);
-            d.join("; ")
+            d
         } else {
-            decisions.join("; ")
+            decisions
         };
-        Some((conf, unc))
+        Some((conf, decisions_out, parsed.product_specified))
     }
 }
 
@@ -9209,6 +9308,10 @@ struct ClarifyQuestion {
     question: String,
     #[serde(default)]
     options: Vec<String>,
+    /// Which open decision / uncertainty this question settles — surfaced in the panel as the question's
+    /// rationale. Optional (empty omitted from the wire) so old consumers are unaffected.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    resolves: String,
 }
 
 fn clarify_schema() -> serde_json::Value {
@@ -9226,7 +9329,9 @@ fn clarify_schema() -> serde_json::Value {
                     "properties": {
                         "question": {"type": "string"},
                         // 2-4 concrete pickable answers (a common default first), or [] if truly open.
-                        "options": {"type": "array", "items": {"type": "string"}}
+                        "options": {"type": "array", "items": {"type": "string"}},
+                        // the ONE open decision this question settles (verbatim from the uncertainties), for the panel rationale.
+                        "resolves": {"type": "string"}
                     }
                 }
             }
@@ -9328,6 +9433,7 @@ async fn ask_clarifying_questions(
     questions: &[ClarifyQuestion],
     cwd: &Path,
     plan_conf: u8,
+    breakdown: Option<serde_json::Value>,
     wait_secs: u64,
     sink: &dyn EventSink,
 ) -> String {
@@ -9340,26 +9446,33 @@ async fn ask_clarifying_questions(
     let qpath = dir.join("clarify-questions.json");
     let apath = dir.join("clarify-answers.json");
     let _ = std::fs::remove_file(&apath); // never read a stale answer from a previous gate
+    let mut file_obj = serde_json::json!({
+        "plan_confidence": plan_conf,
+        "questions": questions,
+        "answer_file": ".swarm/clarify-answers.json",
+        "how_to_answer": "Write {\"answers\":[...one string per question, same order; pick an option or your own words...], \"guidance\":\"...free-form: anything else to change about the plan...\"} to answer_file (a bare JSON array of answers also works). The swarm is BLOCKED on it and will re-plan with your answers + guidance.",
+    });
+    if let Some(b) = &breakdown {
+        file_obj["plan_confidence_breakdown"] = b.clone();
+    }
     if let Err(e) = std::fs::write(
         &qpath,
-        serde_json::to_string_pretty(&serde_json::json!({
-            "plan_confidence": plan_conf,
-            "questions": questions,
-            "answer_file": ".swarm/clarify-answers.json",
-            "how_to_answer": "Write {\"answers\":[...one string per question, same order; pick an option or your own words...], \"guidance\":\"...free-form: anything else to change about the plan...\"} to answer_file (a bare JSON array of answers also works). The swarm is BLOCKED on it and will re-plan with your answers + guidance.",
-        }))
-        .unwrap_or_default(),
+        serde_json::to_string_pretty(&file_obj).unwrap_or_default(),
     ) {
         eprintln!(
             "  warning: could not write clarify questions to {} ({e}) — the harness has nothing to answer",
             qpath.display()
         );
     }
-    sink.write_value(serde_json::json!({
+    let mut ask_evt = serde_json::json!({
         "event": "low_confidence_ask",
         "plan_confidence": plan_conf,
         "questions": questions,
-    }));
+    });
+    if let Some(b) = &breakdown {
+        ask_evt["plan_confidence_breakdown"] = b.clone();
+    }
+    sink.write_value(ask_evt);
 
     let mut answers: Vec<String> = Vec::new();
     let mut guidance = String::new();
@@ -10054,7 +10167,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
         eprintln!("  plan: {} subtask(s)", dag.tasks.len());
         // CONFIDENCE GATE: ask the user once when the meter is below the floor, then re-plan with the answers.
-        if let (Some(floor), Some(conf)) = (ask_floor, plan_conf) {
+        if let (Some(floor), Some(conf)) = (ask_floor, plan_conf.final_conf) {
             if conf < floor && !asked {
                 asked = true;
                 // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
@@ -10080,6 +10193,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         .map(|s| ClarifyQuestion {
                             question: s,
                             options: Vec::new(),
+                            resolves: String::new(),
                         })
                         .collect();
                 }
@@ -10090,6 +10204,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             opts.prompt
                         ),
                         options: Vec::new(),
+                        resolves: String::new(),
                     });
                 }
                 // Always engage the handshake when below floor (the harness IS the human).
@@ -10097,6 +10212,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     &questions,
                     &cwd_for_ask,
                     conf,
+                    breakdown_json(&plan_conf),
                     ask_wait_secs,
                     sink.as_ref(),
                 )
@@ -10231,12 +10347,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
 
-    sink.write_value(serde_json::json!({
+    let mut plan_evt = serde_json::json!({
         "event": "plan_loaded",
         "task_count": dag.tasks.len(),
         // Cross-draft-agreement plan confidence (0-100) — surfaced so the run panel can show HOW SURE the
-        // planner was about this decomposition, not just what it produced. null when not computed.
-        "plan_confidence": plan_conf,
+        // planner was about this decomposition, not just what it produced. null when not computed. The
+        // additive `plan_confidence_breakdown` (below, only when a sub-signal was computed) carries the
+        // agreement/spec-clarity split + drivers so the panel can show WHY it's low and what would raise it.
+        "plan_confidence": plan_conf.final_conf,
         "tasks": dag.tasks.values().map(|n| serde_json::json!({
             "id": n.spec.id,
             // The architect's one-line human description of what this subtask builds — surfaced in the run
@@ -10248,7 +10366,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "model": n.spec.preferred_model,
         })).collect::<Vec<_>>(),
         "raw_plan_json": plan_json,
-    }));
+    });
+    if let Some(b) = breakdown_json(&plan_conf) {
+        plan_evt["plan_confidence_breakdown"] = b;
+    }
+    sink.write_value(plan_evt);
 
     phase_banner(
         "EXECUTE",
