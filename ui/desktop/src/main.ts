@@ -2291,22 +2291,36 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     // Clarify handshake: when planner confidence is below the ask floor the swarm writes
     // clarify-questions.json and BLOCKS on clarify-answers.json. Surface it so the run panel can prompt the
     // user; `pending` = questions exist AND no answers written yet. answerPath is where the panel writes back.
+    type ConfBreakdown = {
+      final: number;
+      agreement: number;
+      agreementReason: string;
+      specClarity: number;
+      productSpecified: boolean;
+      openDecisions: string[];
+    };
     let clarify: {
       pending: boolean;
-      questions: Array<{ question: string; options: string[] }>;
+      questions: Array<{ question: string; options: string[]; resolves?: string }>;
       planConfidence?: number;
+      confidence?: ConfBreakdown | null;
       answerPath: string;
     } | null = null;
     try {
       const qraw = await fs.readFile(path.join(swarmDir, 'clarify-questions.json'), 'utf8');
-      const q = JSON.parse(qraw) as { questions?: unknown; plan_confidence?: unknown };
+      const q = JSON.parse(qraw) as {
+        questions?: unknown;
+        plan_confidence?: unknown;
+        plan_confidence_breakdown?: unknown;
+      };
       const questions = (Array.isArray(q.questions) ? q.questions : [])
         .map((it) => {
           if (typeof it === 'string') return { question: it, options: [] as string[] };
-          const o = it as { question?: unknown; options?: unknown };
+          const o = it as { question?: unknown; options?: unknown; resolves?: unknown };
           return {
             question: String(o.question ?? ''),
             options: Array.isArray(o.options) ? o.options.map(String) : [],
+            resolves: typeof o.resolves === 'string' && o.resolves.length ? o.resolves : undefined,
           };
         })
         .filter((x) => x.question.length > 0);
@@ -2315,10 +2329,35 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
           .stat(path.join(swarmDir, 'clarify-answers.json'))
           .then(() => true)
           .catch(() => false);
+        // Parse the additive confidence breakdown (null on runs that predate it).
+        let confidence: ConfBreakdown | null = null;
+        const bd = q.plan_confidence_breakdown;
+        if (bd && typeof bd === 'object') {
+          const b = bd as Record<string, unknown>;
+          const agreement = typeof b.agreement === 'number' ? b.agreement : null;
+          const specClarity = typeof b.spec_clarity === 'number' ? b.spec_clarity : null;
+          const final =
+            typeof b.final === 'number'
+              ? b.final
+              : agreement != null && specClarity != null
+                ? Math.min(agreement, specClarity)
+                : null;
+          if (final != null) {
+            confidence = {
+              final,
+              agreement: agreement ?? final,
+              agreementReason: typeof b.agreement_reason === 'string' ? b.agreement_reason : '',
+              specClarity: specClarity ?? final,
+              productSpecified: b.product_specified === true,
+              openDecisions: Array.isArray(b.open_decisions) ? b.open_decisions.map(String) : [],
+            };
+          }
+        }
         clarify = {
           pending: !answered,
           questions,
           planConfidence: typeof q.plan_confidence === 'number' ? q.plan_confidence : undefined,
+          confidence,
           answerPath: path.join(swarmDir, 'clarify-answers.json'),
         };
       }

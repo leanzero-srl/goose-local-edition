@@ -56,6 +56,7 @@ export type ActivityKind =
   | 'done'
   | 'fail'
   | 'retry'
+  | 'retarget'
   | 'review'
   | 'judge'
   | 'prereview'
@@ -109,6 +110,18 @@ export interface RunSummary {
   perDevice: DeviceStat[];
 }
 
+/** The full plan-confidence breakdown behind the single number, so the panel can show WHICH signal is low
+ *  (agreement = do the drafts agree on structure; spec-clarity = is the product pinned down) and what would
+ *  raise it. Parsed from the additive `plan_confidence_breakdown` event key; null on runs that predate it. */
+export interface ConfidenceBreakdown {
+  final: number;
+  agreement: number;
+  agreementReason: string;
+  specClarity: number;
+  productSpecified: boolean;
+  openDecisions: string[];
+}
+
 export interface SwarmRunState {
   present: boolean;
   runId: string | null;
@@ -129,8 +142,13 @@ export interface SwarmRunState {
   /** Friendly current-phase label (Planning research / Building / Verifying / Done…). */
   phase: string;
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
-   *  null before planning finishes / when not computed. */
+   *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
+  /** The full breakdown behind planConfidence (agreement vs spec-clarity + drivers), null on older runs. */
+  confidence: ConfidenceBreakdown | null;
+  /** Distinct successive confidence values across the run (initial → each retarget → final) for the climb
+   *  trail / sparkline. */
+  confidenceTrail: number[];
   /** True while a run is underway (started, not finished, and its files are still fresh). */
   inProgress: boolean;
   /** True once a clean run_finished event was seen — distinguishes a real completion from a run that just went
@@ -144,8 +162,9 @@ export interface SwarmRunState {
    *  to answer clarifying questions (via the run panel's clarify prompt, written to answerPath). */
   clarify: {
     pending: boolean;
-    questions: Array<{ question: string; options: string[] }>;
+    questions: Array<{ question: string; options: string[]; rationale?: string; resolves?: string }>;
     planConfidence?: number;
+    confidence?: ConfidenceBreakdown | null;
     answerPath: string;
   } | null;
   mtime: number | null;
@@ -168,6 +187,8 @@ const EMPTY: SwarmRunState = {
   smoke: null,
   phase: '',
   planConfidence: null,
+  confidence: null,
+  confidenceTrail: [],
   inProgress: false,
   finished: false,
   summary: null,
@@ -188,6 +209,27 @@ function nodeName(device: string): string {
 const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** Parse the additive `plan_confidence_breakdown` object (agreement/spec-clarity split + drivers). Returns
+ *  null on older runs where the key is absent — the panel then just shows the scalar. */
+function parseConfidence(v: unknown): ConfidenceBreakdown | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const agreement = num(o['agreement']);
+  const specClarity = num(o['spec_clarity']);
+  const final =
+    num(o['final']) ??
+    (agreement != null && specClarity != null ? Math.min(agreement, specClarity) : null);
+  if (final == null) return null;
+  return {
+    final,
+    agreement: agreement ?? final,
+    agreementReason: str(o['agreement_reason']),
+    specClarity: specClarity ?? final,
+    productSpecified: o['product_specified'] === true,
+    openDecisions: arr(o['open_decisions']).map(String),
+  };
+}
 
 /** The build prompt is wrapped by goose's <turn-context>…</turn-context> preamble (time, cwd, todo
  *  boilerplate). Strip it so the Brief shows just the user's actual spec. */
@@ -214,6 +256,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   phase: string;
   finished: boolean;
   planConfidence: number | null;
+  confidence: ConfidenceBreakdown | null;
+  confidenceTrail: number[];
   summary: RunSummary | null;
   startedAt: number | null;
 } {
@@ -226,11 +270,19 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let meta: RunMeta | null = null;
   let plan: PlanTask[] = [];
   let planConfidence: number | null = null;
+  let confidence: ConfidenceBreakdown | null = null;
+  const confTrail: number[] = [];
   let smoke: SmokeResult | null = null;
   let summary: RunSummary | null = null;
   let startedAt: number | null = null;
   const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
   const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
+  // Push each distinct confidence value onto the trail (initial → retargets → final) and set the live
+  // header value; last-write-wins on each poll makes the pill advance without ref plumbing.
+  const setConf = (v: number) => {
+    if (confTrail[confTrail.length - 1] !== v) confTrail.push(v);
+    planConfidence = v;
+  };
 
   for (const e of events) {
     const type = String(e['event'] ?? '');
@@ -294,8 +346,10 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       case 'low_confidence_ask': {
         // Surface the confidence AS SOON AS the swarm asks (before plan_loaded), so the badge is visible at
         // the exact moment it pauses for the user — not only after the re-plan.
+        const b = parseConfidence(e['plan_confidence_breakdown']);
+        if (b) confidence = b;
         const pc = num(e['plan_confidence']);
-        if (typeof pc === 'number') planConfidence = pc;
+        if (typeof pc === 'number') setConf(pc);
         const nq = arr(e['questions']).length;
         compact({
           kind: 'plan',
@@ -314,9 +368,67 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'plan', text: 'Answers received — re-planning with your input', tone: 'good' });
         break;
       }
+      case 'confidence_retarget': {
+        // The swarm is dynamically raising the meter (re-drafting to a consensus / researching the open
+        // decisions). conf_after may be null (the new value lands on the next plan step) — either way we log
+        // the action; the header pill climbs via setConf on this or the subsequent plan event.
+        const before = num(e['conf_before']);
+        const after = num(e['conf_after']);
+        const signal = str(e['binding_signal']);
+        const action = str(e['action']);
+        const round = num(e['round']);
+        const detail = str(e['detail']);
+        if (typeof after === 'number') {
+          setConf(after);
+          if (confidence) {
+            const next: ConfidenceBreakdown = { ...confidence };
+            if (signal === 'agreement') next.agreement = after;
+            else if (signal === 'spec_clarity') next.specClarity = after;
+            next.final = Math.min(next.agreement, next.specClarity);
+            confidence = next;
+          }
+        }
+        const label =
+          signal === 'spec_clarity' ? 'spec clarity' : signal === 'agreement' ? 'agreement' : 'confidence';
+        const actionLabel =
+          action === 'redraft'
+            ? 're-drafting a consensus plan'
+            : action === 're_research'
+              ? 'researching the open decisions'
+              : action === 'proceed_at_cap'
+                ? 'proceeding at the round cap'
+                : action || 'improving';
+        const climbed = before != null && after != null && after > before;
+        const sub =
+          [
+            before != null && after != null
+              ? `${label} ${before} → ${after}`
+              : before != null
+                ? `${label} at ${before}`
+                : null,
+            detail || null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined;
+        compact({
+          kind: 'retarget',
+          text: `Retargeting confidence: ${actionLabel}`,
+          tone: climbed ? 'good' : 'info',
+          sub,
+        });
+        verbose({
+          kind: 'retarget',
+          text: `Retargeting confidence: ${actionLabel}${round != null ? ` (round ${round})` : ''}`,
+          tone: climbed ? 'good' : 'info',
+          sub,
+        });
+        break;
+      }
       case 'plan_loaded': {
+        const b = parseConfidence(e['plan_confidence_breakdown']);
+        if (b) confidence = b;
         const pc = num(e['plan_confidence']);
-        if (typeof pc === 'number') planConfidence = pc;
+        if (typeof pc === 'number') setConf(pc);
         const tasks = arr(e['tasks']) as Array<Record<string, unknown>>;
         plan = tasks.map((t) => ({
           id: str(t['id']),
@@ -488,6 +600,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     smoke,
     phase,
     finished,
+    confidence,
+    confidenceTrail: confTrail,
     planConfidence,
     summary,
     startedAt,
@@ -619,8 +733,20 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           return;
         }
         const { lanes, totals } = foldEvents(data.events, data.activity);
-        const { activity, verbose, meta, plan, smoke, phase, finished, planConfidence, summary, startedAt } =
-          buildActivity(data.events);
+        const {
+          activity,
+          verbose,
+          meta,
+          plan,
+          smoke,
+          phase,
+          finished,
+          planConfidence,
+          confidence,
+          confidenceTrail,
+          summary,
+          startedAt,
+        } = buildActivity(data.events);
         lastRunId.current = data.runId;
         setState({
           present: true,
@@ -634,6 +760,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           smoke,
           phase,
           planConfidence,
+          confidence,
+          confidenceTrail,
           inProgress: !finished,
           finished,
           summary,
