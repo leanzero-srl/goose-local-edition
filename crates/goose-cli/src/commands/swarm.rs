@@ -1783,6 +1783,100 @@ mod tests {
     }
 
     #[test]
+    fn converge_role_normalizes_surface_variety() {
+        // Two drafts with the SAME roles (types, parser, cli) but different dirs/case/entry-name, plus the
+        // injected sink + a test module. Role-normalized agreement should read near-perfect; the raw metric
+        // reads them as heavily divergent (different file strings + task counts).
+        let d1 = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"types","depends_on":[],"files":["pkg/types.py"]},
+                {"id":"parser","depends_on":["types"],"files":["pkg/parser.py"]},
+                {"id":"cli","depends_on":["parser"],"files":["pkg/__main__.py"]},
+                {"id":"tests","depends_on":["parser"],"files":["tests/test_parser.py"]},
+                {"id":"integrate-verify","depends_on":["cli"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let d2 = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"shared-types","depends_on":[],"files":["src/Types.py"]},
+                {"id":"the-parser","depends_on":["shared-types"],"files":["src/Parser.py"]},
+                {"id":"entry","depends_on":["the-parser"],"files":["src/cli.py"]},
+                {"id":"integrate-verify","depends_on":["entry"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let cands = vec![d1, d2];
+        let (raw, _) = plan_agreement(&cands, false);
+        let (norm, reason) = plan_agreement(&cands, true);
+        assert!(norm > raw, "role-normalized {norm} should beat raw {raw}");
+        assert!(
+            norm >= 85,
+            "same 3 roles -> near-perfect agreement, got {norm}"
+        );
+        assert!(reason.contains("role-normalized"));
+    }
+
+    #[test]
+    fn canonical_role_folds_entry_but_keeps_distinct_stages() {
+        // Entry-point synonyms fold to one role.
+        for f in [
+            "__main__.py",
+            "app.py",
+            "src/main.py",
+            "cli.py",
+            "run.py",
+            "entry.py",
+        ] {
+            assert_eq!(canonical_role(f), "cli", "{f} should be the cli role");
+        }
+        // Distinct compilation stages must NOT merge (conservative — no over-counting).
+        assert_eq!(canonical_role("src/lexer.py"), "lexer");
+        assert_eq!(canonical_role("Parser.PY"), "parser");
+        assert_eq!(canonical_role("ast.rs"), "ast");
+        assert_ne!(canonical_role("lexer.py"), canonical_role("parser.py"));
+        // A genuinely different decomposition (split lexer+parser vs one combined parser) stays < perfect.
+        let split = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"lexer","depends_on":[],"files":["lexer.py"]},
+                {"id":"parser","depends_on":["lexer"],"files":["parser.py"]},
+                {"id":"cli","depends_on":["parser"],"files":["cli.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        let combined = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"parser","depends_on":[],"files":["parser.py"]},
+                {"id":"cli","depends_on":["parser"],"files":["cli.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        let (norm, _) = plan_agreement(&[split, combined], true);
+        assert!(
+            norm < 100,
+            "genuinely different decompositions must not read perfect: {norm}"
+        );
+    }
+
+    #[test]
+    fn plan_agreement_default_path_unchanged() {
+        let d = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["a.py"]},
+                {"id":"b","depends_on":["a"],"files":["b.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        // Two identical drafts, raw path: spread 0 (40) + jaccard 1 (45) + indep 0 (15) = 100, no marker.
+        let (c, r) = plan_agreement(&[d.clone(), d.clone()], false);
+        assert_eq!(c, 100);
+        assert!(!r.contains("role-normalized"));
+        // Single draft -> inert neutral 60 on both paths.
+        assert_eq!(plan_agreement(std::slice::from_ref(&d), false).0, 60);
+        assert_eq!(plan_agreement(std::slice::from_ref(&d), true).0, 60);
+    }
+
+    #[test]
     fn parse_judge_reply_handles_qwen_formats() {
         // Healthy: qwen echoes the field labels and reorders OK/HIGH/LOW — all must read OK (no kill).
         for ok in [
@@ -3207,12 +3301,59 @@ fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
 /// Verbalized self-confidence is overconfident, but agreement across independent drafts is a calibrated
 /// signal — when the drafts diverge, the model doesn't really know how to decompose this (a cue to
 /// research more before committing). Pure-Rust, 0–100, plus a one-line reason.
-fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
+/// Canonical ROLE for a source file, used by role-normalized cross-draft agreement: basename, lowercased,
+/// extension stripped, with the UNAMBIGUOUS entry-point synonyms folded to one role. Deliberately
+/// conservative — it does NOT merge distinct compilation stages (lexer/parser/ast stay separate), so it
+/// cannot over-count two genuinely different modules as one.
+fn canonical_role(file: &str) -> String {
+    let base = file
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(file)
+        .to_lowercase();
+    let stem = base
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(base.as_str());
+    match stem {
+        "__main__" | "main" | "app" | "entry" | "cli" | "run" => "cli".to_string(),
+        s => s.to_string(),
+    }
+}
+
+/// A deterministically-injected or uniform SCAFFOLDING task (the integrate-verify sink, or a test module):
+/// excluded from cross-draft agreement under `converge`, because it reflects the harness (it is injected/
+/// uniform), not the model's decomposition choices — counting it inflates measured divergence.
+fn is_scaffolding_task(t: &goose_swarm::TaskSpec) -> bool {
+    if t.id == "integrate-verify" || t.id.contains("test") {
+        return true;
+    }
+    !t.owned_files.is_empty()
+        && t.owned_files.iter().all(|f| {
+            let b = f.rsplit(['/', '\\']).next().unwrap_or(f).to_lowercase();
+            b.starts_with("test_") || b.ends_with("_test.py") || b == "conftest.py"
+        })
+}
+
+/// Cross-draft plan self-consistency (0-100 + a one-line reason). `converge` (GOOSE_SWARM_CONVERGE) switches
+/// to role-normalized measurement: drop injected scaffolding + compare files by canonical ROLE, so a weak
+/// model's superficial naming/packaging variety no longer reads as real disagreement (fixes "measured
+/// divergence that isn't real"). `converge=false` is byte-identical to the historical metric.
+fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>], converge: bool) -> (u8, String) {
     if candidates.len() < 2 {
         return (60, "single draft — no cross-check".to_string());
     }
+    // Under converge, measure on the SUBSTANTIVE decomposition only (scaffolding dropped).
+    let lists: Vec<Vec<&goose_swarm::TaskSpec>> = candidates
+        .iter()
+        .map(|c| {
+            c.iter()
+                .filter(|t| !converge || !is_scaffolding_task(t))
+                .collect()
+        })
+        .collect();
     // Subtask-count agreement (tight spread = high).
-    let counts: Vec<usize> = candidates.iter().map(Vec::len).collect();
+    let counts: Vec<usize> = lists.iter().map(Vec::len).collect();
     let spread = counts.iter().max().unwrap() - counts.iter().min().unwrap();
     let count_score: u32 = match spread {
         0 => 40,
@@ -3220,12 +3361,19 @@ fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
         2..=3 => 14,
         _ => 0,
     };
-    // Owned-file-set agreement: mean pairwise Jaccard across candidates.
-    let file_sets: Vec<std::collections::BTreeSet<&str>> = candidates
+    // Owned-file-set agreement: mean pairwise Jaccard across candidates, by canonical ROLE under converge.
+    let file_sets: Vec<std::collections::BTreeSet<String>> = lists
         .iter()
         .map(|c| {
             c.iter()
-                .flat_map(|t| t.owned_files.iter().map(String::as_str))
+                .flat_map(|t| t.owned_files.iter())
+                .map(|f| {
+                    if converge {
+                        canonical_role(f)
+                    } else {
+                        f.clone()
+                    }
+                })
                 .collect()
         })
         .collect();
@@ -3242,7 +3390,7 @@ fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
     let jacc = if jn > 0 { jsum / f64::from(jn) } else { 0.0 };
     let file_score = (jacc * 45.0) as u32;
     // Independent-task-count agreement (the parallel shape the planner settled on).
-    let indeps: Vec<usize> = candidates
+    let indeps: Vec<usize> = lists
         .iter()
         .map(|c| c.iter().filter(|t| t.deps.is_empty()).count())
         .collect();
@@ -3252,9 +3400,10 @@ fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
     (
         conf,
         format!(
-            "{} drafts agree: count spread {spread}, file-overlap {:.0}%",
+            "{} drafts agree: count spread {spread}, file-overlap {:.0}%{}",
             candidates.len(),
-            jacc * 100.0
+            jacc * 100.0,
+            if converge { " (role-normalized)" } else { "" }
         ),
     )
 }
@@ -4585,7 +4734,8 @@ impl GooseAgentDispatcher {
                     // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where
                     // verbalized confidence is overconfident). Low agreement = the model doesn't really know
                     // how to decompose this — a signal to research more before committing (M6 step 3).
-                    let (conf, reason) = plan_agreement(&valid_specs);
+                    let (conf, reason) =
+                        plan_agreement(&valid_specs, swarm_gate("GOOSE_SWARM_CONVERGE", false));
                     eprintln!(
                         "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
                         style("✓").green().bold()
