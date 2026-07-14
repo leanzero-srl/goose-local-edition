@@ -4523,12 +4523,36 @@ impl GooseAgentDispatcher {
         homogeneous: bool,
         need_confidence: bool,
     ) -> Result<(String, Option<u8>, String)> {
-        let homo_hint = if homogeneous {
+        // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
+        // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
+        // plan_agreement penalizes. Under converge, steer the fixed weak model toward the SIMPLEST CANONICAL
+        // decomposition so independently-drafted plans converge (higher real + measured agreement). Default
+        // path unchanged.
+        let converge = swarm_gate("GOOSE_SWARM_CONVERGE", false);
+        let homo_hint = if converge {
+            "ALL worker nodes run the SAME model, so files produced independently mesh consistently. Commit to \
+             the SIMPLEST CANONICAL decomposition: the FEWEST cohesive modules that fully cover the spec, using \
+             CONVENTIONAL module names and the STANDARD shape another engineer would pick — so independently \
+             drafted plans CONVERGE on the same structure. Do NOT over-split; do NOT invent extra modules. "
+        } else if homogeneous {
             "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
              independently on different nodes mesh consistently (same naming priors, same conventions). \
              Split AGGRESSIVELY into many fine independent subtasks — do NOT fear interface divergence. "
         } else {
             ""
+        };
+        // Convergent count anchor: a SINGLE target (not a 2x-3x range) so drafts cluster on the same module
+        // count. Scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
+        let count_clause = if converge {
+            format!(
+                "aim for about {worker_count} COHESIVE module subtasks (roughly one per worker unit; add more \
+                 ONLY if the spec genuinely needs them), choosing the CONVENTIONAL module boundaries so \
+                 independent drafts agree"
+            )
+        } else {
+            format!(
+                "aim for about 2x to 3x {worker_count} total (e.g. ~6-9 for a 3-device fleet), NOT one per command/function"
+            )
         };
         let research_block = if research_findings.is_empty() {
             String::new()
@@ -4579,7 +4603,7 @@ impl GooseAgentDispatcher {
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
             There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
-            aim for about 2x to 3x {worker_count} total (e.g. ~6-9 for a 3-device fleet), NOT one per command/function. GROUP \
+            {count_clause}. GROUP \
             several related commands or functions into ONE module subtask, {tests_directive} These models \
             are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
             parallelism past the fleet width — a handful of well-scoped subtasks finishes far sooner than 18 micro-ones. Still keep \
