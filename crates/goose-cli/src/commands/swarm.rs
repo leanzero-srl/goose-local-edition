@@ -4621,9 +4621,11 @@ impl GooseAgentDispatcher {
         // count. Scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
         let count_clause = if converge {
             format!(
-                "aim for about {worker_count} COHESIVE module subtasks (roughly one per worker unit; add more \
-                 ONLY if the spec genuinely needs them), choosing the CONVENTIONAL module boundaries so \
-                 independent drafts agree"
+                "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
+                 distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
+                 business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
+                 subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
+                 independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
             )
         } else {
             format!(
