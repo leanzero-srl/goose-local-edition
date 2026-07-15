@@ -75,8 +75,12 @@ export const DEFAULTS: SwarmConfig = {
   allow_model_load: false,
   scout_budget_secs: 120,
   converge: true, // default_converge (swarm.rs) — the proven agreement raiser, ON by default
-  retarget: false,
-  backbone: false,
+  // Mihai: "don't let goose start implementing something below 80 — research until confidence is > 80."
+  // Floor 80 + retarget ON so a sub-80 plan RE-DRAFTS toward consensus (and asks) to raise the meter before
+  // EXECUTE, instead of building a low-confidence plan. Backbone on too — the structural convergence lever.
+  ask_floor: 80,
+  retarget: true,
+  backbone: true,
 };
 
 // The keys a preset controls — PORTABLE tuning only. Fleet identity (endpoint, planner_model,
