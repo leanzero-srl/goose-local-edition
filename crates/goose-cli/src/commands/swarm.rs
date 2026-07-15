@@ -6332,6 +6332,98 @@ fn existing_files_block(existing: &[String]) -> String {
     }
 }
 
+/// Output schema for the end-of-run OVERVIEW summary agent. NOTE it has NO verification field — the agent is
+/// structurally incapable of authoring a "works/tested/verified" claim; that section is engine-sourced.
+fn run_overview_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["features", "engage", "next"],
+        "properties": {
+            "features": {"type": "array", "items": {"type": "string"}},
+            "engage": {"type": "string"},
+            "next": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+#[derive(serde::Deserialize, Default)]
+struct Overview {
+    #[serde(default)]
+    features: Vec<String>,
+    #[serde(default)]
+    engage: String,
+    #[serde(default)]
+    next: Vec<String>,
+}
+
+/// Deterministic backstop for the summary agent: a value/next line that asserts the program WORKS / is tested
+/// / verified is an over-claim (verification is the engine's separate, honest job) — drop it. Word-level match
+/// so "network" never trips "work". This is defense-in-depth on top of the prompt + the hedged UI.
+fn is_overclaim(line: &str) -> bool {
+    const BAD: &[&str] = &[
+        "works", "working", "worked", "verified", "verify", "tested", "testing", "passes", "passing",
+        "confirmed", "proven", "correct", "correctly", "reliable", "robust", "flawless", "guaranteed",
+        "bugfree", "validated", "production", "seamless", "seamlessly",
+    ];
+    let low = line.to_lowercase();
+    low.split(|c: char| !c.is_alphanumeric())
+        .any(|w| BAD.contains(&w))
+}
+fn scrub_overclaim(lines: &mut Vec<String>) {
+    lines.retain(|l| !is_overclaim(l));
+}
+
+/// The EXACT command a user runs the built app with — stamped in Rust from the on-disk entry (never authored
+/// by the summary model, so it can't drift into an invented entry point). The `--help` form is what the verify
+/// oracle actually exercises. None for languages/layouts with no clean standalone entry.
+fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option<String> {
+    match lang {
+        TargetLang::Python => entry_package_from_paths(rel).map(|pkg| {
+            if rel.iter().any(|p| p.starts_with("src/")) {
+                format!("PYTHONPATH=src python3 -m {pkg} --help")
+            } else {
+                format!("python3 -m {pkg} --help")
+            }
+        }),
+        TargetLang::Rust => root
+            .join("Cargo.toml")
+            .exists()
+            .then(|| "cargo run -- --help".to_string()),
+        TargetLang::TypeScript => rel
+            .iter()
+            .find(|p| p.ends_with("cli.js") || p.ends_with("index.js") || p.ends_with("main.js"))
+            .map(|entry| format!("node {entry} --help")),
+        _ => None,
+    }
+}
+
+/// Read excerpts of the produced SOURCE files (not tests) so the summary agent describes only code that
+/// actually exists — grounding it in Rust rather than trusting it to read the tree.
+fn overview_source_excerpts(root: &Path, rel: &[String]) -> String {
+    let mut out = String::new();
+    let mut budget = 12000usize;
+    for f in rel.iter() {
+        if budget < 500 {
+            break;
+        }
+        let src = f.ends_with(".py")
+            || f.ends_with(".ts")
+            || f.ends_with(".js")
+            || f.ends_with(".rs")
+            || f.ends_with(".go");
+        if !src || f.contains("test") {
+            continue;
+        }
+        if let Ok(c) = std::fs::read_to_string(root.join(f)) {
+            let ex: String = review_file_excerpt(&c).chars().take(budget.min(2500)).collect();
+            budget = budget.saturating_sub(ex.len());
+            out.push_str(&format!("\n### {f}\n{ex}\n"));
+        }
+    }
+    out
+}
+
 /// File excerpt for the review / verify prompt. A small file is shown WHOLE; a large file shows its HEAD and
 /// its TAIL (where a CLI's argparse dispatch + command wiring lives) with the middle elided. The old flat
 /// 2000-char head-truncation hid the dispatch tail of every real entry point (logstat/ledgr/gradebook
@@ -11264,6 +11356,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Off by default => this block never runs and the exit path stays byte-identical.
     let complete_on = swarm_gate("GOOSE_SWARM_COMPLETE", true);
     let mut complete_failed = false;
+    // Hoisted for the end-of-run OVERVIEW: whether the verify oracle actually RAN the built app green (not
+    // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
+    let mut ov_verified = false;
     if complete_on {
         let rounds = complete_rounds();
         let cap_deadline = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
@@ -11536,6 +11631,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
         }
         complete_failed = !final_passed;
+        ov_verified = final_verified;
         sink.write_value(serde_json::json!({
             "event": "complete_result",
             "passed": final_passed,
@@ -12267,6 +12363,100 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if let Some(r) = report.results.get(id) {
                 let snippet: String = r.chars().take(280).collect();
                 println!("\n--- {id} ---\n{snippet}");
+            }
+        }
+    }
+
+    // ── END-OF-RUN OVERVIEW ──────────────────────────────────────────────────────────────────────────────
+    // A human-readable close-out at DONE (Mihai: other tools give "no overview"). Sections: WHAT WAS BUILT (a
+    // GROUNDED summary agent — reads real code excerpts, FORBIDDEN from any works/tested/verified claim +
+    // scrubbed), HOW TO RUN IT (the entry stamped in RUST, never the model), and WHAT'S NEXT. VERIFICATION is
+    // engine-only (the desktop re-derives it from phaseTodo). Skipped (generated:false) on a RED build so a
+    // confident summary never over-sells a broken app; and this runs AFTER run_finished, so a STOPPED run
+    // (which never emits run_finished) never reaches here and the UI never shows a triumphant overview.
+    if swarm_gate("GOOSE_SWARM_OVERVIEW", true) {
+        let ov_root = std::env::current_dir().unwrap_or_default();
+        let rel_files = existing_files_manifest(&ov_root);
+        let ov_lang = detect_language(&opts.prompt, &rel_files);
+        let lang_tag = match ov_lang {
+            TargetLang::Python => "python",
+            TargetLang::TypeScript => "typescript",
+            TargetLang::Rust => "rust",
+            _ => "other",
+        };
+        let run_cmd = overview_run_command(ov_lang, &ov_root, &rel_files);
+        let run_cmd_verified = ov_verified && run_cmd.is_some();
+        let emit_bare = |sink: &dyn EventSink| {
+            sink.write_value(serde_json::json!({
+                "event": "run_overview", "generated": false,
+                "run_command": run_cmd, "run_command_lang": lang_tag,
+                "run_command_verified": run_cmd_verified,
+                "features": [], "engage": serde_json::Value::Null, "next": [],
+            }));
+        };
+        if complete_failed || rel_files.is_empty() {
+            emit_bare(sink.as_ref());
+        } else {
+            eprintln!("  generating build summary …");
+            let spec_excerpt: String = opts.prompt.chars().take(1800).collect();
+            let excerpts = overview_source_excerpts(&ov_root, &rel_files);
+            let verify_line = if ov_verified {
+                "the app was RUN end-to-end and verified"
+            } else {
+                "the app was shipped but NOT run or verified (no test oracle ran)"
+            };
+            let system = "You write the END-OF-BUILD overview a non-technical user reads after a local AI swarm finished BUILDING a program. \
+                You are given the SPEC, the files produced, and EXCERPTS of the ACTUAL code. Describe ONLY what you can see in the code excerpts — \
+                never a feature not present. Produce THREE things, then call the final_output tool: (1) features: 3-6 short lines, each a VALUE the \
+                user gets (e.g. 'Splits a bill and rounds each share to the cent'), for a human — not a file list, not jargon; one capability per line, \
+                <=12 words. (2) engage: ONE sentence on how to have goose run it for them. (3) next: 2-3 concrete, buildable follow-ups — capabilities \
+                NOT present yet. HARD RULE: you are FORBIDDEN from any claim about whether the program works, is tested, verified, correct, complete, \
+                reliable, or bug-free — a SEPARATE section reports verification from the engine's own checks; that is NOT your job. Never write \
+                works/working/tested/verified/passes/correct/reliable/production-ready or any synonym in ANY field. Do NOT restate the run command.".to_string();
+            let user = format!(
+                "SPEC:\n{spec_excerpt}\n\nFILES PRODUCED ({}):\n{}\n\nCODE EXCERPTS:\n{}\n\nVERIFICATION (already reported separately — do NOT restate or contradict; here ONLY so your 'next' fits reality): {verify_line}\n\nCall final_output with features/engage/next.",
+                rel_files.len(),
+                rel_files.join("\n"),
+                excerpts
+            );
+            let resp = Some(Response {
+                json_schema: Some(run_overview_schema()),
+            });
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                smoke_fix_dispatcher.run_agent_timed(
+                    &smoke_fix_dispatcher.planner_model,
+                    system,
+                    user,
+                    resp,
+                    4,
+                    &[],
+                ),
+            )
+            .await;
+            let parsed = res
+                .ok()
+                .and_then(|r| r.ok())
+                .and_then(|o| o.final_output)
+                .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
+            match parsed {
+                Some(mut ov) => {
+                    scrub_overclaim(&mut ov.features);
+                    scrub_overclaim(&mut ov.next);
+                    if is_overclaim(&ov.engage) {
+                        ov.engage = "You can ask goose in chat to run this program for you.".to_string();
+                    }
+                    if ov.features.is_empty() {
+                        ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
+                    }
+                    sink.write_value(serde_json::json!({
+                        "event": "run_overview", "generated": true,
+                        "run_command": run_cmd, "run_command_lang": lang_tag,
+                        "run_command_verified": run_cmd_verified,
+                        "features": ov.features, "engage": ov.engage, "next": ov.next,
+                    }));
+                }
+                None => emit_bare(sink.as_ref()),
             }
         }
     }

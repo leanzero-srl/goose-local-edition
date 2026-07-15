@@ -156,6 +156,20 @@ export interface ConfidenceBreakdown {
   openDecisions: string[];
 }
 
+// End-of-run overview (shown at DONE). features/engage/next are a GROUNDED, scrubbed summary from the model;
+// runCommand is engine-stamped (never the model). VERIFICATION is NOT here — the panel re-derives it from
+// phaseTodo (engine-only) so no model string can reach the honesty surface. generated=false => a red/failed
+// or skipped build: show the caveat, not the summary.
+export interface RunOverview {
+  generated: boolean;
+  runCommand: string | null;
+  runCommandLang: string | null;
+  runCommandVerified: boolean;
+  features: string[];
+  engage: string | null;
+  next: string[];
+}
+
 export interface SwarmRunState {
   present: boolean;
   runId: string | null;
@@ -165,6 +179,8 @@ export interface SwarmRunState {
   planLanes: TurnLane[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
   phaseTodo: PhaseTodo[];
+  /** End-of-run overview (what built / how to run / next) — null until the run cleanly finishes at DONE. */
+  overview: RunOverview | null;
   totals: SwarmRunTotals;
   /** A human-readable timeline of what the swarm is doing — shown even during PLANNING (before any worker
    *  executes), so the user isn't left staring at a blank "working on it". */
@@ -220,6 +236,7 @@ const EMPTY: SwarmRunState = {
   lanes: [],
   planLanes: [],
   phaseTodo: [],
+  overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
   activity: [],
   verboseActivity: [],
@@ -302,6 +319,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   confidenceTrail: number[];
   summary: RunSummary | null;
   startedAt: number | null;
+  overview: RunOverview | null;
 } {
   const feed: ActivityItem[] = [];
   const vfeed: ActivityItem[] = [];
@@ -317,6 +335,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let smoke: SmokeResult | null = null;
   let summary: RunSummary | null = null;
   let startedAt: number | null = null;
+  let overview: RunOverview | null = null;
   const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
   const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
   // Push each distinct confidence value onto the trail (initial → retargets → final) and set the live
@@ -630,6 +649,19 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         finished = true;
         break;
       }
+      case 'run_overview': {
+        overview = {
+          generated: e['generated'] === true,
+          runCommand: typeof e['run_command'] === 'string' ? (e['run_command'] as string) : null,
+          runCommandLang:
+            typeof e['run_command_lang'] === 'string' ? (e['run_command_lang'] as string) : null,
+          runCommandVerified: e['run_command_verified'] === true,
+          features: arr(e['features']).map(String),
+          engage: typeof e['engage'] === 'string' ? (e['engage'] as string) : null,
+          next: arr(e['next']).map(String),
+        };
+        break;
+      }
       default:
         break;
     }
@@ -647,6 +679,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     planConfidence,
     summary,
     startedAt,
+    overview,
   };
 }
 
@@ -1103,6 +1136,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           confidenceTrail,
           summary,
           startedAt,
+          overview,
         } = buildActivity(data.events);
         lastRunId.current = data.runId;
         setState({
@@ -1111,6 +1145,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           lanes,
           planLanes,
           phaseTodo,
+          overview,
           totals,
           activity,
           verboseActivity: verbose,
