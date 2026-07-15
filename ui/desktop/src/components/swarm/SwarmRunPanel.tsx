@@ -24,6 +24,7 @@ import {
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import MarkdownContent from '../MarkdownContent';
+import InlineMarkdown from './InlineMarkdown';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -896,7 +897,9 @@ const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({
       <span className="text-text-secondary">→ {judge.action.replace(/_/g, ' ')}</span>
     </div>
     {judge.hint ? (
-      <p className="text-text-secondary mt-0.5 leading-snug whitespace-pre-wrap break-words">{judge.hint}</p>
+      <p className="text-text-secondary mt-0.5 leading-snug break-words">
+        <InlineMarkdown content={judge.hint} />
+      </p>
     ) : null}
   </div>
 );
@@ -1137,7 +1140,7 @@ const ClarifyPrompt: React.FC<{
                 {plan.map((t) => (
                   <li key={t.id} className="text-[11px] text-text-primary flex gap-1.5">
                     <span className="text-text-secondary shrink-0">·</span>
-                    <span>{t.description || t.id}</span>
+                    <InlineMarkdown content={t.description || t.id} />
                   </li>
                 ))}
               </ul>
@@ -1148,7 +1151,7 @@ const ClarifyPrompt: React.FC<{
         {clarify.questions.map((q, i) => (
           <div key={i} className="space-y-1.5">
             <div className="text-xs text-text-primary font-medium">
-              {i + 1}. {q.question}
+              {i + 1}. <InlineMarkdown content={q.question} />
             </div>
             {q.resolves ? (
               <div className="text-[11px] text-text-secondary flex items-start gap-1.5">
