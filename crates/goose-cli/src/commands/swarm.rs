@@ -79,6 +79,11 @@ fn default_research_scouts() -> bool {
 fn default_parallel_planning() -> bool {
     true
 }
+// Convergence molding is the proven agreement-raiser (steers the weak fleet to one canonical decomposition),
+// so it defaults ON. Exposed as a tunable (config + desktop toggle) so it can be A/B'd off; env still wins.
+fn default_converge() -> bool {
+    true
+}
 fn default_worker_timeout_secs() -> u64 {
     // A generous HANG failsafe — only a genuine infinite stall should ever reach it (slow local models
     // are expected; this must never trip on mere slowness). On trip, the task re-routes to another
@@ -239,6 +244,23 @@ pub struct SwarmConfig {
     /// env still overrides.
     #[serde(default)]
     pub ask_floor: Option<u8>,
+    /// Convergence molding (the proven agreement raiser). ON by default. GOOSE_SWARM_CONVERGE env overrides.
+    #[serde(default = "default_converge")]
+    pub converge: bool,
+    /// Dynamic confidence retarget loop: when plan confidence is below `ask_floor`, re-draft toward consensus
+    /// or research the open decisions BEFORE the one-shot ask. Bounded + monotonic. OFF by default (needs a
+    /// floor). GOOSE_SWARM_RETARGET env overrides.
+    #[serde(default)]
+    pub retarget: bool,
+    /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
+    /// constraint, and re-draft so the weak fleet's independent plans genuinely converge. OFF by default.
+    /// GOOSE_SWARM_BACKBONE env overrides.
+    #[serde(default)]
+    pub backbone: bool,
+    /// Draft plan skeletons at this temperature (steadies structural drafting). None = model default.
+    /// GOOSE_SWARM_DRAFT_TEMP env overrides.
+    #[serde(default)]
+    pub draft_temp: Option<f32>,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -294,6 +316,10 @@ impl Default for SwarmConfig {
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
+            converge: default_converge(),
+            retarget: false,
+            backbone: false,
+            draft_temp: None,
         }
     }
 }
@@ -4881,13 +4907,15 @@ impl GooseAgentDispatcher {
         // (raises real agreement — the model's draft variance is the root cause of low/noisy agreement).
         // None = the server/model default (today's behavior, byte-identical).
         draft_temp: Option<f32>,
+        // Convergence molding on/off (computed from config+env by the caller). Steers the architect prompt to
+        // one canonical decomposition and role-normalizes the agreement metric.
+        converge: bool,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
         // plan_agreement penalizes. Under converge, steer the fixed weak model toward the SIMPLEST CANONICAL
         // decomposition so independently-drafted plans converge (higher real + measured agreement). Default
-        // path unchanged.
-        let converge = swarm_gate("GOOSE_SWARM_CONVERGE", false);
+        // path unchanged. `converge` is a parameter (computed from config+env by the caller).
         let homo_hint = if converge {
             "ALL worker nodes run the SAME model, so files produced independently mesh consistently. Commit to \
              the SIMPLEST CANONICAL decomposition: the FEWEST cohesive modules that fully cover the spec, using \
@@ -5122,7 +5150,6 @@ impl GooseAgentDispatcher {
                     // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where
                     // verbalized confidence is overconfident). Low agreement = the model doesn't really know
                     // how to decompose this — a signal to research more before committing (M6 step 3).
-                    let converge = swarm_gate("GOOSE_SWARM_CONVERGE", false);
                     let (conf, reason) = match consensus_k {
                         Some(k) => best_subset_agreement(&valid_specs, converge, k),
                         None => plan_agreement(&valid_specs, converge),
@@ -7335,10 +7362,12 @@ impl GooseAgentDispatcher {
         let response = Some(Response {
             json_schema: Some(ambiguity_schema()),
         });
-        // Enumeration is fast; cap hard at 75s (NOT the 900s planner budget) so a hung weak model can't stall
-        // planning — on timeout we fall back to the calibrated cross-draft agreement score (the primary signal).
+        // Enumeration is fast; cap at 120s (NOT the 900s planner budget) so a hung weak model can't stall
+        // planning — but generous enough that a busy fleet doesn't time the probe out and default to
+        // product_specified=true (which silently SKIPS the vague-product ask this signal exists to trigger).
+        // On timeout we fall back to the calibrated cross-draft agreement score (the primary signal).
         let out = tokio::time::timeout(
-            std::time::Duration::from_secs(75),
+            std::time::Duration::from_secs(120),
             self.run_agent(model, system, user, response, 4, &[], 0, None),
         )
         .await
@@ -8704,6 +8733,17 @@ fn swarm_gate(name: &str, in_assured_bundle: bool) -> bool {
         assured_enabled(),
         in_assured_bundle,
     )
+}
+
+/// Like `swarm_gate` but the DEFAULT comes from the persisted config (the desktop toggle / config.yaml), not
+/// the assured bundle: an explicit env var still wins (so scripted A/B `GOOSE_SWARM_X=0/1` overrides the
+/// toggle), else the config value. This is how a swarm lever becomes a real user-facing TUNABLE while keeping
+/// the env escape hatch.
+fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
+    match std::env::var(name).ok() {
+        Some(v) => matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"),
+        None => cfg_default,
+    }
 }
 
 /// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
@@ -10397,7 +10437,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // re-research (spec-clarity-bound with a defined product + lookupable open decisions). Requires a floor;
     // default OFF so the ask-only path is byte-identical. `best_plan` keeps the highest-confidence plan seen so
     // a re-draft that diverges can never ship worse than the best already measured.
-    let retarget_on = swarm_gate("GOOSE_SWARM_RETARGET", false) && ask_floor.is_some();
+    let retarget_on = swarm_gate_cfg("GOOSE_SWARM_RETARGET", cfg.retarget) && ask_floor.is_some();
     let retarget_cap = retarget_rounds_from(std::env::var("GOOSE_SWARM_RETARGET_ROUNDS").ok());
     let retarget_step: usize = std::env::var("GOOSE_SWARM_RETARGET_DRAFT_STEP")
         .ok()
@@ -10414,7 +10454,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let base_draft_temp: Option<f32> = std::env::var("GOOSE_SWARM_DRAFT_TEMP")
         .ok()
         .and_then(|v| v.trim().parse::<f32>().ok())
+        .or(cfg.draft_temp)
         .map(|t| t.clamp(0.0, 1.0));
+    // Convergence molding: config default (true) unless the env explicitly overrides. Threaded into every
+    // parallel_plan call so it drives BOTH the architect prompt and the role-normalized agreement metric.
+    let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     let (plan_json, dag, plan_conf) = loop {
         // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
         // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
@@ -10446,6 +10490,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         None
                     },
                     draft_temp,
+                    converge,
                 )
                 .await
             {

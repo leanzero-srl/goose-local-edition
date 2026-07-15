@@ -271,13 +271,10 @@ impl Provider for SwarmProvider {
         if std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS").is_err() {
             cmd.env("GOOSE_SWARM_COMPLETE_CAP_SECS", "1200");
         }
-        // Convergence molding: steer the weak local planner toward the simplest canonical decomposition and
-        // measure agreement role-normalized, so plan confidence reflects real convergence. A/B on the fleet:
-        // agreement tmpl 69->100, expense recovered its modules at 74 (both up, plans still modular). Default
-        // ON for the desktop; set GOOSE_SWARM_CONVERGE=0 to A/B the old behavior.
-        if std::env::var("GOOSE_SWARM_CONVERGE").is_err() {
-            cmd.env("GOOSE_SWARM_CONVERGE", "1");
-        }
+        // Convergence molding (steer the weak planner to the simplest canonical decomposition, role-normalize
+        // agreement) is now a persisted swarm CONFIG tunable (`converge`, default ON) that the spawned
+        // `goose swarm run` reads directly — so it's toggleable from the desktop settings, not forced here.
+        // GOOSE_SWARM_CONVERGE env still overrides for scripted A/B.
         if let Some(dir) = &self.working_dir {
             cmd.current_dir(dir);
         }
