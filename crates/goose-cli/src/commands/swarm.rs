@@ -11253,6 +11253,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     )
                     .await;
                     if !qa.is_empty() {
+                        // Label it inside the findings too — the findings block renders as "Prior research
+                        // findings", which reads advisory; these are the user's binding choices, not research.
+                        research_findings.push_str(
+                            "\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n",
+                        );
                         research_findings.push_str(&qa);
                         // Answers must WIN: drop any higher-agreement pre-answer plan so the monotonic-best
                         // selection at break can never resurrect a plan that ignores the user's clarifications.
@@ -11268,8 +11273,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // safe: the ask fires before any worker writes a file, so the tree is still empty and the
                         // amended spec (not stale files) drives detect_language on the re-plan.
                         let lang_before = detect_language(&opts.prompt, &[]);
-                        opts.prompt
-                            .push_str("\n\n[User clarifications incorporated into the spec]\n");
+                        // BINDING framing, not "clarifications": measured twice that a weak worker treats a
+                        // soft-framed answer as advisory and substitutes its own convention (asked for
+                        // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
+                        // variant). The answers are the user's explicit choices — say so imperatively.
+                        opts.prompt.push_str(
+                            "\n\n## USER DECISIONS — BINDING\n\
+                             The user was ASKED and chose the following. Implement each EXACTLY as written. Do \
+                             NOT paraphrase it, rename it, or substitute your own convention/format — if a \
+                             decision names a separator, a format, a default, or an order, use THAT one \
+                             verbatim. These override any conflicting habit or default you would otherwise \
+                             pick:\n",
+                        );
                         opts.prompt.push_str(&qa);
                         let lang_after = detect_language(&opts.prompt, &[]);
                         let lang_changed = lang_after != lang_before;
