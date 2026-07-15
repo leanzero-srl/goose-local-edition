@@ -10702,12 +10702,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         opts.prompt.push_str(&qa);
                         let lang_after = detect_language(&opts.prompt, &[]);
                         let lang_changed = lang_after != lang_before;
-                        if ask_replan || lang_changed {
+                        // A product-defining answer is STRUCTURAL like a language change: when the ask fired
+                        // because the PRODUCT was undefined (product_specified=false — the vague "build
+                        // something useful" case), the drafted plan is a placeholder for a product the user
+                        // hadn't chosen, so reusing it and injecting the answer as worker text would build the
+                        // WRONG thing. Pinning the product forces a re-plan so the skeleton matches the chosen
+                        // product. Safe: the ask fires before any worker writes a file, so the amended spec
+                        // (not stale files) drives the re-plan.
+                        let product_defined_by_answer = !plan_conf.product_specified;
+                        if ask_replan || lang_changed || product_defined_by_answer {
                             eprintln!(
                                 "  {} re-planning with the user's clarifications{}",
                                 style("↻").cyan(),
                                 if lang_changed {
                                     format!(" (target language → {lang_after:?})")
+                                } else if product_defined_by_answer {
+                                    " (product now defined by your answer)".to_string()
                                 } else {
                                     String::new()
                                 }
