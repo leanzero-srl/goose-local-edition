@@ -467,6 +467,30 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
+              <Group title="Plan confidence">
+                <Row
+                  label="Convergence molding"
+                  hint="steer the weak planner to one canonical decomposition + measure agreement role-normalized — the proven way to raise plan confidence. ON by default."
+                >
+                  <SwarmSwitch checked={cfg.converge !== false} onChange={(v) => set({ converge: v })} />
+                </Row>
+                <Row
+                  label="Dynamic retarget"
+                  hint="when confidence is below the ask floor, re-draft toward consensus or research the open decisions BEFORE asking you. Needs 'Ask when uncertain' on. Experimental — adds planning time."
+                >
+                  <SwarmSwitch checked={!!cfg.retarget} onChange={(v) => set({ retarget: v })} />
+                </Row>
+                <Row
+                  label="Backbone-lock"
+                  hint="extract the module set a majority of drafts agree on, lock it, and re-draft so the fleet's plans genuinely converge. Experimental — adds a second draft round."
+                >
+                  <SwarmSwitch checked={!!cfg.backbone} onChange={(v) => set({ backbone: v })} />
+                </Row>
+                <Row label="Draft temperature" hint="temperature for skeleton drafting only (blank = model default)">
+                  <NumberField value={cfg.draft_temp ?? null} placeholder="default" onCommit={(v) => set({ draft_temp: v })} />
+                </Row>
+              </Group>
+
               <Group title="Sampling">
                 <Row label="Temperature" hint="blank = model default">
                   <NumberField value={cfg.temperature ?? null} placeholder="default" onCommit={(v) => set({ temperature: v })} />

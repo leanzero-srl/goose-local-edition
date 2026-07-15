@@ -40,6 +40,17 @@ export interface SwarmConfig {
   /** Confidence floor (1-100) below which the swarm asks the USER clarifying questions before building,
    *  instead of guessing. 0 / undefined = never ask. Surfaced live in the run panel's clarify prompt. */
   ask_floor?: number;
+  /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
+   *  agreement metric. The proven confidence raiser. Default ON. */
+  converge?: boolean;
+  /** Dynamic confidence-retarget loop: when plan confidence is below ask_floor, re-draft toward consensus
+   *  or research the open decisions BEFORE the one-shot ask. Needs a floor. Default OFF (experimental). */
+  retarget?: boolean;
+  /** Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it, and re-draft
+   *  so the fleet's plans genuinely converge. Default OFF (experimental). */
+  backbone?: boolean;
+  /** Draft plan skeletons at this temperature (steadies structural drafting). Blank = model default. */
+  draft_temp?: number | null;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
@@ -63,6 +74,9 @@ export const DEFAULTS: SwarmConfig = {
   homogeneous_models: false,
   allow_model_load: false,
   scout_budget_secs: 120,
+  converge: true, // default_converge (swarm.rs) — the proven agreement raiser, ON by default
+  retarget: false,
+  backbone: false,
 };
 
 // The keys a preset controls — PORTABLE tuning only. Fleet identity (endpoint, planner_model,
