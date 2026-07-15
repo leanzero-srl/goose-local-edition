@@ -1113,9 +1113,11 @@ const ClarifyPrompt: React.FC<{
             style={{ backgroundColor: BLUE, borderRadius: 2 }}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            Send &amp; re-plan
+            Send answers &amp; build
           </button>
-          <span className="text-[10px] text-text-secondary">The build is paused until you respond.</span>
+          <span className="text-[10px] text-text-secondary">
+            The build is paused until you respond. Your answers guide every worker; the plan shape stays as drafted.
+          </span>
         </div>
       </div>
     </div>
