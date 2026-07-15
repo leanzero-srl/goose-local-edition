@@ -227,6 +227,13 @@ pub struct SwarmConfig {
     /// cannot monopolize a node and idle the fleet behind the scout barrier.
     #[serde(default = "default_scout_budget_secs")]
     pub scout_budget_secs: u64,
+    /// Wall-clock cap (seconds) for the heavy `integrate-verify` SINK worker only: on expiry it is finalized
+    /// as DONE (not failed/re-routed) and the deterministic smoke gate backstops. Set ABOVE a healthy sink
+    /// (~1400s) — a cap BELOW a legitimately-productive sink truncates the run's ONLY golden-value pass, so
+    /// DEFAULT 0 = OFF (byte-identical). `GOOSE_SWARM_SINK_CAP_SECS` env overrides. Enable per-workload once
+    /// A/B data on feature-dense builds confirms healthy sinks cluster under the chosen ceiling.
+    #[serde(default = "default_sink_cap_secs")]
+    pub sink_cap_secs: u64,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -265,6 +272,10 @@ pub struct SwarmConfig {
 
 fn default_scout_budget_secs() -> u64 {
     120
+}
+
+fn default_sink_cap_secs() -> u64 {
+    0 // OFF — see the field doc; capping the sink truncates the only golden-value pass, so opt-in only.
 }
 
 impl Default for SwarmConfig {
@@ -313,6 +324,7 @@ impl Default for SwarmConfig {
             repeat_penalty: None,
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
+            sink_cap_secs: default_sink_cap_secs(),
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -5021,6 +5033,7 @@ impl GooseAgentDispatcher {
         modules: Vec<TaskSpec>,
         worker_models: Vec<String>,
         goal: &str,
+        lang: TargetLang,
     ) -> String {
         let goal = goal.to_string();
         let me = self.clone();
@@ -5031,7 +5044,7 @@ impl GooseAgentDispatcher {
                 let files = spec
                     .owned_files
                     .iter()
-                    .filter(|f| f.ends_with(".py"))
+                    .filter(|f| lang.is_source_file(f.as_str()))
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -5041,23 +5054,11 @@ impl GooseAgentDispatcher {
                     style(&spec.id).bold(),
                     model
                 );
-                let system = "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
-                    implemented, so parallel workers agree on the contract. Output ONLY Python signature \
-                    stubs for the listed files: every public function and class the module will expose, \
-                    with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
-                    `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
-                    SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
-                    block listing each TABLE and its EXACT column names (and types), because every module \
-                    that reads or writes those tables MUST use the SAME column names — a drift (one module \
-                    using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
-                    integration failure that passing isolation unit-tests hide. NO implementations, NO \
-                    private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
-                    them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
-                    Keep it tight."
-                    .to_string();
+                let (system_str, comment) = contract_stub_spec(lang);
+                let system = system_str.to_string();
                 let user = format!(
                     "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
-                     Emit signature-only stubs, each file preceded by a `# <path>` header.",
+                     Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
                     spec.id, spec.description
                 );
                 let stub = match tokio::time::timeout(
@@ -5977,6 +5978,95 @@ fn collect_py_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Language-aware sibling of `collect_py_files` — collects source files for `lang` (used by the CONTRACTS
+/// stray-stub cleanup so a TS/Rust tree removes leftover `.ts`/`.rs` stubs, not just `.py`). Python behavior
+/// matches `collect_py_files` (both accept a `.py` file); other callers keep using `collect_py_files`.
+fn collect_lang_files(root: &Path, lang: TargetLang) -> Vec<PathBuf> {
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        ".venv",
+        ".swarm",
+        "__pycache__",
+    ];
+    fn walk(dir: &Path, depth: u32, lang: TargetLang, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if depth == 0 || name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                walk(&p, depth - 1, lang, out);
+            } else if lang.is_source_file(&name) {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, 3, lang, &mut out);
+    out
+}
+
+/// Per-language interface-stub instructions for the CONTRACTS phase. Returns (system prompt, per-file header
+/// comment prefix). The Python arm is the ORIGINAL prompt verbatim — byte-identical behavior on Python trees.
+/// TS emits `export`ed declaration stubs; Rust emits `pub` signature stubs; both carry the same anti-drift
+/// SCHEMA rule that made contracts valuable on Python.
+fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
+    match lang {
+        TargetLang::TypeScript => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
+             workers agree on the contract. Output ONLY TypeScript DECLARATION stubs for the listed files: \
+             every EXPORTED function, class, interface, type, and const the module will expose, with EXACT \
+             names and full type signatures (parameter AND return types). Prefer `export interface`, \
+             `export type`, and `export declare function` / class signatures with NO bodies. ALSO — if this \
+             module owns a persisted data shape or DB schema, append a `// SCHEMA` comment block listing \
+             each record/table and its EXACT field/column names (and types), because every module that \
+             reads or writes it MUST use the SAME names — a drift (one module using `homeTeam` while \
+             another uses `home`) is a top integration failure that passing isolation unit-tests hide. NO \
+             implementations, NO private helpers, NO prose, NO code fences. You have file/shell tools but \
+             MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT \
+             only. Keep it tight.",
+            "//",
+        ),
+        TargetLang::Rust => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
+             workers agree on the contract. Output ONLY Rust signature stubs for the listed files: every \
+             PUBLIC item the module will expose — `pub fn` (full typed signature, body `unimplemented!()`), \
+             `pub struct` / `pub enum` (with their public fields + types), `pub trait` (method signatures), \
+             and key `pub type` / `pub const`. Use EXACT names and full types. ALSO — if this module owns a \
+             persisted data shape, on-disk object format, or schema, append a `// SCHEMA` comment block \
+             listing each record and its EXACT field names (and types), because every module that reads or \
+             writes it MUST use the SAME names — a drift (one module using `parent_hash` while another uses \
+             `parent`) is a top integration failure that passing isolation unit-tests hide. NO function \
+             bodies beyond `unimplemented!()`, NO private items, NO prose, NO code fences. You have \
+             file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs \
+             in your reply TEXT only. Keep it tight.",
+            "//",
+        ),
+        _ => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
+             implemented, so parallel workers agree on the contract. Output ONLY Python signature \
+             stubs for the listed files: every public function and class the module will expose, \
+             with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
+             `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
+             SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
+             block listing each TABLE and its EXACT column names (and types), because every module \
+             that reads or writes those tables MUST use the SAME column names — a drift (one module \
+             using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
+             integration failure that passing isolation unit-tests hide. NO implementations, NO \
+             private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
+             them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
+             Keep it tight.",
+            "#",
+        ),
+    }
+}
+
 /// Outcome of the smoke gate, serialized into the run jsonl `smoke` event.
 #[derive(Debug, Clone, Serialize)]
 struct SmokeResult {
@@ -6362,9 +6452,28 @@ struct Overview {
 /// so "network" never trips "work". This is defense-in-depth on top of the prompt + the hedged UI.
 fn is_overclaim(line: &str) -> bool {
     const BAD: &[&str] = &[
-        "works", "working", "worked", "verified", "verify", "tested", "testing", "passes", "passing",
-        "confirmed", "proven", "correct", "correctly", "reliable", "robust", "flawless", "guaranteed",
-        "bugfree", "validated", "production", "seamless", "seamlessly",
+        "works",
+        "working",
+        "worked",
+        "verified",
+        "verify",
+        "tested",
+        "testing",
+        "passes",
+        "passing",
+        "confirmed",
+        "proven",
+        "correct",
+        "correctly",
+        "reliable",
+        "robust",
+        "flawless",
+        "guaranteed",
+        "bugfree",
+        "validated",
+        "production",
+        "seamless",
+        "seamlessly",
     ];
     let low = line.to_lowercase();
     low.split(|c: char| !c.is_alphanumeric())
@@ -6416,7 +6525,10 @@ fn overview_source_excerpts(root: &Path, rel: &[String]) -> String {
             continue;
         }
         if let Ok(c) = std::fs::read_to_string(root.join(f)) {
-            let ex: String = review_file_excerpt(&c).chars().take(budget.min(2500)).collect();
+            let ex: String = review_file_excerpt(&c)
+                .chars()
+                .take(budget.min(2500))
+                .collect();
             budget = budget.saturating_sub(ex.len());
             out.push_str(&format!("\n### {f}\n{ex}\n"));
         }
@@ -10415,6 +10527,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let tcap = cfg.max_tool_response_chars.unwrap_or(30000);
         std::env::set_var("GOOSE_MAX_TOOL_RESPONSE_SIZE", tcap.to_string());
     }
+    // Bridge the sink-cap tunable to the env var the worker watchdog reads (swarm.rs sink_deadline). Env wins;
+    // else the config value (default 0 = OFF). The read site's `.filter(|&s| s > 0)` turns 0 back into OFF, so
+    // the default path is byte-identical.
+    if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
+        std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
+    }
 
     let json = opts.output_format == "json";
     let working_dir = std::env::current_dir()?;
@@ -11153,13 +11271,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
     // module filter below already empties on a pure non-Python tree; this makes the skip explicit and
     // misfire-proof. Per-language (TS interface / Rust trait) stub generation is deferred. Python unchanged.
-    if contracts_on && detect_language(&opts.prompt, &[]) == TargetLang::Python {
+    // CONTRACTS now runs for every language with a stub profile (Python/TS/Rust), per-language stubs
+    // (contract_stub_spec). Go/Other still skip (no stub grammar). Python is byte-identical (same prompt,
+    // same `.py` filter via is_source_file, same collector). This kills cross-module interface drift on
+    // TS/Rust trees too — the coherence gap Mihai flagged on the Rust build.
+    let contract_lang = detect_language(&opts.prompt, &[]);
+    if contracts_on
+        && matches!(
+            contract_lang,
+            TargetLang::Python | TargetLang::TypeScript | TargetLang::Rust
+        )
+    {
         let modules: Vec<TaskSpec> = dag
             .tasks
             .values()
             .map(|n| n.spec.clone())
             .filter(|s| {
-                s.id != "integrate-verify" && s.owned_files.iter().any(|f| f.ends_with(".py"))
+                s.id != "integrate-verify"
+                    && s.owned_files
+                        .iter()
+                        .any(|f| contract_lang.is_source_file(f))
             })
             .collect();
         if !modules.is_empty() {
@@ -11171,14 +11302,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             let before: std::collections::HashSet<PathBuf> =
-                collect_py_files(&cwd).into_iter().collect();
+                collect_lang_files(&cwd, contract_lang)
+                    .into_iter()
+                    .collect();
             let bundle = dispatcher
-                .generate_contracts(modules, wm, &opts.prompt)
+                .generate_contracts(modules, wm, &opts.prompt, contract_lang)
                 .await;
             // The stub-gen workers must emit TEXT, but a weak model sometimes writes a `...`-body stub
-            // file anyway. Remove any .py that appeared so EXECUTE starts from a clean tree — a leftover
-            // stub would otherwise risk a lazy worker shipping it as "done".
-            let stray: Vec<PathBuf> = collect_py_files(&cwd)
+            // file anyway. Remove any source file that appeared so EXECUTE starts from a clean tree — a
+            // leftover stub would otherwise risk a lazy worker shipping it as "done".
+            let stray: Vec<PathBuf> = collect_lang_files(&cwd, contract_lang)
                 .into_iter()
                 .filter(|p| !before.contains(p))
                 .collect();
@@ -12332,7 +12465,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     scrub_overclaim(&mut ov.features);
                     scrub_overclaim(&mut ov.next);
                     if is_overclaim(&ov.engage) {
-                        ov.engage = "You can ask goose in chat to run this program for you.".to_string();
+                        ov.engage =
+                            "You can ask goose in chat to run this program for you.".to_string();
                     }
                     if ov.features.is_empty() {
                         ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
