@@ -1944,6 +1944,56 @@ mod tests {
     }
 
     #[test]
+    fn consensus_backbone_pins_only_the_strict_majority() {
+        let draft = |ids: &[(&str, &str)]| {
+            let subs: Vec<String> = ids
+                .iter()
+                .map(|(id, file)| format!(r#"{{"id":"{id}","depends_on":[],"files":["{file}"]}}"#))
+                .collect();
+            goose_swarm::specs_from_plan_json(&format!(r#"{{"subtasks":[{}]}}"#, subs.join(",")))
+                .unwrap()
+        };
+        // 3 drafts: models+cli appear in 2/3; parser in 1/3; a per-module test task must NOT contribute a role.
+        let d1 = draft(&[
+            ("models", "models.py"),
+            ("cli", "__main__.py"),
+            ("t", "test_models.py"),
+        ]);
+        let d2 = draft(&[("models", "models.py"), ("entry", "cli.py")]);
+        let d3 = draft(&[("parser", "parser.py"), ("main", "main.py")]);
+        let bb = consensus_backbone(&[d1, d2, d3]);
+        // cli (folded from __main__/cli/main/entry) in all 3, models in 2 → both pinned; parser (1/3) dropped.
+        assert!(bb.contains(&"cli".to_string()), "cli is unanimous: {bb:?}");
+        assert!(bb.contains(&"models".to_string()), "models is 2/3: {bb:?}");
+        assert!(
+            !bb.contains(&"parser".to_string()),
+            "parser is only 1/3: {bb:?}"
+        );
+        assert!(
+            !bb.iter().any(|r| r.contains("test")),
+            "scaffolding excluded: {bb:?}"
+        );
+        // <2 drafts → no backbone.
+        assert!(consensus_backbone(&[draft(&[("a", "a.py")])]).is_empty());
+    }
+
+    #[test]
+    fn plan_covers_backbone_requires_every_role() {
+        let plan = r#"{"subtasks":[
+            {"id":"models","depends_on":[],"files":["pkg/models.py"]},
+            {"id":"cli","depends_on":["models"],"files":["pkg/__main__.py"]}
+        ]}"#;
+        assert!(plan_covers_backbone(plan, &["cli".into(), "models".into()]));
+        // A missing role → not covered (the lock was disobeyed).
+        assert!(!plan_covers_backbone(
+            plan,
+            &["cli".into(), "models".into(), "parser".into()]
+        ));
+        // Invalid JSON → not covered (never adopt an unparseable round-2 plan).
+        assert!(!plan_covers_backbone("not json", &["cli".into()]));
+    }
+
+    #[test]
     fn breakdown_json_absent_on_cloud_path() {
         // No sub-signal computed (solo/cloud path) -> no key -> plan_loaded stays byte-identical.
         assert!(breakdown_json(&PlanConf::default()).is_none());
@@ -3746,6 +3796,107 @@ fn best_subset_agreement(
     (conf, format!("{reason} [consensus {k} of {n}]"))
 }
 
+/// The BACKBONE: canonical module ROLES that a STRICT MAJORITY of the valid round-1 drafts independently
+/// landed on. Built from the SAME valid_specs `plan_agreement` measures, with the SAME `canonical_role`
+/// folding + `is_scaffolding_task` exclusion, so the lock pins exactly the substantive modules the metric
+/// treats as the decomposition. One vote per draft per role (per-draft dedup). Sorted for a deterministic
+/// prompt. Empty ⇒ no shared core; the caller additionally requires len ≥ 2 (pinning only the near-universal
+/// folded `cli` entry role is inert). This NEVER fabricates a module — it can only pin what a majority shares.
+fn consensus_backbone(valid_specs: &[Vec<goose_swarm::TaskSpec>]) -> Vec<String> {
+    let n = valid_specs.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let threshold = n / 2 + 1; // strict majority: 2/2, 2/3, 3/4, 3/5, 4/6
+    let mut votes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for specs in valid_specs {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        for r in roles {
+            *votes.entry(r).or_insert(0) += 1;
+        }
+    }
+    votes
+        .into_iter()
+        .filter(|(_, c)| *c >= threshold)
+        .map(|(r, _)| r)
+        .collect()
+}
+
+/// True iff the round-2 skeleton actually contains EVERY pinned backbone role (the lock was HONORED, not
+/// merely prompted). Same role-space as `consensus_backbone`. A weak model that drops/renames/merges a
+/// pinned module fails this → the caller keeps round 1 (one wasted round, never a lock-violating plan).
+fn plan_covers_backbone(plan_json: &str, backbone: &[String]) -> bool {
+    let Ok(specs) = goose_swarm::specs_from_plan_json(plan_json) else {
+        return false;
+    };
+    let roles: std::collections::BTreeSet<String> = specs
+        .iter()
+        .filter(|t| !is_scaffolding_task(t))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    backbone.iter().all(|r| roles.contains(r))
+}
+
+/// Parse + structurally-score a candidate pool (the round-1 select loop, reusable for round 2), emitting the
+/// same per-candidate diagnostics prefixed by `label`. Returns (best `(score, json)`, valid_specs).
+fn select_best_skeleton(
+    candidates: Vec<String>,
+    worker_count: usize,
+    label: &str,
+) -> (Option<(i64, String)>, Vec<Vec<goose_swarm::TaskSpec>>) {
+    let mut best: Option<(i64, String)> = None;
+    let mut valid_specs: Vec<Vec<goose_swarm::TaskSpec>> = Vec::new();
+    for (i, c) in candidates.into_iter().enumerate() {
+        let specs = match goose_swarm::specs_from_plan_json(&c) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("  · {label}candidate {i}: invalid JSON — skipped");
+                continue;
+            }
+        };
+        match score_skeleton(&specs, worker_count) {
+            Some(score) => {
+                eprintln!(
+                    "  · {label}candidate {i}: score {score} ({} subtasks)",
+                    specs.len()
+                );
+                valid_specs.push(specs);
+                if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
+                    best = Some((score, c));
+                }
+            }
+            None => eprintln!("  · {label}candidate {i}: invalid DAG — skipped"),
+        }
+    }
+    (best, valid_specs)
+}
+
+/// The round-2 architect constraint: pin the consensus module ROLES (not literal filenames — the model picks
+/// the concrete name to fit its chosen layout/language) as a hard FLOOR, naming the four drift modes weak
+/// fine-tunes exhibit (drop / rename-away / merge / split) and whitelisting a genuinely-needed tail so the
+/// lock complements the converge "simplest canonical decomposition" hint rather than fighting it.
+fn backbone_clause(backbone: &[String]) -> String {
+    format!(
+        "BACKBONE LOCK (hard requirement) — an independent first planning pass across the fleet already \
+         AGREED these are the core modules for THIS task, so they are FIXED. Your plan MUST include EACH of \
+         them as its own substantive subtask, one clear responsibility per module: {} (cli = the program's \
+         entry point). Do NOT drop any of them, do NOT rename one away, do NOT merge two of them into one \
+         subtask, and do NOT split one across two subtasks. You choose each module's concrete filename to fit \
+         the layout and language you pick, but every one of these responsibilities MUST be present as its own \
+         module. This is a FLOOR, not a ceiling: you MAY add FURTHER subtasks beyond this set ONLY when the \
+         spec genuinely needs a concern none of these cover — do not pad with filler, and do not drop a real \
+         concern just to match this list. Add the per-module tests and the final integrate-verify subtask ON \
+         TOP of this backbone exactly as instructed above. ",
+        backbone.join(", ")
+    )
+}
+
 /// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
 /// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
 /// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
@@ -4910,6 +5061,10 @@ impl GooseAgentDispatcher {
         // Convergence molding on/off (computed from config+env by the caller). Steers the architect prompt to
         // one canonical decomposition and role-normalizes the agreement metric.
         converge: bool,
+        // Two-stage backbone lock: pin the majority-consensus module set and re-draft round 2 as a STRUCTURE
+        // lever (confidence stays the round-1 free-draft agreement — the forced round never touches the ask
+        // gate). false = today, byte-identical.
+        backbone_on: bool,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
@@ -4988,9 +5143,10 @@ impl GooseAgentDispatcher {
         } else {
             "and related tests into ONE test subtask.".to_string()
         };
-        let system = format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
+        let build_system = |backbone_clause: &str| {
+            format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
-            explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}\n\
+            explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}{backbone_clause}\n\
             There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
             {count_clause}. GROUP \
             several related commands or functions into ONE module subtask, {tests_directive} These models \
@@ -5052,7 +5208,11 @@ impl GooseAgentDispatcher {
             spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
             module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
             FAILURE: wire it. Reports PASS/FAIL honestly. \
-            Its own files must NOT overlap the others. Then call the final_output tool with the plan.");
+            Its own files must NOT overlap the others. Then call the final_output tool with the plan.")
+        };
+        // Round 1 = today's prompt exactly (empty backbone slot → byte-identical). Round 2 (backbone lock)
+        // re-invokes build_system with the consensus constraint spliced right after homo_hint.
+        let system = build_system("");
         let user_msg = format!(
             "{}{research_block}Plan this task: {user_prompt}",
             existing_files_block(&existing_files)
@@ -5069,45 +5229,56 @@ impl GooseAgentDispatcher {
                 n
             );
         }
-        let mut handles = Vec::new();
-        for i in 0..n {
-            let me = self.clone();
-            let model = draft_models[i % draft_models.len()].clone();
-            let sys = system.clone();
-            let um = user_msg.clone();
-            let schema = plan_schema.clone();
-            let dt = draft_temp;
-            handles.push(tokio::spawn(async move {
-                // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
-                // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
-                // without ever going idle, hanging the whole run before execute starts. On timeout the
-                // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(480),
-                    me.run_agent_timed_at(
-                        &model,
-                        sys,
-                        um,
-                        Some(Response {
-                            json_schema: Some(schema),
-                        }),
-                        12,
-                        &[],
-                        dt,
-                    ),
-                )
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .and_then(|o| o.final_output)
-            }));
-        }
-        let mut candidates: Vec<String> = Vec::new();
-        for h in handles {
-            if let Ok(Some(j)) = h.await {
-                candidates.push(j);
+        // One parallel draft ROUND across the fleet (planner + workers round-robin), reused verbatim for the
+        // backbone round-2 re-draft. Round 1 (below) is behavior-identical to the previous inline loop.
+        let draft_round = |sys: String, dt: Option<f32>| {
+            let me0 = self.clone();
+            let models = draft_models.clone();
+            let um0 = user_msg.clone();
+            let schema0 = plan_schema.clone();
+            async move {
+                let mut handles = Vec::new();
+                for i in 0..n {
+                    let me = me0.clone();
+                    let model = models[i % models.len()].clone();
+                    let sys = sys.clone();
+                    let um = um0.clone();
+                    let schema = schema0.clone();
+                    handles.push(tokio::spawn(async move {
+                        // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
+                        // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
+                        // without ever going idle, hanging the whole run before execute starts. On timeout the
+                        // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(480),
+                            me.run_agent_timed_at(
+                                &model,
+                                sys,
+                                um,
+                                Some(Response {
+                                    json_schema: Some(schema),
+                                }),
+                                12,
+                                &[],
+                                dt,
+                            ),
+                        )
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|o| o.final_output)
+                    }));
+                }
+                let mut c: Vec<String> = Vec::new();
+                for h in handles {
+                    if let Ok(Some(j)) = h.await {
+                        c.push(j);
+                    }
+                }
+                c
             }
-        }
+        };
+        let candidates: Vec<String> = draft_round(system.clone(), draft_temp).await;
         // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
         // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
         // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
@@ -5121,46 +5292,70 @@ impl GooseAgentDispatcher {
                 String::new(),
             )
         } else {
-            let mut best: Option<(i64, String)> = None;
-            let mut valid_specs: Vec<Vec<goose_swarm::TaskSpec>> = Vec::new();
-            for (i, c) in candidates.into_iter().enumerate() {
-                let specs = match goose_swarm::specs_from_plan_json(&c) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        eprintln!("  · candidate {i}: invalid JSON — skipped");
-                        continue;
-                    }
-                };
-                match score_skeleton(&specs, worker_count) {
-                    Some(score) => {
-                        eprintln!(
-                            "  · candidate {i}: score {score} ({} subtasks)",
-                            specs.len()
-                        );
-                        valid_specs.push(specs);
-                        if best.as_ref().map(|(b, _)| score > *b).unwrap_or(true) {
-                            best = Some((score, c));
+            // ROUND 1: pick the structurally-best of the genuinely-independent drafts + measure agreement.
+            // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where verbalized
+            // confidence is overconfident). Low agreement = the model doesn't really know how to decompose
+            // this — a signal to research more before committing (M6 step 3).
+            let (best1, valid1) = select_best_skeleton(candidates, worker_count, "");
+            let (score1, json1) = match best1 {
+                Some(b) => b,
+                None => return Err(anyhow!("no valid skeleton among {n} candidates")),
+            };
+            let (conf1, reason1) = match consensus_k {
+                Some(k) => best_subset_agreement(&valid1, converge, k),
+                None => plan_agreement(&valid1, converge),
+            };
+            eprintln!(
+                "  {} picked best skeleton (score {score1}) — plan confidence {conf1}/100 ({reason1})",
+                style("✓").green().bold()
+            );
+            // BACKBONE LOCK — a STRUCTURE lever only. When a strict majority of the independent drafts already
+            // agreed on ≥2 core module roles, re-draft the whole fleet with that core PINNED and adopt round 2
+            // ONLY if it is a valid DAG that HONORS the lock AND scores structurally HIGHER than round 1.
+            // Confidence stays conf1 — the round-1 free-draft agreement — in ALL branches, so the forced round
+            // can NEVER inflate the number the ask-floor gate reads (dishonesty eliminated by construction, not
+            // by a tuned guard). Off ⇒ this whole block is skipped, byte-identical.
+            if backbone_on {
+                let backbone = consensus_backbone(&valid1);
+                if backbone.len() >= 2 {
+                    eprintln!(
+                        "  {} backbone lock: {} consensus module(s) [{}] — re-drafting round 2",
+                        style("◆").cyan(),
+                        backbone.len(),
+                        backbone.join(", ")
+                    );
+                    let system2 = build_system(&backbone_clause(&backbone));
+                    let candidates2 = draft_round(system2, draft_temp).await;
+                    let (best2, _valid2) =
+                        select_best_skeleton(candidates2, worker_count, "round2 ");
+                    match best2 {
+                        Some((score2, json2))
+                            if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
+                        {
+                            eprintln!(
+                                "  {} backbone round-2 skeleton adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
+                                style("✓").green().bold()
+                            );
+                            (
+                                json2,
+                                Some(conf1),
+                                format!(
+                                    "{reason1} [backbone: {} locked modules; round-2 skeleton adopted score {score1}->{score2}; confidence from round-1 free drafts]",
+                                    backbone.len()
+                                ),
+                            )
+                        }
+                        _ => {
+                            eprintln!("  · backbone round 2 not adopted (kept round 1)");
+                            (json1, Some(conf1), reason1)
                         }
                     }
-                    None => eprintln!("  · candidate {i}: invalid DAG — skipped"),
+                } else {
+                    eprintln!("  · backbone lock: no shared core (skipping round 2)");
+                    (json1, Some(conf1), reason1)
                 }
-            }
-            match best {
-                Some((score, json)) => {
-                    // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where
-                    // verbalized confidence is overconfident). Low agreement = the model doesn't really know
-                    // how to decompose this — a signal to research more before committing (M6 step 3).
-                    let (conf, reason) = match consensus_k {
-                        Some(k) => best_subset_agreement(&valid_specs, converge, k),
-                        None => plan_agreement(&valid_specs, converge),
-                    };
-                    eprintln!(
-                        "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
-                        style("✓").green().bold()
-                    );
-                    (json, Some(conf), reason)
-                }
-                None => return Err(anyhow!("no valid skeleton among {n} candidates")),
+            } else {
+                (json1, Some(conf1), reason1)
             }
         };
         // Second confidence signal: SPEC CLARITY. Cross-draft agreement measures whether the drafts
@@ -8741,7 +8936,10 @@ fn swarm_gate(name: &str, in_assured_bundle: bool) -> bool {
 /// the env escape hatch.
 fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
     match std::env::var(name).ok() {
-        Some(v) => matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"),
+        Some(v) => matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        ),
         None => cfg_default,
     }
 }
@@ -10459,6 +10657,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Convergence molding: config default (true) unless the env explicitly overrides. Threaded into every
     // parallel_plan call so it drives BOTH the architect prompt and the role-normalized agreement metric.
     let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
+    // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
+    let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
     let (plan_json, dag, plan_conf) = loop {
         // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
         // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
@@ -10491,6 +10691,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     },
                     draft_temp,
                     converge,
+                    backbone_on,
                 )
                 .await
             {
