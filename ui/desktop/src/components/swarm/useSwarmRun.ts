@@ -780,6 +780,10 @@ function foldEvents(
         error: status === 'error' ? prev?.error : undefined,
         seq: seq++,
       });
+    } else if (type === 'judge_verdict' && str(e['action']) === 'split') {
+      // The judge decomposed this task into freshly-dispatched children. The parent gets no task_completed, so
+      // its lane would spin forever. Drop it — the children have their own lanes and the split stays in the feed.
+      tasks.delete(taskId);
     }
   }
 
@@ -868,6 +872,7 @@ function buildPhaseTodo(
   const tstate = new Map<string, { state: TodoState; device?: string; error?: string }>();
   const judgeFailed = new Set<string>();
   const salvaged = new Set<string>();
+  const splitParents = new Set<string>();
   const replans: number[] = [];
   let schedulerStuck: number | null = null;
   const reportFailed = new Set<string>();
@@ -923,6 +928,9 @@ function buildPhaseTodo(
       const a = str(e['action']);
       if (a === 'failed') judgeFailed.add(id);
       if (a === 'salvaged') salvaged.add(id);
+      // A SPLIT decomposes this task into freshly-dispatched children; the parent never gets a task_completed,
+      // so without this it would render 'running' forever (a stuck spinner on a done run). Mark it superseded.
+      if (a === 'split') splitParents.add(id);
     } else if (t === 'replanned') {
       const added = arr(e['added']).length;
       if (added > 0) replans.push(added);
@@ -1020,26 +1028,35 @@ function buildPhaseTodo(
 
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
-  for (const tk of planTasks) {
-    const s = tstate.get(tk.id);
+  const plannedIds = new Set(planTasks.map((tk) => tk.id));
+  const buildRow = (id: string, label: string) => {
+    const s = tstate.get(id);
     let state: TodoState;
     let detail: string | undefined;
-    if (s) {
+    if (splitParents.has(id)) {
+      // Decomposed by the judge — the children (dispatched below) carry the real work. Never leave it 'running'.
+      state = 'skipped';
+      detail = 'split into sub-tasks';
+    } else if (s) {
       state = s.state;
       // 'done' in Build only ever means "promoted after the green e2e verify" (build tasks never self-complete
       // to green). Say so honestly — the verification was at the app level, not this unit grading itself.
-      if (state === 'done') detail = salvaged.has(tk.id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
-      else if (state === 'unverified' && salvaged.has(tk.id)) detail = 'salvaged — judge cut a loop';
+      if (state === 'done') detail = salvaged.has(id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
+      else if (state === 'unverified' && salvaged.has(id)) detail = 'salvaged — judge cut a loop';
       else if (state === 'judge_failed') detail = 'judge decision';
       else if (s.error) detail = s.error.slice(0, 80);
-    } else if (reportFailed.has(tk.id) || schedulerStuck != null) {
+    } else if (reportFailed.has(id) || schedulerStuck != null) {
       state = 'blocked';
       detail = schedulerStuck != null ? 'scheduler stuck' : 'a dependency failed';
     } else {
       state = 'pending';
     }
-    build.push(it(`b-${tk.id}`, cleanTaskTitle(tk.description, tk.id), state, detail, s?.device));
-  }
+    build.push(it(`b-${id}`, label, state, detail, s?.device));
+  };
+  for (const tk of planTasks) buildRow(tk.id, cleanTaskTitle(tk.description, tk.id));
+  // Split children (+ any other dynamically-dispatched task) are NOT in planTasks — surface them so the todo
+  // reflects the work that actually ran, not just the original plan. Keep them right after their siblings.
+  for (const [id] of tstate) if (!plannedIds.has(id)) buildRow(id, id);
   for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
   if (schedulerStuck != null)
     build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
@@ -1113,7 +1130,8 @@ function buildPhaseTodo(
     active: false,
     counts: {
       done: items.filter((i) => i.state === 'done').length,
-      total: items.filter((i) => i.state !== 'advisory').length,
+      // exclude advisory (info-only) AND skipped (off / superseded, e.g. a split parent) from the denominator
+      total: items.filter((i) => i.state !== 'advisory' && i.state !== 'skipped').length,
     },
   });
   const phases: PhaseTodo[] = [
