@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
-  MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info,
+  MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
 } from 'lucide-react';
 import {
   useSwarmRun,
@@ -1074,7 +1074,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // Stable node identity: run.lanes RE-SORTS every poll (running first, then recency), so deriving letters
   // from first-seen lane order made a node's letter/hue flicker between polls. Sort the distinct devices
   // deterministically so ⬢A/hue is fixed for the whole run.
-  const deviceOrder: string[] = Array.from(new Set(run.lanes.map((l) => l.device))).sort();
+  const deviceOrder: string[] = Array.from(
+    new Set([...run.lanes, ...run.planLanes].map((l) => l.device))
+  ).sort();
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
   // last-activity mtime with the old conservative window (runs that predate heartbeats).
@@ -1241,6 +1243,38 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         live={run.inProgress && !stale && !ended}
         verbose={verbose}
       />
+
+      {run.planLanes.length > 0 ? (
+        <div className="border-t border-border-primary">
+          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-text-secondary flex items-center gap-1.5">
+            <Braces className="h-3 w-3" style={{ color: '#b14cff' }} />
+            Drafting the plan · {run.planLanes.length} model
+            {run.planLanes.length === 1 ? '' : 's'}
+            {run.planLanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
+          </div>
+          <div className="divide-y divide-border-primary">
+            {run.planLanes.map((lane) => {
+              // Plan drafts: expand while thinking, collapse once the plan is chosen. Mode controls density.
+              const defaultOpen = lane.status === 'running';
+              const open = overrides[lane.taskId] ?? defaultOpen;
+              return (
+                <LaneRow
+                  key={lane.taskId}
+                  lane={lane}
+                  deviceOrder={deviceOrder}
+                  stale={stale}
+                  open={open}
+                  mode={mode}
+                  dev={dev}
+                  onToggle={() =>
+                    setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))
+                  }
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <div className="divide-y divide-border-primary">
         {run.lanes.map((lane) => {
