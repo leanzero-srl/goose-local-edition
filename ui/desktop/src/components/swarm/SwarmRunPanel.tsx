@@ -178,14 +178,20 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
 
 // The worker's full narration, rendered as readable PROSE (not mono), capped with a Show-all escape hatch.
 // In developer mode it starts fully expanded (no cap).
-const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean }> = ({ text, forceOpen }) => {
+const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean; label?: string }> = ({
+  text,
+  forceOpen,
+  label,
+}) => {
   const [expandedState, setExpanded] = useState(false);
   const expanded = expandedState || !!forceOpen;
   const words = text.split(/\s+/).filter(Boolean).length;
   const big = text.length > 1200;
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">Reasoning</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+        {label || 'Reasoning'}
+      </div>
       <div
         className={`text-xs text-text-primary whitespace-pre-wrap break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
         style={{ borderRadius: 3 }}
@@ -209,9 +215,10 @@ const LaneRow: React.FC<{
   deviceOrder: string[];
   stale: boolean;
   open: boolean;
+  mode: SwarmLogMode;
   dev?: boolean;
   onToggle: () => void;
-}> = ({ lane, deviceOrder, stale, open, dev, onToggle }) => {
+}> = ({ lane, deviceOrder, stale, open, mode, dev, onToggle }) => {
   const idx = deviceIndex(lane.device, deviceOrder);
   const hue = FORMATION_RAMP[idx % FORMATION_RAMP.length];
   const letter = String.fromCharCode(65 + (idx % 26));
@@ -232,6 +239,12 @@ const LaneRow: React.FC<{
     reasoning.length > 0 || calls.length > 0 || (lane.recent?.length ?? 0) > 0 || laneError.length > 0;
   // The first failing call auto-expands so the error is zero clicks away.
   const firstFailIdx = calls.findIndex((c) => c.ok === false);
+  // Compact mode's single high-level line: the freshest activity, else the last line of reasoning.
+  const compactLine =
+    (lane.recent && lane.recent.length ? lane.recent[lane.recent.length - 1] : '') ||
+    (reasoning ? reasoning.split('\n').map((l) => l.trim()).filter(Boolean).slice(-1)[0] ?? '' : '') ||
+    lane.lastText?.trim() ||
+    '';
 
   // Human-readable labels for the row's glyphs — so every icon says what it means on hover.
   const secs = typeof lane.elapsedMs === 'number' ? Math.round(lane.elapsedMs / 1000) : null;
@@ -352,26 +365,43 @@ const LaneRow: React.FC<{
               <MonoOutput text={laneError} failed />
             </div>
           ) : null}
-          {reasoning && <ReasoningBlock text={reasoning} forceOpen={dev || live} />}
-
-          {calls.length > 0 ? (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
-                Tool calls · {lane.toolCalls ?? calls.length}
-              </div>
-              <div
-                className="bg-background-primary border border-border-primary px-2 py-1"
-                style={{ borderRadius: 3 }}
-              >
-                {calls.map((c, i) => (
-                  // Developer mode opens every call's output; otherwise only the first failure.
-                  <CallRow key={i} call={c} defaultOpen={dev || i === firstFailIdx} />
-                ))}
-              </div>
-            </div>
-          ) : lane.recent && lane.recent.length > 0 ? (
-            <div className="text-xs text-text-secondary font-mono break-words">{lane.recent.join(' · ')}</div>
-          ) : null}
+          {mode === 'compact' ? (
+            // Compact: a single high-level line of what this node is doing now — no reasoning dump, no calls.
+            compactLine ? (
+              <div className="text-xs text-text-secondary truncate">{compactLine}</div>
+            ) : null
+          ) : (
+            <>
+              {reasoning && (
+                <ReasoningBlock
+                  text={reasoning}
+                  forceOpen={dev || live}
+                  // Developer: name the model so it's unmistakable WHOSE generation this is.
+                  label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
+                />
+              )}
+              {calls.length > 0 ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+                    Tool calls · {lane.toolCalls ?? calls.length}
+                  </div>
+                  <div
+                    className="bg-background-primary border border-border-primary px-2 py-1"
+                    style={{ borderRadius: 3 }}
+                  >
+                    {calls.map((c, i) => (
+                      // Developer mode opens every call's output; otherwise only the first failure.
+                      <CallRow key={i} call={c} defaultOpen={dev || i === firstFailIdx} />
+                    ))}
+                  </div>
+                </div>
+              ) : lane.recent && lane.recent.length > 0 ? (
+                <div className="text-xs text-text-secondary font-mono break-words">
+                  {lane.recent.join(' · ')}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -569,9 +599,23 @@ const ConfidenceBreakdownBody: React.FC<{
           </div>
         </div>
       </div>
-      <div className="space-y-1.5">
-        <ConfBar label="Agreement" value={conf.agreement} />
-        <ConfBar label="Spec clarity" value={conf.specClarity} />
+      <div className="space-y-2">
+        <div>
+          <ConfBar label="Agreement" value={conf.agreement} />
+          {conf.agreementReason ? (
+            <div className="text-[10px] text-text-secondary mt-0.5 pl-[5.5rem]">
+              {conf.agreementReason}
+            </div>
+          ) : null}
+        </div>
+        <div>
+          <ConfBar label="Spec clarity" value={conf.specClarity} />
+          {conf.specClarityReason ? (
+            <div className="text-[10px] text-text-secondary mt-0.5 pl-[5.5rem]">
+              {conf.specClarityReason}
+            </div>
+          ) : null}
+        </div>
       </div>
       <div>
         <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
@@ -1200,9 +1244,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 
       <div className="divide-y divide-border-primary">
         {run.lanes.map((lane) => {
-          // In verbose, every lane defaults open (show all reasoning + tool calls); the user can still
-          // collapse individual ones via the override.
-          const defaultOpen = verbose || lane.status === 'running';
+          // Regardless of mode: IN-PROGRESS lanes default OPEN (you watch the live work), FINISHED ones
+          // default COLLAPSED (headline only — the history stays scannable). The mode controls the CONTENT
+          // density of an open lane (compact = titles, developer = full reasoning), not whether it's open.
+          // The user can still expand/collapse any lane via the override.
+          const defaultOpen = lane.status === 'running';
           const open = overrides[lane.taskId] ?? defaultOpen;
           return (
             <LaneRow
@@ -1211,6 +1257,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
               deviceOrder={deviceOrder}
               stale={stale}
               open={open}
+              mode={mode}
               dev={dev}
               onToggle={() => setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))}
             />

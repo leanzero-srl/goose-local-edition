@@ -137,6 +137,7 @@ type ElectronAPI = {
         agreement: number;
         agreementReason: string;
         specClarity: number;
+        specClarityReason: string;
         productSpecified: boolean;
         openDecisions: string[];
       } | null;

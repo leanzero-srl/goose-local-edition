@@ -1944,6 +1944,27 @@ mod tests {
     }
 
     #[test]
+    fn spec_clarity_score_is_continuous_not_a_constant() {
+        // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
+        // buckets); floored at 30 so a very-open-but-defined spec still reads "low, ask".
+        assert_eq!(spec_clarity_score(true, 0), 100);
+        assert_eq!(spec_clarity_score(true, 1), 84);
+        assert_eq!(spec_clarity_score(true, 2), 68);
+        assert_eq!(spec_clarity_score(true, 3), 52);
+        assert_eq!(spec_clarity_score(true, 9), 30); // floored, count clamped
+                                                     // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
+                                                     // axes are open — so vague specs no longer all snap to a flat 20.
+        assert_eq!(spec_clarity_score(false, 0), 30);
+        assert_eq!(spec_clarity_score(false, 1), 24);
+        assert_eq!(spec_clarity_score(false, 2), 18);
+        assert_eq!(spec_clarity_score(false, 9), 8); // floored
+                                                     // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
+        assert!(spec_clarity_score(true, 1) >= 70);
+        assert!(spec_clarity_score(true, 2) < 70);
+        assert!(spec_clarity_score(false, 0) < 70);
+    }
+
+    #[test]
     fn consensus_backbone_pins_only_the_strict_majority() {
         let draft = |ids: &[(&str, &str)]| {
             let subs: Vec<String> = ids
@@ -2002,6 +2023,7 @@ mod tests {
             agreement: Some(53),
             agreement_reason: "3 drafts agree: count spread 1, file-overlap 24%".into(),
             spec_clarity: Some(43),
+            spec_clarity_reason: "product is pinned; 1 material open decision".into(),
             product_specified: true,
             open_decisions: vec!["which storage backend".into()],
         };
@@ -2042,6 +2064,7 @@ mod tests {
             agreement: a,
             agreement_reason: String::new(),
             spec_clarity: c,
+            spec_clarity_reason: String::new(),
             product_specified: prod,
             open_decisions: if dec { vec!["x".into()] } else { vec![] },
         };
@@ -2084,6 +2107,7 @@ mod tests {
             agreement: a,
             agreement_reason: String::new(),
             spec_clarity: c,
+            spec_clarity_reason: String::new(),
             product_specified: prod,
             open_decisions: dec,
         };
@@ -3556,6 +3580,7 @@ pub(crate) struct PlanConf {
     agreement: Option<u8>,
     agreement_reason: String,
     spec_clarity: Option<u8>,
+    spec_clarity_reason: String,
     product_specified: bool,
     open_decisions: Vec<String>,
 }
@@ -3634,6 +3659,22 @@ const RETARGET_MAX_N: usize = 6;
 
 /// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
 /// path emits no new key and stays byte-identical.
+/// CONTINUOUS spec-clarity score (0-100) from the two real signals the probe produces: is the product
+/// defined, and how many MATERIAL open decisions remain. Deliberately NOT a handful of magic constants
+/// (earlier every product-undefined spec snapped to a flat 20, which reads as faked) — it varies with the
+/// count so specs differentiate honestly, grounded in real signal (no invented smoothing). Undefined product
+/// = the dominant unknown → always low (≤30, so it asks regardless of draft agreement) but still moves with
+/// how many axes are open; defined product = 100 minus 16 per material decision, floored at 30. The ask
+/// boundary vs a ~70 floor is preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
+fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
+    let n = n_decisions.min(6) as u8;
+    if !product_specified {
+        30u8.saturating_sub(6 * n).max(8)
+    } else {
+        100u8.saturating_sub(16 * n).max(30)
+    }
+}
+
 fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
     if pc.agreement.is_none() && pc.spec_clarity.is_none() {
         return None;
@@ -3643,6 +3684,7 @@ fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
         "agreement": pc.agreement,
         "agreement_reason": pc.agreement_reason,
         "spec_clarity": pc.spec_clarity,
+        "spec_clarity_reason": pc.spec_clarity_reason,
         "product_specified": pc.product_specified,
         "open_decisions": pc.open_decisions,
     }))
@@ -5401,11 +5443,25 @@ impl GooseAgentDispatcher {
                     style("◆").cyan()
                 );
             }
+            // A human-readable derivation of the spec-clarity number, so it reads as a computed signal, not a
+            // magic constant (parallels agreement_reason). Shown in the confidence breakdown.
+            let spec_clarity_reason = if !product_specified {
+                "the product itself is undefined — clarity stays low until you say what to build"
+                    .to_string()
+            } else if open_decisions.is_empty() {
+                "product is pinned and only routine defaults remain".to_string()
+            } else {
+                format!(
+                    "product is pinned; {} material open decision(s) still lower clarity",
+                    open_decisions.len()
+                )
+            };
             let pc = PlanConf {
                 final_conf,
                 agreement: agreement_conf,
                 agreement_reason,
                 spec_clarity,
+                spec_clarity_reason,
                 product_specified,
                 open_decisions,
             };
@@ -5416,6 +5472,7 @@ impl GooseAgentDispatcher {
                 agreement: agreement_conf,
                 agreement_reason,
                 spec_clarity: None,
+                spec_clarity_reason: String::new(),
                 product_specified: true,
                 open_decisions: Vec::new(),
             };
@@ -7583,22 +7640,12 @@ impl GooseAgentDispatcher {
             .map(|d| d.trim().to_string())
             .filter(|d| d.chars().count() >= 4)
             .collect();
-        // Confidence-to-PROCEED. The whole product being undefined is the STRONGEST ambiguity — a weak model
-        // reports it as one consolidated decision, so count alone underweights it; force a low score (20) so
-        // the ask fires EVEN IF cross-draft agreement happened to be high (the noise this signal exists to
-        // catch). Otherwise map by count: 0 = clear (100, no veto); 2+ unknowable decisions force the ask (50,
-        // below any reasonable floor); a single arguable one stays just above the default floor (72) so one
-        // over-enumeration alone never trips an ask.
-        let conf: u8 = if !parsed.product_specified {
-            20
-        } else {
-            match decisions.len() {
-                0 => 100,
-                1 => 72,
-                2 => 50,
-                _ => 30,
-            }
-        };
+        // Confidence-to-PROCEED — a CONTINUOUS function of the real signals (product defined? how many
+        // material open decisions?), not a handful of magic constants, so it VARIES honestly across specs
+        // (earlier every product-undefined spec snapped to a flat 20, which reads as faked). Grounded, not
+        // smoothed: the only inputs are the LLM's product_specified bool + its count of genuine unknowables.
+        // Boundary vs a ~70 ask-floor is preserved: 0-1 open decisions proceed, 2+ ask; undefined always asks.
+        let conf = spec_clarity_score(parsed.product_specified, decisions.len());
         // When the product itself is open, make that the leading uncertainty so the clarify questions ask it.
         let decisions_out = if !parsed.product_specified {
             let mut d = vec![
