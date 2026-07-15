@@ -1360,12 +1360,19 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // zero dispatched tasks, so the old `stale && tasks > 0` gate left it stuck showing "planning" forever. The
   // heartbeat makes `stale` precise (a live planner keeps ticking), so staleness alone is a safe end signal.
   const ended = !clarifyPending && (run.finished || stale);
+  // The APP-LEVEL oracle: the engine's own end-to-end verify (complete_result -> phaseTodo v-e2e = 'done').
+  // A green verify means the deliverable WORKS — so the run is 'done' and the overview shows — EVEN IF an
+  // individual build task failed (e.g. the integrate-verify sink stalled but the orchestrator's verify still
+  // passed). Without this, one failed task forced outcome='failed', which suppressed the overview and headlined
+  // "1 task failed" on a working, verified app. The failed task stays visible in the Build phase-todo + counts.
+  const appVerified =
+    (run.phaseTodo.find((p) => p.key === 'verify')?.items ?? []).find((i) => i.id === 'v-e2e')?.state === 'done';
   const outcome: 'done' | 'failed' | 'stopped' | null = !ended
     ? null
     : run.finished
-      ? (run.summary?.failed ?? failed) > 0
-        ? 'failed'
-        : 'done'
+      ? appVerified || (run.summary?.failed ?? failed) === 0
+        ? 'done'
+        : 'failed'
       : 'stopped';
   const durationMin =
     run.summary?.totalMin != null
