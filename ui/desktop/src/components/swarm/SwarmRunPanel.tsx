@@ -23,6 +23,7 @@ import {
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
+import MarkdownContent from '../MarkdownContent';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -246,10 +247,12 @@ const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean; label?: stri
         {label || 'Reasoning'}
       </div>
       <div
-        className={`text-xs text-text-primary whitespace-pre-wrap break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
+        className={`text-xs text-text-primary break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
         style={{ borderRadius: 3 }}
       >
-        {text}
+        {/* Render as rich markdown — the task spec + worker reasoning ARE markdown (bold headers, inline
+            `code`, lists), so show them formatted, not as literal ** and backticks. */}
+        <MarkdownContent content={text} />
       </div>
       {big && (
         <button
