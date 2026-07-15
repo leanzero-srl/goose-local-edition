@@ -275,13 +275,16 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 // Falls back to the id when nothing usable remains.
 export function cleanTaskTitle(desc: string | undefined, id: string): string {
   if (!desc) return id;
-  let s = desc.replace(/[*_`#>]+/g, ' ').replace(/\r/g, '');
+  // TRIM first: the architect's descriptions start with "\n\n", which would make the "\n\s*\n" cut match at
+  // index 0 and get skipped — leaving the whole wall. Strip md emphasis/fences (NOT underscores — they occur
+  // in filenames like test_projects.py), then cut at the first section marker or blank line.
+  let s = desc.replace(/[*`#>]+/g, ' ').replace(/\r/g, '').trim();
   const cut = s.search(
-    /\b(Owned files?|Implementation spec|Files?\s*:|Depends on|Acceptance|Contract|Deliverable)\b|\n\s*\n/i
+    /\b(Owned files?|Files? owned|Implementation spec|Files?\s*:|Depends on|Acceptance|Contract|Deliverable)\b|\n\s*\n/i
   );
-  if (cut > 0) s = s.slice(0, cut);
+  if (cut >= 0) s = s.slice(0, cut); // cut===0 => nothing before the marker => falls back to id below
   s = s
-    .replace(/^\s*Subtask\s*:?\s*/i, '')
+    .replace(/^\s*Subtask(\s+Spec)?\s*:?\s*/i, '')
     .replace(/^\s*\[[^\]]+\]\s*/, '')
     .replace(/^\s*[—–\-:]\s*/, '')
     .replace(/\s+/g, ' ')
