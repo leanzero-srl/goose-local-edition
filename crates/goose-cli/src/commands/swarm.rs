@@ -6013,11 +6013,27 @@ fn collect_lang_files(root: &Path, lang: TargetLang) -> Vec<PathBuf> {
 }
 
 /// Per-language interface-stub instructions for the CONTRACTS phase. Returns (system prompt, per-file header
-/// comment prefix). The Python arm is the ORIGINAL prompt verbatim — byte-identical behavior on Python trees.
-/// TS emits `export`ed declaration stubs; Rust emits `pub` signature stubs; both carry the same anti-drift
-/// SCHEMA rule that made contracts valuable on Python.
+/// comment prefix). Python is the ORIGINAL prompt verbatim — byte-identical behavior on Python trees. TS/Rust/
+/// Go emit language-native public-interface stubs; the generic arm handles ANY other language so contracts are
+/// language-AGNOSTIC, not Python-only. All arms carry the same anti-drift SCHEMA rule that made contracts valuable.
 fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
     match lang {
+        TargetLang::Python => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
+             implemented, so parallel workers agree on the contract. Output ONLY Python signature \
+             stubs for the listed files: every public function and class the module will expose, \
+             with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
+             `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
+             SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
+             block listing each TABLE and its EXACT column names (and types), because every module \
+             that reads or writes those tables MUST use the SAME column names — a drift (one module \
+             using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
+             integration failure that passing isolation unit-tests hide. NO implementations, NO \
+             private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
+             them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
+             Keep it tight.",
+            "#",
+        ),
         TargetLang::TypeScript => (
             "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
              workers agree on the contract. Output ONLY TypeScript DECLARATION stubs for the listed files: \
@@ -6048,21 +6064,37 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              in your reply TEXT only. Keep it tight.",
             "//",
         ),
-        _ => (
-            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is \
-             implemented, so parallel workers agree on the contract. Output ONLY Python signature \
-             stubs for the listed files: every public function and class the module will expose, \
-             with EXACT names, full type-annotated signatures, and a ONE-LINE docstring each, with \
-             `...` as the body. ALSO — if this module owns a DATABASE SCHEMA (it creates tables, a \
-             SQLite/SQL schema, or defines the persisted record shape), append a `# SCHEMA` comment \
-             block listing each TABLE and its EXACT column names (and types), because every module \
-             that reads or writes those tables MUST use the SAME column names — a drift (one module \
-             using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
-             integration failure that passing isolation unit-tests hide. NO implementations, NO \
-             private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
-             them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
-             Keep it tight.",
-            "#",
+        TargetLang::Go => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
+             workers agree on the contract. Output ONLY Go signature stubs for the listed files: every \
+             EXPORTED (capitalized) identifier the module will expose — `func` signatures (body \
+             `panic(\"stub\")`), `type` structs (with their exported fields + types), and interfaces (method \
+             signatures). Include the `package` line. Use EXACT names and full types. ALSO — if this module \
+             owns a persisted data shape or schema, append a `// SCHEMA` comment block listing each record and \
+             its EXACT field names (and types), because every module that reads or writes it MUST use the SAME \
+             names — a drift (one module using `ParentHash` while another uses `Parent`) is a top integration \
+             failure that passing isolation unit-tests hide. NO unexported items, NO prose, NO code fences. You \
+             have file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the \
+             stubs in your reply TEXT only. Keep it tight.",
+            "//",
+        ),
+        // Language-AGNOSTIC fallback — any language detect_language couldn't map to a specific arm. Instructs
+        // the model to emit the module's public interface IN ITS OWN LANGUAGE + syntax, so contracts are never
+        // Python-only. The header prefix "//" is the most common; the prompt tells the model to use the file's
+        // own comment style for the SCHEMA block.
+        TargetLang::Other => (
+            "You are defining the PUBLIC INTERFACE of ONE module BEFORE it is implemented, so parallel \
+             workers agree on the contract. Infer the module's programming language from the file extensions, \
+             then output ONLY signature-only stubs for that language: every PUBLIC / exported function, type, \
+             class, interface, and constant the module will expose, with EXACT names and full type signatures, \
+             and NO bodies (use the language's stub idiom — a declaration, an empty/abstract body, or a \
+             `TODO`). ALSO — if this module owns a persisted data shape or schema, append a SCHEMA comment (in \
+             the file's own comment syntax) listing each record/table and its EXACT field/column names (and \
+             types), because every module that reads or writes it MUST use the SAME names — a drift is a top \
+             integration failure that passing isolation unit-tests hide. NO implementations, NO private \
+             helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use them: do NOT create, \
+             write, or edit ANY file — put the stubs in your reply TEXT only. Keep it tight.",
+            "//",
         ),
     }
 }
@@ -8999,7 +9031,17 @@ impl TargetLang {
             }
             TargetLang::Rust => f.ends_with(".rs"),
             TargetLang::Go => f.ends_with(".go"),
-            TargetLang::Other => false,
+            // Agnostic: an unrecognized language still has source files — match a broad set of code
+            // extensions so CONTRACTS (and dependency-API injection) work for ANY language, not just the 4.
+            TargetLang::Other => {
+                const CODE_EXTS: &[&str] = &[
+                    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".rs", ".go", ".rb", ".java",
+                    ".kt", ".kts", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".php",
+                    ".swift", ".scala", ".ex", ".exs", ".clj", ".cljs", ".hs", ".ml", ".lua",
+                    ".pl", ".pm", ".dart", ".r", ".jl", ".zig", ".nim", ".sh",
+                ];
+                CODE_EXTS.iter().any(|e| f.ends_with(e))
+            }
         }
     }
 
@@ -11277,19 +11319,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let contracts_on = swarm_gate("GOOSE_SWARM_CONTRACTS", true);
     // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
     // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
-    // module filter below already empties on a pure non-Python tree; this makes the skip explicit and
-    // misfire-proof. Per-language (TS interface / Rust trait) stub generation is deferred. Python unchanged.
-    // CONTRACTS now runs for every language with a stub profile (Python/TS/Rust), per-language stubs
-    // (contract_stub_spec). Go/Other still skip (no stub grammar). Python is byte-identical (same prompt,
-    // same `.py` filter via is_source_file, same collector). This kills cross-module interface drift on
-    // TS/Rust trees too — the coherence gap Mihai flagged on the Rust build.
+    // CONTRACTS is LANGUAGE-AGNOSTIC: it runs for ANY detected language (Python/TS/Rust/Go each get a native
+    // per-language stub prompt; anything else gets the generic arm of contract_stub_spec + a broad source-file
+    // matcher via is_source_file(Other)). The module filter empties on a tree with no code files, so a
+    // non-code plan simply skips. Python is byte-identical (same prompt, `.py` filter, collector). This kills
+    // cross-module interface drift on every tree, not just Python — the coherence gap Mihai flagged.
     let contract_lang = detect_language(&opts.prompt, &[]);
-    if contracts_on
-        && matches!(
-            contract_lang,
-            TargetLang::Python | TargetLang::TypeScript | TargetLang::Rust
-        )
-    {
+    if contracts_on {
         let modules: Vec<TaskSpec> = dag
             .tasks
             .values()
