@@ -478,6 +478,62 @@ const ConfBar: React.FC<{ label: string; value: number }> = ({ label, value }) =
   </div>
 );
 
+// Radial arc gauge for the headline plan confidence — a 270° sweep in the value's threshold color over a
+// neutral track, the big number centered. Solid saturated stroke, sharp/flat (no soft glow or faded tint):
+// the visual anchor of the confidence panel. Pure SVG, theme-aware via CSS vars.
+const ConfGauge: React.FC<{ value: number; size?: number }> = ({ value, size = 76 }) => {
+  const v = Math.max(0, Math.min(100, Math.round(value)));
+  const r = 32;
+  const circ = 2 * Math.PI * r;
+  const sweep = 0.75; // 270°
+  const track = sweep * circ;
+  const fill = (v / 100) * sweep * circ;
+  const col = confColor(v);
+  return (
+    <svg width={size} height={size} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`plan confidence ${v} of 100`}>
+      <circle
+        cx="40"
+        cy="40"
+        r={r}
+        fill="none"
+        stroke="var(--border-primary)"
+        strokeWidth="7"
+        strokeDasharray={`${track} ${circ}`}
+        transform="rotate(135 40 40)"
+      />
+      <circle
+        cx="40"
+        cy="40"
+        r={r}
+        fill="none"
+        stroke={col}
+        strokeWidth="7"
+        strokeDasharray={`${fill} ${circ}`}
+        transform="rotate(135 40 40)"
+        style={{ transition: 'stroke-dasharray 500ms ease-out' }}
+      />
+      <text
+        x="40"
+        y="39"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        style={{ fill: col, fontSize: 23, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
+      >
+        {v}
+      </text>
+      <text
+        x="40"
+        y="55"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        style={{ fill: 'var(--text-secondary)', fontSize: 8, letterSpacing: 0.5 }}
+      >
+        /100
+      </text>
+    </svg>
+  );
+};
+
 // Shared breakdown body — reused by the header-expand panel AND the ClarifyPrompt (one visual language). The
 // min number, the two sub-bars, WHAT'S HOLDING IT BACK (the binding/lower signal), WHAT WOULD RAISE IT
 // (honest, research-backed), and a climb trail/sparkline when the meter has moved.
@@ -500,12 +556,18 @@ const ConfidenceBreakdownBody: React.FC<{
       : 'Researching the undecided points to firm up the spec.';
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center gap-2">
-        <Gauge className="h-4 w-4" style={{ color: confColor(conf.final) }} />
-        <span className="text-lg font-semibold tabular-nums" style={{ color: confColor(conf.final) }}>
-          {conf.final}
-        </span>
-        <span className="text-[11px] text-text-secondary">/100 plan confidence</span>
+      <div className="flex items-center gap-3">
+        <ConfGauge value={conf.final} />
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-text-secondary">Plan confidence</div>
+          <div className="text-[12px] font-medium mt-0.5" style={{ color: confColor(conf.final) }}>
+            {conf.final >= 70
+              ? 'Strong — ready to build'
+              : conf.final >= 40
+                ? 'Mixed — check below'
+                : 'Low — needs your input'}
+          </div>
+        </div>
       </div>
       <div className="space-y-1.5">
         <ConfBar label="Agreement" value={conf.agreement} />
@@ -950,7 +1012,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 }) => {
   const run = useSwarmRun(workingDir);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const [confOpen, setConfOpen] = useState(false);
+  // Default OPEN so the confidence gauge shows on EVERY build, not only when the badge is clicked or an ask
+  // fires (Mihai: "I would like to see it for every app"). The badge still collapses it.
+  const [confOpen, setConfOpen] = useState(true);
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';
@@ -1091,11 +1155,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         </span>
       </div>
 
-      {confOpen && run.confidence ? (
+      {confOpen && run.confidence && !run.clarify?.pending ? (
         <ConfidencePanel
           conf={run.confidence}
           trail={run.confidenceTrail}
-          hasPendingQuestions={!!run.clarify?.pending}
+          hasPendingQuestions={false}
         />
       ) : null}
 
