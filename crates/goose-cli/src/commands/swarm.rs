@@ -12260,7 +12260,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // would kill this ~30-120s summary call mid-flight (the bug that shipped in v1.41.37 — it never emitted).
     // Skipped (generated:false) on a RED build so a confident summary never over-sells a broken app; a
     // STOPPED run dies mid-build and never reaches here, so the UI still never shows a triumphant overview.
-    if swarm_gate("GOOSE_SWARM_OVERVIEW", true) {
+    // Gate = DEFAULT ON, env can force off. (NOT swarm_gate(..,true) — that only activates under the assured
+    // profile, which the desktop provider doesn't set, so the overview silently never ran there.)
+    if swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true) {
         let ov_root = std::env::current_dir().unwrap_or_default();
         let rel_files = existing_files_manifest(&ov_root);
         let ov_lang = detect_language(&opts.prompt, &rel_files);
