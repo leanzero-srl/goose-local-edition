@@ -49,6 +49,39 @@ export interface SwarmRunTotals {
   failed: number;
 }
 
+// A per-phase TODO checklist, derived ENTIRELY from the engine's deterministic event stream (scheduler task
+// states + orchestrator phase events) — never from a model self-reporting. The honesty hinges on TodoState:
+// a built task is 'unverified' (the worker's loop returned + passed a syntax gate; the app was NOT run), and
+// only Verify's complete_result.passed&&verified earns a green 'done'. Advisory items (LLM reviewers) are
+// info, never checks. See the phase-todo design workflow (2026-07-15).
+export type PhaseKey = 'research' | 'plan' | 'contracts' | 'build' | 'verify' | 'done';
+export type TodoState =
+  | 'pending'
+  | 'running'
+  | 'done' // class-A VERIFIED complete (green)
+  | 'unverified' // built/shipped but NOT proven to run — neutral, never green
+  | 'failed' // engine hard-fail or terminal block
+  | 'judge_failed' // a task the JUDGE LLM decided to fail (not the engine)
+  | 'blocked' // never dispatched but doomed (cascade dep-fail / scheduler stuck)
+  | 'skipped' // phase legitimately no-op'd (research off / gate off)
+  | 'advisory'; // LLM-reviewer / heuristic signal — info only, never a checkbox
+export interface PhaseTodoItem {
+  id: string;
+  label: string;
+  state: TodoState;
+  detail?: string;
+  device?: string;
+  advisory?: boolean;
+}
+export interface PhaseTodo {
+  key: PhaseKey;
+  label: string;
+  items: PhaseTodoItem[];
+  state: TodoState;
+  active: boolean;
+  counts: { done: number; total: number };
+}
+
 export type ActivityKind =
   | 'phase'
   | 'plan'
@@ -130,6 +163,8 @@ export interface SwarmRunState {
   /** PLAN-phase generation lanes (architect drafts) — what each model produced while decomposing the app.
    *  Separate from `lanes` (build tasks) and excluded from `totals`. */
   planLanes: TurnLane[];
+  /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
+  phaseTodo: PhaseTodo[];
   totals: SwarmRunTotals;
   /** A human-readable timeline of what the swarm is doing — shown even during PLANNING (before any worker
    *  executes), so the user isn't left staring at a blank "working on it". */
@@ -184,6 +219,7 @@ const EMPTY: SwarmRunState = {
   runId: null,
   lanes: [],
   planLanes: [],
+  phaseTodo: [],
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
   activity: [],
   verboseActivity: [],
@@ -749,6 +785,286 @@ function foldEvents(
   return { lanes, totals, planLanes };
 }
 
+// Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
+// scheduler/orchestrator EVENT, never by a model claiming it did something — that is what makes it honest.
+// The load-bearing rule: a completed build task is 'unverified' (the app was never run), and only Verify's
+// complete_result.passed&&verified earns a green 'done'.
+function buildPhaseTodo(
+  events: Array<Record<string, unknown>>,
+  activity: Record<string, unknown>,
+  opts: { clarifyPending: boolean }
+): PhaseTodo[] {
+  let gates: Record<string, unknown> = {};
+  let scoutsN: number | null = null;
+  let researchQ: number | null = null;
+  let researchDone: number | null = null;
+  let planConf: number | null = null;
+  let taskCount: number | null = null;
+  let pillarsN: number | null = null;
+  const retargets: Array<{ round: number; action: string }> = [];
+  let askedQ: number | null = null;
+  let planned = false;
+  let planLoaded = false;
+  let contractsModules: number | null = null;
+  const planTasks: Array<{ id: string; description?: string }> = [];
+  const tstate = new Map<string, { state: TodoState; device?: string; error?: string }>();
+  const judgeFailed = new Set<string>();
+  const salvaged = new Set<string>();
+  const replans: number[] = [];
+  let schedulerStuck: number | null = null;
+  const reportFailed = new Set<string>();
+  let completeResult: { passed: boolean; verified: boolean; remaining?: number | null } | null = null;
+  let completeRan = false;
+  let smoke: { ran: boolean; kind?: string } | null = null;
+  let repro: number | null = null;
+  let reviewFix: { reproduced: number; accepted: number } | null = null;
+  let astReview: number | null = null;
+
+  for (const e of events) {
+    const t = String(e['event'] ?? '');
+    if (t === 'run_started' && e['gates'] && typeof e['gates'] === 'object')
+      gates = e['gates'] as Record<string, unknown>;
+    else if (t === 'scouts_planned') scoutsN = arr(e['lenses']).length || (num(e['count']) ?? 0);
+    else if (t === 'research_planned') researchQ = num(e['count']) ?? arr(e['questions']).length;
+    else if (t === 'research_completed') researchDone = num(e['findings']) ?? 0;
+    else if (t === 'pillars') pillarsN = num(e['count']) ?? arr(e['pillars']).length;
+    else if (t === 'confidence_retarget')
+      retargets.push({ round: num(e['round']) ?? 0, action: str(e['action']) });
+    else if (t === 'low_confidence_ask') askedQ = arr(e['questions']).length;
+    else if (t === 'contracts') contractsModules = num(e['modules']) ?? 0;
+    else if (t === 'plan_loaded') {
+      planLoaded = true;
+      planned = true;
+      planConf = num(e['plan_confidence']) ?? planConf;
+      const ts = arr(e['tasks']) as Array<Record<string, unknown>>;
+      taskCount = ts.length;
+      for (const tk of ts)
+        planTasks.push({
+          id: String(tk['id'] ?? ''),
+          description: tk['description'] ? String(tk['description']) : undefined,
+        });
+    } else if (t === 'task_dispatched') {
+      planned = true;
+      const id = str(e['task_id']);
+      if (id) tstate.set(id, { state: 'running', device: str(e['device']) });
+    } else if (t === 'task_retry') {
+      const id = str(e['task_id']);
+      if (id) tstate.set(id, { ...(tstate.get(id) ?? { state: 'running' }), error: str(e['error']) });
+    } else if (t === 'task_completed') {
+      const id = str(e['task_id']);
+      if (id) {
+        const cur = tstate.get(id);
+        const dev = str(e['device']) || cur?.device;
+        if (str(e['status']) === 'failed')
+          tstate.set(id, { device: dev, state: judgeFailed.has(id) ? 'judge_failed' : 'failed' });
+        // BUILT but UNVERIFIED — the worker loop returned + passed a syntax gate; the app was NOT run.
+        else tstate.set(id, { device: dev, state: 'unverified' });
+      }
+    } else if (t === 'judge_verdict') {
+      const id = str(e['task_id']);
+      const a = str(e['action']);
+      if (a === 'failed') judgeFailed.add(id);
+      if (a === 'salvaged') salvaged.add(id);
+    } else if (t === 'replanned') {
+      const added = arr(e['added']).length;
+      if (added > 0) replans.push(added);
+    } else if (t === 'scheduler_stuck') schedulerStuck = num(e['remaining']) ?? 0;
+    else if (t === 'complete_verify') completeRan = true;
+    else if (t === 'complete_result')
+      completeResult = {
+        passed: e['passed'] === true,
+        verified: e['verified'] === true,
+        remaining: num(e['remaining_findings']),
+      };
+    else if (t === 'smoke' || t === 'smoke_after_fix') {
+      const r = (e['result'] ?? {}) as Record<string, unknown>;
+      const tests = (r['tests'] ?? {}) as Record<string, unknown>;
+      smoke = { ran: r['ran'] === true, kind: str(tests['kind']) };
+    } else if (t === 'review_repro') repro = num(e['reproduced']) ?? repro;
+    else if (t === 'review_fix_summary')
+      reviewFix = { reproduced: num(e['reproduced']) ?? 0, accepted: num(e['accepted']) ?? 0 };
+    else if (t === 'review' || t === 'review_after_fix')
+      astReview = num(e['new_findings']) ?? arr(e['new_findings']).length ?? astReview;
+  }
+
+  // Second pass: task_completed(failed) may precede its judge_verdict in some orderings — reconcile.
+  for (const [id, s] of tstate) if (s.state === 'failed' && judgeFailed.has(id)) s.state = 'judge_failed';
+
+  const plandraftN = Object.keys(activity).filter((k) => /^plandraft-\d+$/.test(k)).length;
+  const gateOn = (k: string) => gates[k] !== false;
+
+  const it = (
+    id: string,
+    label: string,
+    state: TodoState,
+    detail?: string,
+    device?: string
+  ): PhaseTodoItem => ({ id, label, state, detail, device, advisory: state === 'advisory' });
+
+  // ---- RESEARCH ----
+  const researchHappened = scoutsN != null || researchQ != null || researchDone != null;
+  const research: PhaseTodoItem[] = [];
+  if (researchHappened || !planned) {
+    research.push(it('r-start', 'Fleet configured, run started', 'done'));
+    if (scoutsN != null) research.push(it('r-scouts', `Scouts dispatched — ${scoutsN} lenses`, 'done'));
+    else if (researchQ != null)
+      research.push(it('r-q', `Research questions scoped — ${researchQ}`, 'done'));
+    if (researchDone != null)
+      research.push(it('r-done', `Research finished — ${researchDone} findings returned`, 'done'));
+    else if (researchHappened) research.push(it('r-run', 'Researching…', 'running'));
+  } else {
+    research.push(it('r-skip', 'No research this run', 'skipped'));
+  }
+
+  // ---- PLAN ----
+  const plan: PhaseTodoItem[] = [];
+  if (plandraftN > 0 || planLoaded)
+    plan.push(
+      it(
+        'p-draft',
+        `Drafting — ${Math.max(plandraftN, 1)} candidate${plandraftN === 1 ? '' : 's'}`,
+        planned ? 'done' : 'running'
+      )
+    );
+  if (planConf != null)
+    plan.push(it('p-conf', `Confidence scored — ${planConf}/100`, 'done')); // the NUMBER, never a verdict
+  for (const r of retargets)
+    plan.push(it(`p-rt-${r.round}`, `Retarget round ${r.round} — ${r.action}`, 'done'));
+  if (askedQ != null)
+    plan.push(
+      it(
+        'p-ask',
+        `Asked you ${askedQ} question${askedQ === 1 ? '' : 's'}`,
+        opts.clarifyPending ? 'running' : 'done',
+        opts.clarifyPending ? 'waiting on your answer' : undefined
+      )
+    );
+  if (pillarsN != null) plan.push(it('p-pillars', `Quality pillars distilled — ${pillarsN}`, 'done'));
+  if (planLoaded) plan.push(it('p-done', `Plan finalized — ${taskCount ?? 0} tasks`, 'done'));
+  else if (plandraftN > 0) plan.push(it('p-run', 'Finalizing the plan…', 'running'));
+
+  // ---- CONTRACTS ----
+  const contracts: PhaseTodoItem[] = [];
+  if (!gateOn('contracts')) contracts.push(it('c-off', 'Contract-freeze gate off', 'skipped'));
+  else if (contractsModules != null)
+    contracts.push(it('c-frozen', `Frozen interfaces — ${contractsModules} modules`, 'done'));
+  else if (planLoaded)
+    contracts.push(
+      it('c-adv', 'Contract-freeze gate on', 'advisory', 'runs only for Python trees; not always observable')
+    );
+
+  // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
+  const build: PhaseTodoItem[] = [];
+  for (const tk of planTasks) {
+    const s = tstate.get(tk.id);
+    let state: TodoState;
+    let detail: string | undefined;
+    if (s) {
+      state = s.state;
+      if (state === 'unverified' && salvaged.has(tk.id)) detail = 'salvaged — judge cut a loop';
+      else if (state === 'judge_failed') detail = 'judge decision';
+      else if (s.error) detail = s.error.slice(0, 80);
+    } else if (reportFailed.has(tk.id) || schedulerStuck != null) {
+      state = 'blocked';
+      detail = schedulerStuck != null ? 'scheduler stuck' : 'a dependency failed';
+    } else {
+      state = 'pending';
+    }
+    build.push(it(`b-${tk.id}`, tk.description || tk.id, state, detail, s?.device));
+  }
+  for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
+  if (schedulerStuck != null)
+    build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
+
+  // ---- VERIFY ---- (all events already emitted; the honest "it works" signal)
+  const verify: PhaseTodoItem[] = [];
+  const verifyGate = gateOn('complete') || gateOn('smoke');
+  if (verifyGate) {
+    let vs: TodoState;
+    let vdetail: string | undefined;
+    if (completeResult) {
+      vs = completeResult.passed
+        ? completeResult.verified
+          ? 'done'
+          : 'unverified'
+        : 'failed';
+      vdetail = completeResult.passed
+        ? completeResult.verified
+          ? 'app runs — verified end-to-end'
+          : 'shipped — no oracle ran'
+        : `${completeResult.remaining ?? 0} findings remain`;
+    } else if (completeRan || smoke) vs = 'running';
+    else vs = 'pending';
+    // A would-be pass with no real test run is downgraded and never reads "tests pass".
+    if (vs === 'done' && smoke && smoke.kind !== 'pass') {
+      vs = 'unverified';
+      vdetail = 'no tests ran';
+    }
+    verify.push(it('v-e2e', 'End-to-end verify', vs, vdetail));
+  }
+  if (repro != null) verify.push(it('v-repro', `Repro gate — ${repro} findings reproduced`, 'done'));
+  if (reviewFix)
+    verify.push(
+      it('v-fix', `Review fixes — ${reviewFix.accepted} accepted / ${reviewFix.reproduced} reproduced`, 'done')
+    );
+  if (astReview != null)
+    verify.push(it('v-ast', `Unwired-module review — ${astReview} new findings`, 'done'));
+
+  // ---- DONE ----
+  const done: PhaseTodoItem[] = [];
+  const finishedEvent = events.some((e) => e['event'] === 'run_finished');
+  if (schedulerStuck != null) done.push(it('d-blocked', 'Run blocked — scheduler deadlocked', 'blocked'));
+  else if (finishedEvent) {
+    const green = completeResult ? completeResult.passed && completeResult.verified : false;
+    const anyHardFail = [...tstate.values()].some((s) => s.state === 'failed');
+    done.push(
+      it(
+        'd-outcome',
+        green ? 'Finished — app verified' : anyHardFail ? 'Finished — with failures' : 'Finished — unverified',
+        green ? 'done' : anyHardFail ? 'failed' : 'unverified'
+      )
+    );
+  }
+
+  const rollUp = (items: PhaseTodoItem[]): TodoState => {
+    const real = items.filter((i) => i.state !== 'advisory');
+    if (real.some((i) => i.state === 'failed' || i.state === 'judge_failed' || i.state === 'blocked'))
+      return 'failed';
+    if (real.some((i) => i.state === 'running')) return 'running';
+    if (real.length === 0) return 'pending';
+    if (real.every((i) => i.state === 'skipped')) return 'skipped';
+    if (real.some((i) => i.state === 'done')) return 'done';
+    if (real.some((i) => i.state === 'unverified')) return 'unverified';
+    return 'pending';
+  };
+  const mk = (key: PhaseKey, label: string, items: PhaseTodoItem[]): PhaseTodo => ({
+    key,
+    label,
+    items,
+    state: rollUp(items),
+    active: false,
+    counts: {
+      done: items.filter((i) => i.state === 'done').length,
+      total: items.filter((i) => i.state !== 'advisory').length,
+    },
+  });
+  const phases: PhaseTodo[] = [
+    mk('research', 'Research', research),
+    mk('plan', 'Plan', plan),
+    mk('contracts', 'Contracts', contracts),
+    mk('build', 'Build', build),
+    mk('verify', 'Verify', verify),
+    mk('done', 'Done', done),
+  ];
+  // Active = the last phase that has started (any non-pending item) and isn't fully done — monotonic pipeline.
+  let activeIdx = -1;
+  phases.forEach((p, i) => {
+    if (p.items.some((x) => x.state !== 'pending')) activeIdx = i;
+  });
+  if (activeIdx >= 0) phases[activeIdx].active = true;
+  return phases;
+}
+
 export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): SwarmRunState {
   const [state, setState] = useState<SwarmRunState>(EMPTY);
   // Keep the last non-empty run visible between polls so a finished run does not flicker away.
@@ -771,6 +1087,9 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           return;
         }
         const { lanes, totals, planLanes } = foldEvents(data.events, data.activity);
+        const phaseTodo = buildPhaseTodo(data.events, data.activity, {
+          clarifyPending: !!data.clarify?.pending,
+        });
         const {
           activity,
           verbose,
@@ -791,6 +1110,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           runId: data.runId,
           lanes,
           planLanes,
+          phaseTodo,
           totals,
           activity,
           verboseActivity: verbose,

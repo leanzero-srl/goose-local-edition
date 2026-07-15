@@ -3,6 +3,7 @@ import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
+  Circle, Minus, ListTodo,
 } from 'lucide-react';
 import {
   useSwarmRun,
@@ -13,6 +14,9 @@ import {
   type PlanTask,
   type RunSummary,
   type ConfidenceBreakdown,
+  type PhaseTodo,
+  type PhaseTodoItem,
+  type TodoState,
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
@@ -790,6 +794,134 @@ const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean
   );
 };
 
+// Per-phase TODO. Every item's state is driven by an ENGINE event (see buildPhaseTodo) — the honesty is in
+// the colors: 'done' (green) is a VERIFIED completion; 'unverified' is a SLATE check (built but the app was
+// never run — must never look green); 'advisory' is info, never a check.
+const TODO_COLOR: Record<TodoState, string> = {
+  pending: '#8a8a8a',
+  running: AMBER,
+  done: STATUS_COLOR.done,
+  unverified: '#5b8db8', // slate-blue — deliberately NOT green
+  failed: STATUS_COLOR.error,
+  judge_failed: AMBER,
+  blocked: '#8a8a8a',
+  skipped: '#6b7280',
+  advisory: '#2e8bff',
+};
+
+const TodoGlyph: React.FC<{ state: TodoState }> = ({ state }) => {
+  const c = TODO_COLOR[state];
+  const cls = 'h-3.5 w-3.5 shrink-0';
+  const s = { color: c };
+  if (state === 'running') return <Loader2 className={`${cls} animate-spin`} style={s} />;
+  if (state === 'done' || state === 'unverified') return <Check className={cls} strokeWidth={3} style={s} />;
+  if (state === 'failed' || state === 'judge_failed') return <X className={cls} strokeWidth={3} style={s} />;
+  if (state === 'blocked') return <CircleSlash className={cls} style={s} />;
+  if (state === 'skipped') return <Minus className={cls} style={s} />;
+  if (state === 'advisory') return <Info className={cls} style={s} />;
+  return <Circle className={cls} style={s} />; // pending
+};
+
+const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) => (
+  <span
+    className="text-[9px] uppercase tracking-wide px-1 py-px shrink-0"
+    style={{ color, border: `1px solid ${color}`, borderRadius: 2 }}
+  >
+    {text}
+  </span>
+);
+
+const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[] }> = ({ item, deviceOrder }) => {
+  const c = TODO_COLOR[item.state];
+  const idx = item.device ? deviceIndex(item.device, deviceOrder) : -1;
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] py-0.5 min-w-0">
+      <TodoGlyph state={item.state} />
+      {idx >= 0 ? (
+        <span
+          className="text-[9px] font-mono shrink-0"
+          style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
+        >
+          ⬢{String.fromCharCode(65 + (idx % 26))}
+        </span>
+      ) : null}
+      <span
+        className="truncate"
+        style={{ color: item.state === 'pending' ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+      >
+        {item.label}
+      </span>
+      {item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
+      {item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
+      {item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
+      {item.detail ? <span className="text-[10px] text-text-secondary truncate">· {item.detail}</span> : null}
+    </div>
+  );
+};
+
+// The accordion of per-phase checklists. Active phase default-open; finished phases collapse to a counts
+// header. Sits under the phase breadcrumb, above the activity feed.
+const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = ({
+  phases,
+  deviceOrder,
+}) => {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const shown = phases.filter((p) => p.items.length > 0);
+  if (shown.length === 0) return null;
+  return (
+    <div className="border-b border-border-primary">
+      <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-text-secondary flex items-center gap-1.5">
+        <ListTodo className="h-3 w-3" /> Phase checklist
+        <span className="text-[9px] normal-case text-text-secondary opacity-70">
+          · every check is an engine fact, not a claim
+        </span>
+      </div>
+      {shown.map((p) => {
+        const isOpen = open[p.key] ?? p.active;
+        const chip = TODO_COLOR[p.state];
+        return (
+          <div key={p.key}>
+            <button
+              onClick={() => setOpen((o) => ({ ...o, [p.key]: !(o[p.key] ?? p.active) }))}
+              className="w-full flex items-center gap-2 px-3 py-1 hover:bg-background-secondary transition-colors text-left"
+            >
+              {isOpen ? (
+                <ChevronDown className="h-3 w-3 text-text-secondary shrink-0" />
+              ) : (
+                <ChevronRight className="h-3 w-3 text-text-secondary shrink-0" />
+              )}
+              <span
+                className={`text-[11px] font-medium ${p.active ? '' : 'text-text-secondary'}`}
+                style={p.active ? { color: chip } : undefined}
+              >
+                {p.label}
+              </span>
+              <span
+                className="text-[9px] uppercase tracking-wide px-1 py-px shrink-0"
+                style={{ color: chip, border: `1px solid ${chip}`, borderRadius: 2 }}
+              >
+                {p.state === 'unverified' ? 'unverified' : p.state}
+              </span>
+              {p.counts.total > 0 ? (
+                <span className="text-[10px] tabular-nums text-text-secondary ml-auto">
+                  {p.counts.done}/{p.counts.total}
+                </span>
+              ) : null}
+            </button>
+            {isOpen ? (
+              <div className="px-3 pb-2 pl-8 space-y-0">
+                {p.items.map((item) => (
+                  <PhaseTodoRow key={item.id} item={item} deviceOrder={deviceOrder} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // When the planner's confidence is below the ask floor, the swarm BLOCKS and asks the user. This prompt is
 // the interactive answer surface: the user types answers and we write them to the handshake file, which
 // unblocks the run. Amber (solid, not faded) because the build is PAUSED waiting on the human.
@@ -1237,6 +1369,8 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           }
         />
       )}
+
+      <PhaseTodoList phases={run.phaseTodo} deviceOrder={deviceOrder} />
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}

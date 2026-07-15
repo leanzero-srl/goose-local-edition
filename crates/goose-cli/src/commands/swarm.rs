@@ -11072,6 +11072,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "CONTRACTS",
                 "freeze signature-only module interfaces across the fleet before EXECUTE",
             );
+            let n_modules = modules.len();
             let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
             let cwd = std::env::current_dir().unwrap_or_default();
             let before: std::collections::HashSet<PathBuf> =
@@ -11100,6 +11101,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             } else {
                 dispatcher.set_contracts(bundle);
                 eprintln!("  contracts: frozen interfaces injected into every worker");
+                // The one class-A CONTRACTS milestone for the phase TODO: interfaces were actually frozen
+                // across N modules (previously the phase emitted only a stderr banner — no stream evidence).
+                sink.write_value(serde_json::json!({
+                    "event": "contracts",
+                    "modules": n_modules,
+                    "frozen": true,
+                }));
             }
         }
     }
