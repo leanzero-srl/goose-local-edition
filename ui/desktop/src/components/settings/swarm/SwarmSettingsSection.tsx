@@ -489,6 +489,15 @@ export default function SwarmSettingsSection() {
                 <Row label="Draft temperature" hint="temperature for skeleton drafting only (blank = model default)">
                   <NumberField value={cfg.draft_temp ?? null} placeholder="default" onCommit={(v) => set({ draft_temp: v })} />
                 </Row>
+                <Row
+                  label="A proven crash un-verifies the run"
+                  hint="if goose reproduces a crash twice in a clean copy and can't repair it, the run stops claiming it was verified and prints the command to reproduce. Never fails a passing app — it only drops the 'verified' claim. Needs the repro oracle on."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.repro_demotes_verified}
+                    onChange={(v) => set({ repro_demotes_verified: v })}
+                  />
+                </Row>
               </Group>
 
               <Group title="Sampling">
