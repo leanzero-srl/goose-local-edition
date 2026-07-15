@@ -81,7 +81,16 @@ export function classifyCall(call: SwarmCall): CallMeaning {
     } else if (/--help|python3? -m |node (dist|build)|cargo run|\.\/|bin\//.test(low)) {
       icon = 'run';
       action = 'Ran the program';
-    } else if (/^\s*(cat|ls|grep|head|tail|find|rg|sed|wc|tree)\b/.test(low)) {
+    } else if (/^\s*(cat|head|tail|less|more)\b/.test(low)) {
+      icon = 'read';
+      action = file ? `Read ${file}` : 'Read a file';
+    } else if (/^\s*(ls|tree|find)\b/.test(low)) {
+      icon = 'search';
+      action = 'Listed files';
+    } else if (/^\s*(grep|rg|ag|ack)\b/.test(low)) {
+      icon = 'search';
+      action = 'Searched the code';
+    } else if (/^\s*(sed|wc|awk|diff)\b/.test(low)) {
       icon = 'search';
       action = 'Inspected files';
     } else {
