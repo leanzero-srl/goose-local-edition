@@ -10533,6 +10533,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
+    // Upstream #10348 applies the default extension timeout (300s) as a HARD per-command kill to developer
+    // `shell` calls that omit `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo
+    // build`, `npm install`, a big `pytest`/`cargo test`), and our own idle watchdog already bounds a HUNG
+    // command — so give swarm shells a generous 1800s default here (the truly-runaway bound), overridable by
+    // the user's GOOSE_DEFAULT_EXTENSION_TIMEOUT. Without this, #10348 would kill legitimate long builds.
+    if std::env::var("GOOSE_DEFAULT_EXTENSION_TIMEOUT").is_err() {
+        std::env::set_var("GOOSE_DEFAULT_EXTENSION_TIMEOUT", "1800");
+    }
 
     let json = opts.output_format == "json";
     let working_dir = std::env::current_dir()?;
