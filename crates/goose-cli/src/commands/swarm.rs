@@ -4062,6 +4062,35 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    /// Like `run_agent_timed` but at a specific per-call temperature (None = shared default). Skeleton
+    /// drafting uses this to draft at a LOW temperature so independent drafts converge — steadying the weak
+    /// fleet's structural decomposition (higher, less-noisy agreement) without touching worker/coding calls.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_agent_timed_at(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        extensions: &[ExtensionConfig],
+        temp_override: Option<f32>,
+    ) -> Result<RunAgentOut> {
+        self.run_agent_in(
+            self.working_dir.clone(),
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            max_turns,
+            extensions,
+            self.planner_timeout_secs,
+            None,
+            temp_override,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     async fn run_agent(
@@ -4086,6 +4115,7 @@ impl GooseAgentDispatcher {
             extensions,
             idle_secs,
             activity_key,
+            None,
         )
         .await
     }
@@ -4109,6 +4139,10 @@ impl GooseAgentDispatcher {
         // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
         // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
         activity_key: Option<&str>,
+        // Per-call temperature override (Some → this call only; None → the shared sampling.temperature, i.e.
+        // today's behavior). Used to draft plan skeletons at a LOW temperature so the weak fleet's independent
+        // drafts converge (raises real agreement) without touching worker/coding calls.
+        temp_override: Option<f32>,
     ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
@@ -4136,7 +4170,7 @@ impl GooseAgentDispatcher {
         // Follow LM Studio's own temperature: pass the sampling temperature through verbatim, which is
         // None unless the swarm config explicitly sets one. None clears any inherited GOOSE_TEMPERATURE
         // default so the request omits temperature entirely and the LM Studio per-model setting applies.
-        model_config = model_config.with_temperature(self.sampling.temperature);
+        model_config = model_config.with_temperature(temp_override.or(self.sampling.temperature));
         let mut extra = std::collections::HashMap::new();
         if let Some(v) = self.sampling.top_p {
             extra.insert("top_p".to_string(), serde_json::json!(v));
@@ -4843,6 +4877,10 @@ impl GooseAgentDispatcher {
         // instead of the full spread, so growing best_of_n actually raises the metric. None = full-set
         // measure (default/cloud path, byte-identical).
         consensus_k: Option<usize>,
+        // Some(t): draft plan skeletons at temperature t so the weak fleet's independent drafts converge
+        // (raises real agreement — the model's draft variance is the root cause of low/noisy agreement).
+        // None = the server/model default (today's behavior, byte-identical).
+        draft_temp: Option<f32>,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
@@ -5010,6 +5048,7 @@ impl GooseAgentDispatcher {
             let sys = system.clone();
             let um = user_msg.clone();
             let schema = plan_schema.clone();
+            let dt = draft_temp;
             handles.push(tokio::spawn(async move {
                 // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
                 // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
@@ -5017,7 +5056,7 @@ impl GooseAgentDispatcher {
                 // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
                 tokio::time::timeout(
                     std::time::Duration::from_secs(480),
-                    me.run_agent_timed(
+                    me.run_agent_timed_at(
                         &model,
                         sys,
                         um,
@@ -5026,6 +5065,7 @@ impl GooseAgentDispatcher {
                         }),
                         12,
                         &[],
+                        dt,
                     ),
                 )
                 .await
@@ -9123,6 +9163,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 &self.worker_extensions,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
+                None,
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
@@ -10366,7 +10407,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut retarget_round = 0u32;
     let mut effective_best_of_n = best_of_n;
     let mut best_plan: Option<(String, PlanConf)> = None;
+    // GOOSE_SWARM_DRAFT_TEMP: draft plan skeletons at a fixed low temperature so the weak fleet's independent
+    // drafts converge (its draft VARIANCE is the root cause of low/noisy agreement — growing best_of_n can't
+    // reduce variance, but a lower temperature can). Unset → server/model default (byte-identical). Clamped
+    // to a sane [0, 1]. Under retarget, each round drafts a notch cooler to force convergence harder.
+    let base_draft_temp: Option<f32> = std::env::var("GOOSE_SWARM_DRAFT_TEMP")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .map(|t| t.clamp(0.0, 1.0));
     let (plan_json, dag, plan_conf) = loop {
+        // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
+        // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
+        let draft_temp = base_draft_temp.map(|t| (t - 0.05 * retarget_round as f32).max(0.05));
         let (pj, plan_conf, uncertainties) = if use_parallel {
             phase_banner(
                 "PLAN",
@@ -10393,6 +10445,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     } else {
                         None
                     },
+                    draft_temp,
                 )
                 .await
             {
