@@ -17,6 +17,7 @@ import {
   type PhaseTodo,
   type PhaseTodoItem,
   type TodoState,
+  type RunOverview as RunOverviewData,
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
@@ -1121,6 +1122,121 @@ const ClarifyPrompt: React.FC<{
   );
 };
 
+// End-of-run OVERVIEW at DONE: what was built (grounded summary), how to run it (engine-stamped command),
+// VERIFICATION (from phaseTodo — engine only, never the summary model), and what's next. An unverified ship
+// LEADS with an amber caveat + hedged headers so three confident-looking lines can never out-shout the one
+// caveat; a red build shows no summary at all. Mounts only on a clean `done` finish (guarded at the call site).
+const RunOverview: React.FC<{
+  overview: RunOverviewData;
+  phaseTodo: PhaseTodo[];
+  deviceOrder: string[];
+}> = ({ overview, phaseTodo, deviceOrder }) => {
+  const verifyItems = phaseTodo.find((p) => p.key === 'verify')?.items ?? [];
+  const verified = verifyItems.find((i) => i.id === 'v-e2e')?.state === 'done';
+  const hdr = 'text-[10px] uppercase tracking-wide text-text-secondary mb-1 mt-2';
+  const slate = '#5b8db8';
+  return (
+    <div className="border-t border-border-primary px-3 py-3 bg-background-secondary space-y-1">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+        <ListChecks className="h-3.5 w-3.5" /> Build overview
+      </div>
+      {!overview.generated ? (
+        <div
+          className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
+          style={{ backgroundColor: STATUS_COLOR.error, borderRadius: 3 }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          This build did not reach a runnable, verified state — no summary was generated. See verification
+          below.
+        </div>
+      ) : !verified ? (
+        <div
+          className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
+          style={{ backgroundColor: AMBER, borderRadius: 3 }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Not yet verified — the program was built but never run. Everything below describes the code, not
+          proof it works.
+        </div>
+      ) : null}
+      {overview.generated ? (
+        <>
+          {overview.features.length ? (
+            <div>
+              <div className={hdr}>
+                {verified ? 'What was built' : 'What the code appears to do — not run or verified'}
+              </div>
+              <ul className="space-y-0.5">
+                {overview.features.map((f, i) => (
+                  <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+                    <span className="text-text-secondary shrink-0">·</span>
+                    <span>{f}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div>
+            <div className={hdr}>How to run it</div>
+            {overview.runCommand ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <code
+                  className="text-[11px] font-mono bg-background-primary border border-border-primary px-1.5 py-0.5"
+                  style={{ borderRadius: 2 }}
+                >
+                  {overview.runCommand}
+                </code>
+                <span
+                  className="text-[9px] uppercase tracking-wide px-1 py-px"
+                  style={{
+                    color: overview.runCommandVerified ? STATUS_COLOR.done : slate,
+                    border: `1px solid ${overview.runCommandVerified ? STATUS_COLOR.done : slate}`,
+                    borderRadius: 2,
+                  }}
+                >
+                  {overview.runCommandVerified ? 'verified to start' : 'candidate entry — not verified'}
+                </span>
+              </div>
+            ) : (
+              <div className="text-[11px] text-text-primary">
+                No standalone entry point — this runs inside goose.
+              </div>
+            )}
+            {overview.engage ? (
+              <div className="text-[11px] text-text-secondary mt-0.5">{overview.engage}</div>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+      <div>
+        <div className={hdr}>Verification</div>
+        {verifyItems.length ? (
+          <div className="space-y-0">
+            {verifyItems.map((item) => (
+              <PhaseTodoRow key={item.id} item={item} deviceOrder={deviceOrder} stale={false} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-[11px] text-text-secondary">Verification gates were off this run.</div>
+        )}
+      </div>
+      {overview.generated && overview.next.length ? (
+        <div>
+          <div className={hdr}>What&apos;s next</div>
+          <ul className="space-y-0.5">
+            {overview.next.map((n, i) => (
+              <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+                <span className="text-text-secondary shrink-0">→</span>
+                <span>{n}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 // The clear ENDING a run was missing: a solid terminal banner so a finished/stopped run never sits in limbo
 // (tasks green, no "running", no "done"). Done = green, finished-with-failures = red, stopped-without-a-
 // completion-signal (killed/crashed) = solid slate. Carries the tally + total time + the output directory.
@@ -1366,6 +1482,11 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           outputDir={workingDir}
           deviceOrder={deviceOrder}
         />
+      ) : null}
+
+      {/* The end-of-run overview only on a clean DONE — a stopped/crashed run never emits it and never mounts. */}
+      {ended && outcome === 'done' && run.overview ? (
+        <RunOverview overview={run.overview} phaseTodo={run.phaseTodo} deviceOrder={deviceOrder} />
       ) : null}
 
       {run.clarify?.pending ? <ClarifyPrompt clarify={run.clarify} plan={run.plan} /> : null}
