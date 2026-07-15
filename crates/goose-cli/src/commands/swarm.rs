@@ -4294,6 +4294,10 @@ impl GooseAgentDispatcher {
         max_turns: u32,
         extensions: &[ExtensionConfig],
         temp_override: Option<f32>,
+        // Some(key) writes a `.swarm/activity/<key>.json` digest for this planner-side call so the desktop
+        // panel can surface the PLAN phase's live generation (architect drafts) as lanes — the reasoning that
+        // was previously invisible. None keeps the old behavior (no digest for planner calls).
+        activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
         self.run_agent_in(
             self.working_dir.clone(),
@@ -4304,7 +4308,7 @@ impl GooseAgentDispatcher {
             max_turns,
             extensions,
             self.planner_timeout_secs,
-            None,
+            activity_key,
             temp_override,
         )
         .await
@@ -4632,6 +4636,9 @@ impl GooseAgentDispatcher {
                     // The full narration for the desktop panel's "reasoning in plain" view. The judge reads
                     // only the small fields above; this extra key is inert to it.
                     "full_reasoning": full_reasoning,
+                    // The model that produced this digest — lets the panel label planning-phase lanes (which
+                    // have no task_dispatched event to carry the model) with which node/model generated them.
+                    "model": model_id,
                 });
                 let _ = std::fs::write(p, digest.to_string());
             }
@@ -5286,6 +5293,10 @@ impl GooseAgentDispatcher {
                     let sys = sys.clone();
                     let um = um0.clone();
                     let schema = schema0.clone();
+                    // Surface each parallel draft as a PLAN-phase lane so the panel shows what every model is
+                    // generating while it decomposes the app (previously invisible — planner calls wrote no
+                    // digest). Stable per-slot key so the N draft lanes are consistent across a re-plan.
+                    let akey = format!("plandraft-{i}");
                     handles.push(tokio::spawn(async move {
                         // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
                         // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
@@ -5303,6 +5314,7 @@ impl GooseAgentDispatcher {
                                 12,
                                 &[],
                                 dt,
+                                Some(&akey),
                             ),
                         )
                         .await

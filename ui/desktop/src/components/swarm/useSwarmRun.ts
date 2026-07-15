@@ -127,6 +127,9 @@ export interface SwarmRunState {
   present: boolean;
   runId: string | null;
   lanes: TurnLane[];
+  /** PLAN-phase generation lanes (architect drafts) — what each model produced while decomposing the app.
+   *  Separate from `lanes` (build tasks) and excluded from `totals`. */
+  planLanes: TurnLane[];
   totals: SwarmRunTotals;
   /** A human-readable timeline of what the swarm is doing — shown even during PLANNING (before any worker
    *  executes), so the user isn't left staring at a blank "working on it". */
@@ -180,6 +183,7 @@ const EMPTY: SwarmRunState = {
   present: false,
   runId: null,
   lanes: [],
+  planLanes: [],
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
   activity: [],
   verboseActivity: [],
@@ -623,7 +627,7 @@ type Digest = {
 function foldEvents(
   events: Array<Record<string, unknown>>,
   activity: Record<string, unknown>
-): { lanes: TurnLane[]; totals: SwarmRunTotals } {
+): { lanes: TurnLane[]; totals: SwarmRunTotals; planLanes: TurnLane[] } {
   const tasks = new Map<string, TurnLane>();
   const descriptions = new Map<string, string>();
   let seq = 0;
@@ -711,7 +715,38 @@ function foldEvents(
     done: lanes.filter((l) => l.status === 'done').length,
     failed: lanes.filter((l) => l.status === 'error').length,
   };
-  return { lanes, totals };
+
+  // PLAN-phase generation lanes: each parallel architect draft writes a `plandraft-N` digest (model + full
+  // reasoning). Surface them as their OWN group so you can see what every model generated while decomposing
+  // the app — the reasoning that was invisible before. NOT build tasks, so they're excluded from `totals`.
+  // Running until the plan is chosen (plan_loaded / first dispatch), then done (kept, collapsed, for review).
+  const planned = events.some(
+    (e) => e['event'] === 'plan_loaded' || e['event'] === 'task_dispatched'
+  );
+  const planLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^plandraft-\d+$/.test(k))
+    .sort()
+    .map((k, i) => {
+      const d = (activity[k] ?? {}) as Digest & { model?: string };
+      return {
+        taskId: k,
+        description: `Drafting the plan skeleton (candidate ${i + 1})`,
+        device: d.model ?? 'planner',
+        model: d.model,
+        status: (planned ? 'done' : 'running') as TurnStatus,
+        lastText: d.last_text,
+        recent: d.recent,
+        reasoning: d.reasoning,
+        fullReasoning: d.full_reasoning,
+        calls: d.calls,
+        toolCalls: d.tool_calls,
+        errors: d.errors,
+        seq: i,
+      };
+    })
+    .filter((l) => (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0);
+
+  return { lanes, totals, planLanes };
 }
 
 export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): SwarmRunState {
@@ -735,7 +770,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           lastRunId.current = null;
           return;
         }
-        const { lanes, totals } = foldEvents(data.events, data.activity);
+        const { lanes, totals, planLanes } = foldEvents(data.events, data.activity);
         const {
           activity,
           verbose,
@@ -755,6 +790,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           present: true,
           runId: data.runId,
           lanes,
+          planLanes,
           totals,
           activity,
           verboseActivity: verbose,
