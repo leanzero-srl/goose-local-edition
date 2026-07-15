@@ -51,6 +51,10 @@ export interface SwarmConfig {
   backbone?: boolean;
   /** Draft plan skeletons at this temperature (steadies structural drafting). Blank = model default. */
   draft_temp?: number | null;
+  /** A crash the repro oracle PROVED (twice-run traceback in a clean snapshot) and the fix loop did not
+   *  repair demotes the run's `verified` claim. Never flips `passed` red. Default OFF; inert unless the
+   *  repro oracle is on. */
+  repro_demotes_verified?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
