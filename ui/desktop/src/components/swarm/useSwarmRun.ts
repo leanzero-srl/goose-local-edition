@@ -268,6 +268,28 @@ const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
+// The engine ships each task's FULL worker spec as `description` — a wall of markdown ("**Subtask: [id] Do X**
+// **Owned files:** … **Implementation spec:** …"). For the todo list + lane headers we want a clean one-liner,
+// not that wall truncated. Strip md emphasis/code fences, drop the "Subtask: [id]" lead, cut at the first
+// structural section marker (Owned files / Implementation / a blank line), collapse whitespace, cap length.
+// Falls back to the id when nothing usable remains.
+export function cleanTaskTitle(desc: string | undefined, id: string): string {
+  if (!desc) return id;
+  let s = desc.replace(/[*_`#>]+/g, ' ').replace(/\r/g, '');
+  const cut = s.search(
+    /\b(Owned files?|Implementation spec|Files?\s*:|Depends on|Acceptance|Contract|Deliverable)\b|\n\s*\n/i
+  );
+  if (cut > 0) s = s.slice(0, cut);
+  s = s
+    .replace(/^\s*Subtask\s*:?\s*/i, '')
+    .replace(/^\s*\[[^\]]+\]\s*/, '')
+    .replace(/^\s*[—–\-:]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return id;
+  return s.length > 120 ? s.slice(0, 117).trimEnd() + '…' : s;
+}
+
 /** Parse the additive `plan_confidence_breakdown` object (agreement/spec-clarity split + drivers). Returns
  *  null on older runs where the key is absent — the panel then just shows the scalar. */
 function parseConfidence(v: unknown): ConfidenceBreakdown | null {
@@ -762,7 +784,7 @@ function foldEvents(
     const act = activity[t.taskId] as Digest | undefined;
     return {
       ...t,
-      description: descriptions.get(t.taskId) ?? t.description,
+      description: cleanTaskTitle(descriptions.get(t.taskId) ?? t.description, t.taskId),
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
       reasoning: act?.reasoning ?? t.reasoning,
@@ -923,6 +945,13 @@ function buildPhaseTodo(
   // Second pass: task_completed(failed) may precede its judge_verdict in some orderings — reconcile.
   for (const [id, s] of tstate) if (s.state === 'failed' && judgeFailed.has(id)) s.state = 'judge_failed';
 
+  // Once the engine's OWN end-to-end verify passes green (deterministic complete_result — not a model claim),
+  // the built tasks it exercised are verified. Promote 'unverified' -> 'done' so the Build checklist stops
+  // contradicting the green Verify/Done rows. This is still engine-truth: it flips ONLY on complete_result.
+  // Mid-run (no completeResult yet, or an unverified/failed ship) the tasks correctly stay 'unverified'.
+  const e2eVerified = !!completeResult && completeResult.passed && completeResult.verified;
+  if (e2eVerified) for (const [, s] of tstate) if (s.state === 'unverified') s.state = 'done';
+
   const plandraftN = Object.keys(activity).filter((k) => /^plandraft-\d+$/.test(k)).length;
   const gateOn = (k: string) => gates[k] !== false;
 
@@ -994,7 +1023,10 @@ function buildPhaseTodo(
     let detail: string | undefined;
     if (s) {
       state = s.state;
-      if (state === 'unverified' && salvaged.has(tk.id)) detail = 'salvaged — judge cut a loop';
+      // 'done' in Build only ever means "promoted after the green e2e verify" (build tasks never self-complete
+      // to green). Say so honestly — the verification was at the app level, not this unit grading itself.
+      if (state === 'done') detail = salvaged.has(tk.id) ? 'salvaged · verified end-to-end' : 'verified end-to-end';
+      else if (state === 'unverified' && salvaged.has(tk.id)) detail = 'salvaged — judge cut a loop';
       else if (state === 'judge_failed') detail = 'judge decision';
       else if (s.error) detail = s.error.slice(0, 80);
     } else if (reportFailed.has(tk.id) || schedulerStuck != null) {
@@ -1003,7 +1035,7 @@ function buildPhaseTodo(
     } else {
       state = 'pending';
     }
-    build.push(it(`b-${tk.id}`, tk.description || tk.id, state, detail, s?.device));
+    build.push(it(`b-${tk.id}`, cleanTaskTitle(tk.description, tk.id), state, detail, s?.device));
   }
   for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
   if (schedulerStuck != null)
