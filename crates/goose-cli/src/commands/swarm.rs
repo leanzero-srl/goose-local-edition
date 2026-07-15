@@ -1877,6 +1877,47 @@ mod tests {
     }
 
     #[test]
+    fn best_subset_agreement_drops_the_outlier() {
+        // Three tight drafts (same 3 roles) + one wild outlier (5 modules, disjoint files). The full-set
+        // measure is dragged down by the outlier; the best 3-of-4 consensus recovers the tight cluster.
+        let tight = |seed: &str| {
+            goose_swarm::specs_from_plan_json(&format!(
+                r#"{{"subtasks":[
+                    {{"id":"types{seed}","depends_on":[],"files":["types.py"]}},
+                    {{"id":"core{seed}","depends_on":["types{seed}"],"files":["core.py"]}},
+                    {{"id":"cli{seed}","depends_on":["core{seed}"],"files":["cli.py"]}}
+                ]}}"#
+            ))
+            .unwrap()
+        };
+        let outlier = goose_swarm::specs_from_plan_json(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["alpha.py"]},
+                {"id":"b","depends_on":[],"files":["beta.py"]},
+                {"id":"c","depends_on":["a"],"files":["gamma.py"]},
+                {"id":"d","depends_on":["b"],"files":["delta.py"]},
+                {"id":"e","depends_on":["c","d"],"files":["epsilon.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        let pool = vec![tight("1"), tight("2"), tight("3"), outlier];
+        let (full, _) = plan_agreement(&pool, true);
+        let (subset, reason) = best_subset_agreement(&pool, true, 3);
+        assert!(
+            subset > full,
+            "consensus cluster {subset} should beat the outlier-dragged full set {full}"
+        );
+        assert!(subset >= 85, "the 3 tight drafts agree on roles: {subset}");
+        assert!(reason.contains("consensus 3 of 4"));
+        // Inert when the pool has not grown past k: identical to the full-set measure (byte-identical default).
+        let two = vec![tight("1"), tight("2")];
+        assert_eq!(
+            best_subset_agreement(&two, true, 3),
+            plan_agreement(&two, true)
+        );
+    }
+
+    #[test]
     fn breakdown_json_absent_on_cloud_path() {
         // No sub-signal computed (solo/cloud path) -> no key -> plan_loaded stays byte-identical.
         assert!(breakdown_json(&PlanConf::default()).is_none());
@@ -3638,6 +3679,47 @@ fn plan_agreement(candidates: &[Vec<goose_swarm::TaskSpec>], converge: bool) -> 
     )
 }
 
+/// Agreement over the best-agreeing k-subset of the drafts — self-consistency's CONSENSUS CLUSTER, not the
+/// full spread. `plan_agreement` uses max−min spread + mean pairwise Jaccard, both of which only worsen (or
+/// hold) as the pool grows: a single outlier draft masks a real majority. Measuring over the tightest k
+/// drafts drops that outlier, so GROWING the pool can only raise (never lower) the reported agreement — the
+/// mechanism the redraft retarget lever relies on to lift confidence WITHOUT a bigger model. Enumerates all
+/// k-subsets (pool is capped at RETARGET_MAX_N=6, so ≤C(6,3)=20 tiny checks). Falls back to the full-set
+/// measure when k ≥ the pool size, so it is inert unless retarget actually grew the pool past k.
+fn best_subset_agreement(
+    candidates: &[Vec<goose_swarm::TaskSpec>],
+    converge: bool,
+    k: usize,
+) -> (u8, String) {
+    let n = candidates.len();
+    let k = k.max(2);
+    if n <= k {
+        return plan_agreement(candidates, converge);
+    }
+    let mut best_conf = 0u8;
+    let mut best_mask = 0u32;
+    for mask in 0u32..(1u32 << n) {
+        if (mask.count_ones() as usize) != k {
+            continue;
+        }
+        let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| candidates[i].clone())
+            .collect();
+        let (c, _) = plan_agreement(&subset, converge);
+        if best_mask == 0 || c > best_conf {
+            best_conf = c;
+            best_mask = mask;
+        }
+    }
+    let subset: Vec<Vec<goose_swarm::TaskSpec>> = (0..n)
+        .filter(|i| best_mask & (1 << i) != 0)
+        .map(|i| candidates[i].clone())
+        .collect();
+    let (conf, reason) = plan_agreement(&subset, converge);
+    (conf, format!("{reason} [consensus {k} of {n}]"))
+}
+
 /// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
 /// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
 /// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
@@ -4757,6 +4839,10 @@ impl GooseAgentDispatcher {
         best_of_n: usize,
         homogeneous: bool,
         need_confidence: bool,
+        // Some(k) (retarget only): measure agreement over the best-agreeing k-subset of the drafted pool
+        // instead of the full spread, so growing best_of_n actually raises the metric. None = full-set
+        // measure (default/cloud path, byte-identical).
+        consensus_k: Option<usize>,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
@@ -4996,8 +5082,11 @@ impl GooseAgentDispatcher {
                     // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where
                     // verbalized confidence is overconfident). Low agreement = the model doesn't really know
                     // how to decompose this — a signal to research more before committing (M6 step 3).
-                    let (conf, reason) =
-                        plan_agreement(&valid_specs, swarm_gate("GOOSE_SWARM_CONVERGE", false));
+                    let converge = swarm_gate("GOOSE_SWARM_CONVERGE", false);
+                    let (conf, reason) = match consensus_k {
+                        Some(k) => best_subset_agreement(&valid_specs, converge, k),
+                        None => plan_agreement(&valid_specs, converge),
+                    };
                     eprintln!(
                         "  {} picked best skeleton (score {score}) — plan confidence {conf}/100 ({reason})",
                         style("✓").green().bold()
@@ -10296,6 +10385,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     effective_best_of_n,
                     cfg.homogeneous_models,
                     ask_floor.is_some(),
+                    // Under retarget, measure agreement over the best original-sized consensus subset of the
+                    // grown draft pool (redraft lever grows effective_best_of_n past best_of_n → more draws to
+                    // find a tight cluster). Off retarget: None → full-set measure, byte-identical.
+                    if retarget_on && effective_best_of_n > best_of_n {
+                        Some(best_of_n)
+                    } else {
+                        None
+                    },
                 )
                 .await
             {
