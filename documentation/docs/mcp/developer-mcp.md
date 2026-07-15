@@ -11,7 +11,7 @@ import { Tornado } from 'lucide-react';
 
 <YouTubeShortEmbed videoUrl="https://www.youtube.com/embed/on_p-LeIrak" />
 
-The Developer extension allows goose to automate developer-centric tasks such as file editing, shell command execution, and project setup. It also provides tools for [enhanced code editing](/docs/guides/enhanced-code-editing) and [codebase analysis](/docs/guides/codebase-analysis).
+The Developer extension allows goose to automate developer-centric tasks such as file editing, shell command execution, and project setup. It also provides tools for [codebase analysis](/docs/guides/codebase-analysis).
 
 This tutorial will cover enabling and using the Developer MCP Server, which is a built-in goose extension. 
 
@@ -236,12 +236,6 @@ import ContentCardCarousel from '@site/src/components/ContentCardCarousel';
 
 <ContentCardCarousel
   items={[
-    {
-      type: 'topic',
-      title: 'Enhanced Code Editing with AI Models',
-      description: 'Use AI models to intelligently apply code changes',
-      linkUrl: '/docs/guides/enhanced-code-editing'
-    },
     {
       type: 'topic',
       title: 'Codebase Analysis',
