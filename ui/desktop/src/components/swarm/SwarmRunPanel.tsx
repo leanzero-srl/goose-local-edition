@@ -831,12 +831,23 @@ const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) =>
   </span>
 );
 
-const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[] }> = ({ item, deviceOrder }) => {
-  const c = TODO_COLOR[item.state];
+const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[]; stale: boolean }> = ({
+  item,
+  deviceOrder,
+  stale,
+}) => {
+  // A 'running' item on a STALE run (no heartbeat) is not actually working — the run stopped/crashed. Relabel
+  // it 'interrupted' (grey, like the lanes do) so it never looks like live work when the process is dead.
+  const interrupted = stale && item.state === 'running';
+  const c = interrupted ? CALL_PENDING : TODO_COLOR[item.state];
   const idx = item.device ? deviceIndex(item.device, deviceOrder) : -1;
   return (
     <div className="flex items-center gap-1.5 text-[11px] py-0.5 min-w-0">
-      <TodoGlyph state={item.state} />
+      {interrupted ? (
+        <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
+      ) : (
+        <TodoGlyph state={item.state} />
+      )}
       {idx >= 0 ? (
         <span
           className="text-[9px] font-mono shrink-0"
@@ -851,9 +862,10 @@ const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[] }> = (
       >
         {item.label}
       </span>
-      {item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
-      {item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
-      {item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
+      {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
+      {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
+      {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
+      {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
       {item.detail ? <span className="text-[10px] text-text-secondary truncate">· {item.detail}</span> : null}
     </div>
   );
@@ -861,9 +873,10 @@ const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[] }> = (
 
 // The accordion of per-phase checklists. Active phase default-open; finished phases collapse to a counts
 // header. Sits under the phase breadcrumb, above the activity feed.
-const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = ({
+const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[]; stale: boolean }> = ({
   phases,
   deviceOrder,
+  stale,
 }) => {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const shown = phases.filter((p) => p.items.length > 0);
@@ -878,7 +891,10 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = 
       </div>
       {shown.map((p) => {
         const isOpen = open[p.key] ?? p.active;
-        const chip = TODO_COLOR[p.state];
+        // On a stale run a 'running' phase isn't live — it stopped. Show 'interrupted', not 'running'.
+        const interrupted = stale && p.state === 'running';
+        const label = interrupted ? 'interrupted' : p.state === 'unverified' ? 'unverified' : p.state;
+        const chip = interrupted ? CALL_PENDING : TODO_COLOR[p.state];
         return (
           <div key={p.key}>
             <button
@@ -891,8 +907,8 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = 
                 <ChevronRight className="h-3 w-3 text-text-secondary shrink-0" />
               )}
               <span
-                className={`text-[11px] font-medium ${p.active ? '' : 'text-text-secondary'}`}
-                style={p.active ? { color: chip } : undefined}
+                className={`text-[11px] font-medium ${p.active && !interrupted ? '' : 'text-text-secondary'}`}
+                style={p.active && !interrupted ? { color: chip } : undefined}
               >
                 {p.label}
               </span>
@@ -900,7 +916,7 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = 
                 className="text-[9px] uppercase tracking-wide px-1 py-px shrink-0"
                 style={{ color: chip, border: `1px solid ${chip}`, borderRadius: 2 }}
               >
-                {p.state === 'unverified' ? 'unverified' : p.state}
+                {label}
               </span>
               {p.counts.total > 0 ? (
                 <span className="text-[10px] tabular-nums text-text-secondary ml-auto">
@@ -911,7 +927,7 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[] }> = 
             {isOpen ? (
               <div className="px-3 pb-2 pl-8 space-y-0">
                 {p.items.map((item) => (
-                  <PhaseTodoRow key={item.id} item={item} deviceOrder={deviceOrder} />
+                  <PhaseTodoRow key={item.id} item={item} deviceOrder={deviceOrder} stale={stale} />
                 ))}
               </div>
             ) : null}
@@ -1370,7 +1386,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         />
       )}
 
-      <PhaseTodoList phases={run.phaseTodo} deviceOrder={deviceOrder} />
+      <PhaseTodoList phases={run.phaseTodo} deviceOrder={deviceOrder} stale={stale} />
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}
