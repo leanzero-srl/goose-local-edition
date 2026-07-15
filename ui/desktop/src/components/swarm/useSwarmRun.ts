@@ -596,16 +596,23 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         if (b) confidence = b;
         const pc = num(e['plan_confidence']);
         if (typeof pc === 'number') setConf(pc);
-        const nq = arr(e['questions']).length;
+        const qs = arr(e['questions']) as Array<Record<string, unknown>>;
+        const nq = qs.length;
+        // Surface the ACTUAL questions in the feed's `sub` so they PERSIST after the clarify prompt is answered
+        // and dismissed — a durable record that goose polled + what it asked (Mihai: "I expect to SEE the
+        // questions goose is asking").
+        const qsub = qs.map((q, i) => `${i + 1}. ${str(q['question'])}`).join('\n') || undefined;
         compact({
           kind: 'plan',
           text: `Paused — asking you ${nq} question${nq === 1 ? '' : 's'}`,
           tone: 'warn',
+          sub: qsub,
         });
         verbose({
           kind: 'plan',
           text: `Low confidence (${typeof pc === 'number' ? pc : '?'}/100) — asking the user ${nq} clarifying question${nq === 1 ? '' : 's'} before building`,
           tone: 'warn',
+          sub: qsub,
         });
         break;
       }
