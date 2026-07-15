@@ -2296,6 +2296,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       agreement: number;
       agreementReason: string;
       specClarity: number;
+      specClarityReason: string;
       productSpecified: boolean;
       openDecisions: string[];
     };
@@ -2348,6 +2349,8 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
               agreement: agreement ?? final,
               agreementReason: typeof b.agreement_reason === 'string' ? b.agreement_reason : '',
               specClarity: specClarity ?? final,
+              specClarityReason:
+                typeof b.spec_clarity_reason === 'string' ? b.spec_clarity_reason : '',
               productSpecified: b.product_specified === true,
               openDecisions: Array.isArray(b.open_decisions) ? b.open_decisions.map(String) : [],
             };

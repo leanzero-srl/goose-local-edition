@@ -118,6 +118,7 @@ export interface ConfidenceBreakdown {
   agreement: number;
   agreementReason: string;
   specClarity: number;
+  specClarityReason: string;
   productSpecified: boolean;
   openDecisions: string[];
 }
@@ -226,6 +227,7 @@ function parseConfidence(v: unknown): ConfidenceBreakdown | null {
     agreement: agreement ?? final,
     agreementReason: str(o['agreement_reason']),
     specClarity: specClarity ?? final,
+    specClarityReason: str(o['spec_clarity_reason']),
     productSpecified: o['product_specified'] === true,
     openDecisions: arr(o['open_decisions']).map(String),
   };
@@ -698,9 +700,10 @@ function foldEvents(
     };
   });
 
-  // Running first, then most-recent activity first — the freshest turn loops surface at the top.
-  const order: Record<TurnStatus, number> = { running: 0, error: 1, done: 2 };
-  lanes.sort((a, b) => order[a.status] - order[b.status] || b.seq - a.seq);
+  // DONE on top (finished history), IN-PROGRESS at the BOTTOM — the active front sits just above the chat
+  // input where the eye is. Within a group, oldest-activity first so the freshest work sinks to the bottom.
+  const order: Record<TurnStatus, number> = { done: 0, error: 1, running: 2 };
+  lanes.sort((a, b) => order[a.status] - order[b.status] || a.seq - b.seq);
 
   const totals: SwarmRunTotals = {
     tasks: lanes.length,
