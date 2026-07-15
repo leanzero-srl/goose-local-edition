@@ -1113,10 +1113,16 @@ function buildPhaseTodo(
 
   const rollUp = (items: PhaseTodoItem[]): TodoState => {
     const real = items.filter((i) => i.state !== 'advisory');
+    if (real.length === 0) return 'pending';
+    // While the run is still LIVE and any task is running/pending, the phase is IN-PROGRESS — a single failed
+    // sibling must NOT flip the whole phase to FAILED mid-build (it may re-dispatch, split, or the run still
+    // recovers via complete_verify). Only once the run cleanly finished does an unrecovered failure roll up.
+    // (On a crashed/stale run the panel relabels a 'running' phase to 'interrupted' separately.)
+    const anyActive = real.some((i) => i.state === 'running' || i.state === 'pending');
+    if (!finishedEvent && anyActive) return 'running';
     if (real.some((i) => i.state === 'failed' || i.state === 'judge_failed' || i.state === 'blocked'))
       return 'failed';
     if (real.some((i) => i.state === 'running')) return 'running';
-    if (real.length === 0) return 'pending';
     if (real.every((i) => i.state === 'skipped')) return 'skipped';
     if (real.some((i) => i.state === 'done')) return 'done';
     if (real.some((i) => i.state === 'unverified')) return 'unverified';
