@@ -2476,7 +2476,10 @@ mod tests {
                 && TargetLang::Python.is_test_file("conftest.py")
         );
         assert!(ts.is_test_file("foo.test.ts") && !ts.is_test_file("foo.ts"));
-        assert!(!TargetLang::Other.is_source_file("foo.rb"));
+        // Other is now AGNOSTIC: it matches a broad set of code extensions (e.g. Ruby) so CONTRACTS work for
+        // any language, but still rejects non-source files.
+        assert!(TargetLang::Other.is_source_file("foo.rb"));
+        assert!(!TargetLang::Other.is_source_file("README.md"));
     }
 
     #[test]
