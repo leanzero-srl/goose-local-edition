@@ -9484,6 +9484,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
              (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
+             - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \
+             `content` (the whole file). A write with `content` but no `path` FAILS with 'missing field path' \
+             and wastes the turn — ALWAYS include the `path`. Same for `edit`: pass `path` every time.\n\
              - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
              it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
              round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n\
@@ -12247,6 +12250,103 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             0
         }
     };
+
+    // ── END-OF-RUN OVERVIEW ──────────────────────────────────────────────────────────────────────────────
+    // A human-readable close-out (Mihai: other tools give "no overview"). Sections: WHAT WAS BUILT (a GROUNDED
+    // summary agent — reads real code excerpts, FORBIDDEN from any works/tested/verified claim + scrubbed),
+    // HOW TO RUN IT (the entry stamped in RUST, never the model), WHAT'S NEXT. VERIFICATION is engine-only
+    // (the desktop re-derives it from phaseTodo). MUST run BEFORE `run_finished` + the final stdout report:
+    // the desktop provider kill_on_drop-kills the CLI the instant it reads the final stdout output, which
+    // would kill this ~30-120s summary call mid-flight (the bug that shipped in v1.41.37 — it never emitted).
+    // Skipped (generated:false) on a RED build so a confident summary never over-sells a broken app; a
+    // STOPPED run dies mid-build and never reaches here, so the UI still never shows a triumphant overview.
+    if swarm_gate("GOOSE_SWARM_OVERVIEW", true) {
+        let ov_root = std::env::current_dir().unwrap_or_default();
+        let rel_files = existing_files_manifest(&ov_root);
+        let ov_lang = detect_language(&opts.prompt, &rel_files);
+        let lang_tag = match ov_lang {
+            TargetLang::Python => "python",
+            TargetLang::TypeScript => "typescript",
+            TargetLang::Rust => "rust",
+            _ => "other",
+        };
+        let run_cmd = overview_run_command(ov_lang, &ov_root, &rel_files);
+        let run_cmd_verified = ov_verified && run_cmd.is_some();
+        let emit_bare = |sink: &dyn EventSink| {
+            sink.write_value(serde_json::json!({
+                "event": "run_overview", "generated": false,
+                "run_command": run_cmd, "run_command_lang": lang_tag,
+                "run_command_verified": run_cmd_verified,
+                "features": [], "engage": serde_json::Value::Null, "next": [],
+            }));
+        };
+        if complete_failed || rel_files.is_empty() {
+            emit_bare(sink.as_ref());
+        } else {
+            eprintln!("  generating build summary …");
+            let spec_excerpt: String = opts.prompt.chars().take(1800).collect();
+            let excerpts = overview_source_excerpts(&ov_root, &rel_files);
+            let verify_line = if ov_verified {
+                "the app was RUN end-to-end and verified"
+            } else {
+                "the app was shipped but NOT run or verified (no test oracle ran)"
+            };
+            let system = "You write the END-OF-BUILD overview a non-technical user reads after a local AI swarm finished BUILDING a program. \
+                You are given the SPEC, the files produced, and EXCERPTS of the ACTUAL code. Describe ONLY what you can see in the code excerpts — \
+                never a feature not present. Produce THREE things, then call the final_output tool: (1) features: 3-6 short lines, each a VALUE the \
+                user gets (e.g. 'Splits a bill and rounds each share to the cent'), for a human — not a file list, not jargon; one capability per line, \
+                <=12 words. (2) engage: ONE sentence on how to have goose run it for them. (3) next: 2-3 concrete, buildable follow-ups — capabilities \
+                NOT present yet. HARD RULE: you are FORBIDDEN from any claim about whether the program works, is tested, verified, correct, complete, \
+                reliable, or bug-free — a SEPARATE section reports verification from the engine's own checks; that is NOT your job. Never write \
+                works/working/tested/verified/passes/correct/reliable/production-ready or any synonym in ANY field. Do NOT restate the run command.".to_string();
+            let user = format!(
+                "SPEC:\n{spec_excerpt}\n\nFILES PRODUCED ({}):\n{}\n\nCODE EXCERPTS:\n{}\n\nVERIFICATION (already reported separately — do NOT restate or contradict; here ONLY so your 'next' fits reality): {verify_line}\n\nCall final_output with features/engage/next.",
+                rel_files.len(),
+                rel_files.join("\n"),
+                excerpts
+            );
+            let resp = Some(Response {
+                json_schema: Some(run_overview_schema()),
+            });
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                smoke_fix_dispatcher.run_agent_timed(
+                    &smoke_fix_dispatcher.planner_model,
+                    system,
+                    user,
+                    resp,
+                    4,
+                    &[],
+                ),
+            )
+            .await;
+            let parsed = res
+                .ok()
+                .and_then(|r| r.ok())
+                .and_then(|o| o.final_output)
+                .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
+            match parsed {
+                Some(mut ov) => {
+                    scrub_overclaim(&mut ov.features);
+                    scrub_overclaim(&mut ov.next);
+                    if is_overclaim(&ov.engage) {
+                        ov.engage = "You can ask goose in chat to run this program for you.".to_string();
+                    }
+                    if ov.features.is_empty() {
+                        ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
+                    }
+                    sink.write_value(serde_json::json!({
+                        "event": "run_overview", "generated": true,
+                        "run_command": run_cmd, "run_command_lang": lang_tag,
+                        "run_command_verified": run_cmd_verified,
+                        "features": ov.features, "engage": ov.engage, "next": ov.next,
+                    }));
+                }
+                None => emit_bare(sink.as_ref()),
+            }
+        }
+    }
+
     sink.write_value(serde_json::json!({
         "event": "run_finished",
         "report": report_value,
@@ -12363,100 +12463,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if let Some(r) = report.results.get(id) {
                 let snippet: String = r.chars().take(280).collect();
                 println!("\n--- {id} ---\n{snippet}");
-            }
-        }
-    }
-
-    // ── END-OF-RUN OVERVIEW ──────────────────────────────────────────────────────────────────────────────
-    // A human-readable close-out at DONE (Mihai: other tools give "no overview"). Sections: WHAT WAS BUILT (a
-    // GROUNDED summary agent — reads real code excerpts, FORBIDDEN from any works/tested/verified claim +
-    // scrubbed), HOW TO RUN IT (the entry stamped in RUST, never the model), and WHAT'S NEXT. VERIFICATION is
-    // engine-only (the desktop re-derives it from phaseTodo). Skipped (generated:false) on a RED build so a
-    // confident summary never over-sells a broken app; and this runs AFTER run_finished, so a STOPPED run
-    // (which never emits run_finished) never reaches here and the UI never shows a triumphant overview.
-    if swarm_gate("GOOSE_SWARM_OVERVIEW", true) {
-        let ov_root = std::env::current_dir().unwrap_or_default();
-        let rel_files = existing_files_manifest(&ov_root);
-        let ov_lang = detect_language(&opts.prompt, &rel_files);
-        let lang_tag = match ov_lang {
-            TargetLang::Python => "python",
-            TargetLang::TypeScript => "typescript",
-            TargetLang::Rust => "rust",
-            _ => "other",
-        };
-        let run_cmd = overview_run_command(ov_lang, &ov_root, &rel_files);
-        let run_cmd_verified = ov_verified && run_cmd.is_some();
-        let emit_bare = |sink: &dyn EventSink| {
-            sink.write_value(serde_json::json!({
-                "event": "run_overview", "generated": false,
-                "run_command": run_cmd, "run_command_lang": lang_tag,
-                "run_command_verified": run_cmd_verified,
-                "features": [], "engage": serde_json::Value::Null, "next": [],
-            }));
-        };
-        if complete_failed || rel_files.is_empty() {
-            emit_bare(sink.as_ref());
-        } else {
-            eprintln!("  generating build summary …");
-            let spec_excerpt: String = opts.prompt.chars().take(1800).collect();
-            let excerpts = overview_source_excerpts(&ov_root, &rel_files);
-            let verify_line = if ov_verified {
-                "the app was RUN end-to-end and verified"
-            } else {
-                "the app was shipped but NOT run or verified (no test oracle ran)"
-            };
-            let system = "You write the END-OF-BUILD overview a non-technical user reads after a local AI swarm finished BUILDING a program. \
-                You are given the SPEC, the files produced, and EXCERPTS of the ACTUAL code. Describe ONLY what you can see in the code excerpts — \
-                never a feature not present. Produce THREE things, then call the final_output tool: (1) features: 3-6 short lines, each a VALUE the \
-                user gets (e.g. 'Splits a bill and rounds each share to the cent'), for a human — not a file list, not jargon; one capability per line, \
-                <=12 words. (2) engage: ONE sentence on how to have goose run it for them. (3) next: 2-3 concrete, buildable follow-ups — capabilities \
-                NOT present yet. HARD RULE: you are FORBIDDEN from any claim about whether the program works, is tested, verified, correct, complete, \
-                reliable, or bug-free — a SEPARATE section reports verification from the engine's own checks; that is NOT your job. Never write \
-                works/working/tested/verified/passes/correct/reliable/production-ready or any synonym in ANY field. Do NOT restate the run command.".to_string();
-            let user = format!(
-                "SPEC:\n{spec_excerpt}\n\nFILES PRODUCED ({}):\n{}\n\nCODE EXCERPTS:\n{}\n\nVERIFICATION (already reported separately — do NOT restate or contradict; here ONLY so your 'next' fits reality): {verify_line}\n\nCall final_output with features/engage/next.",
-                rel_files.len(),
-                rel_files.join("\n"),
-                excerpts
-            );
-            let resp = Some(Response {
-                json_schema: Some(run_overview_schema()),
-            });
-            let res = tokio::time::timeout(
-                std::time::Duration::from_secs(120),
-                smoke_fix_dispatcher.run_agent_timed(
-                    &smoke_fix_dispatcher.planner_model,
-                    system,
-                    user,
-                    resp,
-                    4,
-                    &[],
-                ),
-            )
-            .await;
-            let parsed = res
-                .ok()
-                .and_then(|r| r.ok())
-                .and_then(|o| o.final_output)
-                .and_then(|fo| serde_json::from_str::<Overview>(&fo).ok());
-            match parsed {
-                Some(mut ov) => {
-                    scrub_overclaim(&mut ov.features);
-                    scrub_overclaim(&mut ov.next);
-                    if is_overclaim(&ov.engage) {
-                        ov.engage = "You can ask goose in chat to run this program for you.".to_string();
-                    }
-                    if ov.features.is_empty() {
-                        ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
-                    }
-                    sink.write_value(serde_json::json!({
-                        "event": "run_overview", "generated": true,
-                        "run_command": run_cmd, "run_command_lang": lang_tag,
-                        "run_command_verified": run_cmd_verified,
-                        "features": ov.features, "engage": ov.engage, "next": ov.next,
-                    }));
-                }
-                None => emit_bare(sink.as_ref()),
             }
         }
     }
