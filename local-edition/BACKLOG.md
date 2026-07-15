@@ -26,3 +26,14 @@ worker prompt already forbids cd/siblings, but home-as-workdir defeats it (sibli
 workdir). FIX: when the swarm provider dispatches a build and the working dir is the home directory, build in
 a dedicated project subdir (e.g. ~/goose-builds/<name> or a chosen/created project dir) instead of $HOME.
 The app already supports `--dir <path>`; the gap is the DEFAULT for builds.
+
+## Merge upstream (parent repo) changes — carefully, favoring OUR work (2026-07-15, requested by Mihai)
+Bring the parent repo's changes into `main` and into our `local-edition` branch. HARD CONSTRAINT: merge
+carefully with the interest of KEEPING WHAT WE'VE DONE over what they've done — our fork carries the whole
+swarm feature set (crates/goose-cli/src/commands/swarm.rs, ui/desktop swarm panel, providers/swarm.rs, the
+LeanZero branding, config tunables). Do NOT let an upstream change clobber our swarm engine/UI. Approach:
+fetch upstream, review the diff for conflicts against our touched files FIRST, take upstream only where it
+doesn't regress our work (deps bumps, unrelated crates, bug fixes we lack), and resolve every conflict in
+OUR favor on the swarm/desktop surfaces. Gate hard after (cargo fmt/build/clippy -D warnings + cargo test
+-p goose-cli; pnpm typecheck + eslint) and smoke-test a real swarm build before pushing. Never staged files
+we must not touch (openai.rs, schedule.rs, pnpm-lock, openapi.json) unless upstream genuinely changed them.
