@@ -268,6 +268,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_DRAFT_TEMP env overrides.
     #[serde(default)]
     pub draft_temp: Option<f32>,
+    /// A finding the repro oracle PROVED (twice-run traceback in a clean snapshot) and the fix loop did not
+    /// repair DEMOTES the run's `verified` claim to false. Never flips `passed` red — an app that builds and
+    /// smokes green still passes; it just stops claiming it was verified. Needs GOOSE_SWARM_REVIEW_REPRO (the
+    /// oracle) to be on. OFF by default. GOOSE_SWARM_REPRO_DEMOTES_VERIFIED env overrides.
+    #[serde(default)]
+    pub repro_demotes_verified: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -332,6 +338,7 @@ impl Default for SwarmConfig {
             retarget: false,
             backbone: false,
             draft_temp: None,
+            repro_demotes_verified: false,
         }
     }
 }
@@ -1544,6 +1551,67 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
+    // These replay the real archived runs in evals/swarm-gym/apps. The corpus contains exactly one
+    // false-green and exactly one correctly-repaired app, and the rule must separate them.
+
+    /// unitconv: the measured false-green. complete_result{passed:true, verified:true} at seq 48, then
+    /// review_repro proved a crash at seq 52 whose fix was REJECTED (smoke-inconclusive-or-red). The green
+    /// claim stood. The rule must demote it.
+    #[test]
+    fn demote_replays_the_archived_false_green() {
+        let proven = vec![(
+            "[wiring] unitconv/parser.py is built (defines parse_quantity) but never imported"
+                .to_string(),
+            vec![
+                "python3".to_string(),
+                "-m".to_string(),
+                "unitconv".to_string(),
+            ],
+        )];
+        let fixed = std::collections::HashSet::new(); // review_fix accepted:false
+        let out = unfixed_proven(&proven, &fixed);
+        assert_eq!(out.len(), 1, "the archived false-green must demote");
+        assert!(!out[0].1.is_empty(), "a demote must carry a pasteable argv");
+    }
+
+    /// prove-s2b: the oracle proved the same class of crash, but review_fix accepted:true (reason "promoted").
+    /// A repaired app must NOT be demoted — this is the false-fail direction and it must stay at zero.
+    #[test]
+    fn demote_spares_the_archived_repaired_app() {
+        let f = "[edge-cases] statz/calc.py: mean([]) crashes with ZeroDivisionError".to_string();
+        let proven = vec![(f.clone(), vec!["python3".to_string(), "-m".to_string()])];
+        let fixed: std::collections::HashSet<String> = [f].into_iter().collect();
+        assert!(
+            unfixed_proven(&proven, &fixed).is_empty(),
+            "an accepted fix must clear the demote — false-fails must stay at zero"
+        );
+    }
+
+    /// The 10 of 12 archived repro events that are NOT crashes. Every ambiguous class must be inert: an
+    /// infra failure or an unrunnable command must never manufacture a demotion.
+    #[test]
+    fn only_a_reproduced_crash_can_demote() {
+        assert!(is_proven_crash("crash", true));
+        assert!(
+            !is_proven_crash("crash", false),
+            "a crash class that did not reproduce is not proof"
+        );
+        for class in [
+            "inconclusive",
+            "unsafe-or-unparsed",
+            "unauthored",
+            "flaky",
+            "baseline-broken",
+            "browser",
+        ] {
+            assert!(
+                !is_proven_crash(class, true),
+                "{class} is not a proven crash and must never demote"
+            );
+        }
+    }
 
     #[test]
     fn summarize_tool_call_extracts_the_intent_field() {
@@ -10515,6 +10583,24 @@ fn review_fix_max_files() -> usize {
         .unwrap_or(3)
         .clamp(1, 10)
 }
+/// The PROVEN-CRASH demote rule, isolated from the run so it is testable without a fleet.
+///
+/// Only a deterministic engine event may retract a green claim. `reproduce_finding` classes every ambiguous
+/// outcome away from "crash" (inconclusive / flaky / baseline-broken / unauthored / unsafe-or-unparsed), so
+/// this predicate is true only when the oracle actually ran the app and read a traceback twice.
+fn is_proven_crash(class: &str, reproduced: bool) -> bool {
+    reproduced && class == "crash"
+}
+
+/// Proven crashes that no accepted fix repaired — the ONLY thing entitled to demote `verified`. Attribution
+/// is by finding string, the same key the review_fix events carry.
+fn unfixed_proven<'a>(
+    proven: &'a [(String, Vec<String>)],
+    fixed: &std::collections::HashSet<String>,
+) -> Vec<&'a (String, Vec<String>)> {
+    proven.iter().filter(|(f, _)| !fixed.contains(f)).collect()
+}
+
 fn review_fix_max_lines() -> usize {
     std::env::var("GOOSE_SWARM_REVIEW_FIX_MAX_LINES")
         .ok()
@@ -12046,6 +12132,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // fanned wave AFTER the repro pass (below). The serial inline path is byte-identical when off.
                 let parallel_fix = review_fix_on && review_fix_parallel();
                 let mut crash_hits: Vec<(usize, String, Vec<String>)> = Vec::new();
+                // PROVEN-CRASH DEMOTE bookkeeping. Every finding the oracle actually reproduced, and every
+                // finding a fix was accepted for; a proven crash still standing at the end of the pass is the
+                // one thing that may retract the run's `verified` claim. Attribution is by finding string —
+                // the same key the fix events already carry.
+                let mut proven_crashes: Vec<(String, Vec<String>)> = Vec::new();
+                let mut fixed_findings: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for (i, finding) in findings.iter().enumerate() {
                     let authored = smoke_fix_dispatcher
                         .author_repro(&repro_model, finding, &help, &smoke_all_files)
@@ -12058,6 +12151,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     };
                     if ok {
                         reproduced += 1;
+                    }
+                    // A reproduced crash is real REGARDLESS of language — the oracle just runs argv and reads
+                    // the traceback. (The fix-gate below is Python-only; the demote is not, because an app that
+                    // provably tracebacks has not been verified whatever it is written in.)
+                    if is_proven_crash(class, ok) {
+                        if let Some(argv) = argv_opt.as_ref() {
+                            proven_crashes.push((finding.clone(), argv.clone()));
+                        }
                     }
                     sink.write_value(serde_json::json!({
                         "event": "review_repro",
@@ -12107,6 +12208,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 .await;
                             if v.accepted {
                                 fixed += 1;
+                                fixed_findings.insert(finding.clone());
                             }
                             sink.write_value(serde_json::json!({
                                 "event": "review_fix",
@@ -12208,6 +12310,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     if v.accepted {
                                         fixed += 1;
                                         shards += 1;
+                                        fixed_findings.insert(finding.clone());
                                         for f in &cand.changed {
                                             promoted_files.insert(f.clone());
                                         }
@@ -12259,6 +12362,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 .await;
                             if v.accepted {
                                 fixed += 1;
+                                fixed_findings.insert(finding.clone());
                             }
                             sink.write_value(serde_json::json!({
                                 "event": "review_fix", "finding": finding,
@@ -12267,6 +12371,55 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 "diff_lines": v.diff_lines,
                             }));
                         }
+                    }
+                }
+                // PROVEN-CRASH DEMOTE (GOOSE_SWARM_REPRO_DEMOTES_VERIFIED, default OFF).
+                //
+                // `complete_result` claims verified ~200 lines and ~10 minutes ABOVE this point, and until now
+                // nothing could retract it — so a run whose app provably tracebacks could still tell the user it
+                // was "RUN end-to-end and verified". Measured in the archives: unitconv shipped
+                // complete_result{passed:true, verified:true} at seq 48, then review_repro proved a crash at
+                // seq 52 whose fix was rejected (smoke-inconclusive-or-red). The green claim stood.
+                //
+                // Only a DETERMINISTIC engine event may retract it: a twice-run traceback in a clean-baseline
+                // snapshot, with no model in the decision path. An argument may not — the model-run verify
+                // refuted BOTH of the archives' provably-real findings (0/2), which is why the repro gate above
+                // deliberately bypasses it.
+                //
+                // `passed` is NEVER touched. That asymmetry is the pillar-check lesson: false-failing a correct
+                // app costs the whole run and hands the fix loop a mandate to "repair" working code, while an
+                // honest UNVERIFIED slate costs a correct app nothing. Any ambiguity in the oracle
+                // (inconclusive / flaky / baseline-broken / unauthored / unsafe) is not a crash, so it cannot
+                // demote — infra failure must never manufacture a demotion.
+                let proven_unfixed = unfixed_proven(&proven_crashes, &fixed_findings);
+                if ov_verified
+                    && !proven_unfixed.is_empty()
+                    && swarm_gate_cfg(
+                        "GOOSE_SWARM_REPRO_DEMOTES_VERIFIED",
+                        cfg.repro_demotes_verified,
+                    )
+                {
+                    ov_verified = false;
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_result_revised",
+                        "verified": false,
+                        "reason": "proven-crash-unfixed",
+                        "proven_unfixed": proven_unfixed.len(),
+                        "evidence": proven_unfixed
+                            .iter()
+                            .map(|(f, argv)| serde_json::json!({
+                                "finding": f,
+                                "repro_argv": argv,
+                            }))
+                            .collect::<Vec<_>>(),
+                    }));
+                    for (f, argv) in &proven_unfixed {
+                        eprintln!(
+                            "{} {}\n  reproduce: {}",
+                            style("NOT VERIFIED — proven crash, unfixed:").red().bold(),
+                            f,
+                            style(argv.join(" ")).yellow(),
+                        );
                     }
                 }
                 eprintln!(
