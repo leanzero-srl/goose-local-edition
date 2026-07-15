@@ -585,7 +585,7 @@ const ConfidenceBreakdownBody: React.FC<{
       ? 'Some requirements are still ambiguous.'
       : "The product itself isn't fully specified yet.";
   const raiseIt = bindingAgreement
-    ? 'Goose re-drafts toward a single consensus plan to reconcile the structure — designed to converge, though a small/weak fleet may not fully agree.'
+    ? 'The drafts disagree on how to structure the build. The score reflects that drafted plan — it only lifts if Goose re-drafts toward a consensus (the retarget option), and a small/weak fleet may still not fully agree.'
     : hasPendingQuestions
       ? 'Answer the questions below — each resolves an open decision. Goose can also research the undecided points.'
       : 'Researching the undecided points to firm up the spec.';
@@ -979,7 +979,7 @@ const ClarifyPrompt: React.FC<{
         style={{ backgroundColor: STATUS_COLOR.done }}
       >
         <Check className="h-4 w-4 shrink-0" />
-        Sent — goose is re-planning with your answers.
+        Sent — goose is building with your answers.
       </div>
     );
   }
@@ -999,7 +999,7 @@ const ClarifyPrompt: React.FC<{
       <div className="px-3 py-3 space-y-3 bg-background-secondary">
         <p className="text-xs text-text-secondary">
           Goose drafted this plan but wants your call on a few things before it builds. Pick an option, type
-          your own, or just tell it what to change — it re-plans with your input.
+          your own, or just tell it what to change — it folds your input into the build.
         </p>
 
         {clarify.confidence ? (
