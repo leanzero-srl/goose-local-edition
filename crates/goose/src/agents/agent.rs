@@ -262,6 +262,11 @@ pub struct Agent {
     goal: Mutex<Option<String>>,
     grind: Mutex<Option<String>>,
     pending_steers: Mutex<HashMap<String, VecDeque<Message>>>,
+    /// SWARM tool-call repair (opt-in, set per worker task by the swarm): when a weak local model emits a
+    /// `write`/`edit` tool call that OMITS `path` and the task owns EXACTLY ONE file, inject that file's path
+    /// so the turn is not wasted on a "missing field path" error. `None` (default) = no repair; every non-swarm
+    /// and planner-side agent leaves this None → byte-identical behavior.
+    swarm_single_owned_file: std::sync::RwLock<Option<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -394,7 +399,43 @@ impl Agent {
             goal: Mutex::new(None),
             grind: Mutex::new(None),
             pending_steers: Mutex::new(HashMap::new()),
+            swarm_single_owned_file: std::sync::RwLock::new(None),
         }
+    }
+
+    /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
+    /// doc + `repair_swarm_tool_call`). Pass `None` to disable. Set by the swarm per worker task; opt-in.
+    pub fn set_swarm_single_owned_file(&self, path: Option<String>) {
+        if let Ok(mut g) = self.swarm_single_owned_file.write() {
+            *g = path;
+        }
+    }
+
+    /// If `tool_call` is a developer `write`/`edit` that OMITS a non-empty `path` and a single owned file is
+    /// registered, inject that path. Returns true if it repaired the call. Scoped tight (single-owned-file
+    /// only) per the adversarial review — a broader alias/content guess risks clobbering the wrong file green.
+    fn repair_swarm_tool_call(&self, tool_call: &mut CallToolRequestParams) -> bool {
+        let owned = match self.swarm_single_owned_file.read() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
+        };
+        let Some(owned) = owned else { return false };
+        let name = tool_call.name.as_ref();
+        let short = name.rsplit("__").next().unwrap_or(name);
+        if short != "write" && short != "edit" && short != "text_editor" {
+            return false;
+        }
+        let obj = tool_call.arguments.get_or_insert_with(serde_json::Map::new);
+        let has_path = obj
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if has_path {
+            return false;
+        }
+        obj.insert("path".to_string(), serde_json::Value::String(owned));
+        true
     }
 
     /// Emit a lifecycle hook event with no extra context. Useful for events
@@ -1027,11 +1068,17 @@ impl Agent {
     #[instrument(skip(self, tool_call, request_id, cancellation_token, session), fields(input, output, session.id = %session.id))]
     pub async fn dispatch_tool_call(
         &self,
-        tool_call: CallToolRequestParams,
+        mut tool_call: CallToolRequestParams,
         request_id: String,
         cancellation_token: Option<CancellationToken>,
         session: &Session,
     ) -> (String, Result<ToolCallResult, ErrorData>) {
+        // SWARM tool-call repair (opt-in, no-op unless a single owned file was registered): inject a missing
+        // `path` on a `write`/`edit` FIRST, so the argument record + pre-tool hooks + input span all see the
+        // repaired call and the turn isn't wasted on "missing field path". See `repair_swarm_tool_call`.
+        if self.repair_swarm_tool_call(&mut tool_call) {
+            tracing::debug!("swarm tool-call repair: injected missing path for {}", tool_call.name);
+        }
         let input_summary = serde_json::json!({
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
