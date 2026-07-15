@@ -18,6 +18,118 @@ export interface SwarmCall {
   result?: string;
 }
 
+// What a tool call MEANS — so the UI stops rendering every ok:false as a scary red "failure". The load-bearing
+// distinction: a MALFORMED call (bad tool arguments) is a genuine slip Goose retries; an APP-ERROR (the tool ran
+// fine but the COMMAND it invoked exited non-zero / a test failed / a traceback) is the worker PRODUCTIVELY
+// running + testing the app — finding a failing test is the job, not a failure. Mirrors the backend taxonomy.
+export type CallKind = 'ok' | 'app-error' | 'malformed' | 'pending';
+
+export interface CallMeaning {
+  kind: CallKind;
+  /** tool-type bucket for the icon */
+  icon: 'terminal' | 'test' | 'build' | 'run' | 'write' | 'edit' | 'read' | 'search' | 'tool';
+  /** plain-English intent, e.g. "Ran the tests", "Wrote src/store.rs" */
+  action: string;
+  /** plain-English outcome, e.g. "3 tests failed — iterating", "malformed — missing the path arg, retried" */
+  outcome: string;
+}
+
+const MALFORMED_SIGNS = [
+  'missing field',
+  'failed to parse',
+  'unknown variant',
+  'no such tool',
+  'invalid type:',
+  'expected `',
+  'invalid arguments',
+  'unexpected argument',
+];
+
+/** Best-effort filename out of a call summary (write/edit/read args or a path in a shell command). */
+function pathHint(summary: string): string {
+  const m = summary.match(/(?:^|[\s"'`(=])((?:[\w.-]+\/)*[\w.-]+\.(?:py|ts|tsx|js|rs|go|toml|json|md|txt|cfg|ya?ml))/);
+  return m ? m[1] : '';
+}
+
+/** Classify + humanize a single tool call so the panel can explain what it MEANS, not just color it red. */
+export function classifyCall(call: SwarmCall): CallMeaning {
+  const name = (call.name || '').replace(/^developer__/, '').toLowerCase();
+  const sum = call.summary || '';
+  const low = sum.toLowerCase();
+  const res = (call.result || '').toLowerCase();
+  const file = pathHint(sum);
+
+  // ---- tool-type bucket + intent verb ----
+  let icon: CallMeaning['icon'] = 'tool';
+  let action = name || 'tool call';
+  if (name === 'write') {
+    icon = 'write';
+    action = file ? `Wrote ${file}` : 'Wrote a file';
+  } else if (name === 'edit' || name === 'str_replace' || name === 'text_editor') {
+    icon = 'edit';
+    action = file ? `Edited ${file}` : 'Edited a file';
+  } else if (name === 'read' || name === 'view') {
+    icon = 'read';
+    action = file ? `Read ${file}` : 'Read a file';
+  } else if (name === 'shell' || name === 'bash') {
+    if (/\b(pytest|cargo test|npm test|jest|vitest|go test|unittest|-m pytest)\b/.test(low)) {
+      icon = 'test';
+      action = 'Ran the tests';
+    } else if (/\b(cargo build|tsc|npm run build|npm run make|go build|make\b|pnpm build)\b/.test(low)) {
+      icon = 'build';
+      action = 'Built the project';
+    } else if (/--help|python3? -m |node (dist|build)|cargo run|\.\/|bin\//.test(low)) {
+      icon = 'run';
+      action = 'Ran the program';
+    } else if (/^\s*(cat|ls|grep|head|tail|find|rg|sed|wc|tree)\b/.test(low)) {
+      icon = 'search';
+      action = 'Inspected files';
+    } else {
+      icon = 'terminal';
+      action = 'Ran a shell command';
+    }
+  }
+
+  // ---- kind + outcome ----
+  if (call.ok === null || call.ok === undefined) {
+    return { kind: 'pending', icon, action, outcome: 'running…' };
+  }
+  if (call.ok === true) {
+    return { kind: 'ok', icon, action, outcome: 'done' };
+  }
+  // ok === false — is it a genuine tool-format slip, or the app reporting something while being tested?
+  if (MALFORMED_SIGNS.some((s) => res.includes(s))) {
+    const why = res.includes('missing field')
+      ? 'missing a required argument'
+      : res.includes('no such tool')
+        ? 'called a tool that does not exist'
+        : 'the arguments did not parse';
+    return { kind: 'malformed', icon, action, outcome: `malformed call — ${why}; Goose retries` };
+  }
+  // productive app-error — the command ran and reported an issue (the worker is testing/iterating)
+  let outcome = 'the command reported an error — the worker is iterating';
+  if (/traceback|panic|exception|\bthrow\b/.test(res)) outcome = 'hit a runtime error while testing — iterating';
+  else if (/\bfailed\b|assert|\d+ failed|test result: FAILED|error\[/i.test(res)) outcome = 'found a failing test/check — iterating';
+  else if (/no such file|not found|cannot find|does not exist/.test(res)) outcome = 'a referenced file/target is not there yet';
+  else if (/already exists/.test(res)) outcome = 'the target already existed';
+  else if (/permission denied/.test(res)) outcome = 'a permission error';
+  return { kind: 'app-error', icon, action, outcome };
+}
+
+/** Roll a lane's calls into honest counts: genuine tool slips vs productive app-errors vs successes. */
+export function callTallies(calls: SwarmCall[]): { ok: number; appError: number; malformed: number } {
+  let ok = 0;
+  let appError = 0;
+  let malformed = 0;
+  for (const c of calls) {
+    const k = classifyCall(c).kind;
+    if (k === 'ok') ok++;
+    else if (k === 'malformed') malformed++;
+    else if (k === 'app-error') appError++;
+  }
+  return { ok, appError, malformed };
+}
+
 export interface TurnLane {
   taskId: string;
   /** The architect's one-line human description of the subtask (e.g. "Tokenize the template source") — the
@@ -72,6 +184,15 @@ export interface PhaseTodoItem {
   detail?: string;
   device?: string;
   advisory?: boolean;
+  // --- rich detail for the expandable Build rows (title + summary collapsed; the rest on expand) ---
+  /** Short one-line human description shown next to the title (collapsed). */
+  summary?: string;
+  /** The FULL task description — shown only on expand. */
+  description?: string;
+  /** Owned files — shown on expand. */
+  files?: string[];
+  /** WHY the judge intervened on this task (verdict = diagnosis, hint = the note it gave the worker). Expand. */
+  judge?: { verdict: string; hint: string; action: string };
 }
 export interface PhaseTodo {
   key: PhaseKey;
@@ -291,6 +412,36 @@ export function cleanTaskTitle(desc: string | undefined, id: string): string {
     .trim();
   if (!s) return id;
   return s.length > 120 ? s.slice(0, 117).trimEnd() + '…' : s;
+}
+
+/** A clean TITLE from a task id: "store-hash-validation" -> "Store hash validation". Stable handle, always
+ *  readable — unlike the description, which can be a wall of markdown or raw code. */
+export function humanizeTaskId(id: string): string {
+  const s = id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return id;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** A SHORT summary line for a task row. Prefers a real prose description ("Shared types, object format, and
+ *  store I/O"); if the description is raw code or a bare instruction, falls back to the owned files, so the
+ *  row is never a wall. Returns '' when nothing useful remains (the title alone then stands). */
+export function taskSummary(desc: string | undefined, id: string, files?: string[]): string {
+  const cleaned = cleanTaskTitle(desc, id);
+  let s = cleaned === id ? '' : cleaned;
+  // drop a leading "<id> — " / "<id>: " so we don't repeat the title
+  const idEsc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  s = s.replace(new RegExp(`^${idEsc}\\s*[—:\\-]\\s*`, 'i'), '').trim();
+  const looksCode =
+    /^(rust\b|use\s|pub\s|fn\s|def\s|class\s|import\s|const\s|let\s|in\ssrc|#!|mod\s|\/\/|package\s|\{)/i.test(
+      s
+    ) || /(::|=>|\{\s|\}\s|;\s*$)/.test(s.slice(0, 40));
+  if (s && !looksCode) return s.length > 90 ? s.slice(0, 87).trimEnd() + '…' : s;
+  // fall back to the owned files as context
+  const src = (files ?? []).filter((f) => /\.[a-z]+$/i.test(f)).slice(0, 3);
+  return src.length ? src.join(', ') : '';
 }
 
 /** Parse the additive `plan_confidence_breakdown` object (agreement/spec-clarity split + drivers). Returns
@@ -868,7 +1019,8 @@ function buildPhaseTodo(
   let planned = false;
   let planLoaded = false;
   let contractsModules: number | null = null;
-  const planTasks: Array<{ id: string; description?: string }> = [];
+  const planTasks: Array<{ id: string; description?: string; files?: string[] }> = [];
+  const judgeInfo = new Map<string, { verdict: string; hint: string; action: string }>();
   const tstate = new Map<string, { state: TodoState; device?: string; error?: string }>();
   const judgeFailed = new Set<string>();
   const salvaged = new Set<string>();
@@ -905,6 +1057,7 @@ function buildPhaseTodo(
         planTasks.push({
           id: String(tk['id'] ?? ''),
           description: tk['description'] ? String(tk['description']) : undefined,
+          files: arr(tk['files']).map((f) => String(f)),
         });
     } else if (t === 'task_dispatched') {
       planned = true;
@@ -931,6 +1084,13 @@ function buildPhaseTodo(
       // A SPLIT decomposes this task into freshly-dispatched children; the parent never gets a task_completed,
       // so without this it would render 'running' forever (a stuck spinner on a done run). Mark it superseded.
       if (a === 'split') splitParents.add(id);
+      // Keep the judge's REASONING so the row can explain WHY it intervened. Prefer an actionable decision
+      // (re_dispatch/failed/salvaged/split) over a passive 'observed'; keep the latest of those.
+      const verdict = str(e['verdict']);
+      const hint = str(e['hint']);
+      const prev = judgeInfo.get(id);
+      if (!prev || a !== 'observed' || prev.action === 'observed')
+        judgeInfo.set(id, { verdict, hint, action: a });
     } else if (t === 'replanned') {
       const added = arr(e['added']).length;
       if (added > 0) replans.push(added);
@@ -1023,13 +1183,13 @@ function buildPhaseTodo(
     contracts.push(it('c-frozen', `Frozen interfaces — ${contractsModules} modules`, 'done'));
   else if (planLoaded)
     contracts.push(
-      it('c-adv', 'Contract-freeze gate on', 'advisory', 'runs only for Python trees; not always observable')
+      it('c-adv', 'Contract-freeze gate on', 'advisory', 'runs for Python/TypeScript/Rust trees; not always observable')
     );
 
   // ---- BUILD ---- (per plan task — surfaces PENDING + BLOCKED tasks lanes can't show)
   const build: PhaseTodoItem[] = [];
   const plannedIds = new Set(planTasks.map((tk) => tk.id));
-  const buildRow = (id: string, label: string) => {
+  const buildRow = (id: string, description?: string, files?: string[]) => {
     const s = tstate.get(id);
     let state: TodoState;
     let detail: string | undefined;
@@ -1051,12 +1211,21 @@ function buildPhaseTodo(
     } else {
       state = 'pending';
     }
-    build.push(it(`b-${id}`, label, state, detail, s?.device));
+    // TITLE = the stable, readable task id; SUMMARY = a short human line; the FULL description / files / judge
+    // reasoning are carried for the expand. This is the redesign: clean row collapsed, everything else tucked.
+    const item = it(`b-${id}`, humanizeTaskId(id), state, detail, s?.device);
+    const summary = taskSummary(description, id, files);
+    if (summary) item.summary = summary;
+    if (description && description.trim()) item.description = description.trim();
+    if (files && files.length) item.files = files;
+    const judge = judgeInfo.get(id);
+    if (judge && (judge.verdict || judge.hint)) item.judge = judge;
+    build.push(item);
   };
-  for (const tk of planTasks) buildRow(tk.id, cleanTaskTitle(tk.description, tk.id));
+  for (const tk of planTasks) buildRow(tk.id, tk.description, tk.files);
   // Split children (+ any other dynamically-dispatched task) are NOT in planTasks — surface them so the todo
   // reflects the work that actually ran, not just the original plan. Keep them right after their siblings.
-  for (const [id] of tstate) if (!plannedIds.has(id)) buildRow(id, id);
+  for (const [id] of tstate) if (!plannedIds.has(id)) buildRow(id);
   for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
   if (schedulerStuck != null)
     build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
