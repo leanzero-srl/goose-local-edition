@@ -3,13 +3,15 @@ import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
-  Circle, Minus, ListTodo,
+  Circle, Minus, ListTodo, Terminal, FilePlus2, FilePenLine, Hammer,
 } from 'lucide-react';
 import {
   useSwarmRun,
+  classifyCall,
   type TurnStatus,
   type TurnLane,
   type SwarmCall,
+  type CallMeaning,
   type ActivityItem,
   type PlanTask,
   type RunSummary,
@@ -89,11 +91,45 @@ function ago(mtime: number | null): string {
   return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
 }
 
-function callColor(ok: boolean | null): string {
-  if (ok === true) return CALL_OK;
-  if (ok === false) return CALL_ERR;
-  return CALL_PENDING;
-}
+// Colour a call by what it MEANS, not just ok/fail: an app-error (a command that ran and reported an issue
+// while the worker tests) is AMBER (informative), not the red of a genuine malformed tool call.
+const CALL_KIND_COLOR: Record<CallMeaning['kind'], string> = {
+  ok: CALL_OK,
+  'app-error': AMBER,
+  malformed: CALL_ERR,
+  pending: CALL_PENDING,
+};
+// A short pill word per kind so the row reads at a glance.
+const CALL_KIND_PILL: Record<CallMeaning['kind'], string> = {
+  ok: '',
+  'app-error': 'app output',
+  malformed: 'retried',
+  pending: '',
+};
+const CallTypeIcon: React.FC<{ icon: CallMeaning['icon']; color: string }> = ({ icon, color }) => {
+  const cls = 'h-3 w-3 shrink-0';
+  const s = { color };
+  switch (icon) {
+    case 'terminal':
+      return <Terminal className={cls} style={s} />;
+    case 'test':
+      return <FlaskConical className={cls} style={s} />;
+    case 'build':
+      return <Hammer className={cls} style={s} />;
+    case 'run':
+      return <Play className={cls} style={s} />;
+    case 'write':
+      return <FilePlus2 className={cls} style={s} />;
+    case 'edit':
+      return <FilePenLine className={cls} style={s} />;
+    case 'read':
+      return <FileText className={cls} style={s} />;
+    case 'search':
+      return <Search className={cls} style={s} />;
+    default:
+      return <Wrench className={cls} style={s} />;
+  }
+};
 
 // A machine-emitted block (shell stdout/stderr, a printed value) rendered TRUE MONOSPACE with alignment
 // preserved, capped with a Show-all escape hatch (never truncate-and-lose) and a copy button.
@@ -135,10 +171,14 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
 };
 
 // One tool call as an action→observation unit: the command/target line (always), its full output on
-// expand. A failing call auto-expands so the error is zero-clicks away.
+// expand. Each call is EXPLAINED — a tool-type icon, a plain-English intent ("Ran the tests"), and an honest
+// outcome ("found a failing test — iterating") so an app-error reads as productive work, not a scary failure.
+// A genuine malformed call auto-expands so the reason is zero clicks away.
 const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, defaultOpen }) => {
+  const m = classifyCall(call);
+  const color = CALL_KIND_COLOR[m.kind];
+  const pill = CALL_KIND_PILL[m.kind];
   const hasOutput = !!call.result && call.result.trim().length > 0;
-  const failed = call.ok === false;
   const [open, setOpen] = useState(defaultOpen ?? false);
   return (
     <div className="py-0.5 border-b border-border-primary/30 last:border-0">
@@ -147,23 +187,31 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
         onClick={() => hasOutput && setOpen((o) => !o)}
         className={`w-full flex items-start gap-2 text-left ${hasOutput ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
       >
-        <span
-          className="mt-1 h-1.5 w-1.5 shrink-0"
-          style={{ backgroundColor: callColor(call.ok), borderRadius: 1 }}
-          aria-hidden
-        />
-        <span
-          className="shrink-0 font-mono text-[10px] uppercase tracking-wide px-1 py-px text-text-secondary border border-border-primary"
-          style={{ borderRadius: 2 }}
-        >
-          {call.name.replace(/^developer__/, '')}
+        <span className="mt-0.5">
+          <CallTypeIcon icon={m.icon} color={color} />
         </span>
-        <span
-          className="flex-1 font-mono text-xs break-words"
-          style={{ color: failed ? CALL_ERR : 'var(--text-primary)' }}
-          title={call.summary}
-        >
-          {call.summary || '—'}
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-text-primary">{m.action}</span>
+            {pill ? (
+              <span
+                className="shrink-0 font-mono text-[9px] uppercase tracking-wide px-1 py-px"
+                style={{ color, border: `1px solid ${color}`, borderRadius: 2 }}
+              >
+                {pill}
+              </span>
+            ) : null}
+            {m.kind !== 'ok' ? (
+              <span className="text-[10px]" style={{ color: m.kind === 'malformed' ? color : 'var(--text-secondary)' }}>
+                {m.outcome}
+              </span>
+            ) : null}
+          </span>
+          {call.summary ? (
+            <span className="block font-mono text-[10px] text-text-secondary break-words mt-px" title={call.summary}>
+              {call.summary}
+            </span>
+          ) : null}
         </span>
         {hasOutput &&
           (open ? (
@@ -173,8 +221,8 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
           ))}
       </button>
       {hasOutput && open && (
-        <div className="ml-[1.15rem] mt-1">
-          <MonoOutput text={call.result!.trim()} failed={failed} />
+        <div className="ml-5 mt-1">
+          <MonoOutput text={call.result!.trim()} failed={m.kind === 'malformed'} />
         </div>
       )}
     </div>
@@ -832,42 +880,101 @@ const TodoPill: React.FC<{ text: string; color: string }> = ({ text, color }) =>
   </span>
 );
 
+// The judge's REASONING for a task — the diagnosis (verdict) + the exact corrective note it gave the worker.
+// This is what Mihai wanted surfaced: not just "judge decision" but WHY.
+const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({ judge }) => (
+  <div className="text-[10px]">
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <Gavel className="h-3 w-3 shrink-0" style={{ color: AMBER }} />
+      <span className="font-semibold text-text-primary">Judge</span>
+      {judge.verdict ? (
+        <span style={{ color: AMBER }}>{judge.verdict.replace(/_/g, ' ')}</span>
+      ) : null}
+      <span className="text-text-secondary">→ {judge.action.replace(/_/g, ' ')}</span>
+    </div>
+    {judge.hint ? (
+      <p className="text-text-secondary mt-0.5 leading-snug whitespace-pre-wrap break-words">{judge.hint}</p>
+    ) : null}
+  </div>
+);
+
+// One task row: TITLE + short summary collapsed; the full spec, owned files, and the judge's reasoning are
+// tucked under an expand. A 'running' item on a STALE run is relabeled 'interrupted' (the process is dead).
 const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[]; stale: boolean }> = ({
   item,
   deviceOrder,
   stale,
 }) => {
-  // A 'running' item on a STALE run (no heartbeat) is not actually working — the run stopped/crashed. Relabel
-  // it 'interrupted' (grey, like the lanes do) so it never looks like live work when the process is dead.
   const interrupted = stale && item.state === 'running';
   const c = interrupted ? CALL_PENDING : TODO_COLOR[item.state];
   const idx = item.device ? deviceIndex(item.device, deviceOrder) : -1;
+  const hasDetail = !!(item.description || (item.files && item.files.length) || item.judge);
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex items-center gap-1.5 text-[11px] py-0.5 min-w-0">
-      {interrupted ? (
-        <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
-      ) : (
-        <TodoGlyph state={item.state} />
-      )}
-      {idx >= 0 ? (
-        <span
-          className="text-[9px] font-mono shrink-0"
-          style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
-        >
-          ⬢{String.fromCharCode(65 + (idx % 26))}
-        </span>
-      ) : null}
-      <span
-        className="truncate"
-        style={{ color: item.state === 'pending' ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+    <div className="min-w-0">
+      <div
+        {...(hasDetail
+          ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              onClick: () => setOpen((o) => !o),
+              onKeyDown: (e: React.KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setOpen((o) => !o);
+                }
+              },
+            }
+          : {})}
+        className={`w-full flex items-center gap-1.5 text-[11px] py-0.5 min-w-0 text-left ${hasDetail ? 'cursor-pointer hover:opacity-80' : ''}`}
       >
-        {item.label}
-      </span>
-      {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
-      {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
-      {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
-      {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
-      {item.detail ? <span className="text-[10px] text-text-secondary truncate">· {item.detail}</span> : null}
+        {interrupted ? (
+          <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
+        ) : (
+          <TodoGlyph state={item.state} />
+        )}
+        {idx >= 0 ? (
+          <span
+            className="text-[9px] font-mono shrink-0"
+            style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
+          >
+            ⬢{String.fromCharCode(65 + (idx % 26))}
+          </span>
+        ) : null}
+        <span
+          className="shrink-0 font-medium"
+          style={{ color: item.state === 'pending' ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+        >
+          {item.label}
+        </span>
+        {item.summary ? (
+          <span className="text-text-secondary truncate">· {item.summary}</span>
+        ) : null}
+        {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
+        {!interrupted && item.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
+        {!interrupted && item.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
+        {!interrupted && item.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
+        {item.detail ? <span className="text-[10px] text-text-secondary truncate">· {item.detail}</span> : null}
+        {hasDetail ? (
+          <span className="ml-auto shrink-0 text-text-secondary">
+            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          </span>
+        ) : null}
+      </div>
+      {open && hasDetail ? (
+        <div className="ml-5 mt-1 mb-1.5 space-y-1.5 border-l-0">
+          {item.judge ? <JudgeReason judge={item.judge} /> : null}
+          {item.files && item.files.length ? (
+            <div className="text-[10px] text-text-secondary">
+              <span className="uppercase tracking-wide">Files</span>{' '}
+              <span className="font-mono text-text-primary">{item.files.join(', ')}</span>
+            </div>
+          ) : null}
+          {item.description ? (
+            <ReasoningBlock text={item.description} label="Full task spec" />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 };
