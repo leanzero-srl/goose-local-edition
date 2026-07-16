@@ -5921,27 +5921,47 @@ impl GooseAgentDispatcher {
                      sibling directories — they are unrelated projects. Finish FAST.",
                     lens.title, lens.brief, lens.tool_hint
                 );
-                let (findings, lookups) = match tokio::time::timeout(
+                let (findings, lookups, timed_out, errored) = match tokio::time::timeout(
                     std::time::Duration::from_secs(scout_budget),
                     me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts),
                 )
                 .await
                 {
-                    Ok(Ok(o)) => (o.text, research_lookups(&o.tool_calls)),
-                    Ok(Err(e)) => (format!("(scout failed: {e})"), Vec::new()),
+                    Ok(Ok(o)) => (o.text, research_lookups(&o.tool_calls), false, false),
+                    Ok(Err(e)) => (format!("(scout failed: {e})"), Vec::new(), false, true),
                     Err(_) => (
                         format!(
                             "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
                             lens.id, scout_budget
                         ),
                         Vec::new(),
+                        true,
+                        false,
                     ),
                 };
+                // SAY WHAT HAPPENED. The tick used to print OUTSIDE the match, so a scout that timed out at
+                // the budget wall, one that errored, and one that actually looked something up all rendered
+                // an identical green "✓ scout libraries (120s)". MEASURED: research_completed fired at
+                // exactly +120.023s against a 120s budget — a guillotine, to the millisecond — and the
+                // "finding" handed to the planner was the literal string "(scout 'x' exceeded 120s budget —
+                // skipped to keep the fleet moving)". The run still reported "research: 3 findings", because
+                // that count is findings.len() = the LENS count, which is fixed no matter what came back.
+                // A tick that cannot fail is not a status; it is decoration.
+                let outcome = if timed_out {
+                    (style("⏱").yellow().bold(), "timed out at the budget — no finding")
+                } else if errored {
+                    (style("✗").red().bold(), "failed — no finding")
+                } else if lookups.is_empty() {
+                    (style("~").yellow().bold(), "answered from the model's own knowledge, looked nothing up")
+                } else {
+                    (style("✓").green().bold(), "looked things up")
+                };
                 eprintln!(
-                    "  {} scout {} ({:.0}s)",
-                    style("✓").green().bold(),
+                    "  {} scout {} ({:.0}s) — {}",
+                    outcome.0,
                     style(lens.id).bold(),
-                    started.elapsed().as_secs_f64()
+                    started.elapsed().as_secs_f64(),
+                    outcome.1
                 );
                 ResearchFinding {
                     question: lens.title.to_string(),
@@ -12770,9 +12790,30 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings))
             .collect::<Vec<_>>()
             .join("\n\n");
-        sink.write_value(
-            serde_json::json!({"event": "research_completed", "findings": findings.len()}),
-        );
+        // COUNT RESEARCH, NOT LENSES. `findings.len()` is the LENS count — it is 3 whether all three looked
+        // things up, all three timed out at the budget wall, or all three answered from the model's own head.
+        // MEASURED: research_completed fired at +120.023s against a 120s budget (a guillotine, to the
+        // millisecond) and still reported "findings: 3", one of which was the literal apology string
+        // "(scout 'x' exceeded 120s budget — skipped...)". The number was true and told the reader nothing.
+        let grounded_n = findings.iter().filter(|f| f.grounded).count();
+        sink.write_value(serde_json::json!({
+            "event": "research_completed",
+            "findings": findings.len(),
+            // The only number that says whether anything was RESEARCHED.
+            "grounded": grounded_n,
+            "looked_nothing_up": findings.len() - grounded_n,
+        }));
+        if grounded_n == 0 && !findings.is_empty() {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "research: {} scout(s) finished and NONE looked anything up — this is the model's own \
+                     knowledge, not research",
+                    findings.len()
+                ))
+                .yellow()
+            );
+        }
     }
     // Research is done (or was skipped — then this is ~t_start, research_min ~= 0).
     let t_research = std::time::Instant::now();
