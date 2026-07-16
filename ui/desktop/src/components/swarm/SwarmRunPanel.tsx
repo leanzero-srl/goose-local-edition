@@ -23,8 +23,8 @@ import {
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
-import MarkdownContent from '../MarkdownContent';
 import InlineMarkdown from './InlineMarkdown';
+import StructuredContent, { CodeBlock } from './StructuredContent';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -142,12 +142,14 @@ const MonoOutput: React.FC<{ text: string; failed?: boolean }> = ({ text, failed
   const big = lineCount > 24;
   return (
     <div>
-      <pre
-        className={`font-mono text-[11px] whitespace-pre-wrap break-words px-2 py-1 bg-background-secondary border border-border-primary ${!expanded && big ? 'max-h-64 overflow-hidden' : ''}`}
-        style={{ borderRadius: 2, color: failed ? '#ff8f88' : 'var(--text-secondary)' }}
-      >
-        {text}
-      </pre>
+      {/* Shell/tool output through the SHARED code surface, so it cannot drift from the other code blocks
+          again. wrap=true is right here (long prose-ish lines), unlike a JSON payload which must scroll. */}
+      <CodeBlock
+        text={text}
+        wrap
+        tone={failed ? 'error' : 'normal'}
+        className={!expanded && big ? 'max-h-64 overflow-hidden' : ''}
+      />
       <div className="flex items-center gap-3 mt-0.5">
         {big && (
           <button
@@ -251,9 +253,10 @@ const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean; label?: stri
         className={`text-xs text-text-primary break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
         style={{ borderRadius: 3 }}
       >
-        {/* Render as rich markdown — the task spec + worker reasoning ARE markdown (bold headers, inline
-            `code`, lists), so show them formatted, not as literal ** and backticks. */}
-        <MarkdownContent content={text} />
+        {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
+            arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
+            `__init__.py` reads as bold syntax, so the file list rendered as **init**.py. */}
+        <StructuredContent content={text} />
       </div>
       {big && (
         <button
