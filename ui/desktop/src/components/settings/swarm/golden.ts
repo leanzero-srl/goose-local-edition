@@ -27,7 +27,10 @@ export interface SwarmConfig {
   planner_weight?: number;
   homogeneous_models?: boolean;
   allow_model_load?: boolean;
+  /** Wall-clock BACKSTOP for a scout, not its budget — scout_max_lookups is the real control. */
   scout_budget_secs?: number;
+  /** How many tool calls (web searches / doc lookups) a research scout may spend. THE scout budget. */
+  scout_max_lookups?: number;
   max_tool_response_chars?: number | null;
   temperature?: number | null;
   top_p?: number | null;
@@ -114,7 +117,8 @@ export const DEFAULTS: SwarmConfig = {
   planner_weight: 1,
   homogeneous_models: false,
   allow_model_load: false,
-  scout_budget_secs: 120,
+  scout_budget_secs: 900,
+  scout_max_lookups: 10,
   converge: true, // default_converge (swarm.rs) — the proven agreement raiser, ON by default
   // Mihai: "don't let goose start implementing something below 80 — research until confidence is > 80."
   // Floor 80 + retarget ON so a sub-80 plan RE-DRAFTS toward consensus (and asks) to raise the meter before

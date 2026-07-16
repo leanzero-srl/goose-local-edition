@@ -227,6 +227,10 @@ pub struct SwarmConfig {
     /// cannot monopolize a node and idle the fleet behind the scout barrier.
     #[serde(default = "default_scout_budget_secs")]
     pub scout_budget_secs: u64,
+    /// Max agent turns (≈ tool calls) a research scout may spend. THE scout budget — the clock is only a
+    /// backstop. See default_scout_max_lookups.
+    #[serde(default = "default_scout_max_lookups")]
+    pub scout_max_lookups: u32,
     /// Wall-clock cap (seconds) for the heavy `integrate-verify` SINK worker only: on expiry it is finalized
     /// as DONE (not failed/re-routed) and the deterministic smoke gate backstops. Set ABOVE a healthy sink
     /// (~1400s) — a cap BELOW a legitimately-productive sink truncates the run's ONLY golden-value pass, so
@@ -355,8 +359,42 @@ pub struct SwarmConfig {
     pub contract_validate: bool,
 }
 
+/// The scout's wall-clock BACKSTOP — not its budget.
+///
+/// This was 120s and it was the binding constraint, which is the wrong shape entirely. MEASURED: a real run's
+/// research phase ended at 120.023s — the cap, to the millisecond — and the "finding" handed to the planner
+/// was the apology string "(scout 'x' exceeded 120s budget — skipped to keep the fleet moving)". A 27b takes
+/// ~30-60s per turn on this hardware, so 120s buys two or three turns: the scout was guillotined before it
+/// could finish a thought, let alone look anything up.
+///
+/// Mihai: "research shouldn't be capped at 120s, it's far too little — instead it should be something like
+/// how many tool calls, how many web searches were done, and maybe after a max of 10 it should stop."
+/// He is right. A CLOCK cap on a slow local model measures the hardware; a WORK cap measures the research.
+/// `scout_max_lookups` is now the control (see below); this stays only so a wedged model cannot hang a run
+/// forever, and is set well clear of the work cap so it is never what stops a healthy scout.
 fn default_scout_budget_secs() -> u64 {
-    120
+    900
+}
+
+/// A scout's budget: the WORK it may do, and the clock that only exists so a wedged model cannot hang the run.
+///
+/// These travel together because either alone is a trap. A clock alone is what shipped: it guillotined a
+/// scout at 120.023s mid-thought and called the apology a finding. A work cap alone would let one stuck model
+/// hold the fleet forever.
+#[derive(Clone, Copy)]
+struct ScoutBudget {
+    /// Agent turns (≈ tool calls). THE budget — a scout stops when it has looked enough things up.
+    max_lookups: u32,
+    /// Wall-clock backstop ONLY. Set well clear of the work cap so it never stops a healthy scout.
+    backstop_secs: u64,
+}
+
+/// How much WORK a scout may do — the real budget, in agent turns (each turn is at most one tool call).
+///
+/// 10 per Mihai's ask. This is what should stop a scout: it has looked things up until it had enough, not
+/// until an arbitrary clock ran out. A scout that finishes in 3 turns finishes in 3 turns.
+fn default_scout_max_lookups() -> u32 {
+    10
 }
 
 fn default_sink_cap_secs() -> u64 {
@@ -394,6 +432,7 @@ impl Default for SwarmConfig {
             context_cap: None,
             research_planning: ResearchPlanningMode::On,
             max_research_questions: default_max_research(),
+            scout_max_lookups: default_scout_max_lookups(),
             dynamic_replan: default_dynamic_replan(),
             max_replans: default_max_replans(),
             research_scouts: default_research_scouts(),
@@ -5885,8 +5924,12 @@ impl GooseAgentDispatcher {
         max_lenses: u32,
         research_extensions: Arc<Vec<ExtensionConfig>>,
         worker_models: Vec<String>,
-        scout_budget: u64,
+        budget: ScoutBudget,
     ) -> Vec<ResearchFinding> {
+        let ScoutBudget {
+            max_lookups,
+            backstop_secs: scout_budget,
+        } = budget;
         if worker_models.is_empty() {
             return Vec::new();
         }
@@ -5918,12 +5961,12 @@ impl GooseAgentDispatcher {
                      is plenty — large context is very slow on local models. \
                      STAY in the current working directory: for a NEW/empty project there is nothing on \
                      disk to investigate, so reason from the task itself; NEVER `ls`/`cat` parent or \
-                     sibling directories — they are unrelated projects. Finish FAST.",
+                     sibling directories — they are unrelated projects. You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not on exploring. Stop as soon as you can answer — an early, grounded answer beats a long one.",
                     lens.title, lens.brief, lens.tool_hint
                 );
                 let (findings, lookups, timed_out, errored) = match tokio::time::timeout(
                     std::time::Duration::from_secs(scout_budget),
-                    me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts),
+                    me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, max_lookups, &exts),
                 )
                 .await
                 {
@@ -12750,7 +12793,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     cfg.max_research_questions,
                     research_exts,
                     worker_models,
-                    cfg.scout_budget_secs,
+                    ScoutBudget {
+                        max_lookups: cfg.scout_max_lookups,
+                        backstop_secs: cfg.scout_budget_secs,
+                    },
                 )
                 .await
         } else {
