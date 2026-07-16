@@ -110,6 +110,7 @@ function snapshotWithActivePrompt(activePromptAttemptId: string | null): AcpChat
     notifications: [],
     chatState: activePromptAttemptId ? ChatState.Streaming : ChatState.Idle,
     sessionLoadError: undefined,
+  submitError: undefined,
     activePromptAttemptId,
     activeRunId: activePromptAttemptId ? 'run-1' : null,
     pendingCancelPromptAttemptId: null,

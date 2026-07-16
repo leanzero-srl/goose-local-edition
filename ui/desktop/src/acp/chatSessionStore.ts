@@ -20,7 +20,21 @@ export interface AcpChatSessionSnapshot {
   tokenState: TokenState;
   notifications: NotificationEvent[];
   chatState: ChatState;
+  /**
+   * The session genuinely could not be LOADED — its history is unreachable. Fatal for the view: its consumer
+   * replaces the whole conversation with an error wall. A failed PROMPT is not this; see `submitError`.
+   */
   sessionLoadError: string | undefined;
+  /**
+   * The last prompt failed to submit — a transport/backend problem, not a data problem.
+   *
+   * WHY THIS EXISTS: this used to be written into `sessionLoadError`, so when the machine powered off
+   * mid-prompt the ACP socket closed, "Submit error: ACP connection closed" landed in the LOAD-error field,
+   * and reopening the session showed a full-screen "Failed to Load Session" wall. The session was intact —
+   * 15,322 rows, integrity_check ok — and every message was sitting in this very store. A dead socket is not
+   * a destroyed session, and conflating the two turns a reconnect into apparent data loss.
+   */
+  submitError: string | undefined;
   activePromptAttemptId: string | null;
   activeRunId: string | null;
   pendingCancelPromptAttemptId: string | null;
@@ -100,6 +114,8 @@ export interface AcpChatSessionActions {
   waitForPromptCancellation(sessionId: string, promptAttemptId: string): Promise<void>;
   finishPromptAttemptIfCurrent(sessionId: string, promptAttemptId: string, error?: string): boolean;
   clearActivePromptAttempt(sessionId: string): AcpChatSessionSnapshot | undefined;
+  /** Dismiss the failed-prompt banner. The conversation is untouched — this only clears the notice. */
+  clearSubmitError(sessionId: string): void;
   isCurrentPromptAttempt(sessionId: string, promptAttemptId: string): boolean;
 }
 
@@ -157,6 +173,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
       notifications: [],
       chatState: ChatState.Idle,
       sessionLoadError: undefined,
+      submitError: undefined,
       activePromptAttemptId: null,
       activeRunId: null,
       pendingCancelPromptAttemptId: null,
@@ -190,6 +207,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     const entry = getOrCreateEntry(sessionId);
     resetReplayState(entry);
     entry.sessionLoadError = undefined;
+    entry.submitError = undefined;
     entry.chatState = ChatState.LoadingConversation;
     return notify(sessionId, entry);
   };
@@ -198,6 +216,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     const entry = getOrCreateEntry(sessionId);
     entry.session = session;
     entry.sessionLoadError = undefined;
+    entry.submitError = undefined;
     entry.chatState = entry.activePromptAttemptId ? ChatState.Streaming : ChatState.Idle;
     return notify(sessionId, entry);
   };
@@ -286,6 +305,8 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     entry.pendingUserInputRequestIds.clear();
     entry.chatState = ChatState.Streaming;
     entry.sessionLoadError = undefined;
+    // A retry supersedes the last failure — otherwise the banner outlives the problem it described.
+    entry.submitError = undefined;
     entry.notifications = [];
     return notify(sessionId, entry);
   };
@@ -386,9 +407,22 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     entry.pendingUserInputRequestIds.clear();
     discardPendingLocalSteerMessages(entry);
     entry.chatState = ChatState.Idle;
-    entry.sessionLoadError = error;
+    // A failed prompt is a failed PROMPT. This used to write `sessionLoadError`, the field that makes the
+    // view throw away the entire conversation and show "Failed to Load Session" — so a socket dropping
+    // mid-turn (machine sleeps, backend restarts) looked exactly like the session had been destroyed, while
+    // every message sat untouched in this store and on disk.
+    entry.submitError = error;
     notify(sessionId, entry);
     return true;
+  };
+
+  const clearSubmitError: AcpChatSessionActions['clearSubmitError'] = (sessionId) => {
+    const entry = sessionsById.get(sessionId);
+    if (!entry || entry.submitError === undefined) {
+      return;
+    }
+    entry.submitError = undefined;
+    notify(sessionId, entry);
   };
 
   const clearActivePromptAttempt: AcpChatSessionActions['clearActivePromptAttempt'] = (
@@ -488,6 +522,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     waitForPromptCancellation,
     finishPromptAttemptIfCurrent,
     clearActivePromptAttempt,
+    clearSubmitError,
     isCurrentPromptAttempt,
     applyAcpSessionNotification,
     applyAcpGooseSessionNotification,
@@ -566,6 +601,7 @@ function actionsFromStore(store: AcpChatSessionStoreInternal): AcpChatSessionAct
     waitForPromptCancellation: store.waitForPromptCancellation,
     finishPromptAttemptIfCurrent: store.finishPromptAttemptIfCurrent,
     clearActivePromptAttempt: store.clearActivePromptAttempt,
+  clearSubmitError: store.clearSubmitError,
     isCurrentPromptAttempt: store.isCurrentPromptAttempt,
   };
 }
@@ -677,6 +713,7 @@ function snapshotFromEntry(entry: StoreEntry): AcpChatSessionSnapshot {
     notifications: [...entry.notifications],
     chatState: entry.chatState,
     sessionLoadError: entry.sessionLoadError,
+    submitError: entry.submitError,
     activePromptAttemptId: entry.activePromptAttemptId,
     activeRunId: entry.activeRunId,
     pendingCancelPromptAttemptId: entry.pendingCancelPromptAttemptId,

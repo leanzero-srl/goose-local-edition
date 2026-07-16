@@ -22,6 +22,8 @@ export interface UseChatSessionResult {
   ) => Promise<boolean>;
   stopStreaming: () => void;
   sessionLoadError?: string;
+  /** The last prompt failed to submit (transport/backend). NOT a reason to hide the conversation. */
+  submitError?: string;
   tokenState: TokenState;
   notifications: Map<string, NotificationEvent[]>;
   pauseQueueOnStop: boolean;

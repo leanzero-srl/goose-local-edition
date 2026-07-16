@@ -18,6 +18,7 @@ import { useNavigationContextSafe } from './Layout/NavigationContext';
 import { cn } from '../utils';
 import { useChatSession } from '../hooks/useChatSession';
 import { acpDeleteSession, acpUpdateWorkingDir } from '../acp/sessions';
+import { acpChatSessionActions } from '../acp/chatSessionStore';
 import { useNavigation } from '../hooks/useNavigation';
 import { RecipeHeader } from './RecipeHeader';
 import { RecipeWarningModal } from './ui/RecipeWarningModal';
@@ -46,6 +47,18 @@ const i18n = defineMessages({
   goHome: {
     id: 'baseChat.goHome',
     defaultMessage: 'Go home',
+  },
+  promptFailed: {
+    id: 'baseChat.promptFailed',
+    defaultMessage: 'That message did not go through',
+  },
+  promptFailedHint: {
+    id: 'baseChat.promptFailedHint',
+    defaultMessage: 'Your conversation is safe. Send again to retry.',
+  },
+  dismiss: {
+    id: 'baseChat.dismiss',
+    defaultMessage: 'Dismiss',
   },
 });
 
@@ -102,6 +115,7 @@ export default function BaseChat({
     submitElicitationResponse,
     stopStreaming,
     sessionLoadError,
+    submitError,
     tokenState,
     notifications: toolCallNotifications,
     pauseQueueOnStop,
@@ -164,7 +178,7 @@ export default function BaseChat({
       chatState === ChatState.Compacting
     ) {
       streamState = 'streaming';
-    } else if (sessionLoadError) {
+    } else if (sessionLoadError || submitError) {
       streamState = 'error';
     }
 
@@ -177,7 +191,7 @@ export default function BaseChat({
         },
       })
     );
-  }, [sessionId, chatState, messages.length, sessionLoadError]);
+  }, [sessionId, chatState, messages.length, sessionLoadError, submitError]);
 
   // Generate command history from user messages (most recent first)
   const commandHistory = useMemo(() => {
@@ -402,6 +416,26 @@ export default function BaseChat({
       >
         {/* Custom header */}
         {renderHeader && renderHeader()}
+
+        {/* A prompt that failed to submit — the socket dropped, the backend restarted, the machine slept.
+            This is deliberately a BANNER and not the full-screen wall above: the conversation is intact both
+            in the store and on disk, and replacing it with an error page made a recoverable blip look
+            exactly like data loss. Solid amber, dismissible, and the history stays on screen behind it. */}
+        {submitError && !sessionLoadError && (
+          <div className="mx-4 mt-2 shrink-0 bg-[#b45309] text-white px-3 py-2 flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold">{intl.formatMessage(i18n.promptFailed)}</p>
+              <p className="text-xs opacity-90 break-words">{submitError}</p>
+              <p className="text-xs opacity-90 mt-0.5">{intl.formatMessage(i18n.promptFailedHint)}</p>
+            </div>
+            <button
+              onClick={() => acpChatSessionActions.clearSubmitError(sessionId)}
+              className="text-xs font-bold underline shrink-0 hover:opacity-80"
+            >
+              {intl.formatMessage(i18n.dismiss)}
+            </button>
+          </div>
+        )}
 
         {/* Chat container with sticky recipe header */}
         <div className="flex flex-col flex-1 min-h-0 relative">
