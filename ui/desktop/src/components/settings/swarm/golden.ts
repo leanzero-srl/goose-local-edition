@@ -64,6 +64,10 @@ export interface SwarmConfig {
   /** A newly-unwired PURE-LIBRARY module the wire-fix did not resolve demotes the run's `verified` claim.
    *  Never flips `passed` red. Requires `review`. Default OFF. */
   unwired_demotes_verified?: boolean;
+  /** Only a GROUNDED research finding (agent actually called web-search/context7/shell) may mark an open
+   *  decision "settled". An invented finding stays as context but no longer suppresses the clarifying ask,
+   *  so a guessed product decision still gets put to the user. Default OFF. */
+  grounded_research_only?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 

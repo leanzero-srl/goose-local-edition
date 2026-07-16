@@ -505,6 +505,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Only trust research it actually looked up"
+                  hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.grounded_research_only}
+                    onChange={(v) => set({ grounded_research_only: v })}
+                  />
+                </Row>
+                <Row
                   label="Tell the author the domain rules up front"
                   hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
                 >
