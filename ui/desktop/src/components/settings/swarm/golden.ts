@@ -74,6 +74,9 @@ export interface SwarmConfig {
   /** A failed planned task blocks the green claim and drives the completion fix loop. The loop only reads the
    *  smoke gate today, so a task can fail outright while the run still reports verified. Default OFF. */
   failed_tasks_block_green?: boolean;
+  /** Give the integrate-verify sink the built entry's REAL --help before it writes its golden checks, so it
+   *  targets the interface the app actually has instead of the one the spec describes. Default OFF. */
+  sink_prebuild?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
