@@ -21,6 +21,32 @@ const scheduledJob = (cron: string): ScheduledJobDto => ({
   paused: false,
 });
 
+/**
+ * Pick an option from one of the themed dropdowns, by the label a user actually sees.
+ *
+ * These are react-select (ui/Select.tsx), not native `<select>` — this project bans native dropdowns because
+ * they cannot be themed. `userEvent.selectOptions` only drives a real `<select>`, so every call here threw
+ * "Value quarter not found in options" from the moment e97f61d3d swapped the component in, and this file sat
+ * red. A red suite is worse than no suite: it makes `pnpm vitest run` unusable as a gate, so nobody reads it
+ * and a real regression hides in the noise.
+ *
+ * The option label, not the value, is what goes in — which is the point. A test that drives the widget the
+ * way a person does keeps passing when the internals change again.
+ */
+const chooseOption = async (
+  user: ReturnType<typeof userEvent.setup>,
+  comboboxIndex: number,
+  optionLabel: string | RegExp
+) => {
+  await user.click(screen.getAllByRole('combobox')[comboboxIndex]);
+  await user.click(await screen.findByRole('option', { name: optionLabel }));
+};
+
+/** react-select shows the current selection as text, not as an input value. */
+const expectSelected = async (label: string) => {
+  await waitFor(() => expect(screen.getByText(label)).toBeInTheDocument());
+};
+
 describe('CronPicker', () => {
   it('generates quarterly cron expressions from the quarter preset', async () => {
     const user = userEvent.setup();
@@ -28,7 +54,7 @@ describe('CronPicker', () => {
 
     renderWithIntl(<CronPicker schedule={null} onChange={onChange} isValid={vi.fn()} />);
 
-    await user.selectOptions(screen.getAllByRole('combobox')[0], 'quarter');
+    await chooseOption(user, 0, 'Quarter');
 
     await waitFor(() => {
       expect(getLastCron(onChange)).toBe('0 0 14 1 1,4,7,10 *');
@@ -37,7 +63,7 @@ describe('CronPicker', () => {
     const dayInput = screen.getAllByRole('spinbutton')[0];
     await user.clear(dayInput);
     await user.type(dayInput, '31');
-    await user.selectOptions(screen.getAllByRole('combobox')[1], '2');
+    await chooseOption(user, 1, 'February');
 
     await waitFor(() => {
       expect(dayInput).toHaveValue(28);
@@ -52,7 +78,7 @@ describe('CronPicker', () => {
 
     renderWithIntl(<CronPicker schedule={null} onChange={onChange} isValid={isValid} />);
 
-    await user.selectOptions(screen.getAllByRole('combobox')[0], 'quarter');
+    await chooseOption(user, 0, 'Quarter');
     const dayInput = screen.getAllByRole('spinbutton')[0];
     await user.clear(dayInput);
     await user.type(dayInput, '0');
@@ -75,10 +101,9 @@ describe('CronPicker', () => {
       />
     );
 
-    const [periodSelect] = screen.getAllByRole('combobox');
+    await expectSelected('Custom cron');
 
     await waitFor(() => {
-      expect(periodSelect).toHaveValue('custom');
       expect(screen.getByLabelText('Cron expression')).toHaveValue('0 0 14 31 1,4,7,10 *');
       expect(getLastCron(onChange)).toBe('0 0 14 31 1,4,7,10 *');
     });
@@ -91,10 +116,9 @@ describe('CronPicker', () => {
       <CronPicker schedule={scheduledJob('* 0 14 * * *')} onChange={onChange} isValid={vi.fn()} />
     );
 
-    const [periodSelect] = screen.getAllByRole('combobox');
+    await expectSelected('Custom cron');
 
     await waitFor(() => {
-      expect(periodSelect).toHaveValue('custom');
       expect(screen.getByLabelText('Cron expression')).toHaveValue('* 0 14 * * *');
       expect(getLastCron(onChange)).toBe('* 0 14 * * *');
     });
@@ -106,7 +130,7 @@ describe('CronPicker', () => {
 
     renderWithIntl(<CronPicker schedule={null} onChange={onChange} isValid={vi.fn()} />);
 
-    await user.selectOptions(screen.getAllByRole('combobox')[0], 'custom');
+    await chooseOption(user, 0, 'Custom cron');
     const customCronInput = screen.getByLabelText('Cron expression');
     await user.clear(customCronInput);
     await user.type(customCronInput, '0 9 31 1,4,7,10 *');
@@ -122,14 +146,13 @@ describe('CronPicker', () => {
 
     renderWithIntl(<CronPicker schedule={null} onChange={onChange} isValid={vi.fn()} />);
 
-    const [periodSelect] = screen.getAllByRole('combobox');
-    await user.selectOptions(periodSelect, 'quarter');
-    await user.selectOptions(screen.getAllByRole('combobox')[1], '2');
+    await chooseOption(user, 0, 'Quarter');
+    await chooseOption(user, 1, 'February');
 
     const dayInput = screen.getAllByRole('spinbutton')[0];
     await user.clear(dayInput);
     await user.type(dayInput, '15');
-    await user.selectOptions(periodSelect, 'custom');
+    await chooseOption(user, 0, 'Custom cron');
 
     await waitFor(() => {
       expect(screen.getByLabelText('Cron expression')).toHaveValue('0 0 14 15 2,5,8,11 *');
@@ -143,7 +166,7 @@ describe('CronPicker', () => {
 
     renderWithIntl(<CronPicker schedule={null} onChange={vi.fn()} isValid={isValid} />);
 
-    await user.selectOptions(screen.getAllByRole('combobox')[0], 'custom');
+    await chooseOption(user, 0, 'Custom cron');
     const customCronInput = screen.getByLabelText('Cron expression');
     await user.clear(customCronInput);
     await user.type(customCronInput, '99 0 14 * * *');
