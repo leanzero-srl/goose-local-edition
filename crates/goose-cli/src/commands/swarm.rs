@@ -6211,7 +6211,25 @@ impl GooseAgentDispatcher {
         let draft_models: Vec<String> = std::iter::once(planner_model.to_string())
             .chain(worker_models.iter().cloned())
             .collect();
-        let n = best_of_n.max(1);
+        // CAP THE FAN-OUT AT THE NUMBER OF DISTINCT MODELS. Slots are handed out round-robin
+        // (`models[i % models.len()]`), so asking for more drafts than there are models issues a SECOND
+        // CONCURRENT request to a model that is already generating. Every model in this fleet is loaded
+        // PARALLEL:1, so that second request does not add a draft — it queues behind the first and usually
+        // times out, contributing a dead slot and ~20 minutes of wall clock.
+        //
+        // MEASURED: draft_models is 4 (planner + 3 workers) while RETARGET_MAX_N is 6, so the redraft ladder's
+        // last two rungs could only ever add duplicates. In the final round 3 of 6 slots returned nothing, and
+        // the one confirmed dead slot was plandraft-4 — exactly models[4 % 4] = models[0], the duplicate.
+        // The ladder was paying full price for drafts that could not exist.
+        let requested_n = best_of_n.max(1);
+        let n = requested_n.min(draft_models.len().max(1));
+        if n < requested_n {
+            eprintln!(
+                "  {} capping plan drafts at {n} (one per distinct model) — {requested_n} was requested but \
+                 extra slots would duplicate a model that is already generating",
+                style("!").yellow()
+            );
+        }
         if n > 1 {
             eprintln!(
                 "  drafting {} skeleton candidate(s) IN PARALLEL, picking the structurally-best (deterministic, no LLM judge)",
@@ -6264,15 +6282,37 @@ impl GooseAgentDispatcher {
                     }));
                 }
                 let mut c: Vec<String> = Vec::new();
+                let mut dead = 0usize;
                 for h in handles {
-                    if let Ok(Some(j)) = h.await {
-                        c.push(j);
+                    match h.await {
+                        Ok(Some(j)) => c.push(j),
+                        // A DEAD DRAFT SLOT: the model timed out, errored, or emitted prose without ever
+                        // calling recipe__final_output. Until now this was dropped with no log and no event,
+                        // so the drafting loop counted REQUESTS while the confidence metric only ever saw
+                        // ANSWERS — and nothing anywhere revealed the gap.
+                        //
+                        // MEASURED (loop-ab-baseline, final round): 3 of 6 slots returned nothing. The pool
+                        // the metric scored was HALF the pool the engine believed it had asked for, which is
+                        // why growing best_of_n moved the number around at random and cost an hour a run.
+                        // A silent 50% loss is not a detail; it is the difference between a signal and noise.
+                        _ => dead += 1,
                     }
                 }
-                c
+                if dead > 0 {
+                    eprintln!(
+                        "  {} {dead} of {n} plan drafts returned nothing (timeout/error/no final_output) — \
+                         confidence is measured on {} draft(s)",
+                        style("!").yellow(),
+                        c.len()
+                    );
+                }
+                (c, dead)
             }
         };
-        let candidates: Vec<String> = draft_round(system.clone(), draft_temp).await;
+        // `dead` = slots that produced no draft at all. Carried out of the round because the confidence
+        // metric is only as trustworthy as the pool it scored, and that count is the only thing that says
+        // how big the pool really was.
+        let (candidates, dead_drafts) = draft_round(system.clone(), draft_temp).await;
         // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
         // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
         // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
@@ -6295,10 +6335,32 @@ impl GooseAgentDispatcher {
                 Some(b) => b,
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
             };
-            let (conf1, reason1) = match consensus_k {
+            let (conf1, mut reason1) = match consensus_k {
                 Some(k) => best_subset_agreement(&valid1, converge, k),
                 None => plan_agreement(&valid1, converge),
             };
+            // SAY HOW BIG THE POOL REALLY WAS, and distinguish the two ways a draft slot fails.
+            //
+            // `n` is how many drafts were REQUESTED. `dead_drafts` never answered at all (timeout, error, or
+            // prose with no final_output). The remainder answered but did not survive parse/DAG validation.
+            // valid1 is what the score was actually computed over. On a measured run these differed by HALF
+            // and nothing said so, so the number read as "6 drafts agree this much" when three of the six had
+            // never spoken. An agreement score without its population is not a measurement.
+            if valid1.len() < n {
+                let unparsed = n - valid1.len() - dead_drafts.min(n - valid1.len());
+                let mut why = Vec::new();
+                if dead_drafts > 0 {
+                    why.push(format!("{dead_drafts} never answered"));
+                }
+                if unparsed > 0 {
+                    why.push(format!("{unparsed} unparseable"));
+                }
+                reason1 = format!(
+                    "{reason1} [scored {} of {n} drafts: {}]",
+                    valid1.len(),
+                    why.join(", ")
+                );
+            }
             eprintln!(
                 "  {} picked best skeleton (score {score1}) — plan confidence {conf1}/100 ({reason1})",
                 style("✓").green().bold()
@@ -6319,7 +6381,7 @@ impl GooseAgentDispatcher {
                         backbone.join(", ")
                     );
                     let system2 = build_system(&backbone_clause(&backbone));
-                    let candidates2 = draft_round(system2, draft_temp).await;
+                    let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
                     let (best2, _valid2) =
                         select_best_skeleton(candidates2, worker_count, "round2 ");
                     match best2 {
