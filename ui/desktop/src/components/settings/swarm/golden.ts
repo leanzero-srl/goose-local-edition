@@ -100,6 +100,11 @@ export interface SwarmConfig {
    *  api.py read `body.group_id` while models.py never declared it — and reported verified, because the tests
    *  only touched the pure module and the smoke gate only checks that the file imports. Default OFF. */
   cross_module_check?: boolean;
+  /** When the run has NO lookup tools, put an open decision to the USER instead of to a research round that
+   *  cannot look anything up. MEASURED: with no tools configured the engine still sent 5 decisions to
+   *  research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing the
+   *  clarifying ask for 90 minutes. The user answered them in 1.8 min. Default OFF. */
+  no_tools_means_ask?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 

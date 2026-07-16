@@ -286,6 +286,13 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
     #[serde(default)]
     pub cross_module_check: bool,
+    /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
+    /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
+    /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
+    /// the ask for 90 minutes. The human answered them in 1.8 min. Default OFF.
+    /// GOOSE_SWARM_NO_TOOLS_MEANS_ASK env overrides.
+    #[serde(default)]
+    pub no_tools_means_ask: bool,
     /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
     /// constraint, and re-draft so the weak fleet's independent plans genuinely converge. OFF by default.
     /// GOOSE_SWARM_BACKBONE env overrides.
@@ -464,6 +471,7 @@ impl Default for SwarmConfig {
             retarget: false,
             retarget_stall_guard: false,
             cross_module_check: false,
+            no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
             repro_demotes_verified: false,
@@ -4734,7 +4742,11 @@ enum RetargetAction {
 fn retarget_action(
     pc: &PlanConf,
     can_grow_drafts: bool,
-    can_look_things_up: bool,
+    // may_research: may this run route an open decision to a research round at all? FALSE when the run has
+    // no lookup tools (the deterministic half of the preference-vs-lookupable triage — with no tools nothing
+    // is lookupable) OR when the triage lever is off, in which case the caller passes `true` and the routing
+    // is byte-identical to before the lever existed.
+    may_research: bool,
 ) -> RetargetAction {
     match pc.binding_signal() {
         Some(BindingSignal::Agreement) => {
@@ -4747,7 +4759,7 @@ fn retarget_action(
         Some(BindingSignal::SpecClarity) => {
             if !pc.product_specified {
                 RetargetAction::Ask
-            } else if !pc.open_decisions.is_empty() && can_look_things_up {
+            } else if !pc.open_decisions.is_empty() && may_research {
                 RetargetAction::ReResearch(pc.open_decisions.clone())
             } else {
                 // No tools => the round could only launder a guess. Ask the human instead, ~90 min sooner,
@@ -13458,13 +13470,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     );
                 }
                 if retarget_on && !stalled && retarget_round < retarget_cap {
-                    // `can_research` is the SAME signal the run reported in its research_tools event —
-                    // read from the engine, not remembered, so it can never drift from what is actually
-                    // configured.
+                    // GOOSE_SWARM_NO_TOOLS_MEANS_ASK (default OFF): when ON, a run with no lookup tools
+                    // may not route an open decision to research — it asks the human instead. `can_research`
+                    // is the SAME signal the run reported in its research_tools event, read from the engine
+                    // rather than remembered, so the routing and the reported fact cannot drift apart.
+                    // OFF => `may_research` is unconditionally true => byte-identical to before this lever.
+                    let may_research = !swarm_gate_cfg(
+                        "GOOSE_SWARM_NO_TOOLS_MEANS_ASK",
+                        load_config().no_tools_means_ask,
+                    ) || can_research;
                     match retarget_action(
                         &plan_conf,
                         effective_best_of_n < RETARGET_MAX_N,
-                        can_research,
+                        may_research,
                     ) {
                         RetargetAction::Redraft => {
                             // AGREEMENT binds: the fixed weak fleet's drafts diverge on structure. Grow the
