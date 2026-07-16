@@ -71,6 +71,9 @@ export interface SwarmConfig {
   /** Run the project's own `npm test` in the TypeScript smoke gate. Python already runs pytest; TS was gated
    *  on `npm run build` alone, so a TS app with a failing suite shipped as verified. Default OFF. */
   ts_smoke_tests?: boolean;
+  /** A failed planned task blocks the green claim and drives the completion fix loop. The loop only reads the
+   *  smoke gate today, so a task can fail outright while the run still reports verified. Default OFF. */
+  failed_tasks_block_green?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 

@@ -302,6 +302,13 @@ pub struct SwarmConfig {
     /// OFF by default. GOOSE_SWARM_TS_SMOKE_TESTS env overrides.
     #[serde(default)]
     pub ts_smoke_tests: bool,
+    /// A FAILED planned task blocks the run's green claim and drives the completion fix loop. The loop's only
+    /// input is the smoke gate today, so a task can burn all its attempts and fail while the run still reports
+    /// verified (measured: loop-05 failed engine-tests + react-tests and shipped verified:true after ZERO fix
+    /// rounds). Bonus/replanner tasks are excluded — their failure must not fail the run. OFF by default.
+    /// GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN env overrides.
+    #[serde(default)]
+    pub failed_tasks_block_green: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -372,6 +379,7 @@ impl Default for SwarmConfig {
             unwired_demotes_verified: false,
             grounded_research_only: false,
             ts_smoke_tests: false,
+            failed_tasks_block_green: false,
         }
     }
 }
@@ -12337,8 +12345,59 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut stall = 0u32;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
+        // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
+        //
+        // The complete loop's ONLY input is the smoke gate — it never looks at whether the build's own tasks
+        // succeeded, even though `report.failed` is right here in scope. MEASURED (loop-05): engine-tests and
+        // react-tests each burned all 3 attempts and FAILED, and the run still emitted
+        // complete_result{passed:true, verified:true} after ZERO fix rounds, because the (test-blind) TS gate
+        // said findings:0 at round 0. The "refuse to ship a red app" phase was not lazy — nothing told it
+        // anything was wrong.
+        //
+        // A failed task is a deterministic engine event. Surfacing it as a finding does two things at once:
+        // the loop no longer breaks green at round 0 (so it CHURNS and actually attempts a fix — the whole
+        // point of this phase), and if the task is still failing at the end the green claim cannot stand.
+        //
+        // BONUS tasks are excluded: RunReport documents that an opportunistic/replanner-added task's failure
+        // "must NOT fail the run", so counting one here would false-fail a correct app.
+        let failed_planned: Vec<String> = report
+            .failed
+            .iter()
+            .filter(|t| !report.bonus.contains(t))
+            .cloned()
+            .collect();
+        let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
+            && swarm_gate_cfg(
+                "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
+                load_config().failed_tasks_block_green,
+            ) {
+            failed_planned
+                .iter()
+                .map(|t| {
+                    format!(
+                        "planned task `{t}` FAILED (its attempts were exhausted) — its deliverable is \
+                         missing or broken. Find what it was meant to produce and finish it."
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !failed_task_findings.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "complete_failed_tasks",
+                "failed": failed_planned,
+                "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
+            }));
+        }
         for round in 0..=rounds {
-            let verdict = run_smoke_gate(&cwd, complete_lang).await;
+            let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
+            // A failed task keeps the loop honest even when the gate is blind (a TS tree with no test step,
+            // an unprofiled language that skips entirely). Re-added every round: the fix loop must clear the
+            // task's real deliverable, not merely survive one pass.
+            verdict
+                .findings
+                .extend(failed_task_findings.iter().cloned());
             // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
             // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
             // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
