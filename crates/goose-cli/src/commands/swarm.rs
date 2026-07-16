@@ -1738,6 +1738,81 @@ mod tests {
         assert_eq!(detect_stack_key("a react native mobile app", &[]), None);
     }
 
+    /// THE SAFETY CLAIM, PINNED. The persona is only defensible because the user can SEE the lesson a weak
+    /// model wrote about itself and throw it out. That rests entirely on the write landing on a directory
+    /// `goose::skills` actually walks — which the first version did not (it wrote to `data_dir/swarm/personas`,
+    /// a path no skill root covers, so nothing goose learned was ever visible). Assert against the real
+    /// discovery list, so moving either side of this contract fails here instead of silently un-mitigating it.
+    #[test]
+    fn learned_persona_lands_where_the_skills_ui_looks() {
+        let dir = persona_dir("react-vite-ts");
+        let roots: Vec<_> = goose::skills::all_skill_dirs(None)
+            .into_iter()
+            .map(|(d, _)| d)
+            .collect();
+        assert!(
+            roots.iter().any(|r| dir.starts_with(r)),
+            "persona dir {dir:?} is under NO skill discovery root {roots:?} — the user cannot see, edit or \
+             delete what goose learned, which is the whole mitigation for a wrong lesson"
+        );
+        assert!(dir.ends_with("stack-react-vite-ts"));
+
+        // The counter must NOT sit in the skill folder: every non-SKILL.md file there is advertised to the
+        // model as a loadable supporting file, so a `runs` file becomes a tool call returning one integer.
+        let counter = persona_runs_file("react-vite-ts");
+        assert!(
+            !counter.starts_with(&dir),
+            "the run counter {counter:?} is inside the skill folder and would be advertised as loadable"
+        );
+    }
+
+    /// The file tells the user their corrections are permanent. A rewrite is `fs::write` — truncating — so
+    /// that promise is only true if the user's section round-trips through the render DETERMINISTICALLY.
+    /// Handing it to a weak model as "prior" and hoping it merges is exactly the trust this cannot assume.
+    #[test]
+    fn user_notes_survive_a_rewrite_verbatim() {
+        let snap = PersonaSnapshot {
+            stack_key: Some("fastapi".into()),
+            files: vec!["app/main.py".into()],
+            shape: vec![("api".into(), vec!["app/main.py".into()])],
+            judge_lessons: vec!["pin the pydantic version".into()],
+        };
+        let correction =
+            "goose keeps getting this wrong: we use SQLModel here, NOT raw SQLAlchemy.";
+        let first = render_persona_skill("fastapi", &snap, "use uvicorn", 1, "");
+        assert!(first.contains(PERSONA_USER_MARKER));
+        assert_eq!(
+            persona_user_notes(&first),
+            "",
+            "a fresh skill has no user notes"
+        );
+
+        // the user opens the file and appends their correction under the marker
+        let edited = format!("{first}\n{correction}\n");
+        assert_eq!(persona_user_notes(&edited), correction);
+
+        // ...and a later successful build rewrites everything ABOVE the marker
+        let rewritten =
+            render_persona_skill("fastapi", &snap, "a totally different lesson", 2, &edited);
+        assert!(
+            rewritten.contains(correction),
+            "the rewrite dropped the user's correction — 'write here and it sticks' is then a lie:\n{rewritten}"
+        );
+        assert!(rewritten.contains("a totally different lesson"));
+        assert!(
+            !rewritten.contains("use uvicorn"),
+            "the model's old lesson should be replaced, not kept"
+        );
+        // and it must be idempotent: rewriting again does not duplicate or nest the notes
+        let again = render_persona_skill("fastapi", &snap, "third lesson", 3, &rewritten);
+        assert_eq!(
+            again.matches(correction).count(),
+            1,
+            "the notes were duplicated across rewrites"
+        );
+        assert_eq!(again.matches(PERSONA_USER_MARKER).count(), 1);
+    }
+
     /// Only a CORRECTIVE verdict carries a lesson; "ok"/"observed" means the judge had nothing to say. Uses
     /// the real event shape emitted by a run.
     #[test]
@@ -9451,11 +9526,65 @@ enum TargetLang {
 ///     enforced) and is injected on the ADVISORY channel only. The live spec always wins.
 ///
 /// It is a plain-markdown folder the user can read, edit, or delete — the mitigation for a wrong lesson.
+///
+/// WHICH IS WHY IT LIVES HERE. `config_dir/skills` is one of the roots `goose::skills::all_skill_dirs`
+/// already walks, so a persona written here is listed, rendered and editable in the Skills UI with no new
+/// plumbing. That placement is not tidiness — it IS the mitigation. The only reason it is defensible to let a
+/// weak local model author its own skill is that a wrong lesson is visible and removable; a skill filed where
+/// the UI never looks is precisely the invisible self-poisoning this design set out to avoid.
+///
+/// It was first written to `data_dir/swarm/personas/<key>`, which NO skill root covers — so the whole safety
+/// argument was false for that commit. Discovery is the feature; do not move this off a discovered root.
 fn persona_dir(stack_key: &str) -> std::path::PathBuf {
+    goose::config::paths::Paths::config_dir()
+        .join("skills")
+        .join(format!("stack-{stack_key}"))
+}
+
+/// The engine's run counter, kept deliberately OUT of the skill folder.
+///
+/// Skill discovery advertises EVERY non-`SKILL.md` file under a skill dir to the model as a loadable
+/// supporting file (`skills/mod.rs`: `walk_files_recursively` → `supporting_files`). A `runs` file beside the
+/// skill would surface in the model's context as `load_skill(name: "stack-react-vite-ts/runs")` — a tool call
+/// whose entire payload is a bare integer. Engine bookkeeping belongs in the data dir; only the artifact the
+/// user is meant to read belongs in the skills dir.
+fn persona_runs_file(stack_key: &str) -> std::path::PathBuf {
     goose::config::paths::Paths::data_dir()
         .join("swarm")
         .join("personas")
-        .join(stack_key)
+        .join(format!("{stack_key}.runs"))
+}
+
+/// The heading after which everything belongs to the USER and is preserved verbatim across rewrites.
+const PERSONA_USER_MARKER: &str = "## Your notes";
+
+/// What sits under the marker until the user writes something. Kept as a constant because the round-trip
+/// cannot otherwise tell "the user wrote nothing" from "the user wrote this" — the previous render's own
+/// invitation would be preserved as though it were a correction, and goose would then be reading its own
+/// boilerplate back to itself as user guidance forever.
+const PERSONA_NOTES_PLACEHOLDER: &str =
+    "_Nothing yet. Whatever you write here is read on the next build of this stack and is kept word for word \
+     when goose rewrites the rest of this file — so a correction here is permanent._";
+
+/// Lift the user's own section out of the existing skill so a rewrite cannot clobber it.
+///
+/// THE HOLE THIS PLUGS: the file told the user "edit anything here that is wrong", but a later successful
+/// build called `write_persona`, which is `fs::write` — a truncating overwrite. The correction was handed to
+/// the reflection as prior text and a weak model was trusted to carry it forward, which is exactly the
+/// trust this feature is not allowed to assume. Everything after the marker now round-trips deterministically,
+/// so a correction written there outlives every future rewrite without a model in the path.
+fn persona_user_notes(prior: &str) -> String {
+    let notes = prior
+        .split_once(PERSONA_USER_MARKER)
+        .map(|(_, after)| after.to_string())
+        .unwrap_or_default();
+    // Strip the invitation wherever it sits, rather than testing the section for equality with it: a user
+    // writing under a "write here" heading appends BELOW the prompt at least as often as they replace it, and
+    // a surviving placeholder would be fed back to the next reflection as though the user had asserted it.
+    notes
+        .replace(PERSONA_NOTES_PLACEHOLDER, "")
+        .trim()
+        .to_string()
 }
 
 /// The structural facts of a run, snapshotted while they are still in scope.
@@ -9646,7 +9775,11 @@ fn write_persona(stack_key: &str, skill: &str, runs: usize) -> std::io::Result<s
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("SKILL.md");
     std::fs::write(&path, skill)?;
-    let _ = std::fs::write(dir.join("runs"), runs.to_string());
+    let counter = persona_runs_file(stack_key);
+    if let Some(parent) = counter.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(counter, runs.to_string());
     Ok(path)
 }
 
@@ -9715,6 +9848,7 @@ fn render_persona_skill(
     snap: &PersonaSnapshot,
     reflection: &str,
     runs: usize,
+    prior: &str,
 ) -> String {
     let layout = snap
         .files
@@ -9737,6 +9871,12 @@ fn render_persona_skill(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let notes = persona_user_notes(prior);
+    let notes = if notes.is_empty() {
+        PERSONA_NOTES_PLACEHOLDER.to_string()
+    } else {
+        notes
+    };
     format!(
         "---\nname: stack-{stack_key}\ndescription: What goose learned from builds of the {stack_key} stack \
          that actually shipped.\n---\n\n\
@@ -9749,8 +9889,11 @@ fn render_persona_skill(
          ## Decomposition that shipped\n\n{shape}\n\n\
          ## Conventions this stack enforces\n\n\
          Caught by the judge during a successful build — these are the mistakes worth not repeating.\n\n{lessons}\n\n\
-         ---\n_Edit or delete anything here that is wrong; goose reads this file as-is on the next build of \
-         this stack._\n"
+         ---\n\
+         _Everything above this line is rewritten by goose after the next successful build of this stack. \
+         Delete this whole skill to make it forget. To correct it permanently, write under `Your notes` — \
+         that section is never rewritten._\n\n\
+         {PERSONA_USER_MARKER}\n\n{notes}\n"
     )
 }
 
@@ -9761,8 +9904,15 @@ fn read_persona(stack_key: &str) -> String {
 }
 
 /// How many successful builds this skill has been learned from (for the header + an honest confidence cue).
+///
+/// Gated on the SKILL.md still being there, so that DELETING the skill — the user's escape hatch from a wrong
+/// lesson — actually resets the learning. Without the gate the counter outlives the file it counts, and the
+/// next freshly-learned skill opens by claiming "learned from 4 successful builds" on the strength of one.
 fn persona_runs(stack_key: &str) -> usize {
-    std::fs::read_to_string(persona_dir(stack_key).join("runs"))
+    if !persona_dir(stack_key).join("SKILL.md").is_file() {
+        return 0;
+    }
+    std::fs::read_to_string(persona_runs_file(stack_key))
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
@@ -13503,7 +13653,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "reason": "the reflection came back empty",
                     }));
                 } else {
-                    let skill = render_persona_skill(&key, &persona_snapshot, &reflection, runs);
+                    let skill =
+                        render_persona_skill(&key, &persona_snapshot, &reflection, runs, &prior);
                     match write_persona(&key, &skill, runs) {
                         Ok(path) => {
                             sink.write_value(serde_json::json!({
