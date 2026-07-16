@@ -1602,6 +1602,46 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 mod tests {
     use super::*;
 
+    // ---- TURN-CONTEXT STRIP -----------------------------------------------------------------
+    /// The desktop prepends a per-turn `<turn-context>` block to the goal. MEASURED (loop-06): it is 171
+    /// chars, and the retarget's research question uses `opts.prompt.chars().take(200)` — so the "task" the
+    /// researcher was handed was 171 chars of XML and 28 chars of real spec. This fixture is the REAL wrapper
+    /// copied from that run's run_started event, not a hand-made one.
+    #[test]
+    fn strip_turn_context_removes_the_real_desktop_wrapper() {
+        let real = "<turn-context>\n<current-time>2026-07-16 14:52:00</current-time>\n\
+                    <working-directory>/Users/mihaiperdum/goose-builds/loop-06-py-splitwise</working-directory>\n\
+                    </turn-context>\nBuild \"Settle\" — a shared-expense splitter as a Python web app.";
+        let out = strip_turn_context(real);
+        assert!(
+            out.starts_with("Build \"Settle\""),
+            "the spec must lead, got: {:.60}",
+            out
+        );
+        assert!(!out.contains("turn-context"));
+        assert!(!out.contains("current-time"));
+        // The first 200 chars a research question sees are now ALL spec.
+        assert!(out
+            .chars()
+            .take(200)
+            .collect::<String>()
+            .contains("shared-expense splitter"));
+    }
+
+    #[test]
+    fn strip_turn_context_leaves_everything_else_byte_identical() {
+        // No wrapper -> untouched.
+        let plain = "Build a Flask kanban app.";
+        assert_eq!(strip_turn_context(plain), plain);
+        // MENTIONS the words but is not the canonical wrapper -> untouched (never strip blindly).
+        let mentions = "Write a parser for <turn-context> tags and a <current-time> helper.";
+        assert_eq!(strip_turn_context(mentions), mentions);
+        // Opens correctly but never closes -> untouched rather than eating the whole goal.
+        let unclosed = "<turn-context>\n<current-time>2026</current-time>\nBuild an app.";
+        assert_eq!(strip_turn_context(unclosed), unclosed);
+        assert_eq!(strip_turn_context(""), "");
+    }
+
     // ---- ORPHAN / STUB FILE DETECTION -------------------------------------------------------
     #[test]
     fn orphan_source_files_flags_only_the_unplanned() {
@@ -11279,7 +11319,41 @@ fn review_fix_max_lines() -> usize {
         .clamp(10, 400)
 }
 
+/// Strip the desktop's per-turn `<turn-context>` wrapper off the front of the goal.
+///
+/// The desktop prepends a volatile block — `<turn-context>\n<current-time>…</current-time>\n
+/// <working-directory>…</working-directory>\n</turn-context>` — to what the user typed. For a chat turn that
+/// is useful; as the swarm's GOAL it is 171 characters of scaffolding sitting in front of the actual spec.
+///
+/// MEASURED (loop-06): the retarget builds its research question from `opts.prompt.chars().take(200)`, so the
+/// "task" it handed the researcher was 171 chars of XML and 28 chars of real spec — every research question
+/// that run asked was about goose's own turn-context wrapper. The end-of-run overview's `take(1800)` excerpt
+/// loses the same 171 chars off the tail of what it can show.
+///
+/// Shape-checked, not blind: the wrapper is only removed when the text actually opens with the canonical
+/// `<turn-context>\n<current-time>` and closes with `</turn-context>` — mirroring `is_turn_context_text` in
+/// goose-provider-types. A prompt that merely mentions the words is untouched, and a goal with no wrapper is
+/// returned byte-identical.
+fn strip_turn_context(goal: &str) -> &str {
+    const OPEN: &str = "<turn-context>\n<current-time>";
+    const CLOSE: &str = "</turn-context>";
+    if !goal.starts_with(OPEN) {
+        return goal;
+    }
+    match goal.find(CLOSE) {
+        Some(i) => goal[i + CLOSE.len()..].trim_start(),
+        None => goal,
+    }
+}
+
 pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
+    // The goal is the spec the user wrote — not the desktop's per-turn scaffolding in front of it. Strip it
+    // ONCE, at the entry, so every downstream consumer (the research question's short_goal, spec_clarity's
+    // probe, the architect, the overview excerpt) sees the real thing.
+    let stripped = strip_turn_context(&opts.prompt);
+    if stripped.len() != opts.prompt.len() {
+        opts.prompt = stripped.to_string();
+    }
     let mut cfg = load_config();
     // Set the LM Studio host up front so the fleet probe's HTTP fallback (used when the `lms` CLI is not
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
@@ -11910,7 +11984,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 cfg.grounded_research_only,
                             );
                             let mut settled = 0usize; // counts toward "do not re-ask"
-                            let mut invented = 0usize; // reasoned, not looked up
+                            let mut invented = 0usize; // not counted as settled (only possible when gated)
+                            let mut grounded_n = 0usize; // ACTUALLY looked something up
                             let mut resolutions: Vec<serde_json::Value> = Vec::new();
                             for f in &findings {
                                 if f.findings.trim().is_empty() {
@@ -11921,6 +11996,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "\n\n### [retarget:{}] {}\n{}",
                                     f.kind, f.question, f.findings
                                 ));
+                                if f.grounded {
+                                    grounded_n += 1;
+                                }
                                 let counts = f.grounded || !grounded_only;
                                 if counts {
                                     settled += 1;
@@ -11964,10 +12042,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 "action": "re_research",
                                 "conf_before": conf,
                                 "conf_after": serde_json::Value::Null,
+                                // Report GROUNDED and SETTLED separately — they are different facts and
+                                // conflating them is exactly the lie this provenance exists to expose. With
+                                // the gate OFF everything counts as settled regardless of grounding, so a
+                                // combined "grounded/settled" label claimed 5 grounded when the resolutions
+                                // array underneath showed all 5 with lookups:[] (measured, loop-06).
                                 "detail": format!(
-                                    "researched {} decision(s), {settled} grounded/settled, {invented} invented",
+                                    "researched {} decision(s): {grounded_n} actually looked up, {settled} counted as settled, {invented} not counted",
                                     picked.len()
                                 ),
+                                "grounded": grounded_n,
                                 // The per-decision provenance — what was resolved and whether it was actually
                                 // looked up. The research is no longer a black box that emits only a count.
                                 "resolutions": resolutions,
