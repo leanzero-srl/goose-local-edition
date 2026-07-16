@@ -514,6 +514,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Stop re-planning when it stops improving"
+                  hint="when goose is unsure about its plan it re-drafts it again and again, hoping the drafts agree better. Measured on a real build, they got worse — 84 to 70 to 52 over three rounds, an hour of every machine, and it shipped the first plan anyway. This stops after a round that fails to beat the best so far. It cannot cost you quality: the best plan is kept either way."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.retarget_stall_guard}
+                    onChange={(v) => set({ retarget_stall_guard: v })}
+                  />
+                </Row>
+                <Row
                   label="Let me add notes while it builds"
                   hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
                 >
