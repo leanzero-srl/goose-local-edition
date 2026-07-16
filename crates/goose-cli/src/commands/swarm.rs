@@ -280,6 +280,16 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_AUTHOR_PITFALLS env overrides.
     #[serde(default)]
     pub author_pitfalls: bool,
+    /// Run the model-free AST wiring review (built-but-unwired modules, stub functions) after the build.
+    /// Previously reachable ONLY via the assured bundle, so ordinary runs never ran it. OFF by default.
+    /// GOOSE_SWARM_REVIEW env overrides.
+    #[serde(default)]
+    pub review: bool,
+    /// A NEWLY-unwired PURE-LIBRARY module the wire-fix did not resolve demotes the run's `verified`
+    /// claim. Never flips `passed` red. Requires `review`. OFF by default.
+    /// GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED env overrides.
+    #[serde(default)]
+    pub unwired_demotes_verified: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -346,6 +356,8 @@ impl Default for SwarmConfig {
             draft_temp: None,
             repro_demotes_verified: false,
             author_pitfalls: false,
+            review: false,
+            unwired_demotes_verified: false,
         }
     }
 }
@@ -1640,6 +1652,43 @@ mod tests {
             "café—x (malformed)"
         );
         assert_eq!(malformed_tool_name("日本語のエラー"), "(malformed call)");
+    }
+
+    /// The demote path must read `demote_eligible`, not `findings` — the detector FLAGS standalone scripts
+    /// (measured: this repo's own calls_report.py / conf_trail.py, both perfectly alive), so gating on the
+    /// finding list would false-fail a correct app. Older stdout without the key must degrade to demoting
+    /// nothing rather than to demoting everything.
+    #[test]
+    fn ast_review_demote_eligible_is_separate_from_findings() {
+        let r = parse_ast_review(
+            r#"{"modules":6,"findings":["module 'kanban.db' is imported by no non-test module — built-but-unwired (dead or unreachable from the app)"],"demote_eligible":["kanban.db"]}"#,
+        );
+        assert!(r.ran);
+        assert_eq!(r.demote_eligible, vec!["kanban.db".to_string()]);
+
+        // A flagged-but-alive script: a finding, but NOT demote-eligible.
+        let scripts = parse_ast_review(
+            r#"{"modules":2,"findings":["module 'calls_report' is imported by no non-test module — built-but-unwired (dead or unreachable from the app)"],"demote_eligible":[]}"#,
+        );
+        assert_eq!(
+            scripts.findings.len(),
+            1,
+            "it must still be FLAGGED (advisory is free)"
+        );
+        assert!(
+            scripts.demote_eligible.is_empty(),
+            "a standalone script must never demote"
+        );
+
+        // Absent key (an older/other producer) -> demote nothing. Fail safe, never fail closed.
+        let legacy = parse_ast_review(r#"{"modules":3,"findings":["x"]}"#);
+        assert!(legacy.ran);
+        assert!(legacy.demote_eligible.is_empty());
+
+        // Unparseable -> ran=false, nothing to act on (a reviewer hiccup must not manufacture a demotion).
+        let broken = parse_ast_review("not json");
+        assert!(!broken.ran);
+        assert!(broken.demote_eligible.is_empty());
     }
 
     // ---- CONTEXTUAL PITFALL RETRIEVAL (the author finally gets the fact library) -------------------
@@ -8712,7 +8761,37 @@ for mod, path in mods.items():
                 if lm:
                     imported_by_nontest.add(lm)
 
+# DEMOTE-ELIGIBILITY. Being unwired is not by itself proof of a defect: a standalone SCRIPT is run
+# directly and is imported by nobody BY DESIGN (measured false positive: this repo's own
+# calls_report.py / conf_trail.py are flagged unwired, and both are entry-point scripts). A module is
+# only PROVABLY dead when it is a pure LIBRARY — nothing but declarations at the top level, and no
+# __main__ guard — so importing it is the only way its code could ever run. That is a deterministic
+# AST property, not a judgement, which is what lets it retract a green claim.
+DECLARATIVE = (
+    ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom,
+    ast.Expr, ast.Assign, ast.AnnAssign,
+)
+
+
+def _is_main_guard(node):
+    return isinstance(node, ast.If) and "__main__" in ast.dump(node.test)
+
+
+def _is_pure_library(path):
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except Exception:
+        return False  # unparseable -> never demote
+    for node in tree.body:
+        if _is_main_guard(node):
+            return False  # has an entry point: it runs standalone
+        if not isinstance(node, DECLARATIVE):
+            return False  # executes at import/run time: a script, not a library
+    return True
+
+
 findings = []
+demote_eligible = []
 for mod in mods:
     if base(mod) in ("__init__", "__main__") or is_test(mod):
         continue
@@ -8721,6 +8800,8 @@ for mod in mods:
             "module '%s' is imported by no non-test module — built-but-unwired (dead or unreachable from the app)"
             % mod
         )
+        if _is_pure_library(mods[mod]):
+            demote_eligible.append(mod)
 
 
 def _strip_doc(body):
@@ -8813,7 +8894,7 @@ for mod, path in mods.items():
                 % (node.name, mod)
             )
 
-print(json.dumps({"modules": len(mods), "findings": sorted(set(findings))}))
+print(json.dumps({"modules": len(mods), "findings": sorted(set(findings)), "demote_eligible": sorted(set(demote_eligible))}))
 "##;
 
 /// Outcome of the AST review, serialized into the run jsonl `review` event.
@@ -8822,6 +8903,10 @@ struct AstReviewResult {
     ran: bool,
     modules: usize,
     findings: Vec<String>,
+    /// Unwired modules that are PROVABLY dead: pure libraries (declarations only, no __main__ guard), so
+    /// an import is the only way their code could ever run. A standalone SCRIPT is unwired by design and
+    /// is deliberately excluded — it is flagged, never demoted.
+    demote_eligible: Vec<String>,
 }
 
 /// Parse the AST reviewer's JSON stdout. Pure — unit-tested. Any parse failure degrades to `ran=false`
@@ -8833,17 +8918,21 @@ fn parse_ast_review(stdout: &str) -> AstReviewResult {
         modules: usize,
         #[serde(default)]
         findings: Vec<String>,
+        #[serde(default)]
+        demote_eligible: Vec<String>,
     }
     match serde_json::from_str::<Raw>(stdout.trim()) {
         Ok(r) => AstReviewResult {
             ran: true,
             modules: r.modules,
             findings: r.findings,
+            demote_eligible: r.demote_eligible,
         },
         Err(_) => AstReviewResult {
             ran: false,
             modules: 0,
             findings: vec![],
+            demote_eligible: vec![],
         },
     }
 }
@@ -8856,6 +8945,7 @@ async fn run_ast_review(root: &Path) -> AstReviewResult {
             ran: false,
             modules: 0,
             findings: vec![],
+            demote_eligible: vec![],
         };
     }
     match tokio::process::Command::new("python3")
@@ -8870,6 +8960,7 @@ async fn run_ast_review(root: &Path) -> AstReviewResult {
             ran: false,
             modules: 0,
             findings: vec![],
+            demote_eligible: vec![],
         },
     }
 }
@@ -11084,7 +11175,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
             "goals": goals_enabled(),
             "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
-            "review": swarm_gate("GOOSE_SWARM_REVIEW", true),
+            "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "review_fanout": swarm_gate("GOOSE_SWARM_REVIEW_FANOUT", true),
             "review_verify": swarm_gate("GOOSE_SWARM_REVIEW_VERIFY", true),
             "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
@@ -11926,15 +12017,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // modules THIS run left unwired — never a PRE-EXISTING intentional dead module (e.g. an amendment's
     // already-unwired duplicate, like byte-oracle's detector.py, which the wire-fix otherwise flails on).
     // Greenfield: the tree is empty here -> no findings -> review_before is empty -> no effect.
-    let review_before: std::collections::HashSet<String> = if swarm_gate("GOOSE_SWARM_REVIEW", true)
-    {
-        run_ast_review(&std::env::current_dir().unwrap_or_default())
-            .await
-            .findings
-            .into_iter()
-            .collect()
+    let (review_before, review_before_modules): (
+        std::collections::HashSet<String>,
+        std::collections::HashSet<String>,
+    ) = if swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review) {
+        // Snapshot the demote-eligible MODULES too, on the same principle: a module that was already dead
+        // before this run started is not this run's doing and must never retract its verified claim.
+        let r = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+        (
+            r.findings.into_iter().collect(),
+            r.demote_eligible.into_iter().collect(),
+        )
     } else {
-        std::collections::HashSet::new()
+        (
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
+        )
     };
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
@@ -12799,10 +12897,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             );
         }
     }
-    let review_on = swarm_gate("GOOSE_SWARM_REVIEW", true);
+    // The AST wiring review's gate read `swarm_gate("GOOSE_SWARM_REVIEW", true)` — and that `true` is
+    // `in_assured_bundle`, NOT a default (resolve_gate: `in_assured_bundle && assured`). So outside
+    // --assured the detector was silently OFF, and every ordinary run shipped with no wiring review at
+    // all. MEASURED: loop-02 logged `assured:false, gates.review:false`, shipped
+    // complete_result{passed:true, verified:true}, and its kanban/db.py (120 LOC, 11% of the build) was
+    // imported by nothing — while THIS detector, run by hand over that exact tree, names it in one line
+    // with zero false positives on the other 5 modules. A whole bonus task then "hardened" the dead file.
+    //
+    // swarm_gate_cfg makes it a real user-facing lever (env > config > default). Default stays false, so
+    // the shipped default is byte-identical to what --assured-less runs already did.
+    let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
     if review_on {
         let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
         let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
+        // Unwired PURE-LIBRARY modules THIS run introduced. Survives the optional wire-fix below; whatever
+        // is still here at the end of the block is provably dead code the run shipped.
+        let mut demote_survivors: Vec<String> = review
+            .demote_eligible
+            .iter()
+            .filter(|m| !review_before_modules.contains(*m))
+            .cloned()
+            .collect();
         // Only act on findings THIS run introduced — exclude any that already held before EXECUTE (a
         // pre-existing intentional dead module). The `review` event still carries ALL findings for the eval.
         let new_findings: Vec<String> = review
@@ -12878,6 +12994,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "result": after_value,
                     "new_findings": after_new,
                 }));
+                demote_survivors = after
+                    .demote_eligible
+                    .iter()
+                    .filter(|m| !review_before_modules.contains(*m))
+                    .cloned()
+                    .collect();
                 if after.ran && after_new.is_empty() {
                     eprintln!(
                         "{}",
@@ -12890,6 +13012,46 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         after_new.len()
                     );
                 }
+            }
+        }
+        // UNWIRED DEMOTE (GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED, default OFF).
+        //
+        // Mirrors the proven-crash demote above, on the same rule: only a DETERMINISTIC engine event may
+        // retract a green claim. An `ast.parse` import-graph walk has no model in its path — no opinion can
+        // create this verdict or argue it away.
+        //
+        // MEASURED: loop-02 shipped complete_result{passed:true, verified:true} with kanban/db.py imported
+        // by nothing; `--help` exit 0 cannot see dead code, and a bonus task then spent a whole dispatch
+        // "hardening" the corpse.
+        //
+        // Only PURE LIBRARIES demote. A standalone script is unwired by design — this repo's own
+        // calls_report.py / conf_trail.py are flagged by the detector and are perfectly alive — so the
+        // script marks as demote-eligible only a module with no __main__ guard and no executable top-level
+        // statement, where an import is the sole way its code could ever run. The "0 false positives"
+        // claim did NOT hold universally; this guard is what makes the finding strong enough to gate on.
+        //
+        // `passed` is NEVER flipped red: false-failing a correct app costs the whole run, while an honest
+        // UNVERIFIED slate costs it nothing.
+        if ov_verified
+            && !demote_survivors.is_empty()
+            && swarm_gate_cfg(
+                "GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED",
+                load_config().unwired_demotes_verified,
+            )
+        {
+            ov_verified = false;
+            sink.write_value(serde_json::json!({
+                "event": "complete_result_revised",
+                "verified": false,
+                "reason": "unwired-module-unfixed",
+                "evidence": demote_survivors,
+            }));
+            for m in &demote_survivors {
+                eprintln!(
+                    "{} module '{}' is built but imported by nothing — it cannot run",
+                    style("NOT VERIFIED — dead code shipped:").red().bold(),
+                    m
+                );
             }
         }
     }
