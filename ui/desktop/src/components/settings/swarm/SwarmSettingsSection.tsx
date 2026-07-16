@@ -505,6 +505,12 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Let me add notes while it builds"
+                  hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
+                >
+                  <SwarmSwitch checked={!!cfg.user_notes} onChange={(v) => set({ user_notes: v })} />
+                </Row>
+                <Row
                   label="Learn from builds that worked"
                   hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
                 >

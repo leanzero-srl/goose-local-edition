@@ -326,6 +326,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_PERSONA env overrides.
     #[serde(default)]
     pub persona: bool,
+    /// Let the user add background notes WHILE a build runs (the run is 2+ hours; today the only input is the
+    /// one-shot clarify ask). Notes land in .swarm/inbox/ and are folded into the NEXT dispatched worker, so a
+    /// live worker is never disturbed. Advisory only — the spec always wins. OFF by default.
+    /// GOOSE_SWARM_USER_NOTES env overrides.
+    #[serde(default)]
+    pub user_notes: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -399,6 +405,7 @@ impl Default for SwarmConfig {
             failed_tasks_block_green: false,
             sink_prebuild: false,
             persona: false,
+            user_notes: false,
         }
     }
 }
@@ -1611,6 +1618,51 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- QUEUED USER NOTES ------------------------------------------------------------------
+    #[test]
+    fn user_notes_are_read_in_order_and_never_block_or_vanish() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let inbox = dir.path().join(".swarm").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        // Filenames are epoch-ms prefixed => sorting them is chronological order.
+        std::fs::write(
+            inbox.join("1700000002-b.json"),
+            r#"{"text":"second: the DB is already seeded"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            inbox.join("1700000001-a.json"),
+            r#"{"text":"first: prefer stdlib over new deps"}"#,
+        )
+        .unwrap();
+        // Junk must not break the read — a torn/foreign file is skipped, never fatal.
+        std::fs::write(inbox.join("1700000003-c.json"), "{not json").unwrap();
+        std::fs::write(inbox.join("ignore.txt"), "not a note").unwrap();
+        std::fs::write(inbox.join("1700000004-d.json"), r#"{"text":"   "}"#).unwrap();
+
+        let out = read_user_notes(dir.path());
+        let first = out.find("prefer stdlib").expect("first note present");
+        let second = out.find("already seeded").expect("second note present");
+        assert!(
+            first < second,
+            "notes must read in the order they were written"
+        );
+        assert!(out.contains("NOTES FROM THE USER"));
+        // It must never be able to outrank the spec.
+        assert!(out.contains("does NOT override the spec"));
+        // The notes are still on disk — a crash must never lose one, so reading does not consume.
+        assert!(inbox.join("1700000001-a.json").exists());
+    }
+
+    #[test]
+    fn no_inbox_means_no_notes_and_a_byte_identical_prompt() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(read_user_notes(dir.path()), "");
+        // An empty inbox is the same as none.
+        std::fs::create_dir_all(dir.path().join(".swarm").join("inbox")).unwrap();
+        assert_eq!(read_user_notes(dir.path()), "");
+    }
 
     // ---- LEARN & REFLECT --------------------------------------------------------------------
     /// The trap this exists for: TargetLang collapses React, Angular and a node CLI all into `TypeScript`,
@@ -9416,6 +9468,56 @@ struct PersonaSnapshot {
     judge_lessons: Vec<String>,
 }
 
+/// QUEUED USER NOTES (GOOSE_SWARM_USER_NOTES, default OFF).
+///
+/// A swarm run is 2+ hours. Today the ONLY user input channel is the one-shot clarify ask at planning time —
+/// after that the user watches the whole build with no way to help, even while SEEING it go wrong. Mihai:
+/// "I see that the progress is stalled and I want to help and I want to add more background information …
+/// allow the user to continuously write messages and for goose to queue them up and from time to time pick
+/// them up and use them."
+///
+/// SHAPE IS FORCED, not chosen: the desktop's write-file IPC has no append mode — it TRUNCATES — so a shared
+/// messages.jsonl would destroy every prior note on each send. One file per note is the only shape that works
+/// through the channel that already exists. It also makes each write atomic and gives a natural id.
+///
+/// Notes are never deleted (a crash must not lose one) and never block. Re-reading is idempotent: a note is
+/// CONTEXT that rides every subsequent dispatch, exactly as the pillars do.
+fn read_user_notes(root: &std::path::Path) -> String {
+    let dir = root.join(".swarm").join("inbox");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return String::new(); // no inbox => no notes => byte-identical
+    };
+    let mut notes: Vec<(String, String)> = rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| {
+            let raw = std::fs::read_to_string(e.path()).ok()?;
+            let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+            let text = v.get("text")?.as_str()?.trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            Some((name, text))
+        })
+        .collect();
+    if notes.is_empty() {
+        return String::new();
+    }
+    notes.sort(); // filename is epoch-ms-prefixed => chronological
+    let body = notes
+        .iter()
+        .map(|(_, t)| format!("- {t}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "\n\n## NOTES FROM THE USER (added while this build was running)\n\
+         The user is watching this build and added the following as BACKGROUND. Take it into account for the \
+         work you are doing now. It does NOT override the spec or any decision already made — where they \
+         disagree, the spec wins. If a note does not concern your task, ignore it.\n\n{body}\n"
+    )
+}
+
 /// Harvest the judge's corrective hints from a finished run's own event log.
 ///
 /// These are the highest-value thing to learn: not what this app needed, but what this STACK gets wrong.
@@ -10733,6 +10835,15 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // QUEUED USER NOTES — read at DISPATCH, which is the one safe moment: run() is called once at the
+        // START of a worker's life, so a live worker is never mutated. The dispatcher already does exactly
+        // this class of read here (read_prereview_findings). Placed before the pillars so it reads as
+        // background, never as something that outranks a NON-NEGOTIABLE.
+        let notes_block = if swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes) {
+            read_user_notes(&self.working_dir)
+        } else {
+            String::new()
+        };
         let worker_directive = lang.directive();
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
@@ -10797,7 +10908,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{pitfalls_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -12033,7 +12144,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // That is a model-claim ("I researched") dressed as an engine fact. MEASURED: on this machine both
         // keys are unset, so every "research finding" in every run so far has been pure model reasoning —
         // which is exactly why every retarget resolution comes back with lookups:[].
-        let research_tools: Vec<String> = research_exts.iter().map(|e| e.name().to_string()).collect();
+        let research_tools: Vec<String> =
+            research_exts.iter().map(|e| e.name().to_string()).collect();
         sink.write_value(serde_json::json!({
             "event": "research_tools",
             "available": research_tools,

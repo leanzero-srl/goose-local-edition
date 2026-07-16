@@ -81,6 +81,9 @@ export interface SwarmConfig {
    *  skill, then starts from it on the next build of that stack. Structural only, advisory only, and the
    *  skill is a plain markdown file the user can edit or delete. Default OFF. */
   persona?: boolean;
+  /** Let the user add background notes WHILE a build runs; they are folded into the next dispatched worker,
+   *  so a live worker is never disturbed. Advisory — the spec always wins. Default OFF. */
+  user_notes?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
