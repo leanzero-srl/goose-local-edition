@@ -2839,6 +2839,54 @@ mod tests {
         );
     }
 
+    /// The draft fan-out must be one slot per DISTINCT MODEL, not per list entry.
+    ///
+    /// The planner is normally ALSO a pool worker, so `once(planner) ++ workers` repeats it. Slots go out
+    /// `models[i % len]` and every model is PARALLEL:1, so a repeated model means a second concurrent request
+    /// that cannot produce a draft — it queues behind the first, dies at the 480s timeout, and gates the whole
+    /// round because the round awaits ALL handles.
+    ///
+    /// MEASURED on loop-ab-baseline's own activity digests — the natural experiment: 6 slots requested, and
+    /// EXACTLY 3 came back, exactly the distinct-model count. workhorse served 1 of its 3 concurrent slots,
+    /// gabee 1 of 2, mihai 1 of 1. plandraft-{0,2,5} ~5KB; plandraft-{1,3,4} 158B/54B/162B.
+    ///
+    /// I shipped a LENGTH cap for this earlier and it could not work: len() was 4 while the fleet had 3
+    /// models, so slot 3 still mapped to the planner's model. This pins the property a length cap cannot have.
+    #[test]
+    fn draft_fan_out_is_one_slot_per_distinct_model() {
+        let dedup = |planner: &str, workers: &[&str]| -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            std::iter::once(planner.to_string())
+                .chain(workers.iter().map(|w| w.to_string()))
+                .filter(|m| seen.insert(m.clone()))
+                .collect()
+        };
+
+        // THE REAL FLEET: the planner IS pool device #3 (verified in the run_started event).
+        let real = dedup(
+            "workhorse-qwopus3.6-27b-coder-mlx",
+            &[
+                "gabee-qwopus3.6-27b-coder-mlx",
+                "mihai-qwopus3.6-27b-coder-mlx",
+                "workhorse-qwopus3.6-27b-coder-mlx",
+            ],
+        );
+        assert_eq!(
+            real.len(),
+            3,
+            "the planner repeats as a worker: 4 entries, 3 models. A cap on len() would still fan out 4 and              hand slot 3 a model that is already generating."
+        );
+        // order is preserved: the planner drafts first
+        assert_eq!(real[0], "workhorse-qwopus3.6-27b-coder-mlx");
+
+        // A planner that is NOT in the pool keeps every entry — dedup must not shrink a genuinely distinct set.
+        let distinct = dedup("planner-only", &["a", "b", "c"]);
+        assert_eq!(distinct.len(), 4);
+
+        // A single-model fleet collapses to one slot, never two concurrent requests to the same model.
+        assert_eq!(dedup("solo", &["solo", "solo"]).len(), 1);
+    }
+
     /// The stall guard's decision, extracted as the pure predicate the loop runs, over the ACTUAL confidence
     /// sequence measured on loop-ab-baseline (run swarm-20260716-145501944).
     ///
@@ -6217,17 +6265,40 @@ impl GooseAgentDispatcher {
         );
         // Models to draw skeleton drafts from: planner first (so best_of_n=1 == today exactly), then
         // the fleet workers round-robin.
-        let draft_models: Vec<String> = std::iter::once(planner_model.to_string())
-            .chain(worker_models.iter().cloned())
-            .collect();
+        // DEDUP BY MODEL, not by list position. The planner is usually ALSO one of the pool workers, so
+        // `once(planner) ++ workers` yields a list with a repeat in it: on this fleet
+        // [workhorse, gabee, mihai, workhorse] — 4 entries, 3 DISTINCT models.
+        //
+        // That repeat is not cosmetic. Slots are handed out `models[i % len]`, every model is loaded
+        // PARALLEL:1, and a second concurrent request to a busy model does not produce a draft — it queues
+        // behind the first and dies at the 480s timeout, while the round awaits ALL handles. So one duplicate
+        // slot gates the whole round's wall clock and contributes nothing.
+        //
+        // MEASURED (loop-ab-baseline, the natural experiment in its own activity digests): 6 slots requested,
+        // and EXACTLY 3 survived — exactly the distinct-model count. workhorse served 1 of its 3 concurrent
+        // slots, gabee 1 of 2, mihai 1 of 1. Every duplicate died. plandraft-{0,2,5} came back at ~5KB;
+        // plandraft-{1,3,4} at 158B/54B/162B.
+        //
+        // I capped this at draft_models.len() earlier today and it was NOT ENOUGH: len() is 4, so slot 3 still
+        // mapped to models[3] = the planner's model = slot 0's model. My own comment stated the wrong premise
+        // out loud — "draft_models is 4 (planner + 3 workers)" — 4 entries, 3 models, because the planner IS a
+        // worker. Dedup is the fix; a length cap can never be.
+        let draft_models: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            std::iter::once(planner_model.to_string())
+                .chain(worker_models.iter().cloned())
+                .filter(|m| seen.insert(m.clone()))
+                .collect()
+        };
         // CAP THE FAN-OUT AT THE NUMBER OF DISTINCT MODELS. Slots are handed out round-robin
         // (`models[i % models.len()]`), so asking for more drafts than there are models issues a SECOND
         // CONCURRENT request to a model that is already generating. Every model in this fleet is loaded
         // PARALLEL:1, so that second request does not add a draft — it queues behind the first and usually
         // times out, contributing a dead slot and ~20 minutes of wall clock.
         //
-        // MEASURED: draft_models is 4 (planner + 3 workers) while RETARGET_MAX_N is 6, so the redraft ladder's
-        // last two rungs could only ever add duplicates. In the final round 3 of 6 slots returned nothing, and
+        // MEASURED: draft_models is now 3 DISTINCT models (it was 4 entries with the planner repeated — see the
+        // dedup above) while RETARGET_MAX_N is 6, so the redraft ladder's last THREE rungs could only ever add
+        // duplicates. In the final round 3 of 6 slots returned nothing, and
         // the one confirmed dead slot was plandraft-4 — exactly models[4 % 4] = models[0], the duplicate.
         // The ladder was paying full price for drafts that could not exist.
         let requested_n = best_of_n.max(1);
