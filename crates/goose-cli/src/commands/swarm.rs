@@ -1578,6 +1578,42 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 mod tests {
     use super::*;
 
+    // ---- ORPHAN / STUB FILE DETECTION -------------------------------------------------------
+    #[test]
+    fn orphan_source_files_flags_only_the_unplanned() {
+        // loop-04's real case: dummy.swift shipped, in no task's owned_files.
+        let on_disk = vec![
+            "Sources/NotesLibrary/Note.swift".to_string(),
+            "Sources/NotesLibrary/NoteStore.swift".to_string(),
+            "Sources/NotesLibrary/dummy.swift".to_string(),
+        ];
+        let planned = vec![
+            "Sources/NotesLibrary/Note.swift".to_string(),
+            "Sources/NotesLibrary/NoteStore.swift".to_string(),
+        ];
+        assert_eq!(
+            orphan_source_files(&on_disk, &planned),
+            vec!["Sources/NotesLibrary/dummy.swift".to_string()]
+        );
+        // Separator + ./ normalization: a planned "./a.py" matches an on-disk "a.py".
+        assert!(orphan_source_files(&["a.py".into()], &["./a.py".into()]).is_empty());
+        // Nothing unplanned -> no orphans.
+        assert!(orphan_source_files(&planned, &planned).is_empty());
+    }
+
+    #[test]
+    fn is_stub_content_catches_placeholders_not_real_code() {
+        assert!(is_stub_content("// NotesLibrary stub\nimport Foundation")); // the real dummy.swift
+        assert!(is_stub_content("# placeholder"));
+        assert!(is_stub_content("// TODO: implement\n"));
+        assert!(is_stub_content("import Foundation")); // one meaningful line = trivial
+        assert!(is_stub_content("")); // empty
+                                      // Real code is not a stub.
+        assert!(!is_stub_content(
+            "func add(a: Int, b: Int) -> Int {\n    return a + b\n}\nlet x = add(1, 2)"
+        ));
+    }
+
     // ---- RESEARCH PROVENANCE (grounded vs invented) -----------------------------------------
     /// A finding is GROUNDED only when the agent made a SUCCESSFUL EXTERNAL lookup — a research MCP call
     /// (web-search/context7). A failed call, no call, or a mere `developer__` shell command is not
@@ -6450,6 +6486,50 @@ fn collect_py_files(root: &Path) -> Vec<PathBuf> {
 /// Language-aware sibling of `collect_py_files` — collects source files for `lang` (used by the CONTRACTS
 /// stray-stub cleanup so a TS/Rust tree removes leftover `.ts`/`.rs` stubs, not just `.py`). Python behavior
 /// matches `collect_py_files` (both accept a `.py` file); other callers keep using `collect_py_files`.
+/// ORPHAN detection: source files on disk that NO task was planned to own. Pure over path strings so it is
+/// testable without a tree. A worker sometimes creates an unplanned stopgap (loop-04 shipped a 2-line
+/// `dummy.swift` "// NotesLibrary stub" that was in no task's owned_files) and never cleans it — the worker
+/// prompt forbids it, but a prompt line is not enforcement. Paths are compared after normalizing separators;
+/// the AST review's Python "unwired" check is parser-based and language-specific, whereas this owned-files
+/// diff is language-agnostic and needs no parser.
+fn orphan_source_files(on_disk_rel: &[String], planned: &[String]) -> Vec<String> {
+    let norm = |s: &str| s.replace('\\', "/").trim_start_matches("./").to_string();
+    let planned: std::collections::HashSet<String> = planned.iter().map(|p| norm(p)).collect();
+    let mut out: Vec<String> = on_disk_rel
+        .iter()
+        .map(|p| norm(p))
+        .filter(|p| !planned.contains(p))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// A file whose whole content is a placeholder — the high-confidence "this is cruft" subset of an orphan.
+/// Trivially short once comments/blanks are stripped, or it literally announces itself a stub. Comment
+/// prefixes cover the languages the swarm builds (//, #, --, ;) — a heuristic, kept deliberately narrow so
+/// it only ever fires ADVISORY, never a delete.
+fn is_stub_content(content: &str) -> bool {
+    let low = content.to_lowercase();
+    if low.contains("stub") || low.contains("placeholder") || low.contains("todo: implement") {
+        return true;
+    }
+    let meaningful = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with("//")
+                && !l.starts_with('#')
+                && !l.starts_with("--")
+                && !l.starts_with(';')
+                && !l.starts_with("/*")
+                && !l.starts_with('*')
+        })
+        .count();
+    meaningful <= 1
+}
+
 fn collect_lang_files(root: &Path, lang: TargetLang) -> Vec<PathBuf> {
     const SKIP: &[&str] = &[
         ".git",
@@ -13034,6 +13114,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // the shipped default is byte-identical to what --assured-less runs already did.
     let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
     if review_on {
+        // ORPHAN/STUB check (advisory, language-agnostic). Source files on disk that no task was planned to
+        // own, and whether they are placeholders. Never deletes — the fleet can create a legit un-tracked
+        // file, so this only SURFACES cruft for the eval + the operator. Complements the Python-only AST
+        // unwired review, which cannot see a Swift/TS orphan.
+        {
+            let root = std::env::current_dir().unwrap_or_default();
+            let lang = detect_language(&opts.prompt, &smoke_all_files);
+            let on_disk_rel: Vec<String> = collect_lang_files(&root, lang)
+                .iter()
+                .filter_map(|p| {
+                    p.strip_prefix(&root)
+                        .ok()
+                        .map(|r| r.to_string_lossy().to_string())
+                })
+                .collect();
+            let orphans = orphan_source_files(&on_disk_rel, &smoke_all_files);
+            if !orphans.is_empty() {
+                let detail: Vec<serde_json::Value> = orphans
+                    .iter()
+                    .map(|rel| {
+                        let stub = std::fs::read_to_string(root.join(rel))
+                            .map(|c| is_stub_content(&c))
+                            .unwrap_or(false);
+                        serde_json::json!({ "file": rel, "stub": stub })
+                    })
+                    .collect();
+                sink.write_value(serde_json::json!({
+                    "event": "orphan_files",
+                    "count": orphans.len(),
+                    "files": detail,
+                }));
+                eprintln!(
+                    "{} {} unplanned file(s) shipped (no task owns them): {}",
+                    style("orphan review:").yellow().bold(),
+                    orphans.len(),
+                    orphans.join(", "),
+                );
+            }
+        }
         let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
         let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
         // Unwired PURE-LIBRARY modules THIS run introduced. Survives the optional wire-fix below; whatever
