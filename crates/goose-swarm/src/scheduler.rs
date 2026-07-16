@@ -26,6 +26,64 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 
+/// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default OFF): give a split CHILD the parent's full implementation spec,
+/// scoped to the child's own files — instead of the ~40-char label it gets today.
+///
+/// MEASURED (loop-04): PLAN spent 48.4 min (40% of the whole run) writing a 2038-char implementation-ready
+/// spec for `data-model-persistence` (three SPM targets, Swift 6 mode, sqlite3 system library, `@Observable
+/// class NoteStore: Sendable`, an undo stack). The judge then split it, and every child's ENTIRE task
+/// statement became `"(split of data-model-persistence) note-store"` — 43 characters. The spec the run had
+/// just paid 40% of its wall-clock to produce was thrown away at the moment of use, and the shipped app
+/// showed it: 221 LOC against an ~800-1200 spec, a plain JSON store where the plan demanded SQLite.
+///
+/// The splitter is default-ON on the desktop path, so this fires on real runs.
+///
+/// Default OFF because it is a real behaviour change, not merely a restoration: handing a child the parent's
+/// whole spec risks it writing its SIBLINGS' files. `child_description` therefore leads with a hard
+/// file-scope header, and the lever gets an A/B before it is trusted.
+fn split_inherit_spec_enabled() -> bool {
+    matches!(
+        std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str(),
+        "1" | "on" | "true" | "yes"
+    )
+}
+
+/// The task statement a split child receives.
+///
+/// OFF (today's behaviour, byte-identical): `"(split of <parent>) <child-id>"`.
+/// ON: a file-scope header naming exactly the files this child owns and stating that the siblings belong to
+/// other workers, followed by the parent's FULL spec as shared context. Pure string work — no model call, no
+/// new judgement, no dep semantics touched. The header comes FIRST so the scope is read before the spec that
+/// describes files the child must not touch.
+fn child_description(
+    parent_id: &str,
+    parent_desc: &str,
+    child: &crate::judge::ChildSpec,
+    inherit_spec: bool,
+) -> String {
+    if !inherit_spec || parent_desc.trim().is_empty() {
+        return format!("(split of {parent_id}) {}", child.id);
+    }
+    format!(
+        "This task is one PART of a larger subtask (`{parent_id}`) that was split across workers.\n\n\
+         YOU OWN ONLY THESE FILES — create/edit these and NOTHING else:\n{}\n\n\
+         The other files named in the spec below belong to OTHER workers on this same plan and are being \
+         written right now in parallel. Do NOT create them, do NOT edit them, and do NOT wait for them.\n\n\
+         The FULL spec of the original subtask follows. Implement ONLY the parts that describe the files you \
+         own; treat the rest as context for how your files must fit together.\n\n{parent_desc}",
+        child
+            .files
+            .iter()
+            .map(|f| format!("- {f}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// GOOSE_SWARM_SALVAGE_SPIN (default ON): when a NON-TEST task terminal-fails via finalize-spin (Verdict::
 /// Looping), salvage it as Done instead of Failed. Looping only fires once the owned file was written, so the
 /// worker DID produce output — discarding it also fails its dependents (esp. the integrate-verify sink), which
@@ -1236,19 +1294,21 @@ impl State {
     /// then takes no action and the worker keeps running, so a bad proposal can never corrupt the DAG.
     fn apply_split(&mut self, tid: &str, children: &[crate::judge::ChildSpec]) -> bool {
         // ---- validate the partition against the original (no mutation yet) ----
-        let (orig_files, orig_deps, orig_diff, orig_model) = match self.dag.tasks.get(tid) {
-            Some(n) => (
-                n.spec
-                    .owned_files
-                    .iter()
-                    .cloned()
-                    .collect::<std::collections::BTreeSet<String>>(),
-                n.spec.deps.clone(),
-                n.spec.difficulty,
-                n.spec.preferred_model.clone(),
-            ),
-            None => return false,
-        };
+        let (orig_files, orig_deps, orig_diff, orig_model, orig_desc) =
+            match self.dag.tasks.get(tid) {
+                Some(n) => (
+                    n.spec
+                        .owned_files
+                        .iter()
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<String>>(),
+                    n.spec.deps.clone(),
+                    n.spec.difficulty,
+                    n.spec.preferred_model.clone(),
+                    n.spec.description.clone(),
+                ),
+                None => return false,
+            };
         if children.len() < 2 {
             return false; // need >= 2 parts to be worth splitting
         }
@@ -1338,6 +1398,7 @@ impl State {
         }
         self.attempt_started_at.remove(tid);
         // ---- build + insert the children (deps = original's external deps + sibling deps) ----
+        let inherit_spec = split_inherit_spec_enabled();
         let child_id_list: Vec<TaskId> = children.iter().map(|c| c.id.clone()).collect();
         let specs: Vec<crate::dag::TaskSpec> = children
             .iter()
@@ -1346,7 +1407,7 @@ impl State {
                 deps.extend(c.depends_on.iter().cloned());
                 crate::dag::TaskSpec {
                     id: c.id.clone(),
-                    description: format!("(split of {tid}) {}", c.id),
+                    description: child_description(tid, &orig_desc, c, inherit_spec),
                     difficulty: orig_diff,
                     preferred_model: orig_model.clone(),
                     owned_files: c.files.clone(),
@@ -1952,6 +2013,74 @@ impl Scheduler {
 #[cfg(test)]
 mod salvage_tests {
     use super::*;
+
+    /// The split used to hand a child a ~40-char label as its ENTIRE task statement, discarding the
+    /// implementation spec PLAN had just spent 40% of the run's wall-clock writing (loop-04: a 2038-char
+    /// spec -> "(split of data-model-persistence) note-store", 43 chars). These pin both arms.
+    #[test]
+    fn split_child_description_off_is_byte_identical() {
+        let child = crate::judge::ChildSpec {
+            id: "note-store".into(),
+            files: vec!["Sources/NotesLibrary/NoteStore.swift".into()],
+            depends_on: vec![],
+        };
+        // OFF -> exactly today's string, unchanged.
+        assert_eq!(
+            child_description(
+                "data-model-persistence",
+                "a 2038-char spec...",
+                &child,
+                false
+            ),
+            "(split of data-model-persistence) note-store"
+        );
+        // ON but the parent had no spec -> nothing to inherit, fall back to the label.
+        assert_eq!(
+            child_description("data-model-persistence", "   ", &child, true),
+            "(split of data-model-persistence) note-store"
+        );
+    }
+
+    #[test]
+    fn split_child_description_on_scopes_files_then_carries_the_spec() {
+        let child = crate::judge::ChildSpec {
+            id: "note-store".into(),
+            files: vec![
+                "Sources/NotesLibrary/NoteStore.swift".into(),
+                "Sources/NotesLibrary/Note.swift".into(),
+            ],
+            depends_on: vec![],
+        };
+        let parent_spec =
+            "**Package.swift**: three targets. **NoteStore.swift**: @Observable class.";
+        let d = child_description("data-model-persistence", parent_spec, &child, true);
+
+        // The parent's real spec survives — that is the whole point.
+        assert!(
+            d.contains(parent_spec),
+            "the child must receive the parent's spec"
+        );
+        // Every owned file is named explicitly.
+        assert!(d.contains("- Sources/NotesLibrary/NoteStore.swift"));
+        assert!(d.contains("- Sources/NotesLibrary/Note.swift"));
+        // The scope guard comes BEFORE the spec, so the child reads its limits before reading about files
+        // it must not touch (the risk this lever introduces).
+        let scope_at = d
+            .find("YOU OWN ONLY THESE FILES")
+            .expect("scope header present");
+        let spec_at = d.find(parent_spec).expect("spec present");
+        assert!(
+            scope_at < spec_at,
+            "the file-scope header must precede the parent spec"
+        );
+        assert!(d.contains("belong to OTHER workers"));
+        // And it is vastly more than the 43-char label it replaces.
+        assert!(
+            d.len() > 200,
+            "expected a real task statement, got {} chars",
+            d.len()
+        );
+    }
 
     #[test]
     fn test_files_and_tasks_are_recognized() {
