@@ -147,7 +147,16 @@ type ElectronAPI = {
   writeFile: (directory: string, content: string) => Promise<boolean>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
   listFiles: (dirPath: string, extension?: string) => Promise<string[]>;
-  copyDir: (src: string, dest: string) => Promise<{ ok: boolean; error?: string }>;
+  copyDir: (
+    src: string,
+    dest: string,
+    opts?: { overwrite?: boolean }
+  ) => Promise<{ ok: boolean; error?: string }>;
+  /** How far an imported skill has fallen behind its Claude Code source. exists:false = never imported. */
+  skillDrift: (
+    src: string,
+    dest: string
+  ) => Promise<{ ok: boolean; exists?: boolean; added?: number; changed?: number; error?: string }>;
   importClaudeCode: (
     args: string[]
   ) => Promise<{ ok: boolean; stdout: string; stderr: string; error: string | null }>;
@@ -249,7 +258,9 @@ const electronAPI: ElectronAPI = {
   ensureDirectory: (dirPath: string) => ipcRenderer.invoke('ensure-directory', dirPath),
   listFiles: (dirPath: string, extension?: string) =>
     ipcRenderer.invoke('list-files', dirPath, extension),
-  copyDir: (src: string, dest: string) => ipcRenderer.invoke('copy-dir', src, dest),
+  copyDir: (src: string, dest: string, opts?: { overwrite?: boolean }) =>
+    ipcRenderer.invoke('copy-dir', src, dest, opts),
+  skillDrift: (src: string, dest: string) => ipcRenderer.invoke('skill-drift', src, dest),
   importClaudeCode: (args: string[]) => ipcRenderer.invoke('import-claude-code', args),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getAllowedExtensions: () => ipcRenderer.invoke('get-allowed-extensions'),

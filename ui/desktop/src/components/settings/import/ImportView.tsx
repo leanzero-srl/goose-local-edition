@@ -30,6 +30,8 @@ interface ClaudeSkill {
   body: string;
   supportingCount: number;
   hasName: boolean; // whether the source SKILL.md declared a frontmatter name (goose skips it if not)
+  /** How far goose's copy has fallen behind this source. undefined until the drift probe answers. */
+  drift?: { exists: boolean; added: number; changed: number };
 }
 
 type ItemStatus = 'idle' | 'importing' | 'done' | 'skipped' | 'error';
@@ -119,7 +121,12 @@ async function ensureCopiedSkillHasName(
   await window.electron.writeFile(skillMdPath, next);
 }
 
-async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
+/** Where an imported skill lands, mirroring importSelectedSkills' destBase. */
+function skillDest(scope: 'global' | 'project', projectDir: string, slug: string): string {
+  return scope === 'global' ? `~/.agents/skills/${slug}` : `${projectDir}/.agents/skills/${slug}`;
+}
+
+async function scanClaudeSkills(scope: 'global' | 'project', projectDir: string): Promise<ClaudeSkill[]> {
   const names = await window.electron.listFiles(CLAUDE_SKILLS_DIR).catch(() => [] as string[]);
   const skills: ClaudeSkill[] = [];
   const usedSlugs = new Set<string>();
@@ -141,7 +148,17 @@ async function scanClaudeSkills(): Promise<ClaudeSkill[]> {
       slug = base.slice(0, 64 - sfx.length) + sfx;
     }
     usedSlugs.add(slug);
+    // Ask the destination how stale it is BEFORE offering to import, so an out-of-date copy can never be
+    // reported as "already present" — the wording that hid a twelve-day-old mirror.
+    const d = await window.electron
+      .skillDrift(`${CLAUDE_SKILLS_DIR}/${dirName}`, skillDest(scope, projectDir, slug))
+      .catch(() => ({ ok: false }) as { ok: boolean });
+    const drift =
+      d.ok && 'exists' in d
+        ? { exists: Boolean(d.exists), added: d.added ?? 0, changed: d.changed ?? 0 }
+        : undefined;
     skills.push({
+      drift,
       dirName,
       name: slug,
       displayName,
@@ -254,7 +271,7 @@ export default function ImportView() {
     setLoading(true);
     try {
       const [found, mcp, mem] = await Promise.all([
-        scanClaudeSkills(),
+        scanClaudeSkills(scope, getInitialWorkingDir()),
         scanClaudeMcp(),
         window.electron.readFile(CLAUDE_MD),
       ]);
@@ -267,7 +284,9 @@ export default function ImportView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    // scope decides the destination, and the destination decides the drift — a global/project switch changes
+    // what "already imported" even means, so the answer cannot be cached across it.
+  }, [scope]);
 
   useEffect(() => {
     void rescan();
@@ -295,13 +314,18 @@ export default function ImportView() {
     let ok = 0;
     let failed = 0;
     let skipped = 0;
+    let updated = 0; // re-imports that REPLACED a stale copy — the case that silently did nothing before
     for (const skill of chosen) {
       setResults((r) => ({ ...r, [skill.dirName]: { status: 'importing' } }));
       try {
         if (skill.supportingCount > 0) {
           // Preserve docs/scripts/templates by copying the directory (the create API drops them).
           const dest = `${destBase}/${skill.name}`;
-          const out = await window.electron.copyDir(`${CLAUDE_SKILLS_DIR}/${skill.dirName}`, dest);
+          // An existing copy is UPDATED. Refusing it is what froze every skill at its first-import snapshot:
+          // re-importing reported "already present" and wrote nothing, for twelve days.
+          const out = await window.electron.copyDir(`${CLAUDE_SKILLS_DIR}/${skill.dirName}`, dest, {
+            overwrite: skill.drift?.exists === true,
+          });
           if (!out.ok) throw new Error(out.error || 'copy failed');
           // A copied SKILL.md with no frontmatter name is silently skipped by goose discovery — inject one.
           if (!skill.hasName) {
@@ -316,6 +340,7 @@ export default function ImportView() {
           });
         }
         ok += 1;
+        if (skill.drift?.exists) updated += 1;
         setResults((r) => ({ ...r, [skill.dirName]: { status: 'done' } }));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -329,8 +354,12 @@ export default function ImportView() {
       }
     }
     setImporting(false);
-    const parts = [`Imported ${ok} skill${ok === 1 ? '' : 's'}`];
-    if (skipped) parts.push(`${skipped} already present`);
+    const fresh = ok - updated;
+    const parts = [`Imported ${fresh} skill${fresh === 1 ? '' : 's'}`];
+    if (updated) parts.push(`${updated} updated`);
+    // "already present" is the phrasing that hid a twelve-day-old mirror: it is literally true and tells the
+    // reader nothing was lost, when what was lost was every change since the first import.
+    if (skipped) parts.push(`${skipped} unchanged`);
     if (failed) parts.push(`${failed} failed`);
     const msg = parts.join(', ');
     if (failed) toast.error(msg);
@@ -529,6 +558,19 @@ export default function ImportView() {
                           {skill.supportingCount} files
                         </span>
                       )}
+                      {/* Say what is actually out of date. "already present" was true and useless: the copy
+                          in goose sat twelve days behind its source and the word for that is not "present". */}
+                      {skill.drift?.exists &&
+                        (skill.drift.added + skill.drift.changed > 0 ? (
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 shrink-0 bg-[#b45309] text-white"
+                            title={`${skill.drift.added} new file(s), ${skill.drift.changed} changed since the last import — importing will update them`}
+                          >
+                            {skill.drift.added + skill.drift.changed} OUT OF DATE
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-text-tertiary shrink-0">up to date</span>
+                        ))}
                     </div>
                     {skill.description && (
                       <div className="text-xs text-text-secondary truncate">{skill.description}</div>

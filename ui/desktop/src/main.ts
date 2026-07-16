@@ -2531,19 +2531,70 @@ ipcMain.handle('list-files', async (_event, dirPath, extension) => {
 
 // Recursively copy a directory (used by the Claude Code import tool to relocate a skill directory,
 // preserving its supporting files — docs/, scripts/, templates/ — which the sources create API drops).
-ipcMain.handle('copy-dir', async (_event, src: string, dest: string) => {
+ipcMain.handle(
+  'copy-dir',
+  async (_event, src: string, dest: string, opts?: { overwrite?: boolean }) => {
+    try {
+      const s = expandTilde(src);
+      const d = expandTilde(dest);
+      // Refusing an existing dir is right for a FIRST import (symmetric with the create path, which errors on
+      // a name collision) and WRONG for a re-import, which is the whole reason the button gets pressed twice.
+      //
+      // MEASURED: this refusal silently froze every imported skill at its first-import snapshot. Twelve days
+      // on, atlassian-community-leanzero was 10,506 bytes in goose against 23,210 in Claude Code, missing 186
+      // files including the ones the SKILL.md instructs the agent to run. Re-importing changed nothing and
+      // reported "16 already present", which reads as "nothing to do" rather than "your updates were dropped".
+      // An import that cannot import an update is not a skip; it is a silent stale mirror.
+      if (fsSync.existsSync(d) && !opts?.overwrite) {
+        return { ok: false, error: `destination already exists: ${d}` };
+      }
+      // force+no errorOnExist so an update REPLACES the files it carries. Files only in the destination are
+      // left alone: cp does not prune, so anything goose wrote that Claude Code does not know about survives.
+      await fs.cp(s, d, {
+        recursive: true,
+        force: Boolean(opts?.overwrite),
+        errorOnExist: !opts?.overwrite,
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error copying directory:', error);
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+);
+
+// Compare a Claude Code skill dir against its imported copy, so the import can tell the user what is actually
+// out of date instead of calling a stale mirror "already present". Returns file counts, never file contents.
+ipcMain.handle('skill-drift', async (_event, src: string, dest: string) => {
   try {
     const s = expandTilde(src);
     const d = expandTilde(dest);
-    // Refuse to clobber an existing skill dir (symmetric with the create path, which errors on a name
-    // collision). The 'exists' message lets the renderer classify it as 'skipped', not a silent overwrite.
-    if (fsSync.existsSync(d)) {
-      return { ok: false, error: `destination already exists: ${d}` };
+    if (!fsSync.existsSync(d)) return { ok: true, exists: false, added: 0, changed: 0 };
+    const walk = async (root: string, base = ''): Promise<string[]> => {
+      const out: string[] = [];
+      for (const e of await fs.readdir(path.join(root, base), { withFileTypes: true })) {
+        const rel = base ? `${base}/${e.name}` : e.name;
+        if (e.isDirectory()) out.push(...(await walk(root, rel)));
+        else if (e.isFile()) out.push(rel);
+      }
+      return out;
+    };
+    const srcFiles = await walk(s);
+    let added = 0;
+    let changed = 0;
+    for (const rel of srcFiles) {
+      const dp = path.join(d, rel);
+      if (!fsSync.existsSync(dp)) {
+        added += 1;
+        continue;
+      }
+      // size+mtime, not a hash: this runs over ~950 files per skill on every scan, and a byte-level diff is
+      // not needed to answer "is the copy behind?".
+      const [a, b] = [fsSync.statSync(path.join(s, rel)), fsSync.statSync(dp)];
+      if (a.size !== b.size || a.mtimeMs > b.mtimeMs + 1000) changed += 1;
     }
-    await fs.cp(s, d, { recursive: true, force: false, errorOnExist: true });
-    return { ok: true };
+    return { ok: true, exists: true, added, changed };
   } catch (error) {
-    console.error('Error copying directory:', error);
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
