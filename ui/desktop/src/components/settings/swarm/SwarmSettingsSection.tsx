@@ -480,6 +480,7 @@ export default function SwarmSettingsSection() {
               </Group>
 
               <Group title="Plan confidence">
+
                 <Row
                   label="Convergence molding"
                   hint="steer the weak planner to one canonical decomposition + measure agreement role-normalized — the proven way to raise plan confidence. ON by default."
@@ -502,18 +503,36 @@ export default function SwarmSettingsSection() {
                   <NumberField value={cfg.draft_temp ?? null} placeholder="default" onCommit={(v) => set({ draft_temp: v })} />
                 </Row>
                 <Row
-                  label="Check for dead code after the build"
-                  hint="reads the finished code and finds modules that were built but nothing imports — they can never run. Model-free, so it can't be argued with. Also finds unimplemented stubs."
-                >
-                  <SwarmSwitch checked={!!cfg.review} onChange={(v) => set({ review: v })} />
-                </Row>
-                <Row
-                  label="Dead code un-verifies the run"
-                  hint="if a module is built but imported by nothing and goose can't wire it up, the run stops claiming it was verified. Standalone scripts are never counted — they're meant to be run directly. Needs the dead-code check on."
+                  label="Stop re-planning when it stops improving"
+                  hint="when goose is unsure about its plan it re-drafts it again and again, hoping the drafts agree better. Measured on a real build, they got worse — 84 to 70 to 52 over three rounds, an hour of every machine, and it shipped the first plan anyway. This stops after a round that fails to beat the best so far. It cannot cost you quality: the best plan is kept either way."
                 >
                   <SwarmSwitch
-                    checked={!!cfg.unwired_demotes_verified}
-                    onChange={(v) => set({ unwired_demotes_verified: v })}
+                    checked={!!cfg.retarget_stall_guard}
+                    onChange={(v) => set({ retarget_stall_guard: v })}
+                  />
+                </Row>
+              </Group>
+
+              <Group title="Research">
+                <Row
+                  label="Only trust research it actually looked up"
+                  hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.grounded_research_only}
+                    onChange={(v) => set({ grounded_research_only: v })}
+                  />
+                </Row>
+              </Group>
+
+              <Group title="While it builds">
+                <Row
+                  label="Tell the author the domain rules up front"
+                  hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.author_pitfalls}
+                    onChange={(v) => set({ author_pitfalls: v })}
                   />
                 </Row>
                 <Row
@@ -535,25 +554,22 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
-                  label="Stop re-planning when it stops improving"
-                  hint="when goose is unsure about its plan it re-drafts it again and again, hoping the drafts agree better. Measured on a real build, they got worse — 84 to 70 to 52 over three rounds, an hour of every machine, and it shipped the first plan anyway. This stops after a round that fails to beat the best so far. It cannot cost you quality: the best plan is kept either way."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.retarget_stall_guard}
-                    onChange={(v) => set({ retarget_stall_guard: v })}
-                  />
-                </Row>
-                <Row
                   label="Let me add notes while it builds"
                   hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
                 >
                   <SwarmSwitch checked={!!cfg.user_notes} onChange={(v) => set({ user_notes: v })} />
                 </Row>
+              </Group>
+
+              <Group title="Before it says done">
                 <Row
-                  label="Learn from builds that worked"
-                  hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
+                  label="Run the app's own tests before calling it verified"
+                  hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
                 >
-                  <SwarmSwitch checked={!!cfg.persona} onChange={(v) => set({ persona: v })} />
+                  <SwarmSwitch
+                    checked={!!cfg.ts_smoke_tests}
+                    onChange={(v) => set({ ts_smoke_tests: v })}
+                  />
                 </Row>
                 <Row
                   label="Show the checker the app's real interface first"
@@ -565,39 +581,18 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
-                  label="Keep working if a task failed"
-                  hint="if one of the build's own tasks fails outright, goose keeps trying to finish it instead of declaring the app done. Today it only checks the smoke gate, so a failed task can still be reported as verified. Bonus tasks are never counted."
+                  label="Check for dead code after the build"
+                  hint="reads the finished code and finds modules that were built but nothing imports — they can never run. Model-free, so it can't be argued with. Also finds unimplemented stubs."
                 >
-                  <SwarmSwitch
-                    checked={!!cfg.failed_tasks_block_green}
-                    onChange={(v) => set({ failed_tasks_block_green: v })}
-                  />
+                  <SwarmSwitch checked={!!cfg.review} onChange={(v) => set({ review: v })} />
                 </Row>
                 <Row
-                  label="Run the app's own tests before calling it verified"
-                  hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
+                  label="Dead code un-verifies the run"
+                  hint="if a module is built but imported by nothing and goose can't wire it up, the run stops claiming it was verified. Standalone scripts are never counted — they're meant to be run directly. Needs the dead-code check on."
                 >
                   <SwarmSwitch
-                    checked={!!cfg.ts_smoke_tests}
-                    onChange={(v) => set({ ts_smoke_tests: v })}
-                  />
-                </Row>
-                <Row
-                  label="Only trust research it actually looked up"
-                  hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.grounded_research_only}
-                    onChange={(v) => set({ grounded_research_only: v })}
-                  />
-                </Row>
-                <Row
-                  label="Tell the author the domain rules up front"
-                  hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.author_pitfalls}
-                    onChange={(v) => set({ author_pitfalls: v })}
+                    checked={!!cfg.unwired_demotes_verified}
+                    onChange={(v) => set({ unwired_demotes_verified: v })}
                   />
                 </Row>
                 <Row
@@ -608,6 +603,24 @@ export default function SwarmSettingsSection() {
                     checked={!!cfg.repro_demotes_verified}
                     onChange={(v) => set({ repro_demotes_verified: v })}
                   />
+                </Row>
+                <Row
+                  label="Keep working if a task failed"
+                  hint="if one of the build's own tasks fails outright, goose keeps trying to finish it instead of declaring the app done. Today it only checks the smoke gate, so a failed task can still be reported as verified. Bonus tasks are never counted."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.failed_tasks_block_green}
+                    onChange={(v) => set({ failed_tasks_block_green: v })}
+                  />
+                </Row>
+              </Group>
+
+              <Group title="Learning">
+                <Row
+                  label="Learn from builds that worked"
+                  hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
+                >
+                  <SwarmSwitch checked={!!cfg.persona} onChange={(v) => set({ persona: v })} />
                 </Row>
               </Group>
 
