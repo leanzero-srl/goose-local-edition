@@ -163,6 +163,25 @@ export interface TurnLane {
   seq: number;
 }
 
+/**
+ * Has this row's WORK finished — regardless of whether it has been VERIFIED?
+ *
+ * The two are deliberately different. A completed build task is 'unverified': the worker returned and the
+ * file passed a syntax gate, but the app was never RUN, and only Verify's green e2e may promote it to 'done'.
+ * That rule is engine-truth and stays.
+ *
+ * The progress COUNTER is a different question — "how far along is this?" — and it used to answer it with
+ * `state === 'done'`, i.e. with the verification status. So it read 0 for every task that had actually
+ * finished, and the only Build row born 'done' is the `Re-planned +N tasks` bookkeeping row, which made the
+ * numerator literally count REPLANS.
+ *
+ * MEASURED (loop-ab-baseline): six tasks completed 16:56:37 → 17:08:52 while the panel showed "Build 0/7".
+ * It first moved at 17:09:46 — when `replanned` fired. The one time the number moved, work had been ADDED.
+ */
+export function isFinishedWork(state: TodoState): boolean {
+  return state === 'done' || state === 'unverified';
+}
+
 export interface SwarmRunTotals {
   tasks: number;
   running: number;
@@ -1331,7 +1350,22 @@ function buildPhaseTodo(
     state: rollUp(items),
     active: false,
     counts: {
-      done: items.filter((i) => i.state === 'done').length,
+      // FINISHED work, not VERIFIED work. These are different questions and this counter answers the first.
+      //
+      // It used to count `state === 'done'` only. But a completed build task is deliberately 'unverified'
+      // (the worker returned and passed a syntax gate; the app was never RUN — only Verify's green promotes
+      // it), so `done` was 0 for every task that had actually finished. The ONLY Build row born 'done' is the
+      // `Re-planned +N tasks` bookkeeping row — which made the numerator literally count REPLANS.
+      //
+      // MEASURED on loop-ab-baseline: db 16:56:37, entry-point 16:59:01, ledger 17:00:46, models 17:02:37,
+      // frontend 17:07:14, api 17:08:52 — six tasks finished, and the panel read "Build 0/7" for 15 minutes.
+      // It moved to 1/10 at 17:09:46, when `replanned` fired: the one time the number moved, it moved because
+      // work was ADDED. A progress counter that only advances when the job grows is not a progress counter.
+      //
+      // 'unverified' counts as finished; the ROW still renders neutral and rollUp still decides the phase's
+      // colour off the real states, so this cannot manufacture a green claim — it only stops the panel
+      // reporting 0 while six of seven tasks are done.
+      done: items.filter((i) => isFinishedWork(i.state)).length,
       // exclude advisory (info-only) AND skipped (off / superseded, e.g. a split parent) from the denominator
       total: items.filter((i) => i.state !== 'advisory' && i.state !== 'skipped').length,
     },
