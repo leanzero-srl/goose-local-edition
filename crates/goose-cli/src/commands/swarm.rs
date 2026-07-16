@@ -317,6 +317,15 @@ pub struct SwarmConfig {
     /// is). OFF by default. GOOSE_SWARM_SINK_PREBUILD env overrides.
     #[serde(default)]
     pub sink_prebuild: bool,
+    /// LEARN & REFLECT: after a build that PROVABLY worked (built AND verified), goose reflects on what it
+    /// did and writes a reusable per-STACK skill, then injects it at planning on the next build of that same
+    /// stack — so it stops re-deriving the same knowledge from zero every time. Measured waste: two Swift
+    /// runs each burned ~40min re-learning the same things, and the judge rediscovered the identical
+    /// conventions in both. Structural only (never the app's features), advisory only (the spec always
+    /// wins), and the skill is a plain markdown file the user can edit or delete. OFF by default.
+    /// GOOSE_SWARM_PERSONA env overrides.
+    #[serde(default)]
+    pub persona: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -389,6 +398,7 @@ impl Default for SwarmConfig {
             ts_smoke_tests: false,
             failed_tasks_block_green: false,
             sink_prebuild: false,
+            persona: false,
         }
     }
 }
@@ -1601,6 +1611,103 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- LEARN & REFLECT --------------------------------------------------------------------
+    /// The trap this exists for: TargetLang collapses React, Angular and a node CLI all into `TypeScript`,
+    /// and Swift into `Other` beside Ruby. Keying learned knowledge on that would inject an Angular lesson
+    /// into a React build — poisoning the very thing the learning is meant to speed up.
+    #[test]
+    fn detect_stack_key_never_collapses_distinct_stacks() {
+        let react = detect_stack_key(
+            "Build Minesweeper as a React + TypeScript SPA using Vite",
+            &[],
+        );
+        let angular = detect_stack_key("Build a dashboard with Angular", &["angular.json".into()]);
+        assert_eq!(react.as_deref(), Some("react-vite-ts"));
+        assert_eq!(angular.as_deref(), Some("angular"));
+        assert_ne!(
+            react, angular,
+            "react and angular must NEVER share a bucket"
+        );
+
+        // THE WHOLE REASON THIS FUNCTION EXISTS: to TargetLang, React and Angular are the SAME thing.
+        // (Second-order trap found while writing this test: detect_language DEFAULTS TO PYTHON without an
+        // explicit cue, so "Build a React app with Vite" alone is Python to it. Given a real TypeScript spec
+        // + manifest, both frameworks still collapse into one bucket.)
+        let react_files = vec!["src/App.tsx".to_string(), "vite.config.ts".to_string()];
+        let ng_files = vec![
+            "src/app.component.ts".to_string(),
+            "angular.json".to_string(),
+        ];
+        assert_eq!(
+            detect_language("Build a React SPA in TypeScript", &react_files),
+            TargetLang::TypeScript
+        );
+        assert_eq!(
+            detect_language("Build an Angular SPA in TypeScript", &ng_files),
+            TargetLang::TypeScript
+        );
+        // Identical to TargetLang; correctly distinct to detect_stack_key.
+        assert_ne!(
+            detect_stack_key("Build a React SPA in TypeScript with Vite", &react_files),
+            detect_stack_key("Build an Angular SPA in TypeScript", &ng_files)
+        );
+
+        assert_eq!(
+            detect_stack_key(
+                "a macOS notes app in Swift 6 with SwiftUI",
+                &["Package.swift".into()]
+            )
+            .as_deref(),
+            Some("swift-spm")
+        );
+        assert_eq!(
+            detect_stack_key("Build a FastAPI + SQLite web app", &[]).as_deref(),
+            Some("fastapi")
+        );
+    }
+
+    /// A bare language is NOT a stack: "python" spans a CLI, a web app and a library, whose proven layouts
+    /// have nothing in common. Refusing to key is the safe answer — no key means nothing is learned and
+    /// nothing is injected, which is byte-identical to today.
+    #[test]
+    fn detect_stack_key_refuses_when_it_is_not_confident() {
+        assert_eq!(detect_stack_key("Build a python tool", &[]), None);
+        assert_eq!(detect_stack_key("Build something nice", &[]), None);
+        assert_eq!(detect_stack_key("", &[]), None);
+        // React WITHOUT vite is not the react-vite-ts stack — do not guess it in.
+        assert_eq!(detect_stack_key("a react native mobile app", &[]), None);
+    }
+
+    /// Only a CORRECTIVE verdict carries a lesson; "ok"/"observed" means the judge had nothing to say. Uses
+    /// the real event shape emitted by a run.
+    #[test]
+    fn judge_lessons_keeps_only_corrective_hints() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("run.jsonl");
+        std::fs::write(
+            &log,
+            "{\"event\":\"judge_verdict\",\"verdict\":\"ok\",\"hint\":\"\"}\n\
+             {\"event\":\"judge_verdict\",\"verdict\":\"observed\",\"hint\":\"looks fine\"}\n\
+             {\"event\":\"judge_verdict\",\"verdict\":\"broken_code\",\"hint\":\"Add @MainActor to the NoteStore class declaration\"}\n\
+             {\"event\":\"judge_verdict\",\"verdict\":\"broken_code\",\"hint\":\"Add @MainActor to the NoteStore class declaration\"}\n\
+             {\"event\":\"task_completed\",\"hint\":\"not a judge event\"}\n\
+             not json at all\n",
+        )
+        .unwrap();
+        let out = judge_lessons_from_log(&log);
+        assert_eq!(
+            out.len(),
+            1,
+            "dedup + drop ok/observed/non-judge, got {out:?}"
+        );
+        assert!(out[0].contains("@MainActor"));
+    }
+
+    #[test]
+    fn judge_lessons_from_a_missing_log_is_empty_not_a_panic() {
+        assert!(judge_lessons_from_log(std::path::Path::new("/nonexistent/run.jsonl")).is_empty());
+    }
 
     // ---- TURN-CONTEXT STRIP -----------------------------------------------------------------
     /// The desktop prepends a per-turn `<turn-context>` block to the goal. MEASURED (loop-06): it is 171
@@ -9265,6 +9372,256 @@ enum TargetLang {
     Other,
 }
 
+/// ── LEARN & REFLECT ────────────────────────────────────────────────────────────────────────────────
+/// After a build that PROVABLY worked, goose reflects on what it did and writes a reusable skill for that
+/// stack, so the next build of the same stack does not re-derive it from zero.
+///
+/// Mihai: "if you did it well once then keep it as a memory/skill to reuse so that next time it won't take
+/// 5 hours." MEASURED waste it exists to kill: loop-03 and loop-04, the SAME Swift/SwiftUI/SPM stack, each
+/// burned ~40 min of planning re-deriving identical knowledge from zero, and the judge rediscovered
+/// "@MainActor on NoteStore" and "a struct cannot have a deinit" in BOTH runs. Same lesson, paid for twice,
+/// thrown away twice.
+///
+/// WHAT MAKES THIS SAFE — the two rules that keep a weak model from poisoning its own future:
+///  1. ONLY A DETERMINISTIC ENGINE EVENT MAY TRIGGER A WRITE. The skill is written ONLY when the run's own
+///     gate says the app built AND was verified. The model never decides that it "did well" — the engine
+///     does. The model only PHRASES what the engine already proved.
+///  2. STRUCTURE, NOT FEATURES. A cached decomposition is spec-specific; injected whole it would bias the
+///     next build toward the LAST app's features — the laundering bug one level up. So the skill records the
+///     STRUCTURAL skeleton (build file, module layout, how tests are wired, the conventions the judge
+///     enforced) and is injected on the ADVISORY channel only. The live spec always wins.
+///
+/// It is a plain-markdown folder the user can read, edit, or delete — the mitigation for a wrong lesson.
+fn persona_dir(stack_key: &str) -> std::path::PathBuf {
+    goose::config::paths::Paths::data_dir()
+        .join("swarm")
+        .join("personas")
+        .join(stack_key)
+}
+
+/// The structural facts of a run, snapshotted while they are still in scope.
+///
+/// THE TRAP THIS EXISTS FOR: by the time a run knows it PASSED, the evidence is gone — `plan_json` has been
+/// moved into the plan_loaded event, `dag` has been moved into `scheduler.run(...)`, and the research
+/// findings have been folded into a flat string and dropped. So the facts must be captured EARLY and carried
+/// to the write, exactly as `smoke_all_files` already is.
+#[derive(Default, Clone)]
+struct PersonaSnapshot {
+    stack_key: Option<String>,
+    /// The file layout that actually built — the proven skeleton.
+    files: Vec<String>,
+    /// Per-task: (id, owned_files) — the decomposition shape, WITHOUT the feature descriptions.
+    shape: Vec<(String, Vec<String>)>,
+    /// Corrective judge verdicts that led somewhere — the conventions this stack really enforces.
+    judge_lessons: Vec<String>,
+}
+
+/// Harvest the judge's corrective hints from a finished run's own event log.
+///
+/// These are the highest-value thing to learn: not what this app needed, but what this STACK gets wrong.
+/// Only hints attached to a CORRECTIVE verdict are kept — an "ok/observed" verdict carries no lesson. Pure
+/// over the log text and best-effort: an unreadable log simply yields nothing.
+fn judge_lessons_from_log(path: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|e| e.get("event").and_then(|v| v.as_str()) == Some("judge_verdict"))
+        .filter(|e| {
+            // "ok"/"observed" means the judge had nothing to correct — no lesson there.
+            !matches!(
+                e.get("verdict").and_then(|v| v.as_str()),
+                Some("ok") | Some("observed") | None
+            )
+        })
+        .filter_map(|e| {
+            e.get("hint")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out.truncate(12); // a skill is a briefing, not a transcript
+    out
+}
+
+/// Persist what was learned. Best-effort: a failed write must never fail a run that already succeeded.
+fn write_persona(stack_key: &str, skill: &str, runs: usize) -> std::io::Result<std::path::PathBuf> {
+    let dir = persona_dir(stack_key);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("SKILL.md");
+    std::fs::write(&path, skill)?;
+    let _ = std::fs::write(dir.join("runs"), runs.to_string());
+    Ok(path)
+}
+
+/// THE REFLECT STEP. The engine has already PROVEN the app built and verified; this asks the model to say
+/// WHAT ABOUT THE APPROACH is worth reusing on this stack next time.
+///
+/// The model is deliberately confined: it is handed only facts the engine attested (the layout that built,
+/// the decomposition that shipped, the conventions the judge enforced) and asked to generalise the STACK
+/// lesson out of them. It cannot invent success — the trigger is a deterministic gate. It cannot smuggle in
+/// the app's features — the prompt forbids it explicitly and the injection channel is advisory.
+async fn reflect_on_success(
+    dispatcher: &Arc<GooseAgentDispatcher>,
+    model: &str,
+    stack_key: &str,
+    snap: &PersonaSnapshot,
+    prior: &str,
+) -> String {
+    let shape = snap
+        .shape
+        .iter()
+        .map(|(id, f)| format!("{id}: {}", f.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lessons = snap.judge_lessons.join("\n");
+    let prior_block = if prior.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nYou have learned about this stack before. MERGE with what you already know — keep what still \
+             holds, drop nothing that is still true, and do NOT simply restate it:\n{prior}"
+        )
+    };
+    let system = "You are writing a REUSABLE SKILL for a specific technology stack, from a build that \
+        PROVABLY worked (it compiled and its checks passed — that is an established fact, not your judgement).\n\n\
+        Write what a future build OF THIS SAME STACK should know, so it does not re-derive it from scratch. \
+        Be concrete and technical: the build-file shape, how modules are laid out and depend on each other, \
+        how tests are wired in, the language/framework conventions that must be honoured.\n\n\
+        HARD RULES:\n\
+        - Write about the STACK, never about THIS APP. 'A SwiftUI store needs @MainActor' is a stack lesson. \
+          'The notes app has a sidebar' is this app's feature and is USELESS — worse than useless, because \
+          the next app on this stack is a different product and would be dragged toward the wrong shape.\n\
+        - Only state what the evidence below supports. Do not invent facts, versions, or APIs you were not \
+          shown. If you are unsure, say less.\n\
+        - No preamble, no 'Certainly'. Terse bullets. At most ~200 words."
+        .to_string();
+    let user = format!(
+        "STACK: {stack_key}\n\nThe file layout that BUILT and VERIFIED:\n{}\n\nThe decomposition that \
+         shipped (task: files owned):\n{shape}\n\nConventions the judge had to enforce during the build \
+         (these are the mistakes this stack invites):\n{lessons}{prior_block}\n\nWrite the skill.",
+        snap.files.join("\n")
+    );
+    match dispatcher
+        .run_agent_timed(model, system, user, None, 4, &[])
+        .await
+    {
+        Ok(o) => o.text.trim().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+/// Render the learned skill as markdown. Human-readable and hand-editable BY DESIGN — this is the mitigation
+/// for a wrong lesson: the user can open it, fix it, or delete it. It is also the shape the Skills UI already
+/// renders, so it is inspectable without new plumbing.
+fn render_persona_skill(
+    stack_key: &str,
+    snap: &PersonaSnapshot,
+    reflection: &str,
+    runs: usize,
+) -> String {
+    let layout = snap
+        .files
+        .iter()
+        .map(|f| format!("- `{f}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let shape = snap
+        .shape
+        .iter()
+        .map(|(id, files)| format!("- **{id}** — owns {}", files.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lessons = if snap.judge_lessons.is_empty() {
+        "_(none recorded)_".to_string()
+    } else {
+        snap.judge_lessons
+            .iter()
+            .map(|l| format!("- {l}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "---\nname: stack-{stack_key}\ndescription: What goose learned from builds of the {stack_key} stack \
+         that actually shipped.\n---\n\n\
+         # {stack_key}\n\n\
+         Written by goose after a build of this stack **built and verified**. Everything here is derived from \
+         a run the engine PROVED worked — not from a guess. It is advisory: a live spec always overrides it.\n\n\
+         Learned from **{runs}** successful build(s).\n\n\
+         ## What worked\n\n{reflection}\n\n\
+         ## Proven layout\n\n{layout}\n\n\
+         ## Decomposition that shipped\n\n{shape}\n\n\
+         ## Conventions this stack enforces\n\n\
+         Caught by the judge during a successful build — these are the mistakes worth not repeating.\n\n{lessons}\n\n\
+         ---\n_Edit or delete anything here that is wrong; goose reads this file as-is on the next build of \
+         this stack._\n"
+    )
+}
+
+/// Read the learned skill for a stack, if one exists. Returns "" when there is nothing — a first build of a
+/// stack is byte-identical to today.
+fn read_persona(stack_key: &str) -> String {
+    std::fs::read_to_string(persona_dir(stack_key).join("SKILL.md")).unwrap_or_default()
+}
+
+/// How many successful builds this skill has been learned from (for the header + an honest confidence cue).
+fn persona_runs(stack_key: &str) -> usize {
+    std::fs::read_to_string(persona_dir(stack_key).join("runs"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// The STACK a build targets, fine enough to key learned knowledge on — e.g. "react-vite-ts", "swift-spm",
+/// "flask", "fastapi". Deliberately NOT `TargetLang`, which is far too coarse for this: React, Angular and a
+/// plain node CLI all collapse to `TypeScript`, and Swift lands in `Other` next to Ruby and Java. Keying a
+/// learned skill on that would inject an Angular lesson into a React build — poisoning the very thing the
+/// learning is supposed to speed up.
+///
+/// Returns None unless the match is CONFIDENT. None means "no stack identified" => nothing is learned and
+/// nothing is injected, which is the safe default: a wrong key is worse than no key.
+///
+/// Pure over the spec text + the planned file list, so it is unit-testable and no model opinion decides it.
+fn detect_stack_key(spec: &str, files: &[String]) -> Option<String> {
+    let hay = format!("{} {}", spec.to_lowercase(), files.join(" ").to_lowercase());
+    let has = |needles: &[&str]| needles.iter().any(|n| hay.contains(n));
+
+    // Order matters: the most specific framework wins. A React+Vite app also says "typescript".
+    if has(&["angular.json", "@angular", " angular"]) {
+        return Some("angular".into());
+    }
+    if has(&["react"]) && has(&["vite", "vite.config"]) {
+        return Some("react-vite-ts".into());
+    }
+    if has(&["next.js", "nextjs"]) {
+        return Some("nextjs".into());
+    }
+    if has(&["svelte"]) {
+        return Some("svelte".into());
+    }
+    if has(&["package.swift", "swiftui", " swift "]) {
+        return Some("swift-spm".into());
+    }
+    if has(&["fastapi"]) {
+        return Some("fastapi".into());
+    }
+    if has(&["flask"]) {
+        return Some("flask".into());
+    }
+    if has(&["django"]) {
+        return Some("django".into());
+    }
+    // A bare language is NOT a stack — "python" alone spans a CLI, a web app and a library, whose proven
+    // layouts have nothing in common. Refuse rather than pollute one bucket with all of them.
+    None
+}
+
 /// SPECULATIVE shadow: recursively copy the project tree `src` -> `dst`, SKIPPING heavy/irrelevant dirs so a
 /// twin gets the source to read but the copy stays cheap. Best-effort — an unreadable entry is skipped, never
 /// fatal. Used only on the speculative path (GOOSE_SWARM_SPECULATE); never touches the real tree.
@@ -11622,6 +11979,43 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
     };
     let mut research_findings = String::new();
+    // LEARN & REFLECT — the READ half. Seed the advisory channel with what goose learned from PREVIOUS
+    // successful builds of this same stack, BEFORE research and planning run, so the fleet starts from what
+    // already worked instead of re-deriving it. Measured: two Swift runs each burned ~40min rediscovering the
+    // same conventions.
+    //
+    // research_findings is deliberately the channel: it renders as "Prior research findings", which reads
+    // ADVISORY. The spec and the user's decisions are appended later to opts.prompt and framed BINDING, so a
+    // learned skill can never outrank what the user actually asked for.
+    let persona_on = swarm_gate_cfg("GOOSE_SWARM_PERSONA", cfg.persona);
+    let mut persona_snapshot = PersonaSnapshot::default();
+    if persona_on {
+        if let Some(key) = detect_stack_key(&opts.prompt, &[]) {
+            persona_snapshot.stack_key = Some(key.clone());
+            let learned = read_persona(&key);
+            if !learned.trim().is_empty() {
+                let runs = persona_runs(&key);
+                research_findings.push_str(&format!(
+                    "\n\n### [learned: {key}] What worked on this stack before ({runs} successful build(s))\n\
+                     Reusable knowledge from builds of this stack that PROVABLY shipped. Start from it \
+                     instead of re-deriving it. It describes the STACK, not this app — the spec below always \
+                     wins where they differ.\n\n{learned}"
+                ));
+                sink.write_value(serde_json::json!({
+                    "event": "persona_loaded",
+                    "stack_key": key,
+                    "runs": runs,
+                    "bytes": learned.len(),
+                }));
+                eprintln!(
+                    "{} {} — reusing what worked on {} previous build(s)",
+                    style("learned skill:").cyan().bold(),
+                    key,
+                    runs
+                );
+            }
+        }
+    }
     // Per-phase wall-clock so every run SHOWS where time goes (research / planning / execute) — performance
     // must be MEASURED, not asserted: a phase that does not pay for its minutes is waste to find and cut.
     let t_start = std::time::Instant::now();
@@ -12355,6 +12749,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Captured before `devices`/`dag`/`dispatcher` move into the scheduler — used only by the
     // GOOSE_SWARM_SMOKE corrective re-dispatch (one guided fix attempt if the smoke check fails).
     let smoke_fix_target = devices.first().map(|d| (d.id.clone(), d.model_id.clone()));
+    // LEARN & REFLECT — the SNAPSHOT. Capture the structural facts NOW, while the plan is still in scope:
+    // by the time the run knows it PASSED, plan_json has been moved into the plan_loaded event and `dag` has
+    // been moved into scheduler.run(). Same reason smoke_all_files is captured here.
+    //
+    // STRUCTURE ONLY — task ids and the files they own, never the feature descriptions. A cached decomposition
+    // carrying THIS app's features would drag the next app on this stack toward the wrong product; that is the
+    // laundering bug one level up, and it is the single thing that would make learning harmful.
+    if persona_on {
+        persona_snapshot.shape = dag
+            .tasks
+            .values()
+            .map(|n| (n.spec.id.clone(), n.spec.owned_files.clone()))
+            .collect();
+        persona_snapshot.shape.sort();
+        // Re-detect with the planned FILE LIST in hand: the spec alone may not name the stack (a spec can say
+        // "a web app" while the plan reveals vite.config.ts), and a wrong key is worse than none.
+        if persona_snapshot.stack_key.is_none() {
+            let files: Vec<String> = dag
+                .tasks
+                .values()
+                .flat_map(|n| n.spec.owned_files.clone())
+                .collect();
+            persona_snapshot.stack_key = detect_stack_key(&opts.prompt, &files);
+        }
+    }
     let smoke_all_files: Vec<String> = dag
         .tasks
         .values()
@@ -12776,6 +13195,78 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "verified": final_verified,
             "remaining_findings": last_findings.len(),
         }));
+        // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
+        // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine
+        // event — the model does not get to decide it "did well". So this is the one honest moment to ask:
+        // what about this approach is worth reusing on this stack next time?
+        //
+        // Mihai: "if you did it well once then keep it as a memory/skill to reuse so that next time it won't
+        // take 5 hours." Measured: loop-03 and loop-04 (same Swift stack) each burned ~40min of planning
+        // re-deriving identical knowledge, and the judge rediscovered "@MainActor on NoteStore" in BOTH.
+        //
+        // Gated on final_passed AND final_verified: a skipped oracle (verified=false) means nothing was
+        // proven, so nothing is learned. Never learn from a run that only claimed success.
+        if persona_on && final_passed && final_verified {
+            if let Some(key) = persona_snapshot.stack_key.clone() {
+                persona_snapshot.files = smoke_all_files.clone();
+                // The judge's corrective hints are the MOST reusable thing a run produces — they are the
+                // mistakes this stack invites ("@MainActor on NoteStore", "a struct cannot have a deinit",
+                // both rediscovered from scratch in two separate Swift runs). They live only in the sink's
+                // event stream (RunReport carries no hint), so read them back from this run's OWN log: it is
+                // the engine's deterministic record, complete by now, and the same source used to audit a run.
+                persona_snapshot.judge_lessons = log_path
+                    .as_deref()
+                    .map(judge_lessons_from_log)
+                    .unwrap_or_default();
+                let prior = read_persona(&key);
+                let runs = persona_runs(&key) + 1;
+                let model = fleet_models.first().cloned().unwrap_or_default();
+                eprintln!(
+                    "{} reflecting on what worked for the {} stack…",
+                    style("learn:").cyan().bold(),
+                    key
+                );
+                let reflection = reflect_on_success(
+                    &smoke_fix_dispatcher,
+                    &model,
+                    &key,
+                    &persona_snapshot,
+                    &prior,
+                )
+                .await;
+                if reflection.trim().is_empty() {
+                    sink.write_value(serde_json::json!({
+                        "event": "persona_learned", "stack_key": key, "written": false,
+                        "reason": "the reflection came back empty",
+                    }));
+                } else {
+                    let skill = render_persona_skill(&key, &persona_snapshot, &reflection, runs);
+                    match write_persona(&key, &skill, runs) {
+                        Ok(path) => {
+                            sink.write_value(serde_json::json!({
+                                "event": "persona_learned", "stack_key": key, "written": true,
+                                "runs": runs, "path": path.display().to_string(),
+                                "lessons": persona_snapshot.judge_lessons.len(),
+                            }));
+                            eprintln!(
+                                "{} {} — goose will start from this next time it builds {} ({} successful build(s))",
+                                style("learned:").green().bold(),
+                                path.display(),
+                                key,
+                                runs,
+                            );
+                        }
+                        Err(e) => {
+                            // Best-effort: a failed write must never fail a run that already succeeded.
+                            sink.write_value(serde_json::json!({
+                                "event": "persona_learned", "stack_key": key, "written": false,
+                                "reason": e.to_string(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
         if !final_passed {
             eprintln!(
                 "{}",

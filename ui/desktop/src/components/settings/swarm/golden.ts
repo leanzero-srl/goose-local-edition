@@ -77,6 +77,10 @@ export interface SwarmConfig {
   /** Give the integrate-verify sink the built entry's REAL --help before it writes its golden checks, so it
    *  targets the interface the app actually has instead of the one the spec describes. Default OFF. */
   sink_prebuild?: boolean;
+  /** LEARN & REFLECT: after a build that provably worked, goose reflects and writes a reusable per-STACK
+   *  skill, then starts from it on the next build of that stack. Structural only, advisory only, and the
+   *  skill is a plain markdown file the user can edit or delete. Default OFF. */
+  persona?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
