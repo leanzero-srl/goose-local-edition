@@ -505,6 +505,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Run the app's own tests before calling it verified"
+                  hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.ts_smoke_tests}
+                    onChange={(v) => set({ ts_smoke_tests: v })}
+                  />
+                </Row>
+                <Row
                   label="Only trust research it actually looked up"
                   hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
                 >
