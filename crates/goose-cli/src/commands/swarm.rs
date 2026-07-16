@@ -261,10 +261,17 @@ pub struct SwarmConfig {
     pub retarget: bool,
     /// Stop the retarget redraft ladder once a round fails to beat the best confidence already measured,
     /// rather than climbing to RETARGET_MAX_N on faith. MEASURED: a py-splitwise run went 84 → 70 → 70 → 52
-    /// over three redraft rounds (~60 min of a 3-node fleet) and shipped round 2's plan anyway. Cannot lower
-    /// quality — `best_plan` is monotonic, so an early stop ships the same plan unless a later round would
-    /// have beaten the best, which is what this observed not to happen. OFF by default.
-    /// GOOSE_SWARM_RETARGET_STALL_GUARD env overrides.
+    /// over three redraft rounds (~60 min of a 3-node fleet), and `plan_loaded` then shipped **52**.
+    ///
+    /// CORRECTED: I first wrote here that the run "shipped round 2's plan anyway via best_plan", so the guard
+    /// merely saved time. That was FALSE — plan_loaded records plan_confidence=52, and the 84 plan was thrown
+    /// away. `best_plan` is nulled when an ask is answered (see the `best_plan = None` below: answers must win
+    /// over a pre-answer plan), and this run's ask WAS answered. So `best_plan` never reaches the break at all
+    /// on any run that asks, and the plan that ships is simply the CURRENT one.
+    ///
+    /// That makes the guard MORE valuable than the claim it replaces, not less: on an asking run the ladder's
+    /// last rung IS what ships, so degrading it 84 → 52 is a direct quality loss, not just wasted minutes.
+    /// OFF by default. GOOSE_SWARM_RETARGET_STALL_GUARD env overrides.
     #[serde(default)]
     pub retarget_stall_guard: bool,
     /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
@@ -2836,8 +2843,10 @@ mod tests {
     /// sequence measured on loop-ab-baseline (run swarm-20260716-145501944).
     ///
     /// The ladder went 84 → 70 → 70 → 52 across three redraft rounds — roughly an hour of the whole fleet —
-    /// and then shipped round 2's plan via `best_plan`. The guard must cut that at the first round that fails
-    /// to beat 84, because every later rung costs a full planning pass to produce a plan already in hand.
+    /// and plan_loaded then shipped 52. (I first documented this as "shipped round 2's plan via best_plan".
+    /// FALSE: an answered ask nulls best_plan so the user's answers always win, and this run's ask was
+    /// answered — so the ladder's LAST rung is what ships. The guard therefore protects QUALITY, not just
+    /// wall-clock.) It must cut at the first round that fails to beat 84.
     #[test]
     fn stall_guard_stops_the_ladder_that_measurably_did_not_climb() {
         // (conf_of_round, tolerance) -> did the guard stop here?
@@ -12806,7 +12815,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //   round 3  redraft best_of_n 4→5   conf 70   <- worse
     //   round 4  redraft best_of_n 5→6   conf 70   <- no better, and now at RETARGET_MAX_N
     //            proceed_at_cap          conf 52
-    // Three redraft rounds, ~60 minutes of the whole 3-node fleet, and the run shipped round 2's plan anyway
+    // Three redraft rounds, ~60 minutes of the whole 3-node fleet, and plan_loaded then shipped conf 52 —
+    // NOT round 2's 84. (I originally wrote that best_plan rescued the 84. It does not: an answered ask nulls
+    // best_plan so the user's answers cannot be overridden by a pre-answer plan, and this run's ask was
+    // answered. On any asking run the ladder's LAST rung is what ships, which is why degrading it costs
+    // quality and not merely time.)
     // via `best_plan`. The ladder never beat its own first rung and the last two rungs were pure cost. The
     // lever's premise — "more independent drafts raise agreement" — did not hold for this fleet on this spec.
     //
