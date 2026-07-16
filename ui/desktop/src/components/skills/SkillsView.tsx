@@ -11,6 +11,9 @@ import { defineMessages, useIntl } from '../../i18n';
 import { SearchView } from '../conversation/SearchView';
 import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 import { listSkillSources } from '../../acp/sources';
+import type { SourceEntry } from '@aaif/goose-sdk';
+import { SkillDetail } from './SkillDetail';
+import { skillOrigin, type SkillOrigin } from './skillKinds';
 
 const i18n = defineMessages({
   errorLoadingSkills: {
@@ -60,20 +63,47 @@ const i18n = defineMessages({
   },
 });
 
-interface SkillEntry {
-  name: string;
-  description: string;
-}
+/**
+ * A row in the explorer.
+ *
+ * `SkillEntry` used to be `{name, description}` — the view fetched the full `SourceEntry`, which carries the
+ * whole SKILL.md body on the wire (`content: body`, skills/mod.rs:354), and threw everything but two strings
+ * away. Nothing needed a new backend call to make skills readable; the content was already here.
+ */
+type SkillEntry = SourceEntry;
 
-function SkillItem({ skill }: { skill: SkillEntry }) {
+const ORIGIN_DOT: Record<SkillOrigin, string> = {
+  persona: 'bg-[#7c3aed]',
+  builtin: 'bg-[#0f766e]',
+  global: 'bg-[#1d4ed8]',
+  project: 'bg-[#b45309]',
+};
+
+function SkillItem({
+  skill,
+  selected,
+  onSelect,
+}: {
+  skill: SkillEntry;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <Card className="py-2 px-4 mb-2 bg-background-primary border-none hover:bg-background-secondary transition-all duration-150">
-      <div className="flex justify-between items-center gap-4">
+    <Card
+      onClick={onSelect}
+      className={`py-2 px-3 mb-1 border-none cursor-pointer transition-all duration-150 ${
+        selected ? 'bg-background-accent text-white' : 'bg-background-primary hover:bg-background-secondary'
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className={`w-2 h-2 shrink-0 ${ORIGIN_DOT[skillOrigin(skill)]}`} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="text-base truncate">{skill.name}</h3>
-          </div>
-          <p className="text-text-secondary text-sm line-clamp-2">{skill.description}</p>
+          <h3 className="text-sm truncate">{skill.name}</h3>
+          <p
+            className={`text-xs line-clamp-1 ${selected ? 'text-white/80' : 'text-text-secondary'}`}
+          >
+            {skill.description}
+          </p>
         </div>
       </div>
     </Card>
@@ -101,6 +131,7 @@ export default function SkillsView() {
   const [error, setError] = useState<string | null>(null);
   const [showContent, setShowContent] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
   const filteredSkills = useMemo(() => {
     if (!searchTerm) return skills;
@@ -108,9 +139,35 @@ export default function SkillsView() {
     return skills.filter(
       (skill) =>
         skill.name.toLowerCase().includes(searchLower) ||
-        skill.description.toLowerCase().includes(searchLower)
+        skill.description.toLowerCase().includes(searchLower) ||
+        skill.content.toLowerCase().includes(searchLower)
     );
   }, [skills, searchTerm]);
+
+  // Grouped by where it came from — the roots are the folders, and which root a skill lives in is the thing
+  // that decides whether it is yours, goose's, or shipped. Personas lead: a lesson goose wrote about itself
+  // is the one the user most needs to notice appearing.
+  const groups = useMemo(() => {
+    const order: SkillOrigin[] = ['persona', 'project', 'global', 'builtin'];
+    const titles: Record<SkillOrigin, string> = {
+      persona: 'Learned by goose',
+      project: 'This project',
+      global: 'Yours',
+      builtin: 'Built in',
+    };
+    return order
+      .map((origin) => ({
+        origin,
+        title: titles[origin],
+        items: filteredSkills.filter((s) => skillOrigin(s) === origin),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [filteredSkills]);
+
+  const selected = useMemo(
+    () => skills.find((s) => s.path === selectedPath) ?? null,
+    [skills, selectedPath]
+  );
 
   const loadSkills = useCallback(async () => {
     try {
@@ -118,12 +175,7 @@ export default function SkillsView() {
       setShowSkeleton(true);
       setShowContent(false);
       setError(null);
-      const sources = await listSkillSources(getInitialWorkingDir());
-      const skillEntries: SkillEntry[] = sources.map((source) => ({
-        name: source.name,
-        description: source.description,
-      }));
-      setSkills(skillEntries);
+      setSkills(await listSkillSources(getInitialWorkingDir()));
     } catch (err) {
       setError(errorMessage(err, 'Failed to load skills'));
     } finally {
@@ -133,6 +185,15 @@ export default function SkillsView() {
 
   useEffect(() => {
     loadSkills();
+  }, [loadSkills]);
+
+  // The swarm rewrites a persona's SKILL.md from another process whenever a build of that stack succeeds, so
+  // a list fetched once on mount goes stale on its own — and a run takes hours, which is exactly how long
+  // this window tends to sit open. Re-read on focus so the lesson on screen is the lesson on disk.
+  useEffect(() => {
+    const onFocus = () => loadSkills();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [loadSkills]);
 
   useEffect(() => {
@@ -192,9 +253,21 @@ export default function SkillsView() {
     }
 
     return (
-      <div className="space-y-2">
-        {filteredSkills.map((skill) => (
-          <SkillItem key={skill.name} skill={skill} />
+      <div className="space-y-4">
+        {groups.map((group) => (
+          <div key={group.origin}>
+            <h2 className="text-[10px] font-bold tracking-wider text-text-tertiary mb-1 px-1">
+              {group.title.toUpperCase()} · {group.items.length}
+            </h2>
+            {group.items.map((skill) => (
+              <SkillItem
+                key={skill.path}
+                skill={skill}
+                selected={skill.path === selectedPath}
+                onSelect={() => setSelectedPath(skill.path)}
+              />
+            ))}
+          </div>
         ))}
       </div>
     );
@@ -226,21 +299,48 @@ export default function SkillsView() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 relative px-8">
-          <ScrollArea className="h-full">
-            <SearchView
-              onSearch={(term) => setSearchTerm(term)}
-              placeholder={intl.formatMessage(i18n.searchSkillsPlaceholder)}
-            >
-              <div
-                className={`h-full relative transition-all duration-300 ${
-                  showContent || showSkeleton ? 'opacity-100 animate-in fade-in' : 'opacity-0'
-                }`}
+        <div className="flex-1 min-h-0 relative px-8 flex gap-6">
+          <div className="w-[300px] shrink-0 min-h-0">
+            <ScrollArea className="h-full">
+              <SearchView
+                onSearch={(term) => setSearchTerm(term)}
+                placeholder={intl.formatMessage(i18n.searchSkillsPlaceholder)}
               >
-                {renderContent()}
+                <div
+                  className={`h-full relative transition-all duration-300 ${
+                    showContent || showSkeleton ? 'opacity-100 animate-in fade-in' : 'opacity-0'
+                  }`}
+                >
+                  {renderContent()}
+                </div>
+              </SearchView>
+            </ScrollArea>
+          </div>
+
+          <div className="flex-1 min-w-0 min-h-0 border-l border-borderSubtle pl-6">
+            {selected ? (
+              <SkillDetail
+                entry={selected}
+                origin={skillOrigin(selected)}
+                projectDir={getInitialWorkingDir()}
+                onSaved={(updated) =>
+                  setSkills((prev) => prev.map((s) => (s.path === updated.path ? updated : s)))
+                }
+                onDeleted={() => {
+                  setSelectedPath(null);
+                  // Re-list rather than splice: `scan_skills_from_dir` keeps a `seen` set and DROPS a
+                  // same-named skill in a lower-priority root, so deleting a visible one can UNSHADOW a
+                  // different skill that was never in this list. Only the backend knows what is there now.
+                  loadSkills();
+                }}
+              />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
+                <Zap className="h-10 w-10 mb-3" />
+                <p className="text-sm">Select a skill to read it</p>
               </div>
-            </SearchView>
-          </ScrollArea>
+            )}
+          </div>
         </div>
       </div>
     </MainPanelLayout>
