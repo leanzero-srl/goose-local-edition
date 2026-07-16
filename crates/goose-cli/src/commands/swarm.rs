@@ -11340,8 +11340,10 @@ fn strip_turn_context(goal: &str) -> &str {
     if !goal.starts_with(OPEN) {
         return goal;
     }
-    match goal.find(CLOSE) {
-        Some(i) => goal[i + CLOSE.len()..].trim_start(),
+    // split_once, not a byte slice: the goal is arbitrary user text and byte-indexing it panics the moment an
+    // index lands mid-character (the same trap `malformed_tool_name` hit earlier today).
+    match goal.split_once(CLOSE) {
+        Some((_, rest)) => rest.trim_start(),
         None => goal,
     }
 }
