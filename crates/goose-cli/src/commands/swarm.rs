@@ -2862,28 +2862,66 @@ mod tests {
             open_decisions: dec,
         };
         assert_eq!(
-            retarget_action(&mk(Some(40), Some(80), true, vec![]), true),
+            retarget_action(&mk(Some(40), Some(80), true, vec![]), true, true),
             RetargetAction::Redraft
         );
         assert_eq!(
-            retarget_action(&mk(Some(40), Some(80), true, vec![]), false),
+            retarget_action(&mk(Some(40), Some(80), true, vec![]), false, true),
             RetargetAction::Ask
         );
         assert_eq!(
-            retarget_action(&mk(Some(80), Some(20), false, vec!["p".into()]), true),
+            retarget_action(&mk(Some(80), Some(20), false, vec!["p".into()]), true, true),
             RetargetAction::Ask
         );
         assert_eq!(
-            retarget_action(&mk(Some(80), Some(50), true, vec!["lib?".into()]), true),
+            retarget_action(
+                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
+                true,
+                true
+            ),
             RetargetAction::ReResearch(vec!["lib?".into()])
         );
         assert_eq!(
-            retarget_action(&mk(Some(80), Some(50), true, vec![]), true),
+            retarget_action(&mk(Some(80), Some(50), true, vec![]), true, true),
             RetargetAction::Ask
         );
         assert_eq!(
-            retarget_action(&mk(None, None, true, vec![]), true),
+            retarget_action(&mk(None, None, true, vec![]), true, true),
             RetargetAction::None
+        );
+
+        // WITH NO LOOKUP TOOLS, NOTHING IS LOOKUPABLE — the same open decisions that route to ReResearch
+        // above must route to Ask. This is the deterministic half of the preference-vs-lookupable triage:
+        // the engine cannot judge whether "should splits be uneven?" is searchable, but it knows for certain
+        // that a research round with an empty tool list can only invent an answer and stamp it settled.
+        //
+        // MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and it
+        // STILL routed 5 open decisions to ReResearch as kind:"web" — tool_hint "Use the web-search tool."
+        // Result: "0 actually looked up, 5 counted as settled", spec_clarity 30 -> 100, and the ask fired 90
+        // minutes late asking about the engine's own inventions. The human answered in 1.8 minutes.
+        assert_eq!(
+            retarget_action(
+                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
+                true,
+                false
+            ),
+            RetargetAction::Ask,
+            "no tools => a research round can only launder a guess; ask the human instead"
+        );
+        // Tools present: the original routing is untouched — this triage must not disable research where
+        // research can actually happen.
+        assert_eq!(
+            retarget_action(
+                &mk(Some(80), Some(50), true, vec!["lib?".into()]),
+                true,
+                true
+            ),
+            RetargetAction::ReResearch(vec!["lib?".into()])
+        );
+        // Agreement-bound is unaffected by tools: re-drafting needs no lookups.
+        assert_eq!(
+            retarget_action(&mk(Some(40), Some(80), true, vec![]), true, false),
+            RetargetAction::Redraft
         );
     }
 
@@ -4677,7 +4715,27 @@ enum RetargetAction {
     None,
 }
 
-fn retarget_action(pc: &PlanConf, can_grow_drafts: bool) -> RetargetAction {
+/// `can_look_things_up`: does this run have ANY lookup tool (context7 / web-search)?
+///
+/// This is the deterministic half of the preference-vs-lookupable triage. The engine has no way to know
+/// whether "should splits be uneven?" is answerable by search — that needs judgement, and a keyword matcher
+/// would be a guess wearing a rule's clothes. But it knows something simpler and stronger: WITH NO TOOLS,
+/// NOTHING IS LOOKUPABLE. A research round with an empty tool list cannot resolve anything; it can only ask
+/// the model to invent an answer and stamp it settled.
+///
+/// MEASURED (loop-ab-baseline): research_tools {"available":[],"can_look_things_up":false}, and the retarget
+/// still routed 5 open decisions to ReResearch as kind:"web" — whose tool_hint is literally "Use the
+/// web-search tool." The engine told five 27b workers to use a tool that does not exist, then counted their
+/// guesses: "0 actually looked up, 5 counted as settled". Those guesses were appended to the prompt as
+/// "settled defaults, do not re-ask", spec_clarity jumped 30 -> 100, and the ask that finally fired 90
+/// minutes later asked about the engine's OWN INVENTIONS instead of the user's real choice.
+/// 4 of those 5 decisions were product preferences no search could ever answer. The ask resolved them in
+/// 1.8 minutes. Research spent 65 minutes failing to answer what a human answered in under two.
+fn retarget_action(
+    pc: &PlanConf,
+    can_grow_drafts: bool,
+    can_look_things_up: bool,
+) -> RetargetAction {
     match pc.binding_signal() {
         Some(BindingSignal::Agreement) => {
             if can_grow_drafts {
@@ -4689,9 +4747,12 @@ fn retarget_action(pc: &PlanConf, can_grow_drafts: bool) -> RetargetAction {
         Some(BindingSignal::SpecClarity) => {
             if !pc.product_specified {
                 RetargetAction::Ask
-            } else if !pc.open_decisions.is_empty() {
+            } else if !pc.open_decisions.is_empty() && can_look_things_up {
                 RetargetAction::ReResearch(pc.open_decisions.clone())
             } else {
+                // No tools => the round could only launder a guess. Ask the human instead, ~90 min sooner,
+                // with the spec still intact (the "settled defaults" text is never appended when nothing
+                // settles), so the questions are about the REAL open choices.
                 RetargetAction::Ask
             }
         }
@@ -12991,6 +13052,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Per-phase wall-clock so every run SHOWS where time goes (research / planning / execute) — performance
     // must be MEASURED, not asserted: a phase that does not pay for its minutes is waste to find and cut.
     let t_start = std::time::Instant::now();
+    // Can this run look ANYTHING up? Set from the same tool list the research_tools event reports, so the
+    // retarget's triage and the reported fact can never disagree. Defaults FALSE: if research never ran, the
+    // engine has established no ability to research, and routing an open decision to a research round it
+    // never configured would be the same guess-laundering by another door.
+    let mut can_research = false;
     if do_research {
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
             ["context7", "web-search"]
@@ -13012,6 +13078,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "available": research_tools,
             "can_look_things_up": !research_tools.is_empty(),
         }));
+        // The retarget's triage reads THIS, so the routing and the reported event can never disagree.
+        can_research = !research_tools.is_empty();
         if research_tools.is_empty() {
             eprintln!(
                 "{}",
@@ -13390,7 +13458,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     );
                 }
                 if retarget_on && !stalled && retarget_round < retarget_cap {
-                    match retarget_action(&plan_conf, effective_best_of_n < RETARGET_MAX_N) {
+                    // `can_research` is the SAME signal the run reported in its research_tools event —
+                    // read from the engine, not remembered, so it can never drift from what is actually
+                    // configured.
+                    match retarget_action(
+                        &plan_conf,
+                        effective_best_of_n < RETARGET_MAX_N,
+                        can_research,
+                    ) {
                         RetargetAction::Redraft => {
                             // AGREEMENT binds: the fixed weak fleet's drafts diverge on structure. Grow the
                             // best-of-N draft budget and re-measure — more independent drafts under the
