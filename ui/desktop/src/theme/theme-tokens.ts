@@ -162,8 +162,12 @@ const darkColorTokens: ColorTokens = {
 
   // Text
   '--color-text-primary': '#ffffff',
-  '--color-text-secondary': '#878787',
-  '--color-text-tertiary': '#606c7a',
+  // Dark-theme secondary/tertiary were below WCAG AA on the card background (measured: #878787 = 4.28:1,
+  // #606c7a = 2.87:1 on rgb(34,37,42), where AA needs 4.5 / large-text 3.0). Bumped to clear AA with margin
+  // while staying visibly secondary — white 12.3:1 > secondary 5.20:1 > tertiary 4.15:1. Solid greys, no
+  // faded tint. (The LIGHT block keeps #878787 — brightening there would REDUCE contrast on a light bg.)
+  '--color-text-secondary': '#969696',
+  '--color-text-tertiary': '#7a8694',
   '--color-text-inverse': '#000000',
   '--color-text-ghost': '#878787',
   '--color-text-info': '#7cacff',
