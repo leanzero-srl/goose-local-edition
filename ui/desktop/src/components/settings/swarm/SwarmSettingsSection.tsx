@@ -505,6 +505,12 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Learn from builds that worked"
+                  hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
+                >
+                  <SwarmSwitch checked={!!cfg.persona} onChange={(v) => set({ persona: v })} />
+                </Row>
+                <Row
                   label="Show the checker the app's real interface first"
                   hint="before goose verifies the finished app, it runs the entry point and reads its actual --help, so its checks target the interface the app really has. Without this it guesses from the spec — and a wrong guess has made it 'fix' a working app."
                 >
