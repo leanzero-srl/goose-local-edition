@@ -2933,6 +2933,76 @@ mod tests {
         );
     }
 
+    /// Resume, against the shapes real runs actually produce.
+    ///
+    /// The bar Mihai set is deliberately low — "it just needs to resume from SOME point, whatever point it
+    /// is" — so the only thing that MUST hold is the conservative rule: a task is skipped ONLY if it has a
+    /// task_completed event. Everything else re-runs and overwrites its own files. Getting that backwards
+    /// would silently skip unfinished work, which is exactly the false-green class this loop exists to hunt.
+    #[test]
+    fn resume_skips_only_what_provably_finished() {
+        let log = [
+            r#"{"event":"run_started","prompt":"build it"}"#,
+            r#"{"event":"plan_loaded","plan_confidence":52,"tasks":[{"id":"db","deps":[]},{"id":"api","deps":["db"]},{"id":"ui","deps":[]}]}"#,
+            r#"{"event":"task_completed","task_id":"db","elapsed_ms":1000}"#,
+            r#"not json at all"#,
+            r#"{"event":"task_completed","task_id":"ui","elapsed_ms":2000}"#,
+        ]
+        .join("\n");
+        let r = resume_state_from_log(&log).expect("a crashed run with a plan is resumable");
+        assert_eq!(r.completed.len(), 2);
+        assert!(r.completed.contains("db") && r.completed.contains("ui"));
+        // `api` was mid-flight when the power went. It has no task_completed, so it MUST re-run.
+        assert!(
+            !r.completed.contains("api"),
+            "a task without task_completed must never be skipped"
+        );
+        // The plan survives verbatim in the shape Dag::from_planner_json parses.
+        let v: serde_json::Value = serde_json::from_str(&r.plan_json).unwrap();
+        assert_eq!(v["tasks"].as_array().unwrap().len(), 3);
+
+        // A FINISHED run is not a resume candidate — its app already exists.
+        let finished = format!("{log}\n{}", r#"{"event":"run_finished","report":{}}"#);
+        assert!(
+            resume_state_from_log(&finished).is_none(),
+            "a finished run must not be resumed"
+        );
+
+        // A run that died BEFORE planning has nothing to resume from — research/plan must run again.
+        let early = r#"{"event":"run_started"}
+{"event":"research_completed","findings":3}"#;
+        assert!(resume_state_from_log(early).is_none());
+
+        // A re-planned run ends on the plan it actually BUILT: the last plan_loaded wins.
+        let replanned = [
+            r#"{"event":"plan_loaded","tasks":[{"id":"old","deps":[]}]}"#,
+            r#"{"event":"plan_loaded","tasks":[{"id":"new-a","deps":[]},{"id":"new-b","deps":[]}]}"#,
+        ]
+        .join("\n");
+        let r2 = resume_state_from_log(&replanned).unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&r2.plan_json).unwrap();
+        assert_eq!(v2["tasks"].as_array().unwrap().len(), 2);
+        assert_eq!(v2["tasks"][0]["id"], "new-a");
+
+        assert!(resume_state_from_log("").is_none());
+    }
+
+    /// The same reader, against the REAL logs this machine has produced — a fixture can agree with a bug.
+    #[test]
+    fn resume_reads_the_real_run_logs() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let finished = std::path::PathBuf::from(&home).join("goose-builds/loop-ab-baseline/.swarm");
+        if !finished.is_dir() {
+            return; // not this machine — the unit test above still pins the logic
+        }
+        // loop-ab-baseline COMPLETED (run_finished present) => must NOT be resumable.
+        let dir = std::path::PathBuf::from(&home).join("goose-builds/loop-ab-baseline");
+        assert!(
+            resume_state_from_dir(&dir).is_none(),
+            "a run with run_finished must never be offered as resumable"
+        );
+    }
+
     /// The cross-module drift check, over the REAL shipped bug and the REAL working app.
     ///
     /// This is the parser half (the python half is exercised against the actual trees in the loop harness).
@@ -10407,6 +10477,81 @@ fn read_user_notes(root: &std::path::Path) -> String {
 /// These are the highest-value thing to learn: not what this app needed, but what this STACK gets wrong.
 /// Only hints attached to a CORRECTIVE verdict are kept — an "ok/observed" verdict carries no lesson. Pure
 /// over the log text and best-effort: an unreadable log simply yields nothing.
+/// What a previous run of this directory got through, so a new one need not redo it.
+///
+/// WHY THIS EXISTS: Mihai powered off a machine mid-run twice in one day and lost ~2.5h each time. There is
+/// no way to say "stop, I need my hardware" without destroying the run. His scope, verbatim: "don't think of
+/// making it TRUE, it just needs to resume from SOME point, whatever point it is."
+///
+/// That makes it small, because BOTH halves are already durable in the run's own jsonl:
+///   plan_loaded.tasks     — the whole DAG, ids + deps + files. So a resume skips research AND planning,
+///                           which measured 119 of 152 minutes on the baseline: 78% of the run.
+///   task_completed.task_id — every task that finished.
+///
+/// THE RULE THAT MAKES IT SAFE: only a task with a task_completed event is skipped. Anything ambiguous —
+/// in flight when the power went, half-written, never dispatched — simply RE-RUNS and overwrites its own
+/// files. So the failure mode is "we redo a little work", never "we silently skipped something". That
+/// direction is the whole reason this needs no corruption detection.
+#[derive(Debug, Clone)]
+struct ResumeState {
+    /// The plan_loaded event's task array, verbatim — the same shape Dag::from_planner_json already parses.
+    plan_json: String,
+    /// Tasks the previous run finished. REPORTED, not skipped — see the wiring below for why that is
+    /// deliberate and why it is the safe half of this feature.
+    completed: std::collections::HashSet<String>,
+}
+
+/// Read the newest run log in `<dir>/.swarm` and recover what it finished.
+///
+/// Returns None when there is nothing to resume FROM (no log, no plan_loaded) or nothing to resume INTO
+/// (the run already emitted run_finished — a finished run is not a candidate, resuming it would rebuild an
+/// app that is already there).
+fn resume_state_from_dir(dir: &std::path::Path) -> Option<ResumeState> {
+    let mut logs: Vec<_> = std::fs::read_dir(dir.join(".swarm"))
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("run-swarm-") && n.ends_with(".jsonl"))
+        })
+        .collect();
+    logs.sort();
+    resume_state_from_log(&std::fs::read_to_string(logs.last()?).ok()?)
+}
+
+/// The pure half: given a run log's text, what can be resumed? Separate so it is testable against the REAL
+/// logs on disk without a filesystem fixture.
+fn resume_state_from_log(text: &str) -> Option<ResumeState> {
+    let mut plan_json = None;
+    let mut completed = std::collections::HashSet::new();
+    for line in text.lines() {
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match e.get("event").and_then(|x| x.as_str()) {
+            // A run that FINISHED has nothing to resume — its app exists.
+            Some("run_finished") => return None,
+            // LAST plan_loaded wins: a run that re-planned mid-flight ends on the plan it actually built.
+            Some("plan_loaded") => {
+                if let Some(t) = e.get("tasks") {
+                    plan_json = Some(serde_json::json!({ "tasks": t }).to_string());
+                }
+            }
+            Some("task_completed") => {
+                if let Some(id) = e.get("task_id").and_then(|x| x.as_str()) {
+                    completed.insert(id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(ResumeState {
+        plan_json: plan_json?,
+        completed,
+    })
+}
+
 fn judge_lessons_from_log(path: &std::path::Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -13342,115 +13487,161 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
     let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
-    let (plan_json, dag, plan_conf) = loop {
-        // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
-        // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
-        let draft_temp = base_draft_temp.map(|t| (t - 0.05 * retarget_round as f32).max(0.05));
-        let (pj, plan_conf, uncertainties) = if use_parallel {
-            phase_banner(
-                "PLAN",
-                "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
-            );
-            eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
-            let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
-            match dispatcher
-                .parallel_plan(
-                    &cfg.planner_model,
-                    wm,
-                    &opts.prompt,
-                    plan_schema(),
-                    devices.len(),
-                    &research_findings,
-                    effective_best_of_n,
-                    cfg.homogeneous_models,
-                    ask_floor.is_some(),
-                    // Under retarget, measure agreement over the best original-sized consensus subset of the
-                    // grown draft pool (redraft lever grows effective_best_of_n past best_of_n → more draws to
-                    // find a tight cluster). Off retarget: None → full-set measure, byte-identical.
-                    if retarget_on && effective_best_of_n > best_of_n {
-                        Some(best_of_n)
-                    } else {
-                        None
-                    },
-                    draft_temp,
-                    converge,
-                    backbone_on,
-                )
-                .await
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("  parallel planning failed ({e}); falling back to the solo planner");
-                    if ask_floor.is_some() {
+    // RESUME (GOOSE_SWARM_RESUME=1, default OFF). Reuse the last run's PLAN and skip research + planning.
+    //
+    // Mihai lost ~2.5h twice in one day to a machine going off mid-run, and his scope was explicit: "don't
+    // think of making it TRUE, it just needs to resume from SOME point, whatever point it is."
+    //
+    // This resumes from the strongest point that costs nothing to be sure of: the PLAN. Measured on the
+    // baseline, research + planning was 119 of 152 minutes — 78% of the run — and it is fully recoverable
+    // from plan_loaded.tasks. So a resumed run starts building within seconds.
+    //
+    // It deliberately does NOT skip completed TASKS, even though it knows exactly which finished. Skipping
+    // them needs a pre-completed seam in Scheduler::run that does not exist, and a half-built version that
+    // silently skipped a task it had not actually finished would be precisely the false-green this engine
+    // keeps producing. Re-running a finished task is SAFE — the worker overwrites its own files — so the
+    // failure mode here is "we redo some work", never "we skipped something". That asymmetry is the whole
+    // reason this half is shippable tonight and the other half is not.
+    let resume = if swarm_gate("GOOSE_SWARM_RESUME", false) {
+        resume_state_from_dir(&cwd_for_ask)
+    } else {
+        None
+    };
+    if let Some(r) = &resume {
+        let n = serde_json::from_str::<serde_json::Value>(&r.plan_json)
+            .ok()
+            .and_then(|v| v["tasks"].as_array().map(|a| a.len()))
+            .unwrap_or(0);
+        eprintln!(
+            "  {} resuming: reusing the last run's plan ({n} tasks) — skipping research + planning. \
+             {} task(s) finished last time and WILL be re-run (a worker overwrites its own files; skipping \
+             them is not yet safe).",
+            style("↺").cyan().bold(),
+            r.completed.len()
+        );
+        sink.write_value(serde_json::json!({
+            "event": "run_resumed",
+            "tasks": n,
+            "previously_completed": r.completed.len(),
+            "detail": "reused the previous plan; research and planning skipped. Completed tasks are re-run.",
+        }));
+    }
+    let (plan_json, dag, plan_conf) = if let Some(r) = resume {
+        let dag = Dag::from_planner_json(&r.plan_json)
+            .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
+        (r.plan_json, dag, PlanConf::default())
+    } else {
+        loop {
+            // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
+            // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
+            let draft_temp = base_draft_temp.map(|t| (t - 0.05 * retarget_round as f32).max(0.05));
+            let (pj, plan_conf, uncertainties) = if use_parallel {
+                phase_banner(
+                    "PLAN",
+                    "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
+                );
+                eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
+                let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+                match dispatcher
+                    .parallel_plan(
+                        &cfg.planner_model,
+                        wm,
+                        &opts.prompt,
+                        plan_schema(),
+                        devices.len(),
+                        &research_findings,
+                        effective_best_of_n,
+                        cfg.homogeneous_models,
+                        ask_floor.is_some(),
+                        // Under retarget, measure agreement over the best original-sized consensus subset of the
+                        // grown draft pool (redraft lever grows effective_best_of_n past best_of_n → more draws to
+                        // find a tight cluster). Off retarget: None → full-set measure, byte-identical.
+                        if retarget_on && effective_best_of_n > best_of_n {
+                            Some(best_of_n)
+                        } else {
+                            None
+                        },
+                        draft_temp,
+                        converge,
+                        backbone_on,
+                    )
+                    .await
+                {
+                    Ok(t) => t,
+                    Err(e) => {
                         eprintln!(
+                            "  parallel planning failed ({e}); falling back to the solo planner"
+                        );
+                        if ask_floor.is_some() {
+                            eprintln!(
                             "  {} GOOSE_SWARM_ASK_FLOOR is inert on the solo fallback (no confidence signal)",
                             style("!").yellow()
                         );
+                        }
+                        dispatcher
+                            .plan(
+                                &cfg.planner_model,
+                                &opts.prompt,
+                                plan_schema(),
+                                devices.len(),
+                                &research_findings,
+                            )
+                            .await?
                     }
-                    dispatcher
-                        .plan(
-                            &cfg.planner_model,
-                            &opts.prompt,
-                            plan_schema(),
-                            devices.len(),
-                            &research_findings,
-                        )
-                        .await?
                 }
-            }
-        } else {
-            phase_banner(
-                "PLAN",
-                "27B builds the task DAG ALONE — workers idle while it reasons",
-            );
-            eprintln!(
-                "  planning on {} (targeting {} workers) ...",
-                cfg.planner_model,
-                devices.len()
-            );
-            dispatcher
-                .plan(
-                    &cfg.planner_model,
-                    &opts.prompt,
-                    plan_schema(),
-                    devices.len(),
-                    &research_findings,
-                )
-                .await?
-        };
-        let dag = Dag::from_planner_json(&pj)
-            .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
-        eprintln!("  plan: {} subtask(s)", dag.tasks.len());
-        // CONFIDENCE GATE: retarget to raise confidence, then ask the user once if still below the floor.
-        if let (Some(floor), Some(conf)) = (ask_floor, plan_conf.final_conf) {
-            // Monotonic best (retarget only): remember the highest-confidence plan so a re-draft that happens
-            // to diverge can never ship worse than the best already measured.
-            if retarget_on
-                && best_plan
-                    .as_ref()
-                    .is_none_or(|(_, b)| conf > b.final_conf.unwrap_or(0))
-            {
-                best_plan = Some((pj.clone(), plan_conf.clone()));
-            }
-            if conf < floor {
-                // RETARGET (before the one-shot ask): when AGREEMENT is the binding signal, re-draft toward a
-                // consensus by growing best-of-N and re-measuring. Spec-clarity / undefined-product cases fall
-                // through to the ask (only the user can pin those). Bounded by retarget_cap + RETARGET_MAX_N.
-                // STALL GUARD: judge the round that just finished before spending another one. A redraft that
-                // failed to beat the best confidence already measured is evidence the ladder is not climbing,
-                // and every further rung costs a full planning pass across the fleet (~20 min measured) to
-                // ship a plan `best_plan` is already holding.
-                let improved = best_conf_seen.is_none_or(|b| conf > b);
-                if stall_guard_on && retarget_round > 0 && !improved {
-                    stalled_rounds += 1;
+            } else {
+                phase_banner(
+                    "PLAN",
+                    "27B builds the task DAG ALONE — workers idle while it reasons",
+                );
+                eprintln!(
+                    "  planning on {} (targeting {} workers) ...",
+                    cfg.planner_model,
+                    devices.len()
+                );
+                dispatcher
+                    .plan(
+                        &cfg.planner_model,
+                        &opts.prompt,
+                        plan_schema(),
+                        devices.len(),
+                        &research_findings,
+                    )
+                    .await?
+            };
+            let dag = Dag::from_planner_json(&pj)
+                .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
+            eprintln!("  plan: {} subtask(s)", dag.tasks.len());
+            // CONFIDENCE GATE: retarget to raise confidence, then ask the user once if still below the floor.
+            if let (Some(floor), Some(conf)) = (ask_floor, plan_conf.final_conf) {
+                // Monotonic best (retarget only): remember the highest-confidence plan so a re-draft that happens
+                // to diverge can never ship worse than the best already measured.
+                if retarget_on
+                    && best_plan
+                        .as_ref()
+                        .is_none_or(|(_, b)| conf > b.final_conf.unwrap_or(0))
+                {
+                    best_plan = Some((pj.clone(), plan_conf.clone()));
                 }
-                if improved {
-                    stalled_rounds = 0;
-                }
-                best_conf_seen = Some(best_conf_seen.map_or(conf, |b| b.max(conf)));
-                let stalled = stall_guard_on && stalled_rounds >= stall_tolerance;
-                if stalled {
-                    sink.write_value(serde_json::json!({
+                if conf < floor {
+                    // RETARGET (before the one-shot ask): when AGREEMENT is the binding signal, re-draft toward a
+                    // consensus by growing best-of-N and re-measuring. Spec-clarity / undefined-product cases fall
+                    // through to the ask (only the user can pin those). Bounded by retarget_cap + RETARGET_MAX_N.
+                    // STALL GUARD: judge the round that just finished before spending another one. A redraft that
+                    // failed to beat the best confidence already measured is evidence the ladder is not climbing,
+                    // and every further rung costs a full planning pass across the fleet (~20 min measured) to
+                    // ship a plan `best_plan` is already holding.
+                    let improved = best_conf_seen.is_none_or(|b| conf > b);
+                    if stall_guard_on && retarget_round > 0 && !improved {
+                        stalled_rounds += 1;
+                    }
+                    if improved {
+                        stalled_rounds = 0;
+                    }
+                    best_conf_seen = Some(best_conf_seen.map_or(conf, |b| b.max(conf)));
+                    let stalled = stall_guard_on && stalled_rounds >= stall_tolerance;
+                    if stalled {
+                        sink.write_value(serde_json::json!({
                         "event": "confidence_retarget",
                         "round": retarget_round,
                         "binding_signal": "none",
@@ -13463,67 +13654,67 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             best_conf_seen.unwrap_or(conf)
                         ),
                     }));
-                    eprintln!(
-                        "  {} retarget stalled at {}/100 — not spending another draft round",
-                        style("↯").yellow(),
-                        best_conf_seen.unwrap_or(conf)
-                    );
-                }
-                if retarget_on && !stalled && retarget_round < retarget_cap {
-                    // GOOSE_SWARM_NO_TOOLS_MEANS_ASK (default OFF): when ON, a run with no lookup tools
-                    // may not route an open decision to research — it asks the human instead. `can_research`
-                    // is the SAME signal the run reported in its research_tools event, read from the engine
-                    // rather than remembered, so the routing and the reported fact cannot drift apart.
-                    // OFF => `may_research` is unconditionally true => byte-identical to before this lever.
-                    let may_research = !swarm_gate_cfg(
-                        "GOOSE_SWARM_NO_TOOLS_MEANS_ASK",
-                        load_config().no_tools_means_ask,
-                    ) || can_research;
-                    match retarget_action(
-                        &plan_conf,
-                        effective_best_of_n < RETARGET_MAX_N,
-                        may_research,
-                    ) {
-                        RetargetAction::Redraft => {
-                            // AGREEMENT binds: the fixed weak fleet's drafts diverge on structure. Grow the
-                            // best-of-N draft budget and re-measure — more independent drafts under the
-                            // convergence prompt raise the agreement half without a bigger model.
-                            retarget_round += 1;
-                            let prev = effective_best_of_n;
-                            effective_best_of_n =
-                                (effective_best_of_n + retarget_step).min(RETARGET_MAX_N);
-                            eprintln!(
+                        eprintln!(
+                            "  {} retarget stalled at {}/100 — not spending another draft round",
+                            style("↯").yellow(),
+                            best_conf_seen.unwrap_or(conf)
+                        );
+                    }
+                    if retarget_on && !stalled && retarget_round < retarget_cap {
+                        // GOOSE_SWARM_NO_TOOLS_MEANS_ASK (default OFF): when ON, a run with no lookup tools
+                        // may not route an open decision to research — it asks the human instead. `can_research`
+                        // is the SAME signal the run reported in its research_tools event, read from the engine
+                        // rather than remembered, so the routing and the reported fact cannot drift apart.
+                        // OFF => `may_research` is unconditionally true => byte-identical to before this lever.
+                        let may_research = !swarm_gate_cfg(
+                            "GOOSE_SWARM_NO_TOOLS_MEANS_ASK",
+                            load_config().no_tools_means_ask,
+                        ) || can_research;
+                        match retarget_action(
+                            &plan_conf,
+                            effective_best_of_n < RETARGET_MAX_N,
+                            may_research,
+                        ) {
+                            RetargetAction::Redraft => {
+                                // AGREEMENT binds: the fixed weak fleet's drafts diverge on structure. Grow the
+                                // best-of-N draft budget and re-measure — more independent drafts under the
+                                // convergence prompt raise the agreement half without a bigger model.
+                                retarget_round += 1;
+                                let prev = effective_best_of_n;
+                                effective_best_of_n =
+                                    (effective_best_of_n + retarget_step).min(RETARGET_MAX_N);
+                                eprintln!(
                                 "  {} retargeting confidence: re-drafting toward consensus (best_of_n {prev}→{effective_best_of_n})",
                                 style("↻").cyan()
                             );
-                            sink.write_value(serde_json::json!({
-                                "event": "confidence_retarget",
-                                "round": retarget_round,
-                                "binding_signal": "agreement",
-                                "action": "redraft",
-                                "conf_before": conf,
-                                "conf_after": serde_json::Value::Null,
-                                "detail": format!("best_of_n {prev}→{effective_best_of_n}"),
-                            }));
-                            continue;
-                        }
-                        RetargetAction::ReResearch(decisions) => {
-                            // SPEC-CLARITY binds but the PRODUCT is defined and the open decisions are
-                            // lookupable secondary choices (library/API/convention — not "what to build").
-                            // Research them across the fleet and fold the concrete answers back into the SPEC
-                            // (the clarity probe reads the goal, not the findings) so the re-plan's probe sees
-                            // fewer open decisions — raising spec-clarity without bothering the user. Bounded
-                            // by retarget_cap; only marks a decision settled when research returned substance.
-                            retarget_round += 1;
-                            let picked: Vec<String> =
-                                decisions.into_iter().take(RETARGET_MAX_N).collect();
-                            eprintln!(
+                                sink.write_value(serde_json::json!({
+                                    "event": "confidence_retarget",
+                                    "round": retarget_round,
+                                    "binding_signal": "agreement",
+                                    "action": "redraft",
+                                    "conf_before": conf,
+                                    "conf_after": serde_json::Value::Null,
+                                    "detail": format!("best_of_n {prev}→{effective_best_of_n}"),
+                                }));
+                                continue;
+                            }
+                            RetargetAction::ReResearch(decisions) => {
+                                // SPEC-CLARITY binds but the PRODUCT is defined and the open decisions are
+                                // lookupable secondary choices (library/API/convention — not "what to build").
+                                // Research them across the fleet and fold the concrete answers back into the SPEC
+                                // (the clarity probe reads the goal, not the findings) so the re-plan's probe sees
+                                // fewer open decisions — raising spec-clarity without bothering the user. Bounded
+                                // by retarget_cap; only marks a decision settled when research returned substance.
+                                retarget_round += 1;
+                                let picked: Vec<String> =
+                                    decisions.into_iter().take(RETARGET_MAX_N).collect();
+                                eprintln!(
                                 "  {} retargeting confidence: researching {} open decision(s) instead of asking",
                                 style("↻").cyan(),
                                 picked.len()
                             );
-                            let short_goal: String = opts.prompt.chars().take(200).collect();
-                            let questions: Vec<ResearchQuestion> = picked
+                                let short_goal: String = opts.prompt.chars().take(200).collect();
+                                let questions: Vec<ResearchQuestion> = picked
                                 .iter()
                                 .enumerate()
                                 .map(|(i, d)| ResearchQuestion {
@@ -13535,81 +13726,81 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     kind: "web".to_string(),
                                 })
                                 .collect();
-                            let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
-                                ["context7", "web-search"]
-                                    .into_iter()
-                                    .filter_map(build_worker_extension)
-                                    .collect(),
-                            );
-                            let worker_models: Vec<String> =
-                                devices.iter().map(|d| d.model_id.clone()).collect();
-                            let findings = dispatcher
-                                .run_research(questions, research_exts, worker_models)
-                                .await;
-                            // GROUNDED vs INVENTED (the #94 fix). A finding is "settled" only if the agent
-                            // actually LOOKED SOMETHING UP. An ungrounded finding is the model's own guess —
-                            // it may be useful planning CONTEXT, but it must NOT silently close a decision or
-                            // stamp it "do not re-ask", because a product decision ("case-sensitive search?")
-                            // is in the USER's head and no amount of reasoning can resolve it. When this
-                            // suppression is OFF (default) the old behaviour holds: any non-empty finding
-                            // counts, byte-identical.
-                            let grounded_only = swarm_gate_cfg(
-                                "GOOSE_SWARM_GROUNDED_RESEARCH_ONLY",
-                                cfg.grounded_research_only,
-                            );
-                            let mut settled = 0usize; // counts toward "do not re-ask"
-                            let mut invented = 0usize; // not counted as settled (only possible when gated)
-                            let mut grounded_n = 0usize; // ACTUALLY looked something up
-                            let mut resolutions: Vec<serde_json::Value> = Vec::new();
-                            for f in &findings {
-                                if f.findings.trim().is_empty() {
-                                    continue;
-                                }
-                                // ALL findings are planning context regardless of grounding.
-                                research_findings.push_str(&format!(
-                                    "\n\n### [retarget:{}] {}\n{}",
-                                    f.kind, f.question, f.findings
-                                ));
-                                if f.grounded {
-                                    grounded_n += 1;
-                                }
-                                let counts = f.grounded || !grounded_only;
-                                if counts {
-                                    settled += 1;
-                                } else {
-                                    invented += 1;
-                                }
-                                // AUDITABILITY: "N resolved" said nothing about what or on what basis. Record
-                                // the decision, whether it was grounded, and the tools that grounded it.
-                                resolutions.push(serde_json::json!({
-                                    "decision": f.question,
-                                    "grounded": f.grounded,
-                                    "lookups": f.lookups,
-                                    "counted_settled": counts,
-                                }));
-                            }
-                            if settled > 0 {
-                                opts.prompt.push_str(
-                                    "\n\n[Design decisions resolved by targeted research — treat these as settled defaults, do not re-ask]\n",
+                                let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
+                                    ["context7", "web-search"]
+                                        .into_iter()
+                                        .filter_map(build_worker_extension)
+                                        .collect(),
                                 );
+                                let worker_models: Vec<String> =
+                                    devices.iter().map(|d| d.model_id.clone()).collect();
+                                let findings = dispatcher
+                                    .run_research(questions, research_exts, worker_models)
+                                    .await;
+                                // GROUNDED vs INVENTED (the #94 fix). A finding is "settled" only if the agent
+                                // actually LOOKED SOMETHING UP. An ungrounded finding is the model's own guess —
+                                // it may be useful planning CONTEXT, but it must NOT silently close a decision or
+                                // stamp it "do not re-ask", because a product decision ("case-sensitive search?")
+                                // is in the USER's head and no amount of reasoning can resolve it. When this
+                                // suppression is OFF (default) the old behaviour holds: any non-empty finding
+                                // counts, byte-identical.
+                                let grounded_only = swarm_gate_cfg(
+                                    "GOOSE_SWARM_GROUNDED_RESEARCH_ONLY",
+                                    cfg.grounded_research_only,
+                                );
+                                let mut settled = 0usize; // counts toward "do not re-ask"
+                                let mut invented = 0usize; // not counted as settled (only possible when gated)
+                                let mut grounded_n = 0usize; // ACTUALLY looked something up
+                                let mut resolutions: Vec<serde_json::Value> = Vec::new();
                                 for f in &findings {
-                                    if f.findings.trim().is_empty()
-                                        || (grounded_only && !f.grounded)
-                                    {
+                                    if f.findings.trim().is_empty() {
                                         continue;
                                     }
-                                    let excerpt: String = f
-                                        .findings
-                                        .split_whitespace()
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                        .chars()
-                                        .take(280)
-                                        .collect();
-                                    opts.prompt.push_str(&format!("- {excerpt}\n"));
+                                    // ALL findings are planning context regardless of grounding.
+                                    research_findings.push_str(&format!(
+                                        "\n\n### [retarget:{}] {}\n{}",
+                                        f.kind, f.question, f.findings
+                                    ));
+                                    if f.grounded {
+                                        grounded_n += 1;
+                                    }
+                                    let counts = f.grounded || !grounded_only;
+                                    if counts {
+                                        settled += 1;
+                                    } else {
+                                        invented += 1;
+                                    }
+                                    // AUDITABILITY: "N resolved" said nothing about what or on what basis. Record
+                                    // the decision, whether it was grounded, and the tools that grounded it.
+                                    resolutions.push(serde_json::json!({
+                                        "decision": f.question,
+                                        "grounded": f.grounded,
+                                        "lookups": f.lookups,
+                                        "counted_settled": counts,
+                                    }));
                                 }
-                            }
-                            sink.write_value(serde_json::json!({
+                                if settled > 0 {
+                                    opts.prompt.push_str(
+                                    "\n\n[Design decisions resolved by targeted research — treat these as settled defaults, do not re-ask]\n",
+                                );
+                                    for f in &findings {
+                                        if f.findings.trim().is_empty()
+                                            || (grounded_only && !f.grounded)
+                                        {
+                                            continue;
+                                        }
+                                        let excerpt: String = f
+                                            .findings
+                                            .split_whitespace()
+                                            .collect::<Vec<_>>()
+                                            .join(" ")
+                                            .chars()
+                                            .take(280)
+                                            .collect();
+                                        opts.prompt.push_str(&format!("- {excerpt}\n"));
+                                    }
+                                }
+                                sink.write_value(serde_json::json!({
                                 "event": "confidence_retarget",
                                 "round": retarget_round,
                                 "binding_signal": "spec_clarity",
@@ -13630,58 +13821,58 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // looked up. The research is no longer a black box that emits only a count.
                                 "resolutions": resolutions,
                             }));
-                            // Only loop back if research actually settled something; otherwise fall through to
-                            // the ask so we don't burn rounds re-researching decisions the fleet can't answer —
-                            // and, under grounded_only, so an all-invented round ASKS the user instead of
-                            // laundering guesses into "settled".
-                            if settled > 0 {
-                                continue;
+                                // Only loop back if research actually settled something; otherwise fall through to
+                                // the ask so we don't burn rounds re-researching decisions the fleet can't answer —
+                                // and, under grounded_only, so an all-invented round ASKS the user instead of
+                                // laundering guesses into "settled".
+                                if settled > 0 {
+                                    continue;
+                                }
                             }
+                            RetargetAction::Ask | RetargetAction::None => {}
                         }
-                        RetargetAction::Ask | RetargetAction::None => {}
+                    } else if retarget_on && retarget_round >= retarget_cap {
+                        sink.write_value(serde_json::json!({
+                            "event": "confidence_retarget",
+                            "round": retarget_round,
+                            "binding_signal": "none",
+                            "action": "proceed_at_cap",
+                            "conf_before": conf,
+                            "conf_after": conf,
+                            "detail": "round cap reached — proceeding with the best plan",
+                        }));
                     }
-                } else if retarget_on && retarget_round >= retarget_cap {
-                    sink.write_value(serde_json::json!({
-                        "event": "confidence_retarget",
-                        "round": retarget_round,
-                        "binding_signal": "none",
-                        "action": "proceed_at_cap",
-                        "conf_before": conf,
-                        "conf_after": conf,
-                        "detail": "round cap reached — proceeding with the best plan",
-                    }));
-                }
-                if !asked {
-                    asked = true;
-                    // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
-                    // (never proceeds on a default): (1) a dedicated LLM generator writes crisp interrogatives
-                    // from the spec + plan + uncertainties; (2) else split the model's raw uncertainties; (3)
-                    // else one generic high-value question.
-                    let mut questions = dispatcher
-                        .clarify_questions(
-                            &cfg.planner_model,
-                            &opts.prompt,
-                            &pj,
-                            &uncertainties,
-                            conf,
-                            ask_max_q as u32,
-                        )
-                        .await;
-                    if questions.is_empty() {
-                        questions = uncertainties
-                            .split(';')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| s.len() >= 4)
-                            .take(ask_max_q)
-                            .map(|s| ClarifyQuestion {
-                                question: s,
-                                options: Vec::new(),
-                                resolves: String::new(),
-                            })
-                            .collect();
-                    }
-                    if questions.is_empty() {
-                        questions.push(ClarifyQuestion {
+                    if !asked {
+                        asked = true;
+                        // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
+                        // (never proceeds on a default): (1) a dedicated LLM generator writes crisp interrogatives
+                        // from the spec + plan + uncertainties; (2) else split the model's raw uncertainties; (3)
+                        // else one generic high-value question.
+                        let mut questions = dispatcher
+                            .clarify_questions(
+                                &cfg.planner_model,
+                                &opts.prompt,
+                                &pj,
+                                &uncertainties,
+                                conf,
+                                ask_max_q as u32,
+                            )
+                            .await;
+                        if questions.is_empty() {
+                            questions = uncertainties
+                                .split(';')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| s.len() >= 4)
+                                .take(ask_max_q)
+                                .map(|s| ClarifyQuestion {
+                                    question: s,
+                                    options: Vec::new(),
+                                    resolves: String::new(),
+                                })
+                                .collect();
+                        }
+                        if questions.is_empty() {
+                            questions.push(ClarifyQuestion {
                         question: format!(
                             "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
                             opts.prompt
@@ -13689,43 +13880,43 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         options: Vec::new(),
                         resolves: String::new(),
                     });
-                    }
-                    // Always engage the handshake when below floor (the harness IS the human).
-                    let qa = ask_clarifying_questions(
-                        &questions,
-                        &cwd_for_ask,
-                        conf,
-                        breakdown_json(&plan_conf),
-                        ask_wait_secs,
-                        sink.as_ref(),
-                    )
-                    .await;
-                    if !qa.is_empty() {
-                        // Label it inside the findings too — the findings block renders as "Prior research
-                        // findings", which reads advisory; these are the user's binding choices, not research.
-                        research_findings.push_str(
-                            "\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n",
-                        );
-                        research_findings.push_str(&qa);
-                        // Answers must WIN: drop any higher-agreement pre-answer plan so the monotonic-best
-                        // selection at break can never resurrect a plan that ignores the user's clarifications.
-                        if retarget_on {
-                            best_plan = None;
                         }
-                        // Fold the answers into the SPEC too, not only the findings: target-language detection reads
-                        // the PROMPT (never the findings), so a language choice like "Rust" was previously invisible
-                        // and the run silently stayed on the Python default (the exact miss: user picked Rust, got
-                        // Python). A language change is STRUCTURAL — the reused plan's file names are the wrong
-                        // language and cannot be corrected by injecting worker text — so it FORCES a re-plan
-                        // (overriding the reuse default) to re-draft the skeleton in the chosen language. This is
-                        // safe: the ask fires before any worker writes a file, so the tree is still empty and the
-                        // amended spec (not stale files) drives detect_language on the re-plan.
-                        let lang_before = detect_language(&opts.prompt, &[]);
-                        // BINDING framing, not "clarifications": measured twice that a weak worker treats a
-                        // soft-framed answer as advisory and substitutes its own convention (asked for
-                        // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
-                        // variant). The answers are the user's explicit choices — say so imperatively.
-                        opts.prompt.push_str(
+                        // Always engage the handshake when below floor (the harness IS the human).
+                        let qa = ask_clarifying_questions(
+                            &questions,
+                            &cwd_for_ask,
+                            conf,
+                            breakdown_json(&plan_conf),
+                            ask_wait_secs,
+                            sink.as_ref(),
+                        )
+                        .await;
+                        if !qa.is_empty() {
+                            // Label it inside the findings too — the findings block renders as "Prior research
+                            // findings", which reads advisory; these are the user's binding choices, not research.
+                            research_findings.push_str(
+                                "\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n",
+                            );
+                            research_findings.push_str(&qa);
+                            // Answers must WIN: drop any higher-agreement pre-answer plan so the monotonic-best
+                            // selection at break can never resurrect a plan that ignores the user's clarifications.
+                            if retarget_on {
+                                best_plan = None;
+                            }
+                            // Fold the answers into the SPEC too, not only the findings: target-language detection reads
+                            // the PROMPT (never the findings), so a language choice like "Rust" was previously invisible
+                            // and the run silently stayed on the Python default (the exact miss: user picked Rust, got
+                            // Python). A language change is STRUCTURAL — the reused plan's file names are the wrong
+                            // language and cannot be corrected by injecting worker text — so it FORCES a re-plan
+                            // (overriding the reuse default) to re-draft the skeleton in the chosen language. This is
+                            // safe: the ask fires before any worker writes a file, so the tree is still empty and the
+                            // amended spec (not stale files) drives detect_language on the re-plan.
+                            let lang_before = detect_language(&opts.prompt, &[]);
+                            // BINDING framing, not "clarifications": measured twice that a weak worker treats a
+                            // soft-framed answer as advisory and substitutes its own convention (asked for
+                            // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
+                            // variant). The answers are the user's explicit choices — say so imperatively.
+                            opts.prompt.push_str(
                             "\n\n## USER DECISIONS — BINDING\n\
                              The user was ASKED and chose the following. Implement each EXACTLY as written. Do \
                              NOT paraphrase it, rename it, or substitute your own convention/format — if a \
@@ -13733,51 +13924,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                              verbatim. These override any conflicting habit or default you would otherwise \
                              pick:\n",
                         );
-                        opts.prompt.push_str(&qa);
-                        let lang_after = detect_language(&opts.prompt, &[]);
-                        let lang_changed = lang_after != lang_before;
-                        // A product-defining answer is STRUCTURAL like a language change: when the ask fired
-                        // because the PRODUCT was undefined (product_specified=false — the vague "build
-                        // something useful" case), the drafted plan is a placeholder for a product the user
-                        // hadn't chosen, so reusing it and injecting the answer as worker text would build the
-                        // WRONG thing. Pinning the product forces a re-plan so the skeleton matches the chosen
-                        // product. Safe: the ask fires before any worker writes a file, so the amended spec
-                        // (not stale files) drives the re-plan.
-                        let product_defined_by_answer = !plan_conf.product_specified;
-                        if ask_replan || lang_changed || product_defined_by_answer {
+                            opts.prompt.push_str(&qa);
+                            let lang_after = detect_language(&opts.prompt, &[]);
+                            let lang_changed = lang_after != lang_before;
+                            // A product-defining answer is STRUCTURAL like a language change: when the ask fired
+                            // because the PRODUCT was undefined (product_specified=false — the vague "build
+                            // something useful" case), the drafted plan is a placeholder for a product the user
+                            // hadn't chosen, so reusing it and injecting the answer as worker text would build the
+                            // WRONG thing. Pinning the product forces a re-plan so the skeleton matches the chosen
+                            // product. Safe: the ask fires before any worker writes a file, so the amended spec
+                            // (not stale files) drives the re-plan.
+                            let product_defined_by_answer = !plan_conf.product_specified;
+                            if ask_replan || lang_changed || product_defined_by_answer {
+                                eprintln!(
+                                    "  {} re-planning with the user's clarifications{}",
+                                    style("↻").cyan(),
+                                    if lang_changed {
+                                        format!(" (target language → {lang_after:?})")
+                                    } else if product_defined_by_answer {
+                                        " (product now defined by your answer)".to_string()
+                                    } else {
+                                        String::new()
+                                    }
+                                );
+                                continue;
+                            }
                             eprintln!(
-                                "  {} re-planning with the user's clarifications{}",
-                                style("↻").cyan(),
-                                if lang_changed {
-                                    format!(" (target language → {lang_after:?})")
-                                } else if product_defined_by_answer {
-                                    " (product now defined by your answer)".to_string()
-                                } else {
-                                    String::new()
-                                }
-                            );
-                            continue;
-                        }
-                        eprintln!(
                         "  {} keeping this plan; clarifications injected into every worker via research findings + spec (set GOOSE_SWARM_ASK_REPLAN=1 to force a re-plan)",
                         style("✓").green()
                     );
+                        }
                     }
                 }
             }
-        }
-        // Retarget ships the monotonic BEST plan measured this run (never worse than the current). The
-        // ask-only path leaves best_plan None, so it falls through to the current plan exactly as before.
-        if retarget_on {
-            if let Some((bpj, bpc)) = best_plan.take() {
-                if bpc.final_conf.unwrap_or(0) >= plan_conf.final_conf.unwrap_or(0) {
-                    let bdag = Dag::from_planner_json(&bpj)
-                        .map_err(|e| anyhow!("invalid best retarget plan: {e}"))?;
-                    break (bpj, bdag, bpc);
+            // Retarget ships the monotonic BEST plan measured this run (never worse than the current). The
+            // ask-only path leaves best_plan None, so it falls through to the current plan exactly as before.
+            if retarget_on {
+                if let Some((bpj, bpc)) = best_plan.take() {
+                    if bpc.final_conf.unwrap_or(0) >= plan_conf.final_conf.unwrap_or(0) {
+                        let bdag = Dag::from_planner_json(&bpj)
+                            .map_err(|e| anyhow!("invalid best retarget plan: {e}"))?;
+                        break (bpj, bdag, bpc);
+                    }
                 }
             }
+            break (pj, dag, plan_conf);
         }
-        break (pj, dag, plan_conf);
     };
 
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
