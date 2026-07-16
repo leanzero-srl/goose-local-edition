@@ -332,6 +332,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_USER_NOTES env overrides.
     #[serde(default)]
     pub user_notes: bool,
+    /// Parse the frozen contract stubs and record WHAT was frozen in the contracts event. Today the bundle is
+    /// accepted raw on a non-empty check and its text is never persisted, so the interface every worker is
+    /// told to honour cannot be audited afterwards. Observability only — it gates nothing. OFF by default.
+    /// GOOSE_SWARM_CONTRACT_VALIDATE env overrides.
+    #[serde(default)]
+    pub contract_validate: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -406,6 +412,7 @@ impl Default for SwarmConfig {
             sink_prebuild: false,
             persona: false,
             user_notes: false,
+            contract_validate: false,
         }
     }
 }
@@ -9468,6 +9475,87 @@ struct PersonaSnapshot {
     judge_lessons: Vec<String>,
 }
 
+/// Validate the frozen contract bundle and turn it into an AUDITABLE ARTIFACT.
+///
+/// Today the bundle is the weakest evidence in the run, treated as the strongest: `generate_contracts` takes
+/// the model's reply RAW — the only check is that it is non-empty — concatenates it into a prompt blob, and
+/// emits `contracts{modules:N, frozen:true}` WITHOUT the stub text. So the interface every worker is told to
+/// honour is never parsed, never checked, and never written down. It dies with the process, and nothing can
+/// audit afterwards what was actually frozen.
+///
+/// That the model disobeys this exact prompt is not a hypothesis: the engine already ships cleanup for
+/// "stray stub file(s) the stub-gen wrote" because a weak model writes files despite being told "MUST NOT
+/// create, write, or edit ANY file". A prompt that says "NO prose, NO code fences" is exactly as unenforced.
+///
+/// This does NOT gate anything. A contract mismatch cannot say whether the module or the CONTRACT is wrong —
+/// and the contract is a pre-build guess from one 75s call to a weak model, while the module has survived
+/// real imports, its own tests and the sink. Reding a built artifact against a pre-build prediction is the
+/// pillar-check bug, whose own remedy is recorded in this file: "remove the guess, not mitigate it
+/// downstream". So: MEASURE first. Emit what was frozen and whether it even parses.
+const CONTRACT_VALIDATE_SCRIPT: &str = r####"
+import ast, json, sys
+bundle = sys.stdin.read()
+out = []
+cur, buf = None, []
+def flush():
+    if cur is None:
+        return
+    text = chr(10).join(buf)
+    entry = {"module": cur, "bytes": len(text)}
+    try:
+        tree = ast.parse(text)
+        names = sorted({
+            n.name for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and not n.name.startswith("_")
+        })
+        entry["parsed"] = True
+        entry["public"] = names
+    except SyntaxError as e:
+        # A stub that will not parse is not an interface — it is prose, a code fence, or an apology.
+        entry["parsed"] = False
+        entry["error"] = str(e).split("(")[0].strip()[:80]
+        entry["public"] = []
+    out.append(entry)
+for line in bundle.splitlines():
+    if line.startswith("### module: "):
+        flush()
+        cur, buf = line[len("### module: "):].strip(), []
+    elif cur is not None:
+        buf.append(line)
+flush()
+print(json.dumps({"modules": out}))
+"####;
+
+/// Run the validator over a frozen bundle. Fails OPEN: no python3, a crash, or unparseable output yields
+/// None and changes nothing — this is observability, and observability must never break a run.
+async fn validate_contract_bundle(bundle: &str) -> Option<serde_json::Value> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg(CONTRACT_VALIDATE_SCRIPT)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    child
+        .stdin
+        .take()?
+        .write_all(bundle.as_bytes())
+        .await
+        .ok()?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output())
+        .await
+        .ok()?
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
 /// QUEUED USER NOTES (GOOSE_SWARM_USER_NOTES, default OFF).
 ///
 /// A swarm run is 2+ hours. Today the ONLY user input channel is the one-shot clarify ask at planning time —
@@ -12794,6 +12882,40 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if bundle.trim().is_empty() {
                 eprintln!("  contracts: no stubs produced — skipping injection");
             } else {
+                // Validate BEFORE the move: set_contracts takes ownership of the bundle.
+                // Deterministic: ast.parse each stub. Fails OPEN — no python3 / a crash / bad output yields
+                // null and changes nothing. Gated because it costs one python3 call; observability only,
+                // it gates NOTHING (a mismatch cannot say whether the module or the CONTRACT is wrong, and
+                // reding a built artifact against a pre-build guess is the pillar-check bug).
+                let contract_validation = if swarm_gate_cfg(
+                    "GOOSE_SWARM_CONTRACT_VALIDATE",
+                    load_config().contract_validate,
+                ) {
+                    let v = validate_contract_bundle(&bundle).await;
+                    if let Some(val) = &v {
+                        let mods = val.get("modules").and_then(|m| m.as_array());
+                        let bad = mods
+                            .map(|a| {
+                                a.iter()
+                                    .filter(|m| {
+                                        m.get("parsed") == Some(&serde_json::Value::Bool(false))
+                                    })
+                                    .count()
+                            })
+                            .unwrap_or(0);
+                        if bad > 0 {
+                            eprintln!(
+                                "  {} {} of {} frozen contract stub(s) do NOT parse — those modules were handed prose, not an interface",
+                                style("contracts:").yellow().bold(),
+                                bad,
+                                mods.map(|a| a.len()).unwrap_or(0),
+                            );
+                        }
+                    }
+                    v.unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::Value::Null
+                };
                 dispatcher.set_contracts(bundle);
                 eprintln!("  contracts: frozen interfaces injected into every worker");
                 // The one class-A CONTRACTS milestone for the phase TODO: interfaces were actually frozen
@@ -12802,6 +12924,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "event": "contracts",
                     "modules": n_modules,
                     "frozen": true,
+                    // WHAT was actually frozen, and whether it even parses. Until now this event said only
+                    // "N modules, frozen: true" — the stub TEXT was never written anywhere, so the interface
+                    // every worker is told to honour died with the process and could not be audited. It is
+                    // also the weakest evidence in the run (one 75s call to a weak model, accepted raw on a
+                    // non-empty check) being treated as the strongest. MEASURE it before anyone gates on it.
+                    "validated": contract_validation,
                 }));
             }
         }

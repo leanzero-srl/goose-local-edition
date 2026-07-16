@@ -84,6 +84,10 @@ export interface SwarmConfig {
   /** Let the user add background notes WHILE a build runs; they are folded into the next dispatched worker,
    *  so a live worker is never disturbed. Advisory — the spec always wins. Default OFF. */
   user_notes?: boolean;
+  /** Parse the frozen contract stubs and record what was frozen in the contracts event. Today the bundle is
+   *  accepted raw on a non-empty check and never persisted, so it cannot be audited. Measures, gates nothing.
+   *  Default OFF. */
+  contract_validate?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 

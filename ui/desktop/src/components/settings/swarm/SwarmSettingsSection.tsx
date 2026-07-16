@@ -505,6 +505,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Check the agreed interfaces are real"
+                  hint="before building, goose freezes an interface contract so parallel workers agree. It is never checked — a worker can be handed prose instead of an interface and nobody knows. This records what was actually frozen and whether it parses. It only reports; it changes nothing about the build."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.contract_validate}
+                    onChange={(v) => set({ contract_validate: v })}
+                  />
+                </Row>
+                <Row
                   label="Let me add notes while it builds"
                   hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
                 >
