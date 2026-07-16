@@ -2550,10 +2550,38 @@ ipcMain.handle(
       }
       // force+no errorOnExist so an update REPLACES the files it carries. Files only in the destination are
       // left alone: cp does not prune, so anything goose wrote that Claude Code does not know about survives.
-      await fs.cp(s, d, {
+      //
+      // Resolve the skill dir itself, but ONLY the top level.
+      //
+      // A Claude skill is often a SYMLINK into a real project — six of Mihai's point at
+      // ~/Projects/skill-jira-forge/. cp defaults to dereference:false, so it copies the LINK, and a
+      // re-import then tries to replace a real destination directory with a symlink:
+      // ERR_FS_CP_NON_DIR_TO_DIR, "cannot overwrite directory with non-directory". That was the red X on
+      // exactly those six rows.
+      //
+      // The tempting fix — dereference:true — is WRONG and measurably worse. It follows EVERY link in the
+      // tree, including the ones npm/pnpm litter through node_modules: the source inflated from 952 files to
+      // 3082 and then died halfway with ERR_FS_CP_EINVAL ("src and dest cannot be the same") on a
+      // self-referential node_modules link, leaving a PARTIAL copy behind. A half-written skill that throws
+      // is worse than the stale one it replaced.
+      //
+      // realpath resolves the top-level link only, so both sides of the copy are real directories.
+      //
+      // The filter then skips every link INSIDE the tree. Leaving them in fails outright: this skill has
+      // scripts/browser/node_modules -> ~/Projects/forge-live-harness/node_modules on BOTH sides, and cp
+      // resolves the destination link, sees the same real path on each end and refuses with
+      // "cannot copy X to a subdirectory of self" (ERR_FS_CP_EINVAL) — killing the whole import over a
+      // dependency folder that is not skill content and that goose has no business owning a copy of.
+      // Skipping links leaves any existing one exactly as it was.
+      const realSrc = await fs.realpath(s);
+      await fs.cp(realSrc, d, {
         recursive: true,
         force: Boolean(opts?.overwrite),
         errorOnExist: !opts?.overwrite,
+        filter: async (from) => {
+          const st = await fs.lstat(from).catch(() => null);
+          return !!st && !st.isSymbolicLink();
+        },
       });
       return { ok: true };
     } catch (error) {
@@ -2570,6 +2598,10 @@ ipcMain.handle('skill-drift', async (_event, src: string, dest: string) => {
     const s = expandTilde(src);
     const d = expandTilde(dest);
     if (!fsSync.existsSync(d)) return { ok: true, exists: false, added: 0, changed: 0 };
+    // The walk must mirror EXACTLY what copy-dir will do, or the badge promises something the button cannot
+    // deliver: resolve the top-level link (realpath, below) and then do NOT follow links inside the tree.
+    // Following them walks the whole of node_modules — and back out again, since pnpm's links point outside
+    // the skill — which is both enormous and, on a self-referential link, unbounded.
     const walk = async (root: string, base = ''): Promise<string[]> => {
       const out: string[] = [];
       for (const e of await fs.readdir(path.join(root, base), { withFileTypes: true })) {
@@ -2579,7 +2611,8 @@ ipcMain.handle('skill-drift', async (_event, src: string, dest: string) => {
       }
       return out;
     };
-    const srcFiles = await walk(s);
+    const realSrc = await fs.realpath(s);
+    const srcFiles = await walk(realSrc);
     let added = 0;
     let changed = 0;
     for (const rel of srcFiles) {
