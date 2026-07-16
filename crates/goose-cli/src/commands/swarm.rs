@@ -290,6 +290,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED env overrides.
     #[serde(default)]
     pub unwired_demotes_verified: bool,
+    /// Only a GROUNDED research finding (the agent actually called web-search/context7/shell) may mark an
+    /// open decision "settled, do not re-ask". An INVENTED finding (pure model reasoning) stays as planning
+    /// context but no longer suppresses the clarifying ASK — so a product decision the fleet merely GUESSED
+    /// still gets put to the user. OFF by default. GOOSE_SWARM_GROUNDED_RESEARCH_ONLY env overrides.
+    #[serde(default)]
+    pub grounded_research_only: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -358,6 +364,7 @@ impl Default for SwarmConfig {
             author_pitfalls: false,
             review: false,
             unwired_demotes_verified: false,
+            grounded_research_only: false,
         }
     }
 }
@@ -1570,6 +1577,39 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- RESEARCH PROVENANCE (grounded vs invented) -----------------------------------------
+    /// A finding is GROUNDED only when the agent made a SUCCESSFUL external lookup — a research MCP call
+    /// (web-search/context7) or a shell read of the codebase. A failed call, or none at all, is not
+    /// grounding: a pure guess must never be able to close a user's product decision.
+    #[test]
+    fn research_lookups_counts_only_successful_lookups() {
+        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
+            name: name.to_string(),
+            is_mcp,
+            ok,
+        };
+        // A successful web-search / context7 call grounds it.
+        let grounded = vec![
+            mk("web-search__search", true, Some(true)),
+            mk("context7__get-library-docs", true, Some(true)),
+        ];
+        assert_eq!(research_lookups(&grounded).len(), 2);
+
+        // A shell read of the codebase also grounds a codebase question.
+        assert_eq!(
+            research_lookups(&[mk("developer__shell", false, Some(true))]).len(),
+            1
+        );
+
+        // NO tool calls -> pure reasoning -> NOT grounded (the laundering case).
+        assert!(research_lookups(&[]).is_empty());
+
+        // A FAILED lookup is not grounding — it looked nothing up.
+        assert!(research_lookups(&[mk("web-search__search", true, Some(false))]).is_empty());
+        // No response at all (max-turns cutoff) is not grounding.
+        assert!(research_lookups(&[mk("context7__resolve-library-id", true, None)]).is_empty());
+    }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
     // These replay the real archived runs in evals/swarm-gym/apps. The corpus contains exactly one
@@ -3666,6 +3706,26 @@ struct ResearchFinding {
     question: String,
     kind: String,
     findings: String,
+    /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
+    /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
+    /// tool call means it consulted an external source. A finding with none is the model's own reasoning.
+    /// This is the deterministic signal that separates a grounded fact (safe to trust / cache / learn) from
+    /// an invented one (which must never silently close a user's product decision). A tool call is an engine
+    /// event, so no model opinion enters the classification.
+    grounded: bool,
+    /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
+    lookups: Vec<String>,
+}
+
+/// True when the agent consulted an external source. Research workers get only research MCP extensions, so
+/// any successful MCP tool call is a real lookup; a shell/grep on the codebase lens also counts as grounding
+/// (it read the actual code). Kept as a free function so the capture sites and tests share one definition.
+fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
+    tool_calls
+        .iter()
+        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.name.starts_with("developer__")))
+        .map(|t| t.name.clone())
+        .collect()
 }
 
 /// A fixed CORRECTNESS-review angle, fanned one-per-model across the idle fleet in the post-execute
@@ -5245,23 +5305,30 @@ impl GooseAgentDispatcher {
                     "You are a RESEARCH worker. Answer EXACTLY the question below with a concise, factual summary \
                      (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
                 );
-                let findings = match me
+                let (findings, lookups) = match me
                     .run_agent_timed(&model, system, q.question.clone(), None, 12, &exts)
                     .await
                 {
-                    Ok(o) => o.text,
-                    Err(e) => format!("(research failed: {e})"),
+                    Ok(o) => (o.text, research_lookups(&o.tool_calls)),
+                    Err(e) => (format!("(research failed: {e})"), Vec::new()),
                 };
                 eprintln!(
-                    "  {} research {} ({:.0}s)",
+                    "  {} research {} ({:.0}s{})",
                     style("✓").green().bold(),
                     style(&q.id).bold(),
-                    started.elapsed().as_secs_f64()
+                    started.elapsed().as_secs_f64(),
+                    if lookups.is_empty() {
+                        style(" · no lookup").yellow().to_string()
+                    } else {
+                        String::new()
+                    },
                 );
                 ResearchFinding {
                     question: q.question,
                     kind: q.kind,
                     findings,
+                    grounded: !lookups.is_empty(),
+                    lookups,
                 }
             }
         })
@@ -5314,17 +5381,20 @@ impl GooseAgentDispatcher {
                      sibling directories — they are unrelated projects. Finish FAST.",
                     lens.title, lens.brief, lens.tool_hint
                 );
-                let findings = match tokio::time::timeout(
+                let (findings, lookups) = match tokio::time::timeout(
                     std::time::Duration::from_secs(scout_budget),
                     me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, 12, &exts),
                 )
                 .await
                 {
-                    Ok(Ok(o)) => o.text,
-                    Ok(Err(e)) => format!("(scout failed: {e})"),
-                    Err(_) => format!(
-                        "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
-                        lens.id, scout_budget
+                    Ok(Ok(o)) => (o.text, research_lookups(&o.tool_calls)),
+                    Ok(Err(e)) => (format!("(scout failed: {e})"), Vec::new()),
+                    Err(_) => (
+                        format!(
+                            "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
+                            lens.id, scout_budget
+                        ),
+                        Vec::new(),
                     ),
                 };
                 eprintln!(
@@ -5337,6 +5407,8 @@ impl GooseAgentDispatcher {
                     question: lens.title.to_string(),
                     kind: lens.id.to_string(),
                     findings,
+                    grounded: !lookups.is_empty(),
+                    lookups,
                 }
             }
         })
@@ -11635,23 +11707,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             let findings = dispatcher
                                 .run_research(questions, research_exts, worker_models)
                                 .await;
-                            let mut settled = 0usize;
+                            // GROUNDED vs INVENTED (the #94 fix). A finding is "settled" only if the agent
+                            // actually LOOKED SOMETHING UP. An ungrounded finding is the model's own guess —
+                            // it may be useful planning CONTEXT, but it must NOT silently close a decision or
+                            // stamp it "do not re-ask", because a product decision ("case-sensitive search?")
+                            // is in the USER's head and no amount of reasoning can resolve it. When this
+                            // suppression is OFF (default) the old behaviour holds: any non-empty finding
+                            // counts, byte-identical.
+                            let grounded_only = swarm_gate_cfg(
+                                "GOOSE_SWARM_GROUNDED_RESEARCH_ONLY",
+                                cfg.grounded_research_only,
+                            );
+                            let mut settled = 0usize; // counts toward "do not re-ask"
+                            let mut invented = 0usize; // reasoned, not looked up
+                            let mut resolutions: Vec<serde_json::Value> = Vec::new();
                             for f in &findings {
                                 if f.findings.trim().is_empty() {
                                     continue;
                                 }
-                                settled += 1;
+                                // ALL findings are planning context regardless of grounding.
                                 research_findings.push_str(&format!(
                                     "\n\n### [retarget:{}] {}\n{}",
                                     f.kind, f.question, f.findings
                                 ));
+                                let counts = f.grounded || !grounded_only;
+                                if counts {
+                                    settled += 1;
+                                } else {
+                                    invented += 1;
+                                }
+                                // AUDITABILITY: "N resolved" said nothing about what or on what basis. Record
+                                // the decision, whether it was grounded, and the tools that grounded it.
+                                resolutions.push(serde_json::json!({
+                                    "decision": f.question,
+                                    "grounded": f.grounded,
+                                    "lookups": f.lookups,
+                                    "counted_settled": counts,
+                                }));
                             }
                             if settled > 0 {
                                 opts.prompt.push_str(
                                     "\n\n[Design decisions resolved by targeted research — treat these as settled defaults, do not re-ask]\n",
                                 );
                                 for f in &findings {
-                                    if f.findings.trim().is_empty() {
+                                    if f.findings.trim().is_empty()
+                                        || (grounded_only && !f.grounded)
+                                    {
                                         continue;
                                     }
                                     let excerpt: String = f
@@ -11673,12 +11774,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 "conf_before": conf,
                                 "conf_after": serde_json::Value::Null,
                                 "detail": format!(
-                                    "researched {} decision(s), {settled} resolved",
+                                    "researched {} decision(s), {settled} grounded/settled, {invented} invented",
                                     picked.len()
                                 ),
+                                // The per-decision provenance — what was resolved and whether it was actually
+                                // looked up. The research is no longer a black box that emits only a count.
+                                "resolutions": resolutions,
                             }));
                             // Only loop back if research actually settled something; otherwise fall through to
-                            // the ask so we don't burn rounds re-researching decisions the fleet can't answer.
+                            // the ask so we don't burn rounds re-researching decisions the fleet can't answer —
+                            // and, under grounded_only, so an all-invented round ASKS the user instead of
+                            // laundering guesses into "settled".
                             if settled > 0 {
                                 continue;
                             }
