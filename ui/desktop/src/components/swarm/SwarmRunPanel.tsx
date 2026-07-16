@@ -608,12 +608,15 @@ const ConfGauge: React.FC<{ value: number; size?: number }> = ({ value, size = 7
       >
         {v}
       </text>
+      {/* Reads at fontSize 8 in DARK mode. --text-secondary at this size rendered near-black on the dark
+          card — Mihai could not see it at all. Tint it with the gauge's own colour at full opacity instead
+          of a dimmer grey: same hue as the number it belongs to, and solid, never a faded tint. */}
       <text
         x="40"
-        y="55"
+        y="55.5"
         textAnchor="middle"
         dominantBaseline="middle"
-        style={{ fill: 'var(--text-secondary)', fontSize: 8, letterSpacing: 0.5 }}
+        style={{ fill: col, fontSize: 9, fontWeight: 600, letterSpacing: 0.5, opacity: 0.85 }}
       >
         /100
       </text>
@@ -624,11 +627,25 @@ const ConfGauge: React.FC<{ value: number; size?: number }> = ({ value, size = 7
 // Shared breakdown body — reused by the header-expand panel AND the ClarifyPrompt (one visual language). The
 // min number, the two sub-bars, WHAT'S HOLDING IT BACK (the binding/lower signal), WHAT WOULD RAISE IT
 // (honest, research-backed), and a climb trail/sparkline when the meter has moved.
+/** The verdict on a confidence number, derived from the ENGINE's floor — never a band the UI invented.
+ *  A hardcoded `>= 70 -> "Strong — ready to build"` told the user exactly that about a plan scoring 73
+ *  against a floor of 80, which had burned all 4 retarget rounds, proceeded at the cap, and ASKED 3
+ *  questions. The number was right there next to the claim and contradicted it. With no floor set the run
+ *  never asks, so there is no bar to be under and the band is all we can honestly say. */
+export function confVerdict(value: number, floor: number | null): string {
+  if (floor == null) {
+    return value >= 70 ? 'Strong' : value >= 40 ? 'Mixed — check below' : 'Low — needs your input';
+  }
+  if (value >= floor) return `At your bar (${floor}+) — ready to build`;
+  return `Below your bar of ${floor} — goose asked before building`;
+}
+
 const ConfidenceBreakdownBody: React.FC<{
   conf: ConfidenceBreakdown;
   trail?: number[];
   hasPendingQuestions: boolean;
-}> = ({ conf, trail, hasPendingQuestions }) => {
+  askFloor?: number | null;
+}> = ({ conf, trail, hasPendingQuestions, askFloor = null }) => {
   const bindingAgreement = conf.agreement <= conf.specClarity;
   const showDecisions = !bindingAgreement && conf.openDecisions.length > 0;
   const holdingBack = bindingAgreement
@@ -648,11 +665,7 @@ const ConfidenceBreakdownBody: React.FC<{
         <div>
           <div className="text-[10px] uppercase tracking-wide text-text-secondary">Plan confidence</div>
           <div className="text-[12px] font-medium mt-0.5" style={{ color: confColor(conf.final) }}>
-            {conf.final >= 70
-              ? 'Strong — ready to build'
-              : conf.final >= 40
-                ? 'Mixed — check below'
-                : 'Low — needs your input'}
+            {confVerdict(conf.final, askFloor)}
           </div>
         </div>
       </div>
@@ -732,6 +745,7 @@ const ConfidencePanel: React.FC<{
   conf: ConfidenceBreakdown;
   trail?: number[];
   hasPendingQuestions: boolean;
+  askFloor?: number | null;
 }> = (p) => (
   <div className="border-b border-border-primary bg-background-secondary px-3 py-3">
     <ConfidenceBreakdownBody {...p} />
@@ -1064,7 +1078,10 @@ const ClarifyPrompt: React.FC<{
     answerPath: string;
   };
   plan: PlanTask[];
-}> = ({ clarify, plan }) => {
+  /** The engine's confidence floor — this prompt only exists BECAUSE the plan scored under it, so the
+   *  breakdown must name the real bar rather than judge the number against an invented band. */
+  askFloor?: number | null;
+}> = ({ clarify, plan, askFloor = null }) => {
   const [answers, setAnswers] = useState<string[]>(() => clarify.questions.map(() => ''));
   const [guidance, setGuidance] = useState('');
   const [showPlan, setShowPlan] = useState(true);
@@ -1117,7 +1134,11 @@ const ClarifyPrompt: React.FC<{
 
         {clarify.confidence ? (
           <div className="border border-border-primary px-2 py-2" style={{ borderRadius: 3 }}>
-            <ConfidenceBreakdownBody conf={clarify.confidence} hasPendingQuestions />
+            <ConfidenceBreakdownBody
+              conf={clarify.confidence}
+              hasPendingQuestions
+              askFloor={askFloor}
+            />
           </div>
         ) : null}
 
@@ -1592,6 +1613,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           conf={run.confidence}
           trail={run.confidenceTrail}
           hasPendingQuestions={false}
+          askFloor={run.askFloor}
         />
       ) : null}
 
@@ -1611,7 +1633,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         <RunOverview overview={run.overview} phaseTodo={run.phaseTodo} deviceOrder={deviceOrder} />
       ) : null}
 
-      {run.clarify?.pending ? <ClarifyPrompt clarify={run.clarify} plan={run.plan} /> : null}
+      {run.clarify?.pending ? (
+        <ClarifyPrompt clarify={run.clarify} plan={run.plan} askFloor={run.askFloor} />
+      ) : null}
 
       {(run.inProgress || ended) && (
         <PhaseSteps

@@ -11942,6 +11942,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // additive `plan_confidence_breakdown` (below, only when a sub-signal was computed) carries the
         // agreement/spec-clarity split + drivers so the panel can show WHY it's low and what would raise it.
         "plan_confidence": plan_conf.final_conf,
+        // The floor this run was held to, so the panel can say what the number MEANS instead of guessing.
+        // Without it the panel judged confidence against a hardcoded band and told the user "Strong — ready
+        // to build" about a plan that scored 73 against a floor of 80, had exhausted its retarget rounds,
+        // proceeded at the cap, and had ASKED 3 questions. A verdict must come from the engine's own
+        // threshold, never from a number the UI invented. null = no floor set (the run never asks).
+        "ask_floor": ask_floor,
         "tasks": dag.tasks.values().map(|n| serde_json::json!({
             "id": n.spec.id,
             // The architect's one-line human description of what this subtask builds — surfaced in the run

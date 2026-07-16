@@ -331,6 +331,11 @@ export interface SwarmRunState {
   planConfidence: number | null;
   /** The full breakdown behind planConfidence (agreement vs spec-clarity + drivers), null on older runs. */
   confidence: ConfidenceBreakdown | null;
+  /** The confidence FLOOR this run was held to (from the engine's plan_loaded), or null when no floor is set.
+   *  The panel must judge planConfidence against THIS, never a hardcoded band — a fixed band told the user
+   *  "Strong — ready to build" about a 73 that was below an 80 floor, had exhausted retarget, proceeded at
+   *  the cap, and had asked 3 questions. */
+  askFloor: number | null;
   /** Distinct successive confidence values across the run (initial → each retarget → final) for the climb
    *  trail / sparkline. */
   confidenceTrail: number[];
@@ -376,6 +381,7 @@ const EMPTY: SwarmRunState = {
   phase: '',
   planConfidence: null,
   confidence: null,
+  askFloor: null,
   confidenceTrail: [],
   inProgress: false,
   finished: false,
@@ -501,6 +507,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   finished: boolean;
   planConfidence: number | null;
   confidence: ConfidenceBreakdown | null;
+  askFloor: number | null;
   confidenceTrail: number[];
   summary: RunSummary | null;
   startedAt: number | null;
@@ -516,6 +523,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let plan: PlanTask[] = [];
   let planConfidence: number | null = null;
   let confidence: ConfidenceBreakdown | null = null;
+  let askFloor: number | null = null;
   const confTrail: number[] = [];
   let smoke: SmokeResult | null = null;
   let summary: RunSummary | null = null;
@@ -596,6 +604,8 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         if (b) confidence = b;
         const pc = num(e['plan_confidence']);
         if (typeof pc === 'number') setConf(pc);
+        const af = num(e['ask_floor']);
+        if (typeof af === 'number') askFloor = af;
         const qs = arr(e['questions']) as Array<Record<string, unknown>>;
         const nq = qs.length;
         // Surface the ACTUAL questions in the feed's `sub` so they PERSIST after the clarify prompt is answered
@@ -867,6 +877,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     phase,
     finished,
     confidence,
+    askFloor,
     confidenceTrail: confTrail,
     planConfidence,
     summary,
@@ -1377,6 +1388,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           finished,
           planConfidence,
           confidence,
+          askFloor,
           confidenceTrail,
           summary,
           startedAt,
@@ -1399,6 +1411,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           phase,
           planConfidence,
           confidence,
+          askFloor,
           confidenceTrail,
           inProgress: !finished,
           finished,
