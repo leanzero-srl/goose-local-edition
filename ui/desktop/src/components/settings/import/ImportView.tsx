@@ -354,6 +354,11 @@ export default function ImportView() {
       }
     }
     setImporting(false);
+    // RE-SCAN. The drift badges are a snapshot taken before the import, so leaving them up after a
+    // successful update shows "212 OUT OF DATE" on a skill that was just brought up to date — the UI then
+    // lies in the opposite direction to the bug it was added to expose, and the user cannot tell whether the
+    // import worked. The badges must be re-derived from disk, which is the only thing that knows.
+    void rescan();
     const fresh = ok - updated;
     const parts = [`Imported ${fresh} skill${fresh === 1 ? '' : 's'}`];
     if (updated) parts.push(`${updated} updated`);
