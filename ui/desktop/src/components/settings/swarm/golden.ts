@@ -95,6 +95,11 @@ export interface SwarmConfig {
    *  MEASURED: a run went 84 -> 70 -> 70 -> 52 over three re-draft rounds (~60 min of the whole fleet) and
    *  shipped the round-2 plan anyway. Cannot lower quality — the best plan is kept regardless. Default OFF. */
   retarget_stall_guard?: boolean;
+  /** After the build, statically check that no module reads a field off a sibling's class that the class does
+   *  not define. MEASURED: a run shipped an expense splitter whose POST /api/expenses 500'd on every call —
+   *  api.py read `body.group_id` while models.py never declared it — and reported verified, because the tests
+   *  only touched the pure module and the smoke gate only checks that the file imports. Default OFF. */
+  cross_module_check?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 

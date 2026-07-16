@@ -526,6 +526,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Check the modules agree about each other"
+                  hint="parallel workers write different files. One can read a field off another's class that the class doesn't have — and the app builds, imports, and passes its tests, then crashes on the first real request. This reads the finished code and finds those disagreements. Model-free, so it can't be argued with."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.cross_module_check}
+                    onChange={(v) => set({ cross_module_check: v })}
+                  />
+                </Row>
+                <Row
                   label="Stop re-planning when it stops improving"
                   hint="when goose is unsure about its plan it re-drafts it again and again, hoping the drafts agree better. Measured on a real build, they got worse — 84 to 70 to 52 over three rounds, an hour of every machine, and it shipped the first plan anyway. This stops after a round that fails to beat the best so far. It cannot cost you quality: the best plan is kept either way."
                 >

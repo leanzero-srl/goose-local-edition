@@ -278,6 +278,14 @@ pub struct SwarmConfig {
     /// OFF by default. GOOSE_SWARM_RETARGET_STALL_GUARD env overrides.
     #[serde(default)]
     pub retarget_stall_guard: bool,
+    /// After the build, statically check that no module reads a field off a sibling's class that the class
+    /// does not define. THE check for the drift CONTRACTS cannot stop: a real run shipped api.py reading
+    /// `body.group_id` while models.py's ExpenseCreate never declared it — a 500 on every POST, reported as
+    /// verified, because the tests only touched the pure module and the smoke gate only checks imports.
+    /// Model-free AST. Findings drive the fix loop and block the green claim. Default OFF.
+    /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
+    #[serde(default)]
+    pub cross_module_check: bool,
     /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
     /// constraint, and re-draft so the weak fleet's independent plans genuinely converge. OFF by default.
     /// GOOSE_SWARM_BACKBONE env overrides.
@@ -455,6 +463,7 @@ impl Default for SwarmConfig {
             converge: default_converge(),
             retarget: false,
             retarget_stall_guard: false,
+            cross_module_check: false,
             backbone: false,
             draft_temp: None,
             repro_demotes_verified: false,
@@ -2876,6 +2885,48 @@ mod tests {
             retarget_action(&mk(None, None, true, vec![]), true),
             RetargetAction::None
         );
+    }
+
+    /// The cross-module drift check, over the REAL shipped bug and the REAL working app.
+    ///
+    /// This is the parser half (the python half is exercised against the actual trees in the loop harness).
+    /// What it must never do is invent a finding: a check that fails a CORRECT app is worse than the bug it
+    /// hunts, because the fix loop would then REGRESS working code — which this codebase has already done
+    /// once (the pillar check false-failed a correct CLI and the loop broke 2 passing tests to appease it).
+    #[test]
+    fn cross_module_drift_reports_the_real_bug_and_stays_quiet_otherwise() {
+        // The exact shape the script emits for the shipped ExpenseCreate/api.py drift.
+        let real = r#"{"checked":9,"classes":11,"findings":[
+            {"file":"settle/api.py","line":73,"expr":"body.group_id","class":"ExpenseCreate",
+             "class_file":"settle/models.py","known":["amount","description","payer","split_among"]}]}"#;
+        let r = parse_cross_module_drift(real);
+        assert!(r.ran);
+        assert_eq!(r.checked, 9);
+        assert_eq!(r.findings.len(), 1);
+        let f = &r.findings[0];
+        // The finding must name BOTH sides — a worker told only "group_id is wrong" cannot know which module
+        // to change. The whole failure was two modules disagreeing.
+        assert!(f.contains("settle/api.py:73"), "{f}");
+        assert!(f.contains("body.group_id"), "{f}");
+        assert!(f.contains("ExpenseCreate"), "{f}");
+        assert!(f.contains("settle/models.py"), "{f}");
+        assert!(
+            f.contains("split_among"),
+            "the fields it DOES have are the fix: {f}"
+        );
+
+        // A clean tree produces no findings but still counts as having RUN — "0 findings" and "never ran"
+        // must never look the same, which is the mistake behind half the lying instruments in this file.
+        let clean = parse_cross_module_drift(r#"{"checked":8,"classes":8,"findings":[]}"#);
+        assert!(clean.ran);
+        assert_eq!(clean.checked, 8);
+        assert!(clean.findings.is_empty());
+
+        // python missing / script blew up / non-JSON: ran=false, NOT a false green and NOT a false finding.
+        let broken = parse_cross_module_drift("Traceback (most recent call last): SyntaxError");
+        assert!(!broken.ran);
+        assert!(broken.findings.is_empty());
+        assert!(!parse_cross_module_drift("").ran);
     }
 
     /// The draft fan-out must be one slot per DISTINCT MODEL, not per list entry.
@@ -9964,6 +10015,206 @@ struct PersonaSnapshot {
 /// real imports, its own tests and the sink. Reding a built artifact against a pre-build prediction is the
 /// pillar-check bug, whose own remedy is recorded in this file: "remove the guess, not mitigate it
 /// downstream". So: MEASURE first. Emit what was frozen and whether it even parses.
+/// CROSS-MODULE ATTRIBUTE DRIFT — the check that catches what CONTRACTS cannot.
+///
+/// THE BUG, measured and shipped as verified:
+///   models.py:31  class ExpenseCreate(BaseModel): payer/amount/description/split_among   <- no group_id
+///   api.py:73     get_group_members(conn, body.group_id)   where  body: ExpenseCreate
+/// AttributeError on EVERY POST /api/expenses — a shared-expense splitter that cannot add an expense. It
+/// claimed passed+verified with 9/9 tasks and 9 tests passing, because the tests only touched the pure ledger
+/// module and the smoke gate only checks that api.py IMPORTS (FastAPI resolves body.group_id at REQUEST time).
+///
+/// WHY CONTRACTS DID NOT STOP IT, and why more prose never will: the frozen stub is NAME-level — its own spec
+/// says "`...` as the body", and for a pydantic model THE FIELDS ARE THE BODY, so a fully COMPLIANT stub for
+/// ExpenseCreate carries zero fields. Worse, the api worker was handed models.py's FULL SOURCE in-prompt
+/// (dep_block injects it uncut at 1991 bytes, 66us after models finished) and wrote body.group_id twice
+/// anyway. A weak model is not bound by being shown the truth. Enforcement is a CHECK, not a better prompt.
+///
+/// This is that check: pure static analysis over the DELIVERED code, no model, no contract, no prompt.
+/// It refuses to judge what it cannot know — a class with an unknown base, a __getattr__, or a duplicated
+/// name is skipped, because failing a CORRECT app is worse than the bug it hunts.
+const CROSS_MODULE_DRIFT_SCRIPT: &str = r####"
+import ast, json, os, sys
+
+# Cross-module ATTRIBUTE drift: a module reads a field off a class that a SIBLING module defines, and that
+# class has no such field. Pure static analysis — no model, no contract, no prompt.
+#
+# THE BUG THIS EXISTS FOR (measured, shipped, and reported as verified):
+#   models.py:31  class ExpenseCreate(BaseModel): payer/amount/description/split_among   <- no group_id
+#   api.py:73     members = get_group_members(conn, body.group_id)   where  body: ExpenseCreate
+#   => AttributeError on EVERY POST /api/expenses. The app could not add an expense. 9 tests passed (they
+#      only touched the pure ledger module) and the smoke gate passed (api.py IMPORTS fine — FastAPI resolves
+#      body.group_id at REQUEST time). Every gate was green.
+root = sys.argv[1]
+SKIP = {".git", "node_modules", "target", ".venv", ".swarm", "__pycache__", "dist", "build"}
+
+files = {}
+for dirpath, dirs, fs in os.walk(root):
+    dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")]
+    for f in fs:
+        if f.endswith(".py"):
+            full = os.path.join(dirpath, f)
+            try:
+                files[os.path.relpath(full, root)] = ast.parse(open(full, encoding="utf-8").read())
+            except Exception:
+                pass  # a file that will not parse is the smoke gate's problem, not ours
+
+# class name -> (defining file, set of known attribute names)
+classes = {}
+for rel, tree in files.items():
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        fields = set()
+        dynamic = False
+        for b in node.body:
+            # pydantic/dataclass style:  name: type [= default]
+            if isinstance(b, ast.AnnAssign) and isinstance(b.target, ast.Name):
+                fields.add(b.target.id)
+            # plain class attr:  name = value
+            elif isinstance(b, ast.Assign):
+                for t in b.targets:
+                    if isinstance(t, ast.Name):
+                        fields.add(t.id)
+            elif isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fields.add(b.name)
+                # anything assigning self.x in __init__ is a field too
+                if b.name == "__init__":
+                    for n in ast.walk(b):
+                        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self":
+                            fields.add(n.attr)
+        # A class that inherits from anything we cannot see, or that defines __getattr__, can grow attributes
+        # at runtime. Refuse to judge it — a false positive here would fail a CORRECT app, which is worse
+        # than the bug.
+        for b in node.body:
+            if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name in ("__getattr__", "__getattribute__", "__setattr__"):
+                dynamic = True
+        known_bases = {"BaseModel", "object", "Enum", "str", "int", "TypedDict", "NamedTuple"}
+        for base in node.bases:
+            bname = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else None)
+            if bname is None or bname not in known_bases:
+                dynamic = True
+        if node.name in classes:
+            dynamic = True  # two classes share a name: we cannot tell which one an annotation means
+        classes[node.name] = {"file": rel, "fields": fields, "dynamic": dynamic}
+
+findings = []
+for rel, tree in files.items():
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # param name -> annotated class, but ONLY classes defined in ANOTHER file (cross-module drift)
+        bound = {}
+        for a in list(fn.args.args) + list(fn.args.kwonlyargs):
+            ann = a.annotation
+            cname = ann.id if isinstance(ann, ast.Name) else None
+            if cname and cname in classes:
+                c = classes[cname]
+                if c["file"] != rel and not c["dynamic"]:
+                    bound[a.arg] = cname
+        if not bound:
+            continue
+        for n in ast.walk(fn):
+            if not isinstance(n, ast.Attribute) or not isinstance(n.value, ast.Name):
+                continue
+            cname = bound.get(n.value.id)
+            if not cname:
+                continue
+            if n.attr not in classes[cname]["fields"]:
+                findings.append({
+                    "file": rel,
+                    "line": n.lineno,
+                    "expr": f"{n.value.id}.{n.attr}",
+                    "class": cname,
+                    "class_file": classes[cname]["file"],
+                    "known": sorted(classes[cname]["fields"])[:12],
+                })
+
+print(json.dumps({"checked": len(files), "classes": len(classes), "findings": findings}))
+"####;
+
+#[derive(Debug, Default, Clone)]
+struct DriftResult {
+    ran: bool,
+    checked: usize,
+    findings: Vec<String>,
+}
+
+/// Run the cross-module drift check over the built tree. Python-only today: the script is an `ast` pass, and
+/// Python is also the one stack with a real smoke oracle, so it is where a false green is provable.
+async fn cross_module_drift(root: &std::path::Path, lang: TargetLang) -> DriftResult {
+    if lang != TargetLang::Python {
+        return DriftResult::default();
+    }
+    match tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg(CROSS_MODULE_DRIFT_SCRIPT)
+        .arg(root)
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => {
+            parse_cross_module_drift(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => DriftResult::default(),
+    }
+}
+
+/// Turn the script's JSON into fix-loop findings. Separate + pure so it is unit-testable without python.
+fn parse_cross_module_drift(stdout: &str) -> DriftResult {
+    // Whole blob first, then a line-scan. The script prints one line, but python is free to emit a
+    // DeprecationWarning ahead of it, and a future `indent=` would span lines — a parser that only handles
+    // the shape it happens to see today is how a working check becomes a silent no-op.
+    let Some(v) = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .or_else(|| {
+            stdout
+                .lines()
+                .rev()
+                .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        })
+    else {
+        return DriftResult::default();
+    };
+    let checked = v.get("checked").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let findings = v
+        .get("findings")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?").to_string();
+                    let line = f.get("line").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let known = f
+                        .get("known")
+                        .and_then(|x| x.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    format!(
+                        "{}:{} reads `{}`, but `{}` (defined in {}) has no such field. It has: {}.                          One of the two modules is wrong — make them agree.",
+                        g("file"),
+                        line,
+                        g("expr"),
+                        g("class"),
+                        g("class_file"),
+                        known
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    DriftResult {
+        ran: true,
+        checked,
+        findings,
+    }
+}
+
 const CONTRACT_VALIDATE_SCRIPT: &str = r####"
 import ast, json, sys
 bundle = sys.stdin.read()
@@ -13813,6 +14064,38 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
             }));
         }
+        // CROSS-MODULE DRIFT (GOOSE_SWARM_CROSS_MODULE_CHECK, default OFF). Computed ONCE, before the loop:
+        // it reads the delivered tree, and re-running it every round would only re-read a tree the fix loop
+        // is actively rewriting. Re-added to the findings each round like the failed tasks, so a fix must
+        // actually clear the drift rather than survive one pass.
+        let drift = if swarm_gate_cfg(
+            "GOOSE_SWARM_CROSS_MODULE_CHECK",
+            load_config().cross_module_check,
+        ) {
+            cross_module_drift(&cwd, complete_lang).await
+        } else {
+            DriftResult::default()
+        };
+        if drift.ran {
+            sink.write_value(serde_json::json!({
+                "event": "cross_module_drift",
+                "checked": drift.checked,
+                "findings": drift.findings.len(),
+                "detail": if drift.findings.is_empty() {
+                    "no module reads a field its sibling does not define"
+                } else {
+                    "a module reads a field a sibling's class does not define — blocking the green claim \
+                     and driving the fix loop"
+                },
+            }));
+            if !drift.findings.is_empty() {
+                eprintln!(
+                    "  {} cross-module drift: {} site(s) read a field the defining class does not have",
+                    style("!").red().bold(),
+                    drift.findings.len()
+                );
+            }
+        }
         for round in 0..=rounds {
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
             // A failed task keeps the loop honest even when the gate is blind (a TS tree with no test step,
@@ -13821,6 +14104,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             verdict
                 .findings
                 .extend(failed_task_findings.iter().cloned());
+            // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
+            // the AttributeError only happens at request time), so without this the loop breaks green at
+            // round 0 on an app whose main endpoint 500s.
+            verdict.findings.extend(drift.findings.iter().cloned());
             // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
             // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
             // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
