@@ -55,6 +55,15 @@ export interface SwarmConfig {
    *  repair demotes the run's `verified` claim. Never flips `passed` red. Default OFF; inert unless the
    *  repro oracle is on. */
   repro_demotes_verified?: boolean;
+  /** Inject the DOMAIN_PITFALLS facts relevant to a subtask into the WORKER's prompt, so the author is
+   *  told the convention BEFORE writing rather than only reviewed against it afterwards. Default OFF. */
+  author_pitfalls?: boolean;
+  /** Run the model-free AST wiring review (built-but-unwired modules, stub functions) after the build.
+   *  Was previously reachable only via the assured bundle. Default OFF. */
+  review?: boolean;
+  /** A newly-unwired PURE-LIBRARY module the wire-fix did not resolve demotes the run's `verified` claim.
+   *  Never flips `passed` red. Requires `review`. Default OFF. */
+  unwired_demotes_verified?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
