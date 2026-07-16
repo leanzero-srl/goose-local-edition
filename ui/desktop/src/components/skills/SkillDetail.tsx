@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { SourceEntry } from '@aaif/goose-sdk';
+import { ChevronRight, ChevronDown, FileText, Folder, FolderOpen } from 'lucide-react';
 import { Button } from '../ui/button';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { ScrollArea } from '../ui/scroll-area';
@@ -7,6 +8,7 @@ import MarkdownContent from '../MarkdownContent';
 import { errorMessage } from '../../utils/conversionUtils';
 import { updateSkillSource, deleteSkillSource, readSkillSourceFresh } from '../../acp/sources';
 import { isEditable, isPersonaPath, splitPersona, recomposePersona } from './skillKinds';
+import { buildSkillTree, defaultExpanded, type TreeNode } from './skillTree';
 
 /** Solid, saturated origin colors — one hue per root, no tints. */
 const ORIGIN_STYLE: Record<string, { label: string; className: string }> = {
@@ -220,6 +222,82 @@ function BodyEditor({
   );
 }
 
+/**
+ * The skill's OTHER files.
+ *
+ * A skill is a directory, not a document: atlassian-community-leanzero ships 950 files — the scripts its own
+ * SKILL.md tells the agent to run, the references it tells it to read. Rendering only SKILL.md showed the
+ * instructions and hid everything they point at, which is also how a stale import went unnoticed for twelve
+ * days: the missing files were never on screen to be missed.
+ */
+function FileTree({
+  root,
+  onOpen,
+  openPath,
+}: {
+  root: TreeNode;
+  onOpen: (n: TreeNode) => void;
+  openPath: string | null;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(root));
+  useEffect(() => setExpanded(defaultExpanded(root)), [root]);
+
+  const toggle = (path: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
+  const row = (n: TreeNode, depth: number): React.ReactNode => {
+    const isDir = Boolean(n.children);
+    const isOpen = expanded.has(n.path);
+    const selected = !isDir && n.path === openPath;
+    return (
+      <div key={`${n.path}:${isDir ? 'd' : 'f'}`}>
+        <button
+          onClick={() => (isDir ? toggle(n.path) : onOpen(n))}
+          className={`w-full flex items-center gap-1.5 py-1 px-2 text-left text-xs transition-colors ${
+            selected ? 'bg-background-accent text-white' : 'hover:bg-background-secondary'
+          }`}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          {isDir ? (
+            <>
+              {isOpen ? (
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              )}
+              {isOpen ? (
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[#2e8bff]" />
+              ) : (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-[#2e8bff]" />
+              )}
+              <span className="truncate font-medium">{n.name}</span>
+              <span
+                className={`ml-auto shrink-0 text-[10px] ${selected ? 'text-white/70' : 'text-text-tertiary'}`}
+              >
+                {n.fileCount}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="w-3 shrink-0" />
+              <FileText className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+              <span className="truncate">{n.name}</span>
+            </>
+          )}
+        </button>
+        {isDir && isOpen && n.children!.map((c) => row(c, depth + 1))}
+      </div>
+    );
+  };
+
+  return <div className="border border-borderSubtle">{root.children!.map((c) => row(c, 0))}</div>;
+}
+
 export function SkillDetail({
   entry,
   origin,
@@ -237,13 +315,37 @@ export function SkillDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openFile, setOpenFile] = useState<{ path: string; abs: string; body: string } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const persona = isPersonaPath(entry.path);
   const editable = isEditable(entry);
+  const tree = useMemo(
+    () => buildSkillTree(entry.path, entry.supportingFiles ?? []),
+    [entry.path, entry.supportingFiles]
+  );
 
   useEffect(() => {
     setEditing(false);
     setError(null);
+    setOpenFile(null);
+    setFileError(null);
   }, [entry.path]);
+
+  // Read a supporting file straight off disk. There is no ACP verb for "read an arbitrary file inside a
+  // skill" — sources/export returns the SKILL.md body only — so this goes through the same main-process
+  // reader the import scanner already uses.
+  const openSupporting = useCallback(async (n: TreeNode) => {
+    if (!n.abs) return;
+    setFileError(null);
+    try {
+      const res = await window.electron.readFile(n.abs);
+      if (!res.found || res.file === undefined) throw new Error(res.error || 'could not read the file');
+      setOpenFile({ path: n.path, abs: n.abs, body: res.file });
+    } catch (e) {
+      setOpenFile(null);
+      setFileError(errorMessage(e, `Could not open ${n.path}`));
+    }
+  }, []);
 
   const doDelete = async () => {
     setDeleting(true);
@@ -306,9 +408,36 @@ export function SkillDetail({
             ) : (
               <BodyEditor entry={entry} projectDir={projectDir} onSaved={onSaved} />
             )
+          ) : openFile ? (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-mono text-xs text-text-secondary truncate">{openFile.path}</span>
+                <Button size="sm" variant="outline" onClick={() => setOpenFile(null)}>
+                  Back to SKILL.md
+                </Button>
+              </div>
+              {/* Verbatim, in a mono block. A supporting file is a script or a data file — rendering it as
+                  markdown would silently eat its indentation, which for a Python script is its meaning. */}
+              <pre className="p-3 bg-background-default border border-borderSubtle text-xs font-mono overflow-x-auto whitespace-pre">
+                {openFile.body}
+              </pre>
+            </div>
           ) : (
             <div className="prose-sm max-w-none">
               <MarkdownContent content={entry.content} />
+            </div>
+          )}
+
+          {/* The skill's other files. A skill is a DIRECTORY: the SKILL.md above tells the agent to run
+              scripts/monitor.py and read references/strategy.md, and until now this view showed the
+              instructions while hiding every file they point at. */}
+          {tree.fileCount > 0 && !editing && (
+            <div className="mt-6">
+              <h3 className="text-[10px] font-bold tracking-wider text-text-tertiary mb-2">
+                FILES · {tree.fileCount}
+              </h3>
+              {fileError && <p className="mb-2 text-xs font-bold text-[#dc2626]">{fileError}</p>}
+              <FileTree root={tree} onOpen={openSupporting} openPath={openFile?.path ?? null} />
             </div>
           )}
         </div>
