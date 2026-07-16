@@ -459,8 +459,20 @@ export default function SwarmSettingsSection() {
                 <Row label="Max research questions" hint="scoping questions before planning">
                   <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
                 </Row>
-                <Row label="Scout budget (s)" hint="per-scout wall-clock budget">
-                  <NumberField value={cfg.scout_budget_secs} onCommit={(v) => set({ scout_budget_secs: v ?? 120 })} />
+                <Row
+                  label="Research lookups per scout"
+                  hint="how many searches a scout may run before it must answer. This is the real limit on research — it stops when it has looked enough things up, not when a clock runs out."
+                >
+                  <NumberField
+                    value={cfg.scout_max_lookups}
+                    onCommit={(v) => set({ scout_max_lookups: v ?? 10 })}
+                  />
+                </Row>
+                <Row
+                  label="Scout time limit (s)"
+                  hint="a backstop so a stuck model can't hang the run — not the budget. It was 120s and that was the real limit: a measured run's research ended at 120.023s, cut off mid-thought, and handed the planner an apology instead of a finding."
+                >
+                  <NumberField value={cfg.scout_budget_secs} onCommit={(v) => set({ scout_budget_secs: v ?? 900 })} />
                 </Row>
                 <Row label="Best-of-N skeletons" hint="candidate plans; pick the structurally-best">
                   <NumberField value={cfg.best_of_n_skeletons} onCommit={(v) => set({ best_of_n_skeletons: v ?? 1 })} />
