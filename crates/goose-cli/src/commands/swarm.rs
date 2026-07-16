@@ -274,6 +274,12 @@ pub struct SwarmConfig {
     /// oracle) to be on. OFF by default. GOOSE_SWARM_REPRO_DEMOTES_VERIFIED env overrides.
     #[serde(default)]
     pub repro_demotes_verified: bool,
+    /// Inject the DOMAIN_PITFALLS facts relevant to a subtask into the WORKER's prompt, so the author is
+    /// told the convention BEFORE writing rather than only being reviewed against it afterwards. Retrieval
+    /// is deterministic keyword matching against the subtask's spec + owned files. OFF by default.
+    /// GOOSE_SWARM_AUTHOR_PITFALLS env overrides.
+    #[serde(default)]
+    pub author_pitfalls: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -339,6 +345,7 @@ impl Default for SwarmConfig {
             backbone: false,
             draft_temp: None,
             repro_demotes_verified: false,
+            author_pitfalls: false,
         }
     }
 }
@@ -1560,28 +1567,6 @@ mod tests {
     /// review_repro proved a crash at seq 52 whose fix was REJECTED (smoke-inconclusive-or-red). The green
     /// claim stood. The rule must demote it.
     #[test]
-    fn malformed_tool_name_recovers_the_quoted_name_without_panicking() {
-        assert_eq!(
-            malformed_tool_name(
-                "The provided function name 'developer__shel' had invalid characters"
-            ),
-            "developer__shel (malformed)"
-        );
-        // No quoted name -> a marker, never an empty lane in the panel.
-        assert_eq!(
-            malformed_tool_name("arguments were not valid json"),
-            "(malformed call)"
-        );
-        assert_eq!(malformed_tool_name("''"), "(malformed call)");
-        // Multi-byte chars on the quote boundary must not panic (the message carries raw model output).
-        assert_eq!(
-            malformed_tool_name("bad name 'café—x' here"),
-            "café—x (malformed)"
-        );
-        assert_eq!(malformed_tool_name("日本語のエラー"), "(malformed call)");
-    }
-
-    #[test]
     fn demote_replays_the_archived_false_green() {
         let proven = vec![(
             "[wiring] unitconv/parser.py is built (defines parse_quantity) but never imported"
@@ -1633,6 +1618,95 @@ mod tests {
                 "{class} is not a proven crash and must never demote"
             );
         }
+    }
+
+    #[test]
+    fn malformed_tool_name_recovers_the_quoted_name_without_panicking() {
+        assert_eq!(
+            malformed_tool_name(
+                "The provided function name 'developer__shel' had invalid characters"
+            ),
+            "developer__shel (malformed)"
+        );
+        // No quoted name -> a marker, never an empty lane in the panel.
+        assert_eq!(
+            malformed_tool_name("arguments were not valid json"),
+            "(malformed call)"
+        );
+        assert_eq!(malformed_tool_name("''"), "(malformed call)");
+        // Multi-byte chars on the quote boundary must not panic (the message carries raw model output).
+        assert_eq!(
+            malformed_tool_name("bad name 'café—x' here"),
+            "café—x (malformed)"
+        );
+        assert_eq!(malformed_tool_name("日本語のエラー"), "(malformed call)");
+    }
+
+    // ---- CONTEXTUAL PITFALL RETRIEVAL (the author finally gets the fact library) -------------------
+
+    /// The parser must find EVERY item and lose NO text — it feeds a prompt, so a silently dropped fact is
+    /// a fact the author never learns. Also pins the trigger table to the library: adding a pitfall without
+    /// a trigger row makes it unreachable to the author, and that must fail loudly here.
+    #[test]
+    fn pitfall_items_match_triggers() {
+        let items = pitfall_items();
+        assert_eq!(
+            items.len(),
+            PITFALL_TRIGGERS.len(),
+            "every DOMAIN_PITFALLS item needs a trigger row (or the author can never receive it)"
+        );
+        for (i, item) in items.iter().enumerate() {
+            assert!(
+                item.starts_with(&format!("{}. ", i + 1)),
+                "item {} out of order: {:.40}",
+                i + 1,
+                item
+            );
+            assert!(
+                !PITFALL_TRIGGERS[i].is_empty(),
+                "item {} has no triggers",
+                i + 1
+            );
+        }
+        // No text may be lost between the const and the items the author would see.
+        let rejoined: String = items.join("\n");
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(
+            norm(&rejoined),
+            norm(DOMAIN_PITFALLS),
+            "the split lost or mangled library text"
+        );
+    }
+
+    #[test]
+    fn relevant_pitfalls_retrieves_only_what_the_task_is_about() {
+        // A cron task gets the cron fact (the measured off-by-one class) and NOT money/unicode noise.
+        let cron =
+            relevant_pitfalls("Build a cron scheduler that parses a crontab day-of-week field")
+                .expect("cron task must retrieve the cron pitfall");
+        assert!(cron.contains("CRON day-of-week is 0=Sunday"));
+        assert!(
+            !cron.contains("MUST NOT be a binary float"),
+            "money trivia must not ride along"
+        );
+
+        // An invoice task gets money, not cron.
+        let money = relevant_pitfalls("Compute the invoice total price in currency with rounding")
+            .expect("money task must retrieve the money pitfall");
+        assert!(money.contains("MUST NOT be a binary float"));
+        assert!(
+            !money.contains("CRON day-of-week"),
+            "cron trivia must not ride along"
+        );
+
+        // Retrieval is case-insensitive (specs are prose, not lowercase).
+        assert!(relevant_pitfalls("Handle TIMEZONE and DST correctly").is_some());
+
+        // A task about none of it gets NOTHING — silence beats diluting the prompt.
+        assert!(
+            relevant_pitfalls("Render a static about page with a logo").is_none(),
+            "an unrelated task must receive no pitfalls at all"
+        );
     }
 
     #[test]
@@ -3621,6 +3695,141 @@ Default string sort is lexicographic/codepoint, not numeric ('10' < '2') and not
 11. Week start: Sunday in the US locale, Monday in ISO-8601. Business-day math skips weekends (and often \
 holidays); day+1 is not always the next business day. Percentages: 5% is 0.05, basis points are /10000.\
 ";
+
+/// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
+/// "round", "index" and "year" — and "Render a static about page" then pulled in pagination trivia. A false
+/// trigger is not free: it spends the author's attention on cron facts during a CSS task, which is the exact
+/// dilution this retrieval exists to avoid. When in doubt, DO NOT match — the cost of missing a fact is one
+/// review finding; the cost of crying wolf on every task is that the author stops reading.
+const PITFALL_TRIGGERS: &[&[&str]] = &[
+    &["cron", "crontab", "day-of-week", "day of week", "weekday"],
+    &[
+        "timezone",
+        "time zone",
+        "utc",
+        "dst",
+        "daylight",
+        "datetime",
+        "zoneinfo",
+        "epoch",
+        "timestamp",
+        "unix time",
+    ],
+    &[
+        "0-based",
+        "1-based",
+        "zero-indexed",
+        "one-indexed",
+        "day-of-month",
+        "iso week",
+        "nth ",
+    ],
+    &[
+        "end-exclusive",
+        "end-inclusive",
+        "inclusive",
+        "exclusive",
+        "between",
+        "range(",
+        "time bucket",
+    ],
+    &[
+        "money",
+        "currency",
+        "price",
+        "cents",
+        "invoice",
+        "decimal",
+        "rounding",
+        "floating point",
+        "float",
+    ],
+    &[
+        "off-by-one",
+        "fencepost",
+        "pagination",
+        "page number",
+        "page size",
+        "offset",
+    ],
+    &["leap year", "february", "365 days", "days in a month"],
+    &[
+        "unicode",
+        "utf-8",
+        "codepoint",
+        "code point",
+        "grapheme",
+        "casefold",
+        "truncate",
+        "encode(",
+    ],
+    &[
+        "integer division",
+        "floor division",
+        "modulo",
+        "remainder",
+        "//",
+    ],
+    &[
+        "mutable default",
+        "default arg",
+        "lexicographic",
+        "sorted(",
+        "sort order",
+    ],
+    &[
+        "week start",
+        "business day",
+        "weekend",
+        "holiday",
+        "percentage",
+        "basis point",
+    ],
+];
+
+/// The DOMAIN_PITFALLS items relevant to this task's text, or None when nothing matches.
+///
+/// Splits the SAME const the reviewer and skeptic read — there is no second copy to drift out of sync. If
+/// an item is added to DOMAIN_PITFALLS without a trigger row, `pitfall_items_match_triggers` fails loudly
+/// rather than silently making the new fact unreachable to the author.
+fn relevant_pitfalls(task_text: &str) -> Option<String> {
+    let hay = task_text.to_lowercase();
+    let hits: Vec<String> = pitfall_items()
+        .into_iter()
+        .zip(PITFALL_TRIGGERS.iter())
+        .filter(|(_, triggers)| triggers.iter().any(|t| hay.contains(*t)))
+        .map(|(item, _)| item)
+        .collect();
+    if hits.is_empty() {
+        return None;
+    }
+    Some(hits.join("\n"))
+}
+
+/// DOMAIN_PITFALLS split back into its numbered items ("1. …", "2. …"). The const is authored as one
+/// block with `\`-continued lines, so an item starts only where a line begins with `<n>. `; every other
+/// line is a continuation of the item above it.
+///
+/// Builds owned Strings rather than slicing the const by byte offset — the library is prose with em-dashes
+/// and other multi-byte characters, and a byte slice that lands mid-character panics.
+fn pitfall_items() -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    for line in DOMAIN_PITFALLS.lines() {
+        let starts_item = line
+            .split_once(". ")
+            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        if starts_item {
+            items.push(line.to_string());
+        } else if let Some(last) = items.last_mut() {
+            last.push(' ');
+            last.push_str(line.trim());
+        }
+    }
+    for i in items.iter_mut() {
+        *i = i.trim_end().to_string();
+    }
+    items
+}
 
 /// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
 /// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
@@ -9390,6 +9599,14 @@ fn goals_enabled() -> bool {
     swarm_gate("GOOSE_SWARM_GOALS", true)
 }
 
+/// Give the AUTHOR the curated domain facts its task is about (not just the reviewer/skeptic, who only ever
+/// see them AFTER the code is written). Default OFF pending the A/B — the fact library is validated, but
+/// whether a 27B AVOIDS the mistake when told up-front, rather than merely recognising it when reviewing,
+/// is unmeasured. `swarm.author_pitfalls` in config; env wins.
+fn author_pitfalls_on() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_AUTHOR_PITFALLS", load_config().author_pitfalls)
+}
+
 /// Render the pillars as a worker-prompt block. Empty pillars -> empty string (a true no-op), so injection is
 /// inert when the flag is off or nothing was distilled. Pure — unit-testable without a model.
 fn render_pillars_block(p: &Pillars) -> String {
@@ -9736,6 +9953,35 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // CONTEXTUAL PITFALLS (GOOSE_SWARM_AUTHOR_PITFALLS). DOMAIN_PITFALLS is a curated library of facts
+        // the weak fleet routinely misremembers, and the engine has only ever shown it to the REVIEWER and
+        // the SKEPTIC — i.e. used it to DETECT a domain error after it was written, never to PREVENT it.
+        // The author is the one prompt that never got the facts.
+        //
+        // This is the `domain-conventions` defect class specifically: a SELF-CONSISTENT error the code AND
+        // its tests both encode the same wrong way, which a green suite and a same-fleet review cannot see
+        // (the review dimension's own words). Detecting it late costs a review round and a fix that may be
+        // refused; not making the mistake costs nothing.
+        //
+        // Retrieval is deterministic and scoped to what the task is ABOUT — never the whole library, or a
+        // CSS task would be lectured about cron.
+        // Retrieval reads the subtask's own spec PLUS its owned file names: a task named `cron.py` /
+        // `money.rs` announces its domain even when the prose does not.
+        let pitfalls_block = if author_pitfalls_on() {
+            relevant_pitfalls(&format!("{} {}", req.description, req.owned_files.join(" ")))
+                .map(|p| {
+                    format!(
+                        "\nKNOWN-CORRECT CONVENTIONS for this task — these are EXTERNAL GROUND TRUTH, not \
+                         suggestions. They are the exact rules this kind of code is most often written \
+                         wrong, in a way that still passes its own tests (the code and the tests then \
+                         encode the SAME mistake). Follow them EXACTLY, even if another convention feels \
+                         natural:\n{p}\n"
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let worker_directive = lang.directive();
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
@@ -9800,7 +10046,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{pitfalls_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
