@@ -505,6 +505,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Keep working if a task failed"
+                  hint="if one of the build's own tasks fails outright, goose keeps trying to finish it instead of declaring the app done. Today it only checks the smoke gate, so a failed task can still be reported as verified. Bonus tasks are never counted."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.failed_tasks_block_green}
+                    onChange={(v) => set({ failed_tasks_block_green: v })}
+                  />
+                </Row>
+                <Row
                   label="Run the app's own tests before calling it verified"
                   hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
                 >
