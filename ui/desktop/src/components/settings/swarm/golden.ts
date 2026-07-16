@@ -88,6 +88,10 @@ export interface SwarmConfig {
    *  accepted raw on a non-empty check and never persisted, so it cannot be audited. Measures, gates nothing.
    *  Default OFF. */
   contract_validate?: boolean;
+  /** Stop the confidence re-draft ladder once a round fails to beat the best confidence already measured.
+   *  MEASURED: a run went 84 -> 70 -> 70 -> 52 over three re-draft rounds (~60 min of the whole fleet) and
+   *  shipped the round-2 plan anyway. Cannot lower quality — the best plan is kept regardless. Default OFF. */
+  retarget_stall_guard?: boolean;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
