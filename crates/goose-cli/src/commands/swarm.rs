@@ -259,6 +259,14 @@ pub struct SwarmConfig {
     /// floor). GOOSE_SWARM_RETARGET env overrides.
     #[serde(default)]
     pub retarget: bool,
+    /// Stop the retarget redraft ladder once a round fails to beat the best confidence already measured,
+    /// rather than climbing to RETARGET_MAX_N on faith. MEASURED: a py-splitwise run went 84 → 70 → 70 → 52
+    /// over three redraft rounds (~60 min of a 3-node fleet) and shipped round 2's plan anyway. Cannot lower
+    /// quality — `best_plan` is monotonic, so an early stop ships the same plan unless a later round would
+    /// have beaten the best, which is what this observed not to happen. OFF by default.
+    /// GOOSE_SWARM_RETARGET_STALL_GUARD env overrides.
+    #[serde(default)]
+    pub retarget_stall_guard: bool,
     /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
     /// constraint, and re-draft so the weak fleet's independent plans genuinely converge. OFF by default.
     /// GOOSE_SWARM_BACKBONE env overrides.
@@ -400,6 +408,7 @@ impl Default for SwarmConfig {
             ask_floor: None,
             converge: default_converge(),
             retarget: false,
+            retarget_stall_guard: false,
             backbone: false,
             draft_temp: None,
             repro_demotes_verified: false,
@@ -2821,6 +2830,53 @@ mod tests {
             retarget_action(&mk(None, None, true, vec![]), true),
             RetargetAction::None
         );
+    }
+
+    /// The stall guard's decision, extracted as the pure predicate the loop runs, over the ACTUAL confidence
+    /// sequence measured on loop-ab-baseline (run swarm-20260716-145501944).
+    ///
+    /// The ladder went 84 → 70 → 70 → 52 across three redraft rounds — roughly an hour of the whole fleet —
+    /// and then shipped round 2's plan via `best_plan`. The guard must cut that at the first round that fails
+    /// to beat 84, because every later rung costs a full planning pass to produce a plan already in hand.
+    #[test]
+    fn stall_guard_stops_the_ladder_that_measurably_did_not_climb() {
+        // (conf_of_round, tolerance) -> did the guard stop here?
+        let decide = |seq: &[u8], tolerance: u32| -> Option<usize> {
+            let mut best: Option<u8> = None;
+            let mut stalled = 0u32;
+            for (i, &conf) in seq.iter().enumerate() {
+                let improved = best.is_none_or(|b| conf > b);
+                if i > 0 && !improved {
+                    stalled += 1;
+                } else {
+                    stalled = 0;
+                }
+                best = Some(best.map_or(conf, |b| b.max(conf)));
+                if stalled >= tolerance {
+                    return Some(i);
+                }
+            }
+            None
+        };
+
+        // THE MEASURED SEQUENCE. Round 0 = 84 (the first measure), then the redrafts.
+        assert_eq!(
+            decide(&[84, 70, 70, 52], 1),
+            Some(1),
+            "the guard must stop at the FIRST round that fails to beat 84 — rounds 2 and 3 cost ~40 min of \
+             fleet and produced nothing better"
+        );
+        // tolerance 2 gives noise one more chance, and still cuts before the last (worst) rung.
+        assert_eq!(decide(&[84, 70, 70, 52], 2), Some(2));
+
+        // A ladder that IS climbing must never be stopped — that would be the guard costing quality.
+        assert_eq!(decide(&[50, 60, 70, 88], 1), None);
+        // A dip followed by a real recovery: one bad round resets on improvement, so a tolerance of 2 rides
+        // it out. This is the case the guard must not get wrong, and why the tolerance is a knob.
+        assert_eq!(decide(&[50, 45, 70, 90], 2), None);
+        // ...but at tolerance 1 the same dip stops it. That is the honest cost of the aggressive setting, and
+        // the reason the default ships OFF until the campaign measures it.
+        assert_eq!(decide(&[50, 45, 70, 90], 1), Some(1));
     }
 
     #[test]
@@ -12680,6 +12736,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut retarget_round = 0u32;
     let mut effective_best_of_n = best_of_n;
     let mut best_plan: Option<(String, PlanConf)> = None;
+    // GOOSE_SWARM_RETARGET_STALL_GUARD: stop the redraft ladder once a round FAILS TO BEAT the best confidence
+    // already measured, instead of climbing to RETARGET_MAX_N on faith.
+    //
+    // MEASURED, not theorised (loop-ab-baseline, run swarm-20260716-145501944, py-splitwise, 3x qwen3.6-27b):
+    //   round 2  redraft best_of_n 3→4   conf 84
+    //   round 3  redraft best_of_n 4→5   conf 70   <- worse
+    //   round 4  redraft best_of_n 5→6   conf 70   <- no better, and now at RETARGET_MAX_N
+    //            proceed_at_cap          conf 52
+    // Three redraft rounds, ~60 minutes of the whole 3-node fleet, and the run shipped round 2's plan anyway
+    // via `best_plan`. The ladder never beat its own first rung and the last two rungs were pure cost. The
+    // lever's premise — "more independent drafts raise agreement" — did not hold for this fleet on this spec.
+    //
+    // The guard cannot lower quality: `best_plan` is monotonic, so stopping early ships the SAME plan the
+    // full ladder would have shipped unless a later round would have beaten the best — which is exactly the
+    // event this observed not to happen. It only removes rounds that produced nothing. Default OFF and
+    // byte-identical when off; the campaign proves it before it becomes a default.
+    let stall_guard_on =
+        swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", cfg.retarget_stall_guard);
+    // How many consecutive non-improving redraft rounds to tolerate before stopping. 1 = stop at the first
+    // round that fails to beat the best (what the measurement above supports); 2 gives noise one more chance.
+    let stall_tolerance: u32 = std::env::var("GOOSE_SWARM_RETARGET_STALL_TOLERANCE")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(1)
+        .clamp(1, 3);
+    let mut stalled_rounds = 0u32;
+    // The best confidence seen BEFORE the current round's redraft, so a round can be judged against it.
+    let mut best_conf_seen: Option<u8> = None;
     // GOOSE_SWARM_DRAFT_TEMP: draft plan skeletons at a fixed low temperature so the weak fleet's independent
     // drafts converge (its draft VARIANCE is the root cause of low/noisy agreement — growing best_of_n can't
     // reduce variance, but a lower temperature can). Unset → server/model default (byte-identical). Clamped
@@ -12788,7 +12872,40 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // RETARGET (before the one-shot ask): when AGREEMENT is the binding signal, re-draft toward a
                 // consensus by growing best-of-N and re-measuring. Spec-clarity / undefined-product cases fall
                 // through to the ask (only the user can pin those). Bounded by retarget_cap + RETARGET_MAX_N.
-                if retarget_on && retarget_round < retarget_cap {
+                // STALL GUARD: judge the round that just finished before spending another one. A redraft that
+                // failed to beat the best confidence already measured is evidence the ladder is not climbing,
+                // and every further rung costs a full planning pass across the fleet (~20 min measured) to
+                // ship a plan `best_plan` is already holding.
+                let improved = best_conf_seen.is_none_or(|b| conf > b);
+                if stall_guard_on && retarget_round > 0 && !improved {
+                    stalled_rounds += 1;
+                }
+                if improved {
+                    stalled_rounds = 0;
+                }
+                best_conf_seen = Some(best_conf_seen.map_or(conf, |b| b.max(conf)));
+                let stalled = stall_guard_on && stalled_rounds >= stall_tolerance;
+                if stalled {
+                    sink.write_value(serde_json::json!({
+                        "event": "confidence_retarget",
+                        "round": retarget_round,
+                        "binding_signal": "none",
+                        "action": "stall_stop",
+                        "conf_before": conf,
+                        "conf_after": best_conf_seen,
+                        "detail": format!(
+                            "redraft stopped: {stalled_rounds} round(s) failed to beat the best confidence \
+                             ({}) — further rounds cost a full planning pass to ship a plan already held",
+                            best_conf_seen.unwrap_or(conf)
+                        ),
+                    }));
+                    eprintln!(
+                        "  {} retarget stalled at {}/100 — not spending another draft round",
+                        style("↯").yellow(),
+                        best_conf_seen.unwrap_or(conf)
+                    );
+                }
+                if retarget_on && !stalled && retarget_round < retarget_cap {
                     match retarget_action(&plan_conf, effective_best_of_n < RETARGET_MAX_N) {
                         RetargetAction::Redraft => {
                             // AGREEMENT binds: the fixed weak fleet's drafts diverge on structure. Grow the
