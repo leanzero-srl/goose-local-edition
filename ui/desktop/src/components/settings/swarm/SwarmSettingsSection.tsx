@@ -490,6 +490,30 @@ export default function SwarmSettingsSection() {
                   <NumberField value={cfg.draft_temp ?? null} placeholder="default" onCommit={(v) => set({ draft_temp: v })} />
                 </Row>
                 <Row
+                  label="Check for dead code after the build"
+                  hint="reads the finished code and finds modules that were built but nothing imports — they can never run. Model-free, so it can't be argued with. Also finds unimplemented stubs."
+                >
+                  <SwarmSwitch checked={!!cfg.review} onChange={(v) => set({ review: v })} />
+                </Row>
+                <Row
+                  label="Dead code un-verifies the run"
+                  hint="if a module is built but imported by nothing and goose can't wire it up, the run stops claiming it was verified. Standalone scripts are never counted — they're meant to be run directly. Needs the dead-code check on."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.unwired_demotes_verified}
+                    onChange={(v) => set({ unwired_demotes_verified: v })}
+                  />
+                </Row>
+                <Row
+                  label="Tell the author the domain rules up front"
+                  hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.author_pitfalls}
+                    onChange={(v) => set({ author_pitfalls: v })}
+                  />
+                </Row>
+                <Row
                   label="A proven crash un-verifies the run"
                   hint="if goose reproduces a crash twice in a clean copy and can't repair it, the run stops claiming it was verified and prints the command to reproduce. Never fails a passing app — it only drops the 'verified' claim. Needs the repro oracle on."
                 >
