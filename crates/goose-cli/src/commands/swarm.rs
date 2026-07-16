@@ -296,6 +296,12 @@ pub struct SwarmConfig {
     /// still gets put to the user. OFF by default. GOOSE_SWARM_GROUNDED_RESEARCH_ONLY env overrides.
     #[serde(default)]
     pub grounded_research_only: bool,
+    /// Run the project's OWN declared `npm test` in the TypeScript smoke gate. The Python arm already runs
+    /// pytest; TS was gated on `npm run build` alone, so a TS app with a failing suite shipped as verified
+    /// (measured: loop-05 said verified:true with 2 failing tests and a broken first-click-safety engine).
+    /// OFF by default. GOOSE_SWARM_TS_SMOKE_TESTS env overrides.
+    #[serde(default)]
+    pub ts_smoke_tests: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -365,6 +371,7 @@ impl Default for SwarmConfig {
             review: false,
             unwired_demotes_verified: false,
             grounded_research_only: false,
+            ts_smoke_tests: false,
         }
     }
 }
@@ -7369,6 +7376,45 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
             }
             Some(_) => {}
             None => return SmokeResult::skipped(), // npm missing / timed out -> inconclusive
+        }
+    }
+    // 1b) TESTS (GOOSE_SWARM_TS_SMOKE_TESTS, default OFF). The Python arm runs `pytest --collect-only` AND
+    // `pytest -q`, so a Python app with a failing suite is caught. TypeScript had NO test step at all — the
+    // whole TS/JS ecosystem was gated on `npm run build` alone.
+    //
+    // MEASURED (loop-05, react-minesweeper): the run emitted complete_result{passed:true, verified:true,
+    // remaining_findings:0} while `npm test` reported "Tests 2 failed | 5 passed" — first-click safety was
+    // broken (the clicked cell WAS a mine) — and run_finished itself listed failed:[engine-tests,
+    // react-tests]. The build compiled, so the gate saw green and the app shipped "verified" with a broken
+    // engine. That is precisely the false-green this gate exists to prevent.
+    //
+    // Only runs a test script the project ITSELF declares. A project with no test script is unchanged (many
+    // tiny TS CLIs have none) — absence of a suite is not a defect the gate should invent.
+    if swarm_gate_cfg("GOOSE_SWARM_TS_SMOKE_TESTS", load_config().ts_smoke_tests) {
+        let has_test = pkg
+            .get("scripts")
+            .and_then(|s| s.get("test"))
+            .and_then(|v| v.as_str())
+            // `npm init` leaves a placeholder that exits 1 by design — running it would false-fail.
+            .filter(|s| !s.contains("no test specified"))
+            .is_some();
+        if has_test {
+            let mut c = tokio::process::Command::new("npm");
+            // `--run` keeps vitest/jest from parking in interactive watch mode and hanging the gate.
+            c.args(["test", "--", "--run"]).current_dir(root);
+            match smoke_output(c, 300).await {
+                Some(out) if !out.status.success() => {
+                    let combined = combined_output(&out);
+                    findings.push(format!(
+                        "`npm test` failed (exit {}) — the app's OWN test suite does not pass:\n{}",
+                        out.status.code().unwrap_or(-1),
+                        tail_lines(&combined, 40)
+                    ));
+                }
+                Some(_) => {}
+                // npm missing / timed out -> inconclusive, never a phantom failure (mirrors the build arm).
+                None => return SmokeResult::skipped(),
+            }
         }
     }
     // 2) entry: confirm it exists, and for a BUILT (.js/.mjs/.cjs) entry that it runs without an uncaught
