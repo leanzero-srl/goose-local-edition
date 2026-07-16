@@ -1738,6 +1738,36 @@ mod tests {
         assert_eq!(detect_stack_key("a react native mobile app", &[]), None);
     }
 
+    /// Moving personas into the SHARED skills root is what made this reachable: persona_dir is a pure
+    /// function of the stack key, and write_persona truncates. A user who hand-writes a skill named
+    /// `stack-fastapi` would have had it silently eaten by the first successful fastapi build. Authorship,
+    /// not the path, decides — and the check runs against real bytes on a real disk, because the bug is in
+    /// the filesystem call and a mocked one would prove nothing.
+    #[test]
+    fn a_persona_write_never_truncates_a_skill_goose_did_not_author() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("SKILL.md");
+        let hand_written =
+            "---\nname: stack-fastapi\ndescription: mine\n---\n\nMy own hard-won notes.\n";
+        std::fs::write(&path, hand_written).unwrap();
+
+        // the guard's exact predicate, over the real file
+        let existing = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !existing.contains(PERSONA_PROVENANCE),
+            "a hand-written skill must not look goose-authored"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            hand_written,
+            "the user's file must be byte-identical after the check"
+        );
+
+        // ...whereas goose's own render IS recognised, so it can still update itself
+        let rendered = render_persona_skill("fastapi", &PersonaSnapshot::default(), "x", 1, "");
+        assert!(rendered.contains(PERSONA_PROVENANCE));
+    }
+
     /// THE SAFETY CLAIM, PINNED. The persona is only defensible because the user can SEE the lesson a weak
     /// model wrote about itself and throw it out. That rests entirely on the write landing on a directory
     /// `goose::skills` actually walks — which the first version did not (it wrote to `data_dir/swarm/personas`,
@@ -1766,6 +1796,31 @@ mod tests {
         );
     }
 
+    /// The render must emit the exact sentence the write guard looks for. These are two constants in two
+    /// functions and nothing but this test couples them: if the render stops emitting PERSONA_PROVENANCE,
+    /// every future write silently takes the RefusedForeign branch and goose quietly stops learning — a
+    /// dead feature behind a green build, which is the failure mode this codebase keeps producing.
+    #[test]
+    fn a_rendered_persona_is_recognised_as_goose_authored() {
+        let snap = PersonaSnapshot::default();
+        let rendered = render_persona_skill("fastapi", &snap, "a lesson", 1, "");
+        assert!(
+            rendered.contains(PERSONA_PROVENANCE),
+            "the write guard proves authorship by finding PERSONA_PROVENANCE in the file it is about to \
+             truncate; this render does not contain it, so goose would refuse to overwrite its own skill"
+        );
+        // and the warning must sit ABOVE the lesson, not only in the footer: the user fixes a wrong sentence
+        // where the wrong sentence IS, and everything above the marker is regenerated.
+        let warn = rendered
+            .find("REGENERATED")
+            .expect("no in-place-edit warning");
+        let lesson = rendered.find("## What worked").expect("no lesson section");
+        assert!(
+            warn < lesson,
+            "the warning that this region is regenerated must appear BEFORE the region the user will edit"
+        );
+    }
+
     /// The file tells the user their corrections are permanent. A rewrite is `fs::write` — truncating — so
     /// that promise is only true if the user's section round-trips through the render DETERMINISTICALLY.
     /// Handing it to a weak model as "prior" and hoping it merges is exactly the trust this cannot assume.
@@ -1785,6 +1840,17 @@ mod tests {
             persona_user_notes(&first),
             "",
             "a fresh skill has no user notes"
+        );
+        // The banner NAMES the marker inline, above the real heading. Cutting at the first textual hit
+        // would hand back the whole document as "the user's notes" — assert we cut at the heading itself.
+        assert!(
+            first.matches(PERSONA_USER_MARKER).count() > 1,
+            "this test only bites while the banner names the marker inline"
+        );
+        assert!(
+            !persona_user_notes(&first).contains("use uvicorn"),
+            "the split landed on the banner, not the heading — goose's own lesson is being preserved as \
+             though the user wrote it, and it will compound on every rewrite"
         );
 
         // the user opens the file and appends their correction under the marker
@@ -1810,7 +1876,14 @@ mod tests {
             1,
             "the notes were duplicated across rewrites"
         );
-        assert_eq!(again.matches(PERSONA_USER_MARKER).count(), 1);
+        // Exactly one real HEADING. The banner names the marker inline too, so a raw substring count is the
+        // wrong invariant — what must never happen is a SECOND notes section, which would strand the first.
+        let headings = |s: &str| {
+            s.matches(&format!("\n{PERSONA_USER_MARKER}")).count()
+                + usize::from(s.starts_with(PERSONA_USER_MARKER))
+        };
+        assert_eq!(headings(&again), 1, "a rewrite grew a second notes section");
+        assert_eq!(headings(&first), 1);
     }
 
     /// Only a CORRECTIVE verdict carries a lesson; "ok"/"observed" means the judge had nothing to say. Uses
@@ -9574,10 +9647,19 @@ const PERSONA_NOTES_PLACEHOLDER: &str =
 /// trust this feature is not allowed to assume. Everything after the marker now round-trips deterministically,
 /// so a correction written there outlives every future rewrite without a model in the path.
 fn persona_user_notes(prior: &str) -> String {
-    let notes = prior
-        .split_once(PERSONA_USER_MARKER)
-        .map(|(_, after)| after.to_string())
-        .unwrap_or_default();
+    // Match the marker ONLY as a heading at the start of a line — i.e. with its newline. The file also
+    // MENTIONS `## Your notes` inline, in the banner telling the user where to write, and a plain
+    // `split_once` cuts at that sentence instead, handing back the whole rest of the file as though the user
+    // had authored it — which round-trips goose's own lesson into the preserved section and compounds it on
+    // every rewrite. Split on the newline-prefixed form rather than computing byte offsets: an index into a
+    // str is a panic waiting on the first multi-byte character, and these files carry em-dashes.
+    let notes = match prior.strip_prefix(PERSONA_USER_MARKER) {
+        Some(rest) => rest.to_string(),
+        None => prior
+            .split_once(&format!("\n{PERSONA_USER_MARKER}"))
+            .map(|(_, after)| after.to_string())
+            .unwrap_or_default(),
+    };
     // Strip the invitation wherever it sits, rather than testing the section for equality with it: a user
     // writing under a "write here" heading appends BELOW the prompt at least as often as they replace it, and
     // a surviving placeholder would be fed back to the next reflection as though the user had asserted it.
@@ -9770,17 +9852,42 @@ fn judge_lessons_from_log(path: &std::path::Path) -> Vec<String> {
 }
 
 /// Persist what was learned. Best-effort: a failed write must never fail a run that already succeeded.
-fn write_persona(stack_key: &str, skill: &str, runs: usize) -> std::io::Result<std::path::PathBuf> {
+/// What a persona write did. `write_persona` is a TRUNCATING write to a path derived purely from the stack
+/// key, so it needs a way to say "I found something there that is not mine and left it alone".
+enum PersonaWrite {
+    Written(std::path::PathBuf),
+    /// A SKILL.md sits at the persona path that goose did not author — a hand-written skill that happens to
+    /// be called `stack-<key>`. Refuse. Learning a lesson is never worth eating the user's own file.
+    RefusedForeign(std::path::PathBuf),
+}
+
+/// The sentence every rendered persona carries, used to prove goose wrote the file it is about to truncate.
+///
+/// The clobber predicate USED to be the path alone: persona_dir(key) is a pure function of the stack key, so
+/// `write_persona` would truncate whatever sat at config_dir/skills/stack-fastapi — including a skill the user
+/// hand-wrote under that name. Moving personas into the shared skills root (so the UI can show them) is what
+/// created that collision, so the guard ships with it.
+const PERSONA_PROVENANCE: &str = "Written by goose after a build of this stack";
+
+fn write_persona(stack_key: &str, skill: &str, runs: usize) -> std::io::Result<PersonaWrite> {
     let dir = persona_dir(stack_key);
-    std::fs::create_dir_all(&dir)?;
     let path = dir.join("SKILL.md");
+    // Fail SAFE: only a file that is absent, or that carries goose's own provenance line, may be truncated.
+    // A user who strips that line out while editing gets a persona goose will never rewrite again — which is
+    // the harmless direction for this to fail in.
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if !existing.contains(PERSONA_PROVENANCE) {
+            return Ok(PersonaWrite::RefusedForeign(path));
+        }
+    }
+    std::fs::create_dir_all(&dir)?;
     std::fs::write(&path, skill)?;
     let counter = persona_runs_file(stack_key);
     if let Some(parent) = counter.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::write(counter, runs.to_string());
-    Ok(path)
+    Ok(PersonaWrite::Written(path))
 }
 
 /// THE REFLECT STEP. The engine has already PROVEN the app built and verified; this asks the model to say
@@ -9881,9 +9988,13 @@ fn render_persona_skill(
         "---\nname: stack-{stack_key}\ndescription: What goose learned from builds of the {stack_key} stack \
          that actually shipped.\n---\n\n\
          # {stack_key}\n\n\
-         Written by goose after a build of this stack **built and verified**. Everything here is derived from \
-         a run the engine PROVED worked — not from a guess. It is advisory: a live spec always overrides it.\n\n\
+         {PERSONA_PROVENANCE} that **built and verified**. Everything here is derived from a run the engine \
+         PROVED worked — not from a guess. It is advisory: a live spec always overrides it.\n\n\
          Learned from **{runs}** successful build(s).\n\n\
+         > **Correcting this file:** everything down to the `{PERSONA_USER_MARKER}` heading is REGENERATED by \
+         goose after the next successful build of this stack, so a fix typed up here is lost. Write it under \
+         `{PERSONA_USER_MARKER}` instead — that section is kept word for word. Delete the skill to make goose \
+         forget the stack entirely.\n\n\
          ## What worked\n\n{reflection}\n\n\
          ## Proven layout\n\n{layout}\n\n\
          ## Decomposition that shipped\n\n{shape}\n\n\
@@ -13653,14 +13764,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "reason": "the reflection came back empty",
                     }));
                 } else {
+                    // RE-READ before rendering. `prior` was captured BEFORE reflect_on_success, which just
+                    // spent minutes inside a 27b local model — a note the user typed during that window is
+                    // not in it, and the write below TRUNCATES. Lifting the preserved section from `prior`
+                    // would therefore destroy exactly the corrections the section promises to keep, with a
+                    // race window as wide as a model call. The reflection keeps the older copy; it is only
+                    // context, and a stale prior there costs nothing.
+                    let fresh = read_persona(&key);
                     let skill =
-                        render_persona_skill(&key, &persona_snapshot, &reflection, runs, &prior);
+                        render_persona_skill(&key, &persona_snapshot, &reflection, runs, &fresh);
                     match write_persona(&key, &skill, runs) {
-                        Ok(path) => {
+                        Ok(PersonaWrite::Written(path)) => {
                             sink.write_value(serde_json::json!({
                                 "event": "persona_learned", "stack_key": key, "written": true,
                                 "runs": runs, "path": path.display().to_string(),
                                 "lessons": persona_snapshot.judge_lessons.len(),
+                                "kept_user_notes": !persona_user_notes(&fresh).is_empty(),
                             }));
                             eprintln!(
                                 "{} {} — goose will start from this next time it builds {} ({} successful build(s))",
@@ -13668,6 +13787,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 path.display(),
                                 key,
                                 runs,
+                            );
+                        }
+                        Ok(PersonaWrite::RefusedForeign(path)) => {
+                            sink.write_value(serde_json::json!({
+                                "event": "persona_learned", "stack_key": key, "written": false,
+                                "reason": "a skill goose did not author already occupies that name",
+                                "path": path.display().to_string(),
+                            }));
+                            eprintln!(
+                                "{} {} already exists and goose did not write it — leaving it alone",
+                                style("learn:").yellow().bold(),
+                                path.display(),
                             );
                         }
                         Err(e) => {
