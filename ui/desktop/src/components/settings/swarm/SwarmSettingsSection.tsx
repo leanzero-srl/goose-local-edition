@@ -505,6 +505,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Show the checker the app's real interface first"
+                  hint="before goose verifies the finished app, it runs the entry point and reads its actual --help, so its checks target the interface the app really has. Without this it guesses from the spec — and a wrong guess has made it 'fix' a working app."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.sink_prebuild}
+                    onChange={(v) => set({ sink_prebuild: v })}
+                  />
+                </Row>
+                <Row
                   label="Keep working if a task failed"
                   hint="if one of the build's own tasks fails outright, goose keeps trying to finish it instead of declaring the app done. Today it only checks the smoke gate, so a failed task can still be reported as verified. Bonus tasks are never counted."
                 >

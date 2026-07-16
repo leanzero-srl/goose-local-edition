@@ -309,6 +309,14 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN env overrides.
     #[serde(default)]
     pub failed_tasks_block_green: bool,
+    /// Give the integrate-verify sink the BUILT entry's REAL `--help` before it authors its golden checks,
+    /// so it writes them against the interface the app ACTUALLY has instead of the one the spec describes.
+    /// Closes the engine's one measured regression (a spec-distilled check used `--db` after the subcommand
+    /// while the app built it as a global before it; a correct app went red and the fix loop broke 2 passing
+    /// tests chasing it). Purely factual — asserts no defect, commands no fix. Python-only today (entry_help
+    /// is). OFF by default. GOOSE_SWARM_SINK_PREBUILD env overrides.
+    #[serde(default)]
+    pub sink_prebuild: bool,
 }
 
 fn default_scout_budget_secs() -> u64 {
@@ -380,6 +388,7 @@ impl Default for SwarmConfig {
             grounded_research_only: false,
             ts_smoke_tests: false,
             failed_tasks_block_green: false,
+            sink_prebuild: false,
         }
     }
 }
@@ -10177,6 +10186,41 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     "{owned_part}{}",
                     read_prereview_findings(std::path::Path::new(&cwd))
                 )
+            } else {
+                owned_part
+            };
+            // SINK PREBUILD (GOOSE_SWARM_SINK_PREBUILD, default OFF): hand the integrate-verify sink the
+            // BUILT entry's REAL `--help` before it authors a single golden check.
+            //
+            // The sink's job list orders it to run every advertised command and compare the output to the
+            // value the SPEC implies — while it only knows the arg shape the spec DESCRIBES. That gap is the
+            // engine's one measured regression (2026-07-03, swarm.rs comment at the pillar-check call site): a
+            // check distilled from the spec used `--db` AFTER the subcommand, the app had built it as a global
+            // BEFORE it, a CORRECT app went red, and the fix loop then broke 2 passing tests chasing the
+            // phantom. That is why the pillar checks are advisory to this day.
+            //
+            // The fix is to remove the guess, not to mitigate it downstream: `entry_help` already runs the
+            // entry in a THROWAWAY SNAPSHOT (never the live tree) and returns the real top-level and
+            // per-subcommand help. Injecting it is PURELY FACTUAL — it asserts nothing is broken, commands no
+            // fix, and puts no model in any verdict. It is also the deterministic half of lifting BUILD out of
+            // the sink's serial loop (the sink is 57% of EXECUTE on one node).
+            //
+            // Python-only today, because entry_help is: other languages return "" and stay byte-identical.
+            let owned_part = if req.task_id == "integrate-verify"
+                && swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild)
+            {
+                let help = entry_help(std::path::Path::new(&cwd), lang).await;
+                if help.trim().is_empty() {
+                    owned_part
+                } else {
+                    format!(
+                        "{owned_part}\n\n## THE BUILT APP'S ACTUAL INTERFACE (observed, not from the spec)\n\
+                         This is the REAL `--help` of the entry point as it was actually built, captured by \
+                         running it. Where it disagrees with how the spec DESCRIBES the interface, THIS is \
+                         what the program really does — write your checks against THIS arg shape, not against \
+                         the shape you expect. Do not treat a difference as a defect on its own.\n\n{help}\n"
+                    )
+                }
             } else {
                 owned_part
             };
