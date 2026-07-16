@@ -12026,6 +12026,29 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .filter_map(build_worker_extension)
                 .collect(),
         );
+        // #108 — SAY WHETHER THIS RUN CAN ACTUALLY RESEARCH. build_worker_extension returns None when the
+        // key is absent (context7 needs CONTEXT7_API_KEY, web-search needs WEBSEARCH_BEARER) and prints the
+        // skip to STDERR, which nobody sees in the desktop app. So a run with NO lookup tools at all still
+        // emitted research_completed and the UI still said "Planning research — libraries, architecture".
+        // That is a model-claim ("I researched") dressed as an engine fact. MEASURED: on this machine both
+        // keys are unset, so every "research finding" in every run so far has been pure model reasoning —
+        // which is exactly why every retarget resolution comes back with lookups:[].
+        let research_tools: Vec<String> = research_exts.iter().map(|e| e.name().to_string()).collect();
+        sink.write_value(serde_json::json!({
+            "event": "research_tools",
+            "available": research_tools,
+            "can_look_things_up": !research_tools.is_empty(),
+        }));
+        if research_tools.is_empty() {
+            eprintln!(
+                "{}",
+                style(
+                    "research: NO lookup tools configured (set WEBSEARCH_BEARER and/or CONTEXT7_API_KEY) — \
+                     planning from the model's own knowledge only, nothing will be looked up"
+                )
+                .yellow()
+            );
+        }
         let worker_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
         let findings = if cfg.research_scouts {
             phase_banner(
