@@ -1560,6 +1560,28 @@ mod tests {
     /// review_repro proved a crash at seq 52 whose fix was REJECTED (smoke-inconclusive-or-red). The green
     /// claim stood. The rule must demote it.
     #[test]
+    fn malformed_tool_name_recovers_the_quoted_name_without_panicking() {
+        assert_eq!(
+            malformed_tool_name(
+                "The provided function name 'developer__shel' had invalid characters"
+            ),
+            "developer__shel (malformed)"
+        );
+        // No quoted name -> a marker, never an empty lane in the panel.
+        assert_eq!(
+            malformed_tool_name("arguments were not valid json"),
+            "(malformed call)"
+        );
+        assert_eq!(malformed_tool_name("''"), "(malformed call)");
+        // Multi-byte chars on the quote boundary must not panic (the message carries raw model output).
+        assert_eq!(
+            malformed_tool_name("bad name 'café—x' here"),
+            "café—x (malformed)"
+        );
+        assert_eq!(malformed_tool_name("日本語のエラー"), "(malformed call)");
+    }
+
+    #[test]
     fn demote_replays_the_archived_false_green() {
         let proven = vec![(
             "[wiring] unitconv/parser.py is built (defines parse_quantity) but never imported"
@@ -4554,6 +4576,11 @@ impl GooseAgentDispatcher {
         // line, edited path, query…) AND a snippet of its output, so the desktop run panel shows both what
         // ran and what it produced. (name, arg-summary, ok, result-snippet).
         let mut call_records: Vec<(String, String, Option<bool>, String)> = Vec::new();
+        // Calls the PROVIDER rejected before any tool ran (bad function name / unparseable arguments) —
+        // the weak-model tool-calling failure. Counted separately from `errors`, which are calls that RAN
+        // and whose tool reported a problem; those are usually PRODUCTIVE (a worker running its own code
+        // and finding a real bug), whereas a malformed call is pure waste.
+        let mut malformed: usize = 0;
         // Per-turn activity heartbeat for the judge (worker calls only). Reset to 0 at the start of every
         // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
         // just means the judge falls back to its time-based checks.
@@ -4630,8 +4657,8 @@ impl GooseAgentDispatcher {
                     for content in &msg.content {
                         match content {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
-                            MessageContent::ToolRequest(req) => {
-                                if let Ok(tc) = req.tool_call.as_ref() {
+                            MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
+                                Ok(tc) => {
                                     let name = tc.name.to_string();
                                     if name == FINAL_OUTPUT_TOOL {
                                         final_output = Some(
@@ -4645,7 +4672,31 @@ impl GooseAgentDispatcher {
                                     let summary = summarize_tool_call(&name, &args_val);
                                     pending.insert(req.id.clone(), (name, mcp, summary));
                                 }
-                            }
+                                // MALFORMED CALL. The provider could not parse what the model emitted, so it
+                                // built the request as an Err — response_to_message does this for an invalid
+                                // function name (INVALID_REQUEST) and for unparseable arguments
+                                // (INVALID_PARAMS). This branch used to be dropped, and because a malformed
+                                // call never reaches a tool there is no ToolResponse to catch it downstream
+                                // either: it was invisible to the digest BY CONSTRUCTION. Every "malformed: 0"
+                                // this instrument ever reported was therefore an artifact, not a measurement —
+                                // which matters because the whole question of whether a weak local model can
+                                // call tools reliably is answered from these digests.
+                                Err(e) => {
+                                    malformed += 1;
+                                    let name = malformed_tool_name(&e.message);
+                                    call_records.push((
+                                        name.clone(),
+                                        e.message.to_string(),
+                                        Some(false),
+                                        format!("MALFORMED CALL — the provider rejected it before any tool ran: {}", e.message),
+                                    ));
+                                    tool_calls.push(ToolCallRecord {
+                                        name,
+                                        is_mcp: false,
+                                        ok: Some(false),
+                                    });
+                                }
+                            },
                             MessageContent::ToolResponse(resp) => {
                                 if let Some((name, is_mcp, summary)) = pending.remove(&resp.id) {
                                     let ok = resp
@@ -4712,6 +4763,10 @@ impl GooseAgentDispatcher {
                 let digest = serde_json::json!({
                     "tool_calls": tool_calls.len(),
                     "errors": errors,
+                    // Of those errors, the ones the provider rejected before any tool ran. `errors -
+                    // malformed` is the productive remainder (a tool ran and the app said no). Additive key;
+                    // the judge reads only the fields it already knew about.
+                    "malformed": malformed,
                     "recent": recent,
                     "last_text": last_text,
                     "calls": calls,
@@ -10583,6 +10638,21 @@ fn review_fix_max_files() -> usize {
         .unwrap_or(3)
         .clamp(1, 10)
 }
+/// Name a MALFORMED tool call for the digest. There is no parsed call to read a name from — the name may
+/// itself be the invalid part — so recover it from the provider's error text when it quotes one, and fall
+/// back to a marker. Keeps the panel/judge from showing an empty lane for a call that never ran.
+fn malformed_tool_name(err_msg: &str) -> String {
+    // response_to_message quotes the offending name, e.g. The provided function name '<x>' had invalid …
+    // Split rather than byte-index: the message can carry arbitrary model output, and slicing it by byte
+    // offset panics the moment a multi-byte char lands on the boundary.
+    let mut parts = err_msg.split('\'');
+    parts.next();
+    match parts.next() {
+        Some(name) if !name.trim().is_empty() => format!("{} (malformed)", name.trim()),
+        _ => "(malformed call)".to_string(),
+    }
+}
+
 /// The PROVEN-CRASH demote rule, isolated from the run so it is testable without a fleet.
 ///
 /// Only a deterministic engine event may retract a green claim. `reproduce_finding` classes every ambiguous
