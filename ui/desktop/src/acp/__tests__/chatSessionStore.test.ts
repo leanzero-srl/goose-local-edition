@@ -640,3 +640,62 @@ describe('useAcpChatSessionSnapshot', () => {
     expect(result.current?.messages).toEqual([nextMessage]);
   });
 });
+
+describe('a failed prompt does not claim the session cannot load', () => {
+  // THE BUG THIS PINS: finishPromptAttemptIfCurrent used to write its error into `sessionLoadError`, the
+  // field whose only consumer replaces the entire conversation with a "Failed to Load Session" wall. When
+  // Mihai's machine powered off mid-prompt, the ACP socket closed, "Submit error: ACP connection closed"
+  // landed in that field, and reopening the session showed the wall with a Go home button. The session was
+  // completely intact — 15,322 rows, integrity_check ok — and the messages were in this very store. A dead
+  // socket is not a destroyed session; conflating the two turns a reconnect into apparent data loss.
+  const sid = 'session-submit-error';
+
+  afterEach(() => {
+    acpChatSessionActions.deleteSnapshot(sid);
+  });
+
+  it('routes a submit failure to submitError and leaves the conversation visible', () => {
+    acpChatSessionActions.setMessages(sid, [message('m1', 'hello'), message('m2', 'world')]);
+    acpChatSessionActions.startPromptAttempt(sid, 'attempt-1');
+
+    acpChatSessionActions.finishPromptAttemptIfCurrent(
+      sid,
+      'attempt-1',
+      'Submit error: ACP connection closed'
+    );
+
+    const snap = acpChatSessionStore.getSnapshot(sid);
+    expect(snap?.submitError).toBe('Submit error: ACP connection closed');
+    // The load-error field is what hides the whole chat. A dropped socket must never set it.
+    expect(snap?.sessionLoadError).toBeUndefined();
+    // ...and the messages are still there to render.
+    expect(snap?.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(snap?.chatState).toBe(ChatState.Idle);
+  });
+
+  it('clears the banner when the user retries', () => {
+    acpChatSessionActions.startPromptAttempt(sid, 'a1');
+    acpChatSessionActions.finishPromptAttemptIfCurrent(sid, 'a1', 'Submit error: boom');
+    expect(acpChatSessionStore.getSnapshot(sid)?.submitError).toBe('Submit error: boom');
+
+    acpChatSessionActions.startPromptAttempt(sid, 'a2');
+    expect(acpChatSessionStore.getSnapshot(sid)?.submitError).toBeUndefined();
+  });
+
+  it('clears the banner when dismissed, without touching the messages', () => {
+    acpChatSessionActions.setMessages(sid, [message('m1', 'keep me')]);
+    acpChatSessionActions.startPromptAttempt(sid, 'a1');
+    acpChatSessionActions.finishPromptAttemptIfCurrent(sid, 'a1', 'Submit error: boom');
+
+    acpChatSessionActions.clearSubmitError(sid);
+
+    const snap = acpChatSessionStore.getSnapshot(sid);
+    expect(snap?.submitError).toBeUndefined();
+    expect(snap?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('a GENUINE load failure still raises sessionLoadError — the wall must survive for real failures', () => {
+    acpChatSessionActions.failSessionLoad(sid, 'session 404: gone');
+    expect(acpChatSessionStore.getSnapshot(sid)?.sessionLoadError).toBe('session 404: gone');
+  });
+});
