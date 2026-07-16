@@ -1579,9 +1579,9 @@ mod tests {
     use super::*;
 
     // ---- RESEARCH PROVENANCE (grounded vs invented) -----------------------------------------
-    /// A finding is GROUNDED only when the agent made a SUCCESSFUL external lookup — a research MCP call
-    /// (web-search/context7) or a shell read of the codebase. A failed call, or none at all, is not
-    /// grounding: a pure guess must never be able to close a user's product decision.
+    /// A finding is GROUNDED only when the agent made a SUCCESSFUL EXTERNAL lookup — a research MCP call
+    /// (web-search/context7). A failed call, no call, or a mere `developer__` shell command is not
+    /// grounding: a pure guess (optionally dressed with a trivial `echo`) must never close a product decision.
     #[test]
     fn research_lookups_counts_only_successful_lookups() {
         let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
@@ -1596,11 +1596,10 @@ mod tests {
         ];
         assert_eq!(research_lookups(&grounded).len(), 2);
 
-        // A shell read of the codebase also grounds a codebase question.
-        assert_eq!(
-            research_lookups(&[mk("developer__shell", false, Some(true))]).len(),
-            1
-        );
+        // A shell command does NOT ground a product/convention decision — else a trivial `echo` before an
+        // invented answer would launder the guess through the gate this exists to close.
+        assert!(research_lookups(&[mk("developer__shell", false, Some(true))]).is_empty());
+        assert!(research_lookups(&[mk("developer__text_editor", false, Some(true))]).is_empty());
 
         // NO tool calls -> pure reasoning -> NOT grounded (the laundering case).
         assert!(research_lookups(&[]).is_empty());
@@ -1609,6 +1608,14 @@ mod tests {
         assert!(research_lookups(&[mk("web-search__search", true, Some(false))]).is_empty());
         // No response at all (max-turns cutoff) is not grounding.
         assert!(research_lookups(&[mk("context7__resolve-library-id", true, None)]).is_empty());
+        // A shell BEFORE a real web-search still yields exactly the one EXTERNAL lookup.
+        assert_eq!(
+            research_lookups(&[
+                mk("developer__shell", false, Some(true)),
+                mk("web-search__search", true, Some(true)),
+            ]),
+            vec!["web-search__search".to_string()]
+        );
     }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
@@ -3717,13 +3724,19 @@ struct ResearchFinding {
     lookups: Vec<String>,
 }
 
-/// True when the agent consulted an external source. Research workers get only research MCP extensions, so
-/// any successful MCP tool call is a real lookup; a shell/grep on the codebase lens also counts as grounding
-/// (it read the actual code). Kept as a free function so the capture sites and tests share one definition.
+/// True when the agent consulted an EXTERNAL source — a successful research MCP call (web-search /
+/// context7). Research workers get only research MCP extensions, so `is_mcp && ok` is exactly "looked it up
+/// externally".
+///
+/// Deliberately EXCLUDES `developer__` builtins (shell/text_editor). A product or convention decision
+/// ("should search be case-sensitive?", "which SQLite binding?") cannot be grounded by a shell command, and
+/// counting a trivial successful `echo`/`ls` as grounding would let an invented guess launder straight
+/// through the very gate this exists to close. It is also the right definition for the learning consumer
+/// (#90): an external fact is reusable stack knowledge; a local `grep` of this project is not.
 fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
     tool_calls
         .iter()
-        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.name.starts_with("developer__")))
+        .filter(|t| t.ok == Some(true) && t.is_mcp)
         .map(|t| t.name.clone())
         .collect()
 }
