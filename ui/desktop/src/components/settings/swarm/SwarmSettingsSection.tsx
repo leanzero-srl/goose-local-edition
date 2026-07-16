@@ -515,6 +515,15 @@ export default function SwarmSettingsSection() {
 
               <Group title="Research">
                 <Row
+                  label="Ask me when it has nothing to search with"
+                  hint="if no search tools are set up, goose currently still sends open decisions off to 'research' — which can only invent an answer and then treat it as settled. With this on it asks you instead. Measured: it spent 65 minutes failing to answer what you answered in under two."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.no_tools_means_ask}
+                    onChange={(v) => set({ no_tools_means_ask: v })}
+                  />
+                </Row>
+                <Row
                   label="Only trust research it actually looked up"
                   hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
                 >
