@@ -299,6 +299,17 @@ pub struct SwarmConfig {
     /// None/0 = the flat deadline (default — byte-identical). GOOSE_SWARM_FIRST_WRITE_GRACE env overrides.
     #[serde(default)]
     pub first_write_grace_per_file_secs: Option<u64>,
+    /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
+    /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
+    /// launched via `open` and never receives the caller's environment. None = the previous behaviour
+    /// (off unless the assured bundle is on). `repro_demotes_verified` is inert without this.
+    #[serde(default)]
+    pub review_repro: Option<bool>,
+    /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
+    /// MEASURED live: a 4-file api task split into `routes` + `app-entry` and BOTH delivered, where the
+    /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). None = off.
+    #[serde(default)]
+    pub split: Option<bool>,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -485,6 +496,8 @@ impl Default for SwarmConfig {
             retarget_stall_guard: false,
             cross_module_check: false,
             first_write_grace_per_file_secs: None,
+            review_repro: None,
+            split: None,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -3755,6 +3768,30 @@ mod tests {
                                                                        // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
         assert!(resolve_gate(Some(" YES ".to_string()), false, false)); // trimmed + case-insensitive
         assert!(!resolve_gate(Some("maybe".to_string()), true, true));
+    }
+
+    /// `swarm_gate_cfg_bundle` inserts config.yaml BETWEEN env and the assured/default fallback, so a lever
+    /// that was env-only becomes reachable from the desktop app — which never receives env at all, because
+    /// `open -n Goose.app` spawns it via LaunchServices with its own environment. The whole point is that
+    /// cfg_val: None must stay byte-identical to the old `swarm_gate`.
+    #[test]
+    fn config_backed_gate_sits_between_env_and_the_assured_default() {
+        // cfg ABSENT => exactly resolve_gate(None, assured, in_bundle) — the pre-existing behaviour.
+        for &assured in &[true, false] {
+            for &bundle in &[true, false] {
+                assert_eq!(
+                    None::<bool>.unwrap_or_else(|| resolve_gate(None, assured, bundle)),
+                    resolve_gate(None, assured, bundle),
+                    "cfg None must not change anything (assured={assured}, bundle={bundle})"
+                );
+            }
+        }
+        // cfg SET wins over the assured/default fallback, both directions...
+        assert!(Some(true).unwrap_or_else(|| resolve_gate(None, false, false)));
+        assert!(!Some(false).unwrap_or_else(|| resolve_gate(None, true, true)));
+        // ...but an EXPLICIT env value still beats config (checked before cfg is ever consulted).
+        assert!(resolve_gate(Some("1".to_string()), false, false));
+        assert!(!resolve_gate(Some("0".to_string()), true, true));
     }
 
     #[test]
@@ -9435,8 +9472,9 @@ impl Judge for GooseAgentDispatcher {
         // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
         let cfg = JudgeConfig {
             split_enabled: std::env::var("GOOSE_SWARM_SPLIT")
+                .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or(false),
+                .unwrap_or_else(|| load_config().split.unwrap_or(false)),
             // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
             // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
@@ -11549,6 +11587,24 @@ fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool
     in_assured_bundle && assured
 }
 
+/// `swarm_gate` + a config field: env wins, then config.yaml if the key is SET, else the existing
+/// assured-bundle/default behaviour unchanged.
+///
+/// This exists because an env-only lever is UNREACHABLE from the desktop app. PROVEN: the app is launched
+/// with `open -n Goose.app`, and `open` hands the spawn to LaunchServices, which gives the app its own
+/// environment — `env FOO=1 open -n App` sets FOO for `open`, which then exits. So every GOOSE_SWARM_* var
+/// intended for the desktop has always been discarded, and the whole lever campaign silently ran with every
+/// env-gated lever OFF. config.yaml is the only channel that reaches the engine (and the one the settings
+/// UI writes), so a lever with no config field cannot be turned on by a user at all.
+/// `cfg_val: None` (key absent) => byte-identical to `swarm_gate`.
+fn swarm_gate_cfg_bundle(name: &str, cfg_val: Option<bool>, in_assured_bundle: bool) -> bool {
+    let explicit = std::env::var(name).ok();
+    if explicit.is_some() {
+        return resolve_gate(explicit, assured_enabled(), in_assured_bundle);
+    }
+    cfg_val.unwrap_or_else(|| resolve_gate(None, assured_enabled(), in_assured_bundle))
+}
+
 fn goals_enabled() -> bool {
     swarm_gate("GOOSE_SWARM_GOALS", true)
 }
@@ -13124,7 +13180,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
             "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
             "browser_verify": browser_verify_enabled(),
-            "review_repro": swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false),
+            "review_repro": swarm_gate_cfg_bundle("GOOSE_SWARM_REVIEW_REPRO", load_config().review_repro, false),
             "review_fix": swarm_gate("GOOSE_SWARM_REVIEW_FIX", false),
         },
     }));
@@ -14978,7 +15034,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // enable-prove showed verify FALSE-REFUTES real crash findings, which would otherwise starve the
             // fix-gate. A fleet model authors a repro command; a deterministic runner executes it in a THROWAWAY
             // snapshot and classifies it (crash/browser/inconclusive). Default OFF + NOT in the assured bundle.
-            if swarm_gate("GOOSE_SWARM_REVIEW_REPRO", false) && !findings.is_empty() {
+            if swarm_gate_cfg_bundle(
+                "GOOSE_SWARM_REVIEW_REPRO",
+                load_config().review_repro,
+                false,
+            ) && !findings.is_empty()
+            {
                 let repro_root = std::env::current_dir().unwrap_or_default();
                 let repro_lang = detect_language(&opts.prompt, &smoke_all_files);
                 let help = entry_help(&repro_root, repro_lang).await;
