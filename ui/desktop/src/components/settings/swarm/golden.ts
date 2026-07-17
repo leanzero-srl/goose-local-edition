@@ -59,6 +59,11 @@ export interface SwarmConfig {
   backbone?: boolean;
   /** Draft plan skeletons at this temperature (steadies structural drafting). Blank = model default. */
   draft_temp?: number | null;
+  /** THE REPRO ORACLE: try to PROVE a reported crash by running it twice in a clean snapshot.
+   *  Had a config field but NO TOGGLE, so it could not be switched on from the app at all — while the
+   *  panel happily offered `repro_demotes_verified`, whose own hint says "Needs the repro oracle on".
+   *  Enabling the demote without this is enabling a lever that can never fire. Default OFF. */
+  review_repro?: boolean;
   /** A crash the repro oracle PROVED (twice-run traceback in a clean snapshot) and the fix loop did not
    *  repair demotes the run's `verified` claim. Never flips `passed` red. Default OFF; inert unless the
    *  repro oracle is on. */

@@ -644,6 +644,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Try to reproduce a crash before believing it"
+                  hint="when a review reports a crash, goose copies the app to a clean directory and runs it twice. Only a crash that reproduces both times counts — a one-off or an environment quirk is dropped. This is what makes the next setting mean anything: without it there is never a proven crash to act on."
+                >
+                  <SwarmSwitch
+                    checked={!!cfg.review_repro}
+                    onChange={(v) => set({ review_repro: v })}
+                  />
+                </Row>
+                <Row
                   label="A proven crash un-verifies the run"
                   hint="if goose reproduces a crash twice in a clean copy and can't repair it, the run stops claiming it was verified and prints the command to reproduce. Never fails a passing app — it only drops the 'verified' claim. Needs the repro oracle on."
                 >
