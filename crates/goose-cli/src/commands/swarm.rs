@@ -1245,6 +1245,68 @@ fn probe_lms_http() -> Vec<LmsProcess> {
         .collect()
 }
 
+/// The model ids the ENDPOINT will actually serve — i.e. the only ids a worker can dispatch to.
+///
+/// `None` means the probe itself failed (endpoint down, curl missing, unparseable body). That is NOT the
+/// same as "no models", and the caller must never gate on it: an instrument reporting zero has been wrong
+/// seven times in this project, and gating a whole run off a failed probe would be the eighth.
+///
+/// WHY THIS IS NOT `lms ps`: `lms ps` lists what is RESIDENT; `/v1/models` lists what is SERVABLE, and they
+/// disagree in exactly the case that costs a run. MEASURED 2026-07-17: `lms ps` showed
+/// `workhorse-qwopus3.6-27b-coder-mlx` IDLE and loaded, while POSTing to it returned
+/// `400 Invalid model identifier` — the Mac Studio had dropped off the LAN and LM Link had withdrawn the
+/// alias, but the resident list still carried it. The pool is built from `lms ps`, so the swarm cheerfully
+/// dispatched a third of its tasks into an instant 400.
+fn endpoint_model_ids() -> Option<std::collections::HashSet<String>> {
+    let url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
+    let out = ProcCommand::new("curl")
+        .args(["-s", "--max-time", "6", &url])
+        .output()
+        .ok()?;
+    let json = serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()?;
+    let arr = json.get("data")?.as_array()?;
+    let ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        .collect();
+    if ids.is_empty() {
+        return None;
+    }
+    Some(ids)
+}
+
+/// Drop devices the endpoint will not serve, so a dead node cannot silently eat a third of the run.
+///
+/// THE FAILURE THIS PREVENTS, measured end-to-end on a 71-minute run that produced nothing:
+/// the `frontend` task was dispatched to a model the endpoint had withdrawn. Every attempt came back
+/// `400 Invalid model identifier` in ~2s. But `run_agent_in` returns Ok for a provider error — the 400 lands
+/// as the agent's *text* — so the dispatcher saw only "worker finished, owned files absent" and retried with
+/// "You finished WITHOUT writing your owned file(s)". Three attempts, 6.8 seconds, zero tool calls, task
+/// failed. `integrate-verify` depends on every task, so it never became ready, and the run ended with
+/// passed=false having never built the app. The engine blamed the model for a network outage.
+///
+/// Returns the surviving devices and the dropped (id, model_id) pairs.
+///
+/// NEVER EMPTIES THE POOL. If every device would be dropped, the probe disagrees with `lms ps` about
+/// literally everything, and the likeliest explanation is a broken probe — not a fleet that is 100% dead.
+/// Keep the pool, report nothing dropped, and let the run proceed as it did before this function existed.
+fn drop_unservable_devices(
+    devices: Vec<SwarmDevice>,
+    served: Option<&std::collections::HashSet<String>>,
+) -> (Vec<SwarmDevice>, Vec<(String, String)>) {
+    let Some(served) = served else {
+        return (devices, Vec::new());
+    };
+    let (keep, drop): (Vec<SwarmDevice>, Vec<SwarmDevice>) = devices
+        .into_iter()
+        .partition(|d| served.contains(&d.model_id));
+    if keep.is_empty() {
+        return (drop, Vec::new());
+    }
+    let dropped = drop.into_iter().map(|d| (d.id, d.model_id)).collect();
+    (keep, dropped)
+}
+
 fn probe_fleet() {
     println!("\n{}", style("lms ps:").bold());
     match ProcCommand::new(resolve_lms()).arg("ps").output() {
@@ -3286,6 +3348,83 @@ mod tests {
         // ...but at tolerance 1 the same dip stops it. That is the honest cost of the aggressive setting, and
         // the reason the default ships OFF until the campaign measures it.
         assert_eq!(decide(&[50, 45, 70, 90], 1), Some(1));
+    }
+
+    fn dev(id: &str, model: &str) -> SwarmDevice {
+        SwarmDevice {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight: 1,
+            enabled: true,
+            instances: 1,
+            host: None,
+        }
+    }
+
+    /// THE 71-MINUTE RUN THIS EXISTS TO PREVENT (measured 2026-07-17, arm allon-mihai):
+    /// `lms ps` reported workhorse-qwopus3.6-27b-coder-mlx IDLE and resident, so the pool included it. The
+    /// Mac Studio had actually dropped off the LAN and LM Link had withdrawn the alias, so POSTing to it
+    /// returned `400 Invalid model identifier`. The `frontend` task went there, every attempt 400'd in ~2s,
+    /// and — because run_agent_in returns Ok for a provider error (the 400 arrives as the agent's TEXT) — the
+    /// dispatcher saw "finished, owned files absent" and retried with "You finished WITHOUT writing your
+    /// owned file(s)". 3 attempts, 6.8s, ZERO tool calls, task failed. integrate-verify depends on every
+    /// task, so it never became ready. 71 minutes, no app, and the engine blamed the model for a dead node.
+    #[test]
+    fn a_resident_but_unservable_node_is_dropped_before_it_can_eat_a_third_of_the_run() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx"),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx"),
+            dev("works-workhorse", "workhorse-qwopus3.6-27b-coder-mlx"),
+        ];
+        // Exactly what /v1/models returned while `lms ps` still listed all three.
+        let served: std::collections::HashSet<String> = [
+            "mihai-qwopus3.6-27b-coder-mlx",
+            "gabee-qwopus3.6-27b-coder-mlx",
+            "text-embedding-nomic-embed-text-v1.5",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let (keep, dropped) = drop_unservable_devices(pool, Some(&served));
+        assert_eq!(keep.len(), 2, "the two servable nodes survive");
+        assert!(!keep.iter().any(|d| d.model_id.starts_with("workhorse-")));
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].1, "workhorse-qwopus3.6-27b-coder-mlx");
+    }
+
+    /// A FAILED PROBE IS NOT AN EMPTY FLEET. Seven instruments in this project have reported a confident
+    /// zero that was a bug in the instrument; gating a whole run off the eighth would be the same mistake
+    /// with worse consequences.
+    #[test]
+    fn a_probe_that_cannot_answer_never_gates_anything() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx"),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx"),
+        ];
+        let (keep, dropped) = drop_unservable_devices(pool.clone(), None);
+        assert_eq!(keep.len(), pool.len(), "None => byte-identical passthrough");
+        assert!(dropped.is_empty());
+    }
+
+    /// If EVERY device looks unservable, the probe disagrees with `lms ps` about literally everything. A
+    /// fleet that is 100% dead is possible; a broken probe is likelier — and dropping everything turns a
+    /// recoverable run into a guaranteed dead one. Keep the pool and let the run proceed as before.
+    #[test]
+    fn the_preflight_can_never_empty_the_pool() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx"),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx"),
+        ];
+        let served: std::collections::HashSet<String> = ["something-else-entirely".to_string()]
+            .into_iter()
+            .collect();
+        let (keep, dropped) = drop_unservable_devices(pool, Some(&served));
+        assert_eq!(keep.len(), 2, "never strand the run with zero nodes");
+        assert!(
+            dropped.is_empty(),
+            "and do not claim drops we did not act on"
+        );
     }
 
     #[test]
@@ -13314,9 +13453,44 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
     let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg);
+    // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
+    // the resident list. Intersect them before anything is dispatched — see drop_unservable_devices.
+    let served = endpoint_model_ids();
+    let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
     let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
         if let Some(p) = fleet_planner {
             cfg.planner_model = p;
+        }
+        // The PLANNER is pinned separately, and a withdrawn planner model kills the run before a single task
+        // is dispatched — every draft returns a 400 as *text*, so the planner "answers" with an error and the
+        // engine plans from nothing. If the configured planner is not servable, fall back to a device that is.
+        if let Some(served) = served.as_ref() {
+            if !served.contains(&cfg.planner_model) {
+                if let Some(alt) = fleet_pool.first() {
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "planner '{}' is NOT servable by {} — falling back to '{}'",
+                            cfg.planner_model, cfg.endpoint, alt.model_id
+                        ))
+                        .yellow()
+                        .bold()
+                    );
+                    cfg.planner_model = alt.model_id.clone();
+                }
+            }
+        }
+        for (id, model_id) in &unservable {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "dropping node '{id}' — {} is loaded but {} will not serve it (the node is unreachable); \
+                     dispatching there would fail every attempt in ~2s and fail the task",
+                    model_id, cfg.endpoint
+                ))
+                .yellow()
+                .bold()
+            );
         }
         eprintln!(
             "{}",
@@ -13894,6 +14068,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             ),
             "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
             "retarget": retarget_on,
+            // A run that quietly shrank 3 nodes -> 2 must SAY so. Without this the only trace of a dead node
+            // is a task that "finished without writing its files", which reads as a lazy model.
+            "nodes_dropped_unservable": unservable
+                .iter()
+                .map(|(_, m)| m.clone())
+                .collect::<Vec<_>>(),
             // The RESOLVED budget, not the config field — the campaign spent weeks believing this was 4 while
             // every run used 2. A run must be able to state what it actually spent.
             "retarget_rounds": retarget_cap,
