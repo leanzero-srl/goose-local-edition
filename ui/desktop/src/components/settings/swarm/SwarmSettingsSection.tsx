@@ -463,6 +463,12 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Give every worker the app's non-negotiables"
+              hint="Before building, goose distils your spec into a short list of app-wide acceptance criteria and puts them in front of every worker as non-negotiable — so a worker writing one file still knows what the whole app must do. It has never actually run: its switch was wired to a mode nobody turns on, so in every build ever made, no worker has seen one. This makes it reachable. Costs one planning pass; unproven, because it has never run once."
+            >
+              <SwarmSwitch checked={!!cfg.goals} onChange={(v) => set({ goals: v })} />
+            </Row>
+            <Row
               label="How many steps the final whole-app check may take"
               hint="At the end, one worker builds the app, runs every command your spec advertises, checks the output is right, and fixes what is broken. It gets the same step budget as a worker that owns a single file — and it runs out: in 5 of 9 builds it never reached a verdict, 3 of them stopping mid-check with “I've reached the maximum number of actions I can do without user input”. The build still reported a result. Raise this so the check can finish; each step costs about a minute on local models, so this is the quality-versus-speed knob that matters most."
             >
