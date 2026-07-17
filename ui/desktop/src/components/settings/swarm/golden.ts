@@ -68,6 +68,13 @@ export interface SwarmConfig {
    *  last words are literally "I've reached the maximum number of actions I can do without user input." The
    *  sink depends on every task and must verify the whole tree; a worker owns 1-3 files. Same budget. */
   sink_max_turns?: number;
+  /** APP PILLARS: distil the app-wide acceptance criteria and inject them into EVERY worker as
+   *  "NON-NEGOTIABLE". Undefined = the historical assured-only behaviour, i.e. OFF.
+   *  MEASURED: this has NEVER RUN, in any run ever made. Its gate read swarm_gate("GOOSE_SWARM_GOALS", true)
+   *  and that `true` is in_assured_bundle, NOT a default — so it resolved to assured_enabled(), and nothing
+   *  sets GOOSE_SWARM_ASSURED. The live run's own run_started says assured:false, gates.goals:false, and
+   *  `pillars` appears in ZERO logs across the whole corpus. */
+  goals?: boolean;
   /** Seconds the spec-clarity probe may take (undefined = 120, clamped [30,900]).
    *  When it is abandoned the engine falls back to cross-draft agreement ALONE and asserts the product is
    *  specified — so the ask that protects an under-specified spec silently never fires. MEASURED on 2 of 14

@@ -311,6 +311,16 @@ pub struct SwarmConfig {
     /// discarded.
     #[serde(default)]
     pub draft_timeout_secs: Option<u64>,
+    /// APP PILLARS: distil the app-wide acceptance criteria and inject them into EVERY worker as
+    /// "NON-NEGOTIABLE". `None` = the historical assured-bundle behaviour (i.e. OFF unless --assured).
+    /// GOOSE_SWARM_GOALS env overrides.
+    ///
+    /// MEASURED: this feature has NEVER RUN. `swarm_gate("GOOSE_SWARM_GOALS", true)` reads that `true` as
+    /// in_assured_bundle, not as a default, so it resolved to `assured_enabled()` — and nothing sets
+    /// GOOSE_SWARM_ASSURED. The live run's own run_started says `assured:false, gates.goals:false`, and
+    /// `pillars` appears in ZERO logs across the entire corpus.
+    #[serde(default)]
+    pub goals: Option<bool>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -550,6 +560,7 @@ impl Default for SwarmConfig {
             clarity_probe_secs: None,
             sink_max_turns: None,
             draft_timeout_secs: None,
+            goals: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -3589,6 +3600,45 @@ mod tests {
             ..base.clone()
         };
         assert!(!broken.passed());
+    }
+
+    /// APP PILLARS HAS NEVER RUN. NOT ONCE, IN ANY RUN EVER MADE.
+    ///
+    /// `swarm_gate("GOOSE_SWARM_GOALS", true)` reads that `true` as `in_assured_bundle`, NOT as a default —
+    /// resolve_gate computes `in_assured_bundle && assured`. Nothing sets GOOSE_SWARM_ASSURED (the desktop
+    /// provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so it resolved FALSE on every run.
+    /// PROVEN: the live run's own run_started says `assured:false, gates.goals:false`, and `pillars` appears
+    /// in ZERO logs across the entire corpus. The feature injects "NON-NEGOTIABLE" acceptance criteria into
+    /// EVERY worker — and no worker has ever seen one.
+    ///
+    /// The identical trap is already recorded at the AST wiring review's gate ("outside --assured the
+    /// detector was silently OFF, and every ordinary run shipped with no wiring review at all"). It was fixed
+    /// for that one gate; five others were left. This pins that making goals reachable changed NOTHING by
+    /// default — the whole safety claim of the commit.
+    #[test]
+    fn making_pillars_reachable_changes_nothing_by_default() {
+        for &assured in &[true, false] {
+            // cfg ABSENT => byte-identical to the old swarm_gate("GOOSE_SWARM_GOALS", true), which is
+            // exactly `in_assured_bundle && assured` = assured. This is the assertion that matters.
+            assert_eq!(
+                resolve_gate_cfg(None, None, assured, true),
+                resolve_gate(None, assured, true),
+                "unset config must resolve exactly as the old assured-bundle gate did (assured={assured})"
+            );
+            // And that value IS assured — i.e. OFF for every desktop run ever made.
+            assert_eq!(resolve_gate_cfg(None, None, assured, true), assured);
+        }
+
+        // Now it is REACHABLE without --assured. That is the entire point: a dead feature becomes testable.
+        assert!(
+            resolve_gate_cfg(None, Some(true), false, true),
+            "config must be able to switch pillars on with assured OFF — it never could before"
+        );
+        // And switchable OFF even under --assured.
+        assert!(!resolve_gate_cfg(None, Some(false), true, true));
+        // Env still wins over both.
+        assert!(resolve_gate_cfg(Some("1".into()), Some(false), false, true));
+        assert!(!resolve_gate_cfg(Some("0".into()), Some(true), true, true));
     }
 
     #[test]
@@ -12361,8 +12411,25 @@ fn resolve_gate_cfg(
     cfg_val.unwrap_or_else(|| resolve_gate(None, assured, in_assured_bundle))
 }
 
+/// APP PILLARS — the distilled app-wide acceptance criteria injected into EVERY worker prompt as
+/// "NON-NEGOTIABLE; they outrank local convenience".
+///
+/// THIS FEATURE HAS NEVER RUN. NOT ONCE. It read `swarm_gate("GOOSE_SWARM_GOALS", true)`, and that `true` is
+/// `in_assured_bundle`, NOT a default — `resolve_gate` computes `in_assured_bundle && assured`. Nothing sets
+/// GOOSE_SWARM_ASSURED (the desktop provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so
+/// it resolved to FALSE on every run ever made. PROVEN from the engine's own run_started event on the live
+/// run: `assured: false, gates.goals: false`, and `pillars` appears in ZERO run logs across the whole corpus.
+///
+/// This is the SAME TRAP that already bit the AST wiring review — see the comment at its gate, which records
+/// the identical discovery ("outside --assured the detector was silently OFF, and every ordinary run shipped
+/// with no wiring review at all"). It was fixed for that ONE gate; five others were left behind, and this is
+/// the most valuable of them because pillars reach every worker.
+///
+/// swarm_gate_cfg_bundle makes it reachable: env > config > the assured bundle. The default is unchanged —
+/// with no config key set it still resolves to `in_assured_bundle && assured`, exactly as before — so this
+/// commit changes NO behaviour. It only makes a dead feature possible to switch on and measure.
 fn goals_enabled() -> bool {
-    swarm_gate("GOOSE_SWARM_GOALS", true)
+    swarm_gate_cfg_bundle("GOOSE_SWARM_GOALS", load_config().goals, true)
 }
 
 /// Give the AUTHOR the curated domain facts its task is about (not just the reviewer/skeptic, who only ever
@@ -13657,9 +13724,35 @@ async fn ask_clarifying_questions(
             if waited >= wait_secs {
                 eprintln!(
                     "{}",
-                    style("no answers within the wait window — proceeding with the current plan")
-                        .yellow()
+                    style(format!(
+                        "no answers within {wait_secs}s — proceeding with the current plan. The fleet sat \
+                         IDLE for that entire window and the questions goose asked are now decided by goose."
+                    ))
+                    .yellow()
                 );
+                // THE 30-MINUTE INVISIBLE HOLE.
+                //
+                // `low_confidence_answered` is emitted ONLY when an answer actually arrives (`if any` below).
+                // This path — the wait expiring — returned SILENTLY. So an unanswered ask left NO event at
+                // all: the whole window is invisible in the log except as an unexplained gap between
+                // low_confidence_ask and whatever came next.
+                //
+                // MEASURED: ask_wait_secs defaults to 1800 = 30 MINUTES. loop-03 has exactly this — a
+                // low_confidence_ask with no answered event and a 31.4-minute hole after it. And it fooled a
+                // measurement TODAY: an analysis pass labelled that gap "human think-time" purely from the
+                // preceding event's name, inflating measured human wait 5.2 -> 36.5 min (7x). It is neither
+                // human time nor compute — it is the engine idling at a wall.
+                //
+                // A run that waited half an hour and then decided the user's product questions ITSELF must
+                // say so. This is the same class as the clarity probe returning None: a silence that reads
+                // exactly like a success.
+                sink.write_value(serde_json::json!({
+                    "event": "low_confidence_ask_timeout",
+                    "waited_secs": wait_secs,
+                    "questions_unanswered": questions.len(),
+                    "detail": "no answers arrived; the fleet idled for the whole window and goose is now \
+                               deciding these itself",
+                }));
                 return String::new();
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
