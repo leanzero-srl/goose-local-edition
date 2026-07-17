@@ -307,8 +307,15 @@ export interface ConfidenceBreakdown {
 
 // End-of-run overview (shown at DONE). features/engage/next are a GROUNDED, scrubbed summary from the model;
 // runCommand is engine-stamped (never the model). VERIFICATION is NOT here — the panel re-derives it from
-// phaseTodo (engine-only) so no model string can reach the honesty surface. generated=false => a red/failed
-// or skipped build: show the caveat, not the summary.
+// phaseTodo (engine-only) so no model string can reach the honesty surface.
+//
+// `generated` ONLY says whether the model wrote the summary PROSE. It says NOTHING about whether the build
+// runs. MEASURED: a run finished 7/7 tasks, 0 failed, with complete_result{passed:true, verified:true},
+// review{findings:[]} and run_overview{generated:false, run_command_verified:TRUE} — and the panel showed a
+// RED "This build did not reach a runnable, verified state". The engine said the app runs; the UI called it
+// failed because the summarizer stayed quiet. That is a FALSE RED — the same sin as a false green, and it
+// breaks the one rule this panel exists for: only a deterministic engine event may create or kill a verdict.
+// Runnability comes from phaseTodo's v-e2e check and runCommandVerified. Never from `generated`.
 export interface RunOverview {
   generated: boolean;
   runCommand: string | null;

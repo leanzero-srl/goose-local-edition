@@ -1304,16 +1304,14 @@ const RunOverview: React.FC<{
       <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
         <ListChecks className="h-3.5 w-3.5" /> Build overview
       </div>
-      {!overview.generated ? (
-        <div
-          className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
-          style={{ backgroundColor: STATUS_COLOR.error, borderRadius: 3 }}
-        >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          This build did not reach a runnable, verified state — no summary was generated. See verification
-          below.
-        </div>
-      ) : !verified ? (
+      {/* RUNNABILITY IS AN ENGINE FACT. It is `verified` (phaseTodo's v-e2e — goose actually RAN the app)
+          and runCommandVerified. It is NOT `generated`, which only says whether the model wrote the summary
+          prose. Those were conflated: a run that finished 7/7 tasks with 0 failed, complete_result{passed,
+          verified}, review{findings:[]} and run_command_verified:TRUE was shown a RED "This build did not
+          reach a runnable, verified state" — because the summarizer stayed quiet. A false red is the same
+          sin as a false green, and this panel exists to prevent exactly that. Ask the verify check first;
+          a missing summary is a missing summary. */}
+      {!verified ? (
         <div
           className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
           style={{ backgroundColor: AMBER, borderRadius: 3 }}
@@ -1321,6 +1319,15 @@ const RunOverview: React.FC<{
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           Not yet verified — the program was built but never run. Everything below describes the code, not
           proof it works.
+        </div>
+      ) : !overview.generated ? (
+        <div
+          className="mt-1 px-2 py-1.5 text-[11px] flex items-center gap-1.5 border border-border-primary text-text-secondary"
+          style={{ borderRadius: 3 }}
+        >
+          <ListChecks className="h-3.5 w-3.5 shrink-0" />
+          goose ran this app and it works{overview.runCommand ? <> — <code className="text-text-primary">{overview.runCommand}</code></> : null}. It just
+          didn&apos;t write up what it built; the verification below is the engine&apos;s own record.
         </div>
       ) : null}
       {overview.generated ? (
