@@ -13568,6 +13568,58 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(1)
         .clamp(1, 3);
+    // EVERY LEVER'S RESOLVED VALUE, FROM THE ENGINE'S OWN MOUTH — and the build that resolved it.
+    //
+    // A lever's value is decided by a precedence chain (env > config.yaml > assured bundle > default)
+    // that NOTHING outside this process can reproduce. Everything that tried, lied:
+    //   * the harness printed "arm env: GOOSE_SWARM_X=1 ..." for a week while `open -n` discarded every
+    //     one of them (LaunchServices hands the app its own environment);
+    //   * reading config.yaml back is not enough either — the DESKTOP PROVIDER force-sets six of these
+    //     at spawn (providers/swarm.rs:240-272) and env BEATS config, so `split` reads false in every
+    //     config file on disk while the engine splits at 300s on every run;
+    //   * the arm labels in the campaign's ledger were hand-written, so five arms were recorded under
+    //     names describing a run that never happened.
+    // These values are computed by calling THE SAME expressions the engine itself branches on, so this
+    // block cannot drift from behaviour without the behaviour changing. "Which levers did this run
+    // actually have" becomes an n=1 fact instead of an archaeology problem.
+    //
+    // `version` exists because NO version field existed in any run log: attributing a result to a build
+    // meant trusting a note someone typed. A number the engine did not emit is not evidence.
+    sink.write_value(serde_json::json!({
+        "event": "levers_resolved",
+        "version": env!("CARGO_PKG_VERSION"),
+        "levers": {
+            "ask_floor": ask_floor,
+            "ask_max_q": ask_max_q,
+            "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
+            "retarget": retarget_on,
+            "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
+            "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
+            "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
+            "grounded_research_only": swarm_gate_cfg("GOOSE_SWARM_GROUNDED_RESEARCH_ONLY", load_config().grounded_research_only),
+            "author_pitfalls": author_pitfalls_on(),
+            "sink_prebuild": swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild),
+            "ts_smoke_tests": swarm_gate_cfg("GOOSE_SWARM_TS_SMOKE_TESTS", load_config().ts_smoke_tests),
+            "failed_tasks_block_green": swarm_gate_cfg("GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN", load_config().failed_tasks_block_green),
+            "cross_module_check": swarm_gate_cfg("GOOSE_SWARM_CROSS_MODULE_CHECK", load_config().cross_module_check),
+            "unwired_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED", load_config().unwired_demotes_verified),
+            "repro_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_REPRO_DEMOTES_VERIFIED", load_config().repro_demotes_verified),
+            "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
+            "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
+            "user_notes": swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes),
+            // FORCED ON by the desktop provider at spawn and unsettable from config — recorded so a
+            // "control" arm can never be mistaken for one that had them off.
+            "split": std::env::var("GOOSE_SWARM_SPLIT")
+                .ok()
+                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                .unwrap_or_else(|| load_config().split.unwrap_or(false)),
+            "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS").ok(),
+            "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
+            "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
+            "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
+        },
+    }));
+
     let mut retarget_round = 0u32;
     let mut effective_best_of_n = best_of_n;
     let mut best_plan: Option<(String, PlanConf)> = None;
