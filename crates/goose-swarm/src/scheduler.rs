@@ -286,6 +286,10 @@ struct State {
     task_final_device: HashMap<TaskId, (String, String)>,
     /// The user goal (passed to the replanner) + how many replan rounds have run.
     goal: String,
+    /// The user's VERBATIM answers to the clarifying questions, for the worker prompt. Empty when the run
+    /// never asked. Unlike `goal` — which reaches only the replanner/judge/pre-reviewer — this is handed to
+    /// every DispatchRequest, because there was previously no path from an answer to a worker at all.
+    user_decisions: String,
     replans_done: u32,
     /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
     bonus_ids: HashSet<TaskId>,
@@ -546,6 +550,9 @@ impl State {
                 all_files,
                 prior_hint,
                 speculative: false,
+                // The user's own words reach a worker for the first time here. Every other channel the
+                // engine claimed (research_findings, the amended spec) is planner-side only.
+                user_decisions: self.user_decisions.clone(),
             },
         });
     }
@@ -1033,6 +1040,7 @@ impl State {
             all_files,
             prior_hint: None,
             speculative: true,
+            user_decisions: self.user_decisions.clone(),
         };
         Some((req, dev))
     }
@@ -1645,6 +1653,19 @@ impl Scheduler {
         dispatcher: Arc<dyn TaskDispatcher>,
         goal: String,
     ) -> Result<RunReport> {
+        self.run_with_decisions(dag, dispatcher, goal, String::new())
+            .await
+    }
+
+    /// `run`, plus the user's verbatim clarify answers to hand to every worker. `run` delegates here with
+    /// an empty string, so every existing caller and test is byte-identical.
+    pub async fn run_with_decisions(
+        &self,
+        dag: Dag,
+        dispatcher: Arc<dyn TaskDispatcher>,
+        goal: String,
+        user_decisions: String,
+    ) -> Result<RunReport> {
         if !self.devices.iter().any(|d| d.enabled) {
             bail!("no enabled devices in the pool");
         }
@@ -1693,6 +1714,7 @@ impl Scheduler {
             task_tool_calls: HashMap::new(),
             task_final_device: HashMap::new(),
             goal,
+            user_decisions,
             replans_done: 0,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
