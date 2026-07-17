@@ -99,6 +99,15 @@ pub(crate) fn validate_skill_name(name: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// How many supporting files a loaded skill may enumerate before the manifest is summarised.
+///
+/// This list is one line per file and there was no cap: MEASURED, `load_skill` on a real user skill
+/// returned ~948,000 characters (~263K tokens) from 3,069 supporting files — about TWICE the whole
+/// context window of the local fleet, in a single tool result, from a call the system prompt invites.
+/// The dependency-tree exclusions in `should_skip_dir` remove the bulk of that; this cap is the backstop
+/// for a skill that legitimately holds many files.
+const MAX_LISTED_SUPPORTING_FILES: usize = 60;
+
 fn loaded_skill_context(skill: &SourceEntry, content: &str) -> String {
     let title = format!("{} ({})", skill.name, skill.source_type);
     let mut output = format!(
@@ -116,7 +125,11 @@ fn loaded_skill_context(skill: &SourceEntry, content: &str) -> String {
              supporting scripts.\n\n",
             skill.path
         ));
+        let mut listed = 0usize;
         for file in &skill.supporting_files {
+            if listed >= MAX_LISTED_SUPPORTING_FILES {
+                break;
+            }
             if let Ok(relative) = Path::new(file).strip_prefix(skill_dir) {
                 let rel_str = relative.to_string_lossy().replace('\\', "/");
                 let resolved_path = Path::new(file).to_string_lossy().replace('\\', "/");
@@ -124,7 +137,20 @@ fn loaded_skill_context(skill: &SourceEntry, content: &str) -> String {
                     "- {} → {} (load_skill(name: \"{}/{}\"))\n",
                     rel_str, resolved_path, skill.name, rel_str
                 ));
+                listed += 1;
             }
+        }
+        // SAY WHAT WAS DROPPED. A silent truncation reads as "that is the whole skill" — and the model
+        // would then never ask for a file it was not shown. Any path omitted here is still loadable by
+        // name; the model just has to be told the list is partial.
+        let total = skill.supporting_files.len();
+        if total > listed {
+            output.push_str(&format!(
+                "- …and {} more file(s) not listed. Load any of them by relative path with \
+                 load_skill(name: \"{}/<path>\"), or use the shell tool to list the skill directory.\n",
+                total - listed,
+                skill.name
+            ));
         }
     }
 
@@ -360,10 +386,34 @@ fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<Sourc
     })
 }
 
+/// Directories a skill's walk must never descend into: VCS metadata, and DEPENDENCY TREES.
+///
+/// A skill that ships scripts also ships their dependencies, and nothing here belongs to the author.
+/// MEASURED on a real user skill (~/.agents/skills/atlassian-community-leanzero): 3,082 files, of which
+/// **2,130 live under node_modules**. Two consequences, both live before this list existed:
+///   * DISCOVERY (the walk below) matches any SKILL.md at any depth, so two SKILL.md files vendored inside
+///     playwright-core were promoted to first-class skills — `playwright-cli` and `playwright-trace` were
+///     injected into every system prompt as if the user had written them.
+///   * THE MANIFEST (loaded_skill_context) prints one line per supporting file with no cap, so
+///     load_skill on that skill emits ~948,000 characters — roughly TWICE the 128K-token window of the
+///     local fleet — from a single tool call the system prompt invites the model to make.
 fn should_skip_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
-        Some(".git") | Some(".hg") | Some(".svn")
+        Some(".git")
+            | Some(".hg")
+            | Some(".svn")
+            | Some("node_modules")
+            | Some("__pycache__")
+            | Some(".venv")
+            | Some("venv")
+            | Some(".tox")
+            | Some(".mypy_cache")
+            | Some(".pytest_cache")
+            | Some("target")
+            | Some("dist")
+            | Some(".next")
+            | Some(".cache")
     )
 }
 
@@ -552,5 +602,78 @@ mod tests {
         assert!(rendered.contains("scripts/my-tool.exe"));
         assert!(rendered.contains(&resolved_path));
         assert!(rendered.contains("load_skill(name: \"test-skill/scripts/my-tool.exe\")"));
+    }
+
+    /// A skill that ships scripts also ships their dependencies. Nothing under a dependency tree was
+    /// written by the skill's author, and none of it belongs in the model's context.
+    #[test]
+    fn dependency_trees_are_never_walked() {
+        for vendored in [
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "target",
+            "dist",
+            ".next",
+            ".cache",
+            ".pytest_cache",
+        ] {
+            assert!(
+                should_skip_dir(Path::new("/s/scripts").join(vendored).as_path()),
+                "{vendored} must never be descended into"
+            );
+        }
+        // ...and the VCS dirs it always skipped
+        for vcs in [".git", ".hg", ".svn"] {
+            assert!(should_skip_dir(Path::new("/s").join(vcs).as_path()));
+        }
+        // A real skill directory must still be walked.
+        assert!(!should_skip_dir(Path::new("/s/scripts")));
+        assert!(!should_skip_dir(Path::new("/s/references")));
+        // Guard against matching a SUBSTRING: only the exact directory name is vendored.
+        assert!(!should_skip_dir(Path::new("/s/my-node_modules-notes")));
+        assert!(!should_skip_dir(Path::new("/s/target-audience")));
+    }
+
+    /// REGRESSION, from the real thing: load_skill on ~/.agents/skills/atlassian-community-leanzero
+    /// returned ~948,000 characters — one line per supporting file, 3,069 of them, no cap — which is about
+    /// TWICE the whole context window of the local 27b fleet, in one tool result.
+    #[test]
+    fn supporting_file_manifest_is_capped_and_says_what_it_dropped() {
+        let skill_dir = std::env::temp_dir().join("goose-test-skill");
+        let mut skill = skill_with_content("Big skill.");
+        skill.path = skill_dir.to_string_lossy().into_owned();
+        skill.supporting_files = (0..3069)
+            .map(|i| {
+                skill_dir
+                    .join(format!("f{i}.txt"))
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+
+        let rendered = loaded_skill_context_with_args(&skill, None).unwrap();
+        let listed = rendered.matches("load_skill(name: \"test-skill/f").count();
+        assert_eq!(
+            listed, MAX_LISTED_SUPPORTING_FILES,
+            "manifest must be capped"
+        );
+        // The drop is NAMED — a silent truncation reads as "that is the whole skill", and the model would
+        // never ask for a file it was not shown.
+        assert!(
+            rendered.contains(&format!(
+                "…and {} more file(s)",
+                3069 - MAX_LISTED_SUPPORTING_FILES
+            )),
+            "the manifest must say how many it dropped: {}",
+            &rendered[rendered.len().saturating_sub(300)..]
+        );
+        // Whatever the cap, the result must stay a sane fraction of a local model's window.
+        assert!(
+            rendered.len() < 40_000,
+            "manifest still too big for a local context: {} chars",
+            rendered.len()
+        );
     }
 }
