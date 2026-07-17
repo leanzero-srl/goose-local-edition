@@ -2500,6 +2500,55 @@ mod tests {
         );
     }
 
+    /// REGRESSION, from a FALSE DEMOTE on a WORKING app.
+    ///
+    /// A run built settle/api.py — the FastAPI app, with the spec's exact /api surface — plus a
+    /// __main__.py doing `uvicorn.run("settle.api:app")`. That is a STRING, not an import, so the
+    /// import-edge scan reported "settle.api is imported by no non-test module" and
+    /// `unwired_demotes_verified` RETRACTED `verified` on the best app of the run. Technically true,
+    /// semantically false. Without this, EVERY idiomatic FastAPI/Flask/Celery layout is flagged — the
+    /// conventional shape those specs ask for.
+    #[tokio::test]
+    async fn ast_review_counts_a_runtime_loader_string_as_wired() {
+        let dir = std::env::temp_dir().join(format!("goose_ast_uvicorn_{}", std::process::id()));
+        let pkg = dir.join("app");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        // The real shape: the entry NAMES its app, it never imports it.
+        std::fs::write(
+            pkg.join("__main__.py"),
+            "import uvicorn\nuvicorn.run(\"app.api:app\", host=\"127.0.0.1\", port=8000)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pkg.join("api.py"),
+            "CONST = 1\ndef make():\n    return CONST\n",
+        )
+        .unwrap();
+        // ...and a module NOTHING names, anywhere. The fix must not blind the check.
+        std::fs::write(pkg.join("orphan.py"), "x = 1\n").unwrap();
+        let res = run_ast_review(&dir).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !res.ran {
+            return; // python3 not available
+        }
+        let joined = res.findings.join("\n");
+        assert!(
+            !joined.contains("'app.api'"),
+            "a module named by a uvicorn/gunicorn \"pkg.mod:attr\" string is WIRED — it is the entry \
+             point: {joined}"
+        );
+        assert!(
+            !res.demote_eligible.contains(&"app.api".to_string()),
+            "and it must never be demote-eligible: {:?}",
+            res.demote_eligible
+        );
+        assert!(
+            joined.contains("app.orphan"),
+            "a module nothing names must STILL be flagged — the fix must not blind the check: {joined}"
+        );
+    }
+
     #[test]
     fn multifile_stub_note_fires_only_for_multifile_non_entry() {
         // Multi-file non-entry module (the plan-shopping case) -> stub-first note; entry, single-file, and
@@ -9895,6 +9944,23 @@ for mod, path in mods.items():
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 lm = localmatch(alias.name)
+                if lm:
+                    imported_by_nontest.add(lm)
+        # RUNTIME-LOADER STRINGS ARE IMPORT EDGES. An ASGI/WSGI entry point does not IMPORT its app — it
+        # names it: uvicorn.run("pkg.api:app"). There is no ast.Import node, so an import-edge scan calls
+        # the app module dead. MEASURED, and it cost a false demote on a WORKING app: a run built
+        # settle/api.py (the FastAPI app, with the spec's exact /api surface) plus __main__.py doing
+        # uvicorn.run("settle.api:app") -> review said "settle.api is imported by no non-test module" ->
+        # unwired_demotes_verified RETRACTED `verified` on the best app of the run. The finding was
+        # technically true and semantically false. Without this, EVERY idiomatic FastAPI/Flask/Celery
+        # layout is flagged — the conventional shape those specs ask for.
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value.strip()
+            # "pkg.mod:attr" (uvicorn/gunicorn/hypercorn) or a bare dotted "pkg.mod"
+            # (importlib.import_module / celery -A). Only the module half matters.
+            cand = v.split(":", 1)[0] if ":" in v else v
+            if cand and " " not in cand and "/" not in cand:
+                lm = localmatch(cand)
                 if lm:
                     imported_by_nontest.add(lm)
 
