@@ -2487,6 +2487,34 @@ ipcMain.handle('read-file', async (_event, filePath) => {
   }
 });
 
+/**
+ * Queue a note for a swarm build that is already running.
+ *
+ * A DEDICATED handler, not the generic write-file, for one reason: `fs.writeFile` does not create parent
+ * directories, and NOTHING creates `.swarm/inbox/`. The engine only ever READS it (read_user_notes does a
+ * read_dir and returns empty on Err), and the only create_dir_all calls for it in the whole codebase are
+ * inside its own unit tests. So the first note a user ever sent would have silently failed. Widening the
+ * generic write-file to mkdir -p would change behaviour for every other caller; this does it only here.
+ *
+ * The filename IS the ordering — read_user_notes sorts on it, so epoch-ms gives chronology for free, and
+ * a unique name per note means two notes can never clobber each other.
+ */
+ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string) => {
+  try {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const inbox = path.join(expandTilde(workingDir), '.swarm', 'inbox');
+    await fs.mkdir(inbox, { recursive: true });
+    await fs.writeFile(path.join(inbox, `${Date.now()}.json`), JSON.stringify({ text: t }, null, 2), {
+      encoding: 'utf8',
+    });
+    return true;
+  } catch (error) {
+    console.error('Error queueing swarm note:', error);
+    return false;
+  }
+});
+
 ipcMain.handle('write-file', async (_event, filePath, content) => {
   try {
     // Expand tilde to home directory
