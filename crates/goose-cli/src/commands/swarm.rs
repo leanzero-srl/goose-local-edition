@@ -286,19 +286,6 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
     #[serde(default)]
     pub cross_module_check: bool,
-    /// Extra seconds the judge's blind first-write deadline gets per owned file beyond the first.
-    ///
-    /// The judge kills a task that has written no owned file by a FLAT 420s — a wall-clock rule with no
-    /// evidence term, which is the only rule that can reach a worker whose tool_calls are 0 (a reasoning
-    /// model streams thinking, so every counter reads 0 while it generates). MEASURED (baseline3): the
-    /// 4-file `api-app` was killed at 457s/450s/430s on all three attempts having made ZERO tool calls,
-    /// while the 1-file `frontend` was judged "ok" at 444s — past the same deadline — and lived, because
-    /// its file was already on disk. The engine's own watchdog comment says killing on wall-clock is wrong
-    /// ("a slow-but-progressing local model ... must be allowed to finish") and worker_timeout_secs is 900
-    /// and IDLE-based; this rule pre-empts it by >2x. 180 gives a 4-file task 420+3*180 = 960s.
-    /// None/0 = the flat deadline (default — byte-identical). GOOSE_SWARM_FIRST_WRITE_GRACE env overrides.
-    #[serde(default)]
-    pub first_write_grace_per_file_secs: Option<u64>,
     /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
     /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
     /// launched via `open` and never receives the caller's environment. None = the previous behaviour
@@ -502,7 +489,6 @@ impl Default for SwarmConfig {
             retarget: false,
             retarget_stall_guard: false,
             cross_module_check: false,
-            first_write_grace_per_file_secs: None,
             ask_max_q: None,
             review_repro: None,
             split: None,
@@ -9489,14 +9475,6 @@ impl Judge for GooseAgentDispatcher {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_else(|| JudgeConfig::default().split_threshold_secs),
-            first_write_grace_per_file_secs: std::env::var("GOOSE_SWARM_FIRST_WRITE_GRACE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or_else(|| {
-                    load_config()
-                        .first_write_grace_per_file_secs
-                        .unwrap_or_else(|| JudgeConfig::default().first_write_grace_per_file_secs)
-                }),
             ..JudgeConfig::default()
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
