@@ -18,7 +18,7 @@ mod tests {
         use goose::agents::AgentConfig;
         use goose::config::permission::PermissionManager;
         use goose::config::GooseMode;
-        use goose::scheduler::{ScheduledJob, SchedulerError};
+        use goose::scheduler::{ScheduledJob, SchedulerError, ValidatedScheduleRecipe};
         use goose::scheduler_trait::SchedulerTrait;
         use goose::session::{Session, SessionManager};
         use std::path::PathBuf;
@@ -45,6 +45,14 @@ mod tests {
                 &self,
                 _job: ScheduledJob,
                 _copy: bool,
+            ) -> Result<(), SchedulerError> {
+                Ok(())
+            }
+
+            async fn add_scheduled_job_with_recipe(
+                &self,
+                _job: ScheduledJob,
+                _validated_recipe: ValidatedScheduleRecipe,
             ) -> Result<(), SchedulerError> {
                 Ok(())
             }
@@ -123,6 +131,16 @@ mod tests {
                 &self,
                 job: ScheduledJob,
                 _copy: bool,
+            ) -> Result<(), SchedulerError> {
+                let mut jobs = self.jobs.lock().await;
+                jobs.push(job);
+                Ok(())
+            }
+
+            async fn add_scheduled_job_with_recipe(
+                &self,
+                job: ScheduledJob,
+                _validated_recipe: ValidatedScheduleRecipe,
             ) -> Result<(), SchedulerError> {
                 let mut jobs = self.jobs.lock().await;
                 jobs.push(job);
