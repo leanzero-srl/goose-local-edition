@@ -88,6 +88,11 @@ export interface SwarmConfig {
    *  runs: both reported conf 93-95 and asked NOTHING on the same spec that made every successful-probe run
    *  report conf 30 and ask 5 questions. */
   clarity_probe_secs?: number;
+  /** Fail-close the spec-clarity probe: a probe that DIED for a reason that taught us nothing (timeout /
+   *  agent_error / no_final_output) counts as LOW clarity, so goose ASKS instead of proceeding on cross-draft
+   *  agreement alone (which agrees perfectly on an invented product — the 2/14 conf-93-95-with-0-questions
+   *  bug). `unparseable` stays fail-open (the model DID answer). Default OFF. */
+  clarity_fail_closed?: boolean;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;

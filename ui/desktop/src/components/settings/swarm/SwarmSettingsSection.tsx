@@ -469,6 +469,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Ask you when the spec-clarity check itself fails"
+              hint="That same spec-clarity check can die outright — it times out on a busy fleet, the model errors, or it returns nothing at all. When it does, goose today treats the failure as if your spec were clear and builds on how much the drafts agreed with each other — which is exactly how it invented whole products in 2 of 14 builds. With this on, a check that DIED (timed out, errored, or produced nothing) counts as LOW clarity, so goose asks you instead of guessing. A check that ran but returned unreadable output is left alone, so it will not nag you when the spec really was clear."
+            >
+              <SwarmSwitch
+                checked={!!cfg.clarity_fail_closed}
+                onChange={(v) => set({ clarity_fail_closed: v })}
+              />
+            </Row>
+            <Row
               label="Give every worker the app's non-negotiables"
               hint="Before building, goose distils your spec into a short list of app-wide acceptance criteria and puts them in front of every worker as non-negotiable — so a worker writing one file still knows what the whole app must do. It has never actually run: its switch was wired to a mode nobody turns on, so in every build ever made, no worker has seen one. This makes it reachable. Costs one planning pass; unproven, because it has never run once."
             >
