@@ -1378,3 +1378,82 @@ async fn speculation_primary_wins_aborts_twin_no_leak() {
         "a twin was spawned (then lost the race + was aborted)"
     );
 }
+
+/// Records what EVERY worker was actually handed. This is the test that the user-decisions bug needed and
+/// did not have.
+struct DecisionSpy {
+    seen: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait]
+impl TaskDispatcher for DecisionSpy {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((req.task_id.clone(), req.user_decisions.clone()));
+        Ok(format!("out-{}", req.task_id).into())
+    }
+}
+
+/// THE USER'S ANSWERS MUST REACH EVERY WORKER, VERBATIM.
+///
+/// Before `DispatchRequest.user_decisions` existed there was NO path from an answer to a worker at all:
+/// `research_findings` never leaves the planner, and the amended spec stops at `Scheduler::goal`, whose
+/// only readers are the replanner, the judge and the pre-reviewer. The engine nevertheless printed
+/// "✓ ... clarifications injected into every worker via research findings + spec". Nothing failed, because
+/// nothing checked — the answers survived only as an LLM paraphrase riding pillars/contracts, which is
+/// exactly how "use a PIPE separator" came back as a comma.
+#[tokio::test]
+async fn user_decisions_reach_every_worker_verbatim() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let specs: Vec<_> = (0..6).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2), dev("b", "m-b", 2)], 3);
+
+    let decisions = "## USER DECISIONS — BINDING\nUse a PIPE separator, not a comma.";
+    let report = sched
+        .run_with_decisions(
+            dag,
+            Arc::new(DecisionSpy { seen: seen.clone() }),
+            "the goal".to_string(),
+            decisions.to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 6);
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 6, "every task dispatched");
+    for (task_id, got) in seen.iter() {
+        assert_eq!(
+            got, decisions,
+            "worker {task_id} must receive the user's decisions VERBATIM — not paraphrased, not dropped"
+        );
+    }
+}
+
+/// A run that never asked must be byte-identical: no decisions => the field is empty => no injected block.
+#[tokio::test]
+async fn no_ask_means_no_decisions_and_run_is_unchanged() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let specs: Vec<_> = (0..3).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2)], 3);
+    // `run` is the pre-existing entry point — it must keep behaving exactly as before.
+    let report = sched
+        .run(
+            dag,
+            Arc::new(DecisionSpy { seen: seen.clone() }),
+            "the goal".to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.done.len(), 3);
+    for (task_id, got) in seen.lock().unwrap().iter() {
+        assert!(
+            got.is_empty(),
+            "worker {task_id} must get an EMPTY decisions field when the run never asked"
+        );
+    }
+}

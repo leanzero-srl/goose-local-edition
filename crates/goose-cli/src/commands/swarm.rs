@@ -1546,7 +1546,8 @@ fn print_import_summary(s: &ImportSummary) {
 }
 
 /// GOOSE_SWARM_ASK_REPLAN gate. After the user answers the clarify questions, the swarm can either REUSE the
-/// first plan (relying on the answers already appended to research_findings, which every worker prompt injects)
+/// first plan (the answers now reach every worker VERBATIM via DispatchRequest.user_decisions — this
+/// comment previously claimed they rode research_findings, which never leaves the planner)
 /// or RE-PLAN from scratch with the answers folded in. A full re-plan is a ~15-20min tax (skeleton re-draft +
 /// re-detailing every subtask) that only pays off when the answers change the plan STRUCTURE; when the ASK was
 /// about semantics the reused plan is identical in shape and the workers still see the answers. DEFAULT is now
@@ -4397,6 +4398,20 @@ fn build_full_reasoning(texts: &[String]) -> String {
         .join("\n\n");
     clip_tail(&joined, 24000)
 }
+
+/// The user's answers are BINDING, and the framing says so imperatively.
+///
+/// MEASURED TWICE that a weak worker treats a soft-framed answer as advisory and substitutes its own
+/// convention: asked for pipe-separated CSV it wrote comma-separated; asked for an exact list format it
+/// invented a variant. The answers are the user's explicit choices, so the prompt says so in the
+/// imperative rather than calling them "clarifications".
+/// ONE constant, used for BOTH copies — the one appended to the spec (which reaches the replanner, judge
+/// and pre-reviewer) and the one injected into every worker prompt. They cannot drift apart.
+const USER_DECISIONS_HEADER: &str = "\n\n## USER DECISIONS — BINDING\n\
+     The user was ASKED and chose the following. Implement each EXACTLY as written. Do NOT paraphrase it, \
+     rename it, or substitute your own convention/format — if a decision names a separator, a format, a \
+     default, or an order, use THAT one verbatim. These override any conflicting habit or default you \
+     would otherwise pick:\n";
 
 /// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
 fn tail_chars(s: &str, max: usize) -> String {
@@ -9065,6 +9080,10 @@ impl GooseAgentDispatcher {
             all_files: manifest.to_vec(),
             prior_hint: None,
             speculative: true,
+            // This helper has no access to the run's ask state, and it repairs a proven crash in
+            // an isolated shadow. Empty => no block => unchanged. Thread the decisions through
+            // this signature if a crash fix ever needs them.
+            user_decisions: String::new(),
         };
         let fix_budget = std::time::Duration::from_secs(fix_cap_secs()).min(remaining);
         let dispatched = tokio::time::timeout(fix_budget, self.run(req)).await;
@@ -11732,6 +11751,22 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 req.context_slice
             )
         };
+        // THE USER'S OWN ANSWERS, VERBATIM. Until this block existed there was NO path from an answer to a
+        // worker: `research_findings` appears ZERO times in this function and is only ever handed to
+        // planner-side calls; the amended spec lives in `Scheduler::goal`, read only by the replanner, the
+        // judge and the pre-reviewer; and because the ask fires AFTER planning while `ask_replan` defaults
+        // off, `req.description` is a pre-answer artifact too. Both halves of the worker prompt excluded
+        // them. The engine nevertheless printed `✓ ... clarifications injected into every worker via
+        // research findings + spec` — naming two channels that do not carry it.
+        // The answers did sometimes survive, as an LLM paraphrase riding pillars/contracts. That is the
+        // measured "asked for pipe-separated CSV, wrote comma-separated" failure: a paraphrase preserves a
+        // strong convention ("integer cents") and destroys a literal (a delimiter). Verbatim or nothing.
+        // Empty when the run never asked => empty block => byte-identical.
+        let decisions_block = if req.user_decisions.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{}\n\n", req.user_decisions.trim())
+        };
         // Hand the worker the AGREED layout: the full file manifest (so imports match where modules
         // actually live) and its OWN exact paths (so it never writes a divergent copy to the cwd root).
         // Gated on the manifest, not owned_files — integrate-verify owns nothing but most needs the map.
@@ -12086,7 +12121,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{decisions_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -13629,6 +13664,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
     }));
 
+    // The user's verbatim answers, hoisted so they outlive the plan loop and can reach EVERY worker.
+    // The BINDING block below is built inside the loop; without this, it died with the loop and the only
+    // thing that ever left was `opts.prompt` -> Scheduler::goal, which no worker reads.
+    let mut user_decisions = String::new();
     let mut retarget_round = 0u32;
     let mut effective_best_of_n = best_of_n;
     let mut best_plan: Option<(String, PlanConf)> = None;
@@ -14107,15 +14146,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // soft-framed answer as advisory and substitutes its own convention (asked for
                             // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
                             // variant). The answers are the user's explicit choices — say so imperatively.
-                            opts.prompt.push_str(
-                            "\n\n## USER DECISIONS — BINDING\n\
-                             The user was ASKED and chose the following. Implement each EXACTLY as written. Do \
-                             NOT paraphrase it, rename it, or substitute your own convention/format — if a \
-                             decision names a separator, a format, a default, or an order, use THAT one \
-                             verbatim. These override any conflicting habit or default you would otherwise \
-                             pick:\n",
-                        );
+                            opts.prompt.push_str(USER_DECISIONS_HEADER);
                             opts.prompt.push_str(&qa);
+                            // ...and keep the SAME binding text for the worker prompt. The spec copy goes
+                            // to Scheduler::goal (replanner/judge/pre-reviewer only); this copy is what
+                            // actually reaches a worker.
+                            user_decisions = format!("{USER_DECISIONS_HEADER}{qa}");
                             let lang_after = detect_language(&opts.prompt, &[]);
                             let lang_changed = lang_after != lang_before;
                             // A product-defining answer is STRUCTURAL like a language change: when the ask fired
@@ -14140,8 +14176,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 );
                                 continue;
                             }
+                            // This line used to claim the answers were "injected into every worker via
+                            // research findings + spec". Both were false — research_findings never leaves
+                            // the planner, and the amended spec stops at Scheduler::goal. It is true now,
+                            // and only because DispatchRequest.user_decisions exists; say what actually
+                            // carries them.
                             eprintln!(
-                        "  {} keeping this plan; clarifications injected into every worker via research findings + spec (set GOOSE_SWARM_ASK_REPLAN=1 to force a re-plan)",
+                        "  {} keeping this plan; your decisions go to every worker VERBATIM as a binding block (set GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)",
                         style("✓").green()
                     );
                         }
@@ -14447,10 +14488,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     let t_plan = std::time::Instant::now();
     let report = scheduler
-        .run(
+        .run_with_decisions(
             dag,
             dispatcher as Arc<dyn TaskDispatcher>,
             opts.prompt.clone(),
+            // The amended spec (arg 3) reaches only the replanner/judge/pre-reviewer. THIS is the copy that
+            // reaches a worker.
+            user_decisions.clone(),
         )
         .await?;
     let t_exec = std::time::Instant::now();
@@ -14729,11 +14773,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
                     let dev = dev_id.clone();
+                    // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
+                    let decisions = user_decisions.clone();
                     let summaries =
                         fanout_over_fleet(fleet_models.clone(), groups, move |g, model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let dev = dev.clone();
+                            let decisions = decisions.clone();
                             async move {
                                 let task_id = format!("complete-fix::{}", g.file);
                                 let req = DispatchRequest {
@@ -14751,6 +14798,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // ONLY this shard's owned file is promoted back — and the file-groups are a
                                     // NORMALIZED disjoint partition, so no two promotes touch the same real dst.
                                     speculative: true,
+                                    // A FIX worker must honour the user's choices too — a fix that re-introduces
+                                    // `Decimal` after the user chose integer cents is still wrong.
+                                    user_decisions: decisions.clone(),
                                 };
                                 match tokio::time::timeout(
                                     std::time::Duration::from_secs(1200),
@@ -14796,6 +14846,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         all_files: smoke_all_files.clone(),
                         prior_hint: None,
                         speculative: false,
+                        // A FIX worker must honour the user's choices too — a fix that re-introduces
+                        // `Decimal` after the user chose integer cents is still wrong.
+                        user_decisions: user_decisions.clone(),
                     };
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_secs()),
@@ -14816,6 +14869,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
                     speculative: false,
+                    // A FIX worker must honour the user's choices too — a fix that re-introduces
+                    // `Decimal` after the user chose integer cents is still wrong.
+                    user_decisions: user_decisions.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -14981,6 +15037,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
                     speculative: false,
+                    // A FIX worker must honour the user's choices too — a fix that re-introduces
+                    // `Decimal` after the user chose integer cents is still wrong.
+                    user_decisions: user_decisions.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -15608,6 +15667,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
                     speculative: false,
+                    // A FIX worker must honour the user's choices too — a fix that re-introduces
+                    // `Decimal` after the user chose integer cents is still wrong.
+                    user_decisions: user_decisions.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
