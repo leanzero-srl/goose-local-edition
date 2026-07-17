@@ -284,6 +284,15 @@ pub struct SwarmConfig {
     /// the spec ... where they disagree, the spec wins" — lose to it.
     #[serde(default)]
     pub spec_wins: Option<bool>,
+    /// Seconds the spec-clarity probe may take before it is abandoned. `None` = the historical 120.
+    /// Clamped [30, 900]. GOOSE_SWARM_CLARITY_PROBE_SECS env overrides.
+    ///
+    /// When the probe is abandoned the engine falls back to cross-draft agreement ALONE and asserts the
+    /// product is specified — so the ask that protects an under-specified spec silently never fires. MEASURED:
+    /// 2 of 14 runs. Both then reported conf 93-95 with 0 questions on the same spec that made every
+    /// successful-probe run report conf 30 and ask 5.
+    #[serde(default)]
+    pub clarity_probe_secs: Option<u64>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -520,6 +529,7 @@ impl Default for SwarmConfig {
             retarget: false,
             clarify_spec_bound: None,
             spec_wins: None,
+            clarity_probe_secs: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -5223,6 +5233,23 @@ fn retarget_action(
     }
 }
 
+/// How long the spec-clarity probe may take. Default 120s (byte-identical to the hardcoded value it
+/// replaces); env > config; clamped [30, 900].
+///
+/// This budget is the prime SUSPECT for the probe's None returns — the fleet is PARALLEL:1, so the probe
+/// queues behind the best-of-N drafts it runs alongside, and a 27B at 262k context can burn 120s in the queue
+/// without ever being handed to the model. It is a suspect, not a proven cause: `clarity_fail` now records
+/// whether it was actually a timeout, so raising this can be judged on evidence rather than on my hunch.
+fn clarity_probe_secs() -> u64 {
+    let cfg = load_config().clarity_probe_secs;
+    std::env::var("GOOSE_SWARM_CLARITY_PROBE_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .or(cfg)
+        .unwrap_or(120)
+        .clamp(30, 900)
+}
+
 /// GOOSE_SWARM_RETARGET_ROUNDS: bounded retarget budget. Default 2; clamped [0,4] (0 = OFF). Mirrors
 /// `complete_rounds_from` so a misconfigured value can never spin the fleet forever.
 fn retarget_rounds_from(v: Option<String>) -> u32 {
@@ -5776,6 +5803,14 @@ pub struct GooseAgentDispatcher {
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
     sink_review_findings: Mutex<Vec<String>>,
+    /// WHY the spec-clarity probe last returned None — "timeout" / "no_final_output" / "unparseable" /
+    /// "agent_error: …". `None` means it succeeded (or never ran).
+    ///
+    /// The probe's failure is the most consequential silent event in the engine: on None the caller falls back
+    /// to agreement ALONE and asserts product_specified=true, so a probe that DIED is indistinguishable from
+    /// one that said "the spec is perfectly clear". Recording the reason is the prerequisite for fixing it —
+    /// timeout, unparseable and no_final_output each demand an opposite remedy.
+    clarity_fail: Mutex<Option<String>>,
 }
 
 impl GooseAgentDispatcher {
@@ -5819,6 +5854,7 @@ impl GooseAgentDispatcher {
             pillars: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
+            clarity_fail: Mutex::new(None),
         })
     }
 
@@ -7222,10 +7258,23 @@ impl GooseAgentDispatcher {
                 (None, Some((c, _, _))) => Some(*c),
                 (None, None) => Some(60),
             };
+            // A DEAD PROBE IS NOT A CLEAR SPEC. `product_specified: true` here is an assertion the engine has
+            // no evidence for — it is what the probe was supposed to MEASURE. Kept as-is (changing it would
+            // alter the default path), but the failure is now recorded and reported instead of vanishing.
+            let clarity_fail = self.clarity_fail.lock().unwrap().clone();
             let (spec_clarity, open_decisions, product_specified) = match &clarity {
                 Some((c, d, p)) => (Some(*c), d.clone(), *p),
                 None => (None, Vec::new(), true), // probe failed/timed out → no spec-clarity veto
             };
+            if let Some(reason) = &clarity_fail {
+                eprintln!(
+                    "  {} spec-clarity probe FAILED ({reason}) — proceeding on cross-draft agreement ALONE. \
+                     Agreement measures whether the DRAFTS agree, not whether YOUR SPEC is clear: 3 drafts can \
+                     agree perfectly on an invented product. The ask that protects an under-specified spec \
+                     cannot fire on this run.",
+                    style("!").yellow().bold()
+                );
+            }
             let unc = open_decisions.join("; ");
             if let Some((c, _, _)) = &clarity {
                 eprintln!(
@@ -7245,7 +7294,13 @@ impl GooseAgentDispatcher {
             }
             // A human-readable derivation of the spec-clarity number, so it reads as a computed signal, not a
             // magic constant (parallels agreement_reason). Shown in the confidence breakdown.
-            let spec_clarity_reason = if !product_specified {
+            let spec_clarity_reason = if let Some(reason) = &clarity_fail {
+                // NEVER claim "product is pinned" off a dead probe. That is what the old code did: the probe
+                // returns None -> open_decisions is empty -> this rendered "product is pinned and only routine
+                // defaults remain" INTO THE UI, telling the user their spec was clear because the check for it
+                // had crashed. An unmeasured signal must read as unmeasured.
+                format!("NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified.")
+            } else if !product_specified {
                 "the product itself is undefined — clarity stays low until you say what to build"
                     .to_string()
             } else if open_decisions.is_empty() {
@@ -9740,14 +9795,41 @@ impl GooseAgentDispatcher {
         // planning — but generous enough that a busy fleet doesn't time the probe out and default to
         // product_specified=true (which silently SKIPS the vague-product ask this signal exists to trigger).
         // On timeout we fall back to the calibrated cross-draft agreement score (the primary signal).
-        let out = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
+        // WHY IT FAILED, not just THAT it failed.
+        //
+        // These three `?`s were silent and identical, and their consequence is the worst in the engine:
+        // returning None makes the caller fall back to agreement ALONE and assert product_specified=TRUE — so
+        // a probe that DIED is indistinguishable from a probe that said "the spec is perfectly clear".
+        // MEASURED across 14 runs: 2 came back None, and BOTH then reported conf 93-95 with asked=0 on the
+        // very same py-splitwise spec whose 5 open decisions made the other runs report conf 30 and ask all
+        // five. One of those two is a proven false green. The difference between "goose asks you 5 questions"
+        // and "goose invents your product and calls it 95% confident" is this Option.
+        //
+        // Timeout vs no-final_output vs unparseable JSON demand OPPOSITE fixes (a longer budget vs molding the
+        // prompt vs a schema retry), and until the reason is recorded, any fix is a guess. `self.clarity_fail`
+        // is read by the caller, which owns the sink.
+        let out = match tokio::time::timeout(
+            std::time::Duration::from_secs(clarity_probe_secs()),
             self.run_agent(model, system, user, response, 4, &[], 0, None),
         )
         .await
-        .ok()
-        .and_then(|r| r.ok())?;
-        let fo = out.final_output?;
+        {
+            Err(_) => {
+                *self.clarity_fail.lock().unwrap() = Some("timeout".to_string());
+                return None;
+            }
+            Ok(Err(e)) => {
+                let msg = e.to_string();
+                *self.clarity_fail.lock().unwrap() =
+                    Some(format!("agent_error: {}", tail_chars(&msg, 160)));
+                return None;
+            }
+            Ok(Ok(o)) => o,
+        };
+        let Some(fo) = out.final_output else {
+            *self.clarity_fail.lock().unwrap() = Some("no_final_output".to_string());
+            return None;
+        };
         #[derive(serde::Deserialize)]
         struct Amb {
             #[serde(default = "default_true")]
@@ -9755,7 +9837,14 @@ impl GooseAgentDispatcher {
             #[serde(default)]
             material_open_decisions: Vec<String>,
         }
-        let parsed: Amb = serde_json::from_str(&fo).ok()?;
+        let parsed: Amb = match serde_json::from_str(&fo) {
+            Ok(p) => p,
+            Err(e) => {
+                *self.clarity_fail.lock().unwrap() =
+                    Some(format!("unparseable: {}", tail_chars(&e.to_string(), 120)));
+                return None;
+            }
+        };
         let decisions: Vec<String> = parsed
             .material_open_decisions
             .into_iter()
