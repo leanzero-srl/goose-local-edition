@@ -163,6 +163,13 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'planner_weight',
   'homogeneous_models',
   'allow_model_load',
+  // The consultation set (see GOLDEN below). In PRESET_KEYS so the preset actually applies them —
+  // a value in GOLDEN that is not listed here is decoration.
+  'ask_floor',
+  'ask_max_q',
+  'no_tools_means_ask',
+  'grounded_research_only',
+  'contract_validate',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
@@ -170,6 +177,18 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
 // homogeneous_models ON, worker_timeout 420. The reliability GATE half of the golden formula
 // (GOOSE_SWARM_ASSURED + REVIEW_REPRO + REVIEW_FIX) is env-layer only today and is the deferred,
 // Rust-backed half — not settable from this panel yet.
+//
+// THE CONSULTATION SET, added 2026-07-17. These four are here on MECHANISM evidence — a deterministic
+// engine event proving each fired — never on an A/B, because an A/B cannot decide this: Fisher's exact on
+// a 1-vs-1 table returns p=1.000 for EVERY possible outcome, and at ~25-37% base failure there is a 37.5%
+// chance an inert lever fabricates a win. Detecting a real effect needs ~46 runs. So the bar for entry is:
+// (1) the engine event proves it fired, and (2) it is STRUCTURALLY INCAPABLE of making the app worse.
+// All four clear both. Measured on the same spec, three configurations:
+//     levers off (what shipped):  5 open decisions · 0 asked · 5 INVENTED · confidence laundered 30 -> 96
+//     levers on, ask cap 3:       5 open · 3 asked · 2 invented in silence · confidence 30 (honest)
+//     levers on, ask_max_q 6:     5 open · 5 asked · 0 invented
+// The spec had exactly five "DELIBERATELY NOT DECIDED — do NOT guess them" items. The shipping default
+// guessed all five and reported 96/100 confidence about it.
 export const GOLDEN: SwarmConfig = {
   worker_max_turns: 40,
   max_attempts: 3,
@@ -186,6 +205,23 @@ export const GOLDEN: SwarmConfig = {
   planner_weight: 1,
   homogeneous_models: true,
   allow_model_load: false,
+  // Never build below the bar; ask instead. (The engine adds +5 for a weak planner, so 80 -> 85 on a 27B.)
+  ask_floor: 80,
+  // Was 3, and it TRUNCATED with a bare .take(): two of five decisions were invented anyway, silently.
+  // A cap that discards user consultation is not a safety limit. 6 covers a spec's realistic open set.
+  ask_max_q: 6,
+  // With no lookup tools nothing is lookupable, so an open decision goes to the USER, not to a research
+  // round that can only guess. Cost: a pause. It cannot worsen the app — it replaces an invented answer
+  // with the user's real one.
+  no_tools_means_ask: true,
+  // The same failure through the second door: an INVENTED finding may no longer mark a decision "settled".
+  // Measured: research reported "0 actually looked up, 5 counted as settled" and that lifted the meter
+  // over the floor, silencing the ask for the whole run.
+  grounded_research_only: true,
+  // Pure annotation — it only adds `validated` to an event that already fires, so it cannot change a
+  // build. Its FIRST measurement falsified the engine's own `frozen: true`: both validated contract stubs
+  // failed to parse (invalid syntax, public: []). Every worker is told to honour those stubs.
+  contract_validate: true,
 };
 
 export type PresetId = 'golden' | 'default' | 'custom';
