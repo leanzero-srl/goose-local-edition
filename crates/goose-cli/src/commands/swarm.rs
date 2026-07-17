@@ -263,6 +263,16 @@ pub struct SwarmConfig {
     /// floor). GOOSE_SWARM_RETARGET env overrides.
     #[serde(default)]
     pub retarget: bool,
+    /// Bind the clarify ask's OPTIONS to the spec: every offered option must satisfy what the task already
+    /// fixes, and a fixed choice is not asked about at all. OFF by default.
+    /// GOOSE_SWARM_CLARIFY_SPEC_BOUND env overrides.
+    ///
+    /// Fixes the measured #117: the ask offered "SQLite / JSON / CSV" for a spec that MANDATED tab-separated
+    /// storage — every option violated the spec the user had just written. The spec was in the prompt all
+    /// along; the prompt just fought it, with a spec-independent worked example ("for a storage question:
+    /// [SQLite file, JSON file, plain-text lines]") plus two separate "most-common default FIRST" nudges.
+    #[serde(default)]
+    pub clarify_spec_bound: Option<bool>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -497,6 +507,7 @@ impl Default for SwarmConfig {
             ask_floor: None,
             converge: default_converge(),
             retarget: false,
+            clarify_spec_bound: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -6226,21 +6237,59 @@ impl GooseAgentDispatcher {
             uncertainties.trim().to_string()
         };
         let plan_excerpt: String = plan_json.chars().take(2000).collect();
+        // SPEC-BOUND OPTIONS (#117). The old prompt fought the spec it was shown, in three places at once:
+        //   1. a worked example that is INDEPENDENT of the task — "for a storage question:
+        //      [SQLite file, JSON file, plain-text lines]". A weak model copies the nearest in-context
+        //      demonstration, and this one literally demonstrates answering a storage question with
+        //      SQLite/JSON regardless of what the spec fixed. The live failure was a storage question
+        //      offering JSON/SQLite/CSV against a spec that MANDATED tab-separated.
+        //   2. "the most likely/COMMON answer FIRST" and 3. "the SAFEST/MOST-COMMON default FIRST" — both
+        //      steer toward the popular choice and away from an unusual spec-mandated one.
+        // Against that, the only counterweight was a passing "NOT ... anything already pinned down by the
+        // task". Two instructions pulled one way, one weak clause the other.
+        //
+        // The spec was never missing — it is interpolated verbatim and untruncated into `user` below. So this
+        // is a molding fix, not a plumbing one: make the spec BINDING ON OPTIONS, and make the example
+        // demonstrate obeying a fixed requirement rather than ignoring one.
+        let spec_bound = swarm_gate_cfg_bundle(
+            "GOOSE_SWARM_CLARIFY_SPEC_BOUND",
+            load_config().clarify_spec_bound,
+            false,
+        );
+        let option_rules = if spec_bound {
+            "FOR EACH QUESTION, also provide 2-4 concrete pickable OPTIONS in `options` so the user can just \
+             click a choice (they can still type their own). EVERY OPTION MUST SATISFY EVERY REQUIREMENT THE \
+             TASK ALREADY FIXES. If the task fixes a choice, that choice is NOT a question — do not offer \
+             alternatives to it, and do not ask about it at all. Only when the task leaves something genuinely \
+             open may you offer the common answers for it, most likely FIRST. Options must be short, concrete, \
+             and mutually distinct. Example of the ONLY correct behaviour: if the task says storage MUST be a \
+             tab-separated file, then the storage format is SETTLED — asking \"SQLite / JSON / CSV?\" is WRONG \
+             because every option contradicts the task; ask instead about something the task genuinely left \
+             open. Use an empty options list ONLY when the question is truly open-ended."
+        } else {
+            "FOR EACH QUESTION, also provide 2-4 concrete pickable OPTIONS in `options` — the most \
+             likely/common answer FIRST — so the user can just click a choice (they can still type their own). \
+             Options must be short, concrete, and mutually distinct (e.g. for a storage question: [\"SQLite \
+             file\",\"JSON file\",\"plain-text lines\"]). Use an empty options list ONLY when the question is \
+             truly open-ended."
+        };
+        let default_rule = if spec_bound {
+            "one clear decision per question, mutually-exclusive options, and NEVER ask something the task \
+             already decided or that a competent developer would just pick by default."
+        } else {
+            "one clear decision per question, mutually-exclusive options with the SAFEST/most-common default \
+             FIRST, and NEVER ask something a competent developer would just pick by default."
+        };
         let system = format!(
             "A weak local model just drafted a plan for a coding task but its confidence is LOW ({conf}/100). \
              Ask the USER AT MOST {max_q} crisp, specific, INTERROGATIVE questions whose answers would most \
              change HOW the program is built — its scope, inputs/outputs, file formats, or acceptance criteria \
              — NOT trivia or anything already pinned down by the task. Ask ONLY what the USER alone can decide \
              — do NOT ask facts that can be looked up in docs or on the web (the swarm researches those itself). \
-             Each question must be answerable in one sentence and END WITH '?'. FOR EACH QUESTION, also provide \
-             2-4 concrete pickable OPTIONS in `options` — the most likely/common answer FIRST — so the user can \
-             just click a choice (they can still type their own). Options must be short, concrete, and mutually \
-             distinct (e.g. for a storage question: [\"SQLite file\",\"JSON file\",\"plain-text lines\"]). Use an \
-             empty options list ONLY when the question is truly open-ended. FOR EACH QUESTION also set \
-             `resolves` to the ONE specific open decision it settles (quote it from the uncertainties above) so \
-             the user sees exactly why you're asking. Write like a senior engineer deciding with a teammate: \
-             one clear decision per question, mutually-exclusive options with the SAFEST/most-common default \
-             FIRST, and NEVER ask something a competent developer would just pick by default. If the task is \
+             Each question must be answerable in one sentence and END WITH '?'. {option_rules} FOR EACH \
+             QUESTION also set `resolves` to the ONE specific open decision it settles (quote it from the \
+             uncertainties above) so the user sees exactly why you're asking. Write like a senior engineer \
+             deciding with a teammate: {default_rule} If the task is \
              genuinely self-contained and nothing would change the build, return an EMPTY questions list — do \
              NOT invent make-work. Then call the final_output tool."
         );
@@ -13834,6 +13883,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "levers": {
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,
+            // Prompt-only levers emit nothing of their own, which is why two earlier ones were screened
+            // "unobservable" — on + precondition met, and no way to tell whether anything happened. The
+            // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
+            // in the same log is a complete mechanism proof.
+            "clarify_spec_bound": swarm_gate_cfg_bundle(
+                "GOOSE_SWARM_CLARIFY_SPEC_BOUND",
+                load_config().clarify_spec_bound,
+                false,
+            ),
             "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
             "retarget": retarget_on,
             // The RESOLVED budget, not the config field — the campaign spent weeks believing this was 4 while

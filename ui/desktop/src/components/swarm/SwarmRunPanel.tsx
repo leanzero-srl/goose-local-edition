@@ -663,6 +663,41 @@ export function confVerdict(value: number, floor: number | null): string {
   return `Below your bar of ${floor} — goose asked before building`;
 }
 
+/// What would actually raise the score when AGREEMENT is the binding signal, tiered by how much room is
+/// left. This was one static string that assumed agreement was LOW — so a real run at agreement 88 rendered
+/// "The drafts disagree on how to structure the build" directly beneath the engine's own
+/// "3 drafts agree: count spread 1, file-overlap 100% (role-normalized)". The panel contradicted the engine
+/// on screen, and pitched "the retarget option" at a user who already had it switched on.
+export function agreementAdvice(agreement: number): string {
+  if (agreement >= 85) {
+    return 'The drafts already landed on nearly the same structure, so there is little headroom here — what remains is the last of the naming and granularity spread. Re-drafting is unlikely to move it much.';
+  }
+  if (agreement >= 60) {
+    return 'The drafts broadly agree but split on part of the structure. Re-drafting toward a consensus backbone (the retarget option) is what lifts this — though a small local fleet may not fully converge.';
+  }
+  return 'The drafts disagree on how to structure the build. The score reflects that drafted plan — it only lifts if goose re-drafts toward a consensus (the retarget option), and a small/weak fleet may still not fully agree.';
+}
+
+/// The binding signal's reason, framed so it reads as a CAP rather than a compliment.
+///
+/// `final = min(agreement, spec_clarity)`, so when agreement binds it is the ceiling — but its reason string
+/// is phrased positively ("3 drafts agree: ..."), which read as nonsense under a "What's holding it back"
+/// header. Name the cap, then give the engine's reason verbatim.
+export function holdingBackText(
+  agreement: number,
+  bindingAgreement: boolean,
+  agreementReason: string | null | undefined,
+  productSpecified: boolean
+): string {
+  if (!bindingAgreement) {
+    return productSpecified
+      ? 'Some requirements are still ambiguous.'
+      : "The product itself isn't fully specified yet.";
+  }
+  if (!agreementReason) return 'The planning drafts disagree on how to structure the build.';
+  return `Agreement caps the score at ${agreement}. ${agreementReason}`;
+}
+
 const ConfidenceBreakdownBody: React.FC<{
   conf: ConfidenceBreakdown;
   trail?: number[];
@@ -671,13 +706,14 @@ const ConfidenceBreakdownBody: React.FC<{
 }> = ({ conf, trail, hasPendingQuestions, askFloor = null }) => {
   const bindingAgreement = conf.agreement <= conf.specClarity;
   const showDecisions = !bindingAgreement && conf.openDecisions.length > 0;
-  const holdingBack = bindingAgreement
-    ? conf.agreementReason || 'The planning drafts disagree on how to structure the build.'
-    : conf.productSpecified
-      ? 'Some requirements are still ambiguous.'
-      : "The product itself isn't fully specified yet.";
+  const holdingBack = holdingBackText(
+    conf.agreement,
+    bindingAgreement,
+    conf.agreementReason,
+    conf.productSpecified
+  );
   const raiseIt = bindingAgreement
-    ? 'The drafts disagree on how to structure the build. The score reflects that drafted plan — it only lifts if Goose re-drafts toward a consensus (the retarget option), and a small/weak fleet may still not fully agree.'
+    ? agreementAdvice(conf.agreement)
     : hasPendingQuestions
       ? 'Answer the questions below — each resolves an open decision. Goose can also research the undecided points.'
       : 'Researching the undecided points to firm up the spec.';
