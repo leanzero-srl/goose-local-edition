@@ -2773,6 +2773,59 @@ mod tests {
     }
 
     #[test]
+    /// THE RESCORE MUST NEVER FLATTER A RUN.
+    ///
+    /// When the user answers, spec-clarity is re-scored deterministically with the SAME pure function the
+    /// first score used — over (open - ANSWERED), never over 0. `ask_max_q` truncates the question list
+    /// with a `.take()`, so a run with 8 open decisions that asked 5 still has 3 the user never saw and
+    /// goose will guess. Snapping to zero there would raise a number the run did not earn — precisely the
+    /// failure the low score exists to prevent (before it, research INVENTED 5 decisions and reported 96).
+    #[test]
+    fn rescore_credits_only_what_was_actually_answered() {
+        // The measured case: 5 open, all 5 asked and answered -> the spec really is pinned.
+        assert_eq!(
+            spec_clarity_score(true, 5),
+            30,
+            "the 30 Mihai saw: 100-16*5=20, floored to 30"
+        );
+        assert_eq!(
+            spec_clarity_score(true, 5usize.saturating_sub(5)),
+            100,
+            "all answered => pinned"
+        );
+
+        // The trap: 8 open but the cap asked only 5. THREE are still guesses.
+        let still_open = 8usize.saturating_sub(5);
+        assert_eq!(still_open, 3);
+        let rescored = spec_clarity_score(true, still_open);
+        assert_eq!(
+            rescored, 52,
+            "credit 5 answers, keep charging for the 3 nobody asked about"
+        );
+        assert!(
+            rescored < 100,
+            "a truncated ask must NEVER read as a pinned spec"
+        );
+
+        // Monotonic: answering more can only raise it, and it can never exceed a pinned spec.
+        assert!(spec_clarity_score(true, 3) > spec_clarity_score(true, 5));
+        assert!(spec_clarity_score(true, 0) >= spec_clarity_score(true, 1));
+
+        // final = min(agreement, clarity) — the SAME expression as the first score. Agreement is never
+        // touched by the rescore: it describes the DAG that actually ships, which IS the pre-answer plan.
+        let agreement = 88u8;
+        assert_eq!(
+            agreement.min(spec_clarity_score(true, 5)),
+            30,
+            "before: the spec binds"
+        );
+        assert_eq!(
+            agreement.min(spec_clarity_score(true, 0)),
+            88,
+            "after: agreement binds, not 100"
+        );
+    }
+
     fn spec_clarity_score_is_continuous_not_a_constant() {
         // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
         // buckets); floored at 30 so a very-open-but-defined spec still reads "low, ask".
@@ -13837,7 +13890,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
             // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
             let draft_temp = base_draft_temp.map(|t| (t - 0.05 * retarget_round as f32).max(0.05));
-            let (pj, plan_conf, uncertainties) = if use_parallel {
+            // `mut` because the user's answers RE-SCORE spec-clarity below: the value bound here is
+            // measured against a prompt the ask is about to amend, and carrying it unchanged reports a
+            // number for a spec that no longer exists.
+            let (pj, mut plan_conf, uncertainties) = if use_parallel {
                 phase_banner(
                     "PLAN",
                     "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
@@ -14224,6 +14280,72 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // to Scheduler::goal (replanner/judge/pre-reviewer only); this copy is what
                             // actually reaches a worker.
                             user_decisions = format!("{USER_DECISIONS_HEADER}{qa}");
+                            // RE-SCORE spec-clarity NOW THAT THE USER HAS ANSWERED.
+                            //
+                            // `plan_conf` was measured against a prompt that NO LONGER EXISTS: it is bound
+                            // from parallel_plan ~380 lines above, and the answers were appended to
+                            // opts.prompt just now. Every mention of plan_conf between the ask and the
+                            // `break` is a READ — nothing recomputes it. So the run BUILDS against the
+                            // answered spec (workers get user_decisions verbatim) while REPORTING the
+                            // pre-answer number. MEASURED: five decisions asked, all five answered, and
+                            // plan_loaded still said 30 with "5 material open decision(s) still lower
+                            // clarity" and a panel reading "Low — needs your input" — about input already
+                            // given. 30 was honest before the ask and false after it.
+                            //
+                            // DETERMINISTIC — no model call, no second probe. Re-running the probe would be
+                            // the re_research laundering path in another costume; this is the SAME pure
+                            // function the first score used, over a count the engine already knows.
+                            //
+                            // The count is (open - ANSWERED), never 0: `ask_max_q` truncates the question
+                            // list with a `.take()`, so a run with 8 open decisions that asked 5 still has
+                            // 3 the user never saw and goose will guess. Snapping to zero there would raise
+                            // a number the run did not earn — exactly the failure the 30 exists to prevent.
+                            let answered = questions.len();
+                            let still_open =
+                                plan_conf.open_decisions.len().saturating_sub(answered);
+                            if let Some(old_clarity) = plan_conf.spec_clarity {
+                                let rescored =
+                                    spec_clarity_score(plan_conf.product_specified, still_open);
+                                if rescored > old_clarity {
+                                    plan_conf.spec_clarity = Some(rescored);
+                                    plan_conf.spec_clarity_reason = if still_open == 0 {
+                                        format!(
+                                            "you answered all {answered} open decision(s) — the spec is pinned"
+                                        )
+                                    } else {
+                                        format!(
+                                            "you answered {answered}; {still_open} open decision(s) goose                                              will still have to guess (raise swarm.ask_max_q to be asked                                              about them)"
+                                        )
+                                    };
+                                    plan_conf.open_decisions = plan_conf
+                                        .open_decisions
+                                        .split_off(answered.min(plan_conf.open_decisions.len()));
+                                    // final = min(agreement, clarity), the SAME expression the first score
+                                    // used. agreement is untouched: it describes the DAG that actually
+                                    // ships, and that plan is genuinely the pre-answer one.
+                                    plan_conf.final_conf =
+                                        match (plan_conf.agreement, plan_conf.spec_clarity) {
+                                            (Some(a), Some(c)) => Some(a.min(c)),
+                                            (Some(a), None) => Some(a),
+                                            (None, Some(c)) => Some(c),
+                                            (None, None) => None,
+                                        };
+                                    sink.write_value(serde_json::json!({
+                                        "event": "confidence_rescored",
+                                        "reason": "user answered the open decisions",
+                                        "answered": answered,
+                                        "still_open": still_open,
+                                        "spec_clarity_before": old_clarity,
+                                        "spec_clarity_after": rescored,
+                                        "conf_after": plan_conf.final_conf,
+                                    }));
+                                    eprintln!(
+                                        "  {} you answered {answered} decision(s) — spec clarity {old_clarity} -> {rescored}, confidence now {}/100",
+                                        style("✓").green(),
+                                        plan_conf.final_conf.unwrap_or(0)
+                                    );
+                                }
+                            }
                             let lang_after = detect_language(&opts.prompt, &[]);
                             let lang_changed = lang_after != lang_before;
                             // A product-defining answer is STRUCTURAL like a language change: when the ask fired
