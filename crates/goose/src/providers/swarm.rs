@@ -280,18 +280,108 @@ impl Provider for SwarmProvider {
         }
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // TEE THE ENGINE'S STDERR TO DISK, AS IT STREAMS.
+        //
+        // `cmd.output()` below buffers stderr in memory and hands it back only when the child EXITS — and the
+        // provider then surfaces it only `if !output.status.success()`, into one chat message. So when a run
+        // dies, its last words go into a message nobody kept, and the build dir — the place anyone would
+        // actually look — holds nothing.
+        //
+        // MEASURED 2026-07-17: three consecutive runs of the same arm died at three DIFFERENT phases (a
+        // redraft, a pre_review, and right after research_completed). Every time the heartbeat froze on its
+        // 5-second timer while `goose serve` stayed up, swap read 0.00M, and macOS filed no crash report. I
+        // could not diagnose ANY of them, because there was nothing written down. Three dead runs, zero lines.
+        //
+        // The prime suspect is `kill_on_drop(true)` below: this child dies the moment the request future is
+        // dropped, and a kill leaves no crash report and no panic — exactly what was observed. Whether that is
+        // it or a panic in the run's own task, the FIRST requirement is that the engine's output survives the
+        // process that produced it. Streamed, never accumulated; the run's own dir, beside its events.
+        let stderr_log = self.working_dir.as_ref().map(|d| {
+            let p = std::path::Path::new(d)
+                .join(".swarm")
+                .join("engine-stderr.log");
+            let _ = std::fs::create_dir_all(p.parent().unwrap());
+            p
+        });
         // A swarm run drives the whole fleet and can take minutes. When the user hits Stop in the
         // UI, the agent drops this request future; without kill_on_drop the child `goose swarm run`
         // is orphaned and keeps dispatching to the fleet. kill_on_drop makes Stop actually stop it.
         cmd.kill_on_drop(true);
 
-        let output = cmd.output().await.map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             ProviderError::RequestFailed(format!(
                 "Failed to spawn '{} swarm run': {e}. Set SWARM_COMMAND to the goose binary path if it is \
                  not on PATH.",
                 self.command
             ))
         })?;
+
+        // Drain stderr into BOTH the tail (what the chat message needs) and the log file (what a post-mortem
+        // needs), line by line, so a killed child still leaves everything it managed to say. This task holds
+        // no reference to the child, so kill_on_drop still works exactly as before.
+        let stderr_pipe = child.stderr.take();
+        let log_path = stderr_log.clone();
+        let stderr_task = tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufWriter};
+            let mut collected = String::new();
+            let Some(pipe) = stderr_pipe else {
+                return collected;
+            };
+            let mut sink = match &log_path {
+                Some(p) => tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(p)
+                    .await
+                    .ok()
+                    .map(BufWriter::new),
+                None => None,
+            };
+            if let Some(w) = sink.as_mut() {
+                let header = format!("\n===== swarm run started {} =====\n", chrono::Utc::now());
+                let _ = tokio::io::AsyncWriteExt::write_all(w, header.as_bytes()).await;
+            }
+            let mut lines = tokio::io::BufReader::new(pipe).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(w) = sink.as_mut() {
+                    let _ = tokio::io::AsyncWriteExt::write_all(w, format!("{line}\n").as_bytes())
+                        .await;
+                    // Flush every line: an unflushed buffer loses precisely the last words before a kill,
+                    // which are the only ones worth having.
+                    let _ = tokio::io::AsyncWriteExt::flush(w).await;
+                }
+                collected.push_str(&line);
+                collected.push('\n');
+            }
+            collected
+        });
+
+        // DRAIN STDOUT CONCURRENTLY WITH wait(), NOT AFTER IT.
+        //
+        // This is why `cmd.output()` reads both pipes at once, and getting it wrong deadlocks every run: the
+        // OS pipe buffer is ~64KB, so a child that writes more than that to stdout BLOCKS on the write until
+        // someone reads. If we sat in `child.wait()` first and only read stdout afterwards, the swarm's
+        // --output-format json RunReport (easily past 64KB on a real build) would fill the pipe, the child
+        // would block forever, and wait() would never return. Both pipes must be drained while the child runs.
+        let stdout_pipe = child.stdout.take();
+        let stdout_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            if let Some(mut so) = stdout_pipe {
+                let _ = tokio::io::AsyncReadExt::read_to_end(&mut so, &mut buf).await;
+            }
+            buf
+        });
+
+        let status = child.wait().await.map_err(|e| {
+            ProviderError::RequestFailed(format!("'{} swarm run' failed to run: {e}", self.command))
+        })?;
+        let stderr_all = stderr_task.await.unwrap_or_default();
+        let stdout_buf = stdout_task.await.unwrap_or_default();
+        let output = std::process::Output {
+            status,
+            stdout: stdout_buf,
+            stderr: stderr_all.into_bytes(),
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let summary = if output.status.success() {

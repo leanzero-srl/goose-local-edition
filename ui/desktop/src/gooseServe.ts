@@ -454,6 +454,35 @@ export const startGooseServe = async ({
 
   gooseProcess.stdout?.on('data', onStdoutData);
 
+  // KEEP THE ENGINE'S STDERR. All of it, on disk, for the whole life of the process.
+  //
+  // Everything below this comment used to be the only thing that ever read stderr, and it drops nearly all of
+  // it: only lines matching isFatalError are logged, and once the server is ready `stopOutputCollection()`
+  // DETACHES this listener and calls `.resume()` — which drains the stream to nowhere. So every byte the
+  // engine writes after startup is discarded BY DESIGN.
+  //
+  // That is fine for a chat session and catastrophic for a swarm run. MEASURED 2026-07-17: three consecutive
+  // runs died at three DIFFERENT phases (a redraft, a pre_review, and right after research_completed). Each
+  // time the heartbeat froze on its 5-second timer while `goose serve` stayed alive with 0 swap used and no
+  // crash report — i.e. a tokio task ended, which kills the TASK and not the PROCESS, and prints its panic to
+  // stderr. Straight into the void. Three dead runs and not one line to read.
+  //
+  // Streamed to a file, never accumulated in memory (the reason the old code refused to keep it). The log
+  // lives beside the run's own events so a dead run's evidence is in the dir the run owns.
+  const stderrLogPath = path.join(workingDir, '.swarm', 'engine-stderr.log');
+  let stderrSink: fs.WriteStream | null = null;
+  try {
+    fs.mkdirSync(path.dirname(stderrLogPath), { recursive: true });
+    stderrSink = fs.createWriteStream(stderrLogPath, { flags: 'a' });
+    stderrSink.write(
+      `\n===== goose serve pid=${gooseProcess.pid ?? '?'} port=${port} started ${new Date().toISOString()} =====\n`
+    );
+    // A write error must never take the app down — losing the log is bad, crashing over it is worse.
+    stderrSink.on('error', (e) => logger.error(`engine stderr log write failed: ${e}`));
+  } catch (e) {
+    logger.error(`could not open engine stderr log at ${stderrLogPath}: ${e}`);
+  }
+
   const onStderrData = (data: Buffer) => {
     const lines = data.toString().split('\n');
     appendErrorTail(errorLog, lines);
@@ -469,6 +498,11 @@ export const startGooseServe = async ({
 
   gooseProcess.stderr?.on('data', onStderrData);
 
+  // The file sink is INDEPENDENT of onStderrData, because stopOutputCollection() removes that listener the
+  // moment the server is ready — and everything worth reading happens after that.
+  const onStderrToFile = (data: Buffer) => stderrSink?.write(data);
+  gooseProcess.stderr?.on('data', onStderrToFile);
+
   gooseProcess.on('exit', (code, signal) => {
     exited = true;
     exitCode = code;
@@ -480,6 +514,14 @@ export const startGooseServe = async ({
       startupTrace.diagnostics.childExitCode = code;
       startupTrace.diagnostics.childExitSignal = signal;
       startupTrace.record('child_exit', { code, signal });
+    }
+    // Record the exit IN the stderr log and flush it. The bytes that matter most are the last ones written
+    // before a death, and an unflushed WriteStream loses exactly those.
+    if (stderrSink) {
+      stderrSink.end(
+        `===== goose serve exited code=${code} signal=${signal} at ${new Date().toISOString()} =====\n`
+      );
+      stderrSink = null;
     }
     resolveFingerprint(null);
   });
