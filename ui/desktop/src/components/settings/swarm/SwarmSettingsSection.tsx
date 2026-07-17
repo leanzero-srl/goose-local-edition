@@ -448,6 +448,12 @@ export default function SwarmSettingsSection() {
               </Row>
             ) : null}
             <Row
+              label="Re-plan after you answer the questions"
+              hint="Goose plans BEFORE it asks you anything — so the plan you get was drafted while it still did not know your answers. Today it keeps that plan and just forwards your answers to each worker. That is often fine and saves ~15 minutes. It is NOT fine when the drafts disagreed with each other: answering fixes how clear your SPEC is, but it cannot make three drafts agree — so the score stays stuck where it was and goose builds anyway, below your bar, on a plan made before you spoke. Turn this on and it re-plans with your answers, which also lets it re-draft toward agreement. Costs one full planning pass."
+            >
+              <SwarmSwitch checked={!!cfg.ask_replan} onChange={(v) => set({ ask_replan: v })} />
+            </Row>
+            <Row
               label="Your spec beats anything goose researched"
               hint="When goose researches a decision you left open, it writes the answer into your spec labelled “settled — do not re-ask”, with nothing saying your own words come first. So a guess it made can quietly outrank what you actually wrote — and a note you type mid-build loses to it, because notes are told the spec wins. With this on, researched answers are DEFAULTS: where one contradicts something you fixed, your spec is right and goose ignores it. Each one also says which decision it was answering, and the run records exactly what goose added to your spec."
             >
