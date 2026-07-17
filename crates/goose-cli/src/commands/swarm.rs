@@ -13587,7 +13587,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // meant trusting a note someone typed. A number the engine did not emit is not evidence.
     sink.write_value(serde_json::json!({
         "event": "levers_resolved",
-        "version": env!("CARGO_PKG_VERSION"),
+        // WHICH BUILD PRODUCED THIS RUN.
+        // CARGO_PKG_VERSION alone is USELESS here and I shipped it that way first: the workspace crate
+        // version is `1.41.0` and has not moved in 54 desktop releases, so every run from every build ever
+        // emits the same string. The number that identifies a build is the DMG version (package.json) and
+        // the commit — neither of which the engine can see unless the build tells it. GOOSE_BUILD_VERSION /
+        // GOOSE_BUILD_SHA are stamped by `just release-fork`; absent (a plain `cargo build`) they read
+        // "dev", which is itself the honest answer.
+        "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
+        "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
+        "crate_version": env!("CARGO_PKG_VERSION"),
         "levers": {
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,
