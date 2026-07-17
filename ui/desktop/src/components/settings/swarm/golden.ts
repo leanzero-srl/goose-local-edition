@@ -105,6 +105,14 @@ export interface SwarmConfig {
    *  research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing the
    *  clarifying ask for 90 minutes. The user answered them in 1.8 min. Default OFF. */
   no_tools_means_ask?: boolean;
+  /** Extra seconds the judge's no-file-yet deadline gets for EACH owned file beyond the first.
+   *  The judge kills a task that has written no file by a FLAT 420s — a stopwatch with no evidence term,
+   *  and the only rule that can reach a reasoning worker (whose tool_calls read 0 while it generates).
+   *  MEASURED: the 4-file `api-app` died at 457s/450s/430s on all 3 attempts having made ZERO tool calls,
+   *  while the 1-file `frontend` was judged fine at 444s — past the same deadline — because its file was
+   *  already on disk. Owned-file count was the real discriminator and the deadline ignored it.
+   *  180 gives a 4-file task 420+3*180 = 960s. 0 = the flat deadline (default). */
+  first_write_grace_per_file_secs?: number;
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
@@ -129,6 +137,7 @@ export const DEFAULTS: SwarmConfig = {
   allow_model_load: false,
   scout_budget_secs: 900,
   scout_max_lookups: 10,
+  first_write_grace_per_file_secs: 0, // JudgeConfig::default() — the flat 420s deadline, unchanged
   converge: true, // default_converge (swarm.rs) — the proven agreement raiser, ON by default
   // Mihai: "don't let goose start implementing something below 80 — research until confidence is > 80."
   // Floor 80 + retarget ON so a sub-80 plan RE-DRAFTS toward consensus (and asks) to raise the meter before
