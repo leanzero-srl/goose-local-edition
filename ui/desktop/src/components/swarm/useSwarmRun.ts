@@ -657,6 +657,33 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({ kind: 'plan', text: 'Answers received — re-planning with your input', tone: 'good' });
         break;
       }
+      case 'confidence_rescored': {
+        // The user answered the open decisions; the engine re-scored spec-clarity and the plan confidence
+        // climbed (e.g. 30 → 68). WITHOUT this case the rescore was DROPPED and the pill froze at the
+        // pre-answer value — which read on screen as "building at 30" when the run was in fact still PLANNING
+        // and the real confidence had already risen. Only spec-clarity moves on a rescore (the drafts are
+        // unchanged, so agreement is held); final = min(agreement, spec-clarity) = conf_after.
+        const after = num(e['conf_after']);
+        const clarityAfter = num(e['spec_clarity_after']);
+        const clarityBefore = num(e['spec_clarity_before']);
+        const answered = num(e['answered']) ?? 0;
+        if (confidence && typeof clarityAfter === 'number') {
+          const next: ConfidenceBreakdown = { ...confidence, specClarity: clarityAfter };
+          next.final = Math.min(next.agreement, next.specClarity);
+          confidence = next;
+        }
+        if (typeof after === 'number') setConf(after);
+        const sub =
+          clarityBefore != null && clarityAfter != null ? `spec clarity ${clarityBefore} → ${clarityAfter}` : undefined;
+        compact({ kind: 'retarget', text: 'Re-scored after your answers', tone: 'good', sub });
+        verbose({
+          kind: 'retarget',
+          text: `Re-scored with your ${answered} answer${answered === 1 ? '' : 's'}${typeof after === 'number' ? ` — confidence now ${after}/100` : ''}`,
+          tone: 'good',
+          sub,
+        });
+        break;
+      }
       case 'confidence_retarget': {
         // The swarm is dynamically raising the meter (re-drafting to a consensus / researching the open
         // decisions). conf_after may be null (the new value lands on the next plan step) — either way we log
