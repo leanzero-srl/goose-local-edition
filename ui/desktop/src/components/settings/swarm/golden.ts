@@ -55,6 +55,13 @@ export interface SwarmConfig {
    *  fought it with a spec-independent worked example (storage question -> SQLite/JSON/plain-text) and two
    *  separate "most-common default FIRST" nudges pulling away from an unusual mandated format. */
   clarify_spec_bound?: boolean;
+  /** After you answer the clarify questions, RE-PLAN with your answers folded in instead of keeping the plan
+   *  drafted before you answered. Undefined = keep the plan (unchanged).
+   *  MEASURED: agreement 55 + clarity 30 -> min 30 -> ask -> your answers lift clarity to 100 -> conf = 55 and
+   *  AGREEMENT now binds. With the plan kept, the loop never re-enters and the retarget (which exists to fix
+   *  agreement) never fires — the run built at 55 against a floor of 85. Was env-only, so the desktop could
+   *  never set it, while the engine printed "(set GOOSE_SWARM_ASK_REPLAN=1 ...)" at a user who had no way to. */
+  ask_replan?: boolean;
   /** The user's spec OUTRANKS any default a research pass chose for it; each appended default names the
    *  decision it settles; and the run records what was added. Default OFF.
    *  The retarget appends its findings INTO the spec under "settled defaults, do not re-ask" with no clause
@@ -206,6 +213,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'ask_floor',
   'ask_max_q',
   'clarify_spec_bound',
+  'ask_replan',
   'spec_wins',
   'sink_max_turns',
   'clarity_probe_secs',

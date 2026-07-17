@@ -321,6 +321,17 @@ pub struct SwarmConfig {
     /// `pillars` appears in ZERO logs across the entire corpus.
     #[serde(default)]
     pub goals: Option<bool>,
+    /// After you answer the clarify questions, RE-PLAN with your answers folded in instead of keeping the plan
+    /// that was drafted before you answered. `None` = keep the plan (unchanged default).
+    /// GOOSE_SWARM_ASK_REPLAN env overrides.
+    ///
+    /// Was ENV-ONLY, i.e. unreachable from the desktop — while the engine printed "(set
+    /// GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)" to a user with no way to set it.
+    /// MEASURED: agreement 55 + clarity 30 -> min 30 -> ask -> answers lift clarity to 100 -> conf = 55 and
+    /// AGREEMENT now binds — but with the plan kept, the loop never re-enters and the retarget (which exists
+    /// to fix agreement) never fires. The run built at 55 against a floor of 85.
+    #[serde(default)]
+    pub ask_replan: Option<bool>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -561,6 +572,7 @@ impl Default for SwarmConfig {
             sink_max_turns: None,
             draft_timeout_secs: None,
             goals: None,
+            ask_replan: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -1692,13 +1704,32 @@ fn print_import_summary(s: &ImportSummary) {
 /// TWO equally-correct full-win apps while the skip saved ~15min — the re-plan's confidence boost (69->88) did
 /// NOT yield a better app. Opt INTO the re-plan with GOOSE_SWARM_ASK_REPLAN=1 (also on/true/yes). N=1 with a
 /// draft-variance confound (the skip arm reused a higher-confidence 78 plan), so the default stays a knob.
+/// UNREACHABLE FROM THE DESKTOP UNTIL NOW — env-only, and env never arrives (LaunchServices). The SIXTH
+/// member of that family today, and the one a user actually hits: the engine PRINTS "(set
+/// GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)" to a user who has no way to set it.
+///
+/// MEASURED, allon4-replicate, and it is exactly what Mihai saw on screen: agreement 55, clarity 30 ->
+/// min = 30 -> below floor -> ASK (correct: only the user can pin clarity). User answers all 5. Rescore lifts
+/// clarity 30 -> 100, so conf becomes min(55,100) = 55 and AGREEMENT now binds. But ask_replan is off, so the
+/// engine "keeps this plan", the loop never re-enters, THE RETARGET NEVER FIRES — and the run builds at 55
+/// against a floor of 85, on a plan drafted BEFORE the answers existed.
+///
+/// The default stays REUSE. That is evidence-backed (an A/B on the same asking spec produced two equally
+/// correct apps while the skip saved ~15min, and the re-plan's 69->88 confidence bump bought no better app),
+/// and n=1 with a draft-variance confound is not enough to move it. What was wrong is that nobody could
+/// CHOOSE. Now: env > config > false.
 fn ask_replan_enabled(v: Option<String>) -> bool {
-    match v {
+    ask_replan_resolved(v, load_config().ask_replan)
+}
+
+/// The pure precedence, split out so it is testable (the wrapper reads the process env + config).
+fn ask_replan_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
+    match env {
         Some(s) => matches!(
             s.trim().to_lowercase().as_str(),
             "1" | "on" | "true" | "yes"
         ),
-        None => false,
+        None => cfg.unwrap_or(false),
     }
 }
 
@@ -3639,6 +3670,35 @@ mod tests {
         // Env still wins over both.
         assert!(resolve_gate_cfg(Some("1".into()), Some(false), false, true));
         assert!(!resolve_gate_cfg(Some("0".into()), Some(true), true, true));
+    }
+
+    /// THE RUN THAT BUILT AT 55 AGAINST A FLOOR OF 85 — allon4-replicate, seen on screen.
+    ///
+    /// agreement 55, clarity 30 -> min = 30 -> below floor -> ASK (correct: only the user can pin clarity).
+    /// User answers all 5. Rescore lifts clarity 30 -> 100, so conf = min(55,100) = 55 and AGREEMENT now
+    /// binds. But ask_replan was OFF and UNREACHABLE (env-only, and env never arrives on the desktop), so the
+    /// engine "kept this plan", the loop never re-entered, THE RETARGET NEVER FIRED, and it built at 55 on a
+    /// plan drafted before the answers existed — while printing "(set GOOSE_SWARM_ASK_REPLAN=1 ...)" to a
+    /// user with no way to set it.
+    #[test]
+    fn ask_replan_is_reachable_from_config_and_its_default_is_unchanged() {
+        // Unset on both channels => keep the plan. Byte-identical to the env-only behaviour it replaces.
+        assert!(!ask_replan_resolved(None, None));
+
+        // Config can now switch it on — the whole point. This was impossible from the desktop.
+        assert!(ask_replan_resolved(None, Some(true)));
+        assert!(!ask_replan_resolved(None, Some(false)));
+
+        // Env still wins, and still accepts every documented truthy spelling.
+        for v in ["1", "on", "true", "yes", " YES ", "True"] {
+            assert!(
+                ask_replan_resolved(Some(v.to_string()), Some(false)),
+                "env {v:?} must beat config=false"
+            );
+        }
+        // An explicit env falsey beats config=true, and anything unrecognised is false — never a panic.
+        assert!(!ask_replan_resolved(Some("0".into()), Some(true)));
+        assert!(!ask_replan_resolved(Some("maybe".into()), Some(true)));
     }
 
     #[test]
