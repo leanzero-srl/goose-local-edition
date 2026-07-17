@@ -263,6 +263,16 @@ pub struct SwarmConfig {
     /// floor). GOOSE_SWARM_RETARGET env overrides.
     #[serde(default)]
     pub retarget: bool,
+    /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
+    /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
+    ///
+    /// WHY THIS FIELD EXISTS: the budget was env-ONLY, and the env NEVER REACHES THE ENGINE — the desktop app
+    /// is spawned via LaunchServices, which hands it its own environment (proven with a probe var + `ps eww`).
+    /// So the campaign charter's "HELD CONSTANT every arm: ROUNDS=4" was never once true; every run silently
+    /// used the default 2. Same dead-channel bug as the levers themselves. config.yaml is the only path that
+    /// actually reaches the engine, and it is the one the desktop settings UI writes.
+    #[serde(default)]
+    pub retarget_rounds: Option<u32>,
     /// Stop the retarget redraft ladder once a round fails to beat the best confidence already measured,
     /// rather than climbing to RETARGET_MAX_N on faith. MEASURED: a py-splitwise run went 84 → 70 → 70 → 52
     /// over three redraft rounds (~60 min of a 3-node fleet), and `plan_loaded` then shipped **52**.
@@ -487,6 +497,7 @@ impl Default for SwarmConfig {
             ask_floor: None,
             converge: default_converge(),
             retarget: false,
+            retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
             ask_max_q: None,
@@ -2772,7 +2783,6 @@ mod tests {
         );
     }
 
-    #[test]
     /// THE RESCORE MUST NEVER FLATTER A RUN.
     ///
     /// When the user answers, spec-clarity is re-scored deterministically with the SAME pure function the
@@ -2826,6 +2836,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn spec_clarity_score_is_continuous_not_a_constant() {
         // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
         // buckets); floored at 30 so a very-open-but-defined spec still reads "low, ask".
@@ -3273,6 +3284,32 @@ mod tests {
         assert_eq!(retarget_rounds_from(Some("3".into())), 3);
         assert_eq!(retarget_rounds_from(Some("9".into())), 4);
         assert_eq!(retarget_rounds_from(Some("abc".into())), 2);
+    }
+
+    /// The retarget budget was env-ONLY, and the env NEVER REACHES THE ENGINE (LaunchServices hands the
+    /// desktop app its own environment — proven with a probe var + `ps eww`). So the campaign's documented
+    /// invariant "HELD CONSTANT every arm: ROUNDS=4" was never true on a single run: every one silently used
+    /// the default 2. config.yaml is the only channel that reaches the engine.
+    #[test]
+    fn retarget_rounds_reads_config_because_the_env_never_arrives() {
+        // The whole point: with no env, the CONFIG decides.
+        assert_eq!(retarget_rounds_resolved(None, Some(4)), 4);
+        assert_eq!(retarget_rounds_resolved(None, Some(0)), 0);
+
+        // Unset on both channels keeps the historical default — byte-identical for anyone not using this.
+        assert_eq!(retarget_rounds_resolved(None, None), 2);
+
+        // Env still wins where it CAN arrive (the CLI, where it is inherited normally).
+        assert_eq!(retarget_rounds_resolved(Some("1".into()), Some(4)), 1);
+
+        // The clamp must hold on BOTH paths. A config field carrying 9 can spin a 3-node fleet for hours just
+        // as easily as an env var can; the two channels must not disagree about what 9 means.
+        assert_eq!(retarget_rounds_resolved(Some("9".into()), None), 4);
+        assert_eq!(retarget_rounds_resolved(None, Some(9)), 4);
+        assert_eq!(
+            retarget_rounds_resolved(None, Some(99)),
+            retarget_rounds_resolved(Some("99".into()), None)
+        );
     }
 
     #[test]
@@ -3877,18 +3914,28 @@ mod tests {
         for &assured in &[true, false] {
             for &bundle in &[true, false] {
                 assert_eq!(
-                    None::<bool>.unwrap_or_else(|| resolve_gate(None, assured, bundle)),
+                    resolve_gate_cfg(None, None, assured, bundle),
                     resolve_gate(None, assured, bundle),
                     "cfg None must not change anything (assured={assured}, bundle={bundle})"
                 );
             }
         }
         // cfg SET wins over the assured/default fallback, both directions...
-        assert!(Some(true).unwrap_or_else(|| resolve_gate(None, false, false)));
-        assert!(!Some(false).unwrap_or_else(|| resolve_gate(None, true, true)));
+        assert!(resolve_gate_cfg(None, Some(true), false, false));
+        assert!(!resolve_gate_cfg(None, Some(false), true, true));
         // ...but an EXPLICIT env value still beats config (checked before cfg is ever consulted).
-        assert!(resolve_gate(Some("1".to_string()), false, false));
-        assert!(!resolve_gate(Some("0".to_string()), true, true));
+        assert!(resolve_gate_cfg(
+            Some("1".to_string()),
+            Some(false),
+            false,
+            false
+        ));
+        assert!(!resolve_gate_cfg(
+            Some("0".to_string()),
+            Some(true),
+            true,
+            true
+        ));
     }
 
     #[test]
@@ -5020,6 +5067,18 @@ fn retarget_rounds_from(v: Option<String>) -> u32 {
     v.and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(2)
         .min(4)
+}
+
+/// The retarget budget, resolved env > config > default 2, and clamped [0,4] on EVERY path.
+///
+/// The clamp must not live only on the env path: a config field is just as capable of carrying `9` and
+/// spinning a 3-node fleet for hours. `retarget_rounds_from` already clamps env; this clamps config with the
+/// same `.min(4)` so the two channels cannot disagree about what 9 means.
+fn retarget_rounds_resolved(env: Option<String>, cfg: Option<u32>) -> u32 {
+    match env {
+        Some(v) => retarget_rounds_from(Some(v)),
+        None => cfg.map(|v| v.min(4)).unwrap_or(2),
+    }
 }
 
 /// Ceiling on how many skeleton drafts the redraft lever may grow to (caps wall-clock).
@@ -11722,11 +11781,29 @@ fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool
 /// UI writes), so a lever with no config field cannot be turned on by a user at all.
 /// `cfg_val: None` (key absent) => byte-identical to `swarm_gate`.
 fn swarm_gate_cfg_bundle(name: &str, cfg_val: Option<bool>, in_assured_bundle: bool) -> bool {
-    let explicit = std::env::var(name).ok();
+    resolve_gate_cfg(
+        std::env::var(name).ok(),
+        cfg_val,
+        assured_enabled(),
+        in_assured_bundle,
+    )
+}
+
+/// The pure precedence: env > config.yaml > assured/default. Split out from `swarm_gate_cfg_bundle` only so
+/// it is testable — the wrapper reads the process env and `assured_enabled()`, which a unit test cannot pin.
+///
+/// Worth the split: the test for this used to re-type the `unwrap_or_else` chain against literals, so it
+/// asserted on a COPY of the logic and would have passed even if the real function drifted away from it.
+fn resolve_gate_cfg(
+    explicit: Option<String>,
+    cfg_val: Option<bool>,
+    assured: bool,
+    in_assured_bundle: bool,
+) -> bool {
     if explicit.is_some() {
-        return resolve_gate(explicit, assured_enabled(), in_assured_bundle);
+        return resolve_gate(explicit, assured, in_assured_bundle);
     }
-    cfg_val.unwrap_or_else(|| resolve_gate(None, assured_enabled(), in_assured_bundle))
+    cfg_val.unwrap_or_else(|| resolve_gate(None, assured, in_assured_bundle))
 }
 
 fn goals_enabled() -> bool {
@@ -13716,7 +13793,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // default OFF so the ask-only path is byte-identical. `best_plan` keeps the highest-confidence plan seen so
     // a re-draft that diverges can never ship worse than the best already measured.
     let retarget_on = swarm_gate_cfg("GOOSE_SWARM_RETARGET", cfg.retarget) && ask_floor.is_some();
-    let retarget_cap = retarget_rounds_from(std::env::var("GOOSE_SWARM_RETARGET_ROUNDS").ok());
+    let retarget_cap = retarget_rounds_resolved(
+        std::env::var("GOOSE_SWARM_RETARGET_ROUNDS").ok(),
+        cfg.retarget_rounds,
+    );
     let retarget_step: usize = std::env::var("GOOSE_SWARM_RETARGET_DRAFT_STEP")
         .ok()
         .and_then(|v| v.trim().parse().ok())
@@ -13756,6 +13836,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "ask_max_q": ask_max_q,
             "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
             "retarget": retarget_on,
+            // The RESOLVED budget, not the config field — the campaign spent weeks believing this was 4 while
+            // every run used 2. A run must be able to state what it actually spent.
+            "retarget_rounds": retarget_cap,
             "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
