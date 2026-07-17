@@ -286,6 +286,19 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
     #[serde(default)]
     pub cross_module_check: bool,
+    /// Extra seconds the judge's blind first-write deadline gets per owned file beyond the first.
+    ///
+    /// The judge kills a task that has written no owned file by a FLAT 420s — a wall-clock rule with no
+    /// evidence term, which is the only rule that can reach a worker whose tool_calls are 0 (a reasoning
+    /// model streams thinking, so every counter reads 0 while it generates). MEASURED (baseline3): the
+    /// 4-file `api-app` was killed at 457s/450s/430s on all three attempts having made ZERO tool calls,
+    /// while the 1-file `frontend` was judged "ok" at 444s — past the same deadline — and lived, because
+    /// its file was already on disk. The engine's own watchdog comment says killing on wall-clock is wrong
+    /// ("a slow-but-progressing local model ... must be allowed to finish") and worker_timeout_secs is 900
+    /// and IDLE-based; this rule pre-empts it by >2x. 180 gives a 4-file task 420+3*180 = 960s.
+    /// None/0 = the flat deadline (default — byte-identical). GOOSE_SWARM_FIRST_WRITE_GRACE env overrides.
+    #[serde(default)]
+    pub first_write_grace_per_file_secs: Option<u64>,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -471,6 +484,7 @@ impl Default for SwarmConfig {
             retarget: false,
             retarget_stall_guard: false,
             cross_module_check: false,
+            first_write_grace_per_file_secs: None,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -4353,6 +4367,16 @@ fn build_full_reasoning(texts: &[String]) -> String {
     clip_tail(&joined, 24000)
 }
 
+/// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
+fn tail_chars(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n > max {
+        s.chars().skip(n - max).collect()
+    } else {
+        s.to_string()
+    }
+}
+
 /// Build the worker's live reasoning from its text chunks, dropping the trivial fragments (a lone ".",
 /// "`", a stray word) these coder models emit between tool calls — so the run panel shows real narration
 /// or nothing, never a box holding a single dot. Keeps the last few substantive chunks, tail-capped.
@@ -5660,6 +5684,13 @@ impl GooseAgentDispatcher {
             .map_err(|e| anyhow!("agent.reply: {e}"))?;
 
         let mut texts: Vec<String> = Vec::new();
+        // A REASONING model (Qwen3.6 via LM Studio) streams its deliberation as MessageContent::Thinking,
+        // which carries no tool call and no text. Until these were counted, such a worker rewrote its digest
+        // on every chunk (resetting the idle watchdog) while every counter in it stayed 0 — maximally alive
+        // to the watchdog, indistinguishable from a hung process to the judge. MEASURED: a task was killed
+        // for "over_reading" three times at 457s/450s/430s with tool_calls=0, having read nothing.
+        let mut thinking_chars: usize = 0;
+        let mut last_thinking: String = String::new();
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
@@ -5748,6 +5779,10 @@ impl GooseAgentDispatcher {
                     for content in &msg.content {
                         match content {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
+                            MessageContent::Thinking(t) => {
+                                thinking_chars += t.thinking.chars().count();
+                                last_thinking = t.thinking.clone();
+                            }
                             MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
                                 Ok(tc) => {
                                     let name = tc.name.to_string();
@@ -5865,6 +5900,13 @@ impl GooseAgentDispatcher {
                     // The full narration for the desktop panel's "reasoning in plain" view. The judge reads
                     // only the small fields above; this extra key is inert to it.
                     "full_reasoning": full_reasoning,
+                    // How much DELIBERATION the worker has streamed. `reasoning`/`full_reasoning` above are
+                    // built from `texts`, which only the Text arm feeds — so on a reasoning model they are
+                    // permanently "", and every counter in this digest reads 0 while the worker is in fact
+                    // producing continuously. These two keys are the only evidence that such a worker is
+                    // alive; `thinking_chars` is what lets the judge tell "still thinking" from "hung".
+                    "thinking_chars": thinking_chars,
+                    "last_thinking": tail_chars(&last_thinking, 400),
                     // The model that produced this digest — lets the panel label planning-phase lanes (which
                     // have no task_dispatched event to carry the model) with which node/model generated them.
                     "model": model_id,
@@ -9401,6 +9443,14 @@ impl Judge for GooseAgentDispatcher {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_else(|| JudgeConfig::default().split_threshold_secs),
+            first_write_grace_per_file_secs: std::env::var("GOOSE_SWARM_FIRST_WRITE_GRACE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| {
+                    load_config()
+                        .first_write_grace_per_file_secs
+                        .unwrap_or_else(|| JudgeConfig::default().first_write_grace_per_file_secs)
+                }),
             ..JudgeConfig::default()
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
@@ -9447,6 +9497,12 @@ impl Judge for GooseAgentDispatcher {
             .as_ref()
             .and_then(|v| v.get("tool_calls").and_then(|n| n.as_u64()))
             .map(|n| n as u32);
+        // On a reasoning model this is the ONLY non-zero signal a still-working worker produces: it streams
+        // Thinking, which is neither a tool call nor text, so tool_calls/errors/last_text all read 0 while
+        // it is in fact generating. Absent (None) on an older digest that predates the key.
+        let worker_thinking_chars = digest
+            .as_ref()
+            .and_then(|v| v.get("thinking_chars").and_then(|n| n.as_u64()));
         let input = JudgeInput {
             task_id: req.task_id.clone(),
             description: req.description.clone(),
@@ -9457,6 +9513,7 @@ impl Judge for GooseAgentDispatcher {
             any_owned_written,
             secs_since_last_write,
             worker_tool_calls,
+            worker_thinking_chars,
             // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
