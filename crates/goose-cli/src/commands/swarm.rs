@@ -303,6 +303,13 @@ pub struct SwarmConfig {
     /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
     /// launched via `open` and never receives the caller's environment. None = the previous behaviour
     /// (off unless the assured bundle is on). `repro_demotes_verified` is inert without this.
+    /// How many clarifying questions the run may put to the user at once. Default 3.
+    /// MEASURED: a run's probe found FIVE material open decisions, every one on the spec's explicit
+    /// "do NOT guess them" list, and the cap of 3 meant two were guessed regardless — silently. Raising
+    /// this is the difference between asking about the user's product and inventing part of it.
+    /// Was env-only (GOOSE_SWARM_ASK_MAXQ) and therefore unreachable from the desktop app.
+    #[serde(default)]
+    pub ask_max_q: Option<usize>,
     #[serde(default)]
     pub review_repro: Option<bool>,
     /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
@@ -496,6 +503,7 @@ impl Default for SwarmConfig {
             retarget_stall_guard: false,
             cross_module_check: false,
             first_write_grace_per_file_secs: None,
+            ask_max_q: None,
             review_repro: None,
             split: None,
             no_tools_means_ask: false,
@@ -12727,15 +12735,39 @@ async fn ask_clarifying_questions(
             qpath.display()
         );
     }
+    // NAME WHAT WAS DROPPED. `ask_max_q` (default 3) truncates the question list with `.take()`, and every
+    // decision that does not make the cut is GUESSED — the exact outcome no_tools_means_ask exists to
+    // prevent. MEASURED: a run's probe found 5 material open decisions, all 5 on the spec's explicit
+    // "do NOT guess them" list, and 3 were asked. The other 2 were invented in silence, and the only way to
+    // notice was to diff the breakdown's open_decisions against the questions by hand. A cap that is not
+    // reported reads as "we asked about everything".
+    let open_n = breakdown
+        .as_ref()
+        .and_then(|b| b.get("open_decisions"))
+        .and_then(|d| d.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let not_asked = open_n.saturating_sub(questions.len());
     let mut ask_evt = serde_json::json!({
         "event": "low_confidence_ask",
         "plan_confidence": plan_conf,
         "questions": questions,
+        "open_decisions_total": open_n,
+        "open_decisions_not_asked": not_asked,
     });
     if let Some(b) = &breakdown {
         ask_evt["plan_confidence_breakdown"] = b.clone();
     }
     sink.write_value(ask_evt);
+    if not_asked > 0 {
+        eprintln!(
+            "  {} asking {} of {} open decision(s) — the other {} will be GUESSED (raise swarm.ask_max_q)",
+            style("!").yellow().bold(),
+            questions.len(),
+            open_n,
+            not_asked
+        );
+    }
 
     let mut answers: Vec<String> = Vec::new();
     let mut guidance = String::new();
@@ -13508,9 +13540,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             f
         }
     });
+    // How many clarifying questions the run may put to the user at once. MEASURED (real-all-on, the first
+    // arm whose levers actually reached the engine): the probe found FIVE material open decisions — every
+    // one of them on the spec's explicit "DELIBERATELY NOT DECIDED — do NOT guess them" list — and this cap
+    // let only THREE be asked. The other two were guessed anyway, which is the exact behaviour
+    // no_tools_means_ask exists to stop. The cap half-defeats the lever it sits behind.
+    // Was env-only, so a desktop user could not raise it at all (the app never receives the environment).
     let ask_max_q: usize = std::env::var("GOOSE_SWARM_ASK_MAXQ")
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
+        .or_else(|| load_config().ask_max_q)
         .unwrap_or(3)
         .max(1);
     let ask_wait_secs: u64 = std::env::var("GOOSE_SWARM_ASK_WAIT_SECS")

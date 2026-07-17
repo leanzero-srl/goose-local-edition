@@ -397,6 +397,17 @@ export default function SwarmSettingsSection() {
                 onChange={(v) => set({ ask_floor: v ? 70 : 0 })}
               />
             </Row>
+            {(cfg.ask_floor ?? 0) > 0 ? (
+              <Row
+                label="How many questions it may ask"
+                hint="goose asks at most this many at once — and anything it does not ask, it decides for you. One build turned up five choices only you could make (equal or uneven splits, fewest transfers or pay-who-you-owe, cents or decimals, and two more); it asked about three and quietly picked the rest itself. Raise this and it asks instead of picking."
+              >
+                <NumberField
+                  value={cfg.ask_max_q}
+                  onCommit={(v) => set({ ask_max_q: v ?? 3 })}
+                />
+              </Row>
+            ) : null}
           </div>
 
           <div className="text-xs text-text-secondary pt-1">

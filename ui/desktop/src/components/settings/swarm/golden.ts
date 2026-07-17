@@ -43,6 +43,11 @@ export interface SwarmConfig {
   /** Confidence floor (1-100) below which the swarm asks the USER clarifying questions before building,
    *  instead of guessing. 0 / undefined = never ask. Surfaced live in the run panel's clarify prompt. */
   ask_floor?: number;
+  /** How many clarifying questions goose may ask at once. Default 3.
+   *  MEASURED: a run's probe found FIVE material open decisions — every one of them on the spec's explicit
+   *  "do NOT guess them" list — and the cap of 3 meant two were guessed anyway, silently. This cap is the
+   *  difference between asking about the user's product and inventing part of it. */
+  ask_max_q?: number;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
@@ -145,6 +150,7 @@ export const DEFAULTS: SwarmConfig = {
   ask_floor: 80,
   retarget: true,
   backbone: true,
+  ask_max_q: 3, // swarm.rs ask_max_q — .unwrap_or(3); anything past the cap is guessed, not asked
 };
 
 // The keys a preset controls — PORTABLE tuning only. Fleet identity (endpoint, planner_model,
