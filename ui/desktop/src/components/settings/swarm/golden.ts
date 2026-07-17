@@ -55,6 +55,13 @@ export interface SwarmConfig {
    *  fought it with a spec-independent worked example (storage question -> SQLite/JSON/plain-text) and two
    *  separate "most-common default FIRST" nudges pulling away from an unusual mandated format. */
   clarify_spec_bound?: boolean;
+  /** The user's spec OUTRANKS any default a research pass chose for it; each appended default names the
+   *  decision it settles; and the run records what was added. Default OFF.
+   *  The retarget appends its findings INTO the spec under "settled defaults, do not re-ask" with no clause
+   *  saying the user's words win — violating this engine's own invariant that research is ADVISORY and the
+   *  spec is BINDING. Because the guess then lives inside the spec, the user's LIVE mid-run notes lose to it:
+   *  they are explicitly told "it does NOT override the spec ... where they disagree, the spec wins". */
+  spec_wins?: boolean;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
@@ -180,6 +187,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'ask_floor',
   'ask_max_q',
   'clarify_spec_bound',
+  'spec_wins',
   'no_tools_means_ask',
   'grounded_research_only',
   'contract_validate',
@@ -228,6 +236,11 @@ export const GOLDEN: SwarmConfig = {
   // was no correct click. Consulting the user with illegal choices is worse than not asking — it launders
   // a spec violation into "the user chose it".
   clarify_spec_bound: true,
+  // Consulting the user is pointless if the engine can overwrite the answer. The retarget writes researched
+  // guesses INTO the spec as "settled defaults, do not re-ask" — and the user's own live notes are told the
+  // spec wins, so the guess beats the human typing the truth at it. This makes those defaults subordinate,
+  // labelled, and recorded. Same family as clarify_spec_bound: nothing may edit a FIXED requirement.
+  spec_wins: true,
   // With no lookup tools nothing is lookupable, so an open decision goes to the USER, not to a research
   // round that can only guess. Cost: a pause. It cannot worsen the app — it replaces an invented answer
   // with the user's real one.

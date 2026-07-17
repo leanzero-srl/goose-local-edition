@@ -273,6 +273,17 @@ pub struct SwarmConfig {
     /// [SQLite file, JSON file, plain-text lines]") plus two separate "most-common default FIRST" nudges.
     #[serde(default)]
     pub clarify_spec_bound: Option<bool>,
+    /// The user's spec OUTRANKS any default a research pass chose for it, and each appended default names the
+    /// decision it settles. OFF by default. GOOSE_SWARM_SPEC_WINS env overrides.
+    ///
+    /// The retarget's re-research appends its findings INTO `opts.prompt` — the user's own spec — under
+    /// "treat these as settled defaults, do not re-ask", with no clause saying the user's words win. That
+    /// violates this file's own invariant ("a learned skill can never outrank what the user actually asked
+    /// for" — research_findings is advisory precisely so the spec stays binding). And because the invented
+    /// text now lives INSIDE the spec, the user's LIVE mid-run notes — which are told "it does NOT override
+    /// the spec ... where they disagree, the spec wins" — lose to it.
+    #[serde(default)]
+    pub spec_wins: Option<bool>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -508,6 +519,7 @@ impl Default for SwarmConfig {
             converge: default_converge(),
             retarget: false,
             clarify_spec_bound: None,
+            spec_wins: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -14066,6 +14078,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 load_config().clarify_spec_bound,
                 false,
             ),
+            "spec_wins": swarm_gate_cfg_bundle(
+                "GOOSE_SWARM_SPEC_WINS",
+                load_config().spec_wins,
+                false,
+            ),
             "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
             "retarget": retarget_on,
             // A run that quietly shrank 3 nodes -> 2 must SAY so. Without this the only trace of a dead node
@@ -14458,10 +14475,51 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         "counted_settled": counts,
                                     }));
                                 }
-                                if settled > 0 {
-                                    opts.prompt.push_str(
-                                    "\n\n[Design decisions resolved by targeted research — treat these as settled defaults, do not re-ask]\n",
+                                // SPEC_WINS (#118). This block is the ONLY place the engine writes into the
+                                // user's spec, and it violates the architecture's own stated invariant. From
+                                // this file, verbatim: "research_findings is deliberately the channel: it
+                                // renders as 'Prior research findings', which reads ADVISORY. The spec and the
+                                // user's decisions are appended later to opts.prompt and framed BINDING, so a
+                                // learned skill can never outrank what the user actually asked for."
+                                // opts.prompt IS the binding channel. This append puts researched guesses in it.
+                                //
+                                // Three things were wrong and are fixed here. NOT fixed: whether to append at
+                                // all — two designs to suppress it were reviewed and both came back FLAWED,
+                                // because `grounded_research_only` already gates WHICH findings land, and the
+                                // delta is exactly the findings research legitimately should resolve. So the
+                                // append stays; it stops LYING about its own authority.
+                                //
+                                //  1. NO PRECEDENCE. "treat these as settled defaults, do not re-ask" with no
+                                //     clause saying the user's own words outrank it. Meanwhile the user's LIVE
+                                //     mid-run notes ARE told "it does NOT override the spec or any decision
+                                //     already made — where they disagree, the spec wins" — so an invented
+                                //     default, once inside the spec, BEATS the user typing the truth at it.
+                                //  2. UNLABELED. Only `f.findings` was appended, never `f.question`, so the
+                                //     spec gained an anonymous prose fragment that never says WHICH decision it
+                                //     settled — hard-cut at 280 chars, mid-sentence, no ellipsis.
+                                //  3. UNAUDITABLE. `run_started` writes `"prompt": opts.prompt` BEFORE this
+                                //     loop, so the sink records the CLEAN spec forever. The polluted spec that
+                                //     every downstream model actually reads was never written down anywhere.
+                                //
+                                // "Grounded" means the agent CALLED A TOOL — not that the answer is correct, and
+                                // not that it agrees with the spec. A web search returning "JSON is the standard
+                                // choice" against a spec mandating tab-separated is GROUNDED, and lands as
+                                // binding. That is why precedence, not filtering, is the fix.
+                                let spec_wins = swarm_gate_cfg_bundle(
+                                    "GOOSE_SWARM_SPEC_WINS",
+                                    load_config().spec_wins,
+                                    false,
                                 );
+                                let mut appended_to_spec = String::new();
+                                if settled > 0 {
+                                    appended_to_spec.push_str(if spec_wins {
+                                        "\n\n[Defaults a research pass chose for decisions your spec left open. \
+                                         They are DEFAULTS, not requirements. The spec above WINS: where any \
+                                         line here contradicts something the spec fixes, the spec is correct \
+                                         and the line is wrong — ignore it and follow the spec.]\n"
+                                    } else {
+                                        "\n\n[Design decisions resolved by targeted research — treat these as settled defaults, do not re-ask]\n"
+                                    });
                                     for f in &findings {
                                         if f.findings.trim().is_empty()
                                             || (grounded_only && !f.grounded)
@@ -14476,8 +14534,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             .chars()
                                             .take(280)
                                             .collect();
-                                        opts.prompt.push_str(&format!("- {excerpt}\n"));
+                                        if spec_wins {
+                                            // Name the decision each line claims to settle, so a reader (model
+                                            // or human) can tell what it is looking at instead of an orphan
+                                            // fragment under an authoritative header.
+                                            let q = f.question.trim();
+                                            appended_to_spec
+                                                .push_str(&format!("- ({q}) {excerpt}\n"));
+                                        } else {
+                                            appended_to_spec.push_str(&format!("- {excerpt}\n"));
+                                        }
                                     }
+                                    opts.prompt.push_str(&appended_to_spec);
                                 }
                                 sink.write_value(serde_json::json!({
                                 "event": "confidence_retarget",
@@ -14499,6 +14567,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // The per-decision provenance — what was resolved and whether it was actually
                                 // looked up. The research is no longer a black box that emits only a count.
                                 "resolutions": resolutions,
+                                // THE POLLUTION ITSELF, on the record. `run_started` writes "prompt":
+                                // opts.prompt BEFORE this loop runs, so the sink's copy of the spec is the
+                                // CLEAN one, forever — while every model downstream reads the mutated one.
+                                // The engine edited the user's requirements and kept no record of the edit.
+                                // This is the exact text it added.
+                                "appended_to_spec": appended_to_spec,
+                                "spec_wins": spec_wins,
                             }));
                                 // Only loop back if research actually settled something; otherwise fall through to
                                 // the ask so we don't burn rounds re-researching decisions the fleet can't answer —

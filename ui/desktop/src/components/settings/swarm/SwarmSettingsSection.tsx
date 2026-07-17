@@ -447,6 +447,12 @@ export default function SwarmSettingsSection() {
                 />
               </Row>
             ) : null}
+            <Row
+              label="Your spec beats anything goose researched"
+              hint="When goose researches a decision you left open, it writes the answer into your spec labelled “settled — do not re-ask”, with nothing saying your own words come first. So a guess it made can quietly outrank what you actually wrote — and a note you type mid-build loses to it, because notes are told the spec wins. With this on, researched answers are DEFAULTS: where one contradicts something you fixed, your spec is right and goose ignores it. Each one also says which decision it was answering, and the run records exactly what goose added to your spec."
+            >
+              <SwarmSwitch checked={!!cfg.spec_wins} onChange={(v) => set({ spec_wins: v })} />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
