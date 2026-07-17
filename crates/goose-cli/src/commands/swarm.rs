@@ -293,6 +293,14 @@ pub struct SwarmConfig {
     /// successful-probe run report conf 30 and ask 5.
     #[serde(default)]
     pub clarity_probe_secs: Option<u64>,
+    /// Fail-CLOSED the spec-clarity probe: when it DIES for a reason that taught us nothing (timeout /
+    /// agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops plan
+    /// confidence below the ask floor and the run ASKS instead of proceeding on cross-draft agreement ALONE
+    /// (which agrees perfectly on an INVENTED product — the 2/14 conf-93-95-with-0-questions bug above).
+    /// `unparseable` stays fail-open (the model DID answer, only the JSON didn't fit). Default OFF = today's
+    /// behaviour exactly. GOOSE_SWARM_CLARITY_FAIL_CLOSED env overrides.
+    #[serde(default)]
+    pub clarity_fail_closed: bool,
     /// Turn budget for the integrate-verify SINK. `None` = the same as workers. Clamped
     /// [worker_max_turns, 200]. GOOSE_SWARM_SINK_MAX_TURNS env overrides.
     ///
@@ -569,6 +577,7 @@ impl Default for SwarmConfig {
             clarify_spec_bound: None,
             spec_wins: None,
             clarity_probe_secs: None,
+            clarity_fail_closed: false,
             sink_max_turns: None,
             draft_timeout_secs: None,
             goals: None,
@@ -2991,6 +3000,25 @@ mod tests {
             88,
             "after: agreement binds, not 100"
         );
+    }
+
+    #[test]
+    fn clarity_fail_closed_reasons() {
+        // FAIL-CLOSED (learned nothing → ask): timeout / agent_error / no_final_output, incl. the ": detail" tail.
+        assert!(clarity_reason_is_fail_closed("timeout"));
+        assert!(clarity_reason_is_fail_closed(
+            "agent_error: connection refused"
+        ));
+        assert!(clarity_reason_is_fail_closed("no_final_output"));
+        // FAIL-OPEN (the model DID answer, the JSON just didn't fit): unparseable stays out → no false-ask storm.
+        assert!(!clarity_reason_is_fail_closed("unparseable: {truncated"));
+        // The clamp value is below the default ask floor AND is not a producible spec_clarity_score, so a 20 in
+        // the breakdown is an unambiguous fail-closed sentinel, never a real measurement.
+        assert!(CLARITY_FAILCLOSED < 70);
+        for n in 0..=9 {
+            assert_ne!(spec_clarity_score(true, n), CLARITY_FAILCLOSED);
+            assert_ne!(spec_clarity_score(false, n), CLARITY_FAILCLOSED);
+        }
     }
 
     #[test]
@@ -5580,6 +5608,22 @@ fn retarget_rounds_resolved(env: Option<String>, cfg: Option<u32>) -> u32 {
 /// Ceiling on how many skeleton drafts the redraft lever may grow to (caps wall-clock).
 const RETARGET_MAX_N: usize = 6;
 
+/// Fail-closed spec-clarity value. A DEAD probe learned NOTHING about the spec, so it must not read as "clear."
+/// 20 is below the default ask floor (70) and every realistic config floor, so `min(agreement, 20)` forces the
+/// ASK. It is also NOT a value `spec_clarity_score` can emit (its outputs are {8,12,18,24,30,36,52,68,84,100}),
+/// so a 20 in the breakdown is an unambiguous "fail-closed clamp," never a real measurement.
+const CLARITY_FAILCLOSED: u8 = 20;
+
+/// Probe-failure reasons that taught us NOTHING about the spec → be cautious (fail-closed = ask). `unparseable`
+/// is EXCLUDED: the model DID answer and DID emit final output, only the JSON didn't fit the schema — as likely
+/// "nothing material to say" as "lost verdict" — so it stays fail-OPEN to avoid a false-ask storm. `starts_with`
+/// because `agent_error`/`unparseable` carry a `: …` detail tail; `timeout`/`no_final_output` are exact.
+fn clarity_reason_is_fail_closed(reason: &str) -> bool {
+    reason.starts_with("timeout")
+        || reason.starts_with("agent_error")
+        || reason.starts_with("no_final_output")
+}
+
 /// Additive `plan_confidence_breakdown` JSON, or `None` when no sub-signal was computed — so the cloud/default
 /// path emits no new key and stays byte-identical.
 /// CONTINUOUS spec-clarity score (0-100) from the two real signals the probe produces: is the product
@@ -7575,19 +7619,38 @@ impl GooseAgentDispatcher {
             let clarity = self
                 .spec_clarity_confidence(planner_model, user_prompt, &skeleton)
                 .await;
+            // A DEAD PROBE IS NOT A CLEAR SPEC. The default keeps `product_specified: true` and drops clarity
+            // from the min — an assertion the engine has no evidence for (it is what the probe was supposed to
+            // MEASURE), but changing it would alter the default path, so the failure is recorded and reported.
+            // When `clarity_fail_closed` is ON and the probe died for a reason that taught us nothing (timeout /
+            // agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops below the
+            // ask floor and the run ASKS instead of proceeding on cross-draft agreement alone (which agrees
+            // perfectly on an invented product). OFF short-circuits at swarm_gate_cfg → every value below is
+            // bit-identical to before. `unparseable` is deliberately excluded (see clarity_reason_is_fail_closed).
+            let clarity_fail = self.clarity_fail.lock().unwrap().clone();
+            let fail_closed = clarity.is_none()
+                && clarity_fail
+                    .as_deref()
+                    .is_some_and(clarity_reason_is_fail_closed)
+                && swarm_gate_cfg(
+                    "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
+                    load_config().clarity_fail_closed,
+                );
             let final_conf = match (agreement_conf, clarity.as_ref()) {
                 // Proceed only when BOTH signals are confident — the lower one governs.
                 (Some(a), Some((c, _, _))) => Some(a.min(*c)),
-                (Some(a), None) => Some(a),
+                (Some(a), None) => Some(if fail_closed {
+                    a.min(CLARITY_FAILCLOSED)
+                } else {
+                    a
+                }),
                 (None, Some((c, _, _))) => Some(*c),
-                (None, None) => Some(60),
+                (None, None) => Some(if fail_closed { CLARITY_FAILCLOSED } else { 60 }),
             };
-            // A DEAD PROBE IS NOT A CLEAR SPEC. `product_specified: true` here is an assertion the engine has
-            // no evidence for — it is what the probe was supposed to MEASURE. Kept as-is (changing it would
-            // alter the default path), but the failure is now recorded and reported instead of vanishing.
-            let clarity_fail = self.clarity_fail.lock().unwrap().clone();
             let (spec_clarity, open_decisions, product_specified) = match &clarity {
                 Some((c, d, p)) => (Some(*c), d.clone(), *p),
+                // Fail-closed: a dead probe reads as LOW clarity (forces the ask), not as an unmeasured skip.
+                None if fail_closed => (Some(CLARITY_FAILCLOSED), Vec::new(), true),
                 None => (None, Vec::new(), true), // probe failed/timed out → no spec-clarity veto
             };
             if let Some(reason) = &clarity_fail {
@@ -7623,7 +7686,11 @@ impl GooseAgentDispatcher {
                 // returns None -> open_decisions is empty -> this rendered "product is pinned and only routine
                 // defaults remain" INTO THE UI, telling the user their spec was clear because the check for it
                 // had crashed. An unmeasured signal must read as unmeasured.
-                format!("NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified.")
+                if fail_closed {
+                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). Clamped to {CLARITY_FAILCLOSED} (fail-closed) to force the ask rather than proceed on cross-draft agreement, which cannot see whether your spec is under-specified.")
+                } else {
+                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified.")
+                }
             } else if !product_specified {
                 "the product itself is undefined — clarity stays low until you say what to build"
                     .to_string()
