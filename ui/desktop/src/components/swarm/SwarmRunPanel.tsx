@@ -545,8 +545,24 @@ const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: bo
 };
 
 // Threshold color for a confidence value: solid green >=70 (confident), amber 40-69 (unsure), red <40.
+// Use this for the SUB-SIGNALS (agreement / spec-clarity), where the point is which one is lower — not
+// whether the run may proceed. For the headline number use confColorVsFloor.
 const confColor = (v: number): string =>
   v >= 70 ? STATUS_COLOR.done : v >= 40 ? AMBER : STATUS_COLOR.error;
+
+/** Colour for the HEADLINE confidence, against the engine's own bar.
+ *
+ *  The band above is a UI invention. When a floor is set, the engine has already made the go/no-go call:
+ *  below the floor it ASKS instead of building. A 73 under a floor of 80 painted green said "good" in the
+ *  one channel a user reads before any words — while the run had stopped and asked. confVerdict was fixed
+ *  for exactly this and the colour was left behind, so the pill went on being green next to text saying
+ *  "Below your bar of 80". No floor = that run never asks = there is no bar = the band is all we can say. */
+export const confColorVsFloor = (v: number, floor: number | null): string => {
+  if (floor == null) return confColor(v);
+  if (v >= floor) return STATUS_COLOR.done;
+  // Under the bar. Amber = goose asked and is waiting; red = it is not close.
+  return v >= floor - 20 ? AMBER : STATUS_COLOR.error;
+};
 
 // One labelled sub-bar (agreement / spec-clarity): a solid fill in the value's threshold color over a
 // bordered track (not a faded tint), so the LOWER (binding) signal visibly reads as the culprit.
@@ -571,14 +587,18 @@ const ConfBar: React.FC<{ label: string; value: number }> = ({ label, value }) =
 // Radial arc gauge for the headline plan confidence — a 270° sweep in the value's threshold color over a
 // neutral track, the big number centered. Solid saturated stroke, sharp/flat (no soft glow or faded tint):
 // the visual anchor of the confidence panel. Pure SVG, theme-aware via CSS vars.
-const ConfGauge: React.FC<{ value: number; size?: number }> = ({ value, size = 76 }) => {
+const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | null }> = ({
+  value,
+  size = 76,
+  askFloor = null,
+}) => {
   const v = Math.max(0, Math.min(100, Math.round(value)));
   const r = 32;
   const circ = 2 * Math.PI * r;
   const sweep = 0.75; // 270°
   const track = sweep * circ;
   const fill = (v / 100) * sweep * circ;
-  const col = confColor(v);
+  const col = confColorVsFloor(v, askFloor);
   return (
     <svg width={size} height={size} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`plan confidence ${v} of 100`}>
       <circle
@@ -664,10 +684,10 @@ const ConfidenceBreakdownBody: React.FC<{
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-3">
-        <ConfGauge value={conf.final} />
+        <ConfGauge value={conf.final} askFloor={askFloor} />
         <div>
           <div className="text-[10px] uppercase tracking-wide text-text-secondary">Plan confidence</div>
-          <div className="text-[12px] font-medium mt-0.5" style={{ color: confColor(conf.final) }}>
+          <div className="text-[12px] font-medium mt-0.5" style={{ color: confColorVsFloor(conf.final, askFloor) }}>
             {confVerdict(conf.final, askFloor)}
           </div>
         </div>
@@ -763,9 +783,14 @@ const ConfidenceBadge: React.FC<{
   expanded?: boolean;
   onToggle?: () => void;
   hasBreakdown?: boolean;
-}> = ({ value, trail, expanded, onToggle, hasBreakdown }) => {
-  const color = confColor(value);
-  const label = value >= 70 ? 'confident' : value >= 40 ? 'unsure' : 'guessing';
+  askFloor?: number | null;
+}> = ({ value, trail, expanded, onToggle, hasBreakdown, askFloor = null }) => {
+  const color = confColorVsFloor(value, askFloor);
+  // Same rule as the expanded panel: the verdict comes from the ENGINE's floor, never a band the UI made
+  // up. The panel was fixed for this and the badge's tooltip was not, so the tooltip went on calling a 73
+  // "confident" while the run had ASKED because 73 was under the bar of 80 — with the floor named in the
+  // very next sentence of the same tooltip.
+  const label = confVerdict(value, askFloor);
   const climb = trail && trail.length >= 2 ? trail[trail.length - 1] - trail[0] : 0;
   const pill = (
     <span
@@ -786,7 +811,7 @@ const ConfidenceBadge: React.FC<{
   return (
     <span className="flex items-center gap-1 shrink-0">
       <Tip
-        label={`Planner confidence in how it broke this app down — ${value}/100 (${label}).${hasBreakdown ? ' Click for the breakdown.' : ''} Below the ask floor, goose pauses to ask you before building.`}
+        label={`Planner confidence in how it broke this app down — ${value}/100. ${label}.${hasBreakdown ? ' Click for the breakdown.' : ''}`}
       >
         {hasBreakdown ? (
           <button type="button" onClick={onToggle} className="flex">
@@ -1535,6 +1560,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
               expanded={confOpen}
               onToggle={() => setConfOpen((o) => !o)}
               hasBreakdown={!!run.confidence}
+              askFloor={run.askFloor}
             />
           ) : null}
           {clarifyPending ? (
