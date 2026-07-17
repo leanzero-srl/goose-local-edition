@@ -145,6 +145,8 @@ type ElectronAPI = {
     } | null;
   } | null>;
   writeFile: (directory: string, content: string) => Promise<boolean>;
+  /** Queue a note for a RUNNING swarm build. Creates .swarm/inbox/ — nothing else does. */
+  swarmAddNote: (workingDir: string, text: string) => Promise<boolean>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
   listFiles: (dirPath: string, extension?: string) => Promise<string[]>;
   copyDir: (
@@ -255,6 +257,8 @@ const electronAPI: ElectronAPI = {
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
+  swarmAddNote: (workingDir: string, text: string) =>
+    ipcRenderer.invoke('swarm-add-note', workingDir, text),
   ensureDirectory: (dirPath: string) => ipcRenderer.invoke('ensure-directory', dirPath),
   listFiles: (dirPath: string, extension?: string) =>
     ipcRenderer.invoke('list-files', dirPath, extension),

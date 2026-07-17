@@ -1097,6 +1097,84 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[]; stal
 // When the planner's confidence is below the ask floor, the swarm BLOCKS and asks the user. This prompt is
 // the interactive answer surface: the user types answers and we write them to the handshake file, which
 // unblocks the run. Amber (solid, not faded) because the build is PAUSED waiting on the human.
+/**
+ * SEND A NOTE TO A BUILD THAT IS ALREADY RUNNING — the input half of the feature.
+ *
+ * The engine has read this inbox all along (swarm.rs read_user_notes: `.swarm/inbox/*.json`, sorted by an
+ * epoch-ms filename, folded into the NEXT dispatched worker, never interrupting one already in flight, and
+ * never deleted so a crash cannot lose one). It has 7 implementation sites and its own tests.
+ * And the desktop had exactly TWO references to the feature: the type, and the settings toggle. There was
+ * NO WAY TO SEND ONE. You could switch on "Let me add notes while it builds" and then discover the only
+ * door was hand-writing JSON into a hidden directory. That is also why `user_notes` reads INERT in every
+ * screened run — nobody could ever add a note.
+ *
+ * Claude Code's shape, because it is the right one: the box is always there while it works, you type, it
+ * lands at the next turn boundary. No modal, no pause, no "are you sure".
+ */
+const NoteBox: React.FC<{ workingDir: string }> = ({ workingDir }) => {
+  const [text, setText] = React.useState('');
+  const [sent, setSent] = React.useState(0);
+  const [busy, setBusy] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    setFailed(false);
+    // swarmAddNote, not writeFile: it mkdir -p's .swarm/inbox/, which NOTHING else creates — the
+    // engine only reads it. A plain writeFile would fail on the very first note.
+    const ok = await window.electron.swarmAddNote(workingDir, t).catch(() => false);
+    setBusy(false);
+    if (ok) {
+      setText('');
+      setSent((n) => n + 1);
+    } else {
+      setFailed(true);
+    }
+  };
+
+  return (
+    <div className="border-t border-border-primary px-3 py-2">
+      <div className="flex items-center gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          placeholder="Tell it something while it builds — picked up by the next task, never interrupts one"
+          className="flex-1 min-w-0 bg-background-primary border border-border-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-text-secondary"
+          style={{ borderRadius: 3 }}
+          aria-label="Add a note to this build"
+        />
+        <button
+          type="button"
+          onClick={() => void send()}
+          disabled={!text.trim() || busy}
+          className="shrink-0 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-40"
+          style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
+        >
+          {busy ? 'Sending…' : 'Send'}
+        </button>
+      </div>
+      {failed ? (
+        <div className="text-[11px] mt-1" style={{ color: STATUS_COLOR.error }}>
+          Could not write the note. Is the build directory still there?
+        </div>
+      ) : sent > 0 ? (
+        <div className="text-[11px] text-text-secondary mt-1">
+          {sent === 1 ? '1 note queued' : `${sent} notes queued`} — it is background context, not an order:
+          the spec still wins. Needs “Let me add notes while it builds” on.
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const ClarifyPrompt: React.FC<{
   clarify: {
     pending: boolean;
@@ -1652,6 +1730,10 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           askFloor={run.askFloor}
         />
       ) : null}
+
+      {/* While it is actually building — not ended, and not already blocked on a clarify prompt (that one
+          is a question awaiting YOUR answer; two input boxes at once would be a puzzle). */}
+      {!ended && !clarifyPending && workingDir ? <NoteBox workingDir={workingDir} /> : null}
 
       {ended && outcome ? (
         <TerminalBanner
