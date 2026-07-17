@@ -667,7 +667,17 @@ mod tests {
                 3069 - MAX_LISTED_SUPPORTING_FILES
             )),
             "the manifest must say how many it dropped: {}",
-            &rendered[rendered.len().saturating_sub(300)..]
+            // Take CHARACTERS, not bytes. Byte-slicing a String panics when the cut lands inside a UTF-8
+            // sequence — and this is the failure MESSAGE, so it would panic exactly when the assert was
+            // already failing and the text was the only thing worth reading.
+            rendered
+                .chars()
+                .rev()
+                .take(300)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
         );
         // Whatever the cap, the result must stay a sane fraction of a local model's window.
         assert!(
