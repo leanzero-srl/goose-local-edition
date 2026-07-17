@@ -34,12 +34,20 @@ import {
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-1.5">
+    // items-START, not items-center: a wrapped hint makes the row tall, and a centered control then floats
+    // in the middle of a paragraph instead of sitting beside the thing it toggles.
+    <div className="flex items-start justify-between gap-4 py-2">
       <div className="min-w-0">
-        <div className="text-sm text-text-primary truncate">{label}</div>
-        {hint && <div className="text-xs text-text-secondary truncate">{hint}</div>}
+        <div className="text-sm text-text-primary">{label}</div>
+        {/* The hint is the WHOLE POINT of this panel — it is what each setting costs you and what it
+            bought, measured. `truncate` killed every one of them at the viewport edge mid-sentence:
+            "…it shipped the first plan anyway. This stops after a round that fails to beat the be…" and
+            "…Model-free, so it can't be argue…". A one-line rule cannot explain a quality/speed trade-off,
+            and a reader who cannot finish the sentence cannot make the choice. Let it wrap; cap the
+            measure so it stays readable next to the control. */}
+        {hint && <p className="text-xs text-text-secondary max-w-[92ch] mt-0.5">{hint}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 pt-0.5">{children}</div>
     </div>
   );
 }
@@ -142,11 +150,31 @@ function SwarmSwitch({ checked, onChange }: { checked: boolean; onChange: (v: bo
   );
 }
 
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * A group of settings, with what the group COSTS you.
+ *
+ * Mihai's read, and it is the right one: "The text for each of these features is like QUALITY VERSUS
+ * SPEED. Some users may choose not to wait so long, so it may make sense to untick some — but they're all
+ * quality-oriented, aside from the queued messages which is a genuine feature." The panel never said that
+ * anywhere, so every toggle looked like an equal coin-flip. `cost` states the trade so a reader can decide
+ * what to switch off, instead of guessing which ones are safe.
+ */
+function Group({
+  title,
+  cost,
+  children,
+}: {
+  title: string;
+  cost?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="border border-border-primary" style={{ borderRadius: 3 }}>
-      <div className="px-3 py-1.5 text-xs font-semibold text-text-primary bg-background-secondary border-b border-border-primary">
-        {title}
+      <div className="px-3 py-1.5 bg-background-secondary border-b border-border-primary">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <span className="text-xs font-semibold text-text-primary">{title}</span>
+          {cost ? <span className="text-[11px] text-text-secondary">{cost}</span> : null}
+        </div>
       </div>
       <div className="px-3 py-1 divide-y divide-border-primary">{children}</div>
     </div>
@@ -490,7 +518,7 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Plan confidence">
+              <Group title="Plan confidence" cost="Buys: a plan the fleet agrees on, and goose asking you instead of guessing. Costs: planning minutes — each extra draft round is another pass over the whole fleet.">
 
                 <Row
                   label="Convergence molding"
@@ -524,7 +552,7 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Research">
+              <Group title="Research" cost="Buys: goose stops inventing YOUR product decisions. Costs: it stops and waits for you. Measured: it spent 65 minutes failing to answer what you answered in under two.">
                 <Row
                   label="Ask me when it has nothing to search with"
                   hint="if no search tools are set up, goose currently still sends open decisions off to 'research' — which can only invent an answer and then treat it as settled. With this on it asks you instead. Measured: it spent 65 minutes failing to answer what you answered in under two."
@@ -545,7 +573,7 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="While it builds">
+              <Group title="While it builds" cost="Buys: the worker is told the convention BEFORE it writes, not corrected after. Costs: almost nothing — these add prompt text, not extra model calls.">
                 <Row
                   label="Tell the author the domain rules up front"
                   hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
@@ -581,7 +609,7 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Before it says done">
+              <Group title="Before it says done" cost="Buys: goose stops calling a broken app verified — 7 runs have. Costs: real minutes. Every check here RUNS something, and a failed check triggers a fix round.">
                 <Row
                   label="Run the app's own tests before calling it verified"
                   hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
@@ -635,7 +663,7 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Learning">
+              <Group title="Learning" cost="Buys: goose gets faster at a stack the more you build it. Costs: one reflection pass at the end of a build that worked.">
                 <Row
                   label="Learn from builds that worked"
                   hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
