@@ -3534,6 +3534,63 @@ mod tests {
         assert_eq!(draft_timeout_resolved(Some("abc".into()), None), 480);
     }
 
+    /// "INCONCLUSIVE" AND "VERIFIED" WERE THE SAME VALUE. This is the measured 4/4 false greens.
+    ///
+    /// smoke_output returns None on a spawn error OR a TIMEOUT, and every call site correctly declines to add
+    /// a finding (an inconclusive check is not a defect). But the verdict line was `final_verified =
+    /// verdict.ran`, and `ran` is true for any tree with one .py file — so findings stayed empty, passed()
+    /// stayed true, and the run reported VERIFIED having executed NOTHING.
+    ///
+    /// loop-ab-baseline3 is fully explained: 3/16 spec requirements, `python3 -m settle` serves nothing
+    /// (HTTP 0), and it claimed passed AND verified. There are TWO green paths for a dead server — `--help`
+    /// exits 0 without binding a port, or `--help` HANGS and is killed at the 30s cap.
+    #[test]
+    fn a_check_that_never_ran_is_not_a_verified_check() {
+        let base = SmokeResult {
+            ran: true,
+            py_files: 3,
+            collect: None,
+            tests: None,
+            entry_package: Some("settle".into()),
+            entry_ok: None,
+            findings: vec![],
+            inconclusive: vec![],
+        };
+
+        // The healthy case: it ran, nothing was red, nothing was skipped -> genuinely verified.
+        assert!(base.passed());
+        assert!(base.established(), "a clean full run must stay verified");
+
+        // THE BUG: a --help that HANGS (a server ignoring --help and binding a port) is killed at 30s ->
+        // no finding -> findings empty -> passed. It must NOT be verified.
+        let hung = SmokeResult {
+            inconclusive: vec![
+                "`python3 -m settle --help` never answered (timed out at 30s)".into(),
+            ],
+            ..base.clone()
+        };
+        assert!(
+            hung.passed(),
+            "passed must NOT flip red — an inconclusive check is not evidence of a defect, and flipping \
+             passed on a correct app is forbidden"
+        );
+        assert!(
+            !hung.established(),
+            "but it must NOT claim verified: the app never answered a single question"
+        );
+
+        // A skipped tree (Go/Other) was already the honest unknown — ran=false. Unchanged.
+        let skipped = SmokeResult::skipped();
+        assert!(!skipped.established());
+
+        // And a REAL finding is still a real failure — this changes nothing about red.
+        let broken = SmokeResult {
+            findings: vec!["pytest -q failed".into()],
+            ..base.clone()
+        };
+        assert!(!broken.passed());
+    }
+
     #[test]
     fn retarget_rounds_clamps() {
         assert_eq!(retarget_rounds_from(None), 2);
@@ -8152,11 +8209,33 @@ struct SmokeResult {
     entry_package: Option<String>,
     entry_ok: Option<bool>,
     findings: Vec<String>,
+    /// Checks that produced NO VERDICT — the process failed to spawn, or timed out. Deliberately NOT
+    /// findings: an inconclusive check is not evidence of a defect, and turning it into one would enter the
+    /// corrective-fix loop and let the engine vandalise correct code over a check that never ran.
+    ///
+    /// THE BUG THIS EXISTS FOR: `smoke_output` returns None on spawn-error OR timeout, every call site
+    /// correctly declines to add a finding, and the verdict line was `final_verified = verdict.ran`. So
+    /// findings stayed empty, `passed()` stayed true, and **the run reported verified:true having executed
+    /// NOTHING**. A tree with no python3, a pytest that timed out, or a `--help` that HANGS — which is exactly
+    /// what a server that ignores --help and binds a port does, killed at the 30s cap — all reported verified.
+    /// "Inconclusive" and "verified" were the same value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    inconclusive: Vec<String>,
 }
 
 impl SmokeResult {
     fn passed(&self) -> bool {
         self.ran && self.findings.is_empty()
+    }
+
+    /// Did the gate actually ESTABLISH anything? `passed()` means "nothing we looked at was red"; this means
+    /// "and we genuinely looked". They are different questions and the engine only ever asked the first.
+    ///
+    /// NOTE this deliberately does NOT change `passed()`. An inconclusive check is not proof of a defect, and
+    /// flipping `passed` red on a correct app is forbidden here. The honest state is passed:true +
+    /// verified:false — which the engine and the UI already support (a skipped oracle produces exactly it).
+    fn established(&self) -> bool {
+        self.ran && self.inconclusive.is_empty()
     }
     /// The gate did not apply to this tree (no recognized build) — never a failure.
     fn skipped() -> Self {
@@ -8168,6 +8247,7 @@ impl SmokeResult {
             entry_package: None,
             entry_ok: None,
             findings: vec![],
+            inconclusive: vec![],
         }
     }
 }
@@ -8194,9 +8274,11 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
             entry_package: None,
             entry_ok: None,
             findings: vec![],
+            inconclusive: vec![],
         };
     }
     let mut findings: Vec<String> = Vec::new();
+    let mut inconclusive: Vec<String> = Vec::new();
 
     // 1) collect-only — imports every module + test, surfacing cross-module ImportError.
     let mut collect_cmd = tokio::process::Command::new("python3");
@@ -8214,7 +8296,15 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
             }
             Some(v)
         }
-        None => None, // python3 missing / timed out -> inconclusive, not a failure
+        None => {
+            // Inconclusive, not a failure — and NOT a pass either. Recorded so the verdict can tell "nothing
+            // was red" apart from "nothing was checked"; deliberately not a finding (that would drive a fix).
+            inconclusive.push(
+                "pytest --collect-only did not complete (python3 missing or timed out at 90s)"
+                    .to_string(),
+            );
+            None
+        }
     };
 
     // 1b) RUN the generated tests — the runtime oracle. `--help`/`--collect-only` never execute a real
@@ -8236,7 +8326,12 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 }
                 Some(v)
             }
-            None => None, // pytest missing / timed out -> inconclusive, not a failure
+            None => {
+                inconclusive.push(
+                    "`pytest -q` did not complete (missing or timed out at 120s)".to_string(),
+                );
+                None
+            }
         }
     } else {
         None
@@ -8277,7 +8372,17 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 }
                 Some(ok)
             }
-            None => None,
+            None => {
+                // THE SECOND GREEN PATH FOR A DEAD SERVER, and the more insidious one. A `--help` that HANGS
+                // is exactly what an entry point that ignores --help and binds a port does — it is killed at
+                // the 30s cap, returns None, adds no finding, and the run reported VERIFIED. The app never
+                // answered a single question and the gate called it checked.
+                inconclusive.push(format!(
+                    "`python3 -m {pkg} --help` never answered (timed out at 30s — an entry point that \
+                     ignores --help and binds a port does exactly this)"
+                ));
+                None
+            }
         }
     } else {
         findings.push(
@@ -8296,6 +8401,7 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         entry_package,
         entry_ok,
         findings,
+        inconclusive,
     }
 }
 
@@ -8992,6 +9098,7 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
         entry_package: None,
         entry_ok,
         findings,
+        inconclusive: vec![],
     }
 }
 
@@ -9342,6 +9449,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                 entry_package: None,
                 entry_ok: Some(false),
                 findings,
+                inconclusive: vec![],
             };
         }
         Some(_) => {}
@@ -9393,6 +9501,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         entry_package: None,
         entry_ok,
         findings,
+        inconclusive: vec![],
     }
 }
 
@@ -15562,7 +15671,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
             if verdict.findings.is_empty() {
                 final_passed = true;
-                final_verified = verdict.ran;
+                // "VERIFIED" MUST MEAN WE ACTUALLY CHECKED — not merely that nothing we looked at was red.
+                //
+                // This was `final_verified = verdict.ran`, and `ran` is set to true for ANY tree with one .py
+                // file. Combined with smoke_output returning None (adding NO finding) on a spawn error or a
+                // TIMEOUT, "inconclusive" and "verified" were literally the same value: a run where python3 is
+                // missing, or pytest times out, or `--help` HANGS — which is exactly what an entry point that
+                // ignores --help and binds a port does — reported **verified:true having executed NOTHING**.
+                // That is the measured 4/4 false greens, and loop-ab-baseline3 (3/16, server never starts) is
+                // fully explained by it.
+                //
+                // `passed` is deliberately UNTOUCHED. An inconclusive check is not evidence of a defect, and
+                // flipping passed red on a correct app is forbidden. The honest state is passed:true +
+                // verified:false, which the engine and UI already support — a skipped oracle produces exactly
+                // it. This adds NO finding, so it cannot enter the corrective-fix loop and cannot vandalise
+                // correct code: it only narrows a CLAIM to what the evidence supports.
+                final_verified = verdict.established();
+                if verdict.ran && !verdict.inconclusive.is_empty() {
+                    eprintln!(
+                        "  {} NOT verified — {} check(s) never produced a verdict: {}. Nothing was red, but \
+                         nothing was established either.",
+                        style("!").yellow().bold(),
+                        verdict.inconclusive.len(),
+                        verdict.inconclusive.join("; ")
+                    );
+                }
                 // Clear the prior round's findings so complete_result reports remaining_findings=0 on a
                 // green finish — the green break happens before last_findings is refreshed below, so
                 // without this it would report the stale pre-fix count for an app that is actually clean.
