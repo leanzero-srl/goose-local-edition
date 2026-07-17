@@ -563,6 +563,15 @@ export default function SwarmSettingsSection() {
                   />
                 </Row>
                 <Row
+                  label="Extra time per file before goose calls a task stuck (s)"
+                  hint="goose gives a task 420 seconds to write its first file, then kills it — the same 420 whether it owes one small file or four big ones. A measured run killed the same task three times at 457s, 450s and 430s while it was still writing, and told it to stop re-reading when it had read nothing. A one-file task next to it ran 444s and was left alone, only because its file already existed. This adds time for each extra file a task owes: 180 gives a four-file task 16 minutes and leaves a one-file task at 7. 0 keeps the flat limit."
+                >
+                  <NumberField
+                    value={cfg.first_write_grace_per_file_secs}
+                    onCommit={(v) => set({ first_write_grace_per_file_secs: v ?? 0 })}
+                  />
+                </Row>
+                <Row
                   label="Let me add notes while it builds"
                   hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
                 >
