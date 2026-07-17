@@ -62,6 +62,18 @@ export interface SwarmConfig {
    *  spec is BINDING. Because the guess then lives inside the spec, the user's LIVE mid-run notes lose to it:
    *  they are explicitly told "it does NOT override the spec ... where they disagree, the spec wins". */
   spec_wins?: boolean;
+  /** Turn budget for the integrate-verify SINK. Undefined = the same as workers (40). Floored at the worker
+   *  budget, capped at 200.
+   *  MEASURED across 9 runs: 5 sinks NEVER reached their own verdict, and 3 died ON the worker cap — their
+   *  last words are literally "I've reached the maximum number of actions I can do without user input." The
+   *  sink depends on every task and must verify the whole tree; a worker owns 1-3 files. Same budget. */
+  sink_max_turns?: number;
+  /** Seconds the spec-clarity probe may take (undefined = 120, clamped [30,900]).
+   *  When it is abandoned the engine falls back to cross-draft agreement ALONE and asserts the product is
+   *  specified — so the ask that protects an under-specified spec silently never fires. MEASURED on 2 of 14
+   *  runs: both reported conf 93-95 and asked NOTHING on the same spec that made every successful-probe run
+   *  report conf 30 and ask 5 questions. */
+  clarity_probe_secs?: number;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
@@ -188,6 +200,8 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'ask_max_q',
   'clarify_spec_bound',
   'spec_wins',
+  'sink_max_turns',
+  'clarity_probe_secs',
   'no_tools_means_ask',
   'grounded_research_only',
   'contract_validate',
@@ -241,6 +255,16 @@ export const GOLDEN: SwarmConfig = {
   // spec wins, so the guess beats the human typing the truth at it. This makes those defaults subordinate,
   // labelled, and recorded. Same family as clarify_spec_bound: nothing may edit a FIXED requirement.
   spec_wins: true,
+  // The verifier must be able to FINISH. 3 of 9 sinks died on the worker cap of 40 mid-verify — and the run
+  // still reported a verdict. A verifier that was cut off has not verified anything, and "verified" on an
+  // interrupted check is the false green this whole formula exists to prevent. 120 is not a measured optimum;
+  // it is enough headroom that the cap stops being the thing that ends the check.
+  sink_max_turns: 120,
+  // The probe that decides whether to ASK died on 2 of 14 runs and took the entire consultation with it
+  // (conf 95, zero questions, product invented). The fleet is PARALLEL:1, so the probe queues behind the
+  // drafts it runs alongside and can burn 120s without reaching the model. 300 buys it a real chance; the
+  // engine now records WHY it failed, so this number can be judged on evidence rather than on my hunch.
+  clarity_probe_secs: 300,
   // With no lookup tools nothing is lookupable, so an open decision goes to the USER, not to a research
   // round that can only guess. Cost: a pause. It cannot worsen the app — it replaces an invented answer
   // with the user's real one.

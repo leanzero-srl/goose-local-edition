@@ -293,6 +293,14 @@ pub struct SwarmConfig {
     /// successful-probe run report conf 30 and ask 5.
     #[serde(default)]
     pub clarity_probe_secs: Option<u64>,
+    /// Turn budget for the integrate-verify SINK. `None` = the same as workers. Clamped
+    /// [worker_max_turns, 200]. GOOSE_SWARM_SINK_MAX_TURNS env overrides.
+    ///
+    /// MEASURED: 3 of 9 sinks died ON the worker cap of 40 — their last words are literally "I've reached the
+    /// maximum number of actions I can do without user input." The sink depends on every task and must verify
+    /// the whole tree; a worker owns 1-3 files. They were given the same budget.
+    #[serde(default)]
+    pub sink_max_turns: Option<u32>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -530,6 +538,7 @@ impl Default for SwarmConfig {
             clarify_spec_bound: None,
             spec_wins: None,
             clarity_probe_secs: None,
+            sink_max_turns: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -3449,6 +3458,44 @@ mod tests {
         );
     }
 
+    /// THE 40 TURNS THAT CUT THE VERIFIER OFF MID-VERIFY.
+    ///
+    /// MEASURED across 9 runs: 5 sinks never reached their own verdict, and 3 died exactly on the worker cap
+    /// of 40. Their `last_text` is verbatim "I've reached the maximum number of actions I can do without user
+    /// input. Would you like me to continue?" (loop-04 at 42 calls, loop-05 at 41, loop-06 at 41 — pinned at
+    /// the cap). The engine reported complete_result anyway: a mechanism behind the measured 4/4 false greens.
+    /// integrate-verify depends on EVERY task and must verify the whole tree; a worker owns 1-3 files. They
+    /// were handed the same budget.
+    #[test]
+    fn the_sink_gets_its_own_turn_budget_and_can_never_get_less_than_a_worker() {
+        // Unset on both channels => byte-identical to the old behaviour.
+        assert_eq!(sink_max_turns_resolved(None, None, 40), 40);
+
+        // Config raises it; env beats config.
+        assert_eq!(sink_max_turns_resolved(None, Some(120), 40), 120);
+        assert_eq!(
+            sink_max_turns_resolved(Some("80".into()), Some(120), 40),
+            80
+        );
+
+        // FLOORED at the worker budget, from BOTH channels. The sink strictly dominates a worker's job, so a
+        // smaller cap could only cut it off sooner — there is no config in which that is what someone meant.
+        assert_eq!(sink_max_turns_resolved(Some("5".into()), None, 40), 40);
+        assert_eq!(sink_max_turns_resolved(None, Some(1), 40), 40);
+        assert_eq!(sink_max_turns_resolved(Some("0".into()), None, 40), 40);
+
+        // Capped, so a typo cannot spin a 3-node fleet for a day.
+        assert_eq!(sink_max_turns_resolved(Some("9999".into()), None, 40), 200);
+        assert_eq!(sink_max_turns_resolved(None, Some(9999), 40), 200);
+
+        // Garbage falls through to config, then to the worker default — never to 0.
+        assert_eq!(
+            sink_max_turns_resolved(Some("abc".into()), Some(90), 40),
+            90
+        );
+        assert_eq!(sink_max_turns_resolved(Some("abc".into()), None, 40), 40);
+    }
+
     #[test]
     fn retarget_rounds_clamps() {
         assert_eq!(retarget_rounds_from(None), 2);
@@ -5231,6 +5278,29 @@ fn retarget_action(
         }
         None => RetargetAction::None,
     }
+}
+
+/// The turn budget for the `integrate-verify` SINK specifically. `None` = whatever workers get (so the
+/// default is byte-identical); env > config; clamped [worker_max_turns, 200].
+///
+/// Never BELOW the worker budget: the sink strictly dominates a worker's job, so a smaller cap could only
+/// ever cut it off sooner — there is no configuration in which that is what someone meant.
+fn sink_max_turns(worker_default: u32) -> u32 {
+    sink_max_turns_resolved(
+        std::env::var("GOOSE_SWARM_SINK_MAX_TURNS").ok(),
+        load_config().sink_max_turns,
+        worker_default,
+    )
+}
+
+/// The pure precedence: env > config > the worker default, floored at the worker default and capped at 200.
+/// Split out only so it is testable — the wrapper reads the process env and config, which a unit test cannot
+/// pin. (Same reason as `resolve_gate_cfg` and `retarget_rounds_resolved`.)
+fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default: u32) -> u32 {
+    env.and_then(|v| v.trim().parse::<u32>().ok())
+        .or(cfg)
+        .unwrap_or(worker_default)
+        .clamp(worker_default, 200)
 }
 
 /// How long the spec-clarity probe may take. Default 120s (byte-identical to the hardcoded value it
@@ -12630,6 +12700,27 @@ impl TaskDispatcher for GooseAgentDispatcher {
             ),
             None => req.description.clone(),
         };
+        // THE SINK IS NOT A WORKER, AND THE TURN BUDGET NEVER NOTICED.
+        //
+        // A worker owns 1-3 files. `integrate-verify` depends on EVERY task, is told to confirm every file in
+        // the layout exists, build the artifact, run every command the spec advertises, golden-check each
+        // output, probe robustness, and "FIX any failure at the ROOT CAUSE" — all on the same 40 turns.
+        //
+        // MEASURED across 9 runs: 5 sinks NEVER REACHED THEIR OWN VERDICT, and 3 of those died exactly here.
+        // Their `last_text` is verbatim: "I've reached the maximum number of actions I can do without user
+        // input. Would you like me to continue?" (loop-04 at 42 calls, loop-05 at 41, loop-06 at 41 — all
+        // pinned at the cap). loop-05's ENTIRE reasoning field is that 102-char sentence. The engine then
+        // reported complete_result anyway: this is a mechanism behind the 4/4 false greens — the verifier was
+        // cut off mid-verify and nobody noticed.
+        //
+        // Default = worker_max_turns, so OFF is byte-identical. Raising it alone is NOT the whole fix: at ~65s
+        // per call a bigger budget buys more minutes, not more sense — the read storm the sink's own prompt
+        // orders is the other half. But a sink that cannot finish is strictly worse than a slow one.
+        let max_turns = if req.task_id == "integrate-verify" {
+            sink_max_turns(self.worker_max_turns)
+        } else {
+            self.worker_max_turns
+        };
         let outcome = self
             .run_agent_in(
                 root.clone(),
@@ -12637,7 +12728,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 system_prompt,
                 worker_user_text,
                 None,
-                self.worker_max_turns,
+                max_turns,
                 &self.worker_extensions,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
@@ -12645,6 +12736,28 @@ impl TaskDispatcher for GooseAgentDispatcher {
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
+        // A SINK THAT WAS CUT OFF DID NOT VERIFY ANYTHING — SAY SO, LOUDLY.
+        //
+        // 5 of 9 sinks never reached their own verdict (3 on the turn cap, 2 on a network error) and the
+        // engine reported complete_result regardless. That is a mechanism behind the measured 4/4 false
+        // greens: "verified" on a run whose verifier was interrupted. This does not flip any verdict — only a
+        // deterministic engine event may do that — it makes the interruption VISIBLE, which is the thing that
+        // was missing. The exact filler below is what the core emits when max_turns is exhausted.
+        if req.task_id == "integrate-verify" {
+            if let Ok(out) = &outcome {
+                let tail = out.final_output.clone().unwrap_or_default();
+                let cut_off = tail.contains("maximum number of actions")
+                    || tail.contains("Would you like me to continue?");
+                if cut_off {
+                    eprintln!(
+                        "  {} integrate-verify was CUT OFF at its {max_turns}-turn cap — it did NOT finish \
+                         verifying. Any 'verified' reported for this run is a claim about an interrupted \
+                         check. Raise sink_max_turns (or cut the sink's read storm).",
+                        style("!").red().bold()
+                    );
+                }
+            }
+        }
         match outcome {
             Ok(out) => {
                 // Hallucinated-completion guard: a worker can call final_output ("done") WITHOUT ever
