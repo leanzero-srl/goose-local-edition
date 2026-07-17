@@ -492,6 +492,15 @@ export default function SwarmSettingsSection() {
                 onCommit={(v) => set({ sink_max_turns: v ?? 40 })}
               />
             </Row>
+            <Row
+              label="Actually call the app's endpoints before calling it verified"
+              hint="The final check confirms the code imports and `--help` runs — but never that the app HONORS what your spec advertised. So an app whose endpoints return a 500 (its database was never created) or whose list endpoint was simply never built (405) still passes as verified. Two of two test apps did exactly that. With this on, goose starts the app the way your spec says to (`python3 -m yourapp`) and calls each endpoint you listed: a server error or a missing endpoint fails the build and triggers a fix, and an app that never even starts its server is marked unverified instead of green. Deterministic — it reads your spec, no model judgement. (Python web apps for now.)"
+            >
+              <SwarmSwitch
+                checked={!!cfg.spec_contract}
+                onChange={(v) => set({ spec_contract: v })}
+              />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">

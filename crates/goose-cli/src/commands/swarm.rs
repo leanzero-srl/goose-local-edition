@@ -301,6 +301,13 @@ pub struct SwarmConfig {
     /// behaviour exactly. GOOSE_SWARM_CLARITY_FAIL_CLOSED env overrides.
     #[serde(default)]
     pub clarity_fail_closed: bool,
+    /// Spec-contract verify (#120): after the smoke gate, run the spec's advertised `python3 -m PKG` entry and
+    /// curl each concrete advertised GET endpoint. A 5xx (uninitialised DB) or 404/405 (endpoint never built)
+    /// on an advertised path is a HARD finding → the green verdict is demoted and the fix loop runs; an entry
+    /// that never binds a port → inconclusive (verified:false, no red). Deterministic, no model in the path.
+    /// Default OFF = today's behaviour exactly. GOOSE_SWARM_SPEC_CONTRACT env overrides.
+    #[serde(default)]
+    pub spec_contract: Option<bool>,
     /// Turn budget for the integrate-verify SINK. `None` = the same as workers. Clamped
     /// [worker_max_turns, 200]. GOOSE_SWARM_SINK_MAX_TURNS env overrides.
     ///
@@ -578,6 +585,7 @@ impl Default for SwarmConfig {
             spec_wins: None,
             clarity_probe_secs: None,
             clarity_fail_closed: false,
+            spec_contract: None,
             sink_max_turns: None,
             draft_timeout_secs: None,
             goals: None,
@@ -2766,8 +2774,8 @@ mod tests {
         // Default (unset) now REUSES the plan (skip the re-plan, per the UNIQ12/UNIQ12b A/B); opt INTO the
         // re-plan only with an explicit on-value.
         assert!(
-            !ask_replan_enabled(None),
-            "unset defaults OFF (reuse plan / skip re-plan)"
+            !ask_replan_resolved(None, None),
+            "unset (env+config None) defaults OFF (reuse plan / skip re-plan)"
         );
         assert!(ask_replan_enabled(Some("1".into())));
         assert!(ask_replan_enabled(Some("on".into())));
@@ -3003,6 +3011,25 @@ mod tests {
     }
 
     #[test]
+    fn spec_contract_parsing() {
+        let spec =
+            "It runs as `python3 -m quorum` which starts the server. REST: POST /api/polls; \
+                    GET /api/polls/<id>; GET /api/polls/<id>/results; GET /api/polls (list).";
+        assert_eq!(spec_python_entry(spec).as_deref(), Some("quorum"));
+        let gets = spec_get_endpoints(spec);
+        // The concrete list endpoint is kept; the param'd routes are excluded (no false base-path finding).
+        assert_eq!(gets, vec!["/api/polls".to_string()]);
+        assert!(!gets.iter().any(|g| g.contains("id") || g.contains('<')));
+        // No advertised python entry -> None (a Swift/TS spec no-ops the whole check).
+        assert!(spec_python_entry("Build a Swift CLI note-taker").is_none());
+        // Port: default 8000, else the advertised one.
+        assert_eq!(spec_port("no port mentioned"), 8000);
+        assert_eq!(spec_port("the server listens on 127.0.0.1:9100"), 9100);
+        // A pure-CLI spec with no GET endpoints yields nothing to curl.
+        assert!(spec_get_endpoints("python3 -m tool add x").is_empty());
+    }
+
+    #[test]
     fn clarity_fail_closed_reasons() {
         // FAIL-CLOSED (learned nothing → ask): timeout / agent_error / no_final_output, incl. the ": detail" tail.
         assert!(clarity_reason_is_fail_closed("timeout"));
@@ -3012,9 +3039,9 @@ mod tests {
         assert!(clarity_reason_is_fail_closed("no_final_output"));
         // FAIL-OPEN (the model DID answer, the JSON just didn't fit): unparseable stays out → no false-ask storm.
         assert!(!clarity_reason_is_fail_closed("unparseable: {truncated"));
-        // The clamp value is below the default ask floor AND is not a producible spec_clarity_score, so a 20 in
-        // the breakdown is an unambiguous fail-closed sentinel, never a real measurement.
-        assert!(CLARITY_FAILCLOSED < 70);
+        // The clamp value is below the default ask floor (documented on the const) AND is not a producible
+        // spec_clarity_score, so a 20 in the breakdown is an unambiguous fail-closed sentinel — checked at
+        // runtime against every score the function can emit (a const-vs-const assert is a clippy error).
         for n in 0..=9 {
             assert_ne!(spec_clarity_score(true, n), CLARITY_FAILCLOSED);
             assert_ne!(spec_clarity_score(false, n), CLARITY_FAILCLOSED);
@@ -9474,6 +9501,178 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
     out
 }
 
+/// Result of the deterministic spec-contract check (#120). HARD `findings` gate `passed` (red + fix loop);
+/// `inconclusive` entries demote `established()` (verified:false) without a red — the honest "could not
+/// verify the endpoints" case (e.g. the advertised entry never bound a port).
+struct SpecContractResult {
+    findings: Vec<String>,
+    inconclusive: Vec<String>,
+}
+
+/// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
+fn spec_python_entry(spec: &str) -> Option<String> {
+    regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)")
+        .ok()?
+        .captures(spec)
+        .map(|c| c[1].to_string())
+}
+
+/// GET endpoints the spec advertises with a CONCRETE path (no path parameter), deduped, order-preserving. A
+/// param'd route (`{id}`, `:id`, `<id>`) is excluded: a bare GET of it legitimately 404s/422s, so it can't be
+/// a clean finding. Only a concrete advertised path returning 5xx/404/405 is unambiguously broken. Pure/testable.
+fn spec_get_endpoints(spec: &str) -> Vec<String> {
+    // Capture the WHOLE path token (up to whitespace) so a param'd route's delimiter is INCLUDED and can be
+    // excluded below — a narrower char-class would stop before `<`/`{`/`:` and wrongly keep the base path.
+    let re = match regex::Regex::new(r"(?i)\bGET\s+(/\S*)") {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for c in re.captures_iter(spec) {
+        // Strip trailing prose punctuation the spec attaches (`;`, `,`, `)`, `.`, trailing `/`).
+        let path = c[1].trim_end_matches([';', ',', ')', '.', '/']).to_string();
+        if path.is_empty() {
+            continue;
+        }
+        // A param'd route (`{id}`, `:id`, `<id>`) legitimately 404s/422s under a bare GET — exclude it.
+        if path.contains('{') || path.contains('<') || path.contains(':') {
+            continue;
+        }
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// The advertised server port, else 8000 (the uvicorn/FastAPI default the beds use). Pure/testable.
+fn spec_port(spec: &str) -> u16 {
+    regex::Regex::new(r"(?:127\.0\.0\.1:|localhost:|port\s+)(\d{4,5})")
+        .ok()
+        .and_then(|re| re.captures(spec).and_then(|c| c[1].parse::<u16>().ok()))
+        .filter(|p| *p >= 1024)
+        .unwrap_or(8000)
+}
+
+fn spec_contract_enabled() -> bool {
+    swarm_gate_cfg_bundle(
+        "GOOSE_SWARM_SPEC_CONTRACT",
+        load_config().spec_contract,
+        false,
+    )
+}
+
+/// DETERMINISTIC spec-contract check (#120). The smoke gate proves the tree IMPORTS + `python3 -m PKG --help`
+/// exits 0 — never that the app HONORS its advertised REST contract, so an app whose endpoints 500 (uninitialised
+/// DB) or 405 (a spec-advertised endpoint never implemented) passes green. MEASURED false-green on 2 seeded apps.
+/// This runs the spec's advertised BARE `python3 -m PKG` (exactly the "runs as ..." claim — an app that hid the
+/// server behind a subcommand never binds), waits for the port, and curls each concrete advertised GET endpoint.
+/// NO MODEL in the path: the contract is regex-parsed from the spec text, so only an engine event creates the
+/// verdict. FAIL-OPEN everywhere it can't be sure (non-python, no advertised entry/endpoints, server never bound,
+/// curl error) → inconclusive, never a false red.
+async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecContractResult {
+    let mut findings = Vec::new();
+    let mut inconclusive = Vec::new();
+    // Python/FastAPI beds only for now; other stacks keep the existing smoke gate untouched.
+    if !matches!(lang, TargetLang::Python) {
+        return SpecContractResult {
+            findings,
+            inconclusive,
+        };
+    }
+    let Some(pkg) = spec_python_entry(spec) else {
+        return SpecContractResult {
+            findings,
+            inconclusive,
+        };
+    };
+    let gets = spec_get_endpoints(spec);
+    if gets.is_empty() {
+        return SpecContractResult {
+            findings,
+            inconclusive,
+        };
+    }
+    let port = spec_port(spec);
+    let mut server = tokio::process::Command::new("python3");
+    server
+        .args(["-m", &pkg])
+        .current_dir(root)
+        .env("PYTHONPATH", "src")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let Ok(mut child) = server.spawn() else {
+        inconclusive.push(format!("spec-contract: could not spawn `python3 -m {pkg}`"));
+        return SpecContractResult {
+            findings,
+            inconclusive,
+        };
+    };
+    let mut up = false;
+    for _ in 0..80 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            up = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !up {
+        let _ = child.kill().await;
+        inconclusive.push(format!(
+            "spec-contract: `python3 -m {pkg}` never bound port {port} within 4s — the advertised entrypoint did not start a server"
+        ));
+        return SpecContractResult {
+            findings,
+            inconclusive,
+        };
+    }
+    for path in gets {
+        let url = format!("http://127.0.0.1:{port}{path}");
+        let mut cmd = tokio::process::Command::new("curl");
+        cmd.args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-m",
+            "5",
+            &url,
+        ]);
+        let Some(out) = smoke_output(cmd, 8).await else {
+            inconclusive.push(format!(
+                "spec-contract: curl of GET {path} did not complete"
+            ));
+            continue;
+        };
+        let code: u16 = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if code >= 500 {
+            findings.push(format!(
+                "GET {path} returned {code} — the advertised endpoint errors (server 5xx)"
+            ));
+        } else if code == 404 || code == 405 {
+            findings.push(format!(
+                "GET {path} returned {code} — the spec advertises this endpoint but the app does not implement it"
+            ));
+        }
+        // 2xx / 3xx / other 4xx (a route that needs a body/auth) -> not a finding (fail-open)
+    }
+    let _ = child.kill().await;
+    SpecContractResult {
+        findings,
+        inconclusive,
+    }
+}
+
 /// GOOSE_SWARM_BROWSER_VERIFY ADVISORY: if `root` is a STATIC web app (index.html, no package manifest) and a
 /// headless chromium is available, load index.html (served over localhost) and return console lines matching
 /// a CODE-DEFECT signature (contains "ReferenceError" / "SyntaxError" / "is not defined") — the class that
@@ -15870,6 +16069,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the AttributeError only happens at request time), so without this the loop breaks green at
             // round 0 on an app whose main endpoint 500s.
             verdict.findings.extend(drift.findings.iter().cloned());
+            // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
+            // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
+            // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
+            // never binds is inconclusive (verified:false). Deterministic (regex-parsed spec, no model). OFF =
+            // byte-identical (spec_contract_enabled() short-circuits and the block never runs).
+            if spec_contract_enabled() {
+                let sc = run_spec_contract(&cwd, &opts.prompt, complete_lang).await;
+                verdict.findings.extend(sc.findings);
+                verdict.inconclusive.extend(sc.inconclusive);
+            }
             // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
             // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
             // on it. A distilled check whose arg-shape mismatches how the app was actually built would else

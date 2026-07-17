@@ -93,6 +93,10 @@ export interface SwarmConfig {
    *  agreement alone (which agrees perfectly on an invented product — the 2/14 conf-93-95-with-0-questions
    *  bug). `unparseable` stays fail-open (the model DID answer). Default OFF. */
   clarity_fail_closed?: boolean;
+  /** Spec-contract verify (#120): after the smoke gate, start the spec's advertised `python3 -m PKG` and curl
+   *  each concrete advertised GET endpoint — a 5xx / 404 / 405 on an advertised path fails the build (red +
+   *  fix), an entry that never binds → unverified. Deterministic, no model. Python web apps for now. Default OFF. */
+  spec_contract?: boolean;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
