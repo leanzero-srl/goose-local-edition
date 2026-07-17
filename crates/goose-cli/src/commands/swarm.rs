@@ -14139,20 +14139,54 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // still inside one long tool call (task files quiet for minutes, but the engine — and this ticker — are
     // alive), so the UI can flag "stopped" quickly without false-positives on legitimate long tasks. The
     // guard aborts the ticker on EVERY run_swarm exit path (Drop), so it never outlives the run.
-    struct HeartbeatGuard(tokio::task::JoinHandle<()>);
+    // The guard also STAMPS THE EXIT REASON into the heartbeat on Drop — the single fact that settles the
+    // "why did the run die" question I chased for a whole day (#121).
+    //
+    // A run dies one of two ways, and they demand OPPOSITE fixes:
+    //   - the run future RETURNS EARLY (an error propagated to the top) — Drop RUNS, so it writes
+    //     "EXITED:<ts>". A reader that sees this + no run_finished knows the engine exited itself.
+    //   - the process is HARD-KILLED (SIGKILL, e.g. kill_on_drop from the parent) — Drop does NOT run, so the
+    //     heartbeat stays frozen at a real RFC3339 timestamp. Absence of the sentinel IS the signal.
+    // PROVEN root cause (verified 6/6 in ~/.local/state/goose/logs/cli): a fleet node drops the HTTP body
+    // mid-stream -> ProviderError::NetworkError("Stream decode error") -> agent.rs:2543 swallows it to the cli
+    // log (never the engine stream). Which of the two exit paths that swallow leads to is what this stamp
+    // records. Ship-on: it only writes a final byte on teardown, changes no build control flow.
+    struct HeartbeatGuard {
+        ticker: tokio::task::JoinHandle<()>,
+        hb: std::path::PathBuf,
+        stopping: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
     impl Drop for HeartbeatGuard {
         fn drop(&mut self) {
-            self.0.abort();
+            // Set the flag BEFORE aborting so a ticker mid-iteration on another worker thread never clobbers
+            // the sentinel — an instrument that occasionally lies is worse than none.
+            self.stopping
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.ticker.abort();
+            let _ = std::fs::write(
+                &self.hb,
+                format!("EXITED:{}", chrono::Utc::now().to_rfc3339()),
+            );
         }
     }
     let _heartbeat = log_path.as_ref().and_then(|p| p.parent()).map(|dir| {
         let hb = dir.join("heartbeat");
-        HeartbeatGuard(tokio::spawn(async move {
-            loop {
-                let _ = std::fs::write(&hb, chrono::Utc::now().to_rfc3339());
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        }))
+        let hb_ticker = hb.clone();
+        let stopping = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping_ticker = stopping.clone();
+        HeartbeatGuard {
+            ticker: tokio::spawn(async move {
+                loop {
+                    if stopping_ticker.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    let _ = std::fs::write(&hb_ticker, chrono::Utc::now().to_rfc3339());
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }),
+            hb,
+            stopping,
+        }
     });
 
     // Progress goes to stderr so stdout carries only the report (clean in --output-format json).
