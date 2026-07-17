@@ -13650,6 +13650,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "repro_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_REPRO_DEMOTES_VERIFIED", load_config().repro_demotes_verified),
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
+            // `review` and `review_repro` also appear in `gates` above, but a campaign screens the LEVERS
+            // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
+            // bedA's screen reported "(not on: 1)" for `review` on a run where review ran, found dead code,
+            // and drove a demote. The echo's whole purpose is completeness.
+            "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
+            "review_repro": swarm_gate_cfg_bundle("GOOSE_SWARM_REVIEW_REPRO", load_config().review_repro, false),
             "user_notes": swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes),
             // FORCED ON by the desktop provider at spawn and unsettable from config — recorded so a
             // "control" arm can never be mistaken for one that had them off.
