@@ -453,6 +453,24 @@ export default function SwarmSettingsSection() {
             >
               <SwarmSwitch checked={!!cfg.spec_wins} onChange={(v) => set({ spec_wins: v })} />
             </Row>
+            <Row
+              label="Seconds goose may spend working out if your spec is clear"
+              hint="Before building, goose checks whether your spec actually pins down what to build — that check is what makes it ask you questions instead of guessing. It runs alongside the planning drafts on the same nodes, and each node handles one request at a time, so on a busy fleet it can wait in the queue until it gives up. When it gives up, goose does not tell you it gave up: it proceeds on how much the drafts agreed with EACH OTHER, which says nothing about whether YOUR spec was clear, and reports high confidence with no questions. Two of fourteen builds did exactly that and invented the whole product. Give it room."
+            >
+              <NumberField
+                value={cfg.clarity_probe_secs}
+                onCommit={(v) => set({ clarity_probe_secs: v ?? 120 })}
+              />
+            </Row>
+            <Row
+              label="How many steps the final whole-app check may take"
+              hint="At the end, one worker builds the app, runs every command your spec advertises, checks the output is right, and fixes what is broken. It gets the same step budget as a worker that owns a single file — and it runs out: in 5 of 9 builds it never reached a verdict, 3 of them stopping mid-check with “I've reached the maximum number of actions I can do without user input”. The build still reported a result. Raise this so the check can finish; each step costs about a minute on local models, so this is the quality-versus-speed knob that matters most."
+            >
+              <NumberField
+                value={cfg.sink_max_turns}
+                onCommit={(v) => set({ sink_max_turns: v ?? 40 })}
+              />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
