@@ -48,6 +48,13 @@ export interface SwarmConfig {
    *  "do NOT guess them" list — and the cap of 3 meant two were guessed anyway, silently. This cap is the
    *  difference between asking about the user's product and inventing part of it. */
   ask_max_q?: number;
+  /** Bind the ask's OPTIONS to the spec: never offer a choice the spec already ruled out, and never ask
+   *  about something the spec fixed. Default OFF.
+   *  MEASURED: a run offered "SQLite / JSON / CSV" against a spec that MANDATED tab-separated storage — every
+   *  option violated the spec, so no click was correct. The spec was in the prompt the whole time; the prompt
+   *  fought it with a spec-independent worked example (storage question -> SQLite/JSON/plain-text) and two
+   *  separate "most-common default FIRST" nudges pulling away from an unusual mandated format. */
+  clarify_spec_bound?: boolean;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
@@ -172,6 +179,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   // a value in GOLDEN that is not listed here is decoration.
   'ask_floor',
   'ask_max_q',
+  'clarify_spec_bound',
   'no_tools_means_ask',
   'grounded_research_only',
   'contract_validate',
@@ -215,6 +223,11 @@ export const GOLDEN: SwarmConfig = {
   // Was 3, and it TRUNCATED with a bare .take(): two of five decisions were invented anyway, silently.
   // A cap that discards user consultation is not a safety limit. 6 covers a spec's realistic open set.
   ask_max_q: 6,
+  // Asking the user is only worth anything if the OPTIONS are answerable. A run offered "SQLite / JSON /
+  // CSV" against a spec that mandated tab-separated storage: five questions asked, and on that one there
+  // was no correct click. Consulting the user with illegal choices is worse than not asking — it launders
+  // a spec violation into "the user chose it".
+  clarify_spec_bound: true,
   // With no lookup tools nothing is lookupable, so an open decision goes to the USER, not to a research
   // round that can only guess. Cost: a pause. It cannot worsen the app — it replaces an invented answer
   // with the user's real one.

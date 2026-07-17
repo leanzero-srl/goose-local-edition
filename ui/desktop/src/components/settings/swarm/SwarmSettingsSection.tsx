@@ -436,6 +436,17 @@ export default function SwarmSettingsSection() {
                 />
               </Row>
             ) : null}
+            {(cfg.ask_floor ?? 0) > 0 ? (
+              <Row
+                label="Only offer answers your spec allows"
+                hint="Stops goose offering you choices your own spec already ruled out. One build asked “SQLite, JSON, or CSV?” for a spec that said storage MUST be tab-separated — every option broke the spec, so there was no right answer to click. It had read the spec; the question prompt just talked it out of it, with a worked example that answered storage questions with SQLite/JSON no matter what, and two nudges toward “the most common choice”. With this on, anything your spec fixes is not up for question, and goose asks about what you actually left open."
+              >
+                <SwarmSwitch
+                  checked={!!cfg.clarify_spec_bound}
+                  onChange={(v) => set({ clarify_spec_bound: v })}
+                />
+              </Row>
+            ) : null}
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
