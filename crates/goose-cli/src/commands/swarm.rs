@@ -301,6 +301,16 @@ pub struct SwarmConfig {
     /// the whole tree; a worker owns 1-3 files. They were given the same budget.
     #[serde(default)]
     pub sink_max_turns: Option<u32>,
+    /// Wall-clock seconds ONE skeleton draft may take. `None` = 480 (unchanged). Clamped [60, 1800].
+    /// GOOSE_SWARM_DRAFT_TIMEOUT_SECS env overrides.
+    ///
+    /// Deliberately its own field rather than reusing `planner_timeout_secs` (900): the tighter per-draft cap
+    /// exists to bound a runaway single generation that the idle-based watchdog cannot see. It was HARDCODED,
+    /// so a fleet that legitimately needs longer could not say so — and MEASURED, 2 of 3 redraft drafts
+    /// returned nothing, leaving "agreement" measured on ONE draft (the inert neutral 60) and the round
+    /// discarded.
+    #[serde(default)]
+    pub draft_timeout_secs: Option<u64>,
     /// How many retarget rounds the loop may spend. `None` keeps the historical default of 2; clamped [0,4].
     /// GOOSE_SWARM_RETARGET_ROUNDS env still overrides.
     ///
@@ -539,6 +549,7 @@ impl Default for SwarmConfig {
             spec_wins: None,
             clarity_probe_secs: None,
             sink_max_turns: None,
+            draft_timeout_secs: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
             cross_module_check: false,
@@ -3496,6 +3507,33 @@ mod tests {
         assert_eq!(sink_max_turns_resolved(Some("abc".into()), None, 40), 40);
     }
 
+    /// THE 480 THAT KILLED 2 OF 3 REDRAFT DRAFTS.
+    ///
+    /// Revealed live by the engine-stderr log on its very first run: "! 2 of 3 plan drafts returned nothing
+    /// (timeout/error/no final_output) — confidence is measured on 1 draft(s)". With one surviving draft,
+    /// plan_agreement returns the INERT NEUTRAL 60 (a placeholder, not a measurement) and the round is
+    /// discarded — a full round of 3-node fleet time spent to learn nothing.
+    #[test]
+    fn the_draft_budget_is_reachable_and_its_default_is_unchanged() {
+        // UNSET on both channels => exactly the hardcoded value it replaces. This is the whole safety claim.
+        assert_eq!(draft_timeout_resolved(None, None), 480);
+
+        // Config reaches it; env beats config.
+        assert_eq!(draft_timeout_resolved(None, Some(900)), 900);
+        assert_eq!(draft_timeout_resolved(Some("600".into()), Some(900)), 600);
+
+        // Clamped BOTH ways, on BOTH channels — the tight per-draft cap exists to bound a runaway generation
+        // the idle watchdog cannot see, so it must not be settable to "forever".
+        assert_eq!(draft_timeout_resolved(Some("99999".into()), None), 1800);
+        assert_eq!(draft_timeout_resolved(None, Some(99999)), 1800);
+        assert_eq!(draft_timeout_resolved(Some("1".into()), None), 60);
+        assert_eq!(draft_timeout_resolved(None, Some(0)), 60);
+
+        // Garbage env falls through to config, then to the default — never to 0.
+        assert_eq!(draft_timeout_resolved(Some("abc".into()), Some(700)), 700);
+        assert_eq!(draft_timeout_resolved(Some("abc".into()), None), 480);
+    }
+
     #[test]
     fn retarget_rounds_clamps() {
         assert_eq!(retarget_rounds_from(None), 2);
@@ -5278,6 +5316,38 @@ fn retarget_action(
         }
         None => RetargetAction::None,
     }
+}
+
+/// Wall-clock budget for ONE skeleton draft. env > config `draft_timeout_secs` > **480**; clamped [60, 1800].
+///
+/// The 480 default is DELIBERATE and is kept: it is a per-draft cap TIGHTER than `planner_timeout_secs` (900),
+/// added because "a runaway SINGLE generation on a slow local model can stream for 20+ min without ever going
+/// idle, hanging the whole run before execute starts" — the idle-based watchdog cannot catch that. Keying
+/// drafts off planner_timeout_secs would silently undo that decision for everyone, so this gets its own field.
+///
+/// What was wrong is that the value was HARDCODED — unreachable from config, so a fleet that needs longer had
+/// no way to say so. MEASURED LIVE, the first thing the new engine-stderr log ever revealed:
+///   "! 2 of 3 plan drafts returned nothing (timeout/error/no final_output) — confidence is measured on 1 draft(s)"
+/// With a single surviving draft `plan_agreement` returns the INERT NEUTRAL 60 — a placeholder, not a
+/// measurement — and the round was then discarded ("backbone round 2 not adopted"). A full round of 3-node
+/// fleet time to learn nothing.
+///
+/// It bites the REDRAFT hardest: that prompt carries the locked backbone AND round 1, so it is the longest
+/// generation of the run, and it was handed the same budget as the first and smallest draft. Whether 480 is
+/// simply too small for a 27B at 262k context is now MEASURABLE instead of unaskable.
+fn draft_timeout_secs() -> u64 {
+    draft_timeout_resolved(
+        std::env::var("GOOSE_SWARM_DRAFT_TIMEOUT_SECS").ok(),
+        load_config().draft_timeout_secs,
+    )
+}
+
+/// The pure precedence, split out so it is testable (the wrapper reads env + config).
+fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
+    env.and_then(|v| v.trim().parse::<u64>().ok())
+        .or(cfg)
+        .unwrap_or(480)
+        .clamp(60, 1800)
 }
 
 /// The turn budget for the `integrate-verify` SINK specifically. `None` = whatever workers get (so the
@@ -7135,6 +7205,9 @@ impl GooseAgentDispatcher {
             let models = draft_models.clone();
             let um0 = user_msg.clone();
             let schema0 = plan_schema.clone();
+            // Resolved ONCE per round, outside the spawn: load_config() reads from disk and this would
+            // otherwise re-read it per draft.
+            let draft_timeout = draft_timeout_secs();
             async move {
                 let mut handles = Vec::new();
                 for i in 0..n {
@@ -7152,8 +7225,22 @@ impl GooseAgentDispatcher {
                         // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
                         // without ever going idle, hanging the whole run before execute starts. On timeout the
                         // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
+                        //
+                        // THIS WAS HARDCODED AT 480s AND IGNORED planner_timeout_secs (Mihai's config: 900).
+                        // MEASURED LIVE 2026-07-17, the first thing the new engine-stderr log ever showed:
+                        //   "! 2 of 3 plan drafts returned nothing (timeout/error/no final_output) —
+                        //    confidence is measured on 1 draft(s)"
+                        // With one draft, plan_agreement returns the INERT NEUTRAL 60 — a placeholder constant,
+                        // not a measurement. So a redraft round can kill 2 of 3 drafts, "measure" agreement on
+                        // the survivor, and be discarded ("backbone round 2 not adopted"). A full round of
+                        // 3-node fleet time, spent to learn nothing.
+                        //
+                        // The redraft is where this bites hardest: its prompt carries the locked backbone AND
+                        // round 1, so it is the LONGEST generation of the run — and it gets the same 480s as
+                        // the first, smallest draft. Same family as the clarity probe's hardcoded 120s and
+                        // retarget_rounds being env-only: a budget the user cannot reach.
                         tokio::time::timeout(
-                            std::time::Duration::from_secs(480),
+                            std::time::Duration::from_secs(draft_timeout),
                             me.run_agent_timed_at(
                                 &model,
                                 sys,
