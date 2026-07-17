@@ -141,7 +141,12 @@ package-ui:
 # signs every build with the SAME stable cert so auto-update validates build-to-build.
 # Usage: just release-fork 1.41.1
 release-fork version:
-    @just release-binary
+    # STAMP THE BUILD SO A RUN CAN SAY WHICH BINARY PRODUCED IT.
+    # The engine's levers_resolved event reports these. Without them it fell back to CARGO_PKG_VERSION,
+    # which is the workspace crate version (1.41.0) and has not moved in 54 desktop releases — so every
+    # run from every build emitted the same string and attributing a result to a build meant trusting a
+    # hand-typed note. A number the engine did not emit is not evidence.
+    GOOSE_BUILD_VERSION={{version}} GOOSE_BUILD_SHA=$(git rev-parse --short HEAD) just release-binary
     @echo "Bumping ui/desktop version to {{version}}..."
     cd ui/desktop && node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="{{version}}";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
     @echo "Building (electron-forge make)..."

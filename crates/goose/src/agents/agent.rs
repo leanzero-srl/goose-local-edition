@@ -1077,7 +1077,10 @@ impl Agent {
         // `path` on a `write`/`edit` FIRST, so the argument record + pre-tool hooks + input span all see the
         // repaired call and the turn isn't wasted on "missing field path". See `repair_swarm_tool_call`.
         if self.repair_swarm_tool_call(&mut tool_call) {
-            tracing::debug!("swarm tool-call repair: injected missing path for {}", tool_call.name);
+            tracing::debug!(
+                "swarm tool-call repair: injected missing path for {}",
+                tool_call.name
+            );
         }
         let input_summary = serde_json::json!({
             "tool": tool_call.name,
