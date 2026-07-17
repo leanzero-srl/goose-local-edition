@@ -61,15 +61,16 @@ pub struct DispatchRequest {
     /// The user's own answers to the clarifying questions, VERBATIM, for injection into the worker prompt.
     /// Empty when the run never asked.
     ///
-    /// This field exists because there was NO channel from the user's answers to a worker at all. The
-    /// engine printed `✓ keeping this plan; clarifications injected into every worker via research findings
-    /// + spec` — and BOTH named channels were false: `research_findings` is only ever passed to
-    /// planner-side calls (it appears ZERO times in the dispatcher's run body), and the amended spec lives
-    /// in `Scheduler::goal`, whose only consumers are the replanner, the judge and the pre-reviewer. Worse,
-    /// the plan is drafted BEFORE the ask, and `ask_replan` defaults off, so `description` is a pre-answer
+    /// This field exists because there was NO channel from the user's answers to a worker at all. The engine
+    /// printed `✓ keeping this plan; clarifications injected into every worker via research findings and
+    /// spec` — and BOTH named channels were false. `research_findings` is only ever passed to planner-side
+    /// calls (it appears ZERO times in the dispatcher's run body), and the amended spec lives in
+    /// `Scheduler::goal`, whose only consumers are the replanner, the judge and the pre-reviewer. Worse, the
+    /// plan is drafted BEFORE the ask, and `ask_replan` defaults off, so `description` is a pre-answer
     /// artifact too. The answers were structurally excluded from BOTH halves of the worker prompt, and only
     /// reached workers as a lossy planner-model paraphrase (pillars/contracts) — which is exactly the
     /// measured "asked for pipe-separated CSV, wrote comma-separated" failure.
+    ///
     /// Empty string => the injected block is empty => byte-identical to before this field existed.
     pub user_decisions: String,
 }
