@@ -166,15 +166,6 @@ pub struct JudgeConfig {
     /// Master gate for task-splitting (M3): when false, `is_split_candidate` never fires and the judge
     /// never proposes a Verdict::Split, regardless of the threshold. Default false until proven live.
     pub split_enabled: bool,
-    /// Extra seconds the blind first-write deadline gets for EACH owned file beyond the first.
-    ///
-    /// The blind deadline below is on TIME-TO-FIRST-BYTE-ON-DISK, and it is flat regardless of how much
-    /// the task must compose before its first write can land. MEASURED (baseline3): `api-app` owned FOUR
-    /// files and was killed at 457s/450s/430s across all three attempts, while `frontend` owned ONE, ran
-    /// LONGER (judged "ok" at 444s elapsed — past the same deadline) and lived, purely because a file was
-    /// already on disk. Runtime was never the discriminator; owned-file count is what the deadline failed
-    /// to account for. 0 = the old flat deadline (default — byte-identical).
-    pub first_write_grace_per_file_secs: u64,
 }
 
 impl Default for JudgeConfig {
@@ -194,9 +185,6 @@ impl Default for JudgeConfig {
             // LLM partition safe end-to-end (M4). The scheduler logic + detection are in place and tested;
             // this is the single master switch that lets a real run produce a Verdict::Split.
             split_enabled: false,
-            // OFF: the flat deadline is what every measured run so far was taken against, so widening it
-            // by default would void the A/B control. Opt in with GOOSE_SWARM_FIRST_WRITE_GRACE.
-            first_write_grace_per_file_secs: 0,
         }
     }
 }
@@ -338,18 +326,17 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // Blind fallback: no file on disk and the clock ran out. Unlike the branch above this one has NO
     // evidence term — it fires on a stopwatch alone, so it is the ONLY branch that can ever reach a worker
     // whose tool_calls are 0. Two corrections to that bluntness, both inert at the default config:
-    //   * the deadline scales with owned_files (a 4-file task cannot land its first byte as fast as a
-    //     1-file one, and the flat deadline charged them the same);
     //   * the hint no longer ASSERTS over-reading. A worker with 0 tool calls has read nothing, and
     //     telling it to "stop exploring/re-reading" is a false diagnosis injected as a supervisor note.
+    // I ALSO TRIED widening this deadline per owned file and REMOVED it. The deadline is on
+    // TIME-TO-FIRST-BYTE, and how many files a task owes in total has nothing to do with when it writes
+    // its FIRST one — the scaling was incoherent on its own terms. MEASURED, the run that would have used
+    // it: a 4-file task wrote its first file at ~140s and was SPLIT, while the task that died at 457s had
+    // made ZERO tool calls. tool_calls is the discriminator, not file count. Widening the clock would only
+    // buy a spiralling worker more silence.
     if !input.owned_files.is_empty()
         && !input.any_owned_written
-        && input.elapsed_secs >= {
-            cfg.min_age_secs.max(420).saturating_add(
-                cfg.first_write_grace_per_file_secs
-                    .saturating_mul(input.owned_files.len().saturating_sub(1) as u64),
-            )
-        }
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
     {
         let read_nothing = input.worker_tool_calls == Some(0);
         return Some(JudgeOutcome {
@@ -438,8 +425,8 @@ mod tests {
     #[test]
     fn blind_deadline_kills_a_zero_tool_call_worker_at_420s_by_default() {
         let cfg = JudgeConfig::default();
-        assert_eq!(cfg.first_write_grace_per_file_secs, 0, "must default OFF");
-        let out = deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).expect("killed, as measured");
+        let out =
+            deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).expect("killed, as measured");
         assert_eq!(out.verdict, Verdict::OverReading);
         // ...and the hint must NOT accuse a worker that has read nothing of re-reading.
         assert!(
@@ -453,28 +440,10 @@ mod tests {
     #[test]
     fn behavioural_branch_still_owns_the_thrashing_worker() {
         let cfg = JudgeConfig::default();
-        let out = deterministic_verdict(&mk_no_write(1, 300, 16), &cfg).expect("thrashing is caught");
+        let out =
+            deterministic_verdict(&mk_no_write(1, 300, 16), &cfg).expect("thrashing is caught");
         assert_eq!(out.verdict, Verdict::OverReading);
         assert!(out.hint.contains("taken many actions"), "{}", out.hint);
-    }
-
-    /// THE FIX. The deadline is on TIME-TO-FIRST-BYTE-ON-DISK and was flat regardless of how much the task
-    /// must compose. With the grace on, a 4-file task gets 420 + 3*180 = 960s while a 1-file task still
-    /// gets 420 — which is exactly the asymmetry the measurement showed (1-file `frontend` was judged "ok"
-    /// at 444s and lived; 4-file `api-app` died at 430-457s).
-    #[test]
-    fn first_write_grace_scales_the_deadline_by_owned_file_count() {
-        let cfg = JudgeConfig {
-            first_write_grace_per_file_secs: 180,
-            ..JudgeConfig::default()
-        };
-        // 4 files -> 960s. The 457s that actually killed api-app is now survivable.
-        assert!(deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).is_none());
-        assert!(deterministic_verdict(&mk_no_write(4, 959, 0), &cfg).is_none());
-        assert!(deterministic_verdict(&mk_no_write(4, 960, 0), &cfg).is_some());
-        // 1 file -> unchanged at 420s: the lever widens the deadline only where the task is genuinely bigger.
-        assert!(deterministic_verdict(&mk_no_write(1, 419, 0), &cfg).is_none());
-        assert!(deterministic_verdict(&mk_no_write(1, 420, 0), &cfg).is_some());
     }
 
     #[test]
