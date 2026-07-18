@@ -501,6 +501,24 @@ export default function SwarmSettingsSection() {
                 onChange={(v) => set({ spec_contract: v })}
               />
             </Row>
+            <Row
+              label="Keep the plan you just answered instead of re-planning it away"
+              hint="When your spec leaves things open, goose asks you a few questions, and your answers are supposed to raise its confidence in the plan. But if re-planning is on, goose then throws that answered plan away and drafts a fresh one — and the fresh draft asks itself the same questions you already answered, so its confidence collapses and it builds a WORSE plan than the one you improved. Measured: a plan reached 85, was re-drafted, and shipped at 52 — below the bar the questions existed to clear. With this on, once your answers lift the plan to the bar, goose keeps THAT plan. Switching programming language, or defining a product that was blank before, still re-plans — those genuinely make the old plan wrong."
+            >
+              <SwarmSwitch
+                checked={!!cfg.answers_win_floor}
+                onChange={(v) => set({ answers_win_floor: v })}
+              />
+            </Row>
+            <Row
+              label="Let the fleet build independent modules at the same time"
+              hint="Some planner models chain the modules one behind another — module B waits for module A, C waits for B — even when B only needs A's function SIGNATURES, which goose already hands every worker up front. That chain forces the fleet to build one module at a time: on a three-machine fleet, two sit idle (measured on a Rust build, 1 of 3 busy). With this on, goose drops those needless waits so every independent module starts at once, and keeps only the final whole-app check waiting on all of them. A test that must run against its own module is left alone. Needs the interface-sharing step on, which it is by default."
+            >
+              <SwarmSwitch
+                checked={!!cfg.relax_contracted_deps}
+                onChange={(v) => set({ relax_contracted_deps: v })}
+              />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
