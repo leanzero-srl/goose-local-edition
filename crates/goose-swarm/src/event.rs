@@ -36,6 +36,13 @@ pub enum SwarmEvent {
     SchedulerStuck {
         remaining: usize,
     },
+    /// The scheduler reached a task boundary and is HOLDING because the pause sentinel exists. This is the
+    /// in-process pause (distinct from the crash-resume `run_resumed`): in-flight tasks were left to finish
+    /// and no new ready task is claimed. Emitted on the transition into the hold, so the log means "the engine
+    /// actually reached the hold", not merely "the file exists".
+    RunPaused,
+    /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
+    RunUnpaused,
     /// A dynamic replan round: `added` are the spliced task ids; `stopped` means the replanner
     /// declined (empty/invalid) and no further replans will run.
     Replanned {

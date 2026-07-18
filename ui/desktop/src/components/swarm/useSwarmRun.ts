@@ -403,6 +403,12 @@ export interface SwarmRunState {
    *  with no heartbeat file. Lets the panel detect a killed engine in seconds without false "stopped" during
    *  a legitimately long tool call (which leaves task files quiet but keeps the heartbeat ticking). */
   heartbeat: number | null;
+  /** True while the user has REQUESTED a pause (the .swarm/pause sentinel exists) — the optimistic "Pausing…"
+   *  signal. A request is not a fact: it flips the moment the button is clicked, before the engine reacts. */
+  pauseRequested: boolean;
+  /** ENGINE-TRUTH that the scheduler actually reached the hold (last run_paused seen, no later run_unpaused).
+   *  Only this earns the word "Held/Paused" on screen — never the sentinel alone. */
+  held: boolean;
   loading: boolean;
 }
 
@@ -431,6 +437,8 @@ const EMPTY: SwarmRunState = {
   clarify: null,
   mtime: null,
   heartbeat: null,
+  pauseRequested: false,
+  held: false,
   loading: true,
 };
 
@@ -1495,6 +1503,14 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           overview,
         } = buildActivity(data.events);
         lastRunId.current = data.runId;
+        // Engine-truth hold state: replay the pause events; the last run_paused with no later run_unpaused
+        // means the scheduler actually reached the hold. This — never the sentinel stat — earns "Held".
+        const held = data.events.reduce((h: boolean, e) => {
+          const ev = (e as { event?: string }).event;
+          if (ev === 'run_paused') return true;
+          if (ev === 'run_unpaused') return false;
+          return h;
+        }, false);
         setState({
           present: true,
           runId: data.runId,
@@ -1520,6 +1536,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           clarify: data.clarify,
           mtime: data.mtime,
           heartbeat: data.heartbeat,
+          pauseRequested: !!data.pauseRequested,
+          held,
           loading: false,
         });
       } catch {

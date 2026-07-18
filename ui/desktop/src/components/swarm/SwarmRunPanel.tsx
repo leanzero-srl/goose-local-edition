@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
-  Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
+  Search, ListChecks, Play, Pause, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
   Circle, Minus, ListTodo, Terminal, FilePlus2, FilePenLine, Hammer,
 } from 'lucide-react';
@@ -1902,6 +1902,42 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
               </Tip>
             ) : null}
           </span>
+          {run.inProgress && !ended && !clarifyPending && workingDir ? (
+            // PAUSE / RESUME — hold the build at the next task boundary (in-flight work finishes, nothing is
+            // lost) and resume re-running nothing. Amber (not red) + a ‖/▶ glyph so it never reads as the
+            // terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
+            <button
+              onClick={() => window.electron.swarmSetPaused(workingDir, !run.pauseRequested)}
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
+              style={{
+                borderRadius: 2,
+                borderColor: AMBER,
+                color: run.pauseRequested ? '#fff' : AMBER,
+                backgroundColor: run.pauseRequested ? AMBER : 'transparent',
+              }}
+              title={
+                !run.pauseRequested
+                  ? 'Hold at the next task boundary — in-flight work finishes, nothing is lost'
+                  : run.held
+                    ? 'Resume the build (re-runs nothing)'
+                    : 'Pausing — finishing the current task, then holding. Click to resume.'
+              }
+            >
+              {!run.pauseRequested ? (
+                <>
+                  <Pause size={11} /> Pause
+                </>
+              ) : run.held ? (
+                <>
+                  <Play size={11} /> Resume
+                </>
+              ) : (
+                <>
+                  <Loader2 size={11} className="animate-spin" /> Pausing…
+                </>
+              )}
+            </button>
+          ) : null}
           <button
             onClick={() => setMode(nextMode[mode])}
             className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors capitalize"

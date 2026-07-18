@@ -2379,6 +2379,17 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       /* no heartbeat file (older run) */
     }
 
+    // Pause sentinel (.swarm/pause): its existence means the user REQUESTED a hold. This is the optimistic
+    // "Pausing…" signal; the engine-truth "Held" comes from the run_paused event in `events`. A request is not
+    // a fact — the panel must show "Held" only off the event, never off this stat alone.
+    let pauseRequested = false;
+    try {
+      await fs.stat(path.join(swarmDir, 'pause'));
+      pauseRequested = true;
+    } catch {
+      /* no pause sentinel -> not paused */
+    }
+
     return {
       runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
       mtime: freshest,
@@ -2386,6 +2397,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       events,
       activity,
       clarify,
+      pauseRequested,
     };
   } catch {
     return null;
@@ -2511,6 +2523,24 @@ ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string
     return true;
   } catch (error) {
     console.error('Error queueing swarm note:', error);
+    return false;
+  }
+});
+
+// In-process PAUSE: create/remove the <workingDir>/.swarm/pause sentinel. The scheduler holds at the next task
+// boundary while it exists and resumes (re-running nothing) when it is removed. Best-effort like swarm-add-note.
+ipcMain.handle('swarm-set-paused', async (_event, workingDir: string, paused: boolean) => {
+  try {
+    const f = path.join(expandTilde(workingDir), '.swarm', 'pause');
+    if (paused) {
+      await fs.mkdir(path.dirname(f), { recursive: true });
+      await fs.writeFile(f, '', { encoding: 'utf8' });
+    } else {
+      await fs.rm(f, { force: true });
+    }
+    return true;
+  } catch (error) {
+    console.error('Error setting swarm pause:', error);
     return false;
   }
 });
