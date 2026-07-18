@@ -372,6 +372,17 @@ pub struct SwarmConfig {
     /// OFF by default. GOOSE_SWARM_RETARGET_STALL_GUARD env overrides.
     #[serde(default)]
     pub retarget_stall_guard: bool,
+
+    /// #129: when the user answers the clarify ask and the DETERMINISTIC rescore lifts the plan to/above
+    /// `ask_floor`, KEEP that answered plan instead of letting a NON-structural `ask_replan` re-draft it from
+    /// scratch (a fresh weak-fleet draft re-runs the spec-clarity probe, which re-lists the already-answered
+    /// decisions so clarity collapses — measured live nf-hexohm: rescored to 85, re-planned, shipped 52, BELOW
+    /// the floor of 85 the ask existed to satisfy). A language flip or a product first defined by the answer is
+    /// STRUCTURAL (wrong-language / placeholder skeleton) and STILL forces a re-plan. A rescore still below the
+    /// floor is pinned as the monotonic `best_plan` (a floor to beat) and re-drafted. Default OFF.
+    /// GOOSE_SWARM_ANSWERS_WIN_FLOOR env overrides.
+    #[serde(default)]
+    pub answers_win_floor: bool,
     /// After the build, statically check that no module reads a field off a sibling's class that the class
     /// does not define. THE check for the drift CONTRACTS cannot stop: a real run shipped api.py reading
     /// `body.group_id` while models.py's ExpenseCreate never declared it — a 500 on every POST, reported as
@@ -484,6 +495,19 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CONTRACT_VALIDATE env overrides.
     #[serde(default)]
     pub contract_validate: bool,
+
+    /// #130 backstop: flatten the architect's false-serialization dependency CHAINS into a FLAT FAN. CONTRACTS
+    /// freezes a signature-only interface for EVERY module into every worker BEFORE it writes code, and no
+    /// subtask compiles its own files — the per-worker Rust gate no-ops without Cargo.toml and only rejects
+    /// OWNED-file errors, so the crate is built only at the integrate-verify sink. A module that merely IMPORTS
+    /// a sibling already has its signatures and never needs that sibling's FILES at its own build step, so a
+    /// `depends_on` a chain-planning architect added for a type/import need is FALSE serialization that
+    /// indegree-gates the fleet to one buildable node at a time (measured: nf-hexohm, 1 of 3 busy). When ON,
+    /// every non-test CODE module becomes a root and integrate-verify stays the single join; tests and edges
+    /// INTO the sink are never touched. Only meaningful with CONTRACTS on (the premise it relies on). OFF by
+    /// default = byte-identical. GOOSE_SWARM_RELAX_CONTRACTED_DEPS env overrides.
+    #[serde(default)]
+    pub relax_contracted_deps: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -592,6 +616,7 @@ impl Default for SwarmConfig {
             ask_replan: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
+            answers_win_floor: false,
             cross_module_check: false,
             ask_max_q: None,
             review_repro: None,
@@ -610,6 +635,7 @@ impl Default for SwarmConfig {
             persona: false,
             user_notes: false,
             contract_validate: false,
+            relax_contracted_deps: false,
         }
     }
 }
@@ -1901,9 +1927,173 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
     relaxed
 }
 
+/// GOOSE_SWARM_RELAX_CONTRACTED_DEPS backstop (#130). CONTRACTS injects a FROZEN signature-only interface for
+/// every module into every worker BEFORE it writes code, and no subtask compiles its own files — the per-worker
+/// Rust gate (`rust_compile_error`) no-ops without Cargo.toml and only rejects errors located in a worker's OWN
+/// files, so the whole crate is built only at the integrate-verify sink. A module that merely IMPORTS a sibling
+/// therefore already has its signatures and never needs that sibling's FILES to exist at its own build step; a
+/// `depends_on` a chain-planning architect added for a type/import need is FALSE serialization that idles the
+/// fleet one node at a time. This drops those edges: for every non-sink, non-test subtask it removes every dep
+/// EXCEPT a dep on the sink itself (never legally present — that would be a cycle), making each module a root
+/// while integrate-verify keeps all its incoming edges as the single compile/test join. Test subtasks are left
+/// UNTOUCHED — a per-module test RUNS against its module and the signature-only contract cannot satisfy that.
+/// Removing edges can never cycle or orphan a task (files live in a shared tree, the sink joins everyone), so
+/// the DAG stays valid by construction. Returns the number of edges relaxed. Pure — unit-tested without a model.
+fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    // is_test_file takes a BASE name (the Python arm checks the `test_` prefix), so pass base_of, NOT the full
+    // path — the sibling relax_test_module_deps passes the full path and is silently wrong for `dir/test_x.py`.
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        id.contains("test")
+            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // Modules whose upstream edges we may flatten: every subtask that is neither the sink nor a test.
+    let relax_ids: std::collections::HashSet<String> = arr
+        .iter()
+        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
+        .map(id_of)
+        .collect();
+    if relax_ids.is_empty() {
+        return 0;
+    }
+    let mut relaxed = 0;
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if !relax_ids.contains(&id_of(s)) {
+                continue; // never touch the sink or a test subtask
+            }
+            if let Some(deps) = s.get_mut("depends_on").and_then(|d| d.as_array_mut()) {
+                let before = deps.len();
+                // Keep only a dep on the real join (a cycle in practice, so this empties module deps); every
+                // other module->module edge is the false serialization the frozen contract already satisfies.
+                deps.retain(|d| d.as_str() == Some("integrate-verify"));
+                relaxed += before - deps.len();
+            }
+        }
+    }
+    relaxed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answers_win_floor_keeps_answered_plan_only_when_gated_and_non_structural() {
+        use PostAnswerAction::*;
+        // #129 nf-hexohm: gate ON, ask_replan the SOLE trigger, rescored 85 >= floor 85 -> keep (legacy shipped 52).
+        assert_eq!(post_answer_action(true, true, false, 85, 85), KeepRescored);
+        assert_eq!(post_answer_action(true, true, false, 86, 85), KeepRescored);
+        // Gate ON, still below floor -> pin as the best_plan floor and re-draft to beat it.
+        assert_eq!(
+            post_answer_action(true, true, false, 52, 85),
+            FloorAndRedraft
+        );
+        assert_eq!(
+            post_answer_action(true, true, false, 84, 85),
+            FloorAndRedraft
+        );
+        // Gate ON but STRUCTURAL -> never freeze a wrong-language/placeholder skeleton, even above the floor.
+        assert_eq!(post_answer_action(true, true, true, 90, 85), Replan);
+        assert_eq!(post_answer_action(true, false, true, 90, 85), Replan);
+        // Gate ON, ask_replan off, non-structural -> unchanged reuse path.
+        assert_eq!(post_answer_action(true, false, false, 40, 85), KeepReuse);
+        // Gate OFF is byte-identical to legacy: (ask_replan || structural) => Replan, else KeepReuse.
+        assert_eq!(post_answer_action(false, true, false, 85, 85), Replan);
+        assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
+        assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
+        assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn relax_contracted_deps_flattens_chain_keeps_sink_and_tests() {
+        fn deps(plan: &serde_json::Value, id: &str) -> String {
+            plan["subtasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == id)
+                .unwrap()["depends_on"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|d| d.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+        // The measured nf-hexohm serial chain (core-types owns Cargo.toml) plus a per-module test that
+        // genuinely runs against its module.
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core-types","depends_on":[],"files":["Cargo.toml","core/src/lib.rs","core/src/board.rs"]},
+                {"id":"core-eval","depends_on":["core-types"],"files":["core/src/resistance.rs","core/src/eval.rs"]},
+                {"id":"core-search","depends_on":["core-eval"],"files":["core/src/search.rs","core/src/solve.rs"]},
+                {"id":"cli","depends_on":["core-search"],"files":["src/main.rs"]},
+                {"id":"test-core-eval","depends_on":["core-eval"],"files":["core/src/eval_test.rs"]},
+                {"id":"integrate-verify","depends_on":["core-types","core-eval","core-search","cli","test-core-eval"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = relax_contracted_module_deps(&mut plan, TargetLang::Rust);
+        // every code module is now a root — the fleet can build all of them at once (no Cargo.toml ordering:
+        // the per-worker gate no-ops without it and the sink owns the only real compile)
+        assert_eq!(deps(&plan, "core-types"), "");
+        assert_eq!(deps(&plan, "core-eval"), "");
+        assert_eq!(deps(&plan, "core-search"), "");
+        assert_eq!(deps(&plan, "cli"), "");
+        // the per-module test is UNTOUCHED (signature-only contract cannot let it RUN against the module)
+        assert_eq!(deps(&plan, "test-core-eval"), "core-eval");
+        // the join still waits on everyone — compile/verify happens here, correctness preserved
+        assert_eq!(
+            deps(&plan, "integrate-verify"),
+            "core-types,core-eval,core-search,cli,test-core-eval"
+        );
+        // dropped exactly: core-eval<-core-types, core-search<-core-eval, cli<-core-search
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn relax_contracted_deps_noop_on_flat_fan() {
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["a.py"]},
+                {"id":"b","depends_on":[],"files":["b.py"]},
+                {"id":"integrate-verify","depends_on":["a","b"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let before = plan.clone();
+        let n = relax_contracted_module_deps(&mut plan, TargetLang::Python);
+        assert_eq!(n, 0, "already a fan -> nothing to relax");
+        assert_eq!(plan, before, "flat-fan plan left byte-identical");
+    }
 
     // ---- QUEUED USER NOTES ------------------------------------------------------------------
     #[test]
@@ -5669,6 +5859,45 @@ fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
     }
 }
 
+/// #129: the post-answer re-plan decision under GOOSE_SWARM_ANSWERS_WIN_FLOOR. PURE — no env, no I/O — so
+/// it is unit-testable and foldable into the golden formula. `structural` = a language flip or a product
+/// first defined by the answer (those invalidate the drafted skeleton and ALWAYS re-plan). `post_conf` is
+/// the DETERMINISTICALLY-rescored final confidence; `floor` is the ask floor. With `answers_win_floor`
+/// false this reduces EXACTLY to the prior rule: `ask_replan || structural => Replan, else KeepReuse`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostAnswerAction {
+    /// Rescore met the floor and nothing structural changed: keep the answered plan (fall through to the
+    /// break and ship the rescored plan_conf).
+    KeepRescored,
+    /// Rescore is still below the floor: pin the answered plan as the monotonic `best_plan` floor and
+    /// re-draft to try to beat it. The floor-to-beat only functions when retarget is on (see caller).
+    FloorAndRedraft,
+    /// Re-plan from scratch: the legacy `continue`, and the forced path for any structural trigger.
+    Replan,
+    /// No trigger fired: keep this plan and inject the answers to the workers verbatim (legacy reuse).
+    KeepReuse,
+}
+
+fn post_answer_action(
+    answers_win_floor: bool,
+    ask_replan: bool,
+    structural: bool,
+    post_conf: u8,
+    floor: u8,
+) -> PostAnswerAction {
+    if answers_win_floor && ask_replan && !structural {
+        if post_conf >= floor {
+            PostAnswerAction::KeepRescored
+        } else {
+            PostAnswerAction::FloorAndRedraft
+        }
+    } else if ask_replan || structural {
+        PostAnswerAction::Replan
+    } else {
+        PostAnswerAction::KeepReuse
+    }
+}
+
 fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
     if pc.agreement.is_none() && pc.spec_clarity.is_none() {
         return None;
@@ -7321,6 +7550,11 @@ impl GooseAgentDispatcher {
             subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
             needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
             needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
+            A frozen signature-only interface for EVERY module is injected into every worker BEFORE it writes code, so a module that \
+            merely IMPORTS another's types or functions ALREADY HAS them and does NOT need to wait — do NOT add a `depends_on` for a \
+            type/interface/import need. Declare `depends_on` ONLY for a genuine build-ORDER need the frozen interface cannot satisfy \
+            (rare). Default to a FLAT FAN: make every module a root with no deps, and let the final integrate/verify subtask be the \
+            single join that depends on them — a chain (A->B->C->D) leaves the fleet idle one node at a time; a fan keeps every node busy.\n\
             MODULAR ARCHITECTURE (hard rule) — keep FILES small and single-responsibility. A subtask may (and for any non-trivial \
             module SHOULD) own SEVERAL small files, ONE concern each (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a \
             models subtask owns `user.py`+`account.py`), NOT one big catch-all file. NEVER assign a single monolithic file that does \
@@ -7791,6 +8025,24 @@ impl GooseAgentDispatcher {
             if relaxed > 0 {
                 eprintln!(
                     "  · parallel-tests: relaxed {relaxed} stray cli/entry dep(s) off per-module test subtask(s)"
+                );
+            }
+        }
+        // GOOSE_SWARM_RELAX_CONTRACTED_DEPS (#130): flatten false-serialization chains between CODE modules into
+        // a flat fan. The frozen contract already gives every importer its siblings' signatures and nothing
+        // compiles until the integrate-verify sink, so a module never needs another's FILES at its own build
+        // step. Every non-test module becomes a root; the sink stays the single join; tests are left untouched.
+        // Gated additionally on CONTRACTS being ON (the premise it relies on). OFF -> block skipped, v untouched.
+        if swarm_gate("GOOSE_SWARM_CONTRACTS", true)
+            && swarm_gate_cfg(
+                "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
+                load_config().relax_contracted_deps,
+            )
+        {
+            let relaxed = relax_contracted_module_deps(&mut v, lang);
+            if relaxed > 0 {
+                eprintln!(
+                    "  \u{b7} relax-contracted-deps: flattened {relaxed} inter-module dep edge(s) into roots — the frozen contract satisfies the imports; integrate-verify remains the single join"
                 );
             }
         }
@@ -15031,6 +15283,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
     let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
+    // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default OFF): after the user answers the clarify ask and the
+    // deterministic rescore lifts the plan to/over the floor, keep THAT plan instead of letting a
+    // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
+    // outside the loop, same env>config>default precedence as the sibling gates.
+    let answers_win_floor = swarm_gate_cfg("GOOSE_SWARM_ANSWERS_WIN_FLOOR", cfg.answers_win_floor);
     // RESUME (GOOSE_SWARM_RESUME=1, default OFF). Reuse the last run's PLAN and skip research + planning.
     //
     // Mihai lost ~2.5h twice in one day to a machine going off mid-run, and his scope was explicit: "don't
@@ -15603,29 +15860,86 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // product. Safe: the ask fires before any worker writes a file, so the amended spec
                             // (not stale files) drives the re-plan.
                             let product_defined_by_answer = !plan_conf.product_specified;
-                            if ask_replan || lang_changed || product_defined_by_answer {
-                                eprintln!(
-                                    "  {} re-planning with the user's clarifications{}",
-                                    style("↻").cyan(),
-                                    if lang_changed {
-                                        format!(" (target language → {lang_after:?})")
-                                    } else if product_defined_by_answer {
-                                        " (product now defined by your answer)".to_string()
-                                    } else {
-                                        String::new()
+                            // #129 (GOOSE_SWARM_ANSWERS_WIN_FLOOR, default OFF, byte-identical when OFF): the
+                            // deterministic rescore above may already have lifted this plan to/over the floor the
+                            // ask existed to satisfy. A NON-structural ask_replan then re-drafts from scratch and
+                            // the fresh weak-fleet clarity probe re-lists the just-answered decisions, so a WORSE
+                            // plan ships below the floor (nf-hexohm: rescored 85 == floor 85, re-plan shipped 52).
+                            // A language flip or a newly-defined product IS structural and STILL forces a re-plan.
+                            // When OFF, post_answer_action reduces to `ask_replan || structural ? Replan : KeepReuse`
+                            // — byte-identical to the original `if ask_replan || lang_changed ||
+                            // product_defined_by_answer { continue }` + keep notice.
+                            let structural = lang_changed || product_defined_by_answer;
+                            let post_conf = plan_conf.final_conf.unwrap_or(0);
+                            match post_answer_action(
+                                answers_win_floor,
+                                ask_replan,
+                                structural,
+                                post_conf,
+                                floor,
+                            ) {
+                                PostAnswerAction::FloorAndRedraft => {
+                                    // Still below the floor after answering: pin THIS rescored plan as the
+                                    // monotonic best so a regressing re-draft can never ship below it, then
+                                    // re-draft to beat it. The break's best_plan.take() is gated on retarget_on,
+                                    // so this guard mirrors it — without retarget the floor-to-beat cannot be
+                                    // honored and this degrades to a plain re-plan (no worse than legacy).
+                                    if retarget_on {
+                                        best_plan = Some((pj.clone(), plan_conf.clone()));
                                     }
-                                );
-                                continue;
-                            }
-                            // This line used to claim the answers were "injected into every worker via
-                            // research findings + spec". Both were false — research_findings never leaves
-                            // the planner, and the amended spec stops at Scheduler::goal. It is true now,
-                            // and only because DispatchRequest.user_decisions exists; say what actually
-                            // carries them.
-                            eprintln!(
+                                    sink.write_value(serde_json::json!({
+                                        "event": "answers_win_floor",
+                                        "action": "floor_and_redraft",
+                                        "post_conf": post_conf,
+                                        "floor": floor,
+                                    }));
+                                    eprintln!(
+                                        "  {} re-planning to beat your answered plan (confidence {post_conf}/100 < floor {floor}); kept as the floor to beat",
+                                        style("↻").cyan()
+                                    );
+                                    continue;
+                                }
+                                PostAnswerAction::Replan => {
+                                    eprintln!(
+                                        "  {} re-planning with the user's clarifications{}",
+                                        style("↻").cyan(),
+                                        if lang_changed {
+                                            format!(" (target language → {lang_after:?})")
+                                        } else if product_defined_by_answer {
+                                            " (product now defined by your answer)".to_string()
+                                        } else {
+                                            String::new()
+                                        }
+                                    );
+                                    continue;
+                                }
+                                PostAnswerAction::KeepRescored => {
+                                    // Clears the floor: keep the rescored plan. best_plan was nulled when the ask
+                                    // was answered (or was never set without retarget), so the break below ships
+                                    // THIS plan_conf (the 85), not a fresh draft.
+                                    sink.write_value(serde_json::json!({
+                                        "event": "answers_win_floor",
+                                        "action": "keep_rescored",
+                                        "post_conf": post_conf,
+                                        "floor": floor,
+                                    }));
+                                    eprintln!(
+                                        "  {} keeping the plan you just answered — confidence {post_conf}/100 ≥ floor {floor}; not re-drafting it away (GOOSE_SWARM_ANSWERS_WIN_FLOOR)",
+                                        style("✓").green()
+                                    );
+                                }
+                                PostAnswerAction::KeepReuse => {
+                                    // This line used to claim the answers were "injected into every worker via
+                                    // research findings + spec". Both were false — research_findings never leaves
+                                    // the planner, and the amended spec stops at Scheduler::goal. It is true now,
+                                    // and only because DispatchRequest.user_decisions exists; say what actually
+                                    // carries them.
+                                    eprintln!(
                         "  {} keeping this plan; your decisions go to every worker VERBATIM as a binding block (set GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)",
                         style("✓").green()
                     );
+                                }
+                            }
                         }
                     }
                 }
