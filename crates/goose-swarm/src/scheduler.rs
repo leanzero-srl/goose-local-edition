@@ -1588,6 +1588,9 @@ pub struct Scheduler {
     judge_cfg: JudgeConfig,
     pre_reviewer: Option<Arc<dyn PreReviewer>>,
     speculation_enabled: bool,
+    /// When set, the scheduler HOLDS at task boundaries while this file exists (the in-process pause).
+    /// None (default) -> pause is inert and the loop is byte-identical to before.
+    pause_file: Option<std::path::PathBuf>,
 }
 
 impl Scheduler {
@@ -1602,6 +1605,7 @@ impl Scheduler {
             judge_cfg: JudgeConfig::default(),
             pre_reviewer: None,
             speculation_enabled: false,
+            pause_file: None,
         }
     }
 
@@ -1634,6 +1638,14 @@ impl Scheduler {
     /// Attach an event sink for structured observability (goose-cli writes JSONL through it).
     pub fn with_sink(mut self, sink: Arc<dyn EventSink>) -> Self {
         self.sink = sink;
+        self
+    }
+
+    /// Enable the in-process PAUSE hold: while `path` exists the scheduler holds at task boundaries
+    /// (claims no new ready task; in-flight tasks finish). Deleting the file resumes with zero re-runs.
+    /// Not called -> `pause_file` stays None -> pause is inert and the loop is byte-identical.
+    pub fn with_pause_file(mut self, path: std::path::PathBuf) -> Self {
+        self.pause_file = Some(path);
         self
     }
 
@@ -1733,9 +1745,28 @@ impl Scheduler {
             spec_count: 0,
         }));
         let notify = Arc::new(Notify::new());
+        // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
+        let mut was_paused = false;
 
         loop {
-            let assignments = { state.lock().await.pick_assignments() };
+            // In-process PAUSE hold: while the sentinel exists, claim NO new ready task. Already-spawned
+            // in-flight futures (below) run to completion — the hold is BETWEEN tasks, so it can never
+            // corrupt a half-written file. Cheap Path::exists per wake; inert when pause_file is None.
+            let paused = self.pause_file.as_ref().is_some_and(|p| p.exists());
+            if paused != was_paused {
+                let s = state.lock().await;
+                s.sink.emit(if paused {
+                    &SwarmEvent::RunPaused
+                } else {
+                    &SwarmEvent::RunUnpaused
+                });
+                was_paused = paused;
+            }
+            let assignments = if paused {
+                Vec::new()
+            } else {
+                state.lock().await.pick_assignments()
+            };
             let dispatched_now = !assignments.is_empty();
             for a in assignments {
                 let dispatcher = dispatcher.clone();
@@ -1769,9 +1800,12 @@ impl Scheduler {
                 if s.all_terminal() {
                     return Ok(s.build_report());
                 }
-                if !dispatched_now && s.total_in_flight() == 0 {
+                if !paused && !dispatched_now && s.total_in_flight() == 0 {
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
+                    // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can
+                    // drain to zero in-flight — without this guard that state trips the stuck-bail and turns
+                    // Pause into an accidental terminate. Held + drained must idle until the sentinel clears.
                     let remaining = s
                         .dag
                         .tasks
@@ -1789,7 +1823,7 @@ impl Scheduler {
             // exclusive with the stuck-bail above (which needs in_flight == 0). The state lock is
             // released across the async planner call; completions fire meanwhile and splice_specs
             // re-validates against the now-current DAG.
-            if self.replanner.is_some() {
+            if !paused && self.replanner.is_some() {
                 let ctx = {
                     let mut s = state.lock().await;
                     if !dispatched_now
@@ -1861,7 +1895,7 @@ impl Scheduler {
             // Idle-model judge: when a node would otherwise sit idle while tasks are still in flight,
             // inspect the longest-running worker and possibly kill + re-dispatch a stuck one. At most one
             // judge runs at a time; the whole block is skipped when no judge is attached.
-            if let Some(judge) = &self.judge {
+            if let Some(judge) = self.judge.as_ref().filter(|_| !paused) {
                 let target = {
                     let mut s = state.lock().await;
                     // The judge is NOT capacity-bounded: it must fire even on a SATURATED fleet to kill a
@@ -1955,7 +1989,7 @@ impl Scheduler {
             // pre-review is exhausted, put an otherwise-idle node on a READ-ONLY whole-tree dimension review.
             // Findings accumulate in the dispatcher; run_swarm drains + re-verifies them after the sink. The
             // IdleSlotGuard releases the claimed device. Off by default (pick_sink_review returns None).
-            if let Some(pr) = &self.pre_reviewer {
+            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
                 // Fill ALL currently-free nodes this tick (not one) — pick_sink_review claims a device each
                 // call and returns None once none is free, so this saturates the idle nodes during the sink
                 // instead of leaving them idle between the ~15s tick and a ~90s review finishing.
@@ -1981,7 +2015,7 @@ impl Scheduler {
             // task on a free device — first-to-finish wins. Gated on spare capacity beyond the running idle
             // jobs (so it never oversubscribes) and no ready work. OFF by default -> the block is skipped and
             // pick_speculation_target / spec_* are never touched (byte-identical).
-            if self.speculation_enabled {
+            if !paused && self.speculation_enabled {
                 let target = {
                     let mut s = state.lock().await;
                     // Bounds: no ready work, spare capacity beyond the running idle jobs, and a global cap on
@@ -2019,7 +2053,11 @@ impl Scheduler {
             // zero output) and the terminal-fail decision act within ~15s of tripping, not minutes.
             // tokio::Notify stores one permit, so a completion that fires before this await is not lost.
             // With no judge this is an effectively-infinite wait: byte-identical to before.
-            let tick = if self.judge.is_some()
+            let tick = if paused {
+                // While held, re-poll the pause sentinel ~every 2s so Resume is detected promptly even when
+                // there are no in-flight completions left to wake the loop.
+                std::time::Duration::from_secs(2)
+            } else if self.judge.is_some()
                 || self.pre_reviewer.is_some()
                 || self.speculation_enabled
             {

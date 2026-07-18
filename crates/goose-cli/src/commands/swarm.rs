@@ -16273,6 +16273,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // `devices`, so the completion fix step can fan one fix per failing file across all models.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
+    // In-process PAUSE: the desktop Pause button writes <working_dir>/.swarm/pause; the scheduler then holds
+    // at the next task boundary (in-flight work finishes, nothing is claimed) and resumes — re-running NOTHING
+    // — when the file is deleted. Wired unconditionally: with no sentinel the hold never fires, so this is
+    // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
+    scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
     if replan_on && cfg.max_replans > 0 {
         eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
