@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Brain,
   Clock,
   FileText,
   History,
@@ -26,6 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'home', path: '/', label: 'New Chat', icon: MessageSquarePlus },
   { id: 'recipes', path: '/recipes', label: 'Recipes', icon: FileText },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
+  { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
   { id: 'apps', path: '/apps', label: 'Apps', icon: AppWindow },
   { id: 'scheduler', path: '/schedules', label: 'Scheduler', icon: Clock },
   { id: 'loop', path: '/loop', label: 'Loop', icon: Repeat },
@@ -55,6 +57,10 @@ const navItemMessages = defineMessages({
   skills: {
     id: 'navigation.itemSkills',
     defaultMessage: 'Skills',
+  },
+  memories: {
+    id: 'navigation.itemMemories',
+    defaultMessage: 'Memories',
   },
   apps: {
     id: 'navigation.itemApps',

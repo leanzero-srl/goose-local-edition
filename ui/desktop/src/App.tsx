@@ -49,6 +49,7 @@ import PermissionSettingsView from './components/settings/permission/PermissionS
 import ExtensionsView, { ExtensionsViewOptions } from './components/extensions/ExtensionsView';
 import RecipesView from './components/recipes/RecipesView';
 import SkillsView from './components/skills/SkillsView';
+import MemoriesView from './components/memories/MemoriesView';
 import AppsView from './components/apps/AppsView';
 import StandaloneAppView from './components/apps/StandaloneAppView';
 import { View, ViewOptions } from './utils/navigationUtils';
@@ -222,6 +223,10 @@ const LoopRoute = () => {
 
 const SkillsRoute = () => {
   return <SkillsView />;
+};
+
+const MemoriesRoute = () => {
+  return <MemoriesView />;
 };
 
 const PermissionRoute = () => {
@@ -667,6 +672,7 @@ export function AppInner() {
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
+              <Route path="memories" element={<MemoriesRoute />} />
               <Route path="permission" element={<PermissionRoute />} />
             </Route>
           </Routes>
