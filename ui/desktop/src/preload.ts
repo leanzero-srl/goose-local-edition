@@ -223,6 +223,19 @@ type ElectronAPI = {
       updatedAt: number;
     }>
   >;
+  editMemory: (args: {
+    scope: 'global' | 'local';
+    category: string;
+    oldContent: string;
+    newContent: string;
+    workingDir?: string;
+  }) => Promise<boolean>;
+  deleteMemory: (args: {
+    scope: 'global' | 'local';
+    category: string;
+    content: string;
+    workingDir?: string;
+  }) => Promise<boolean>;
   launchApp: (app: GooseApp) => Promise<void>;
   refreshApp: (app: GooseApp) => Promise<void>;
   closeApp: (appName: string) => Promise<void>;
@@ -389,6 +402,8 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('open-directory-in-explorer', directoryPath),
   revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
   listMemories: (workingDir?: string) => ipcRenderer.invoke('list-memories', workingDir),
+  editMemory: (args) => ipcRenderer.invoke('edit-memory', args),
+  deleteMemory: (args) => ipcRenderer.invoke('delete-memory', args),
   launchApp: (app: GooseApp) => ipcRenderer.invoke('launch-app', app),
   refreshApp: (app: GooseApp) => ipcRenderer.invoke('refresh-app', app),
   closeApp: (appName: string) => ipcRenderer.invoke('close-app', appName),
