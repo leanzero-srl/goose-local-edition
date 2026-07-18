@@ -10,6 +10,7 @@ pub mod dag;
 pub mod dispatch;
 pub mod event;
 pub mod judge;
+pub mod memory_classify;
 pub mod replan;
 pub mod scheduler;
 
