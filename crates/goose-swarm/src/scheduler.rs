@@ -500,6 +500,7 @@ impl State {
 
     fn do_claim(&mut self, tid: TaskId, dev: usize, out: &mut Vec<Assignment>) {
         let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let neighborhood = self.neighborhood_of(&tid, &deps);
         let slice = self.ctx.slice_for(&deps);
         let (files, description, attempt) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
@@ -561,8 +562,22 @@ impl State {
                 // engine claimed (research_findings, the amended spec) is planner-side only.
                 user_decisions: self.user_decisions.clone(),
                 doc_facts: self.doc_facts.clone(),
+                neighborhood,
             },
         });
+    }
+
+    /// The DAG neighborhood of `tid`: its deps ∪ its consumers (reverse edges) ∪ itself, deduped. Used to
+    /// scope the frozen-contract bundle to only the modules a worker touches.
+    fn neighborhood_of(&self, tid: &str, deps: &[TaskId]) -> Vec<String> {
+        let mut n: Vec<String> = deps.to_vec();
+        if let Some(consumers) = self.dag.dependents.get(tid) {
+            n.extend(consumers.iter().cloned());
+        }
+        n.push(tid.to_string());
+        n.sort();
+        n.dedup();
+        n
     }
 
     /// Relax every dependent of a just-finished task: drop its indegree and promote it to Ready at zero.
@@ -1013,6 +1028,7 @@ impl State {
         }
         let (tid, _elapsed) = best?;
         let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let neighborhood = self.neighborhood_of(&tid, &deps);
         let slice = self.ctx.slice_for(&deps);
         let (owned_files, description, attempt) = {
             let n = &self.dag.tasks[&tid];
@@ -1050,6 +1066,7 @@ impl State {
             speculative: true,
             user_decisions: self.user_decisions.clone(),
             doc_facts: self.doc_facts.clone(),
+            neighborhood,
         };
         Some((req, dev))
     }

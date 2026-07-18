@@ -80,6 +80,12 @@ pub struct DispatchRequest {
     ///
     /// Empty string => the injected block is empty => byte-identical to before this field existed.
     pub doc_facts: String,
+    /// The task ids in this task's DAG neighborhood — its deps ∪ its consumers ∪ itself — used to scope
+    /// the frozen-contract bundle to only the modules this worker actually touches (deterministic,
+    /// `GOOSE_SWARM_SCOPED_CONTRACTS`). Empty => "no neighborhood info" => the consumer falls back to the
+    /// full unscoped bundle, so a fix/sink/mock dispatch with no neighborhood is byte-identical to before
+    /// this field existed.
+    pub neighborhood: Vec<String>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
