@@ -9759,6 +9759,14 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
 struct SpecContractResult {
     findings: Vec<String>,
     inconclusive: Vec<String>,
+    /// #120/#119: count of advertised checks that AFFIRMATIVELY passed (a genuine 2xx on an advertised GET).
+    /// Lets a consumer (the #119 sink early-exit) require verified>=1, so a run where findings.is_empty() &&
+    /// inconclusive.is_empty() because it CHECKED NOTHING (non-python, no advertised entry/endpoint) is never
+    /// mistaken for a real pass — the exact #120 false-green class.
+    // Written now (the affirmative signal is populated deterministically); the reader is the #119 sink
+    // early-exit, landing next. allow(dead_code) is the explicit bridge until that consumer is wired.
+    #[allow(dead_code)]
+    verified: usize,
 }
 
 /// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
@@ -9826,17 +9834,22 @@ fn spec_contract_enabled() -> bool {
 async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecContractResult {
     let mut findings = Vec::new();
     let mut inconclusive = Vec::new();
+    // #120/#119: affirmative-pass count (advertised GETs that returned a genuine 2xx). Stays 0 at every early
+    // return (they checked nothing / are inconclusive); incremented per 2xx in the curl loop below.
+    let mut verified = 0usize;
     // Python/FastAPI beds only for now; other stacks keep the existing smoke gate untouched.
     if !matches!(lang, TargetLang::Python) {
         return SpecContractResult {
             findings,
             inconclusive,
+            verified,
         };
     }
     let Some(pkg) = spec_python_entry(spec) else {
         return SpecContractResult {
             findings,
             inconclusive,
+            verified,
         };
     };
     let gets = spec_get_endpoints(spec);
@@ -9844,6 +9857,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         return SpecContractResult {
             findings,
             inconclusive,
+            verified,
         };
     }
     let port = spec_port(spec);
@@ -9861,6 +9875,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         return SpecContractResult {
             findings,
             inconclusive,
+            verified,
         };
     };
     let mut up = false;
@@ -9882,6 +9897,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         return SpecContractResult {
             findings,
             inconclusive,
+            verified,
         };
     }
     for path in gets {
@@ -9915,13 +9931,18 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings.push(format!(
                 "GET {path} returned {code} — the spec advertises this endpoint but the app does not implement it"
             ));
+        } else if (200..300).contains(&code) {
+            // AFFIRMATIVE: the advertised endpoint answered with a real 2xx. This is the signal a consumer can
+            // require (verified>=1) to tell a genuine pass from "checked nothing".
+            verified += 1;
         }
-        // 2xx / 3xx / other 4xx (a route that needs a body/auth) -> not a finding (fail-open)
+        // 3xx / other 4xx (a route that needs a body/auth) -> neither a finding nor verified (fail-open)
     }
     let _ = child.kill().await;
     SpecContractResult {
         findings,
         inconclusive,
+        verified,
     }
 }
 
