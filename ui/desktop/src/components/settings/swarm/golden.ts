@@ -97,6 +97,17 @@ export interface SwarmConfig {
    *  each concrete advertised GET endpoint — a 5xx / 404 / 405 on an advertised path fails the build (red +
    *  fix), an entry that never binds → unverified. Deterministic, no model. Python web apps for now. Default OFF. */
   spec_contract?: boolean;
+  /** #129: after you answer the clarify ask and the deterministic rescore lifts the plan to/over the ask
+   *  floor, KEEP that answered plan instead of letting a non-structural re-plan re-draft it away — a fresh
+   *  draft re-lists the decisions you already answered and ships a WORSE plan below the floor (measured
+   *  nf-hexohm: rescored 85, re-planned, shipped 52). A language change or a newly-defined product still
+   *  re-plans. Default OFF. */
+  answers_win_floor?: boolean;
+  /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
+   *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
+   *  because the frozen interface already gives every importer its siblings' signatures and only
+   *  integrate-verify compiles the crate; tests and the sink join are untouched. Gated on contracts. Default OFF. */
+  relax_contracted_deps?: boolean;
   /** Convergence molding — steer the weak planner to one canonical decomposition + role-normalize the
    *  agreement metric. The proven confidence raiser. Default ON. */
   converge?: boolean;
