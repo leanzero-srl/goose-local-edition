@@ -556,6 +556,26 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_WRITE_FIRST env overrides.
     #[serde(default)]
     pub write_first: bool,
+    /// GROUNDING (Phase 1, Move 1): attach the research MCP tools (context7 / web-search) to the scouts so a
+    /// run can actually LOOK THINGS UP instead of planning from the model's frozen weights. The tool arms
+    /// already self-disable to a no-op when their env key is absent (CONTEXT7_API_KEY / WEBSEARCH_BEARER), so
+    /// this master switch just makes grounding an explicit opt-in rather than silently depending on whether a
+    /// key happens to be exported. OFF by default => the enable list is empty => `research_exts` is empty =>
+    /// byte-identical to today (can_look_things_up:false, the "NO lookup tools" path). When ON, tools attach
+    /// for whichever keys are present. GOOSE_SWARM_RESEARCH_TOOLS env overrides.
+    #[serde(default)]
+    pub research_tools: bool,
+    /// DOC-PREFETCH (Phase 1, Move 2): inject the GROUNDED research findings — the ones a scout actually
+    /// looked up with a real tool — VERBATIM into every worker's prompt, reusing the same verbatim-splice
+    /// pattern as the user's clarify answers (`decisions_block`). Today a scout's concrete API fact reaches
+    /// the workers ZERO times: it survives only as a lossy planner-model paraphrase riding pillars/contracts,
+    /// which preserves a convention and destroys a literal. This routes the exact looked-up text to the
+    /// worker un-paraphrased. Grounded-only by construction (an INVENTED finding is never injected, so a
+    /// hallucinated API can never be hardcoded), and grounding requires `research_tools` + a key, so with
+    /// tools off there are no grounded findings and this stays empty. OFF by default => empty block =>
+    /// byte-identical to today's worker prompt. GOOSE_SWARM_DOC_PREFETCH env overrides.
+    #[serde(default)]
+    pub doc_prefetch: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -690,6 +710,8 @@ impl Default for SwarmConfig {
             ask_rounds_max: None,
             occupancy: false,
             write_first: false,
+            research_tools: false,
+            doc_prefetch: false,
         }
     }
 }
@@ -6901,6 +6923,21 @@ fn build_worker_extension(name: &str) -> Option<ExtensionConfig> {
     }
 }
 
+/// GROUNDING (Phase 1, Move 1): the research MCP tools attached to the scouts. Each arm self-disables to a
+/// no-op when its env key is absent (`build_worker_extension` returns `None`), so the master `enabled` switch
+/// is the only thing that changes today's behaviour: OFF => empty list => `research_exts` empty => the run
+/// cannot look anything up, exactly as before this switch existed. ON => tools attach for whichever keys are
+/// present. Callable from both the initial-research and the retarget-research sites so the gate is identical.
+fn build_research_exts(enabled: bool) -> Vec<ExtensionConfig> {
+    if !enabled {
+        return Vec::new();
+    }
+    ["context7", "web-search"]
+        .into_iter()
+        .filter_map(build_worker_extension)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
 // ---------------------------------------------------------------------------------------------
@@ -11131,6 +11168,7 @@ impl GooseAgentDispatcher {
             // an isolated shadow. Empty => no block => unchanged. Thread the decisions through
             // this signature if a crash fix ever needs them.
             user_decisions: String::new(),
+            doc_facts: String::new(),
         };
         let fix_budget = std::time::Duration::from_secs(fix_cap_secs()).min(remaining);
         let dispatched = tokio::time::timeout(fix_budget, self.run(req)).await;
@@ -13949,6 +13987,15 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             format!("{}\n\n", req.user_decisions.trim())
         };
+        // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research facts, VERBATIM — same splice pattern as the
+        // user's answers above. This is the ONLY path a scout's looked-up API fact reaches a worker
+        // un-paraphrased (research_findings is planner-side only). Empty when DOC_PREFETCH is off (or nothing
+        // was grounded) => empty block => byte-identical.
+        let doc_facts_block = if req.doc_facts.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{}\n\n", req.doc_facts.trim())
+        };
         // Hand the worker the AGREED layout: the full file manifest (so imports match where modules
         // actually live) and its OWN exact paths (so it never writes a divergent copy to the cwd root).
         // Gated on the manifest, not owned_files — integrate-verify owns nothing but most needs the map.
@@ -14318,7 +14365,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{write_first_block}{decisions_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -15665,6 +15712,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         },
     };
     let mut research_findings = String::new();
+    // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research findings, VERBATIM, to hand to every worker. Stays
+    // empty unless GOOSE_SWARM_DOC_PREFETCH is on AND a scout actually looked something up — so off (or with
+    // no grounding) it is "" and the worker prompt is byte-identical to today.
+    let mut doc_facts = String::new();
     // LEARN & REFLECT — the READ half. Seed the advisory channel with what goose learned from PREVIOUS
     // successful builds of this same stack, BEFORE research and planning run, so the fleet starts from what
     // already worked instead of re-deriving it. Measured: two Swift runs each burned ~40min rediscovering the
@@ -15711,12 +15762,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // never configured would be the same guess-laundering by another door.
     let mut can_research = false;
     if do_research {
-        let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
-            ["context7", "web-search"]
-                .into_iter()
-                .filter_map(build_worker_extension)
-                .collect(),
-        );
+        let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(build_research_exts(
+            swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", cfg.research_tools),
+        ));
         // #108 — SAY WHETHER THIS RUN CAN ACTUALLY RESEARCH. build_worker_extension returns None when the
         // key is absent (context7 needs CONTEXT7_API_KEY, web-search needs WEBSEARCH_BEARER) and prints the
         // skip to STDERR, which nobody sees in the desktop app. So a run with NO lookup tools at all still
@@ -15814,6 +15862,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // millisecond) and still reported "findings: 3", one of which was the literal apology string
         // "(scout 'x' exceeded 120s budget — skipped...)". The number was true and told the reader nothing.
         let grounded_n = findings.iter().filter(|f| f.grounded).count();
+        // DOC-PREFETCH (Phase 1, Move 2): route the GROUNDED findings — the ones a scout actually looked up
+        // with a real tool — VERBATIM to every worker. An INVENTED finding is deliberately excluded: injecting
+        // the model's own guess as an authoritative "verified fact" would hardcode a hallucinated API, the
+        // exact opposite of grounding. Off (or with no grounding — which is always the case when the research
+        // tools are not attached, since `grounded` is `is_mcp && ok`) => `doc_facts` stays "" => byte-identical.
+        if swarm_gate_cfg("GOOSE_SWARM_DOC_PREFETCH", cfg.doc_prefetch) {
+            let grounded: Vec<String> = findings
+                .iter()
+                .filter(|f| f.grounded)
+                .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings.trim()))
+                .collect();
+            if !grounded.is_empty() {
+                doc_facts = format!(
+                    "## Verified facts from research — these were LOOKED UP with a real tool. Use them \
+                     EXACTLY: do NOT paraphrase, re-derive, guess, or substitute a different library/API for \
+                     what is stated here.\n{}",
+                    grounded.join("\n\n")
+                );
+            }
+        }
         sink.write_value(serde_json::json!({
             "event": "research_completed",
             "findings": findings.len(),
@@ -16006,6 +16074,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
             "grounded_research_only": swarm_gate_cfg("GOOSE_SWARM_GROUNDED_RESEARCH_ONLY", load_config().grounded_research_only),
+            "research_tools": swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", load_config().research_tools),
+            "doc_prefetch": swarm_gate_cfg("GOOSE_SWARM_DOC_PREFETCH", load_config().doc_prefetch),
             "author_pitfalls": author_pitfalls_on(),
             "sink_prebuild": swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild),
             "ts_smoke_tests": swarm_gate_cfg("GOOSE_SWARM_TS_SMOKE_TESTS", load_config().ts_smoke_tests),
@@ -16371,12 +16441,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     kind: "web".to_string(),
                                 })
                                 .collect();
-                                let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(
-                                    ["context7", "web-search"]
-                                        .into_iter()
-                                        .filter_map(build_worker_extension)
-                                        .collect(),
-                                );
+                                let research_exts: Arc<Vec<ExtensionConfig>> =
+                                    Arc::new(build_research_exts(swarm_gate_cfg(
+                                        "GOOSE_SWARM_RESEARCH_TOOLS",
+                                        cfg.research_tools,
+                                    )));
                                 let worker_models: Vec<String> =
                                     devices.iter().map(|d| d.model_id.clone()).collect();
                                 let findings = dispatcher
@@ -17103,7 +17172,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();
-    let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
+    let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
+        .with_sink(sink.clone())
+        // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
+        // byte-identical (matches the `with_doc_facts` default).
+        .with_doc_facts(doc_facts.clone());
     // In-process PAUSE: the desktop Pause button writes <working_dir>/.swarm/pause; the scheduler then holds
     // at the next task boundary (in-flight work finishes, nothing is claimed) and resumes — re-running NOTHING
     // — when the file is deleted. Wired unconditionally: with no sentinel the hold never fires, so this is
@@ -17503,12 +17576,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let dev = dev_id.clone();
                     // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
                     let decisions = user_decisions.clone();
+                    let facts = doc_facts.clone();
                     let summaries =
                         fanout_over_fleet(fleet_models.clone(), groups, move |g, model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let dev = dev.clone();
                             let decisions = decisions.clone();
+                            let facts = facts.clone();
                             async move {
                                 let task_id = format!("complete-fix::{}", g.file);
                                 let req = DispatchRequest {
@@ -17529,6 +17604,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                                     // `Decimal` after the user chose integer cents is still wrong.
                                     user_decisions: decisions.clone(),
+                                    doc_facts: facts.clone(),
                                 };
                                 match tokio::time::timeout(
                                     std::time::Duration::from_secs(1200),
@@ -17577,6 +17653,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // A FIX worker must honour the user's choices too — a fix that re-introduces
                         // `Decimal` after the user chose integer cents is still wrong.
                         user_decisions: user_decisions.clone(),
+                        doc_facts: doc_facts.clone(),
                     };
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_secs()),
@@ -17600,6 +17677,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
+                    doc_facts: doc_facts.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -17768,6 +17846,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
+                    doc_facts: doc_facts.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -18398,6 +18477,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
+                    doc_facts: doc_facts.clone(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),

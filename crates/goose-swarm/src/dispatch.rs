@@ -73,6 +73,13 @@ pub struct DispatchRequest {
     ///
     /// Empty string => the injected block is empty => byte-identical to before this field existed.
     pub user_decisions: String,
+    /// GROUNDED research facts (Phase 1, Move 2 — `GOOSE_SWARM_DOC_PREFETCH`), VERBATIM, for injection into
+    /// the worker prompt via the same splice pattern as `user_decisions`. These are the findings a scout
+    /// actually LOOKED UP with a real research tool (never an invented/paraphrased one), routed to the worker
+    /// un-paraphrased so a concrete API fact survives as a literal instead of a lossy planner paraphrase.
+    ///
+    /// Empty string => the injected block is empty => byte-identical to before this field existed.
+    pub doc_facts: String,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
