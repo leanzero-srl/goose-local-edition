@@ -213,6 +213,16 @@ type ElectronAPI = {
   recordRecipeHash: (recipe: Recipe) => Promise<boolean>;
   openDirectoryInExplorer: (directoryPath: string) => Promise<boolean>;
   revealInFinder: (path: string) => Promise<boolean>;
+  listMemories: (workingDir?: string) => Promise<
+    Array<{
+      id: string;
+      category: string;
+      scope: 'global' | 'local';
+      tags: string[];
+      content: string;
+      updatedAt: number;
+    }>
+  >;
   launchApp: (app: GooseApp) => Promise<void>;
   refreshApp: (app: GooseApp) => Promise<void>;
   closeApp: (appName: string) => Promise<void>;
@@ -378,6 +388,7 @@ const electronAPI: ElectronAPI = {
   openDirectoryInExplorer: (directoryPath: string) =>
     ipcRenderer.invoke('open-directory-in-explorer', directoryPath),
   revealInFinder: (path: string) => ipcRenderer.invoke('reveal-in-finder', path),
+  listMemories: (workingDir?: string) => ipcRenderer.invoke('list-memories', workingDir),
   launchApp: (app: GooseApp) => ipcRenderer.invoke('launch-app', app),
   refreshApp: (app: GooseApp) => ipcRenderer.invoke('refresh-app', app),
   closeApp: (appName: string) => ipcRenderer.invoke('close-app', appName),

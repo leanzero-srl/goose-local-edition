@@ -3316,6 +3316,69 @@ async function appMain() {
     }
   });
 
+  // Read goose's stored memories for the Memories view. Global memories live in ~/.config/goose/memory/ as one
+  // .txt per category; the optional local dir is <workingDir>/.goose/memory/. Each file is split into entries on
+  // blank lines, and an entry's leading "# ..." line is its space-separated tags (see goose-mcp memory/mod.rs).
+  ipcMain.handle('list-memories', async (_event, workingDir?: string) => {
+    const parseFile = (filePath: string, category: string, scope: 'global' | 'local') => {
+      const out: Array<{
+        id: string;
+        category: string;
+        scope: 'global' | 'local';
+        tags: string[];
+        content: string;
+        updatedAt: number;
+      }> = [];
+      let mtime = 0;
+      try {
+        mtime = fsSync.statSync(filePath).mtimeMs;
+      } catch {
+        mtime = 0;
+      }
+      const raw = fsSync.readFileSync(filePath, 'utf8');
+      let idx = 0;
+      for (const block of raw.split('\n\n')) {
+        const trimmed = block.trim();
+        if (!trimmed) continue;
+        const lines = trimmed.split('\n');
+        let tags: string[] = [];
+        let bodyLines = lines;
+        if (lines[0].startsWith('#')) {
+          tags = lines[0].slice(1).trim().split(/\s+/).filter(Boolean);
+          bodyLines = lines.slice(1);
+        }
+        const content = bodyLines.join('\n').trim();
+        if (!content) continue;
+        out.push({ id: `${scope}:${category}:${idx++}`, category, scope, tags, content, updatedAt: mtime });
+      }
+      return out;
+    };
+    const readDir = (dir: string, scope: 'global' | 'local') => {
+      const acc: ReturnType<typeof parseFile> = [];
+      let names: string[] = [];
+      try {
+        names = fsSync.readdirSync(dir);
+      } catch {
+        return acc;
+      }
+      for (const name of names) {
+        if (!name.endsWith('.txt')) continue;
+        try {
+          acc.push(...parseFile(path.join(dir, name), name.replace(/\.txt$/, ''), scope));
+        } catch (error) {
+          console.error('Error reading memory file', name, error);
+        }
+      }
+      return acc;
+    };
+    const all = [...readDir(path.join(os.homedir(), '.config', 'goose', 'memory'), 'global')];
+    if (workingDir) {
+      all.push(...readDir(path.join(workingDir, '.goose', 'memory'), 'local'));
+    }
+    all.sort((a, b) => b.updatedAt - a.updatedAt);
+    return all;
+  });
+
   ipcMain.handle('launch-app', async (event, gooseApp: GooseApp) => {
     try {
       if (isRetiredGooseChatApp(gooseApp)) {
