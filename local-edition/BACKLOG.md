@@ -38,6 +38,15 @@ OUR favor on the swarm/desktop surfaces. Gate hard after (cargo fmt/build/clippy
 -p goose-cli; pnpm typecheck + eslint) and smoke-test a real swarm build before pushing. Never staged files
 we must not touch (openai.rs, schedule.rs, pnpm-lock, openapi.json) unless upstream genuinely changed them.
 
+## ✅ DONE — UI batch shipped 2026-07-18 (in DMG 1.41.64)
+- **#1 AI-named sessions** — DONE (e73e4b559 + c14de7015): `ai_session_title()` in providers/swarm.rs, gated `GOOSE_SWARM_AI_NAME` / swarm.ai_session_name (default OFF), settings toggle.
+- **#2 Chat-list cap** — DONE (5e5014b0c): `MAX_RECENT_SESSIONS` 25 → 200 in useNavigationSessions.ts; list scrolls; all sessions safe in DB.
+- **#3 Expandable/clickable activity log** — DONE (389a579d4): click any activity line → wrapped full-detail block; chevron affordance; right-click context menu preserved. Frontend-only (shows the sub-detail the event already carries; backend enrichment of research-finding text is a follow-up).
+- **#6 Reveal in Finder** — DONE (5e5014b0c): right-click activity line → custom sharp-cornered context menu (Reveal in Finder / Copy path / Copy) via `shell.showItemInFolder` IPC.
+- **#7 Progress metrics strip** — DONE (6f64597f4): top-of-panel strip — TOTAL ELAPSED (ticking fact) + rough wide-range Est. left + current phase w/ done/total. Honest (ETA labeled "rough", suppressed until ≥1 task done).
+- **#8 Memories tab** — DONE (0fa3d88b9): left-nav Memories entry (Brain) mirroring Skills; `list-memories` IPC reads ~/.config/goose/memory/ (global) + <wd>/.goose/memory/ (local); grouped/searchable list + detail pane w/ solid-hue tag chips.
+- **Phase-distribution fix** (Mihai flag "isn't this already Verify? still shows building") — DONE (66e4a4849): integrate-verify SINK = Verify phase, breadcrumb advances, routed out of Build checklist.
+
 ## Mihai asks 2026-07-18 (evening) — NEXT-DMG UI/UX + loop evolution
 1. **AI-named sessions** (next DMG). Each chat/session should be named by AI from the prompt / what it builds, not the raw truncated first prompt ("Build X — a"). MACHINERY EXISTS: crates/goose/src/session/session_naming.rs (generate_description -> model call -> extract_short_title). It is NOT wired into the swarm-build session path. Wire it so a swarm build names its session (e.g. "logfold — Go log-template miner"). Confidence: high (mostly wiring an existing fn).
 2. **Chat-list cap** (next DMG). NOT a deletion bug — sessions are all safe in ~/.local/share/goose/sessions.db (366MB). The sidebar hard-caps the VISIBLE list at MAX_RECENT_SESSIONS=25 (ui/desktop/src/hooks/useNavigationSessions.ts:13, .slice(0,25)). Raise the cap and/or add scroll + a "see all sessions" view so nothing drops off visibly. SEPARATE concern: the 366MB DB is bloating — investigate session-data growth. Confidence: high.
