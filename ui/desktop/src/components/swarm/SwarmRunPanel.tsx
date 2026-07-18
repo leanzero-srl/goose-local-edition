@@ -981,6 +981,64 @@ function phaseStepIndex(phase: string): number {
   if (/research|scout|start/.test(p)) return 0;
   return 3;
 }
+function fmtElapsed(min: number): string {
+  const totalSec = Math.max(0, Math.round(min * 60));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// Live progress metrics at the top of the panel: TOTAL ELAPSED (a fact, ticking every second) + a rough,
+// clearly-labeled ETA for the rest + the current phase. The ETA is deliberately a WIDE range: the local fleet
+// is slow and variable and the single-node verify sink dominates the tail, so a fake-precise figure would lie.
+// It updates and shifts as tasks complete, and is suppressed until at least one task has finished.
+const SwarmMetricsStrip: React.FC<{
+  startedAt: number | null;
+  phase: string;
+  totals: { running: number; done: number; failed: number; tasks: number };
+}> = ({ startedAt, phase, totals }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!startedAt) return null;
+  const elapsedMin = (now - startedAt) / 60000;
+  const remaining = Math.max(0, totals.tasks - totals.done);
+  let etaLabel: string | null = null;
+  let etaSub: string | undefined;
+  if (totals.done >= 1 && remaining > 0) {
+    const perTask = elapsedMin / totals.done;
+    const parallel = Math.min(remaining, 2); // the fleet builds a few modules at once; the sink is single-node
+    const mid = (perTask * remaining) / parallel;
+    const lo = Math.max(1, Math.round(mid * 0.6));
+    const hi = Math.max(lo + 1, Math.round(mid * 1.6));
+    etaLabel = `~${lo}–${hi} min`;
+    etaSub = 'rough';
+  } else if (totals.tasks > 0 && remaining === 0) {
+    etaLabel = 'wrapping up';
+  }
+  const tile = (label: string, value: string, color: string, sub?: string) => (
+    <div className="flex flex-col" style={{ minWidth: 84 }}>
+      <span className="text-[10px] uppercase tracking-wide text-text-secondary">{label}</span>
+      <span className="text-sm font-semibold tabular-nums" style={{ color }}>
+        {value}
+      </span>
+      {sub ? <span className="text-[10px] text-text-secondary">{sub}</span> : null}
+    </div>
+  );
+  return (
+    <div className="flex items-center gap-6 px-3 py-2 border-b border-border-primary">
+      {tile('Elapsed', fmtElapsed(elapsedMin), '#2e8bff')}
+      {tile('Est. left', etaLabel ?? '—', '#f5a623', etaSub)}
+      {tile('Phase', phase || '—', '#34c759', totals.tasks > 0 ? `${totals.done}/${totals.tasks} tasks` : undefined)}
+    </div>
+  );
+};
+
 const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean }> = ({
   phase,
   activeColor = STATUS_COLOR.running,
@@ -1878,6 +1936,10 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       {run.clarify?.pending ? (
         <ClarifyPrompt clarify={run.clarify} plan={run.plan} askFloor={run.askFloor} />
       ) : null}
+
+      {run.inProgress && !stale && !ended && !clarifyPending && (
+        <SwarmMetricsStrip startedAt={run.startedAt} phase={run.phase} totals={run.totals} />
+      )}
 
       {(run.inProgress || ended) && (
         <PhaseSteps
