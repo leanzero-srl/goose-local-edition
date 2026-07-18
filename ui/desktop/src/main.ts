@@ -3304,6 +3304,18 @@ async function appMain() {
     }
   });
 
+  // Reveal-and-SELECT a file/dir in Finder (vs openPath, which LAUNCHES it in its default app — the wrong
+  // verb for a source file). Used by the swarm activity log's right-click "Reveal in Finder".
+  ipcMain.handle('reveal-in-finder', async (_event, path: string) => {
+    try {
+      shell.showItemInFolder(path);
+      return true;
+    } catch (error) {
+      console.error('Error revealing in finder:', error);
+      return false;
+    }
+  });
+
   ipcMain.handle('launch-app', async (event, gooseApp: GooseApp) => {
     try {
       if (isRetiredGooseChatApp(gooseApp)) {

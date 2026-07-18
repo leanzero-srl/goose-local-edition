@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
@@ -8,6 +9,7 @@ import {
 import {
   useSwarmRun,
   classifyCall,
+  resolveActivityPath,
   type TurnStatus,
   type TurnLane,
   type SwarmCall,
@@ -505,12 +507,89 @@ const TONE_COLOR: Record<NonNullable<ActivityItem['tone']>, string> = {
   bad: '#ff3b30',
 };
 
+// Right-click menu for an activity line — "Reveal in Finder" (when the line references a file), Copy path,
+// and Copy. Custom (NOT native) per the no-native-chrome rule: a solid, sharp-cornered, full-bordered menu
+// portaled at the cursor, dismissed on outside-click or Escape.
+const ActivityContextMenu: React.FC<{
+  x: number;
+  y: number;
+  path: string | null;
+  lineText: string;
+  onClose: () => void;
+}> = ({ x, y, path, lineText, onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const itemCls =
+    'w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-background-secondary flex items-center gap-2';
+  return createPortal(
+    <>
+      <div
+        className="fixed inset-0 z-40"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
+      <div
+        className="fixed z-50 min-w-[168px] bg-background-primary border border-border-primary shadow-lg py-1"
+        style={{ left: x, top: y }}
+      >
+        {path && (
+          <button
+            className={itemCls}
+            onClick={() => void window.electron.revealInFinder(path).finally(onClose)}
+          >
+            <FolderOpen size={13} /> Reveal in Finder
+          </button>
+        )}
+        {path && (
+          <button
+            className={itemCls}
+            onClick={() => {
+              void navigator.clipboard.writeText(path);
+              onClose();
+            }}
+          >
+            Copy path
+          </button>
+        )}
+        <button
+          className={itemCls}
+          onClick={() => {
+            void navigator.clipboard.writeText(lineText);
+            onClose();
+          }}
+        >
+          Copy
+        </button>
+      </div>
+    </>,
+    document.body
+  );
+};
+
 // One line in the activity timeline. Tone (when set) tints the icon so judge warnings / failures stand out.
+// Right-click reveals a menu — "Reveal in Finder" when the line references a file path, plus Copy.
 const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap }) => {
   const Icon = ACTIVITY_ICON[it.kind];
   const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const lineText = `${it.text}${it.sub ? ` — ${it.sub}` : ''}`;
+  const path = resolveActivityPath(lineText, undefined);
   return (
-    <div className="flex items-start gap-2 text-xs">
+    <div
+      className="flex items-start gap-2 text-xs"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
       <span className="text-text-primary shrink-0">{it.text}</span>
       {it.sub && (
@@ -519,6 +598,15 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap
         >
           — {it.sub}
         </span>
+      )}
+      {menu && (
+        <ActivityContextMenu
+          x={menu.x}
+          y={menu.y}
+          path={path}
+          lineText={lineText}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );

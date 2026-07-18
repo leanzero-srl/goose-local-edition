@@ -51,6 +51,21 @@ function pathHint(summary: string): string {
   return m ? m[1] : '';
 }
 
+/** Resolve a filesystem path referenced by an activity line to an ABSOLUTE path for "Reveal in Finder".
+ *  Prefers a full absolute path already in the text (activity lines carry them, e.g. "Wrote a file /Users/…/x.ts");
+ *  else a relative path (via pathHint) resolved against the run's cwd. Returns null when no path is found. */
+export function resolveActivityPath(
+  text: string | undefined,
+  workingDir: string | undefined
+): string | null {
+  if (!text) return null;
+  const abs = text.match(/(\/(?:[\w.-]+\/)*[\w.-]+\.[\w]+)/);
+  if (abs) return abs[1];
+  const rel = pathHint(text);
+  if (!rel || !workingDir) return null;
+  return `${workingDir.replace(/\/+$/, '')}/${rel}`;
+}
+
 /** Classify + humanize a single tool call so the panel can explain what it MEANS, not just color it red. */
 export function classifyCall(call: SwarmCall): CallMeaning {
   const name = (call.name || '').replace(/^developer__/, '').toLowerCase();
