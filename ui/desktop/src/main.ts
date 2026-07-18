@@ -3379,6 +3379,79 @@ async function appMain() {
     return all;
   });
 
+  // Resolve a memory file's path from its scope (global = ~/.config/goose/memory, local = <wd>/.goose/memory)
+  // and split a stored entry-block into its leading "# tags" line + body (mirrors the list-memories parse).
+  const memoryFilePath = (scope: 'global' | 'local', category: string, workingDir?: string) =>
+    scope === 'local' && workingDir
+      ? path.join(workingDir, '.goose', 'memory', `${category}.txt`)
+      : path.join(os.homedir(), '.config', 'goose', 'memory', `${category}.txt`);
+  const splitMemoryBlock = (block: string) => {
+    const lines = block.split('\n');
+    return lines[0].startsWith('#')
+      ? { tagsLine: lines[0], body: lines.slice(1).join('\n').trim() }
+      : { tagsLine: '', body: lines.join('\n').trim() };
+  };
+
+  // Edit ONE memory entry in place, preserving its tags line. The entry is matched by its exact (pre-edit) body
+  // — the same body list-memories returned — so the edit targets the block the user opened. Throws if the entry
+  // is not found (it changed on disk since the list was read).
+  ipcMain.handle(
+    'edit-memory',
+    async (
+      _event,
+      args: {
+        scope: 'global' | 'local';
+        category: string;
+        oldContent: string;
+        newContent: string;
+        workingDir?: string;
+      }
+    ) => {
+      const fp = memoryFilePath(args.scope, args.category, args.workingDir);
+      const raw = fsSync.readFileSync(fp, 'utf8');
+      let found = false;
+      const out = raw
+        .split('\n\n')
+        .map((block) => {
+          const trimmed = block.trim();
+          if (!trimmed) return '';
+          const { tagsLine, body } = splitMemoryBlock(trimmed);
+          if (!found && body === args.oldContent) {
+            found = true;
+            return (tagsLine ? tagsLine + '\n' : '') + args.newContent.trim();
+          }
+          return trimmed;
+        })
+        .filter((b) => b.length > 0);
+      if (!found) throw new Error('Memory entry not found — it may have changed on disk. Reopen and retry.');
+      fsSync.writeFileSync(fp, out.join('\n\n') + '\n');
+      return true;
+    }
+  );
+
+  // Delete ONE memory entry (matched by exact body). If it was the file's last entry, remove the file so the
+  // category disappears rather than lingering as an empty file.
+  ipcMain.handle(
+    'delete-memory',
+    async (
+      _event,
+      args: { scope: 'global' | 'local'; category: string; content: string; workingDir?: string }
+    ) => {
+      const fp = memoryFilePath(args.scope, args.category, args.workingDir);
+      const raw = fsSync.readFileSync(fp, 'utf8');
+      const kept = raw
+        .split('\n\n')
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0 && splitMemoryBlock(b).body !== args.content);
+      if (kept.length === 0) {
+        fsSync.rmSync(fp, { force: true });
+      } else {
+        fsSync.writeFileSync(fp, kept.join('\n\n') + '\n');
+      }
+      return true;
+    }
+  );
+
   ipcMain.handle('launch-app', async (event, gooseApp: GooseApp) => {
     try {
       if (isRetiredGooseChatApp(gooseApp)) {

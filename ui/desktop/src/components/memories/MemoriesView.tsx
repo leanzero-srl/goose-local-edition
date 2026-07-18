@@ -4,6 +4,7 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Card } from '../ui/card';
 import { Skeleton } from '../ui/skeleton';
 import { Button } from '../ui/button';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
@@ -105,13 +106,85 @@ function TagChip({ tag }: { tag: string }) {
   );
 }
 
-function MemoryDetail({ memory }: { memory: MemoryEntry }) {
+function MemoryDetail({
+  memory,
+  workingDir,
+  onSaved,
+  onDeleted,
+}: {
+  memory: MemoryEntry;
+  workingDir?: string;
+  onSaved: () => void;
+  onDeleted: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [body, setBody] = useState(memory.content);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset when a different memory is selected or its content changes on disk (e.g. after a save re-list).
+  useEffect(() => {
+    setEditing(false);
+    setBody(memory.content);
+    setError(null);
+    setConfirmDelete(false);
+  }, [memory.id, memory.content]);
+
+  const dirty = body !== memory.content;
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await window.electron.editMemory({
+        scope: memory.scope,
+        category: memory.category,
+        oldContent: memory.content,
+        newContent: body,
+        workingDir,
+      });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to save'));
+    } finally {
+      setSaving(false);
+    }
+  }, [memory, body, workingDir, onSaved]);
+
+  const doDelete = useCallback(async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      await window.electron.deleteMemory({
+        scope: memory.scope,
+        category: memory.category,
+        content: memory.content,
+        workingDir,
+      });
+      setConfirmDelete(false);
+      onDeleted();
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to delete'));
+    } finally {
+      setDeleting(false);
+    }
+  }, [memory, workingDir, onDeleted]);
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <div className="mb-3">
         <div className="flex items-center gap-2 mb-1">
           <span className={`w-2.5 h-2.5 shrink-0 ${SCOPE_DOT[memory.scope]}`} />
-          <h2 className="text-xl font-medium truncate">{prettyTitle(memory.category)}</h2>
+          <h2 className="text-xl font-medium truncate flex-1">{prettyTitle(memory.category)}</h2>
+          <Button size="sm" variant={editing ? 'default' : 'outline'} onClick={() => setEditing((e) => !e)}>
+            {editing ? 'Done editing' : 'Edit'}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setConfirmDelete(true)}>
+            Delete
+          </Button>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] uppercase tracking-wide text-text-tertiary">
@@ -121,12 +194,49 @@ function MemoryDetail({ memory }: { memory: MemoryEntry }) {
             <TagChip key={t} tag={t} />
           ))}
         </div>
+        {error && <p className="mt-2 text-xs font-bold text-[#dc2626]">{error}</p>}
       </div>
       <ScrollArea className="flex-1 min-h-0">
-        <div className="text-sm text-text-primary whitespace-pre-wrap break-words leading-relaxed pr-2">
-          {memory.content}
-        </div>
+        {editing ? (
+          <div className="flex flex-col gap-3 pr-2">
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              spellCheck={false}
+              className="w-full h-[360px] p-3 font-mono text-xs bg-background-default border border-borderSubtle text-text-default focus:outline-none focus:border-borderStandard resize-y"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" onClick={save} disabled={!dirty || saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setBody(memory.content)}
+                disabled={!dirty || saving}
+              >
+                Revert
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-text-primary whitespace-pre-wrap break-words leading-relaxed pr-2">
+            {memory.content}
+          </div>
+        )}
       </ScrollArea>
+
+      <ConfirmationModal
+        isOpen={confirmDelete}
+        title={`Delete "${prettyTitle(memory.category)}"?`}
+        message="This permanently removes this memory — goose will no longer recall it. There is no undo."
+        confirmLabel="Delete"
+        cancelLabel="Keep it"
+        confirmVariant="destructive"
+        isSubmitting={deleting}
+        onConfirm={doDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }
@@ -300,7 +410,15 @@ export default function MemoriesView() {
 
           <div className="flex-1 min-w-0 min-h-0 border-l border-borderSubtle pl-6">
             {selected ? (
-              <MemoryDetail memory={selected} />
+              <MemoryDetail
+                memory={selected}
+                workingDir={getInitialWorkingDir()}
+                onSaved={() => loadMemories()}
+                onDeleted={() => {
+                  setSelectedId(null);
+                  loadMemories();
+                }}
+              />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
                 <Brain className="h-10 w-10 mb-3" />
