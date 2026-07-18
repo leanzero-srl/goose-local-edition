@@ -593,6 +593,20 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_SCOPED_CONTRACTS env overrides.
     #[serde(default)]
     pub scoped_contracts: Option<bool>,
+    /// SINK DECOMPOSITION (Phase-1). The planner emits ONE terminal `integrate-verify` sink that depends on
+    /// EVERY module and does ALL verification — run every module's tests, build, run the entry, golden-check
+    /// every command, probe robustness, fix at root cause — in ONE model turn-loop on ONE node. Because it
+    /// depends on all modules it can only become READY once every module is DONE, so it runs LAST and ALONE,
+    /// and it STALLS (measured: a few tool calls then repeated wall-clock timeouts) while the scoped module
+    /// tasks around it succeed. When ON, split it: emit one scoped, read-only `verify::<module>` task per
+    /// file-owning module (each depends only on its module, owns no files, runs that module's own import,
+    /// build, and unit checks) so they FAN across the fleet exactly like the build tasks that succeed, PLUS a
+    /// THIN `integrate-verify` join (keeping that exact id — `sink_in_flight` hardcodes it) that does only the
+    /// irreducible whole-program gate: assemble, build, run the advertised entry end-to-end once. The thin join
+    /// stays the SOLE integration oracle — per-module green never substitutes for it. OFF by default => the
+    /// single monolithic sink is emitted exactly as before = byte-identical. GOOSE_SWARM_FAN_VERIFY overrides.
+    #[serde(default)]
+    pub fan_verify: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -731,6 +745,7 @@ impl Default for SwarmConfig {
             doc_prefetch: false,
             dep_signatures: None,
             scoped_contracts: None,
+            fan_verify: false,
         }
     }
 }
@@ -2096,6 +2111,114 @@ fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) 
     relaxed
 }
 
+/// SINK DECOMPOSITION (Phase-1, GOOSE_SWARM_FAN_VERIFY). Split the monolithic `integrate-verify` sink — which
+/// depends on EVERY module and does ALL verification serially in one model turn-loop on one node (it stalls) —
+/// into a fannable per-module half plus a thin serial join. For every file-owning, non-test module M it adds a
+/// scoped read-only `verify::<M>` task depending only on M (owns no files → co-run race-free, fans across the
+/// fleet exactly like the build tasks that succeed), then rewrites the existing `integrate-verify` sink KEEPING
+/// its exact id (`sink_in_flight` hardcodes it): its module deps are re-pointed onto the matching `verify::<M>`
+/// tasks (non-module deps preserved) and its description becomes the thin whole-program join. The join stays
+/// the SOLE end-to-end oracle.
+///
+/// Only ever called when the flag is ON; the default path never invokes it, so OFF is byte-identical. No-op
+/// (returns 0) when there is no sink, no fannable module, or the split was already applied. Returns the number
+/// of per-module verify tasks created. Pure — unit-tested without a model.
+fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let is_test = |s: &serde_json::Value| -> bool {
+        let id = id_of(s);
+        if id == "integrate-verify" {
+            return false;
+        }
+        let files = files_of(s);
+        id.contains("test")
+            || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
+    };
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    // Nothing to thin without a sink; never re-split an already-fanned plan (idempotent).
+    if !arr.iter().any(|s| id_of(s) == "integrate-verify")
+        || arr.iter().any(|s| id_of(s).starts_with("verify::"))
+    {
+        return 0;
+    }
+    // Fannable modules: everything that is neither the sink nor a test AND owns at least one file (a
+    // scaffolding task owning nothing has no isolated surface to verify).
+    let modules: Vec<(String, Vec<String>)> = arr
+        .iter()
+        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s) && !files_of(s).is_empty())
+        .map(|s| (id_of(s), files_of(s)))
+        .collect();
+    if modules.is_empty() {
+        return 0;
+    }
+    let module_set: std::collections::HashSet<String> =
+        modules.iter().map(|(id, _)| id.clone()).collect();
+    let new_tasks: Vec<serde_json::Value> = modules
+        .iter()
+        .map(|(id, files)| {
+            serde_json::json!({
+                "id": format!("verify::{id}"),
+                "description": per_module_verify_spec(lang, files),
+                "depends_on": [id],
+                "files": [],
+                "difficulty": "medium"
+            })
+        })
+        .collect();
+    let thin = thin_integrate_verify_spec(lang);
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if id_of(s) != "integrate-verify" {
+                continue;
+            }
+            s["description"] = serde_json::json!(thin);
+            let mut new_deps: Vec<serde_json::Value> = Vec::new();
+            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
+                for d in deps {
+                    match d.as_str() {
+                        Some(ds) if module_set.contains(ds) => {
+                            new_deps.push(serde_json::json!(format!("verify::{ds}")))
+                        }
+                        _ => new_deps.push(d.clone()),
+                    }
+                }
+            }
+            // Guarantee the join gates behind every per-module verify (a module the architect left off the
+            // sink's deps is still verified before the assembled run).
+            for (id, _) in &modules {
+                let vid = format!("verify::{id}");
+                if !new_deps.iter().any(|x| x.as_str() == Some(vid.as_str())) {
+                    new_deps.push(serde_json::json!(vid));
+                }
+            }
+            s["depends_on"] = serde_json::json!(new_deps);
+        }
+        arr.extend(new_tasks);
+    }
+    modules.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2188,6 +2311,108 @@ mod tests {
         let n = relax_contracted_module_deps(&mut plan, TargetLang::Python);
         assert_eq!(n, 0, "already a fan -> nothing to relax");
         assert_eq!(plan, before, "flat-fan plan left byte-identical");
+    }
+
+    // ---- SINK DECOMPOSITION (fan-verify) ---------------------------------------------------
+    fn fv_deps(plan: &serde_json::Value, id: &str) -> String {
+        plan["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id)
+            .unwrap()["depends_on"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|d| d.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+    fn fv_task<'a>(plan: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+        plan["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id)
+    }
+
+    #[test]
+    fn fan_verify_split_emits_per_module_verify_and_thin_join() {
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core","depends_on":[],"files":["core.py"]},
+                {"id":"cli","depends_on":["core"],"files":["cli.py"]},
+                {"id":"test-core","depends_on":["core"],"files":["test_core.py"]},
+                {"id":"integrate-verify","depends_on":["core","cli","test-core"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = fan_verify_split(&mut plan, TargetLang::Python);
+        assert_eq!(
+            n, 2,
+            "one verify task per file-owning non-test module (core, cli)"
+        );
+        // Each module got a scoped, read-only verify task depending only on its module.
+        assert_eq!(fv_deps(&plan, "verify::core"), "core");
+        assert_eq!(fv_deps(&plan, "verify::cli"), "cli");
+        for vid in ["verify::core", "verify::cli"] {
+            assert!(
+                fv_task(&plan, vid).unwrap()["files"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "{vid} owns no files (read-only, fannable)"
+            );
+        }
+        // No verify task for the test subtask.
+        assert!(fv_task(&plan, "verify::test-core").is_none());
+        // The join keeps its exact id, re-points module deps onto the verify tasks, and keeps the non-module
+        // (test) dep. Order: mapped existing deps first, then any missing verify tasks appended (none here).
+        assert_eq!(
+            fv_deps(&plan, "integrate-verify"),
+            "verify::core,verify::cli,test-core"
+        );
+        // The join is the thin whole-program oracle, not the monolithic suite-runner.
+        let desc = fv_task(&plan, "integrate-verify").unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(desc.contains("INTEGRATION JOIN"));
+        assert!(desc.contains("SOLE integration gate"));
+        assert!(
+            !desc.contains("run the test suite"),
+            "the whole-suite step moved to per-module verify"
+        );
+        // The module build tasks themselves are untouched.
+        assert_eq!(fv_deps(&plan, "core"), "");
+        assert_eq!(fv_deps(&plan, "cli"), "core");
+    }
+
+    #[test]
+    fn fan_verify_split_is_idempotent_and_noops_without_sink() {
+        // Idempotent: a second application does nothing (verify:: prefix already present).
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"a","depends_on":[],"files":["a.py"]},
+                {"id":"b","depends_on":[],"files":["b.py"]},
+                {"id":"integrate-verify","depends_on":["a","b"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
+        let after_first = plan.clone();
+        assert_eq!(
+            fan_verify_split(&mut plan, TargetLang::Python),
+            0,
+            "already fanned -> no-op"
+        );
+        assert_eq!(plan, after_first, "second application byte-identical");
+        // No sink -> no-op, byte-identical.
+        let mut no_sink: serde_json::Value =
+            serde_json::from_str(r#"{"subtasks":[{"id":"a","depends_on":[],"files":["a.py"]}]}"#)
+                .unwrap();
+        let before = no_sink.clone();
+        assert_eq!(fan_verify_split(&mut no_sink, TargetLang::Python), 0);
+        assert_eq!(no_sink, before, "no sink -> plan left byte-identical");
     }
 
     // ---- QUEUED USER NOTES ------------------------------------------------------------------
@@ -8762,6 +8987,18 @@ impl GooseAgentDispatcher {
                 );
             }
         }
+        // SINK DECOMPOSITION (Phase-1, #119): split the monolithic integrate-verify sink — which depends on
+        // every module and does ALL verification serially on one node (it stalls) — into a fannable per-module
+        // `verify::<M>` task each (read-only, owns nothing, fans like the build tasks) PLUS a THIN
+        // integrate-verify join (same id) that does only the irreducible whole-program run. OFF -> byte-identical.
+        if swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify) {
+            let fanned = fan_verify_split(&mut v, lang);
+            if fanned > 0 {
+                eprintln!(
+                    "  \u{b7} fan-verify: split the sink into {fanned} scoped per-module verify task(s) + a thin integrate-verify join (id kept) — the per-module checks fan across the fleet, the join stays the sole end-to-end gate"
+                );
+            }
+        }
         // T4: deterministic layout-normalizer (backstop to T3's file manifest). On an AMENDMENT where a package
         // already exists on disk, force a subtask's BARE module path onto the package ONLY when it COLLIDES with
         // an existing <pkg>/<name>.py — so a planner that switches package->flat cannot create a duplicate
@@ -9745,6 +9982,46 @@ fn integrate_verify_spec_inner(lang: TargetLang, boundary_probe: bool) -> String
     } else {
         base
     }
+}
+
+/// SINK DECOMPOSITION (Phase-1). The scoped, read-only verify spec for ONE module — the fannable half of the
+/// monolithic sink. It owns no files and writes nothing, so many of these co-run race-free and fan across the
+/// fleet exactly like the module BUILD tasks that already succeed. It does ONLY this module's own import/build
+/// + unit checks; the whole-program end-to-end run is the thin `integrate-verify` join's job, never this one's.
+fn per_module_verify_spec(lang: TargetLang, files: &[String]) -> String {
+    format!(
+        "VERIFY THIS ONE MODULE IN ISOLATION. You own NOTHING and must WRITE NO files — this is a read-only \
+         per-module gate that runs in parallel with its siblings. Import/build-check every file this module \
+         delivers ({owned}) and run ONLY this module's own unit tests ({test}). Confirm the module's public \
+         surface imports cleanly (no ImportError/SyntaxError/build error) and its own tests pass. Do NOT run \
+         the whole program end-to-end, do NOT verify sibling modules, do NOT redesign the interface — the \
+         final integrate-verify join assembles and runs the whole program. If this module fails to import or \
+         its own tests fail, REPORT the exact error precisely (which file, which symbol, the message); do not \
+         attempt cross-module fixes from here.",
+        owned = files.join(", "),
+        test = lang.test_cmd(),
+    )
+}
+
+/// SINK DECOMPOSITION (Phase-1). The THIN `integrate-verify` join spec — the irreducible serial half. Derived
+/// from the monolithic spec by dropping the "run the whole test suite" step (the per-module verify tasks now
+/// own it) and reframing as the sole whole-program gate, but keeping the strong build/run/golden-value/
+/// robustness oracle verbatim so coverage is NOT weakened. If the source string ever drifts and a replacement
+/// misses, this fails safe to the full monolithic spec (still a complete gate). Per-module green NEVER
+/// substitutes for this run — it stays the single end-to-end integration oracle.
+fn thin_integrate_verify_spec(lang: TargetLang) -> String {
+    let full = integrate_verify_spec(lang);
+    let suite = format!("run the test suite ({}), then ", lang.test_cmd());
+    let thinned = full.replacen(&suite, "", 1).replacen(
+        "Integrate every module and VERIFY the whole program works end-to-end: ",
+        "INTEGRATION JOIN — every module was already import/build-checked and unit-tested in isolation upstream \
+         (the per-module verify tasks); do the irreducible whole-program gate that cannot be sharded: ",
+        1,
+    );
+    format!(
+        "{thinned} A green per-module verify NEVER proves the ASSEMBLED program runs or is correct — THIS \
+         end-to-end run is the SOLE integration gate and per-module green never substitutes for it."
+    )
 }
 
 /// The existing on-disk .py files (relative to the app root) for the ARCHITECT (T3). On an AMENDMENT the

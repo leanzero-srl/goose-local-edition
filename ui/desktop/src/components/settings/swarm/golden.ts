@@ -108,6 +108,11 @@ export interface SwarmConfig {
    *  because the frozen interface already gives every importer its siblings' signatures and only
    *  integrate-verify compiles the crate; tests and the sink join are untouched. Gated on contracts. Default OFF. */
   relax_contracted_deps?: boolean;
+  /** #119 sink decomposition: split the single final integrate-verify check — which depends on every module
+   *  and does ALL verification on ONE node (it stalls) — into one scoped, read-only verify task per module
+   *  (these fan across the fleet like the build tasks) plus a THIN final integration run. The thin run stays
+   *  the sole end-to-end gate; per-module green never substitutes for it. Default OFF (byte-identical when off). */
+  fan_verify?: boolean;
   /** Name each swarm build's chat session with a short AI-generated title (one cheap local-planner call)
    *  instead of the first-four-words truncation ("Build X — a"). Runs off the critical path so it never slows
    *  a build. Default OFF (an extra planner call can queue behind the planning burst on a busy fleet). */

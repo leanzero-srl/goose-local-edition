@@ -520,6 +520,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Split the final whole-app check across the fleet"
+              hint="At the end of a build goose runs one big check that puts the app together and verifies everything — every module's tests, the build, running the app, checking each command's output. Today that whole check runs on a single machine in one long pass, and because it can only start once every module is finished, the other machines sit idle while it grinds — and on hard builds it stalls out before it reaches a verdict. With this on, goose gives each module its own quick check that runs the moment that module is done, so those spread across the fleet alongside the build work, and the final step shrinks to just the one thing that can't be split up: assembling the app and running it end to end once. That final run is still the real gate — a module passing its own check never counts as the whole app working. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.fan_verify}
+                onChange={(v) => set({ fan_verify: v })}
+              />
+            </Row>
+            <Row
               label="Name each build's chat with a short AI title"
               hint="By default a swarm build's entry in the chat list is just the first few words of your brief (like 'Build X — a'). With this on, goose asks a local model for a short, meaningful title (like 'logfold — Go log-template miner') when the build starts. It's one cheap call that runs off to the side, so it never delays the build. Off by default because on a busy fleet that extra call can wait in line behind the planning work."
             >
