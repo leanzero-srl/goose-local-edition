@@ -580,24 +580,45 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap
   const Icon = ACTIVITY_ICON[it.kind];
   const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [open, setOpen] = useState(false);
   const lineText = `${it.text}${it.sub ? ` — ${it.sub}` : ''}`;
   const path = resolveActivityPath(lineText, undefined);
+  // A line is clickable-to-expand when it carries a sub detail — in the compact feed that detail is truncated,
+  // so a click reveals the full text (wrapped, nothing invented — just what the event already carried).
+  const expandable = !!it.sub;
   return (
-    <div
-      className="flex items-start gap-2 text-xs"
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setMenu({ x: e.clientX, y: e.clientY });
-      }}
-    >
-      <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
-      <span className="text-text-primary shrink-0">{it.text}</span>
-      {it.sub && (
-        <span
-          className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${it.kind === 'brief' ? 'line-clamp-3' : ''}`}
+    <div className="flex flex-col">
+      <div
+        className={`flex items-start gap-2 text-xs ${expandable ? 'cursor-pointer' : ''}`}
+        onClick={expandable ? () => setOpen((o) => !o) : undefined}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
+        <span className="text-text-primary shrink-0">{it.text}</span>
+        {it.sub && !open && (
+          <span
+            className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${it.kind === 'brief' ? 'line-clamp-3' : ''}`}
+          >
+            — {it.sub}
+          </span>
+        )}
+        {expandable &&
+          (open ? (
+            <ChevronDown size={12} className="ml-auto mt-0.5 shrink-0 text-text-secondary" />
+          ) : (
+            <ChevronRight size={12} className="ml-auto mt-0.5 shrink-0 text-text-secondary" />
+          ))}
+      </div>
+      {it.sub && open && (
+        <div
+          className="ml-[21px] mt-1 mb-0.5 px-2 py-1.5 text-xs text-text-secondary whitespace-pre-wrap break-words bg-background-secondary border border-border-primary"
+          style={{ borderRadius: 2 }}
         >
-          — {it.sub}
-        </span>
+          {it.sub}
+        </div>
       )}
       {menu && (
         <ActivityContextMenu
