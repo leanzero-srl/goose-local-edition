@@ -4,7 +4,7 @@
 //! device pool with the goose-swarm weighted work-queue scheduler. `goose swarm pool` manages the
 //! pool (devices, weights, enable/disable) via an interactive menu, persisted in the Goose config.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
 use futures::StreamExt;
@@ -516,6 +516,15 @@ pub struct SwarmConfig {
     /// default = byte-identical. GOOSE_SWARM_RELAX_CONTRACTED_DEPS env overrides.
     #[serde(default)]
     pub relax_contracted_deps: bool,
+    /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
+    /// modules a UNANIMOUS + dependency-downward-closed majority of the round-1 drafts agreed on (carried
+    /// VERBATIM from one source draft), and re-draft ONLY the residual dirty modules against that frozen
+    /// interface. The frozen∪dirty splice is adopted only when it is a valid DAG that passes the interface
+    /// gate AND scores strictly higher than round 1; confidence stays the round-1 free-draft agreement in
+    /// every branch (never inflated by freeze fraction). OFF by default = byte-identical to today.
+    /// GOOSE_SWARM_INCREMENTAL_REPLAN env overrides.
+    #[serde(default)]
+    pub incremental_replan: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -645,6 +654,7 @@ impl Default for SwarmConfig {
             user_notes: false,
             contract_validate: false,
             relax_contracted_deps: false,
+            incremental_replan: false,
         }
     }
 }
@@ -3316,6 +3326,151 @@ mod tests {
         ));
         // Invalid JSON → not covered (never adopt an unparseable round-2 plan).
         assert!(!plan_covers_backbone("not json", &["cli".into()]));
+    }
+
+    // --- Incremental replan (Phase 1) --------------------------------------------------------------------
+
+    fn spec(id: &str, files: &[&str], deps: &[&str]) -> goose_swarm::TaskSpec {
+        goose_swarm::TaskSpec {
+            id: id.to_string(),
+            description: format!("{id} module"),
+            difficulty: goose_swarm::Difficulty::Easy,
+            preferred_model: None,
+            owned_files: files.iter().map(|s| s.to_string()).collect(),
+            deps: deps.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn module_votes_tallies_roles_over_the_full_pool() {
+        let d1 = vec![
+            spec("core", &["core.py"], &[]),
+            spec("cli", &["main.py"], &[]),
+        ];
+        let d2 = vec![
+            spec("core", &["core.py"], &[]),
+            spec("entry", &["cli.py"], &[]),
+        ];
+        let d3 = vec![
+            spec("core", &["core.py"], &[]),
+            spec("parser", &["parser.py"], &[]),
+        ];
+        let v = module_votes(&[d1, d2, d3]);
+        // core unanimous (3/3); cli folded from main/cli/entry (2/3 — d3 has no entry role); parser 1/3.
+        assert_eq!(v.get("core"), Some(&(3, 3)));
+        assert_eq!(v.get("cli"), Some(&(2, 3)));
+        assert_eq!(v.get("parser"), Some(&(1, 3)));
+    }
+
+    #[test]
+    fn partition_freezes_only_unanimous_and_downward_closed() {
+        // core + cli unanimous, eval only 2/3. cli deps on eval, so even though cli's own role is unanimous it
+        // CANNOT freeze (downward-closure): its dep eval is dirty. core (root, unanimous) freezes.
+        let mk = |eval: bool| {
+            let mut s = vec![
+                spec("core", &["core.py"], &[]),
+                spec("cli", &["main.py"], &["core", "eval"]),
+            ];
+            if eval {
+                s.push(spec("eval", &["eval.py"], &["core"]));
+            } else {
+                s.push(spec("score", &["score.py"], &["core"])); // a different role, so eval is not unanimous
+            }
+            s
+        };
+        let valid = vec![mk(true), mk(true), mk(false)];
+        let votes = module_votes(&valid);
+        let source = mk(true); // the best draft = one that HAS eval
+        let (frozen, dirty) = partition_frozen_dirty(&votes, &source);
+        let fids: Vec<&str> = frozen.iter().map(|t| t.id.as_str()).collect();
+        assert!(fids.contains(&"core"), "core is unanimous root: {fids:?}");
+        assert!(
+            !fids.contains(&"cli"),
+            "cli deps on dirty eval → not frozen: {fids:?}"
+        );
+        assert!(
+            !fids.contains(&"eval"),
+            "eval is only 2/3 → dirty: {fids:?}"
+        );
+        assert!(dirty.contains(&"eval".to_string()) && dirty.contains(&"cli".to_string()));
+        // P0-1 invariant: EVERY frozen task's deps resolve inside the frozen set (never dangles).
+        let frozen_ids: std::collections::BTreeSet<&str> =
+            frozen.iter().map(|t| t.id.as_str()).collect();
+        for t in &frozen {
+            for d in &t.deps {
+                assert!(
+                    frozen_ids.contains(d.as_str()),
+                    "frozen `{}` deps on non-frozen `{d}`",
+                    t.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn partition_downward_closure_freezes_a_full_chain_when_all_unanimous() {
+        // core <- eval <- cli, all unanimous → the whole chain freezes (closure is satisfied at every level).
+        let chain = || {
+            vec![
+                spec("core", &["core.py"], &[]),
+                spec("eval", &["eval.py"], &["core"]),
+                spec("cli", &["main.py"], &["eval"]),
+            ]
+        };
+        let valid = vec![chain(), chain(), chain()];
+        let votes = module_votes(&valid);
+        let (frozen, dirty) = partition_frozen_dirty(&votes, &chain());
+        assert_eq!(frozen.len(), 3, "all three freeze");
+        assert!(dirty.is_empty());
+    }
+
+    #[test]
+    fn validate_frozen_interfaces_accepts_a_clean_wire_and_rejects_the_r2_breaks() {
+        let frozen = vec![spec("core", &["core.py"], &[])];
+        // (ok) a dirty module that deps on the frozen id and owns a NEW role.
+        let clean = vec![
+            spec("cli", &["main.py"], &["core"]),
+            spec("integrate-verify", &[], &["core", "cli"]),
+        ];
+        assert!(validate_frozen_interfaces(&frozen, &clean).is_ok());
+        // (ii) dep on a frozen id that does not exist (a changed/renamed frozen id) → unknown dep → reject.
+        let bad_dep = vec![spec("cli", &["main.py"], &["kore"])];
+        assert!(validate_frozen_interfaces(&frozen, &bad_dep).is_err());
+        // (iii) a cycle through a frozen node: give the frozen node a dep on a dirty node, dirty deps back.
+        let frozen_cyc = vec![spec("core", &["core.py"], &["cli"])];
+        let dirty_cyc = vec![spec("cli", &["main.py"], &["core"])];
+        assert!(validate_frozen_interfaces(&frozen_cyc, &dirty_cyc).is_err());
+        // (iv) a dirty file whose canonical role collides with a frozen role → reject.
+        let role_collide = vec![spec("core2", &["pkg/core.py"], &[])];
+        assert!(validate_frozen_interfaces(&frozen, &role_collide).is_err());
+        // (b) a dirty task that reuses a frozen id → reject.
+        let id_reuse = vec![spec("core", &["other.py"], &[])];
+        assert!(validate_frozen_interfaces(&frozen, &id_reuse).is_err());
+    }
+
+    #[test]
+    fn plan_json_from_specs_roundtrips() {
+        let specs = vec![
+            spec("core", &["core.py", "types.py"], &[]),
+            spec("cli", &["main.py"], &["core"]),
+        ];
+        let json = plan_json_from_specs(&specs);
+        let back = goose_swarm::specs_from_plan_json(&json).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].id, "core");
+        assert_eq!(back[0].owned_files, vec!["core.py", "types.py"]);
+        assert_eq!(back[1].deps, vec!["core"]);
+    }
+
+    #[test]
+    fn frozen_backbone_clause_emits_ids_files_deps_and_keeps_the_hatch() {
+        let frozen = vec![spec("core", &["core.py"], &[])];
+        let clause = frozen_backbone_clause(&frozen);
+        assert!(clause.contains("core") && clause.contains("core.py"));
+        assert!(clause.contains("reproduce EXACTLY"));
+        // FLOOR-not-ceiling hatch + the P1-6 "say so" escalation clause are both present.
+        assert!(clause.contains("FURTHER NEW module"));
+        assert!(clause.contains("SAY SO EXPLICITLY"));
     }
 
     #[test]
@@ -6139,6 +6294,86 @@ fn consensus_backbone(valid_specs: &[Vec<goose_swarm::TaskSpec>]) -> Vec<String>
         .collect()
 }
 
+/// role → (votes, n): how many of the n valid round-1 drafts independently landed on each canonical module
+/// ROLE. Generalizes `consensus_backbone`'s tally — it keeps the FULL map instead of filtering to the strict
+/// majority — over the SAME role-space (`canonical_role` folding + `is_scaffolding_task` exclusion + per-draft
+/// dedup), so `votes[r] == n` is exactly "every valid draft has role r". Pure, no model call. The per-module
+/// uncertainty signal for incremental replan (Phase 1).
+fn module_votes(
+    valid_specs: &[Vec<goose_swarm::TaskSpec>],
+) -> std::collections::BTreeMap<String, (usize, usize)> {
+    let n = valid_specs.len();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for specs in valid_specs {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        for r in roles {
+            *counts.entry(r).or_insert(0) += 1;
+        }
+    }
+    counts.into_iter().map(|(r, c)| (r, (c, n))).collect()
+}
+
+/// Partition ONE internally-consistent source draft's substantive tasks into FROZEN (carried verbatim) and
+/// DIRTY (re-drafted) for incremental replan (Phase 1, seam 2). A task freezes iff EVERY canonical role it
+/// owns is UNANIMOUS across the valid drafts (`votes[role] == n`) AND — the P0-1 downward-closure conjunct —
+/// every task it depends on also freezes. The closure is a greatest fixpoint: iterate, dropping any candidate
+/// whose deps include a non-candidate, until stable. This guarantees every intra-frozen dep resolves by
+/// construction (the frozen set is lifted from ONE draft, so its ids are self-consistent, and no frozen task
+/// can dangle off a dirty/re-authored id). Returns (frozen specs verbatim, sorted dirty roles). Pure.
+///
+/// NOTE (Phase 2, deferred): the "no open decision names r" conjunct (§2.3) is NOT applied here yet — the
+/// open-decision→role map does not exist. Until it does, an open decision can only make freezing *looser*, so
+/// the conservative gate (interface validator + strictly-higher-score adoption) is what keeps a wrong freeze
+/// from shipping; this is called out in the deferral note on the feature.
+fn partition_frozen_dirty(
+    votes: &std::collections::BTreeMap<String, (usize, usize)>,
+    source_specs: &[goose_swarm::TaskSpec],
+) -> (Vec<goose_swarm::TaskSpec>, Vec<String>) {
+    let unanimous = |role: &str| matches!(votes.get(role), Some((v, n)) if *n > 0 && v == n);
+    let substantive: Vec<&goose_swarm::TaskSpec> = source_specs
+        .iter()
+        .filter(|t| !is_scaffolding_task(t) && !t.owned_files.is_empty())
+        .collect();
+    // Seed: every substantive task all of whose owned roles are unanimous.
+    let mut candidate_ids: std::collections::BTreeSet<String> = substantive
+        .iter()
+        .filter(|t| t.owned_files.iter().all(|f| unanimous(&canonical_role(f))))
+        .map(|t| t.id.clone())
+        .collect();
+    // Downward-closure fixpoint: a task may stay frozen only if ALL its deps are themselves frozen candidates
+    // (a dep on a dirty module OR on a scaffold/unknown id disqualifies it → fails toward dirty).
+    loop {
+        let snapshot = candidate_ids.clone();
+        let mut changed = false;
+        for t in &substantive {
+            if snapshot.contains(&t.id) && !t.deps.iter().all(|d| snapshot.contains(d)) {
+                candidate_ids.remove(&t.id);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let frozen: Vec<goose_swarm::TaskSpec> = source_specs
+        .iter()
+        .filter(|t| candidate_ids.contains(&t.id))
+        .cloned()
+        .collect();
+    let dirty_roles: std::collections::BTreeSet<String> = substantive
+        .iter()
+        .filter(|t| !candidate_ids.contains(&t.id))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    (frozen, dirty_roles.into_iter().collect())
+}
+
 /// True iff the round-2 skeleton actually contains EVERY pinned backbone role (the lock was HONORED, not
 /// merely prompted). Same role-space as `consensus_backbone`. A weak model that drops/renames/merges a
 /// pinned module fails this → the caller keeps round 1 (one wasted round, never a lock-violating plan).
@@ -6207,6 +6442,106 @@ fn backbone_clause(backbone: &[String]) -> String {
          TOP of this backbone exactly as instructed above. ",
         backbone.join(", ")
     )
+}
+
+/// The incremental-replan round-2 constraint (seam 5): unlike `backbone_clause` (which pins role NAMES and
+/// re-details everything), this emits the FROZEN modules as a hard VERBATIM contract — exact id, files, deps —
+/// so the fleet re-drafts ONLY the residual and wires into a fixed interface. It keeps `backbone_clause`'s
+/// FLOOR-not-ceiling hatch (P2-7: a genuinely-needed new module may be added) AND adds the P1-6 "say so"
+/// clause so the model surfaces a frozen module that must itself change rather than silently working around it.
+fn frozen_backbone_clause(frozen: &[goose_swarm::TaskSpec]) -> String {
+    let modules = frozen
+        .iter()
+        .map(|t| {
+            format!(
+                "{} — files:[{}] — deps:[{}] — {}",
+                t.id,
+                t.owned_files.join(", "),
+                t.deps.join(", "),
+                t.description.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "FROZEN MODULES (already decided by an independent first planning pass — reproduce EXACTLY, do NOT \
+         rename/merge/split/re-file them and do NOT change their ids, files, or deps). Design the remaining \
+         TO-DESIGN modules and wire them INTO these: you MAY depend on a frozen module's existing id and \
+         consume its files; you may NOT change a frozen module's id, files, or deps. You MAY add a FURTHER NEW \
+         module ONLY if the spec genuinely needs a concern NONE of these cover — do not pad, do not drop a real \
+         concern. If designing the remaining modules reveals that a FROZEN module must itself change (needs a \
+         new dependency, a new file, or a different interface), SAY SO EXPLICITLY on that module rather than \
+         working around it — do not silently duplicate its logic. Add the per-module tests and the final \
+         integrate-verify subtask ON TOP exactly as instructed above. Frozen modules, verbatim:\n{modules}\n"
+    )
+}
+
+/// Interface gate for the frozen∪dirty splice (seam 6, the LOWEST-confidence piece of the design — R2). This
+/// is a NEW pure validator, NOT an extension of `Dag::splice_specs` (which mutates a LIVE dag with TaskStates
+/// and applies runtime semantics that do not exist at planning time). `frozen` is the COMPLETE carried-verbatim
+/// set (modules AND their own test tasks); `dirty` is the re-drafted residual. Rejects a merge that would let a
+/// broken plan through silently:
+///   (a) merged is a valid DAG — duplicate ids, a dirty→frozen dep that resolves to nothing, and any cycle
+///       through a frozen node are all rejected (same `Dag::from_specs` validity the live path uses);
+///   (b) no dirty task REUSES a frozen id (that would silently rewrite a frozen module);
+///   (c) no dirty file canonicalizes onto a FROZEN role (R4 role-collision merge).
+/// On any violation the caller keeps round 1 — never ships the broken splice.
+fn validate_frozen_interfaces(
+    frozen: &[goose_swarm::TaskSpec],
+    dirty: &[goose_swarm::TaskSpec],
+) -> Result<()> {
+    let frozen_ids: std::collections::BTreeSet<&str> =
+        frozen.iter().map(|t| t.id.as_str()).collect();
+    let frozen_roles: std::collections::BTreeSet<String> = frozen
+        .iter()
+        .filter(|t| !is_scaffolding_task(t))
+        .flat_map(|t| t.owned_files.iter())
+        .map(|f| canonical_role(f))
+        .collect();
+    let mut merged: Vec<goose_swarm::TaskSpec> = frozen.to_vec();
+    merged.extend(dirty.iter().cloned());
+    goose_swarm::Dag::from_specs(merged)?;
+    for d in dirty {
+        if frozen_ids.contains(d.id.as_str()) {
+            bail!("dirty module `{}` reuses a frozen module id", d.id);
+        }
+        if is_scaffolding_task(d) {
+            continue;
+        }
+        for f in &d.owned_files {
+            let r = canonical_role(f);
+            if frozen_roles.contains(&r) {
+                bail!("dirty file `{f}` collides with frozen role `{r}`");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Serialize a `Vec<TaskSpec>` back to the planner's skeleton JSON (`{"subtasks":[…]}`), the inverse of
+/// `specs_from_plan_json`, so a spliced frozen∪dirty plan can flow out of `parallel_plan` as a skeleton string
+/// exactly like a model-drafted one. Deterministic; used only on the incremental path.
+fn plan_json_from_specs(specs: &[goose_swarm::TaskSpec]) -> String {
+    let subtasks: Vec<serde_json::Value> = specs
+        .iter()
+        .map(|t| {
+            let mut o = serde_json::json!({
+                "id": t.id,
+                "description": t.description,
+                "difficulty": match t.difficulty {
+                    goose_swarm::Difficulty::Hard => "hard",
+                    goose_swarm::Difficulty::Easy => "easy",
+                },
+                "depends_on": t.deps,
+                "files": t.owned_files,
+            });
+            if let Some(m) = &t.preferred_model {
+                o["model"] = serde_json::Value::String(m.clone());
+            }
+            o
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({ "subtasks": subtasks })).unwrap_or_default()
 }
 
 /// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
@@ -7507,6 +7842,10 @@ impl GooseAgentDispatcher {
         // lever (confidence stays the round-1 free-draft agreement — the forced round never touches the ask
         // gate). false = today, byte-identical.
         backbone_on: bool,
+        // Incremental replan (Phase 1): freeze the unanimous + downward-closed modules VERBATIM and re-draft
+        // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher.
+        // Takes precedence over `backbone_on` when both are set. false = today, byte-identical.
+        incremental_on: bool,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
@@ -7863,13 +8202,118 @@ impl GooseAgentDispatcher {
                 "  {} picked best skeleton (score {score1}) — plan confidence {conf1}/100 ({reason1})",
                 style("✓").green().bold()
             );
+            // INCREMENTAL REPLAN (Phase 1) — freeze the unanimous + dependency-downward-closed modules VERBATIM
+            // from ONE source draft (the best round-1 skeleton) and re-draft ONLY the dirty residual against
+            // that frozen interface, then splice frozen∪dirty. Adopt ONLY when the splice is a valid DAG that
+            // passes the interface gate AND scores strictly higher than round 1; confidence stays conf1 (the
+            // round-1 free-draft agreement) in EVERY branch, so the freeze fraction can never inflate the ask-
+            // floor number (P0-2). Takes precedence over backbone. Off ⇒ this whole block is skipped, byte-
+            // identical. On any failure it falls back to round 1 — it can never ship a broken/worse plan.
+            if incremental_on && valid1.len() >= 2 {
+                let votes = module_votes(&valid1);
+                let source_specs = goose_swarm::specs_from_plan_json(&json1).unwrap_or_default();
+                let (frozen, dirty_roles) = partition_frozen_dirty(&votes, &source_specs);
+                if frozen.len() >= 2 && !dirty_roles.is_empty() {
+                    eprintln!(
+                        "  {} incremental replan: {} frozen module(s) [{}], {} dirty [{}] — drafting residual",
+                        style("◆").cyan(),
+                        frozen.len(),
+                        frozen
+                            .iter()
+                            .map(|t| t.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        dirty_roles.len(),
+                        dirty_roles.join(", ")
+                    );
+                    // Carry each frozen module's OWN scaffolding (its per-module test, whose deps are all frozen
+                    // ids) verbatim too — otherwise freezing a module silently drops its test task.
+                    let frozen_ids: std::collections::BTreeSet<&str> =
+                        frozen.iter().map(|t| t.id.as_str()).collect();
+                    let mut frozen_carry: Vec<goose_swarm::TaskSpec> = frozen.clone();
+                    for t in &source_specs {
+                        if is_scaffolding_task(t)
+                            && t.id != "integrate-verify"
+                            && !t.deps.is_empty()
+                            && t.deps.iter().all(|d| frozen_ids.contains(d.as_str()))
+                        {
+                            frozen_carry.push(t.clone());
+                        }
+                    }
+                    let carry_ids: std::collections::BTreeSet<String> =
+                        frozen_carry.iter().map(|t| t.id.clone()).collect();
+                    let frozen_roles: std::collections::BTreeSet<String> = frozen
+                        .iter()
+                        .flat_map(|t| t.owned_files.iter())
+                        .map(|f| canonical_role(f))
+                        .collect();
+                    let system2 = build_system(&frozen_backbone_clause(&frozen));
+                    let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
+                    let (best2, _valid2) =
+                        select_best_skeleton(candidates2, worker_count, "incremental ");
+                    match best2 {
+                        Some((_score2_raw, json2)) => {
+                            let round2_specs =
+                                goose_swarm::specs_from_plan_json(&json2).unwrap_or_default();
+                            // Keep from round 2 only the RESIDUAL: drop any task that collides with a carried
+                            // frozen id, and drop any substantive task that merely reproduces a frozen module
+                            // (every role it owns is already frozen). What remains = dirty modules + their
+                            // tests + the integrate-verify sink (which references the carried frozen ids).
+                            let dirty_specs: Vec<goose_swarm::TaskSpec> = round2_specs
+                                .into_iter()
+                                .filter(|t| !carry_ids.contains(&t.id))
+                                .filter(|t| {
+                                    is_scaffolding_task(t)
+                                        || t.owned_files.is_empty()
+                                        || t.owned_files
+                                            .iter()
+                                            .any(|f| !frozen_roles.contains(&canonical_role(f)))
+                                })
+                                .collect();
+                            let mut merged = frozen_carry.clone();
+                            merged.extend(dirty_specs.iter().cloned());
+                            let ok =
+                                validate_frozen_interfaces(&frozen_carry, &dirty_specs).is_ok();
+                            match score_skeleton(&merged, worker_count) {
+                                Some(score2) if ok && score2 > score1 => {
+                                    eprintln!(
+                                        "  {} incremental splice adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
+                                        style("✓").green().bold()
+                                    );
+                                    (
+                                        plan_json_from_specs(&merged),
+                                        Some(conf1),
+                                        format!(
+                                            "{reason1} [incremental: {} frozen, {} dirty; spliced score {score1}->{score2}; confidence from round-1 free drafts]",
+                                            frozen.len(),
+                                            dirty_roles.len()
+                                        ),
+                                    )
+                                }
+                                _ => {
+                                    eprintln!("  · incremental splice not adopted (kept round 1)");
+                                    (json1, Some(conf1), reason1)
+                                }
+                            }
+                        }
+                        None => {
+                            eprintln!(
+                                "  · incremental replan: no valid residual draft (kept round 1)"
+                            );
+                            (json1, Some(conf1), reason1)
+                        }
+                    }
+                } else {
+                    eprintln!("  · incremental replan: no freezable core (kept round 1)");
+                    (json1, Some(conf1), reason1)
+                }
             // BACKBONE LOCK — a STRUCTURE lever only. When a strict majority of the independent drafts already
             // agreed on ≥2 core module roles, re-draft the whole fleet with that core PINNED and adopt round 2
             // ONLY if it is a valid DAG that HONORS the lock AND scores structurally HIGHER than round 1.
             // Confidence stays conf1 — the round-1 free-draft agreement — in ALL branches, so the forced round
             // can NEVER inflate the number the ask-floor gate reads (dishonesty eliminated by construction, not
             // by a tuned guard). Off ⇒ this whole block is skipped, byte-identical.
-            if backbone_on {
+            } else if backbone_on {
                 let backbone = consensus_backbone(&valid1);
                 if backbone.len() >= 2 {
                     eprintln!(
@@ -15343,6 +15787,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // every run used 2. A run must be able to state what it actually spent.
             "retarget_rounds": retarget_cap,
             "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
+            "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
             "grounded_research_only": swarm_gate_cfg("GOOSE_SWARM_GROUNDED_RESEARCH_ONLY", load_config().grounded_research_only),
@@ -15444,6 +15889,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
     let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
+    // Incremental replan (Phase 1): config default OFF unless env overrides. Read once outside the loop. Takes
+    // precedence over backbone_on inside parallel_plan when both are set.
+    let incremental_on = swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", cfg.incremental_replan);
     // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default OFF): after the user answers the clarify ask and the
     // deterministic rescore lifts the plan to/over the floor, keep THAT plan instead of letting a
     // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
@@ -15529,6 +15977,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         draft_temp,
                         converge,
                         backbone_on,
+                        incremental_on,
                     )
                     .await
                 {
