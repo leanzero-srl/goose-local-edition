@@ -525,6 +525,20 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_INCREMENTAL_REPLAN env overrides.
     #[serde(default)]
     pub incremental_replan: bool,
+    /// ASK-AWAY (Concept A, #94-family): replace the one-shot clarify latch with a BOUNDED multi-round ask
+    /// loop. While the plan is below the ask floor AND material open decisions remain, keep asking the next
+    /// batch (re-derived from the TRIMMED open_decisions each round) instead of asking exactly one batch and
+    /// proceeding at a low cap — the arithmetic pin where a spec with more open decisions than `ask_max_q` is
+    /// mathematically stuck below the floor after a single round. Batches INLINE within one below-floor visit
+    /// (no re-draft between batches, per #129); a STRUCTURAL answer (language flip / product first defined)
+    /// still forces a re-plan. Bounded by `ask_rounds_max`. OFF by default = byte-identical to today.
+    /// GOOSE_SWARM_ASK_AWAY env overrides.
+    #[serde(default)]
+    pub ask_away: bool,
+    /// How many clarify ROUNDS ASK-AWAY may spend within one below-floor visit. `None` = default 3; clamped
+    /// [1,6]. Inert unless `ask_away` is on. GOOSE_SWARM_ASK_ROUNDS env overrides.
+    #[serde(default)]
+    pub ask_rounds_max: Option<u32>,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -655,6 +669,8 @@ impl Default for SwarmConfig {
             contract_validate: false,
             relax_contracted_deps: false,
             incremental_replan: false,
+            ask_away: false,
+            ask_rounds_max: None,
         }
     }
 }
@@ -2518,6 +2534,56 @@ mod tests {
             ]),
             vec!["web-search__search".to_string()]
         );
+    }
+
+    /// P1 substrate: `classify_research_attempt` widens `grounded:bool` into the four cases the ASK-AWAY
+    /// interim routing needs (CalledEmpty → ask the user; Errored/NeverCalled → retry the fetch). The
+    /// CalledEmpty-vs-Errored boundary is the load-bearing distinction — verify it explicitly.
+    #[test]
+    fn classify_research_attempt_separates_the_four_cases() {
+        let mk = |name: &str, is_mcp: bool, ok: Option<bool>| ToolCallRecord {
+            name: name.to_string(),
+            is_mcp,
+            ok,
+        };
+        // NeverCalled: no tool call at all — pure model reasoning.
+        assert_eq!(classify_research_attempt(&[]), ResearchAttempt::NeverCalled);
+        // Grounded: at least one successful MCP lookup, and it wins even alongside a failed one.
+        assert_eq!(
+            classify_research_attempt(&[mk("web-search__search", true, Some(true))]),
+            ResearchAttempt::Grounded
+        );
+        assert_eq!(
+            classify_research_attempt(&[
+                mk("web-search__search", true, Some(false)),
+                mk("context7__get-library-docs", true, Some(true)),
+            ]),
+            ResearchAttempt::Grounded
+        );
+        // Errored: a lookup was attempted and failed or was cut off (Some(false) / None), none succeeded.
+        assert_eq!(
+            classify_research_attempt(&[mk("web-search__search", true, Some(false))]),
+            ResearchAttempt::Errored
+        );
+        assert_eq!(
+            classify_research_attempt(&[mk("context7__resolve-library-id", true, None)]),
+            ResearchAttempt::Errored
+        );
+        // CalledEmpty: tools ran and none errored, but nothing grounded — only non-MCP shell calls.
+        assert_eq!(
+            classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
+            ResearchAttempt::CalledEmpty
+        );
+        // The field is populated on the struct — read it so the P1 substrate is exercised end to end.
+        let f = ResearchFinding {
+            question: "q".into(),
+            kind: "web".into(),
+            findings: "f".into(),
+            grounded: false,
+            lookups: Vec::new(),
+            attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
+        };
+        assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
     }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
@@ -5532,6 +5598,46 @@ struct ResearchQuestion {
     kind: String,
 }
 
+/// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
+/// researchable classifier (#94) keys its fallback off. `grounded: bool` flattens four cases the classifier
+/// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
+/// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
+///
+/// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
+/// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
+/// without guessing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResearchAttempt {
+    /// No research tool call at all — pure model reasoning.
+    NeverCalled,
+    /// A lookup was attempted and failed or was cut off (`ok == Some(false)` / `ok == None`).
+    Errored,
+    /// A tool ran but grounded nothing usable — only non-MCP calls, or MCP calls returning nothing.
+    CalledEmpty,
+    /// At least one successful MCP lookup (today's `grounded: true`).
+    Grounded,
+}
+
+/// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
+/// events only) so it is unit-testable and no model opinion enters. `Grounded` wins over any failure, then
+/// an attempted-but-failed lookup is `Errored`, tools-ran-but-nothing-grounded is `CalledEmpty`, and an
+/// empty trace is `NeverCalled`.
+fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
+    if tool_calls.is_empty() {
+        return ResearchAttempt::NeverCalled;
+    }
+    if tool_calls.iter().any(|t| t.ok == Some(true) && t.is_mcp) {
+        return ResearchAttempt::Grounded;
+    }
+    if tool_calls
+        .iter()
+        .any(|t| matches!(t.ok, Some(false) | None))
+    {
+        return ResearchAttempt::Errored;
+    }
+    ResearchAttempt::CalledEmpty
+}
+
 struct ResearchFinding {
     question: String,
     kind: String,
@@ -5545,6 +5651,10 @@ struct ResearchFinding {
     grounded: bool,
     /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
     lookups: Vec<String>,
+    /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
+    /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
+    #[allow(dead_code)]
+    attempt: ResearchAttempt,
 }
 
 /// True when the agent consulted an EXTERNAL source — a successful research MCP call (web-search /
@@ -7552,12 +7662,20 @@ impl GooseAgentDispatcher {
                     "You are a RESEARCH worker. Answer EXACTLY the question below with a concise, factual summary \
                      (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
                 );
-                let (findings, lookups) = match me
+                let (findings, lookups, attempt) = match me
                     .run_agent_timed(&model, system, q.question.clone(), None, 12, &exts)
                     .await
                 {
-                    Ok(o) => (o.text, research_lookups(&o.tool_calls)),
-                    Err(e) => (format!("(research failed: {e})"), Vec::new()),
+                    Ok(o) => {
+                        let lookups = research_lookups(&o.tool_calls);
+                        let attempt = classify_research_attempt(&o.tool_calls);
+                        (o.text, lookups, attempt)
+                    }
+                    Err(e) => (
+                        format!("(research failed: {e})"),
+                        Vec::new(),
+                        ResearchAttempt::Errored,
+                    ),
                 };
                 eprintln!(
                     "  {} research {} ({:.0}s{})",
@@ -7576,6 +7694,7 @@ impl GooseAgentDispatcher {
                     findings,
                     grounded: !lookups.is_empty(),
                     lookups,
+                    attempt,
                 }
             }
         })
@@ -7632,14 +7751,24 @@ impl GooseAgentDispatcher {
                      sibling directories — they are unrelated projects. You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not on exploring. Stop as soon as you can answer — an early, grounded answer beats a long one.",
                     lens.title, lens.brief, lens.tool_hint
                 );
-                let (findings, lookups, timed_out, errored) = match tokio::time::timeout(
+                let (findings, lookups, timed_out, errored, attempt) = match tokio::time::timeout(
                     std::time::Duration::from_secs(scout_budget),
                     me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, max_lookups, &exts),
                 )
                 .await
                 {
-                    Ok(Ok(o)) => (o.text, research_lookups(&o.tool_calls), false, false),
-                    Ok(Err(e)) => (format!("(scout failed: {e})"), Vec::new(), false, true),
+                    Ok(Ok(o)) => {
+                        let lookups = research_lookups(&o.tool_calls);
+                        let attempt = classify_research_attempt(&o.tool_calls);
+                        (o.text, lookups, false, false, attempt)
+                    }
+                    Ok(Err(e)) => (
+                        format!("(scout failed: {e})"),
+                        Vec::new(),
+                        false,
+                        true,
+                        ResearchAttempt::Errored,
+                    ),
                     Err(_) => (
                         format!(
                             "(scout '{}' exceeded {}s budget — skipped to keep the fleet moving)",
@@ -7648,6 +7777,7 @@ impl GooseAgentDispatcher {
                         Vec::new(),
                         true,
                         false,
+                        ResearchAttempt::Errored,
                     ),
                 };
                 // SAY WHAT HAPPENED. The tick used to print OUTSIDE the match, so a scout that timed out at
@@ -7680,6 +7810,7 @@ impl GooseAgentDispatcher {
                     findings,
                     grounded: !lookups.is_empty(),
                     lookups,
+                    attempt,
                 }
             }
         })
@@ -15897,6 +16028,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
     // outside the loop, same env>config>default precedence as the sibling gates.
     let answers_win_floor = swarm_gate_cfg("GOOSE_SWARM_ANSWERS_WIN_FLOOR", cfg.answers_win_floor);
+    // ASK-AWAY (Concept A, GOOSE_SWARM_ASK_AWAY, default OFF, byte-identical when OFF): turn the one-shot
+    // clarify latch into a BOUNDED multi-round loop that keeps asking the next batch while the plan is below
+    // the floor AND material open decisions remain, re-deriving the batch from the TRIMMED open_decisions each
+    // round. When OFF the ask block runs exactly once, exactly as before. Read once outside the loop.
+    let ask_away = swarm_gate_cfg("GOOSE_SWARM_ASK_AWAY", cfg.ask_away);
+    // How many clarify rounds ASK-AWAY may spend within one below-floor visit. Env > config > default 3; the
+    // upper clamp bounds the worst-case idle on the non-interactive file handshake (each round waits up to
+    // `ask_wait_secs`). Inert unless `ask_away` is on.
+    let ask_rounds_max: u32 = std::env::var("GOOSE_SWARM_ASK_ROUNDS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .or(cfg.ask_rounds_max)
+        .unwrap_or(3)
+        .clamp(1, 6);
     // RESUME (GOOSE_SWARM_RESUME=1, default OFF). Reuse the last run's PLAN and skip research + planning.
     //
     // Mihai lost ~2.5h twice in one day to a machine going off mid-run, and his scope was explicit: "don't
@@ -15941,7 +16086,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
         (r.plan_json, dag, PlanConf::default())
     } else {
-        loop {
+        // Labeled so ASK-AWAY's inner ask loop can `continue 'plan_loop` to force a re-plan on a structural
+        // answer (language flip / product first defined) while ordinary inline batches loop the inner ask.
+        'plan_loop: loop {
             // Cool the drafts a further notch per retarget round (never below 0.05): round 0 uses the base temp,
             // each retarget round subtracts 0.05 so repeated re-drafts converge harder.
             let draft_temp = base_draft_temp.map(|t| (t - 0.05 * retarget_round as f32).max(0.05));
@@ -16316,35 +16463,49 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }
                     if !asked {
                         asked = true;
-                        // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
-                        // (never proceeds on a default): (1) a dedicated LLM generator writes crisp interrogatives
-                        // from the spec + plan + uncertainties; (2) else split the model's raw uncertainties; (3)
-                        // else one generic high-value question.
-                        let mut questions = dispatcher
-                            .clarify_questions(
-                                &cfg.planner_model,
-                                &opts.prompt,
-                                &pj,
-                                &uncertainties,
-                                conf,
-                                ask_max_q as u32,
-                            )
-                            .await;
-                        if questions.is_empty() {
-                            questions = uncertainties
-                                .split(';')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| s.len() >= 4)
-                                .take(ask_max_q)
-                                .map(|s| ClarifyQuestion {
-                                    question: s,
-                                    options: Vec::new(),
-                                    resolves: String::new(),
-                                })
-                                .collect();
-                        }
-                        if questions.is_empty() {
-                            questions.push(ClarifyQuestion {
+                        // ASK-AWAY: how many clarify rounds this below-floor visit has already spent. When OFF
+                        // the inner loop below runs exactly once, so every path is byte-identical to the
+                        // one-shot latch it replaces.
+                        let mut ask_round: u32 = 0;
+                        'ask_loop: loop {
+                            // Re-derive the batch's uncertainties from the TRIMMED open_decisions on every round
+                            // after the first, so a subsequent batch asks about what is STILL open instead of
+                            // re-feeding the full original list (which would re-ask the top decisions). Round 0
+                            // (and every OFF run) uses `uncertainties` verbatim — byte-identical.
+                            let batch_uncertainties = if ask_away && ask_round > 0 {
+                                plan_conf.open_decisions.join("; ")
+                            } else {
+                                uncertainties.clone()
+                            };
+                            // Generate questions, cascading from best to fallback so a below-floor plan ALWAYS asks
+                            // (never proceeds on a default): (1) a dedicated LLM generator writes crisp interrogatives
+                            // from the spec + plan + uncertainties; (2) else split the model's raw uncertainties; (3)
+                            // else one generic high-value question.
+                            let mut questions = dispatcher
+                                .clarify_questions(
+                                    &cfg.planner_model,
+                                    &opts.prompt,
+                                    &pj,
+                                    &batch_uncertainties,
+                                    conf,
+                                    ask_max_q as u32,
+                                )
+                                .await;
+                            if questions.is_empty() {
+                                questions = batch_uncertainties
+                                    .split(';')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| s.len() >= 4)
+                                    .take(ask_max_q)
+                                    .map(|s| ClarifyQuestion {
+                                        question: s,
+                                        options: Vec::new(),
+                                        resolves: String::new(),
+                                    })
+                                    .collect();
+                            }
+                            if questions.is_empty() {
+                                questions.push(ClarifyQuestion {
                         question: format!(
                             "Plan confidence is only {conf}/100. What is the single most important constraint or acceptance criterion this MUST get right for the task: {}?",
                             opts.prompt
@@ -16352,204 +16513,269 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         options: Vec::new(),
                         resolves: String::new(),
                     });
-                        }
-                        // Always engage the handshake when below floor (the harness IS the human).
-                        let qa = ask_clarifying_questions(
-                            &questions,
-                            &cwd_for_ask,
-                            conf,
-                            breakdown_json(&plan_conf),
-                            ask_wait_secs,
-                            sink.as_ref(),
-                        )
-                        .await;
-                        if !qa.is_empty() {
-                            // Label it inside the findings too — the findings block renders as "Prior research
-                            // findings", which reads advisory; these are the user's binding choices, not research.
-                            research_findings.push_str(
-                                "\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n",
-                            );
-                            research_findings.push_str(&qa);
-                            // Answers must WIN: drop any higher-agreement pre-answer plan so the monotonic-best
-                            // selection at break can never resurrect a plan that ignores the user's clarifications.
-                            if retarget_on {
-                                best_plan = None;
                             }
-                            // Fold the answers into the SPEC too, not only the findings: target-language detection reads
-                            // the PROMPT (never the findings), so a language choice like "Rust" was previously invisible
-                            // and the run silently stayed on the Python default (the exact miss: user picked Rust, got
-                            // Python). A language change is STRUCTURAL — the reused plan's file names are the wrong
-                            // language and cannot be corrected by injecting worker text — so it FORCES a re-plan
-                            // (overriding the reuse default) to re-draft the skeleton in the chosen language. This is
-                            // safe: the ask fires before any worker writes a file, so the tree is still empty and the
-                            // amended spec (not stale files) drives detect_language on the re-plan.
-                            let lang_before = detect_language(&opts.prompt, &[]);
-                            // BINDING framing, not "clarifications": measured twice that a weak worker treats a
-                            // soft-framed answer as advisory and substitutes its own convention (asked for
-                            // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
-                            // variant). The answers are the user's explicit choices — say so imperatively.
-                            opts.prompt.push_str(USER_DECISIONS_HEADER);
-                            opts.prompt.push_str(&qa);
-                            // ...and keep the SAME binding text for the worker prompt. The spec copy goes
-                            // to Scheduler::goal (replanner/judge/pre-reviewer only); this copy is what
-                            // actually reaches a worker.
-                            user_decisions = format!("{USER_DECISIONS_HEADER}{qa}");
-                            // RE-SCORE spec-clarity NOW THAT THE USER HAS ANSWERED.
-                            //
-                            // `plan_conf` was measured against a prompt that NO LONGER EXISTS: it is bound
-                            // from parallel_plan ~380 lines above, and the answers were appended to
-                            // opts.prompt just now. Every mention of plan_conf between the ask and the
-                            // `break` is a READ — nothing recomputes it. So the run BUILDS against the
-                            // answered spec (workers get user_decisions verbatim) while REPORTING the
-                            // pre-answer number. MEASURED: five decisions asked, all five answered, and
-                            // plan_loaded still said 30 with "5 material open decision(s) still lower
-                            // clarity" and a panel reading "Low — needs your input" — about input already
-                            // given. 30 was honest before the ask and false after it.
-                            //
-                            // DETERMINISTIC — no model call, no second probe. Re-running the probe would be
-                            // the re_research laundering path in another costume; this is the SAME pure
-                            // function the first score used, over a count the engine already knows.
-                            //
-                            // The count is (open - ANSWERED), never 0: `ask_max_q` truncates the question
-                            // list with a `.take()`, so a run with 8 open decisions that asked 5 still has
-                            // 3 the user never saw and goose will guess. Snapping to zero there would raise
-                            // a number the run did not earn — exactly the failure the 30 exists to prevent.
-                            let answered = questions.len();
-                            let still_open =
-                                plan_conf.open_decisions.len().saturating_sub(answered);
-                            if let Some(old_clarity) = plan_conf.spec_clarity {
-                                let rescored =
-                                    spec_clarity_score(plan_conf.product_specified, still_open);
-                                if rescored > old_clarity {
-                                    plan_conf.spec_clarity = Some(rescored);
-                                    plan_conf.spec_clarity_reason = if still_open == 0 {
-                                        format!(
+                            // Always engage the handshake when below floor (the harness IS the human).
+                            let qa = ask_clarifying_questions(
+                                &questions,
+                                &cwd_for_ask,
+                                conf,
+                                breakdown_json(&plan_conf),
+                                ask_wait_secs,
+                                sink.as_ref(),
+                            )
+                            .await;
+                            if !qa.is_empty() {
+                                // Label it inside the findings too — the findings block renders as "Prior research
+                                // findings", which reads advisory; these are the user's binding choices, not research.
+                                research_findings.push_str(
+                                    "\n[USER DECISIONS — binding; honor these EXACTLY, verbatim]\n",
+                                );
+                                research_findings.push_str(&qa);
+                                // Answers must WIN: drop any higher-agreement pre-answer plan so the monotonic-best
+                                // selection at break can never resurrect a plan that ignores the user's clarifications.
+                                if retarget_on {
+                                    best_plan = None;
+                                }
+                                // Fold the answers into the SPEC too, not only the findings: target-language detection reads
+                                // the PROMPT (never the findings), so a language choice like "Rust" was previously invisible
+                                // and the run silently stayed on the Python default (the exact miss: user picked Rust, got
+                                // Python). A language change is STRUCTURAL — the reused plan's file names are the wrong
+                                // language and cannot be corrected by injecting worker text — so it FORCES a re-plan
+                                // (overriding the reuse default) to re-draft the skeleton in the chosen language. This is
+                                // safe: the ask fires before any worker writes a file, so the tree is still empty and the
+                                // amended spec (not stale files) drives detect_language on the re-plan.
+                                let lang_before = detect_language(&opts.prompt, &[]);
+                                // BINDING framing, not "clarifications": measured twice that a weak worker treats a
+                                // soft-framed answer as advisory and substitutes its own convention (asked for
+                                // pipe-separated CSV, wrote comma-separated; asked for an exact list format, invented a
+                                // variant). The answers are the user's explicit choices — say so imperatively.
+                                opts.prompt.push_str(USER_DECISIONS_HEADER);
+                                opts.prompt.push_str(&qa);
+                                // ...and keep the SAME binding text for the worker prompt. The spec copy goes
+                                // to Scheduler::goal (replanner/judge/pre-reviewer only); this copy is what
+                                // actually reaches a worker. APPENDED (not overwritten) so ASK-AWAY's later
+                                // batches accumulate every round's answers for the workers; `user_decisions`
+                                // starts empty, so a single OFF round yields the identical `{HEADER}{qa}` string.
+                                user_decisions.push_str(USER_DECISIONS_HEADER);
+                                user_decisions.push_str(&qa);
+                                // RE-SCORE spec-clarity NOW THAT THE USER HAS ANSWERED.
+                                //
+                                // `plan_conf` was measured against a prompt that NO LONGER EXISTS: it is bound
+                                // from parallel_plan ~380 lines above, and the answers were appended to
+                                // opts.prompt just now. Every mention of plan_conf between the ask and the
+                                // `break` is a READ — nothing recomputes it. So the run BUILDS against the
+                                // answered spec (workers get user_decisions verbatim) while REPORTING the
+                                // pre-answer number. MEASURED: five decisions asked, all five answered, and
+                                // plan_loaded still said 30 with "5 material open decision(s) still lower
+                                // clarity" and a panel reading "Low — needs your input" — about input already
+                                // given. 30 was honest before the ask and false after it.
+                                //
+                                // DETERMINISTIC — no model call, no second probe. Re-running the probe would be
+                                // the re_research laundering path in another costume; this is the SAME pure
+                                // function the first score used, over a count the engine already knows.
+                                //
+                                // The count is (open - ANSWERED), never 0: `ask_max_q` truncates the question
+                                // list with a `.take()`, so a run with 8 open decisions that asked 5 still has
+                                // 3 the user never saw and goose will guess. Snapping to zero there would raise
+                                // a number the run did not earn — exactly the failure the 30 exists to prevent.
+                                let answered = questions.len();
+                                let still_open =
+                                    plan_conf.open_decisions.len().saturating_sub(answered);
+                                if let Some(old_clarity) = plan_conf.spec_clarity {
+                                    let rescored =
+                                        spec_clarity_score(plan_conf.product_specified, still_open);
+                                    if rescored > old_clarity {
+                                        plan_conf.spec_clarity = Some(rescored);
+                                        plan_conf.spec_clarity_reason = if still_open == 0 {
+                                            format!(
                                             "you answered all {answered} open decision(s) — the spec is pinned"
                                         )
-                                    } else {
-                                        format!(
+                                        } else {
+                                            format!(
                                             "you answered {answered}; {still_open} open decision(s) goose                                              will still have to guess (raise swarm.ask_max_q to be asked                                              about them)"
                                         )
-                                    };
-                                    plan_conf.open_decisions = plan_conf
-                                        .open_decisions
-                                        .split_off(answered.min(plan_conf.open_decisions.len()));
-                                    // final = min(agreement, clarity), the SAME expression the first score
-                                    // used. agreement is untouched: it describes the DAG that actually
-                                    // ships, and that plan is genuinely the pre-answer one.
-                                    plan_conf.final_conf =
-                                        match (plan_conf.agreement, plan_conf.spec_clarity) {
-                                            (Some(a), Some(c)) => Some(a.min(c)),
-                                            (Some(a), None) => Some(a),
-                                            (None, Some(c)) => Some(c),
-                                            (None, None) => None,
                                         };
-                                    sink.write_value(serde_json::json!({
-                                        "event": "confidence_rescored",
-                                        "reason": "user answered the open decisions",
-                                        "answered": answered,
-                                        "still_open": still_open,
-                                        "spec_clarity_before": old_clarity,
-                                        "spec_clarity_after": rescored,
-                                        "conf_after": plan_conf.final_conf,
-                                    }));
-                                    eprintln!(
+                                        plan_conf.open_decisions =
+                                            plan_conf.open_decisions.split_off(
+                                                answered.min(plan_conf.open_decisions.len()),
+                                            );
+                                        // final = min(agreement, clarity), the SAME expression the first score
+                                        // used. agreement is untouched: it describes the DAG that actually
+                                        // ships, and that plan is genuinely the pre-answer one.
+                                        plan_conf.final_conf =
+                                            match (plan_conf.agreement, plan_conf.spec_clarity) {
+                                                (Some(a), Some(c)) => Some(a.min(c)),
+                                                (Some(a), None) => Some(a),
+                                                (None, Some(c)) => Some(c),
+                                                (None, None) => None,
+                                            };
+                                        sink.write_value(serde_json::json!({
+                                            "event": "confidence_rescored",
+                                            "reason": "user answered the open decisions",
+                                            "answered": answered,
+                                            "still_open": still_open,
+                                            "spec_clarity_before": old_clarity,
+                                            "spec_clarity_after": rescored,
+                                            "conf_after": plan_conf.final_conf,
+                                        }));
+                                        eprintln!(
                                         "  {} you answered {answered} decision(s) — spec clarity {old_clarity} -> {rescored}, confidence now {}/100",
                                         style("✓").green(),
                                         plan_conf.final_conf.unwrap_or(0)
                                     );
-                                }
-                            }
-                            let lang_after = detect_language(&opts.prompt, &[]);
-                            let lang_changed = lang_after != lang_before;
-                            // A product-defining answer is STRUCTURAL like a language change: when the ask fired
-                            // because the PRODUCT was undefined (product_specified=false — the vague "build
-                            // something useful" case), the drafted plan is a placeholder for a product the user
-                            // hadn't chosen, so reusing it and injecting the answer as worker text would build the
-                            // WRONG thing. Pinning the product forces a re-plan so the skeleton matches the chosen
-                            // product. Safe: the ask fires before any worker writes a file, so the amended spec
-                            // (not stale files) drives the re-plan.
-                            let product_defined_by_answer = !plan_conf.product_specified;
-                            // #129 (GOOSE_SWARM_ANSWERS_WIN_FLOOR, default OFF, byte-identical when OFF): the
-                            // deterministic rescore above may already have lifted this plan to/over the floor the
-                            // ask existed to satisfy. A NON-structural ask_replan then re-drafts from scratch and
-                            // the fresh weak-fleet clarity probe re-lists the just-answered decisions, so a WORSE
-                            // plan ships below the floor (nf-hexohm: rescored 85 == floor 85, re-plan shipped 52).
-                            // A language flip or a newly-defined product IS structural and STILL forces a re-plan.
-                            // When OFF, post_answer_action reduces to `ask_replan || structural ? Replan : KeepReuse`
-                            // — byte-identical to the original `if ask_replan || lang_changed ||
-                            // product_defined_by_answer { continue }` + keep notice.
-                            let structural = lang_changed || product_defined_by_answer;
-                            let post_conf = plan_conf.final_conf.unwrap_or(0);
-                            match post_answer_action(
-                                answers_win_floor,
-                                ask_replan,
-                                structural,
-                                post_conf,
-                                floor,
-                            ) {
-                                PostAnswerAction::FloorAndRedraft => {
-                                    // Still below the floor after answering: pin THIS rescored plan as the
-                                    // monotonic best so a regressing re-draft can never ship below it, then
-                                    // re-draft to beat it. The break's best_plan.take() is gated on retarget_on,
-                                    // so this guard mirrors it — without retarget the floor-to-beat cannot be
-                                    // honored and this degrades to a plain re-plan (no worse than legacy).
-                                    if retarget_on {
-                                        best_plan = Some((pj.clone(), plan_conf.clone()));
+                                    } else if ask_away {
+                                        // P3 (ASK-AWAY only): trim the resolved decisions and refresh the reason
+                                        // string UNCONDITIONALLY — even when the rescore did not strictly improve
+                                        // — so the loop's termination variable (open_decisions) actually advances
+                                        // each round and the stale reason doesn't linger during the ask. The
+                                        // clarity SCORE is NOT lowered (never claim a number the run didn't earn),
+                                        // so final_conf is left untouched here. When ask_away is OFF this branch
+                                        // never runs, keeping the path byte-identical.
+                                        plan_conf.open_decisions =
+                                            plan_conf.open_decisions.split_off(
+                                                answered.min(plan_conf.open_decisions.len()),
+                                            );
+                                        plan_conf.spec_clarity_reason = if still_open == 0 {
+                                            format!(
+                                            "you answered all {answered} open decision(s) — the spec is pinned"
+                                        )
+                                        } else {
+                                            format!(
+                                            "you answered {answered}; {still_open} open decision(s) still lower clarity"
+                                        )
+                                        };
                                     }
-                                    sink.write_value(serde_json::json!({
-                                        "event": "answers_win_floor",
-                                        "action": "floor_and_redraft",
-                                        "post_conf": post_conf,
-                                        "floor": floor,
-                                    }));
-                                    eprintln!(
+                                }
+                                // Q5 (ASK-AWAY only): re-bank best_plan from the freshly rescored post-answer plan.
+                                // Answers already nulled the PRE-answer plan above (answers must win); re-banking
+                                // the POST-answer rescored plan restores monotonicity across the Ask boundary so a
+                                // later inline batch or the break can never ship below what this batch measured.
+                                // Cannot resurrect a plan that ignores the answers — it IS the answered plan.
+                                if ask_away && retarget_on {
+                                    best_plan = Some((pj.clone(), plan_conf.clone()));
+                                }
+                                let lang_after = detect_language(&opts.prompt, &[]);
+                                let lang_changed = lang_after != lang_before;
+                                // A product-defining answer is STRUCTURAL like a language change: when the ask fired
+                                // because the PRODUCT was undefined (product_specified=false — the vague "build
+                                // something useful" case), the drafted plan is a placeholder for a product the user
+                                // hadn't chosen, so reusing it and injecting the answer as worker text would build the
+                                // WRONG thing. Pinning the product forces a re-plan so the skeleton matches the chosen
+                                // product. Safe: the ask fires before any worker writes a file, so the amended spec
+                                // (not stale files) drives the re-plan.
+                                let product_defined_by_answer = !plan_conf.product_specified;
+                                // #129 (GOOSE_SWARM_ANSWERS_WIN_FLOOR, default OFF, byte-identical when OFF): the
+                                // deterministic rescore above may already have lifted this plan to/over the floor the
+                                // ask existed to satisfy. A NON-structural ask_replan then re-drafts from scratch and
+                                // the fresh weak-fleet clarity probe re-lists the just-answered decisions, so a WORSE
+                                // plan ships below the floor (nf-hexohm: rescored 85 == floor 85, re-plan shipped 52).
+                                // A language flip or a newly-defined product IS structural and STILL forces a re-plan.
+                                // When OFF, post_answer_action reduces to `ask_replan || structural ? Replan : KeepReuse`
+                                // — byte-identical to the original `if ask_replan || lang_changed ||
+                                // product_defined_by_answer { continue }` + keep notice.
+                                let structural = lang_changed || product_defined_by_answer;
+                                let post_conf = plan_conf.final_conf.unwrap_or(0);
+                                match post_answer_action(
+                                    answers_win_floor,
+                                    ask_replan,
+                                    structural,
+                                    post_conf,
+                                    floor,
+                                ) {
+                                    PostAnswerAction::FloorAndRedraft => {
+                                        // Still below the floor after answering: pin THIS rescored plan as the
+                                        // monotonic best so a regressing re-draft can never ship below it, then
+                                        // re-draft to beat it. The break's best_plan.take() is gated on retarget_on,
+                                        // so this guard mirrors it — without retarget the floor-to-beat cannot be
+                                        // honored and this degrades to a plain re-plan (no worse than legacy).
+                                        if retarget_on {
+                                            best_plan = Some((pj.clone(), plan_conf.clone()));
+                                        }
+                                        sink.write_value(serde_json::json!({
+                                            "event": "answers_win_floor",
+                                            "action": "floor_and_redraft",
+                                            "post_conf": post_conf,
+                                            "floor": floor,
+                                        }));
+                                        eprintln!(
                                         "  {} re-planning to beat your answered plan (confidence {post_conf}/100 < floor {floor}); kept as the floor to beat",
                                         style("↻").cyan()
                                     );
-                                    continue;
-                                }
-                                PostAnswerAction::Replan => {
-                                    eprintln!(
-                                        "  {} re-planning with the user's clarifications{}",
-                                        style("↻").cyan(),
-                                        if lang_changed {
-                                            format!(" (target language → {lang_after:?})")
-                                        } else if product_defined_by_answer {
-                                            " (product now defined by your answer)".to_string()
-                                        } else {
-                                            String::new()
-                                        }
-                                    );
-                                    continue;
-                                }
-                                PostAnswerAction::KeepRescored => {
-                                    // Clears the floor: keep the rescored plan. best_plan was nulled when the ask
-                                    // was answered (or was never set without retarget), so the break below ships
-                                    // THIS plan_conf (the 85), not a fresh draft.
-                                    sink.write_value(serde_json::json!({
-                                        "event": "answers_win_floor",
-                                        "action": "keep_rescored",
-                                        "post_conf": post_conf,
-                                        "floor": floor,
-                                    }));
-                                    eprintln!(
+                                        continue 'plan_loop;
+                                    }
+                                    PostAnswerAction::Replan => {
+                                        eprintln!(
+                                            "  {} re-planning with the user's clarifications{}",
+                                            style("↻").cyan(),
+                                            if lang_changed {
+                                                format!(" (target language → {lang_after:?})")
+                                            } else if product_defined_by_answer {
+                                                " (product now defined by your answer)".to_string()
+                                            } else {
+                                                String::new()
+                                            }
+                                        );
+                                        continue 'plan_loop;
+                                    }
+                                    PostAnswerAction::KeepRescored => {
+                                        // Clears the floor: keep the rescored plan. best_plan was nulled when the ask
+                                        // was answered (or was never set without retarget), so the break below ships
+                                        // THIS plan_conf (the 85), not a fresh draft.
+                                        sink.write_value(serde_json::json!({
+                                            "event": "answers_win_floor",
+                                            "action": "keep_rescored",
+                                            "post_conf": post_conf,
+                                            "floor": floor,
+                                        }));
+                                        eprintln!(
                                         "  {} keeping the plan you just answered — confidence {post_conf}/100 ≥ floor {floor}; not re-drafting it away (GOOSE_SWARM_ANSWERS_WIN_FLOOR)",
                                         style("✓").green()
                                     );
-                                }
-                                PostAnswerAction::KeepReuse => {
-                                    // This line used to claim the answers were "injected into every worker via
-                                    // research findings + spec". Both were false — research_findings never leaves
-                                    // the planner, and the amended spec stops at Scheduler::goal. It is true now,
-                                    // and only because DispatchRequest.user_decisions exists; say what actually
-                                    // carries them.
-                                    eprintln!(
+                                    }
+                                    PostAnswerAction::KeepReuse => {
+                                        // This line used to claim the answers were "injected into every worker via
+                                        // research findings + spec". Both were false — research_findings never leaves
+                                        // the planner, and the amended spec stops at Scheduler::goal. It is true now,
+                                        // and only because DispatchRequest.user_decisions exists; say what actually
+                                        // carries them.
+                                        eprintln!(
                         "  {} keeping this plan; your decisions go to every worker VERBATIM as a binding block (set GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)",
                         style("✓").green()
                     );
+                                    }
+                                }
+                                // ASK-AWAY: the answered batch was non-structural and kept. If the plan is still
+                                // below the floor AND material open decisions remain AND the round budget is not
+                                // spent, ask the NEXT batch inline (no re-draft between batches, per #129). An
+                                // empty batch or an exhausted queue falls through to the break below.
+                                if ask_away
+                                    && plan_conf.final_conf.unwrap_or(0) < floor
+                                    && !plan_conf.open_decisions.is_empty()
+                                    && ask_round + 1 < ask_rounds_max
+                                {
+                                    ask_round += 1;
+                                    sink.write_value(serde_json::json!({
+                                        "event": "ask_away_round",
+                                        "round": ask_round,
+                                        "rounds_max": ask_rounds_max,
+                                        "conf": plan_conf.final_conf,
+                                        "floor": floor,
+                                        "open_decisions_remaining": plan_conf.open_decisions.len(),
+                                    }));
+                                    eprintln!(
+                                    "  {} ask-away: {} open decision(s) still below floor {floor} — asking round {} of {}",
+                                    style("↺").cyan(),
+                                    plan_conf.open_decisions.len(),
+                                    ask_round + 1,
+                                    ask_rounds_max
+                                );
+                                    continue 'ask_loop;
                                 }
                             }
+                            // One-shot latch equivalent when OFF (runs exactly once); ASK-AWAY exits here when the
+                            // queue is exhausted, the floor is cleared, the round budget is spent, or a batch came
+                            // back empty (anti-redundancy stop).
+                            break 'ask_loop;
                         }
                     }
                 }
