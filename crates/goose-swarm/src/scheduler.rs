@@ -294,6 +294,9 @@ struct State {
     /// never asked. Unlike `goal` — which reaches only the replanner/judge/pre-reviewer — this is handed to
     /// every DispatchRequest, because there was previously no path from an answer to a worker at all.
     user_decisions: String,
+    /// GROUNDED research facts (Phase 1, Move 2), VERBATIM, handed to every DispatchRequest alongside
+    /// `user_decisions`. Empty when DOC_PREFETCH is off => the worker prompt is byte-identical.
+    doc_facts: String,
     replans_done: u32,
     /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
     bonus_ids: HashSet<TaskId>,
@@ -557,6 +560,7 @@ impl State {
                 // The user's own words reach a worker for the first time here. Every other channel the
                 // engine claimed (research_findings, the amended spec) is planner-side only.
                 user_decisions: self.user_decisions.clone(),
+                doc_facts: self.doc_facts.clone(),
             },
         });
     }
@@ -1045,6 +1049,7 @@ impl State {
             prior_hint: None,
             speculative: true,
             user_decisions: self.user_decisions.clone(),
+            doc_facts: self.doc_facts.clone(),
         };
         Some((req, dev))
     }
@@ -1596,6 +1601,10 @@ pub struct Scheduler {
     /// When set, the scheduler HOLDS at task boundaries while this file exists (the in-process pause).
     /// None (default) -> pause is inert and the loop is byte-identical to before.
     pause_file: Option<std::path::PathBuf>,
+    /// GROUNDED research facts (Phase 1, Move 2), VERBATIM, handed to every DispatchRequest for injection into
+    /// the worker prompt — the same channel as `user_decisions`. Empty (default) -> the worker prompt is
+    /// byte-identical. Set via `with_doc_facts` so `run_with_decisions`' signature is unchanged.
+    doc_facts: String,
 }
 
 impl Scheduler {
@@ -1611,7 +1620,15 @@ impl Scheduler {
             pre_reviewer: None,
             speculation_enabled: false,
             pause_file: None,
+            doc_facts: String::new(),
         }
+    }
+
+    /// Attach the GROUNDED research facts (Phase 1, Move 2) that each worker gets VERBATIM. Empty (default)
+    /// => the worker prompt is byte-identical, so callers that don't opt into DOC_PREFETCH are unchanged.
+    pub fn with_doc_facts(mut self, doc_facts: String) -> Self {
+        self.doc_facts = doc_facts;
+        self
     }
 
     /// Attach an idle-model judge: when a node would otherwise sit idle while tasks are still in
@@ -1732,6 +1749,7 @@ impl Scheduler {
             task_final_device: HashMap::new(),
             goal,
             user_decisions,
+            doc_facts: self.doc_facts.clone(),
             replans_done: 0,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
