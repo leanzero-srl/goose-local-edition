@@ -767,16 +767,22 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       }
       case 'task_dispatched': {
         const task = str(e['task_id']);
+        // integrate-verify is the SINK — its work IS the Verify phase (run the suite, build + run the
+        // advertised entry, golden-check). Dispatching it means the run has entered VERIFY, not Build.
+        // Without this the breadcrumb sat on "Build" for the whole (long) sink grind while it was actually
+        // verifying — the exact "isn't this already Verify? it still shows Building" confusion.
+        const isSink = task === 'integrate-verify';
+        const verb = isSink ? 'Integrating & verifying' : `Building ${task}`;
         const node = e['device'] ? nodeName(str(e['device'])) : '';
         const attempt = num(e['attempt']) ?? 0;
-        compact({ kind: 'dispatch', text: `Building ${task}`, sub: node ? `on ${node}` : undefined });
+        compact({ kind: 'dispatch', text: verb, sub: node ? `on ${node}` : undefined });
         const owned = arr(e['owned_files']).map(String).join(', ');
         verbose({
           kind: 'dispatch',
-          text: `Building ${task}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`,
+          text: `${verb}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`,
           sub: [node && `on ${node}`, owned].filter(Boolean).join(' — ') || undefined,
         });
-        phase = 'Building';
+        phase = isSink ? 'Verifying' : 'Building';
         break;
       }
       case 'task_retry': {
@@ -1300,18 +1306,29 @@ function buildPhaseTodo(
     if (files && files.length) item.files = files;
     const judge = judgeInfo.get(id);
     if (judge && (judge.verdict || judge.hint)) item.judge = judge;
-    build.push(item);
+    return item;
   };
-  for (const tk of planTasks) buildRow(tk.id, tk.description, tk.files);
+  // integrate-verify is the SINK — its work IS the Verify phase, so it is added to `verify` below, NOT here
+  // (otherwise Build carried a stuck 12th row and the run read "Building" while it was actually verifying).
+  for (const tk of planTasks)
+    if (tk.id !== 'integrate-verify') build.push(buildRow(tk.id, tk.description, tk.files));
   // Split children (+ any other dynamically-dispatched task) are NOT in planTasks — surface them so the todo
   // reflects the work that actually ran, not just the original plan. Keep them right after their siblings.
-  for (const [id] of tstate) if (!plannedIds.has(id)) buildRow(id);
+  for (const [id] of tstate)
+    if (!plannedIds.has(id) && id !== 'integrate-verify') build.push(buildRow(id));
   for (const n of replans) build.push(it(`b-replan-${n}`, `Re-planned +${n} tasks`, 'done'));
   if (schedulerStuck != null)
     build.push(it('b-stuck', `Scheduler blocked — ${schedulerStuck} task(s) unschedulable`, 'blocked'));
 
   // ---- VERIFY ---- (all events already emitted; the honest "it works" signal)
   const verify: PhaseTodoItem[] = [];
+  // integrate-verify is the SINK — the run's actual verification work (build + run the advertised entry +
+  // golden-check). It LEADS the Verify phase, reusing the same state logic as a build task, so Verify shows
+  // RUNNING while it grinds instead of the run reading "Building 11/12" with a stuck integrate-verify row.
+  if (plannedIds.has('integrate-verify') || tstate.has('integrate-verify')) {
+    const ivTask = planTasks.find((t) => t.id === 'integrate-verify');
+    verify.push(buildRow('integrate-verify', ivTask?.description, ivTask?.files));
+  }
   const verifyGate = gateOn('complete') || gateOn('smoke');
   if (verifyGate) {
     let vs: TodoState;
