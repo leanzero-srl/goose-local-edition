@@ -1,10 +1,12 @@
+> **HARD DIRECTIVE (Mihai 2026-07-18): NEVER put a line-count / LOC target in a generated spec or any prompt fed to goose.** Pinning the model to a LOC number stifles it and makes it dumber — let it produce whatever size the feature set genuinely needs. Describe FEATURES, BEHAVIOR, and acceptance criteria; NEVER a line count. (LOC may be MEASURED afterward as an observation, never IMPOSED as a target.)
+
 # Complex archetypes — the new standing bar (2026-06-30)
 
 The user raised the bar: the prior eval apps (70-450 LOC CLI tools) are "literally nothing — a couple of
-methods." From here on, eval apps must be genuinely COMPLEX + FEATURE-DENSE (~800-1500 LOC, many modules,
+methods." From here on, eval apps must be genuinely COMPLEX + FEATURE-DENSE (many modules,
 rich command surfaces). Three diverse archetypes (data-app / algorithmic-engine / systems-tool), three
 languages (Python / TypeScript / Rust), all VERIFIABLE by golden output. Run ONE AT A TIME (3-node fleet),
-study each against all 7 points + measure ACTUAL LOC + RUN end-to-end with golden values + watch for a NEW
+study each against all 7 points + measure ACTUAL scope/complexity + RUN end-to-end with golden values + watch for a NEW
 failure mode at scale (cross-module integration, partial completion, time blowup) distinct from the
 recursive-depth ceiling. Expect 60-120+ min each — that is acceptable for this complexity (the 15-25 target
 was for the small tools; record the real time).
@@ -24,7 +26,7 @@ has a non-done blocker; REPORTS: 'report status' (count per status), 'report ass
 'export CSV_PATH' and 'import CSV_PATH'. Validate all inputs and exit non-zero with a message on bad input.
 Persist to a SQLite file (path via --db or a default in the cwd).
 VERIFY: add a project + several issues with deps; check 'ready'/'blocked' are correct; check a done-with-open-
-blocker is rejected (non-zero); check the report counts; export then re-import round-trips. Target ~1000-1500 LOC.
+blocker is rejected (non-zero); check the report counts; export then re-import round-trips.
 
 ## ARCHETYPE B — ALGORITHMIC ENGINE (TypeScript, deep+structured)
 LANG=TypeScript, built with tsc to a runnable dist entry. A spreadsheet calculation engine "sheet". A sheet is
@@ -39,7 +41,7 @@ value), 'get FILE CELL', 'deps FILE CELL' (the cells CELL transitively depends o
 (update the file, recalc, print the changed cells). Validate inputs; exit non-zero on a malformed file or bad
 cell reference.
 VERIFY: a grid with =A1+B2, =SUM(A1:A3), =IF(...), and a deliberate cycle; check the computed values + the
-#CYCLE/#DIV0 errors. Target ~800-1200 LOC. (This is the DEEP archetype where the recursive ceiling lives —
+#CYCLE/#DIV0 errors. (This is the DEEP archetype where the recursive ceiling lives —
 tests whether clear module boundaries make depth tractable, or whether it still fails like APP6/APP8.)
 
 ## ARCHETYPE C — SYSTEMS TOOL (Rust, different paradigm)
@@ -54,7 +56,7 @@ in the current commit's tree); 'checkout HASH' (restore the working files from t
 two commits); 'tag NAME HASH' and 'tags'. Objects are content-addressed by SHA-256 under .vcs/objects/.
 Validate inputs and exit non-zero on a bad hash or missing object.
 VERIFY: init; add 2 files + commit; modify one + commit; log shows 2 commits; cat-file a blob hash; checkout
-the first commit restores the old content; diff the two commits shows the modified file. Target ~800-1200 LOC.
+the first commit restores the old content; diff the two commits shows the modified file.
 (Different paradigm — content hashing + a commit DAG + persistence — tests the Rust path at real scale.)
 
 ## What to measure (the user wants to understand the wall)
