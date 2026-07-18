@@ -519,6 +519,15 @@ export default function SwarmSettingsSection() {
                 onChange={(v) => set({ relax_contracted_deps: v })}
               />
             </Row>
+            <Row
+              label="Name each build's chat with a short AI title"
+              hint="By default a swarm build's entry in the chat list is just the first few words of your brief (like 'Build X — a'). With this on, goose asks a local model for a short, meaningful title (like 'logfold — Go log-template miner') when the build starts. It's one cheap call that runs off to the side, so it never delays the build. Off by default because on a busy fleet that extra call can wait in line behind the planning work."
+            >
+              <SwarmSwitch
+                checked={!!cfg.ai_session_name}
+                onChange={(v) => set({ ai_session_name: v })}
+              />
+            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
