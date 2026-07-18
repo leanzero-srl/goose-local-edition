@@ -539,6 +539,23 @@ pub struct SwarmConfig {
     /// [1,6]. Inert unless `ask_away` is on. GOOSE_SWARM_ASK_ROUNDS env overrides.
     #[serde(default)]
     pub ask_rounds_max: Option<u32>,
+    /// HONEST FLEET DISPATCH-OCCUPANCY (#104 / §1-#10): emit the fraction of node-time a node actually HELD a
+    /// task, derived from the scheduler's per-device `busy_ms` (task-holding time) — NOT a CPU/generation
+    /// sample, which reads 0% while a `PARALLEL:1` node is BUSY blocked on I/O. The historical "12% util, 85%
+    /// idle" number was of unstated provenance; this is the dispatch-occupancy instrument that lets it be
+    /// checked truthfully before any headroom claim (e.g. B1) is trusted. Observability ONLY — it gates and
+    /// changes nothing; when OFF the run_finished event is byte-identical. OFF by default.
+    /// GOOSE_SWARM_OCCUPANCY env overrides.
+    #[serde(default)]
+    pub occupancy: bool,
+    /// WRITE-FIRST worker mold (§1-#5): inject a skeleton-first directive telling each worker its VERY FIRST
+    /// tool call must CREATE an owned file (skeleton), before any read/ls/grep. 66% of judge interventions are
+    /// `over_reading`+`looping` and 42% of file-writing workers burn reads before their first write; 58%
+    /// already write first, so the behaviour is achievable on the same models. This only SHAPES the prompt (it
+    /// never blocks a read). OFF by default = the worker prompt is byte-identical to today.
+    /// GOOSE_SWARM_WRITE_FIRST env overrides.
+    #[serde(default)]
+    pub write_first: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -671,6 +688,8 @@ impl Default for SwarmConfig {
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
+            occupancy: false,
+            write_first: false,
         }
     }
 }
@@ -4738,6 +4757,25 @@ mod tests {
         assert!(
             block.contains("P1: The command is invoked as `report budget`"),
             "each pillar's goal must be embedded verbatim"
+        );
+    }
+
+    #[test]
+    fn dispatch_occupancy_is_honest_fraction() {
+        // 3 nodes, 10-min window = 30 node-min available. 15 node-min held => 50%.
+        assert_eq!(
+            dispatch_occupancy_pct(15 * 60_000, 10.0 * 60_000.0, 3),
+            50.0
+        );
+        // Fully idle fleet.
+        assert_eq!(dispatch_occupancy_pct(0, 10.0 * 60_000.0, 3), 0.0);
+        // Degenerate denominators never divide-by-zero or emit garbage.
+        assert_eq!(dispatch_occupancy_pct(999, 0.0, 3), 0.0);
+        assert_eq!(dispatch_occupancy_pct(999, 10.0, 0), 0.0);
+        // Rounding-slop above 100 is clamped, never > 100%.
+        assert_eq!(
+            dispatch_occupancy_pct(31 * 60_000, 10.0 * 60_000.0, 3),
+            100.0
         );
     }
 
@@ -13735,6 +13773,37 @@ fn author_pitfalls_on() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_AUTHOR_PITFALLS", load_config().author_pitfalls)
 }
 
+/// Emit the honest fleet dispatch-occupancy alongside run_finished. Observability only. `swarm.occupancy` in
+/// config; env wins. OFF => run_finished is byte-identical.
+fn occupancy_on() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_OCCUPANCY", load_config().occupancy)
+}
+
+/// Inject the write-first (skeleton-first) mold into every worker prompt. `swarm.write_first` in config; env
+/// wins. OFF => the worker prompt is byte-identical (the block is an empty string).
+fn write_first_on() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_WRITE_FIRST", load_config().write_first)
+}
+
+/// Honest fleet DISPATCH-OCCUPANCY: the fraction (0-100%) of available node-time a node actually HELD a task,
+/// computed from the scheduler's per-device task-holding time (`busy_ms`), NOT from CPU/generation sampling.
+///
+/// This distinction is the whole point (§1-#10): a `PARALLEL:1` local model blocked on I/O reads 0% CPU while
+/// it is BUSY holding a dispatched task, so a CPU-sampled "12% util / 85% idle" figure overstates idleness and
+/// any headroom claim resting on it. Dispatch-occupancy cannot lie that way — a node either holds a task or it
+/// does not.
+///
+/// `busy_node_ms` = Σ busy_ms over devices; `wall_ms` = the wall-clock window; `node_count` = fleet size. A
+/// device runs tasks sequentially so its busy_ms ≤ wall_ms, hence the sum ≤ wall_ms·node_count and the ratio
+/// is a true fraction (clamped only against float rounding). Pure — unit-testable without a run.
+fn dispatch_occupancy_pct(busy_node_ms: u64, wall_ms: f64, node_count: usize) -> f64 {
+    if node_count == 0 || wall_ms <= 0.0 {
+        return 0.0;
+    }
+    let cap = wall_ms * node_count as f64;
+    ((busy_node_ms as f64 / cap) * 100.0).clamp(0.0, 100.0)
+}
+
 /// Render the pillars as a worker-prompt block. Empty pillars -> empty string (a true no-op), so injection is
 /// inert when the flag is off or nothing was distilled. Pure — unit-testable without a model.
 fn render_pillars_block(p: &Pillars) -> String {
@@ -14170,6 +14239,21 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // WRITE-FIRST (skeleton-first) mold, GOOSE_SWARM_WRITE_FIRST. 66% of judge interventions are
+        // over_reading+looping and 42% of file-writing workers burn reads before their first write; 58% of
+        // workers already write first, so the ordering is achievable on the same models. This SHAPES the
+        // prompt only — it never blocks a read. Empty when off => the worker prompt is byte-identical.
+        let write_first_block = if write_first_on() {
+            "\nWRITE FIRST — before you read ANYTHING. Your VERY FIRST tool call MUST be a `write` that creates \
+             one of your OWNED files as a working skeleton (its imports and the functions/classes the manifest \
+             names, with minimal bodies), then fill it in. Do NOT `cat`/`ls`/`tree`/`find`/`grep`/'explore' \
+             before that first write: you ALREADY have the file manifest and your dependencies' contracts \
+             above, which is everything you need to start. Reading before writing is the #1 way a worker \
+             stalls (some have burned 10+ reads and produced nothing). Skeleton first, then iterate.\n"
+                .to_string()
+        } else {
+            String::new()
+        };
         let worker_directive = lang.directive();
         let system_prompt = format!(
             "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
@@ -14234,7 +14318,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
              already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
              one.\n\
-             \n{decisions_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+             \n{write_first_block}{decisions_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
@@ -17016,6 +17100,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_COMPLETE_PARALLEL: the fleet's model ids, captured before the scheduler consumes
     // `devices`, so the completion fix step can fan one fix per failing file across all models.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+    // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
+    // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
+    let fleet_size = devices.len();
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts).with_sink(sink.clone());
     // In-process PAUSE: the desktop Pause button writes <working_dir>/.swarm/pause; the scheduler then holds
     // at the next task boundary (in-flight work finishes, nothing is claimed) and resumes — re-running NOTHING
@@ -18512,16 +18599,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     }
 
+    let mut phases_value = serde_json::json!({
+        "research_min": (research_m * 10.0).round() / 10.0,
+        "planning_min": (planning_m * 10.0).round() / 10.0,
+        "execute_min": (execute_m * 10.0).round() / 10.0,
+        "gates_min": (gates_m * 10.0).round() / 10.0,
+        "total_min": (total_m * 10.0).round() / 10.0,
+    });
+    // HONEST DISPATCH-OCCUPANCY (§1-#10 / #104). OFF => `phases_value` is untouched and run_finished is
+    // byte-identical to today. ON => add the fraction of node-time a node actually HELD a task (from the
+    // scheduler's per-device busy_ms), NOT a CPU sample — the instrument the "12% util" figure needs before
+    // any headroom claim (B1) may be trusted. `_run` divides the SAME execute-phase busy time by the WHOLE-run
+    // wall (the analog of the historical whole-run util); `_execute` divides by the execute window alone.
+    if occupancy_on() {
+        let busy_node_ms: u64 = report.per_device.values().map(|s| s.busy_ms).sum();
+        let occ_execute = dispatch_occupancy_pct(busy_node_ms, execute_m * 60_000.0, fleet_size);
+        let occ_run = dispatch_occupancy_pct(busy_node_ms, total_m * 60_000.0, fleet_size);
+        let busy_node_min = (busy_node_ms as f64 / 60_000.0 * 10.0).round() / 10.0;
+        let round1 = |x: f64| (x * 10.0).round() / 10.0;
+        if let Some(obj) = phases_value.as_object_mut() {
+            obj.insert("fleet_nodes".into(), serde_json::json!(fleet_size));
+            obj.insert("busy_node_min".into(), serde_json::json!(busy_node_min));
+            obj.insert(
+                "dispatch_occupancy_execute_pct".into(),
+                serde_json::json!(round1(occ_execute)),
+            );
+            obj.insert(
+                "dispatch_occupancy_run_pct".into(),
+                serde_json::json!(round1(occ_run)),
+            );
+        }
+        eprintln!(
+            "dispatch-occupancy (node HELD a task, not CPU): execute {:.1}% · whole-run {:.1}% across {} node(s) ({:.1} node-min busy)",
+            occ_execute, occ_run, fleet_size, busy_node_min
+        );
+    }
     sink.write_value(serde_json::json!({
         "event": "run_finished",
         "report": report_value,
-        "phases": {
-            "research_min": (research_m * 10.0).round() / 10.0,
-            "planning_min": (planning_m * 10.0).round() / 10.0,
-            "execute_min": (execute_m * 10.0).round() / 10.0,
-            "gates_min": (gates_m * 10.0).round() / 10.0,
-            "total_min": (total_m * 10.0).round() / 10.0,
-        },
+        "phases": phases_value,
     }));
 
     if json {
