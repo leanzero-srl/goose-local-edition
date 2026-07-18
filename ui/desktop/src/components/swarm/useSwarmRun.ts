@@ -356,6 +356,10 @@ export interface SwarmRunState {
   /** A human-readable timeline of what the swarm is doing — shown even during PLANNING (before any worker
    *  executes), so the user isn't left staring at a blank "working on it". */
   activity: ActivityItem[];
+  /** Per-task activity DIGESTS from .swarm/activity/<task>.json (tool_calls, thinking_chars, reasoning/full
+   *  reasoning, model, per-tool call breakdown), keyed by task id. Powers the per-task "live generation" detail
+   *  in the phase checklist — the answer to "what is the model actually doing / why is it taking so long". */
+  activityDigests: Record<string, unknown>;
   /** The FULL timeline — every dispatch, judge verdict + hint, pre-review, completion, smoke result — for
    *  the verbose view. The compact `activity` is a subset of headline phases. */
   verboseActivity: ActivityItem[];
@@ -421,6 +425,7 @@ const EMPTY: SwarmRunState = {
   overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
   activity: [],
+  activityDigests: {},
   verboseActivity: [],
   meta: null,
   plan: [],
@@ -1432,6 +1437,12 @@ function buildPhaseTodo(
   const rollUp = (items: PhaseTodoItem[]): TodoState => {
     const real = items.filter((i) => i.state !== 'advisory');
     if (real.length === 0) return 'pending';
+    // A phase whose work has NOT STARTED — every real item is still 'pending', nothing has run — is WAITING,
+    // not running. This is the fix for Verify reading RUNNING while Build is still going: the sink
+    // (integrate-verify) and the e2e row are both 'pending' until Build finishes and the sink dispatches, so
+    // without this guard the roll-up below painted Verify as RUNNING alongside Build.
+    const started = real.some((i) => i.state !== 'pending');
+    if (!finishedEvent && !started) return 'pending';
     // While the run is still LIVE and any task is running/pending, the phase is IN-PROGRESS — a single failed
     // sibling must NOT flip the whole phase to FAILED mid-build (it may re-dispatch, split, or the run still
     // recovers via complete_verify). Only once the run cleanly finished does an unrecovered failure roll up.
@@ -1549,6 +1560,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           overview,
           totals,
           activity,
+          activityDigests: data.activity,
           verboseActivity: verbose,
           meta,
           plan,
