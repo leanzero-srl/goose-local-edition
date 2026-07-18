@@ -10,7 +10,11 @@ import {
   type SessionListItem,
 } from '../acp/sessions';
 
-const MAX_RECENT_SESSIONS = 25;
+// The CHATS sidebar list is scrollable (overflow-y-auto in NavigationPanel), so this is a render cap, not a
+// storage cap — every session is kept in the sessions.db. It was 25, which made older chats "vanish" from the
+// visible list as new builds arrived (they were never deleted). Raised so weeks of builds stay visible; a
+// dedicated "all sessions" view (SessionListView) remains the place to browse the full history.
+const MAX_RECENT_SESSIONS = 200;
 
 export function prependUnique(
   prev: SessionListItem[],
