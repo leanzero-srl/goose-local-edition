@@ -576,6 +576,23 @@ pub struct SwarmConfig {
     /// byte-identical to today's worker prompt. GOOSE_SWARM_DOC_PREFETCH env overrides.
     #[serde(default)]
     pub doc_prefetch: bool,
+    /// SWARM-COHERENCE Phase-1 (Tier-A, deterministic — no model). When injecting an already-built
+    /// dependency's source into a consumer's prompt, inject only its DETERMINISTICALLY-EXTRACTED exported
+    /// SIGNATURES (function/method signatures with bodies removed; type/const/var declarations kept) instead
+    /// of the full body. Smaller, exact, no body noise — the same ground truth a `.mli`/stub gives a team.
+    /// Falls back to the full body when extraction yields nothing (unknown language / no recognizable
+    /// surface). `None`/OFF => the dep body is injected verbatim exactly as before = byte-identical.
+    /// GOOSE_SWARM_DEP_SIGNATURES env overrides.
+    #[serde(default)]
+    pub dep_signatures: Option<bool>,
+    /// SWARM-COHERENCE Phase-1 (DAG-scoped context, deterministic). The frozen-contract bundle is one global
+    /// string holding EVERY module's stub, injected identically into EVERY worker — O(total modules) per
+    /// worker, growing with every split. When ON, scope it to the worker's DAG neighborhood (its deps ∪ its
+    /// consumers ∪ itself) so per-worker context is O(degree). A worker with no neighborhood (fix/sink) keeps
+    /// the full bundle. `None`/OFF => the full unscoped bundle is injected exactly as before = byte-identical.
+    /// GOOSE_SWARM_SCOPED_CONTRACTS env overrides.
+    #[serde(default)]
+    pub scoped_contracts: Option<bool>,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -712,6 +729,8 @@ impl Default for SwarmConfig {
             write_first: false,
             research_tools: false,
             doc_prefetch: false,
+            dep_signatures: None,
+            scoped_contracts: None,
         }
     }
 }
@@ -11169,6 +11188,8 @@ impl GooseAgentDispatcher {
             // this signature if a crash fix ever needs them.
             user_decisions: String::new(),
             doc_facts: String::new(),
+            // Isolated crash-repair shadow: no DAG neighborhood → the contract bundle stays unscoped.
+            neighborhood: Vec::new(),
         };
         let fix_budget = std::time::Duration::from_secs(fix_cap_secs()).min(remaining);
         let dispatched = tokio::time::timeout(fix_budget, self.run(req)).await;
@@ -13803,6 +13824,27 @@ fn goals_enabled() -> bool {
     swarm_gate_cfg_bundle("GOOSE_SWARM_GOALS", load_config().goals, true)
 }
 
+/// SWARM-COHERENCE Phase-1 (Tier-A): inject deterministically-extracted dependency SIGNATURES rather than
+/// full bodies into a consumer's prompt. Not in the assured bundle → default OFF (byte-identical): with no
+/// env var and no config key, `resolve_gate_cfg(None, None, assured, false)` = false.
+fn dep_signatures_on() -> bool {
+    swarm_gate_cfg_bundle(
+        "GOOSE_SWARM_DEP_SIGNATURES",
+        load_config().dep_signatures,
+        false,
+    )
+}
+
+/// SWARM-COHERENCE Phase-1 (DAG-scoped context): scope the frozen-contract bundle to a worker's DAG
+/// neighborhood. Not in the assured bundle → default OFF (byte-identical).
+fn scoped_contracts_on() -> bool {
+    swarm_gate_cfg_bundle(
+        "GOOSE_SWARM_SCOPED_CONTRACTS",
+        load_config().scoped_contracts,
+        false,
+    )
+}
+
 /// Give the AUTHOR the curated domain facts its task is about (not just the reviewer/skeptic, who only ever
 /// see them AFTER the code is written). Default OFF pending the A/B — the fact library is validated, but
 /// whether a 27B AVOIDS the mistake when told up-front, rather than merely recognising it when reviewing,
@@ -14195,6 +14237,17 @@ impl TaskDispatcher for GooseAgentDispatcher {
             // deps); skip owned files (already injected above), test files, and non-`.py`. Capped per-file
             // and total to bound context on slow local models.
             let owned_set: std::collections::HashSet<&String> = req.owned_files.iter().collect();
+            // SWARM-COHERENCE Phase-1 (Tier-A): inject deterministically-extracted dependency SIGNATURES
+            // instead of full bodies when enabled. Computed once; OFF => the full body path below is
+            // byte-identical to before.
+            let dep_sig_on = dep_signatures_on();
+            let sig_lang = match lang {
+                TargetLang::Python => goose_swarm::SigLang::Python,
+                TargetLang::Rust => goose_swarm::SigLang::Rust,
+                TargetLang::Go => goose_swarm::SigLang::Go,
+                TargetLang::TypeScript => goose_swarm::SigLang::TypeScript,
+                TargetLang::Other => goose_swarm::SigLang::Other,
+            };
             let mut dep_block = String::new();
             let mut dep_budget: usize = 14000;
             for f in &req.all_files {
@@ -14216,7 +14269,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    let capped: String = trimmed.chars().take(dep_budget.min(3500)).collect();
+                    // Tier-A: replace the full body with extracted signatures when the lever is on. Falls
+                    // back to the full body if extraction yields nothing (unknown language / no surface),
+                    // so ON never injects an empty API. OFF => `api_source` is `trimmed` => byte-identical.
+                    let api_source: std::borrow::Cow<str> = if dep_sig_on {
+                        let sigs = goose_swarm::extract_signatures(trimmed, sig_lang);
+                        if sigs.trim().is_empty() {
+                            std::borrow::Cow::Borrowed(trimmed)
+                        } else {
+                            std::borrow::Cow::Owned(sigs)
+                        }
+                    } else {
+                        std::borrow::Cow::Borrowed(trimmed)
+                    };
+                    let capped: String = api_source.chars().take(dep_budget.min(3500)).collect();
                     dep_budget = dep_budget.saturating_sub(capped.chars().count());
                     dep_block.push_str(&format!(
                         "## API of {f} (a dependency you import — use it from here, do NOT `cat` it):\n```\n{capped}\n```\n\n"
@@ -14233,11 +14299,24 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // GOOSE_SWARM_CONTRACTS: inject the frozen sibling-module interfaces so every parallel worker
         // builds against ONE agreed contract (kills cross-module drift). No-op until the stub pass (2b)
         // populates the bundle, so this is safe to ship ahead of the generator.
+        // SWARM-COHERENCE Phase-1 (DAG-scoped context): scope the frozen bundle to this worker's DAG
+        // neighborhood (deps ∪ consumers ∪ self) so per-worker context is O(degree), not O(total modules).
+        // OFF (or an empty neighborhood, e.g. a fix/sink dispatch) => the full bundle path is byte-identical.
+        let scoped_contracts_on = scoped_contracts_on();
         let contracts_block = if contracts_on {
-            self.contracts
-                .get()
-                .map(|b| frozen_interfaces_block(b))
-                .unwrap_or_default()
+            match self.contracts.get() {
+                Some(b) => {
+                    if scoped_contracts_on && !req.neighborhood.is_empty() {
+                        frozen_interfaces_block(&goose_swarm::scope_contract_bundle(
+                            b,
+                            &req.neighborhood,
+                        ))
+                    } else {
+                        frozen_interfaces_block(b)
+                    }
+                }
+                None => String::new(),
+            }
         } else {
             String::new()
         };
@@ -17605,6 +17684,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // `Decimal` after the user chose integer cents is still wrong.
                                     user_decisions: decisions.clone(),
                                     doc_facts: facts.clone(),
+                                    // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
+                                    neighborhood: Vec::new(),
                                 };
                                 match tokio::time::timeout(
                                     std::time::Duration::from_secs(1200),
@@ -17654,6 +17735,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // `Decimal` after the user chose integer cents is still wrong.
                         user_decisions: user_decisions.clone(),
                         doc_facts: doc_facts.clone(),
+                        // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
+                        neighborhood: Vec::new(),
                     };
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_secs()),
@@ -17678,6 +17761,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
                     doc_facts: doc_facts.clone(),
+                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
+                    neighborhood: Vec::new(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -17847,6 +17932,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
                     doc_facts: doc_facts.clone(),
+                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
+                    neighborhood: Vec::new(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
@@ -18478,6 +18565,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // `Decimal` after the user chose integer cents is still wrong.
                     user_decisions: user_decisions.clone(),
                     doc_facts: doc_facts.clone(),
+                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
+                    neighborhood: Vec::new(),
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
