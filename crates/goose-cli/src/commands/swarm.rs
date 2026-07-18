@@ -15227,6 +15227,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
             "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
             "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
+            // #129/#130 levers + ask_replan were firing but ABSENT from this map, so a campaign screen read
+            // them as OFF while they demonstrably drove the run (measured: nf-hexohm-fixed shipped 82 via
+            // answers_win_floor floor_and_redraft and built a fan via relax_contracted_deps, both invisible here).
+            "ask_replan": ask_replan_resolved(
+                std::env::var("GOOSE_SWARM_ASK_REPLAN").ok(),
+                load_config().ask_replan,
+            ),
+            "answers_win_floor": swarm_gate_cfg(
+                "GOOSE_SWARM_ANSWERS_WIN_FLOOR",
+                load_config().answers_win_floor,
+            ),
+            "relax_contracted_deps": swarm_gate_cfg(
+                "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
+                load_config().relax_contracted_deps,
+            ),
         },
     }));
 
