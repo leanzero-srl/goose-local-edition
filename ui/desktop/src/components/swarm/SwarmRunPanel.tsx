@@ -1020,7 +1020,8 @@ const SwarmMetricsStrip: React.FC<{
   startedAt: number | null;
   phase: string;
   totals: { running: number; done: number; failed: number; tasks: number };
-}> = ({ startedAt, phase, totals }) => {
+  phaseTodo: PhaseTodo[];
+}> = ({ startedAt, phase, totals, phaseTodo }) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -1028,19 +1029,29 @@ const SwarmMetricsStrip: React.FC<{
   }, []);
   if (!startedAt) return null;
   const elapsedMin = (now - startedAt) / 60000;
-  const remaining = Math.max(0, totals.tasks - totals.done);
-  let etaLabel: string | null = null;
+  // ETA basis: ALL phase-checklist items done/total (research + plan + contracts + build + verify), NOT just
+  // build tasks. A run can sit at 0/N build tasks for most of its life (long planning), which left this BLANK.
+  // Counting every phase's items means it populates the moment research finishes and shifts as the run advances.
+  const itemsDone = phaseTodo.reduce((n, p) => n + p.counts.done, 0);
+  const itemsTotal = phaseTodo.reduce((n, p) => n + p.counts.total, 0);
+  let etaLabel: string;
   let etaSub: string | undefined;
-  if (totals.done >= 1 && remaining > 0) {
-    const perTask = elapsedMin / totals.done;
-    const parallel = Math.min(remaining, 2); // the fleet builds a few modules at once; the sink is single-node
-    const mid = (perTask * remaining) / parallel;
-    const lo = Math.max(1, Math.round(mid * 0.6));
-    const hi = Math.max(lo + 1, Math.round(mid * 1.6));
+  if (itemsDone >= 1 && itemsTotal > itemsDone) {
+    const perItem = elapsedMin / itemsDone;
+    const remaining = itemsTotal - itemsDone;
+    const parallel = Math.min(remaining, 2); // the fleet works a few tasks at once; the verify sink is single-node
+    const mid = (perItem * remaining) / parallel;
+    // Deliberately WIDE band: the local fleet is variable and the planning whipsaw makes any point estimate a
+    // guess — a range that shifts is honest; a fake-precise minute count is not.
+    const lo = Math.max(1, Math.round(mid * 0.5));
+    const hi = Math.max(lo + 1, Math.round(mid * 2));
     etaLabel = `~${lo}–${hi} min`;
     etaSub = 'rough';
-  } else if (totals.tasks > 0 && remaining === 0) {
+  } else if (itemsTotal > 0 && itemsDone >= itemsTotal) {
     etaLabel = 'wrapping up';
+  } else {
+    // Never blank — before the first checklist item completes there is genuinely no basis to estimate from yet.
+    etaLabel = 'estimating…';
   }
   const tile = (label: string, value: string, color: string, sub?: string) => (
     <div className="flex flex-col" style={{ minWidth: 84 }}>
@@ -1054,7 +1065,7 @@ const SwarmMetricsStrip: React.FC<{
   return (
     <div className="flex items-center gap-6 px-3 py-2 border-b border-border-primary">
       {tile('Elapsed', fmtElapsed(elapsedMin), '#2e8bff')}
-      {tile('Est. left', etaLabel ?? '—', '#f5a623', etaSub)}
+      {tile('Est. left', etaLabel, '#f5a623', etaSub)}
       {tile('Phase', phase || '—', '#34c759', totals.tasks > 0 ? `${totals.done}/${totals.tasks} tasks` : undefined)}
     </div>
   );
@@ -1149,17 +1160,96 @@ const JudgeReason: React.FC<{ judge: NonNullable<PhaseTodoItem['judge']> }> = ({
   </div>
 );
 
-// One task row: TITLE + short summary collapsed; the full spec, owned files, and the judge's reasoning are
-// tucked under an expand. A 'running' item on a STALE run is relabeled 'interrupted' (the process is dead).
-const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[]; stale: boolean }> = ({
-  item,
-  deviceOrder,
-  stale,
-}) => {
+// Per-task LIVE GENERATION detail — what the model on THIS task actually produced: the tool-call breakdown (so
+// over-reading is visible at a glance: many reads/shell, no write), how much it's thinking, the reasoning text,
+// and which node/model. All of it is already collected per worker in .swarm/activity/<task>.json (the panel
+// reads it as run.activity) — this is the surface that makes "what are the models actually doing / why so long"
+// answerable instead of a blank two-line un-truncation.
+const TaskGenDetail: React.FC<{ digest: Record<string, unknown> }> = ({ digest }) => {
+  const num = (k: string) => (typeof digest[k] === 'number' ? (digest[k] as number) : 0);
+  const str = (k: string) => (typeof digest[k] === 'string' ? (digest[k] as string) : '');
+  const calls = Array.isArray(digest.calls) ? (digest.calls as Array<Record<string, unknown>>) : [];
+  const byName: Record<string, number> = {};
+  for (const c of calls) {
+    const n = c && typeof c.name === 'string' ? c.name : 'other';
+    byName[n] = (byName[n] ?? 0) + 1;
+  }
+  const rawModel = str('model');
+  const model = rawModel.split('-').slice(0, 2).join('-') || rawModel;
+  const toolCalls = num('tool_calls');
+  const thinking = num('thinking_chars');
+  const errors = num('errors');
+  const malformed = num('malformed');
+  const reasoning = str('full_reasoning') || str('reasoning') || str('last_thinking') || str('last_text');
+  const breakdown = Object.entries(byName)
+    .map(([n, c]) => `${c} ${n}`)
+    .join(' · ');
+  const hasAny = toolCalls > 0 || thinking > 0 || model || reasoning.trim();
+  if (!hasAny) return null;
+  return (
+    <div className="text-[10px] text-text-secondary space-y-1">
+      <span className="uppercase tracking-wide text-text-tertiary">Live generation</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+        {model ? (
+          <span>
+            model <span className="font-mono text-text-primary">{model}</span>
+          </span>
+        ) : null}
+        {toolCalls > 0 ? (
+          <span>
+            tool calls <span className="font-mono text-text-primary">{toolCalls}</span>
+            {breakdown ? ` (${breakdown})` : ''}
+          </span>
+        ) : null}
+        {thinking > 0 ? (
+          <span>
+            thinking <span className="font-mono text-text-primary">{thinking.toLocaleString()} ch</span>
+          </span>
+        ) : null}
+        {errors > 0 ? (
+          <span style={{ color: '#f5a623' }} className="font-medium">
+            {errors} app-error{malformed > 0 ? ` · ${malformed} malformed` : ''}
+          </span>
+        ) : null}
+      </div>
+      {reasoning.trim() ? <ReasoningBlock text={reasoning} label="Model reasoning (live)" /> : null}
+    </div>
+  );
+};
+
+// One task row: TITLE + short summary collapsed; the full spec, owned files, the judge's reasoning AND the live
+// generation are tucked under an expand. A 'running' item on a STALE run is relabeled 'interrupted' (dead proc).
+const PhaseTodoRow: React.FC<{
+  item: PhaseTodoItem;
+  deviceOrder: string[];
+  stale: boolean;
+  activity?: Record<string, unknown>;
+  plan?: PlanTask[];
+  workingDir?: string;
+}> = ({ item, deviceOrder, stale, activity, plan, workingDir }) => {
+  // build rows are `b-<taskid>`, the verify sink is `b-integrate-verify`; strip the prefix to key run.activity
+  // (gen/app/miner/…) and run.plan. Non-task rows (r-start, p-conf, v-e2e…) simply won't match → no gen block.
+  const taskId = item.id.replace(/^[bv]-/, '');
+  const digest =
+    activity && typeof activity[taskId] === 'object' && activity[taskId] !== null
+      ? (activity[taskId] as Record<string, unknown>)
+      : undefined;
+  const planTask = plan?.find((t) => t.id === taskId);
+  const revealFile = (rel: string) => {
+    if (!workingDir) return;
+    const base = workingDir.replace(/\/$/, '');
+    void window.electron.revealInFinder(rel.startsWith('/') ? rel : `${base}/${rel}`);
+  };
   const interrupted = stale && item.state === 'running';
   const c = interrupted ? CALL_PENDING : TODO_COLOR[item.state];
   const idx = item.device ? deviceIndex(item.device, deviceOrder) : -1;
-  const hasDetail = !!(item.description || (item.files && item.files.length) || item.judge);
+  const hasDetail = !!(
+    item.description ||
+    (item.files && item.files.length) ||
+    item.judge ||
+    digest ||
+    planTask
+  );
   const [open, setOpen] = useState(false);
   return (
     <div className="min-w-0">
@@ -1214,16 +1304,41 @@ const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[]; stale
       </div>
       {open && hasDetail ? (
         <div className="ml-5 mt-1 mb-1.5 space-y-1.5 border-l-0">
-          {item.judge ? <JudgeReason judge={item.judge} /> : null}
-          {item.files && item.files.length ? (
-            <div className="text-[10px] text-text-secondary">
-              <span className="uppercase tracking-wide">Files</span>{' '}
-              <span className="font-mono text-text-primary">{item.files.join(', ')}</span>
+          {planTask && (planTask.difficulty || planTask.deps.length) ? (
+            <div className="text-[10px] text-text-secondary flex flex-wrap gap-x-3">
+              {planTask.difficulty ? (
+                <span>
+                  difficulty <span className="text-text-primary">{planTask.difficulty}</span>
+                </span>
+              ) : null}
+              {planTask.deps.length ? (
+                <span>
+                  after <span className="font-mono text-text-primary">{planTask.deps.join(', ')}</span>
+                </span>
+              ) : null}
             </div>
           ) : null}
-          {item.description ? (
-            <ReasoningBlock text={item.description} label="Full task spec" />
+          {item.files && item.files.length ? (
+            <div className="text-[10px] text-text-secondary break-words">
+              <span className="uppercase tracking-wide text-text-tertiary">Files</span>{' '}
+              {item.files.map((f, i) => (
+                <span key={f}>
+                  {i > 0 ? ', ' : ''}
+                  <button
+                    onClick={() => revealFile(f)}
+                    disabled={!workingDir}
+                    title={workingDir ? 'Reveal in Finder' : undefined}
+                    className={`font-mono text-text-primary ${workingDir ? 'hover:underline cursor-pointer' : ''}`}
+                  >
+                    {f}
+                  </button>
+                </span>
+              ))}
+            </div>
           ) : null}
+          {item.description ? <ReasoningBlock text={item.description} label="Full task spec" /> : null}
+          {digest ? <TaskGenDetail digest={digest} /> : null}
+          {item.judge ? <JudgeReason judge={item.judge} /> : null}
         </div>
       ) : null}
     </div>
@@ -1232,11 +1347,14 @@ const PhaseTodoRow: React.FC<{ item: PhaseTodoItem; deviceOrder: string[]; stale
 
 // The accordion of per-phase checklists. Active phase default-open; finished phases collapse to a counts
 // header. Sits under the phase breadcrumb, above the activity feed.
-const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[]; stale: boolean }> = ({
-  phases,
-  deviceOrder,
-  stale,
-}) => {
+const PhaseTodoList: React.FC<{
+  phases: PhaseTodo[];
+  deviceOrder: string[];
+  stale: boolean;
+  activity?: Record<string, unknown>;
+  plan?: PlanTask[];
+  workingDir?: string;
+}> = ({ phases, deviceOrder, stale, activity, plan, workingDir }) => {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const shown = phases.filter((p) => p.items.length > 0);
   if (shown.length === 0) return null;
@@ -1286,7 +1404,15 @@ const PhaseTodoList: React.FC<{ phases: PhaseTodo[]; deviceOrder: string[]; stal
             {isOpen ? (
               <div className="px-3 pb-2 pl-8 space-y-0">
                 {p.items.map((item) => (
-                  <PhaseTodoRow key={item.id} item={item} deviceOrder={deviceOrder} stale={stale} />
+                  <PhaseTodoRow
+                    key={item.id}
+                    item={item}
+                    deviceOrder={deviceOrder}
+                    stale={stale}
+                    activity={activity}
+                    plan={plan}
+                    workingDir={workingDir}
+                  />
                 ))}
               </div>
             ) : null}
@@ -1575,7 +1701,8 @@ const RunOverview: React.FC<{
   overview: RunOverviewData;
   phaseTodo: PhaseTodo[];
   deviceOrder: string[];
-}> = ({ overview, phaseTodo, deviceOrder }) => {
+  workingDir?: string;
+}> = ({ overview, phaseTodo, deviceOrder, workingDir }) => {
   const verifyItems = phaseTodo.find((p) => p.key === 'verify')?.items ?? [];
   const verified = verifyItems.find((i) => i.id === 'v-e2e')?.state === 'done';
   const hdr = 'text-[10px] uppercase tracking-wide text-text-secondary mb-1 mt-2';
@@ -1584,6 +1711,15 @@ const RunOverview: React.FC<{
     <div className="border-t border-border-primary px-3 py-3 bg-background-secondary space-y-1">
       <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
         <ListChecks className="h-3.5 w-3.5" /> Build overview
+        {workingDir ? (
+          <button
+            onClick={() => void window.electron.revealInFinder(workingDir)}
+            title="Reveal the build folder in Finder — every file this run wrote lives here"
+            className="ml-auto flex items-center gap-1 text-[10px] font-normal text-text-secondary hover:text-text-primary"
+          >
+            <FolderOpen className="h-3 w-3" /> Reveal build folder
+          </button>
+        ) : null}
       </div>
       {/* RUNNABILITY IS AN ENGINE FACT. It is `verified` (phaseTodo's v-e2e — goose actually RAN the app)
           and runCommandVerified. It is NOT `generated`, which only says whether the model wrote the summary
@@ -1987,7 +2123,12 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 
       {/* The end-of-run overview only on a clean DONE — a stopped/crashed run never emits it and never mounts. */}
       {ended && outcome === 'done' && run.overview ? (
-        <RunOverview overview={run.overview} phaseTodo={run.phaseTodo} deviceOrder={deviceOrder} />
+        <RunOverview
+          overview={run.overview}
+          phaseTodo={run.phaseTodo}
+          deviceOrder={deviceOrder}
+          workingDir={workingDir}
+        />
       ) : null}
 
       {run.clarify?.pending ? (
@@ -1995,7 +2136,12 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       ) : null}
 
       {run.inProgress && !stale && !ended && !clarifyPending && (
-        <SwarmMetricsStrip startedAt={run.startedAt} phase={run.phase} totals={run.totals} />
+        <SwarmMetricsStrip
+          startedAt={run.startedAt}
+          phase={run.phase}
+          totals={run.totals}
+          phaseTodo={run.phaseTodo}
+        />
       )}
 
       {(run.inProgress || ended) && (
@@ -2014,7 +2160,14 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         />
       )}
 
-      <PhaseTodoList phases={run.phaseTodo} deviceOrder={deviceOrder} stale={stale} />
+      <PhaseTodoList
+        phases={run.phaseTodo}
+        deviceOrder={deviceOrder}
+        stale={stale}
+        activity={run.activityDigests}
+        plan={run.plan}
+        workingDir={workingDir}
+      />
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}
