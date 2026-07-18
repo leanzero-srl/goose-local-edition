@@ -188,6 +188,62 @@ impl ProviderDef for SwarmProvider {
     }
 }
 
+/// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT OFF —
+/// conservative about fleet queue-contention). When on, a swarm-build session is titled by ONE cheap
+/// local-planner call instead of the first-4-words truncation ("Build X — a").
+fn ai_session_name_enabled() -> bool {
+    if let Ok(v) = std::env::var("GOOSE_SWARM_AI_NAME") {
+        return matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        );
+    }
+    crate::config::Config::global()
+        .get_param::<serde_json::Value>("swarm")
+        .ok()
+        .and_then(|c| c.get("ai_session_name").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
+/// Title the session with ONE local-planner call (thinking OFF via complete_fast, 25s timeout). Passes the
+/// SAME session-title system+messages straight to the real lmstudio provider, so the planner emits a title and
+/// the outer `generate_session_name` strips the reasoning block + picks the short title. Any error/timeout
+/// bubbles up so the caller falls back to the truncation. Fires off the reply critical path (a detached spawn
+/// in agent.rs), so it never slows build start.
+async fn ai_session_title(
+    system: &str,
+    messages: &[Message],
+) -> Result<MessageStream, ProviderError> {
+    let planner = crate::config::Config::global()
+        .get_param::<serde_json::Value>("swarm")
+        .ok()
+        .and_then(|c| {
+            c.get("planner_model")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "qwen/qwen3.6-27b".to_string());
+    let provider = crate::providers::create("lmstudio", vec![])
+        .await
+        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
+    let mc = crate::model_config::model_config_from_user_config("lmstudio", &planner)
+        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
+    let (message, usage) = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        crate::model_config::complete_fast(
+            provider.as_ref(),
+            &mc,
+            "swarm-name",
+            system,
+            messages,
+            &[],
+        ),
+    )
+    .await
+    .map_err(|_| ProviderError::ExecutionError("session-title call timed out".into()))??;
+    Ok(stream_from_single_message(message, usage))
+}
+
 #[async_trait]
 impl Provider for SwarmProvider {
     fn get_name(&self) -> &str {
@@ -207,6 +263,15 @@ impl Provider for SwarmProvider {
     ) -> Result<MessageStream, ProviderError> {
         // Incidental-completion guard: session titles, tool summaries, etc. must NOT spawn the fleet.
         if super::cli_common::is_session_description_request(system) {
+            // #ai-session-names: title the session with a cheap local-planner call instead of the
+            // first-4-words truncation ("Build X — a"). Gated (default OFF); on error/timeout it falls back to
+            // the truncation below. Runs off the reply critical path (a detached spawn in agent.rs), so it
+            // never slows build start.
+            if ai_session_name_enabled() {
+                if let Ok(s) = ai_session_title(system, messages).await {
+                    return Ok(s);
+                }
+            }
             let (message, usage) = super::cli_common::generate_simple_session_description(
                 &model_config.model_name,
                 messages,
