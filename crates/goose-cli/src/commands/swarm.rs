@@ -8717,8 +8717,9 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
     match lang {
         TargetLang::TypeScript => return smoke_typescript(root).await,
         TargetLang::Rust => return smoke_rust(root).await,
+        TargetLang::Go => return smoke_go(root).await,
         TargetLang::Python => {}
-        TargetLang::Go | TargetLang::Other => return SmokeResult::skipped(),
+        TargetLang::Other => return SmokeResult::skipped(),
     }
     let py = collect_py_files(root);
     if py.is_empty() {
@@ -9381,6 +9382,61 @@ fn has_run_script(pkg: &serde_json::Value) -> bool {
 /// must EXIST after the build (catches built-but-unwired), and running it (`node <entry> --help`) must not
 /// CRASH at runtime (catches APP6-class "compiles but throws on every input"). A missing `npm`/`node`, or no
 /// package.json, is inconclusive (ran=false), never a failure.
+/// Deterministic Go smoke oracle: `go build ./...` must succeed (a compile error is a HARD finding) and
+/// `go test ./...` must pass. A missing `go` or no `go.mod` is inconclusive (skipped), never a failure.
+/// MEASURED (nf-logfold): a Go app shipped complete_result{passed:true} while `go build ./...` failed with
+/// `undefined: newDrainTree` — because run_smoke_gate SKIPPED Go, so `passed` was the MODEL'S self-report,
+/// not a deterministic engine event. This closes that false-green class (the non-python gap #120 names).
+async fn smoke_go(root: &Path) -> SmokeResult {
+    if !root.join("go.mod").exists() {
+        return SmokeResult::skipped();
+    }
+    let mut findings: Vec<String> = Vec::new();
+    // 1) BUILD — a compile error is precisely the false-green this exists to catch.
+    let mut c = tokio::process::Command::new("go");
+    c.args(["build", "./..."]).current_dir(root);
+    match smoke_output(c, 180).await {
+        Some(out) if !out.status.success() => {
+            let combined = combined_output(&out);
+            findings.push(format!(
+                "`go build ./...` failed (exit {}) — the app does not compile:\n{}",
+                out.status.code().unwrap_or(-1),
+                tail_lines(&combined, 40)
+            ));
+        }
+        Some(_) => {}
+        None => return SmokeResult::skipped(), // `go` missing / timed out -> inconclusive, never a phantom fail
+    }
+    // 2) TESTS — the app's OWN suite must pass (the runtime oracle). Only when the build was clean, so a test
+    // step failure is a genuine test failure, not the same compile error re-surfaced. `go test` exits 0 for a
+    // package with no test files, so absence of a suite is never invented as a defect.
+    if findings.is_empty() {
+        let mut c = tokio::process::Command::new("go");
+        c.args(["test", "./..."]).current_dir(root);
+        match smoke_output(c, 300).await {
+            Some(out) if !out.status.success() => {
+                let combined = combined_output(&out);
+                findings.push(format!(
+                    "`go test ./...` failed (exit {}) — the app's OWN test suite does not pass:\n{}",
+                    out.status.code().unwrap_or(-1),
+                    tail_lines(&combined, 40)
+                ));
+            }
+            _ => {} // pass, or `go test` timed out -> not a finding (build already established runnability)
+        }
+    }
+    SmokeResult {
+        ran: true,
+        py_files: 0,
+        collect: None,
+        tests: None,
+        entry_package: None,
+        entry_ok: None,
+        findings,
+        inconclusive: vec![],
+    }
+}
+
 async fn smoke_typescript(root: &Path) -> SmokeResult {
     let pkg_path = root.join("package.json");
     let pkg: serde_json::Value = match std::fs::read_to_string(&pkg_path) {
