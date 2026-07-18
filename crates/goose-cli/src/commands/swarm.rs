@@ -466,6 +466,14 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN env overrides.
     #[serde(default)]
     pub failed_tasks_block_green: bool,
+    /// DELIVERY hard-completion gate (bundle). Turns the deterministic conjuncts on TOGETHER — the failed-
+    /// OWNING-task block (with the C1 owns-nothing exclusion) and the #120 spec-contract check — so a run can
+    /// emit "app verified" / verified:true ONLY when the deterministic verdict is green. The model-judge
+    /// integrate-verify sink owns nothing and stays INFORMATIONAL, never a green-veto. OFF by default =
+    /// byte-identical to today (each conjunct stays at its own default-off flag). GOOSE_SWARM_DELIVERY env
+    /// overrides.
+    #[serde(default)]
+    pub delivery: bool,
     /// Give the integrate-verify sink the BUILT entry's REAL `--help` before it authors its golden checks,
     /// so it writes them against the interface the app ACTUALLY has instead of the one the spec describes.
     /// Closes the engine's one measured regression (a spec-distilled check used `--db` after the subcommand
@@ -631,6 +639,7 @@ impl Default for SwarmConfig {
             grounded_research_only: false,
             ts_smoke_tests: false,
             failed_tasks_block_green: false,
+            delivery: false,
             sink_prebuild: false,
             persona: false,
             user_notes: false,
@@ -4571,6 +4580,44 @@ mod tests {
                                                                        // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
         assert!(resolve_gate(Some(" YES ".to_string()), false, false)); // trimmed + case-insensitive
         assert!(!resolve_gate(Some("maybe".to_string()), true, true));
+    }
+
+    #[test]
+    fn green_blocking_failed_excludes_bonus_and_owns_nothing() {
+        let failed = vec![
+            "engine-tests".to_string(),
+            "integrate-verify".to_string(), // owns-nothing model judge (C1)
+            "replan-extra".to_string(),     // bonus/replanner task
+            "kanban-db".to_string(),
+        ];
+        let bonus = vec!["replan-extra".to_string()];
+        let owns_nothing = vec!["integrate-verify".to_string()];
+        let blocking = green_blocking_failed(&failed, &bonus, &owns_nothing);
+        // Only the FILE-OWNING core tasks block green; the judge sink and the bonus task are excluded.
+        assert_eq!(
+            blocking,
+            vec!["engine-tests".to_string(), "kanban-db".to_string()]
+        );
+
+        // A failed judge with NO failed owning task must not block green at all (the doctrine contradiction C1
+        // resolves): a run whose only failure is the model judge yields an empty deterministic-block set.
+        let judge_only = green_blocking_failed(
+            &["integrate-verify".to_string()],
+            &[],
+            &["integrate-verify".to_string()],
+        );
+        assert!(judge_only.is_empty());
+
+        // With no exclusions, every failed task blocks (byte-identical to the pre-C1 bonus-only filter when
+        // owns_nothing is empty).
+        assert_eq!(
+            green_blocking_failed(&failed, &bonus, &[]),
+            vec![
+                "engine-tests".to_string(),
+                "integrate-verify".to_string(),
+                "kanban-db".to_string()
+            ]
+        );
     }
 
     /// `swarm_gate_cfg_bundle` inserts config.yaml BETWEEN env and the assured/default fallback, so a lever
@@ -13019,6 +13066,24 @@ fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
     }
 }
 
+/// The planned tasks whose failure BLOCKS the green claim (the deterministic-block set for the hard
+/// completion gate). A failed task is excluded when it is a bonus/replanner task (its failure must not fail
+/// the run) OR when it owns NO files (C1 — the injected `integrate-verify` model-judge sink; its failure is a
+/// model self-report, never a deterministic green-veto). Only a FILE-OWNING core task can block green. Pure
+/// (no I/O) so the exclusion is unit-testable.
+fn green_blocking_failed(
+    failed: &[String],
+    bonus: &[String],
+    owns_nothing: &[String],
+) -> Vec<String> {
+    failed
+        .iter()
+        .filter(|t| !bonus.contains(t))
+        .filter(|t| !owns_nothing.contains(t))
+        .cloned()
+        .collect()
+}
+
 /// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
 fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool) -> bool {
     if let Some(v) = explicit {
@@ -14838,6 +14903,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "browser_verify": browser_verify_enabled(),
             "review_repro": swarm_gate_cfg_bundle("GOOSE_SWARM_REVIEW_REPRO", load_config().review_repro, false),
             "review_fix": swarm_gate("GOOSE_SWARM_REVIEW_FIX", false),
+            // DELIVERY hard-completion gate — read by the desktop to reconcile the "app verified" label so a
+            // deterministic-block failure can never sit beside a green claim (default OFF).
+            "delivery": swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery),
         },
     }));
 
@@ -15282,6 +15350,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "sink_prebuild": swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild),
             "ts_smoke_tests": swarm_gate_cfg("GOOSE_SWARM_TS_SMOKE_TESTS", load_config().ts_smoke_tests),
             "failed_tasks_block_green": swarm_gate_cfg("GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN", load_config().failed_tasks_block_green),
+            "delivery": swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery),
             "cross_module_check": swarm_gate_cfg("GOOSE_SWARM_CROSS_MODULE_CHECK", load_config().cross_module_check),
             "unwired_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED", load_config().unwired_demotes_verified),
             "repro_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_REPRO_DEMOTES_VERIFIED", load_config().repro_demotes_verified),
@@ -16406,17 +16475,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         //
         // BONUS tasks are excluded: RunReport documents that an opportunistic/replanner-added task's failure
         // "must NOT fail the run", so counting one here would false-fail a correct app.
-        let failed_planned: Vec<String> = report
-            .failed
+        // DELIVERY hard-completion gate (GOOSE_SWARM_DELIVERY, default OFF): the deterministic conjuncts turned
+        // on as ONE bundle. When on it forces the failed-owning-task block and the #120 spec-contract check so
+        // a failed DETERMINISTIC check can never coexist with a green claim. OFF = byte-identical (delivery_on
+        // stays false, so each `|| delivery_on` short-circuits to the conjunct's own default-off flag).
+        let delivery_on = swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery);
+        // C1 (owns-nothing exclusion): the injected `integrate-verify` sink OWNS NO files, so its failure is a
+        // MODEL self-report, not a deterministic engine event. Excluding it here keeps the model judge
+        // INFORMATIONAL — only a FILE-OWNING task can block green — the exact engine-truth-not-model-claim
+        // doctrine. Without it, turning the block on would let a judge's dissent veto a genuinely-good app.
+        let owns_nothing: Vec<String> = report
+            .tasks
             .iter()
-            .filter(|t| !report.bonus.contains(t))
-            .cloned()
+            .filter(|o| o.owns_nothing)
+            .map(|o| o.task_id.clone())
             .collect();
+        let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing);
         let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
-            && swarm_gate_cfg(
-                "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
-                load_config().failed_tasks_block_green,
-            ) {
+            && (delivery_on
+                || swarm_gate_cfg(
+                    "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
+                    load_config().failed_tasks_block_green,
+                )) {
             failed_planned
                 .iter()
                 .map(|t| {
@@ -16485,7 +16565,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
             // never binds is inconclusive (verified:false). Deterministic (regex-parsed spec, no model). OFF =
             // byte-identical (spec_contract_enabled() short-circuits and the block never runs).
-            if spec_contract_enabled() {
+            if delivery_on || spec_contract_enabled() {
                 let sc = run_spec_contract(&cwd, &opts.prompt, complete_lang).await;
                 verdict.findings.extend(sc.findings);
                 verdict.inconclusive.extend(sc.inconclusive);

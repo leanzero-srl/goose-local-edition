@@ -1234,6 +1234,10 @@ function buildPhaseTodo(
 
   const plandraftN = Object.keys(activity).filter((k) => /^plandraft-\d+$/.test(k)).length;
   const gateOn = (k: string) => gates[k] !== false;
+  // DELIVERY hard-completion gate (GOOSE_SWARM_DELIVERY, default OFF). Unlike `gateOn` (which defaults a
+  // missing key to ON), this defaults to OFF — an old run without the key, or the gate off, keeps today's
+  // label logic byte-for-byte.
+  const deliveryOn = gates['delivery'] === true;
 
   const it = (
     id: string,
@@ -1389,15 +1393,40 @@ function buildPhaseTodo(
   const finishedEvent = events.some((e) => e['event'] === 'run_finished');
   if (schedulerStuck != null) done.push(it('d-blocked', 'Run blocked — scheduler deadlocked', 'blocked'));
   else if (finishedEvent) {
-    const green = completeResult ? completeResult.passed && completeResult.verified : false;
+    // 'failed' is the DETERMINISTIC-BLOCK lane — a file-owning task the engine failed. 'judge_failed' is the
+    // model JUDGE (owns-nothing integrate-verify sink) and is INFORMATIONAL: it never counts as a hard fail.
     const anyHardFail = [...tstate.values()].some((s) => s.state === 'failed');
-    done.push(
-      it(
-        'd-outcome',
-        green ? 'Finished — app verified' : anyHardFail ? 'Finished — with failures' : 'Finished — unverified',
-        green ? 'done' : anyHardFail ? 'failed' : 'unverified'
-      )
-    );
+    const e2eGreen = completeResult ? completeResult.passed && completeResult.verified : false;
+    if (deliveryOn) {
+      // HARD COMPLETION GATE: "app verified" requires the green e2e verdict AND no coexisting deterministic-
+      // block failure — a failed deterministic check can never sit beside a green claim. A judge dissent on an
+      // otherwise-green gate is surfaced, but as informational (reachable only because the engine's C1 keeps
+      // the owns-nothing judge out of the green-blocking set).
+      const green = e2eGreen && !anyHardFail;
+      const judgeDissent = green && [...tstate.values()].some((s) => s.state === 'judge_failed');
+      done.push(
+        it(
+          'd-outcome',
+          green
+            ? judgeDissent
+              ? 'Finished — app verified (judge dissent — informational)'
+              : 'Finished — app verified'
+            : anyHardFail
+              ? 'Finished — with failures'
+              : 'Finished — unverified',
+          green ? 'done' : anyHardFail ? 'failed' : 'unverified'
+        )
+      );
+    } else {
+      const green = e2eGreen;
+      done.push(
+        it(
+          'd-outcome',
+          green ? 'Finished — app verified' : anyHardFail ? 'Finished — with failures' : 'Finished — unverified',
+          green ? 'done' : anyHardFail ? 'failed' : 'unverified'
+        )
+      );
+    }
   }
 
   const rollUp = (items: PhaseTodoItem[]): TodoState => {

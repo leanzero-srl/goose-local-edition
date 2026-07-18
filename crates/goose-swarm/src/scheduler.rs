@@ -174,6 +174,10 @@ pub struct TaskOutcome {
     pub session_id: Option<String>,
     pub tool_calls: Vec<ToolCallRecord>,
     pub output: Option<String>,
+    /// True when this task owns NO files (e.g. the injected `integrate-verify` model-judge sink). Such a
+    /// task's failure is a MODEL self-report, never a deterministic engine event — the hard completion gate
+    /// must exclude it from the green-blocking set so a judge's dissent can never veto a good app (C1).
+    pub owns_nothing: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1555,6 +1559,7 @@ impl State {
                 session_id,
                 tool_calls,
                 output: n.result.clone(),
+                owns_nothing: n.spec.owned_files.is_empty(),
             });
         }
         for (d, c) in &self.dispatched_per_device {
