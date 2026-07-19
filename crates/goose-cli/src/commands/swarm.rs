@@ -84,6 +84,9 @@ fn default_parallel_planning() -> bool {
 fn default_converge() -> bool {
     true
 }
+fn default_struct_stop() -> u8 {
+    80
+}
 fn default_worker_timeout_secs() -> u64 {
     // A generous HANG failsafe — only a genuine infinite stall should ever reach it (slow local models
     // are expected; this must never trip on mere slowness). On trip, the task re-routes to another
@@ -258,6 +261,16 @@ pub struct SwarmConfig {
     /// Convergence molding (the proven agreement raiser). ON by default. GOOSE_SWARM_CONVERGE env overrides.
     #[serde(default = "default_converge")]
     pub converge: bool,
+    /// #133 DIVERSE PLAN: draft the N skeletons with DIFFERENT decomposition strategies (canonical / second
+    /// boundary / finer) instead of N re-rolls of one prompt, then measure `structural_convergence` and, when
+    /// it clears `struct_stop`, lift the agreement confidence past the floor so the sequential retarget ladder
+    /// is SKIPPED (the drafts already ran in parallel — the ladder is the wasted serial time). OFF by default =
+    /// byte-identical (every slot uses the canonical strategy, no conf change). GOOSE_SWARM_DIVERSE_PLAN env.
+    #[serde(default)]
+    pub diverse_plan: bool,
+    /// #133 structural-convergence threshold for the diverse-plan early-stop (0-100). Default 80.
+    #[serde(default = "default_struct_stop")]
+    pub struct_stop: u8,
     /// Dynamic confidence retarget loop: when plan confidence is below `ask_floor`, re-draft toward consensus
     /// or research the open decisions BEFORE the one-shot ask. Bounded + monotonic. OFF by default (needs a
     /// floor). GOOSE_SWARM_RETARGET env overrides.
@@ -724,6 +737,8 @@ impl Default for SwarmConfig {
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
             converge: default_converge(),
+            diverse_plan: false,
+            struct_stop: default_struct_stop(),
             retarget: false,
             clarify_spec_bound: None,
             spec_wins: None,
@@ -3734,6 +3749,40 @@ mod tests {
         assert_eq!(v.get("core"), Some(&(3, 3)));
         assert_eq!(v.get("cli"), Some(&(2, 3)));
         assert_eq!(v.get("parser"), Some(&(1, 3)));
+    }
+
+    #[test]
+    fn structural_convergence_clears_80_on_diverse_but_convergent() {
+        // A,B share a 5-role core; C renames one (e→x) and adds an extra — a genuinely DIVERSE decomposition
+        // that the count-spread metric caps at ~74. struct_conv rewards the shared backbone: A=1.0, B=1.0,
+        // C = 4/6 = 0.667 → mean 0.889 → 89, which clears the 80 floor the old metric could not reach.
+        let core = |extra: &[(&str, &str)]| {
+            let mut v = vec![
+                spec("a", &["a.py"], &[]),
+                spec("b", &["b.py"], &[]),
+                spec("c", &["c.py"], &[]),
+                spec("d", &["d.py"], &[]),
+            ];
+            for (id, f) in extra {
+                v.push(spec(id, &[f], &[]));
+            }
+            v
+        };
+        let a = core(&[("e", "e.py")]);
+        let b = core(&[("e", "e.py")]);
+        let c = core(&[("x", "x.py"), ("extra", "extra.py")]);
+        let (conv, _) = structural_convergence(&[a, b, c]);
+        assert_eq!(
+            conv, 89,
+            "diverse-but-convergent drafts must clear the 80 floor"
+        );
+
+        // Fragmented: each draft invents its own modules, nothing shared → won't stop (F3 guarantee).
+        let f1 = vec![spec("a", &["a1.py"], &[]), spec("b", &["a2.py"], &[])];
+        let f2 = vec![spec("a", &["b1.py"], &[]), spec("b", &["b2.py"], &[])];
+        let f3 = vec![spec("a", &["c1.py"], &[]), spec("b", &["c2.py"], &[])];
+        let (frag, _) = structural_convergence(&[f1, f2, f3]);
+        assert_eq!(frag, 0, "fragmented drafts must NOT fake convergence");
     }
 
     #[test]
@@ -6829,6 +6878,55 @@ fn module_votes(
     counts.into_iter().map(|(r, c)| (r, (c, n))).collect()
 }
 
+/// #133 diverse-plan: STRUCTURAL convergence of a draft set (0-100 + reason). `plan_agreement` penalizes
+/// subtask-COUNT spread, so a genuinely-diverse-but-convergent pair caps at ~74 and can NEVER clear an 80
+/// floor (F1) — it rewards sameness, which contradicts injected diversity. This measures, per draft, the
+/// fraction of its OWN roles that a MAJORITY of drafts also chose, then averages: near-identical drafts → ~100,
+/// a shared backbone with per-draft extras → 80-90 (stop + merge the backbone), fragmented drafts that share
+/// nothing → ~0 (won't stop → escalate). Ignores count-spread, rewards shared structure. Reuses
+/// `module_votes`/`canonical_role`/`is_scaffolding_task` (same role-space). Pure, no model call.
+fn structural_convergence(valid_drafts: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
+    let n = valid_drafts.len();
+    if n < 2 {
+        return (0, "single draft — no structural cross-check".to_string());
+    }
+    let votes = module_votes(valid_drafts);
+    let majority = n / 2 + 1;
+    let mut per_draft: Vec<f64> = Vec::new();
+    for specs in valid_drafts {
+        let roles: std::collections::BTreeSet<String> = specs
+            .iter()
+            .filter(|t| !is_scaffolding_task(t))
+            .flat_map(|t| t.owned_files.iter())
+            .map(|f| canonical_role(f))
+            .collect();
+        if roles.is_empty() {
+            continue;
+        }
+        let mut backed = 0usize;
+        for r in &roles {
+            if let Some(val) = votes.get(r.as_str()) {
+                if val.0 >= majority {
+                    backed += 1;
+                }
+            }
+        }
+        per_draft.push(backed as f64 / roles.len() as f64);
+    }
+    if per_draft.is_empty() {
+        return (0, "no substantive roles across drafts".to_string());
+    }
+    let mean = per_draft.iter().sum::<f64>() / per_draft.len() as f64;
+    let conv = (mean * 100.0).round() as u8;
+    let shared = votes.values().filter(|val| val.0 >= majority).count();
+    (
+        conv,
+        format!(
+            "{conv}% of each draft's structure is majority-shared ({shared} role(s) in >={majority}/{n} drafts)"
+        ),
+    )
+}
+
 /// Partition ONE internally-consistent source draft's substantive tasks into FROZEN (carried verbatim) and
 /// DIRTY (re-drafted) for incremental replan (Phase 1, seam 2). A task freezes iff EVERY canonical role it
 /// owns is UNANIMOUS across the valid drafts (`votes[role] == n`) AND — the P0-1 downward-closure conjunct —
@@ -8430,6 +8528,10 @@ impl GooseAgentDispatcher {
         // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher.
         // Takes precedence over `backbone_on` when both are set. false = today, byte-identical.
         incremental_on: bool,
+        // #133 DIVERSE PLAN: when the parallel drafts STRUCTURALLY converge (>= struct_stop), lift agreement
+        // confidence to skip the sequential retarget ladder. false = today (shadow-log only), byte-identical.
+        diverse_plan_on: bool,
+        struct_stop: u8,
     ) -> Result<(String, PlanConf, String)> {
         // GOOSE_SWARM_CONVERGE (Part 0a): the old homogeneous hint literally told the weak model to "split
         // AGGRESSIVELY … do NOT fear divergence" — self-inflicting the subtask-count + file-set variance that
@@ -8756,10 +8858,28 @@ impl GooseAgentDispatcher {
                 Some(b) => b,
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
             };
-            let (conf1, mut reason1) = match consensus_k {
+            let (mut conf1, mut reason1) = match consensus_k {
                 Some(k) => best_subset_agreement(&valid1, converge, k),
                 None => plan_agreement(&valid1, converge),
             };
+            // #133 DIVERSE PLAN: `plan_agreement` penalizes subtask-COUNT spread, so a diverse-but-convergent
+            // draft set caps ~74 and can never clear an 80 floor — that's the bug that makes the SEQUENTIAL
+            // retarget ladder run every time. Measure STRUCTURAL convergence (majority-shared roles, ignoring
+            // count spread). SHADOW (off): logged only, conf unchanged → byte-identical. ENFORCE (on): when the
+            // parallel drafts strongly converge, lift agreement conf past the floor so the ladder is SKIPPED.
+            let (struct_conv, struct_reason) = structural_convergence(&valid1);
+            if diverse_plan_on && struct_conv >= struct_stop && struct_conv > conf1 {
+                reason1 = format!(
+                    "{reason1} [diverse-plan: struct-converged {struct_conv} ({struct_reason}) → skip ladder]"
+                );
+                conf1 = struct_conv;
+            } else {
+                eprintln!(
+                    "  {} struct_conv {struct_conv}/100 ({struct_reason}){}",
+                    style("·").dim(),
+                    if diverse_plan_on { "" } else { " [shadow]" }
+                );
+            }
             // SAY HOW BIG THE POOL REALLY WAS, and distinguish the two ways a draft slot fails.
             //
             // `n` is how many drafts were REQUESTED. `dead_drafts` never answered at all (timeout, error, or
@@ -16647,6 +16767,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 false,
             ),
             "converge": swarm_gate_cfg("GOOSE_SWARM_CONVERGE", load_config().converge),
+            "diverse_plan": swarm_gate_cfg("GOOSE_SWARM_DIVERSE_PLAN", load_config().diverse_plan),
             "retarget": retarget_on,
             // A run that quietly shrank 3 nodes -> 2 must SAY so. Without this the only trace of a dead node
             // is a task that "finished without writing its files", which reads as a lazy model.
@@ -16774,6 +16895,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Incremental replan (Phase 1): config default OFF unless env overrides. Read once outside the loop. Takes
     // precedence over backbone_on inside parallel_plan when both are set.
     let incremental_on = swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", cfg.incremental_replan);
+    // #133 DIVERSE PLAN (default OFF): skip the sequential retarget ladder when the parallel drafts
+    // structurally converge. Read once outside the loop, mirroring the levers above.
+    let diverse_plan_on = swarm_gate_cfg("GOOSE_SWARM_DIVERSE_PLAN", cfg.diverse_plan);
+    let struct_stop_val = std::env::var("GOOSE_SWARM_STRUCT_STOP")
+        .ok()
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .unwrap_or(cfg.struct_stop);
     // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default OFF): after the user answers the clarify ask and the
     // deterministic rescore lifts the plan to/over the floor, keep THAT plan instead of letting a
     // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
@@ -16876,6 +17004,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         converge,
                         backbone_on,
                         incremental_on,
+                        diverse_plan_on,
+                        struct_stop_val,
                     )
                     .await
                 {
