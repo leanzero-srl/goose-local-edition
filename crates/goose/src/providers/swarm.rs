@@ -202,7 +202,7 @@ fn ai_session_name_enabled() -> bool {
         .get_param::<serde_json::Value>("swarm")
         .ok()
         .and_then(|c| c.get("ai_session_name").and_then(|v| v.as_bool()))
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Title the session with ONE local-planner call (thinking OFF via complete_fast, 25s timeout). Passes the
