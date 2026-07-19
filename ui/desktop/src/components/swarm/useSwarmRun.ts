@@ -1052,10 +1052,27 @@ function foldEvents(
     }
   }
 
+  // The engine reports a device by its POOL id ('mac-qwen3.6-27b') for worker tasks but by its MODEL id
+  // ('gabee-qwen/qwen3.6-27b') for scouts/plan drafts, so the SAME physical node showed up twice — 6 rows for 3
+  // machines. run_started.pool ties them ({id, model_id}); canonicalize every device to ONE label (the model
+  // prefix) so the fleet reads 3, not 6.
+  const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
+  const deviceCanon: Record<string, string> = {};
+  for (const p of arr(events.find((e) => e['event'] === 'run_started')?.['pool'])) {
+    const rec = p as Record<string, unknown>;
+    const id = str(rec['id']);
+    const modelId = str(rec['model_id']);
+    const canon = shortNode(modelId) || shortNode(id);
+    if (id) deviceCanon[id] = canon;
+    if (modelId) deviceCanon[modelId] = canon;
+  }
+  const canonDevice = (d: string): string => deviceCanon[d] ?? shortNode(d);
+
   const lanes = [...tasks.values()].map((t) => {
     const act = activity[t.taskId] as Digest | undefined;
     return {
       ...t,
+      device: canonDevice(t.device),
       description: cleanTaskTitle(descriptions.get(t.taskId) ?? t.description, t.taskId),
       lastText: act?.last_text || t.lastText,
       recent: act?.recent ?? t.recent,
@@ -1094,7 +1111,7 @@ function foldEvents(
       return {
         taskId: k,
         description: `Drafting the plan skeleton (candidate ${i + 1})`,
-        device: d.model ?? 'planner',
+        device: canonDevice(d.model ?? 'planner'),
         model: d.model,
         status: (planned ? 'done' : 'running') as TurnStatus,
         lastText: d.last_text,
