@@ -113,6 +113,13 @@ export interface SwarmConfig {
    *  (these fan across the fleet like the build tasks) plus a THIN final integration run. The thin run stays
    *  the sole end-to-end gate; per-module green never substitutes for it. Default OFF (byte-identical when off). */
   fan_verify?: boolean;
+  dep_signatures?: boolean;
+  scoped_contracts?: boolean;
+  owned_file_fence?: boolean;
+  contract_retry?: boolean;
+  diverse_plan?: boolean;
+  struct_stop?: number;
+  spiral_thinking_chars?: number;
   /** Name each swarm build's chat session with a short AI-generated title (one cheap local-planner call)
    *  instead of the first-four-words truncation ("Build X — a"). Runs off the critical path so it never slows
    *  a build. Default OFF (an extra planner call can queue behind the planning burst on a busy fleet). */

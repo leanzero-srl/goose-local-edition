@@ -529,6 +529,45 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Give each worker its dependencies' interfaces up front"
+              hint="Before a worker writes a module, goose can hand it the exact function signatures of the other modules it builds on, extracted deterministically from their code. With this on, workers call the real API instead of guessing it — fewer cases where two modules disagree and the tests break. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.dep_signatures} onChange={(v) => set({ dep_signatures: v })} />
+            </Row>
+            <Row
+              label="Scope each worker's shared contracts to its neighbors"
+              hint="The frozen module interfaces goose shares with every worker can be trimmed to just the modules a given worker actually depends on, instead of the whole set — less noise in each prompt, so the model stays focused on what it needs. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.scoped_contracts} onChange={(v) => set({ scoped_contracts: v })} />
+            </Row>
+            <Row
+              label="Fence each worker to the files it owns"
+              hint="Workers share one project folder, so one worker can accidentally overwrite a file another module owns to make its own code build — clobbering the real work. With this on, goose snapshots each task's files when it finishes and, before the final assembly, restores any file a non-owner overwrote, so the owner's work always wins. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.owned_file_fence} onChange={(v) => set({ owned_file_fence: v })} />
+            </Row>
+            <Row
+              label="Retry an empty module-interface stub"
+              hint="Before building, goose freezes each module's public interface so workers agree on each other's API. On a cold fleet the first of those calls can time out, leaving a module with no frozen interface and workers guessing. With this on, a timed-out stub is retried once with a longer budget. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.contract_retry} onChange={(v) => set({ contract_retry: v })} />
+            </Row>
+            <Row
+              label="Skip the re-plan ladder when the drafts already agree"
+              hint="Goose drafts several plans in parallel and, if confidence is low, re-drafts the whole plan again and again — a slow, single-machine loop that rarely improves. With this on, goose measures how much structure the parallel drafts share; when they strongly agree it accepts that plan and skips the re-draft loop entirely. It still asks you a question when the spec itself is genuinely underspecified. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.diverse_plan} onChange={(v) => set({ diverse_plan: v })} />
+            </Row>
+            <Row
+              label="Nudge a worker stuck thinking to just write"
+              hint="A local model can get stuck streaming its reasoning without ever writing a file, burning the whole time budget on one task. With this on, once a worker has thought past a threshold with nothing written, goose interrupts it with a firm 'stop planning, write the simplest version now' and re-dispatches — a productive retry in a minute or two instead of a wasted seven. Default off."
+            >
+              <SwarmSwitch
+                checked={(cfg.spiral_thinking_chars ?? 0) > 0}
+                onChange={(v) => set({ spiral_thinking_chars: v ? 8000 : 0 })}
+              />
+            </Row>
+            <Row
               label="Name each build's chat with a short AI title"
               hint="By default a swarm build's entry in the chat list is just the first few words of your brief (like 'Build X — a'). With this on, goose asks a local model for a short, meaningful title (like 'logfold — Go log-template miner') when the build starts. It's one cheap call that runs off to the side, so it never delays the build. Off by default because on a busy fleet that extra call can wait in line behind the planning work."
             >
