@@ -1614,7 +1614,7 @@ function buildPhaseTodo(
   return phases;
 }
 
-export function useSwarmRun(workingDir: string | undefined, pollMs = 700): SwarmRunState {
+export function useSwarmRun(workingDir: string | undefined, pollMs = 500): SwarmRunState {
   const [state, setState] = useState<SwarmRunState>(EMPTY);
   // Keep the last non-empty run visible between polls so a finished run does not flicker away.
   const lastRunId = useRef<string | null>(null);
