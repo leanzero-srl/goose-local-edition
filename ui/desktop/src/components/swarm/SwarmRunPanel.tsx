@@ -642,14 +642,17 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
 // (and any starvation) legible at a glance. Derived from the run's OWN device set (no fleet-endpoint join, so
 // no host-id vs model-id naming mismatch). deviceOrder is the same sorted set the lanes color by, so a node's
 // letter/hue is identical here and in its lane rows.
-const FleetStrip: React.FC<{ lanes: TurnLane[]; deviceOrder: string[]; live: boolean }> = ({
-  lanes,
-  deviceOrder,
-  live,
-}) => {
+const FleetStrip: React.FC<{
+  lanes: TurnLane[];
+  planLanes: TurnLane[];
+  deviceOrder: string[];
+  live: boolean;
+}> = ({ lanes, planLanes, deviceOrder, live }) => {
   if (deviceOrder.length === 0) return null;
+  // Both worker lanes (EXECUTE) and plan-draft lanes (PLAN) count as a node being busy — during planning the
+  // running work IS the drafts, so without them a drafting node would wrongly read "idle".
   const runningByDevice = new Map<string, TurnLane>();
-  for (const l of lanes) {
+  for (const l of [...lanes, ...planLanes]) {
     if (l.status === 'running' && !runningByDevice.has(l.device)) runningByDevice.set(l.device, l);
   }
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
@@ -663,10 +666,17 @@ const FleetStrip: React.FC<{ lanes: TurnLane[]; deviceOrder: string[]; live: boo
         const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
         const letter = String.fromCharCode(65 + (i % 26));
         const lane = runningByDevice.get(device);
+        // The ephemeral generation — the last chunk of text/reasoning the model has streamed on this node,
+        // updated every turn from the activity digest. This is the "what is it generating right now" that was
+        // only ever visible by expanding a lane; surface it inline per node.
+        const liveGen =
+          lane?.lastText?.trim() ||
+          lane?.reasoning?.trim() ||
+          (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '');
         return (
-          <div key={device} className="flex items-center gap-2 text-xs">
+          <div key={device} className="flex items-start gap-2 text-xs">
             <span
-              className="inline-flex items-center justify-center font-mono font-semibold shrink-0"
+              className="inline-flex items-center justify-center font-mono font-semibold shrink-0 mt-[1px]"
               style={{ width: 16, height: 16, borderRadius: 3, background: hue, color: '#0b0b0b', fontSize: 10 }}
             >
               {letter}
@@ -675,14 +685,29 @@ const FleetStrip: React.FC<{ lanes: TurnLane[]; deviceOrder: string[]; live: boo
               {shortName(device)}
             </span>
             {lane ? (
-              <>
-                <Loader2
-                  size={12}
-                  className="animate-spin shrink-0"
-                  style={{ color: STATUS_COLOR.running }}
-                />
-                <span className="text-text-secondary truncate">{lane.description || lane.taskId}</span>
-              </>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <Loader2
+                    size={12}
+                    className="animate-spin shrink-0"
+                    style={{ color: STATUS_COLOR.running }}
+                  />
+                  <span className="text-text-primary truncate">{lane.description || lane.taskId}</span>
+                </div>
+                {liveGen ? (
+                  <div
+                    className="mt-0.5 font-mono text-text-secondary break-words"
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {liveGen}
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
             )}
@@ -2222,6 +2247,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 
       <FleetStrip
         lanes={run.lanes}
+        planLanes={run.planLanes}
         deviceOrder={deviceOrder}
         live={run.inProgress && !stale && !ended}
       />
