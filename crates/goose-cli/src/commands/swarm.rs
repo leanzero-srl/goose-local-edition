@@ -165,6 +165,16 @@ pub struct SwarmConfig {
     /// re-runs and produces a real result. None => default ON (env GOOSE_SWARM_STREAM_RETRY overrides).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_decode_retry: Option<bool>,
+    /// #135 straggler-stop: during plan drafting, once all-but-one drafts have returned a VALID skeleton,
+    /// wait only `straggler_grace_secs` for the lone lagging draft, then abort it and proceed on the quorum
+    /// (rather than blocking the whole run on one slow node up to the full draft timeout). None => OFF
+    /// (byte-identical: the classic await-all path). env GOOSE_SWARM_STRAGGLER_STOP overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub straggler_stop: Option<bool>,
+    /// #135: grace window (seconds) granted to the last lagging plan draft once the quorum of valid drafts
+    /// is in. Clamped to [10, draft_timeout]. None => default 45. env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub straggler_grace_secs: Option<u64>,
     /// MCP extensions (by builder name) every worker gets: "context7" | "web-search" | "doc-processor".
     /// Secrets are read from the environment at runtime, never stored here.
     #[serde(default)]
@@ -743,6 +753,8 @@ impl Default for SwarmConfig {
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
             stream_decode_retry: None,
+            straggler_stop: None,
+            straggler_grace_secs: None,
             worker_extensions: Vec::new(),
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
@@ -2038,6 +2050,43 @@ fn is_stream_decode_interrupt(text: &str) -> bool {
         && text
             .trim_end()
             .ends_with("Please resend your message to try again.")
+}
+
+/// #135 straggler-stop gate: env GOOSE_SWARM_STRAGGLER_STOP wins, else config, else default OFF (a timing
+/// change, not a pure correctness fix — ship OFF and validate by enabling).
+fn straggler_stop_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
+    match env {
+        Some(s) => matches!(
+            s.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        ),
+        None => cfg.unwrap_or(false),
+    }
+}
+
+fn straggler_stop_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_STOP").ok(), cfg)
+}
+
+/// #135: resolve the straggler grace window (seconds). env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins, else
+/// config, else 45. NOT clamped here — the caller clamps to [10, draft_timeout] once draft_timeout is known.
+fn straggler_grace_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
+    env.and_then(|s| s.trim().parse::<u64>().ok())
+        .or(cfg)
+        .unwrap_or(45)
+}
+
+fn straggler_grace_secs(cfg: Option<u64>) -> u64 {
+    straggler_grace_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_GRACE_SECS").ok(), cfg)
+}
+
+/// #135 pure decision: given the number of drafts requested (`n`) and how many have so far returned a VALID
+/// skeleton (`valid`), should the grace timer for the lone straggler be armed now? True only when every draft
+/// but one is in (`valid >= n - 1`) AND we already hold at least 2 valid drafts (agreement needs a pair).
+/// This is deliberately conservative: it only ever races the SINGLE last-place draft, never sacrificing draft
+/// diversity while more than one draft is still outstanding. n < 3 can never arm (no lone straggler to stop).
+fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
+    n >= 3 && valid >= 2 && valid >= n - 1
 }
 
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
@@ -3816,6 +3865,59 @@ mod tests {
         assert!(!is_stream_decode_interrupt(
             "VERDICT: PASS — all endpoints return 200 and balances sum to zero."
         ));
+    }
+
+    #[test]
+    fn straggler_stop_defaults_off_and_opts_in() {
+        // A timing change, not a correctness fix — ships OFF (byte-identical await-all) until validated.
+        assert!(!straggler_stop_resolved(None, None));
+        assert!(!straggler_stop_resolved(None, Some(false)));
+        assert!(straggler_stop_resolved(None, Some(true)));
+        assert!(straggler_stop_resolved(Some("1".into()), None));
+        assert!(
+            straggler_stop_resolved(Some("on".into()), Some(false)),
+            "env beats config"
+        );
+        assert!(!straggler_stop_resolved(Some("0".into()), Some(true)));
+        assert!(!straggler_stop_resolved(
+            Some("nonsense".into()),
+            Some(true)
+        ));
+    }
+
+    #[test]
+    fn straggler_grace_resolves_env_then_config_then_default() {
+        assert_eq!(straggler_grace_resolved(None, None), 45);
+        assert_eq!(straggler_grace_resolved(None, Some(30)), 30);
+        assert_eq!(straggler_grace_resolved(Some("90".into()), Some(30)), 90);
+        // Unparseable env falls through to config, then default.
+        assert_eq!(straggler_grace_resolved(Some("abc".into()), Some(30)), 30);
+        assert_eq!(straggler_grace_resolved(Some("abc".into()), None), 45);
+    }
+
+    #[test]
+    fn straggler_grace_arms_only_for_the_lone_last_draft() {
+        // n < 3: no lone straggler concept — never arm (both drafts are needed for agreement).
+        assert!(!should_arm_straggler_grace(1, 1));
+        assert!(!should_arm_straggler_grace(2, 2));
+        // n == 3: Mihai's "2 of 3" — arm exactly when 2 valid are in and 1 is still out.
+        assert!(
+            !should_arm_straggler_grace(3, 1),
+            "one valid draft is not a quorum"
+        );
+        assert!(
+            should_arm_straggler_grace(3, 2),
+            "2 of 3 valid -> race the 3rd"
+        );
+        assert!(should_arm_straggler_grace(3, 3));
+        // n == 6: conservative — only ever race the single last draft (5 of 6), never sacrifice diversity
+        // while more than one draft is still outstanding.
+        assert!(!should_arm_straggler_grace(6, 2));
+        assert!(!should_arm_straggler_grace(6, 4));
+        assert!(
+            should_arm_straggler_grace(6, 5),
+            "5 of 6 valid -> race the 6th"
+        );
     }
 
     #[test]
@@ -7987,6 +8089,12 @@ pub struct GooseAgentDispatcher {
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
     /// construction (env GOOSE_SWARM_STREAM_RETRY > config.stream_decode_retry > default ON).
     stream_decode_retry: bool,
+    /// #135: when set, plan drafting stops the lone lagging draft once the quorum of valid drafts is in
+    /// (see `should_arm_straggler_grace`). Resolved once at construction (default OFF).
+    straggler_stop: bool,
+    /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
+    /// the drafting call site. Resolved once at construction (default 45).
+    straggler_grace_secs: u64,
 }
 
 impl GooseAgentDispatcher {
@@ -8007,6 +8115,8 @@ impl GooseAgentDispatcher {
         allow_model_load: bool,
         sampling: SamplingParams,
         stream_decode_retry: bool,
+        straggler_stop: bool,
+        straggler_grace_secs: u64,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -8034,6 +8144,8 @@ impl GooseAgentDispatcher {
             clarity_fail: Mutex::new(None),
             owner_snapshots: Mutex::new(HashMap::new()),
             stream_decode_retry,
+            straggler_stop,
+            straggler_grace_secs,
         })
     }
 
@@ -9334,9 +9446,13 @@ impl GooseAgentDispatcher {
             // Resolved ONCE per round, outside the spawn: load_config() reads from disk and this would
             // otherwise re-read it per draft.
             let draft_timeout = draft_timeout_secs();
+            // #135 straggler-stop: OFF -> the classic await-all path below runs unchanged.
+            let straggler_stop = self.straggler_stop;
+            let straggler_grace = self.straggler_grace_secs;
             async move {
-                let mut handles = Vec::new();
-                for i in 0..n {
+                // One spawnable draft future per slot. Extracted so the OFF (await-all) and ON (JoinSet +
+                // straggler grace) paths share the exact same per-draft work — only the collection differs.
+                let make_draft = |i: usize| {
                     let me = me0.clone();
                     let model = models[i % models.len()].clone();
                     let sys = sys.clone();
@@ -9346,25 +9462,13 @@ impl GooseAgentDispatcher {
                     // generating while it decomposes the app (previously invisible — planner calls wrote no
                     // digest). Stable per-slot key so the N draft lanes are consistent across a re-plan.
                     let akey = format!("plandraft-{i}");
-                    handles.push(tokio::spawn(async move {
+                    async move {
                         // Wall-clock cap per skeleton draft. The planner watchdog is IDLE-based (no-progress),
                         // so a runaway SINGLE generation on a slow local (non-q5) model can stream for 20+ min
                         // without ever going idle, hanging the whole run before execute starts. On timeout the
-                        // draft is dropped; best-of-N (and the solo-planner fallback) then take over.
-                        //
-                        // THIS WAS HARDCODED AT 480s AND IGNORED planner_timeout_secs (Mihai's config: 900).
-                        // MEASURED LIVE 2026-07-17, the first thing the new engine-stderr log ever showed:
-                        //   "! 2 of 3 plan drafts returned nothing (timeout/error/no final_output) —
-                        //    confidence is measured on 1 draft(s)"
-                        // With one draft, plan_agreement returns the INERT NEUTRAL 60 — a placeholder constant,
-                        // not a measurement. So a redraft round can kill 2 of 3 drafts, "measure" agreement on
-                        // the survivor, and be discarded ("backbone round 2 not adopted"). A full round of
-                        // 3-node fleet time, spent to learn nothing.
-                        //
-                        // The redraft is where this bites hardest: its prompt carries the locked backbone AND
-                        // round 1, so it is the LONGEST generation of the run — and it gets the same 480s as
-                        // the first, smallest draft. Same family as the clarity probe's hardcoded 120s and
-                        // retarget_rounds being env-only: a budget the user cannot reach.
+                        // draft is dropped; best-of-N (and the solo-planner fallback) then take over. This is
+                        // the HARD backstop; #135's straggler grace is the SOFTER, earlier stop once a quorum
+                        // of valid drafts is already in.
                         tokio::time::timeout(
                             std::time::Duration::from_secs(draft_timeout),
                             me.run_agent_timed_at(
@@ -9384,23 +9488,101 @@ impl GooseAgentDispatcher {
                         .ok()
                         .and_then(|r| r.ok())
                         .and_then(|o| o.final_output)
-                    }));
-                }
+                    }
+                };
+                // A draft counts toward the straggler quorum only if its JSON parses AND forms a valid DAG —
+                // the SAME validity `select_best_skeleton` requires (specs_from_plan_json + Dag::from_specs).
+                // A JSON-parseable-but-invalid draft must NOT let us abort a still-running good one.
+                let draft_is_valid = |j: &str| {
+                    goose_swarm::specs_from_plan_json(j)
+                        .ok()
+                        .and_then(|s| goose_swarm::Dag::from_specs(s).ok())
+                        .is_some()
+                };
+
                 let mut c: Vec<String> = Vec::new();
                 let mut dead = 0usize;
-                for h in handles {
-                    match h.await {
-                        Ok(Some(j)) => c.push(j),
-                        // A DEAD DRAFT SLOT: the model timed out, errored, or emitted prose without ever
-                        // calling recipe__final_output. Until now this was dropped with no log and no event,
-                        // so the drafting loop counted REQUESTS while the confidence metric only ever saw
-                        // ANSWERS — and nothing anywhere revealed the gap.
-                        //
-                        // MEASURED (loop-ab-baseline, final round): 3 of 6 slots returned nothing. The pool
-                        // the metric scored was HALF the pool the engine believed it had asked for, which is
-                        // why growing best_of_n moved the number around at random and cost an hour a run.
-                        // A silent 50% loss is not a detail; it is the difference between a signal and noise.
-                        _ => dead += 1,
+
+                if straggler_stop {
+                    // #135: race the lone lagging draft. Collect drafts as they resolve; once every draft but
+                    // one has returned a VALID skeleton (should_arm_straggler_grace), grant the last one only
+                    // `grace` seconds, then abort it and proceed on the quorum — instead of blocking the whole
+                    // run on one slow node up to the full draft_timeout. This is Mihai's "if 2 of 3 finish and
+                    // the 3rd doesn't finish close enough, stop it to avoid wasting time".
+                    let grace = straggler_grace.clamp(10, draft_timeout.max(10));
+                    let mut js = tokio::task::JoinSet::new();
+                    for i in 0..n {
+                        js.spawn(make_draft(i));
+                    }
+                    let mut valid = 0usize;
+                    let mut stopped = 0usize;
+                    // Inert until armed (a far-future deadline); reset to `grace` from now the moment the
+                    // quorum lands. Guarded by `if armed` so it can never fire before that.
+                    let grace_timer =
+                        tokio::time::sleep(std::time::Duration::from_secs(u64::MAX / 4));
+                    tokio::pin!(grace_timer);
+                    let mut armed = false;
+                    while !js.is_empty() {
+                        tokio::select! {
+                            biased;
+                            joined = js.join_next() => {
+                                match joined {
+                                    Some(Ok(Some(j))) => {
+                                        if draft_is_valid(&j) {
+                                            valid += 1;
+                                        }
+                                        c.push(j);
+                                    }
+                                    // JoinError (panic/abort) or a slot with no final_output.
+                                    Some(_) => dead += 1,
+                                    None => break,
+                                }
+                                if !armed && should_arm_straggler_grace(n, valid) {
+                                    grace_timer.as_mut().reset(
+                                        tokio::time::Instant::now()
+                                            + std::time::Duration::from_secs(grace),
+                                    );
+                                    armed = true;
+                                }
+                            }
+                            _ = &mut grace_timer, if armed => {
+                                stopped = js.len();
+                                js.abort_all();
+                                // Drain the aborted tasks so nothing leaks. A draft that finished in the same
+                                // instant the grace expired is discarded (we already hold a quorum) — rare and
+                                // harmless; the point of the grace was that we have waited long enough.
+                                while js.join_next().await.is_some() {}
+                            }
+                        }
+                    }
+                    if stopped > 0 {
+                        eprintln!(
+                            "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after {grace}s grace \
+                             — proceeding on {valid} valid of {n}",
+                            style("↯").yellow()
+                        );
+                    }
+                } else {
+                    // OFF (byte-identical): spawn all, then await in index order. Tie-breaks in
+                    // select_best_skeleton stay first-seen-by-index, exactly as before.
+                    let mut handles = Vec::new();
+                    for i in 0..n {
+                        handles.push(tokio::spawn(make_draft(i)));
+                    }
+                    for h in handles {
+                        match h.await {
+                            Ok(Some(j)) => c.push(j),
+                            // A DEAD DRAFT SLOT: the model timed out, errored, or emitted prose without ever
+                            // calling recipe__final_output. Until now this was dropped with no log and no
+                            // event, so the drafting loop counted REQUESTS while the confidence metric only
+                            // ever saw ANSWERS — and nothing anywhere revealed the gap.
+                            //
+                            // MEASURED (loop-ab-baseline, final round): 3 of 6 slots returned nothing. The
+                            // pool the metric scored was HALF the pool the engine believed it had asked for,
+                            // which is why growing best_of_n moved the number around at random and cost an
+                            // hour a run. A silent 50% loss is the difference between a signal and noise.
+                            _ => dead += 1,
+                        }
                     }
                 }
                 if dead > 0 {
@@ -17059,6 +17241,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 repeat_penalty: cfg.repeat_penalty,
             },
             stream_decode_retry_enabled(cfg.stream_decode_retry),
+            straggler_stop_enabled(cfg.straggler_stop),
+            straggler_grace_secs(cfg.straggler_grace_secs),
         )
         .await?,
     );
