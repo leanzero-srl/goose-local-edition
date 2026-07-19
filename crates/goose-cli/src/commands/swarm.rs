@@ -3392,6 +3392,42 @@ mod tests {
     }
 
     #[test]
+    fn build_full_reasoning_matches_full_walk_at_clip_boundary() {
+        // build_full_reasoning now walks from the back and stops once it has covered the 24000-char clip,
+        // instead of scanning the whole (growing) texts vec every write. Prove the output is byte-identical
+        // to the naive full walk it replaced, ACROSS the clip boundary where the early-stop actually kicks in.
+        fn reference(texts: &[String]) -> String {
+            let joined = texts
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| t.chars().count() >= 6 && t.contains(char::is_whitespace))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            clip_tail(&joined, 24000)
+        }
+        // 400 chunks of ~120 chars each ≈ 48000 chars total — well past the 24000 clip, plus interleaved
+        // trivial fragments (dropped) and a couple of short no-whitespace tokens (also dropped).
+        let mut texts: Vec<String> = Vec::new();
+        for i in 0..400 {
+            texts.push(".".into());
+            texts.push(format!(
+                "chunk {i} narration line describing what the worker is doing at this particular step {}",
+                "x".repeat(60)
+            ));
+            texts.push("`".into());
+        }
+        assert_eq!(build_full_reasoning(&texts), reference(&texts));
+        // And the small case (under the clip) is identical too.
+        let small = vec![
+            "first substantive narration line".to_string(),
+            ".".to_string(),
+            "second substantive narration line".to_string(),
+        ];
+        assert_eq!(build_full_reasoning(&small), reference(&small));
+        assert_eq!(build_full_reasoning(&[]), reference(&[]));
+    }
+
+    #[test]
     fn integrate_verify_does_not_block_on_tests() {
         // A failing `tests` subtask must not block integrate-verify (UNIQ6: tests failed -> integrate-verify
         // never ran -> the app's real bug went uncaught + the run looked failed for the wrong reason).
@@ -6156,12 +6192,25 @@ fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> Strin
 /// "read the reasoning in plain" the run panel shows on expand (distinct from `build_reasoning`, which is
 /// the short last-few-chunks summary the judge reads). Tail-capped very generously.
 fn build_full_reasoning(texts: &[String]) -> String {
-    let joined = texts
-        .iter()
-        .map(|t| t.trim())
-        .filter(|t| t.chars().count() >= 6 && t.contains(char::is_whitespace))
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    // Walk from the newest chunk backward, keeping only enough substantive tail to cover the 24000-char clip
+    // below, then stop. This is O(kept) instead of O(all-texts) — the digest is rebuilt on a hot timer while
+    // `texts` grows for the whole task. clip_tail still yields the EXACT same last 24000 chars: once the kept
+    // suffix is itself >= 24000 chars, clipping it equals clipping the full join (the char count here ignores
+    // the "\n\n" separators, which only makes the real suffix longer, so we never keep too little).
+    let mut kept: Vec<&str> = Vec::new();
+    let mut chars = 0usize;
+    for t in texts.iter().rev() {
+        let t = t.trim();
+        if t.chars().count() >= 6 && t.contains(char::is_whitespace) {
+            chars += t.chars().count();
+            kept.push(t);
+            if chars >= 24000 {
+                break;
+            }
+        }
+    }
+    kept.reverse();
+    let joined = kept.join("\n\n");
     clip_tail(&joined, 24000)
 }
 
@@ -6193,19 +6242,18 @@ fn tail_chars(s: &str, max: usize) -> String {
 /// "`", a stray word) these coder models emit between tool calls — so the run panel shows real narration
 /// or nothing, never a box holding a single dot. Keeps the last few substantive chunks, tail-capped.
 fn build_reasoning(texts: &[String]) -> String {
-    let substantive: Vec<&str> = texts
+    // Keep the last few substantive chunks. Walk from the back and stop after 4: the digest is rebuilt on a hot
+    // timer while `texts` grows for the whole task, so scanning from the end is O(kept), not O(all-texts). The
+    // result is identical to filtering everything and taking the last 4 in order.
+    let mut last: Vec<&str> = texts
         .iter()
+        .rev()
         .map(|t| t.trim())
         .filter(|t| t.chars().count() >= 16 && t.contains(char::is_whitespace))
-        .collect();
-    let joined = substantive
-        .iter()
-        .rev()
         .take(4)
-        .rev()
-        .copied()
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
+    last.reverse();
+    let joined = last.join("\n");
     clip_tail(&joined, 1200)
 }
 

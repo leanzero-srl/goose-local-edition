@@ -123,3 +123,12 @@ cudaforge = { git = "https://github.com/jbg/cudaforge", rev = "e7c1967340e40673d
 # full debug info and stay fully debuggable; release builds are unaffected.
 [profile.dev.package."*"]
 debug = false
+
+# Release build. `strip = "symbols"` drops the symbol table from the shipped binary — a smaller binary and
+# DMG at zero runtime cost (release builds don't step-debug). `lto = "thin"` does cross-crate inlining for a
+# modest CPU win on the Rust side with only a small build-time cost (kept "thin", not "fat", so iterative DMG
+# builds stay reasonable; a tagged release can override to fat + codegen-units=1). Token generation itself is
+# in llama.cpp/Metal, so this is a modest first-party win, not a headline one.
+[profile.release]
+strip = "symbols"
+lto = "thin"
