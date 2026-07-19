@@ -206,11 +206,23 @@ fn ai_session_name_enabled() -> bool {
         .unwrap_or(true)
 }
 
-/// Title the session with ONE local-planner call (thinking OFF via complete_fast, 25s timeout). Passes the
-/// SAME session-title system+messages straight to the real lmstudio provider, so the planner emits a title and
-/// the outer `generate_session_name` strips the reasoning block + picks the short title. Any error/timeout
-/// bubbles up so the caller falls back to the truncation. Fires off the reply critical path (a detached spawn
-/// in agent.rs), so it never slows build start.
+/// The session-title call is fired at reply START (agent.rs, a DETACHED spawn) — which means it races the build
+/// it is naming for the single PARALLEL:1 planner slot. The old 25s timeout LOST that race on every real build
+/// (planning holds the slot for minutes), silently falling back to the "Build X — a" truncation. Because the
+/// spawn is detached it blocks nothing, so we can afford to WAIT: a generous timeout lets the queued title
+/// request get served between build generations (typically within a minute or two) and return the real title.
+/// Override with GOOSE_SWARM_NAME_TIMEOUT_SECS; 0 disables the timer entirely (wait indefinitely for the fleet).
+fn name_timeout_secs() -> u64 {
+    std::env::var("GOOSE_SWARM_NAME_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(600)
+}
+
+/// Title the session with ONE local-planner call (thinking OFF via complete_fast). Passes the SAME session-title
+/// system+messages straight to the real lmstudio provider, so the planner emits a title and the outer
+/// `generate_session_name` strips the reasoning block + picks the short title. Any error/timeout bubbles up so
+/// the caller falls back to the truncation.
 async fn ai_session_title(
     system: &str,
     messages: &[Message],
@@ -229,19 +241,22 @@ async fn ai_session_title(
         .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
     let mc = crate::model_config::model_config_from_user_config("lmstudio", &planner)
         .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
-    let (message, usage) = tokio::time::timeout(
-        std::time::Duration::from_secs(25),
-        crate::model_config::complete_fast(
-            provider.as_ref(),
-            &mc,
-            "swarm-name",
-            system,
-            messages,
-            &[],
-        ),
-    )
-    .await
-    .map_err(|_| ProviderError::ExecutionError("session-title call timed out".into()))??;
+    let call = crate::model_config::complete_fast(
+        provider.as_ref(),
+        &mc,
+        "swarm-name",
+        system,
+        messages,
+        &[],
+    );
+    let secs = name_timeout_secs();
+    let (message, usage) = if secs == 0 {
+        call.await?
+    } else {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), call)
+            .await
+            .map_err(|_| ProviderError::ExecutionError("session-title call timed out".into()))??
+    };
     Ok(stream_from_single_message(message, usage))
 }
 
