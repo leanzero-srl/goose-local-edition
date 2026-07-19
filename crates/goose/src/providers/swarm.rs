@@ -188,8 +188,9 @@ impl ProviderDef for SwarmProvider {
     }
 }
 
-/// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT OFF —
-/// conservative about fleet queue-contention). When on, a swarm-build session is titled by ONE cheap
+/// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT ON — the
+/// title call is a 25s detached spawn off the reply critical path, so the queue-contention concern is
+/// moot and the ugly first-4-words truncation is not worth shipping). When on, a swarm-build session is titled by ONE cheap
 /// local-planner call instead of the first-4-words truncation ("Build X — a").
 fn ai_session_name_enabled() -> bool {
     if let Ok(v) = std::env::var("GOOSE_SWARM_AI_NAME") {

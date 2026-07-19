@@ -763,8 +763,22 @@ fn truncate_output(
 
     let output_path = save_full_output(full_output, label, output_dir)?;
 
-    let preview_start = total_lines.saturating_sub(OUTPUT_PREVIEW_LINES);
-    let preview = lines[preview_start..].join("\n");
+    // Show BOTH ends, not just the tail: header imports/signatures live at the TOP of a file, so a
+    // tail-only preview forced the caller to issue a SECOND head/sed read on every large file. Split the
+    // budget between head and tail with an elision marker so the head is never lost.
+    let preview = if total_lines > OUTPUT_PREVIEW_LINES {
+        let head = OUTPUT_PREVIEW_LINES / 2;
+        let tail = OUTPUT_PREVIEW_LINES - head;
+        let tail_start = total_lines.saturating_sub(tail);
+        let omitted = tail_start.saturating_sub(head);
+        format!(
+            "{}\n… [{omitted} lines omitted — full output saved to file] …\n{}",
+            lines[..head].join("\n"),
+            lines[tail_start..].join("\n"),
+        )
+    } else {
+        lines.join("\n")
+    };
 
     let reason = if exceeded_lines {
         format!("Output exceeded {OUTPUT_LIMIT_LINES} line limit ({total_lines} lines total).")
@@ -927,8 +941,11 @@ mod tests {
         let result = render_output(&input, "test_lines", dir.path()).unwrap();
         let preview = &result.text;
 
-        assert_eq!(preview.lines().count(), OUTPUT_PREVIEW_LINES);
-        assert!(preview.starts_with("line 2450"));
+        // head (25) + elision marker + tail (25): the header is now shown too, so a caller no longer needs
+        // a second head-read to see the top of a large file.
+        assert_eq!(preview.lines().count(), OUTPUT_PREVIEW_LINES + 1);
+        assert!(preview.starts_with("line 0"));
+        assert!(preview.contains("lines omitted"));
         assert!(preview.contains("line 2499"));
 
         let info = result
