@@ -175,6 +175,13 @@ pub struct SwarmConfig {
     /// is in. Clamped to [10, draft_timeout]. None => default 45. env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straggler_grace_secs: Option<u64>,
+    /// #135 degrade-straggler-stop: extend straggler-stop to the CONTRACTS and DETAIL planning fanouts.
+    /// SEPARATE from `straggler_stop` because these CAN change a worker's build inputs — a stopped straggler
+    /// drops that module's frozen interface / detailed spec, degrading exactly like a timed-out contract/
+    /// detail (the module builds from its brief; integrate-verify reconciles). At most one module degrades.
+    /// None => OFF. env GOOSE_SWARM_STRAGGLER_STOP_DEGRADE overrides. Reuses `straggler_grace_secs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub straggler_stop_degrade: Option<bool>,
     /// MCP extensions (by builder name) every worker gets: "context7" | "web-search" | "doc-processor".
     /// Secrets are read from the environment at runtime, never stored here.
     #[serde(default)]
@@ -755,6 +762,7 @@ impl Default for SwarmConfig {
             stream_decode_retry: None,
             straggler_stop: None,
             straggler_grace_secs: None,
+            straggler_stop_degrade: None,
             worker_extensions: Vec::new(),
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
@@ -2066,6 +2074,15 @@ fn straggler_stop_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
 
 fn straggler_stop_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_STOP").ok(), cfg)
+}
+
+/// #135 degrade-straggler-stop gate (contracts + detail). Reuses the same on/off parsing; env
+/// GOOSE_SWARM_STRAGGLER_STOP_DEGRADE wins, else config, else default OFF.
+fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(
+        std::env::var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE").ok(),
+        cfg,
+    )
 }
 
 /// #135: resolve the straggler grace window (seconds). env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins, else
@@ -8314,6 +8331,9 @@ pub struct GooseAgentDispatcher {
     /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
     /// the drafting call site. Resolved once at construction (default 45).
     straggler_grace_secs: u64,
+    /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
+    /// Resolved once at construction (default OFF).
+    straggler_stop_degrade: bool,
 }
 
 impl GooseAgentDispatcher {
@@ -8336,6 +8356,7 @@ impl GooseAgentDispatcher {
         stream_decode_retry: bool,
         straggler_stop: bool,
         straggler_grace_secs: u64,
+        straggler_stop_degrade: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -8365,6 +8386,7 @@ impl GooseAgentDispatcher {
             stream_decode_retry,
             straggler_stop,
             straggler_grace_secs,
+            straggler_stop_degrade,
         })
     }
 
@@ -9140,7 +9162,7 @@ impl GooseAgentDispatcher {
             0
         };
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet_straggler(worker_models, lenses, scout_grace, move |lens, model| {
+        fanout_over_fleet_straggler(worker_models, lenses, scout_grace, "scout", move |lens, model| {
             let me = me.clone();
             let exts = research_extensions.clone();
             let prompt = prompt.clone();
@@ -9323,8 +9345,19 @@ impl GooseAgentDispatcher {
         lang: TargetLang,
     ) -> String {
         let goal = goal.to_string();
+        // #135 degrade-straggler-stop: once every contract but one is in, stop the lone lagging one (measured
+        // 7+ min on one node while two idled). Safe because a dropped contract == a timed-out/empty contract:
+        // the bundle-assembly loop already skips empty stubs, the module builds without a frozen self-
+        // interface, and integrate-verify reconciles. grace 0 => OFF => byte-identical await-all.
+        let contract_grace = if self.straggler_stop_degrade {
+            self.straggler_grace_secs
+                .clamp(10, self.worker_timeout_secs.max(10))
+        } else {
+            0
+        };
         let me = self.clone();
-        let stubs = fanout_over_fleet(worker_models, modules, move |spec, model| {
+        let stubs =
+            fanout_over_fleet_straggler(worker_models, modules, contract_grace, "contract", move |spec, model| {
             let me = me.clone();
             let goal = goal.clone();
             async move {
@@ -10295,11 +10328,20 @@ impl GooseAgentDispatcher {
         };
         let goal = user_prompt.to_string();
         let findings = research_findings.to_string();
+        // #135 degrade-straggler-stop for detail: an aborted detail task keeps its skeleton brief (the existing
+        // `_ => brief` fallback), so stopping the lone lagger only costs one module a richer spec — never
+        // corruption. Usually near-inert: #subtasks > #devices makes it fall back to await-all. grace 0 => OFF.
+        let detail_grace = if self.straggler_stop_degrade {
+            self.straggler_grace_secs.clamp(10, 75)
+        } else {
+            0
+        };
         let me = self.clone();
         // One detail call per device (work-stealing): a weight-1 node never has a second detail queued
         // behind the first. Each item grabs the next free node, so the fleet stays busy without
         // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
-        let results = fanout_over_fleet(wm, items, move |(idx, id, brief, files), model| {
+        let results =
+            fanout_over_fleet_straggler(wm, items, detail_grace, "detail", move |(idx, id, brief, files), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -12495,14 +12537,16 @@ where
 }
 
 /// #135: like `fanout_over_fleet`, but stops the lone lagging task once the others are in. Used for the SCOUT
-/// phase — advisory research the fleet otherwise idles on (measured: 2 scouts done at ~85s, the 3rd ran to
-/// 199s → 111s of two nodes idle). Straggler-stop is sound ONLY when every item runs concurrently (items <=
-/// devices, so nothing is queued behind a busy device) and there is a lone last item to race (>=3 items);
-/// `grace_secs == 0` (feature off) or any other shape falls back to the byte-identical await-all fanout.
+/// phase (advisory) and, under the degrade gate, CONTRACTS/DETAIL (measured: 2 scouts done at ~85s, the 3rd
+/// ran to 199s → 111s of two nodes idle; a contract ran 7+ min while two nodes idled). Straggler-stop is sound
+/// ONLY when every item runs concurrently (items <= devices, so nothing is queued behind a busy device) and
+/// there is a lone last item to race (>=3 items); `grace_secs == 0` (feature off) or any other shape falls
+/// back to the byte-identical await-all fanout. `noun` labels the phase in the logs (scout/contract/detail).
 async fn fanout_over_fleet_straggler<T, R, F, Fut>(
     devices: Vec<String>,
     items: Vec<T>,
     grace_secs: u64,
+    noun: &str,
     f: F,
 ) -> Vec<R>
 where
@@ -12515,6 +12559,12 @@ where
     if grace_secs == 0 || n < 3 || n > devices.len() {
         return fanout_over_fleet(devices, items, f).await;
     }
+    // Observability (verify-instrument-reporting-zero): make the straggler PATH visible even on runs where it
+    // never has to abort, so a clean "no fire" is distinguishable from a silent fall-back to await-all.
+    eprintln!(
+        "  {} straggler-stop watching {n} {noun}(s) — the last lagger gets a {grace_secs}s grace, then stops",
+        style("↯").dim()
+    );
     use std::collections::VecDeque;
     let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
     let pool = Arc::new(Mutex::new(
@@ -12544,7 +12594,7 @@ where
     let (results, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
     if stopped > 0 {
         eprintln!(
-            "  {} straggler-stop: {stopped} lagging scout(s) aborted after {grace_secs}s grace — proceeding \
+            "  {} straggler-stop: {stopped} lagging {noun}(s) aborted after {grace_secs}s grace — proceeding \
              on {} of {n}",
             style("↯").yellow(),
             results.len()
@@ -17493,6 +17543,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             stream_decode_retry_enabled(cfg.stream_decode_retry),
             straggler_stop_enabled(cfg.straggler_stop),
             straggler_grace_secs(cfg.straggler_grace_secs),
+            straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
         )
         .await?,
     );
@@ -17923,6 +17974,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "relax_contracted_deps": swarm_gate_cfg(
                 "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
                 load_config().relax_contracted_deps,
+            ),
+            "stream_decode_retry": stream_decode_retry_enabled(load_config().stream_decode_retry),
+            "straggler_stop": straggler_stop_enabled(load_config().straggler_stop),
+            "straggler_stop_degrade": straggler_stop_degrade_enabled(
+                load_config().straggler_stop_degrade,
             ),
         },
     }));

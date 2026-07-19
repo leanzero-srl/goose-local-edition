@@ -574,6 +574,15 @@ export default function SwarmSettingsSection() {
               <SwarmSwitch checked={!!cfg.straggler_stop} onChange={(v) => set({ straggler_stop: v })} />
             </Row>
             <Row
+              label="Also stop a lagging step during contracts and detailing"
+              hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.straggler_stop_degrade}
+                onChange={(v) => set({ straggler_stop_degrade: v })}
+              />
+            </Row>
+            <Row
               label="Nudge a worker stuck thinking to just write"
               hint="A local model can get stuck streaming its reasoning without ever writing a file, burning the whole time budget on one task. With this on, once a worker has thought past a threshold with nothing written, goose interrupts it with a firm 'stop planning, write the simplest version now' and re-dispatches — a productive retry in a minute or two instead of a wasted seven. Default off."
             >
