@@ -704,7 +704,10 @@ const FleetStrip: React.FC<{
           (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '') ||
           // These coder models draft in the <think> channel, so text stays empty while thinking streams —
           // show the live thinking (with a marker) so a generating node reads as WORKING, not blank.
-          (lane?.lastThinking?.trim() ? `💭 ${lane.lastThinking.trim()}` : '');
+          (lane?.lastThinking?.trim() ? `💭 ${lane.lastThinking.trim()}` : '') ||
+          // Dispatched but no token yet: LM Studio is processing the prompt (can be many seconds on a big
+          // context). Say so, rather than leaving the working node blank.
+          (lane?.phase === 'processing' ? 'processing the prompt…' : '');
         return (
           <div key={device} className="flex items-start gap-2 text-xs">
             <span

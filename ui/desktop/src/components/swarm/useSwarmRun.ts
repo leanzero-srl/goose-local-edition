@@ -173,6 +173,8 @@ export interface TurnLane {
    *  a heavily-generating node counts as WORKING and its thinking previews inline instead of reading "idle". */
   thinkingChars?: number;
   lastThinking?: string;
+  /** "processing" while the node is prompt-processing (dispatched, no tokens yet) — shown before generation. */
+  phase?: string;
   errors?: number;
   elapsedMs?: number;
   /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
@@ -998,6 +1000,9 @@ type Digest = {
    *  these fields a heavily-generating node reads as "idle — no task". */
   thinking_chars?: number;
   last_thinking?: string;
+  /** Set to "processing" on the seed digest written at dispatch (before the first token) so the node shows as
+   *  prompt-processing rather than idle; cleared once real tokens arrive. */
+  phase?: string;
 };
 
 function foldEvents(
@@ -1146,17 +1151,20 @@ function foldEvents(
         toolCalls: d.tool_calls,
         thinkingChars: d.thinking_chars,
         lastThinking: d.last_thinking,
+        phase: d.phase,
         errors: d.errors,
         seq: i,
       };
     })
-    // Keep a lane the moment it's WORKING — text OR reasoning-channel thinking. These coder models draft the
-    // plan in the <think> channel, so reasoning/last_text stay empty while thinking_chars climbs; the old
-    // text-only filter dropped a heavily-generating node, so the Fleet strip read "idle" during drafting.
+    // Keep a lane the moment it's dispatched: prompt-PROCESSING (phase set, no tokens yet), text, OR
+    // reasoning-channel thinking. These coder models draft in the <think> channel (reasoning/last_text empty
+    // while thinking_chars climbs), and prompt-processing precedes the first token — the old text-only filter
+    // dropped both, so the Fleet strip read "idle" while the node was busy.
     .filter(
       (l) =>
         (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
-        (l.thinkingChars ?? 0) > 0
+        (l.thinkingChars ?? 0) > 0 ||
+        l.phase === 'processing'
     );
 
   // RESEARCH (scout-<lens>) and CONTRACTS (contract-<id>) now write per-node digests too, so those phases are no
@@ -1186,6 +1194,7 @@ function foldEvents(
       toolCalls: d.tool_calls,
       thinkingChars: d.thinking_chars,
       lastThinking: d.last_thinking,
+      phase: d.phase,
       errors: d.errors,
       seq: i,
     };
@@ -1193,7 +1202,8 @@ function foldEvents(
   const hasActivity = (l: TurnLane) =>
     (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
     (l.calls?.length ?? 0) > 0 ||
-    (l.thinkingChars ?? 0) > 0;
+    (l.thinkingChars ?? 0) > 0 ||
+    l.phase === 'processing';
   const scoutLanes: TurnLane[] = Object.keys(activity)
     .filter((k) => /^scout-/.test(k))
     .sort()
@@ -1604,7 +1614,7 @@ function buildPhaseTodo(
   return phases;
 }
 
-export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): SwarmRunState {
+export function useSwarmRun(workingDir: string | undefined, pollMs = 700): SwarmRunState {
   const [state, setState] = useState<SwarmRunState>(EMPTY);
   // Keep the last non-empty run visible between polls so a finished run does not flicker away.
   const lastRunId = useRef<string | null>(null);
