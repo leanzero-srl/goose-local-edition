@@ -8208,9 +8208,23 @@ impl GooseAgentDispatcher {
             dir.join(format!("{k}.json"))
         });
         if let Some(p) = &activity_file {
+            // Seed the digest the instant the call is DISPATCHED — before the first token — carrying the node
+            // (`model`) and phase="processing". LM Studio processes the prompt (often many seconds on a big
+            // context) before it emits anything, and with no token there is no stream event and no digest, so
+            // the node read as "idle — no task" while it was busy prompt-processing. This seed makes the panel
+            // show the node + "processing the prompt…" from the start; the first real digest (with tokens)
+            // overwrites it with phase gone, flipping the node to generating.
             let _ = std::fs::write(
                 p,
-                "{\"tool_calls\":0,\"errors\":0,\"recent\":[],\"last_text\":\"\"}",
+                serde_json::json!({
+                    "tool_calls": 0,
+                    "errors": 0,
+                    "recent": [],
+                    "last_text": "",
+                    "model": model_id,
+                    "phase": "processing",
+                })
+                .to_string(),
             );
         }
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
