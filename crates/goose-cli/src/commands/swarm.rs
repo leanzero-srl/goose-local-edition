@@ -555,6 +555,13 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CONTRACT_RETRY env overrides.
     #[serde(default)]
     pub contract_retry: bool,
+    /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
+    /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
+    /// dependents instead of failing the whole subtree — so one hung core task does not kill the capstone.
+    /// integrate-verify + R1 gate the degraded file honestly. OFF by default = byte-identical (fail_descendants).
+    /// GOOSE_SWARM_DEGRADE_ON_STALL env overrides.
+    #[serde(default)]
+    pub degrade_on_stall: bool,
     /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
     /// modules a UNANIMOUS + dependency-downward-closed majority of the round-1 drafts agreed on (carried
     /// VERBATIM from one source draft), and re-draft ONLY the residual dirty modules against that frozen
@@ -780,6 +787,7 @@ impl Default for SwarmConfig {
             owned_file_fence: false,
             spiral_thinking_chars: 0,
             contract_retry: false,
+            degrade_on_stall: false,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -16808,6 +16816,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
+            "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
             // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
             // the campaign's measure.py read them as OFF while they demonstrably drove runs (fan_verify split
             // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
@@ -17957,6 +17966,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if speculate_on {
         eprintln!("speculative execution: ON (idle nodes race the chokepoint — EXPERIMENTAL)");
         scheduler = scheduler.with_speculation();
+    }
+    // GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, default-OFF): at transient-retry exhaustion (a mid-generation
+    // model hang), if the stalled task already wrote its critical owned file, mark it Done(degraded) + relax
+    // dependents instead of fail_descendants killing the capstone. Config-reachable (env > config > default)
+    // so the desktop toggle reaches it; OFF => the exhausted arm is byte-identical. integrate-verify gates the
+    // degraded file honestly downstream.
+    let degrade_on_stall_on = std::env::var("GOOSE_SWARM_DEGRADE_ON_STALL")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(cfg.degrade_on_stall);
+    if degrade_on_stall_on {
+        eprintln!(
+            "degrade-on-stall: ON (a stall-exhausted task that wrote its file is integrated, not failed)"
+        );
+        scheduler = scheduler.with_degrade_on_stall();
     }
     // GOOSE_SWARM_REVIEW: snapshot the PRE-EXECUTE unwired findings so the post-run wire-fix only chases
     // modules THIS run left unwired — never a PRE-EXISTING intentional dead module (e.g. an amendment's
