@@ -27,6 +27,20 @@ workdir). FIX: when the swarm provider dispatches a build and the working dir is
 a dedicated project subdir (e.g. ~/goose-builds/<name> or a chosen/created project dir) instead of $HOME.
 The app already supports `--dir <path>`; the gap is the DEFAULT for builds.
 
+### SEAMS + FIX DESIGN (2026-07-19 — traced, held for fleet-phase validation; MED confidence blind)
+Confirmed live. Seams: desktop `main.ts:1069` `let workingDir = dir || os.homedir()` is the source — this is
+the GENERAL session working dir (createChat), not build-specific, so it is shared by plain chats too. The
+swarm provider inherits it: providers/swarm.rs:359-360 `cmd.current_dir(dir)` with no $HOME guard. The run
+panel reads `.swarm` from the SAME desktop-chosen dir (main.ts:2234 `read-swarm-run` → `expandTilde(workingDir)/.swarm`).
+=> A provider-only redirect (build in ~/goose-builds/<slug> but panel still reads $HOME/.swarm) BLINDS the run
+panel — a visible regression. The redirect MUST be coordinated so goosed's current_dir AND the panel reader use
+ONE dir. Two clean options: (A) DESKTOP-side, at build DISPATCH (not createChat): when the working dir === os.homedir()
+and the turn is a swarm build, set workingDir = ~/goose-builds/<slug-from-brief>, mkdir it, pass THAT to goosed +
+the panel. Needs the dispatch to know "this is a build" + a slug. (B) PROVIDER-side redirect that EMITS the real
+build dir in the `run_started` event, and the panel resolves `.swarm` from the event dir instead of the passed
+workingDir. Both need a live fleet build to confirm the app lands in ~/goose-builds AND the panel follows. NOT a
+blind drop-in; the panel-coordination is why. Slug: reuse the ai_session_title / brief-first-words logic.
+
 ## Merge upstream (parent repo) changes — carefully, favoring OUR work (2026-07-15, requested by Mihai)
 Bring the parent repo's changes into `main` and into our `local-edition` branch. HARD CONSTRAINT: merge
 carefully with the interest of KEEPING WHAT WE'VE DONE over what they've done — our fork carries the whole
