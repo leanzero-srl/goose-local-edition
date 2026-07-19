@@ -8398,7 +8398,7 @@ impl GooseAgentDispatcher {
         // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
         // so write the terminal state exactly once here (pending is drained above → pass an empty map).
         if let Some(p) = &activity_file {
-            let digest = build_worker_digest(
+            let mut digest = build_worker_digest(
                 &tool_calls,
                 &call_records,
                 &std::collections::HashMap::new(),
@@ -8408,6 +8408,12 @@ impl GooseAgentDispatcher {
                 &last_thinking,
                 model_id,
             );
+            // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
+            // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
+            // "Scouting" with a spinner while the node was actually idle (the "nodes are down but shown busy" bug).
+            if let Some(obj) = digest.as_object_mut() {
+                obj.insert("phase".to_string(), serde_json::Value::from("done"));
+            }
             let _ = std::fs::write(p, digest.to_string());
         }
 
