@@ -120,13 +120,60 @@ fn is_test_task(id: &str, owned_files: &[String]) -> bool {
         || (!owned_files.is_empty() && owned_files.iter().all(|f| looks_like_test_file(f)))
 }
 
-/// At least one owned file exists on disk and is non-empty. The deterministic finalize-spin gate only fires
-/// once a file was written, but a custom/LLM judge could emit Looping with nothing on disk — never salvage
-/// then (there is no output to gate). Paths resolve against the run cwd (where workers write).
+/// A build-system manifest / package descriptor — a task that wrote ONLY one of these has not delivered its
+/// actual code. Used to keep the salvage gate from marking a task Done on a trivial go.mod.
+fn looks_like_manifest_file(f: &str) -> bool {
+    let base = f.rsplit('/').next().unwrap_or(f).to_lowercase();
+    matches!(
+        base.as_str(),
+        "go.mod"
+            | "go.sum"
+            | "package.json"
+            | "package-lock.json"
+            | "cargo.toml"
+            | "cargo.lock"
+            | "requirements.txt"
+            | "setup.py"
+            | "setup.cfg"
+            | "pyproject.toml"
+            | "__init__.py"
+            | "tsconfig.json"
+            | "gemfile"
+    )
+}
+
+/// GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL (#134, default OFF = byte-identical `.any()`): when a stalled/spinning
+/// task is salvaged to Done, require its CRITICAL owned files to be present, not just ANY file.
+fn salvage_require_critical() -> bool {
+    std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Whether a salvage is justified by what is on disk. DEFAULT: at least one owned file is non-empty (the
+/// finalize-spin gate only fires once SOMETHING was written; a custom/LLM judge could emit Looping with
+/// nothing on disk — never salvage then). STRICT (salvage_require_critical): EVERY *critical* owned file —
+/// non-manifest, non-test source — must exist and be non-empty; a go.mod-only tree is not a done app. Measured
+/// on mustsolve-test4: cli-entry owns cmd/logfold/main.go but stalled after writing only a 24-byte go.mod, and
+/// the old `.any()` salvaged it to Done → the app shipped with NO entrypoint. Falls back to `.any()` when the
+/// task owns only manifest/test files. Paths resolve against the run cwd (where workers write).
 fn owned_file_written(owned_files: &[String]) -> bool {
-    owned_files
-        .iter()
-        .any(|f| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false))
+    let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
+    if salvage_require_critical() {
+        let critical: Vec<&String> = owned_files
+            .iter()
+            .filter(|f| !looks_like_manifest_file(f) && !looks_like_test_file(f))
+            .collect();
+        if !critical.is_empty() {
+            return critical.iter().all(|f| nonempty(f));
+        }
+    }
+    owned_files.iter().any(|f| nonempty(f))
 }
 
 /// A pool device = one LM Link model id with a capacity weight.
