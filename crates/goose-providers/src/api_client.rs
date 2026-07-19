@@ -16,6 +16,30 @@ use std::time::Duration;
 
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
+// reqwest's `.timeout()` is a TOTAL-request deadline — for a streamed completion it caps the ENTIRE stream,
+// so a healthy sink that keeps emitting tokens past the deadline is killed mid-stream (observed as
+// Stream-decode run-kills on long generations). When `GOOSE_PROVIDER_READ_TIMEOUT_SECS` is set to N>0 we
+// instead apply reqwest's `.read_timeout(N)` — an inactivity deadline reset on every received chunk — so a
+// slow-but-alive stream survives and only a genuinely stalled one (no bytes for N seconds) is cut. Unset (the
+// default) keeps the total-timeout behavior exactly, so the default provider path is byte-identical.
+fn read_timeout_override() -> Option<Duration> {
+    std::env::var("GOOSE_PROVIDER_READ_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .map(Duration::from_secs)
+}
+
+fn apply_request_timeout(
+    builder: reqwest::ClientBuilder,
+    total: Duration,
+) -> reqwest::ClientBuilder {
+    match read_timeout_override() {
+        Some(read) => builder.read_timeout(read),
+        None => builder.timeout(total),
+    }
+}
+
 pub type RequestBuilderDecorator =
     Arc<dyn Fn(reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> + Send + Sync>;
 
@@ -251,7 +275,7 @@ impl ApiClient {
         timeout: Duration,
         tls_config: Option<TlsConfig>,
     ) -> Result<Self> {
-        let mut client_builder = Client::builder().timeout(timeout);
+        let mut client_builder = apply_request_timeout(Client::builder(), timeout);
 
         if let Some(ref config) = tls_config {
             client_builder = Self::configure_tls(client_builder, config)?;
@@ -276,8 +300,7 @@ impl ApiClient {
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
-        let mut client_builder = Client::builder()
-            .timeout(self.timeout)
+        let mut client_builder = apply_request_timeout(Client::builder(), self.timeout)
             .default_headers(self.default_headers.clone());
 
         // Configure TLS if needed
