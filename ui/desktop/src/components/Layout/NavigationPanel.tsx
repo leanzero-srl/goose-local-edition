@@ -177,13 +177,6 @@ function folderName(dir: string | undefined): string {
   return seg ?? trimmed;
 }
 
-/** Bare model name without the provider prefix, capped so it never blows out the row. */
-function shortModel(modelId: string | undefined): string {
-  if (!modelId) return '';
-  const base = modelId.split('/').pop() ?? modelId;
-  return base.length > 20 ? `${base.slice(0, 19)}…` : base;
-}
-
 /** Compact "time since last activity" — the second disambiguator for duplicate titles. */
 function timeAgo(iso: string | undefined): string {
   if (!iso) return '';
@@ -311,7 +304,6 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
 
   const kind = sessionKind(session);
   const folder = folderName(session.workingDir);
-  const model = shortModel(session.modelId);
   const when = timeAgo(sessionActivityAt(session));
   const KindIcon = KIND_ICON[kind];
 
@@ -337,7 +329,7 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
           : '';
 
   // A row only grows a second (meta) line when it actually has meta — a brand-new empty chat stays one line.
-  const showMeta = !!folder || !!model || session.messageCount > 0;
+  const showMeta = !!folder || session.messageCount > 0;
 
   const commitRename = useCallback(async () => {
     const next = editValue.trim();
@@ -470,20 +462,14 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
         )}
 
         {showMeta && !isEditing && (
-          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-text-secondary min-w-0">
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-text-secondary min-w-0">
             {folder ? (
               <span
-                className="inline-flex items-center gap-1 min-w-0 max-w-[60%] px-1 py-px border border-border-primary bg-background-muted text-text-primary"
-                style={{ borderRadius: 3 }}
+                className="inline-flex items-center gap-1 min-w-0 flex-1"
                 title={session.workingDir}
               >
                 <Folder className="h-2.5 w-2.5 shrink-0" />
                 <span className="truncate font-mono">{folder}</span>
-              </span>
-            ) : null}
-            {model ? (
-              <span className="shrink-0 truncate font-mono" title={session.modelId}>
-                {model}
               </span>
             ) : null}
             {session.messageCount > 0 ? (
