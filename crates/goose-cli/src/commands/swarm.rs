@@ -527,6 +527,16 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_OWNED_FILE_FENCE env overrides.
     #[serde(default)]
     pub owned_file_fence: bool,
+    /// CONTRACT RETRY (#131 enabler): the CONTRACTS phase freezes a signature-only interface per module BEFORE
+    /// EXECUTE so workers agree on each other's API. It runs on a freshly-loaded 262k-ctx fleet where the FIRST
+    /// call is slow; measured on mustsolve-test1, all 3 stubs came back empty within the 75s budget and the
+    /// engine logged "no stubs produced — skipping injection", so the whole frozen-interface injection was
+    /// SILENTLY absent and workers diverged (Diff / DiffTemplates / Compute for one function). When ON, an
+    /// empty/timed-out stub is retried once with a longer budget. OFF by default = single attempt, byte-
+    /// identical. (The per-module empty-reason warning is always on — a silent "no stubs" must never recur.)
+    /// GOOSE_SWARM_CONTRACT_RETRY env overrides.
+    #[serde(default)]
+    pub contract_retry: bool,
     /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
     /// modules a UNANIMOUS + dependency-downward-closed majority of the round-1 drafts agreed on (carried
     /// VERBATIM from one source draft), and re-draft ONLY the residual dirty modules against that frozen
@@ -748,6 +758,7 @@ impl Default for SwarmConfig {
             contract_validate: false,
             relax_contracted_deps: false,
             owned_file_fence: false,
+            contract_retry: false,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -8330,15 +8341,41 @@ impl GooseAgentDispatcher {
                      Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
                     spec.id, spec.description
                 );
-                let stub = match tokio::time::timeout(
-                    std::time::Duration::from_secs(75),
-                    me.run_agent(&model, system, user, None, 6, &[], 0, None),
-                )
-                .await
-                {
-                    Ok(Ok(o)) if !o.text.trim().is_empty() => o.text,
-                    _ => String::new(),
-                };
+                // Retry an empty/timed-out stub once with a longer budget (gated; OFF = single 75s attempt,
+                // byte-identical). The per-module empty-reason warning below is ALWAYS on so a silently-empty
+                // CONTRACTS phase — which strips every module's frozen interface — can never recur unseen.
+                let retry_on =
+                    swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
+                let attempts = if retry_on { 2 } else { 1 };
+                let mut stub = String::new();
+                let mut reason = "empty_text".to_string();
+                for attempt in 0..attempts {
+                    let budget = std::time::Duration::from_secs(if attempt == 0 { 75 } else { 150 });
+                    match tokio::time::timeout(
+                        budget,
+                        me.run_agent(&model, system.clone(), user.clone(), None, 6, &[], 0, None),
+                    )
+                    .await
+                    {
+                        Ok(Ok(o)) if !o.text.trim().is_empty() => {
+                            stub = o.text;
+                            break;
+                        }
+                        Ok(Ok(_)) => reason = "empty_text".to_string(),
+                        Ok(Err(e)) => {
+                            reason = format!("agent_error: {}", e.to_string().replace('\n', " "))
+                        }
+                        Err(_) => reason = "timeout".to_string(),
+                    }
+                }
+                if stub.trim().is_empty() {
+                    eprintln!(
+                        "  {} contract {} produced NO stub ({}) — this module has no frozen interface; siblings may diverge",
+                        style("⚠").yellow().bold(),
+                        style(&spec.id).bold(),
+                        reason,
+                    );
+                }
                 (spec.id, stub)
             }
         })
@@ -16629,6 +16666,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "repro_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_REPRO_DEMOTES_VERIFIED", load_config().repro_demotes_verified),
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
+            "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // `review` and `review_repro` also appear in `gates` above, but a campaign screens the LEVERS
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
