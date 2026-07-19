@@ -2089,6 +2089,64 @@ fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
     n >= 3 && valid >= 2 && valid >= n - 1
 }
 
+/// #135 collection loop: drain `js` (one draft future per slot) as drafts resolve. The instant every draft
+/// but one has returned a VALID skeleton (should_arm_straggler_grace), give the lone straggler only
+/// `grace_secs` more, then abort it and return the quorum. Returns (candidates in completion order, dead
+/// count, stopped count). Extracted from draft_round so the async abort/grace mechanics are unit-testable —
+/// the pure predicate test alone missed a panic here (a huge inert-timer duration overflows std::Instant).
+async fn collect_drafts_with_straggler_stop<F>(
+    mut js: tokio::task::JoinSet<Option<String>>,
+    n: usize,
+    grace_secs: u64,
+    is_valid: F,
+) -> (Vec<String>, usize, usize)
+where
+    F: Fn(&str) -> bool,
+{
+    let mut c: Vec<String> = Vec::new();
+    let mut dead = 0usize;
+    let mut valid = 0usize;
+    let mut stopped = 0usize;
+    // Inert until armed: the `if armed` select guard means this is never awaited to completion before the
+    // quorum lands, at which point it is reset to `grace_secs` from now. A day is far past any real draft
+    // (bounded by draft_timeout) yet nowhere near the std::Instant overflow that a huge sentinel would hit.
+    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
+    tokio::pin!(grace_timer);
+    let mut armed = false;
+    while !js.is_empty() {
+        tokio::select! {
+            biased;
+            joined = js.join_next() => {
+                match joined {
+                    Some(Ok(Some(j))) => {
+                        if is_valid(&j) {
+                            valid += 1;
+                        }
+                        c.push(j);
+                    }
+                    // JoinError (panic/abort) or a slot with no final_output.
+                    Some(_) => dead += 1,
+                    None => break,
+                }
+                if !armed && should_arm_straggler_grace(n, valid) {
+                    grace_timer
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
+                    armed = true;
+                }
+            }
+            _ = &mut grace_timer, if armed => {
+                stopped = js.len();
+                js.abort_all();
+                // Drain the aborted tasks so nothing leaks. A draft that finished in the same instant the
+                // grace expired is discarded (we already hold a quorum) — rare and harmless.
+                while js.join_next().await.is_some() {}
+            }
+        }
+    }
+    (c, dead, stopped)
+}
+
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
 /// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
 /// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
@@ -3918,6 +3976,74 @@ mod tests {
             should_arm_straggler_grace(6, 5),
             "5 of 6 valid -> race the 6th"
         );
+    }
+
+    // The async abort/grace path — the pure predicate test above did NOT exercise this, and that is exactly
+    // where a panic hid (a huge inert-timer duration overflowed std::Instant). Real (short) durations, no
+    // test-util needed; big margins keep them deterministic.
+    #[tokio::test]
+    async fn straggler_stop_aborts_lone_lagging_draft() {
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { Some("A".to_string()) });
+        js.spawn(async { Some("B".to_string()) });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Some("C".to_string())
+        });
+        // Two valid drafts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
+        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 1, |_| true).await;
+        assert_eq!(stopped, 1, "the lone straggler is stopped");
+        assert_eq!(dead, 0);
+        assert_eq!(c.len(), 2, "quorum of 2 kept; straggler dropped");
+        assert!(c.contains(&"A".to_string()) && c.contains(&"B".to_string()));
+        assert!(!c.contains(&"C".to_string()));
+    }
+
+    #[tokio::test]
+    async fn straggler_stop_keeps_all_when_none_lags() {
+        let mut js = tokio::task::JoinSet::new();
+        for k in ["A", "B", "C"] {
+            let s = k.to_string();
+            js.spawn(async move { Some(s) });
+        }
+        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 1, |_| true).await;
+        assert_eq!(stopped, 0);
+        assert_eq!(dead, 0);
+        assert_eq!(c.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn straggler_that_finishes_within_grace_is_kept() {
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { Some("A".to_string()) });
+        js.spawn(async { Some("B".to_string()) });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Some("C".to_string())
+        });
+        // grace 10s >> the 50ms straggler, so it lands inside the window and is kept (all 3 collected).
+        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 10, |_| true).await;
+        assert_eq!(stopped, 0, "straggler finished within grace");
+        assert_eq!(dead, 0);
+        assert_eq!(c.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn straggler_invalid_drafts_do_not_arm_the_grace() {
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { Some("VALID".to_string()) });
+        js.spawn(async { Some("BAD".to_string()) });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            Some("VALID2".to_string())
+        });
+        // Only ONE valid draft lands until the 3rd resolves, so the 2-valid quorum never forms before the
+        // last draft — the grace never arms and nothing is stopped, even though a draft was slower.
+        let (c, dead, stopped) =
+            collect_drafts_with_straggler_stop(js, 3, 1, |s| s.starts_with("VALID")).await;
+        assert_eq!(stopped, 0, "one valid draft is not a quorum -> never armed");
+        assert_eq!(dead, 0);
+        assert_eq!(c.len(), 3);
     }
 
     #[test]
@@ -9505,61 +9631,25 @@ impl GooseAgentDispatcher {
 
                 if straggler_stop {
                     // #135: race the lone lagging draft. Collect drafts as they resolve; once every draft but
-                    // one has returned a VALID skeleton (should_arm_straggler_grace), grant the last one only
-                    // `grace` seconds, then abort it and proceed on the quorum — instead of blocking the whole
-                    // run on one slow node up to the full draft_timeout. This is Mihai's "if 2 of 3 finish and
-                    // the 3rd doesn't finish close enough, stop it to avoid wasting time".
+                    // one has returned a VALID skeleton, grant the last one only `grace` seconds, then abort
+                    // it and proceed on the quorum — instead of blocking the whole run on one slow node up to
+                    // the full draft_timeout. Mihai's "if 2 of 3 finish and the 3rd doesn't finish close
+                    // enough, stop it to avoid wasting time". The grace/abort mechanics live in the unit-
+                    // tested collect_drafts_with_straggler_stop.
                     let grace = straggler_grace.clamp(10, draft_timeout.max(10));
                     let mut js = tokio::task::JoinSet::new();
                     for i in 0..n {
                         js.spawn(make_draft(i));
                     }
-                    let mut valid = 0usize;
-                    let mut stopped = 0usize;
-                    // Inert until armed (a far-future deadline); reset to `grace` from now the moment the
-                    // quorum lands. Guarded by `if armed` so it can never fire before that.
-                    let grace_timer =
-                        tokio::time::sleep(std::time::Duration::from_secs(u64::MAX / 4));
-                    tokio::pin!(grace_timer);
-                    let mut armed = false;
-                    while !js.is_empty() {
-                        tokio::select! {
-                            biased;
-                            joined = js.join_next() => {
-                                match joined {
-                                    Some(Ok(Some(j))) => {
-                                        if draft_is_valid(&j) {
-                                            valid += 1;
-                                        }
-                                        c.push(j);
-                                    }
-                                    // JoinError (panic/abort) or a slot with no final_output.
-                                    Some(_) => dead += 1,
-                                    None => break,
-                                }
-                                if !armed && should_arm_straggler_grace(n, valid) {
-                                    grace_timer.as_mut().reset(
-                                        tokio::time::Instant::now()
-                                            + std::time::Duration::from_secs(grace),
-                                    );
-                                    armed = true;
-                                }
-                            }
-                            _ = &mut grace_timer, if armed => {
-                                stopped = js.len();
-                                js.abort_all();
-                                // Drain the aborted tasks so nothing leaks. A draft that finished in the same
-                                // instant the grace expired is discarded (we already hold a quorum) — rare and
-                                // harmless; the point of the grace was that we have waited long enough.
-                                while js.join_next().await.is_some() {}
-                            }
-                        }
-                    }
+                    let stopped;
+                    (c, dead, stopped) =
+                        collect_drafts_with_straggler_stop(js, n, grace, &draft_is_valid).await;
                     if stopped > 0 {
                         eprintln!(
                             "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after {grace}s grace \
-                             — proceeding on {valid} valid of {n}",
-                            style("↯").yellow()
+                             — proceeding on {} valid of {n}",
+                            style("↯").yellow(),
+                            c.iter().filter(|j| draft_is_valid(j)).count()
                         );
                     }
                 } else {
