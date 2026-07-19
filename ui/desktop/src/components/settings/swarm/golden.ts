@@ -103,6 +103,18 @@ export interface SwarmConfig {
    *  nf-hexohm: rescored 85, re-planned, shipped 52). A language change or a newly-defined product still
    *  re-plans. Default OFF. */
   answers_win_floor?: boolean;
+  /** #121: a fleet node dropping the HTTP body mid-stream surfaces as a "Stream decode error" that the
+   *  agent loop swallows into the task's text (not an error) — so a truncated verdict would be accepted as
+   *  done, a silent false-green. When on, that deterministic signature is re-dispatched onto a different
+   *  device so the task re-runs and produces a real result. Default ON (only fires on an actual body-drop). */
+  stream_decode_retry?: boolean;
+  /** #135: during plan drafting, once every draft but one has returned a valid skeleton, wait only the grace
+   *  window for the lone lagging draft, then stop it and proceed on the quorum — instead of blocking the
+   *  whole run on one slow node. Mihai's "if 2 of 3 finish and the 3rd lags, stop it". Default OFF. */
+  straggler_stop?: boolean;
+  /** #135: seconds the last lagging plan draft gets once the quorum is in, before it is stopped. Clamped to
+   *  [10, draft timeout]. Blank = 45. Only used when straggler_stop is on. */
+  straggler_grace_secs?: number;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -258,6 +270,9 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'grounded_research_only',
   'contract_validate',
   'ai_session_name',
+  'stream_decode_retry',
+  'straggler_stop',
+  'straggler_grace_secs',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
