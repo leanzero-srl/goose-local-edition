@@ -6444,7 +6444,9 @@ fn build_worker_digest(
         "reasoning": build_reasoning(texts),
         "full_reasoning": build_full_reasoning(texts),
         "thinking_chars": thinking_chars,
-        "last_thinking": tail_chars(last_thinking, 400),
+        // Carry a generous tail of the live reasoning so the desktop's expandable per-node box shows a real
+        // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
+        "last_thinking": tail_chars(last_thinking, 2000),
         "model": model_id,
     })
 }
@@ -8298,8 +8300,8 @@ impl GooseAgentDispatcher {
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
                                 // a readable run of the live reasoning instead of the last fragment.
                                 last_thinking.push_str(&t.thinking);
-                                if last_thinking.chars().count() > 1200 {
-                                    last_thinking = tail_chars(&last_thinking, 800);
+                                if last_thinking.chars().count() > 3000 {
+                                    last_thinking = tail_chars(&last_thinking, 2400);
                                 }
                             }
                             MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
