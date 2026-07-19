@@ -516,6 +516,17 @@ pub struct SwarmConfig {
     /// default = byte-identical. GOOSE_SWARM_RELAX_CONTRACTED_DEPS env overrides.
     #[serde(default)]
     pub relax_contracted_deps: bool,
+    /// OWNED-FILE FENCE (#131): all workers share ONE real working tree (per-worker isolation exists only
+    /// under SPECULATE), so a worker can WRITE a file another task owns — measured on mustsolve-test1 where
+    /// `cli-main` wrote `internal/diff/diff.go` (owned by `diff-model-reader`) to make its own file build,
+    /// clobbering the owner's impl and stranding the owner's test on an undefined symbol. When ON, each task's
+    /// owned-file bytes are snapshotted at its `task_completed`; before the integrate-verify sink, any owned
+    /// file whose on-disk bytes drifted from its owner's snapshot is a VIOLATION — the owner's bytes are
+    /// restored (owner wins, intruder loses) and an `owned_file_violation` event is emitted. Deterministic,
+    /// no model in the verdict path. OFF by default = byte-identical (no snapshot, no restore).
+    /// GOOSE_SWARM_OWNED_FILE_FENCE env overrides.
+    #[serde(default)]
+    pub owned_file_fence: bool,
     /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
     /// modules a UNANIMOUS + dependency-downward-closed majority of the round-1 drafts agreed on (carried
     /// VERBATIM from one source draft), and re-draft ONLY the residual dirty modules against that frozen
@@ -736,6 +747,7 @@ impl Default for SwarmConfig {
             user_notes: false,
             contract_validate: false,
             relax_contracted_deps: false,
+            owned_file_fence: false,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -4996,6 +5008,80 @@ mod tests {
     }
 
     #[test]
+    fn fence_owned_files_flags_and_restores_a_clobber() {
+        // owner `diff-model-reader` left diff.go = "func Diff"; a non-owner later wrote "func Compute".
+        let snaps = vec![(
+            "internal/diff/diff.go".to_string(),
+            "diff-model-reader".to_string(),
+            b"func Diff".to_vec(),
+        )];
+        let current = vec![(
+            "internal/diff/diff.go".to_string(),
+            b"func Compute".to_vec(),
+        )];
+        let (viol, restore) = fence_owned_files(&snaps, &current);
+        assert_eq!(
+            viol,
+            vec![OwnedFileViolation {
+                file: "internal/diff/diff.go".to_string(),
+                owner: "diff-model-reader".to_string(),
+            }]
+        );
+        assert_eq!(
+            restore,
+            vec![("internal/diff/diff.go".to_string(), b"func Diff".to_vec())],
+            "the owner's bytes are the restore target"
+        );
+    }
+
+    #[test]
+    fn fence_owned_files_noop_when_owner_bytes_intact() {
+        let snaps = vec![
+            ("a.go".to_string(), "mod-a".to_string(), b"AAA".to_vec()),
+            ("b.go".to_string(), "mod-b".to_string(), b"BBB".to_vec()),
+        ];
+        // both still hold the owners' bytes -> no violation, no restore, byte-identical outcome.
+        let current = vec![
+            ("a.go".to_string(), b"AAA".to_vec()),
+            ("b.go".to_string(), b"BBB".to_vec()),
+        ];
+        let (viol, restore) = fence_owned_files(&snaps, &current);
+        assert!(viol.is_empty());
+        assert!(restore.is_empty());
+    }
+
+    #[test]
+    fn fence_owned_files_flags_a_deleted_owned_file() {
+        let snaps = vec![("gone.go".to_string(), "mod-x".to_string(), b"KEEP".to_vec())];
+        let current: Vec<(String, Vec<u8>)> = vec![]; // file no longer on disk
+        let (viol, restore) = fence_owned_files(&snaps, &current);
+        assert_eq!(viol.len(), 1);
+        assert_eq!(viol[0].file, "gone.go");
+        assert_eq!(restore, vec![("gone.go".to_string(), b"KEEP".to_vec())]);
+    }
+
+    #[test]
+    fn fence_owned_files_only_touches_drifted_files() {
+        let snaps = vec![
+            ("keep.go".to_string(), "mod-a".to_string(), b"OK".to_vec()),
+            (
+                "clobbered.go".to_string(),
+                "mod-b".to_string(),
+                b"OWNER".to_vec(),
+            ),
+        ];
+        let current = vec![
+            ("keep.go".to_string(), b"OK".to_vec()),
+            ("clobbered.go".to_string(), b"INTRUDER".to_vec()),
+        ];
+        let (viol, restore) = fence_owned_files(&snaps, &current);
+        assert_eq!(viol.len(), 1, "only the drifted file is a violation");
+        assert_eq!(viol[0].file, "clobbered.go");
+        assert_eq!(restore.len(), 1);
+        assert_eq!(restore[0].0, "clobbered.go");
+    }
+
+    #[test]
     fn frozen_interfaces_block_noop_when_empty() {
         assert_eq!(frozen_interfaces_block(""), "");
         assert_eq!(frozen_interfaces_block("   \n  "), "");
@@ -7229,6 +7315,11 @@ pub struct GooseAgentDispatcher {
     /// one that said "the spec is perfectly clear". Recording the reason is the prerequisite for fixing it —
     /// timeout, unparseable and no_final_output each demand an opposite remedy.
     clarity_fail: Mutex<Option<String>>,
+    /// OWNED-FILE FENCE (GOOSE_SWARM_OWNED_FILE_FENCE, #131): file -> (owner_task_id, authoritative bytes)
+    /// captured when a file-owning task completes. Before the integrate-verify sink runs, any owned file whose
+    /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
+    /// flag is on -> no snapshot taken, no restore, byte-identical.
+    owner_snapshots: Mutex<HashMap<String, (String, Vec<u8>)>>,
 }
 
 impl GooseAgentDispatcher {
@@ -7273,6 +7364,7 @@ impl GooseAgentDispatcher {
             spec_shadows: Mutex::new(HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             clarity_fail: Mutex::new(None),
+            owner_snapshots: Mutex::new(HashMap::new()),
         })
     }
 
@@ -13505,6 +13597,42 @@ fn has_suppression_smell(real_content: &str, shadow_content: &str) -> bool {
     d_except > d_raise || d_mask > 0
 }
 
+/// A detected owned-file fence violation (#131): `file` — owned by task `owner` — drifted from the bytes the
+/// owner left at its `task_completed` (a later, non-owner write clobbered or deleted it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OwnedFileViolation {
+    file: String,
+    owner: String,
+}
+
+/// Pure owned-file fence (#131). `snapshots` = each owner's authoritative `(file, owner_id, bytes)` captured
+/// at its `task_completed`; `current` = the on-disk `(file, bytes)` now. A snapshot file is a VIOLATION iff
+/// its current bytes differ from the owner's (clobbered) or it is missing from `current` (deleted). Returns
+/// the violations and the exact `(file, owner_bytes)` restore set (owner wins). Pure — no I/O — so the
+/// verdict is unit-testable without a real tree; the caller does the snapshot read and the restore write.
+fn fence_owned_files(
+    snapshots: &[(String, String, Vec<u8>)],
+    current: &[(String, Vec<u8>)],
+) -> (Vec<OwnedFileViolation>, Vec<(String, Vec<u8>)>) {
+    let cur: std::collections::HashMap<&str, &[u8]> = current
+        .iter()
+        .map(|(f, b)| (f.as_str(), b.as_slice()))
+        .collect();
+    let mut violations = Vec::new();
+    let mut restore = Vec::new();
+    for (file, owner, bytes) in snapshots {
+        if cur.get(file.as_str()) == Some(&bytes.as_slice()) {
+            continue; // owner's bytes intact
+        }
+        violations.push(OwnedFileViolation {
+            file: file.clone(),
+            owner: owner.clone(),
+        });
+        restore.push((file.clone(), bytes.clone()));
+    }
+    (violations, restore)
+}
+
 /// Read the current bytes of each rel path under `root` (skips unreadable). Used to FREEZE the promotable
 /// bytes and to snapshot the real originals for an exact revert.
 fn read_files_bytes(root: &Path, rels: &[String]) -> Vec<(String, Vec<u8>)> {
@@ -14282,6 +14410,49 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             real_root
         };
+        // OWNED-FILE FENCE (#131): just before the integrate-verify sink reads the final tree, restore every
+        // owned file that a NON-owner clobbered back to its owner's authoritative bytes (owner wins). OFF (or
+        // no snapshots) => this whole block is skipped and the tree is byte-identical.
+        if req.task_id == "integrate-verify"
+            && swarm_gate_cfg(
+                "GOOSE_SWARM_OWNED_FILE_FENCE",
+                load_config().owned_file_fence,
+            )
+        {
+            let snaps: Vec<(String, String, Vec<u8>)> = {
+                let guard = self.owner_snapshots.lock().unwrap();
+                guard
+                    .iter()
+                    .map(|(f, (owner, bytes))| (f.clone(), owner.clone(), bytes.clone()))
+                    .collect()
+            };
+            if !snaps.is_empty() {
+                let files: Vec<String> = snaps.iter().map(|(f, _, _)| f.clone()).collect();
+                let current = read_files_bytes(&root, &files);
+                let (violations, restore) = fence_owned_files(&snaps, &current);
+                for v in &violations {
+                    eprintln!(
+                        "  {} owned-file fence: {} was written outside its owner {} — restoring the owner's bytes",
+                        style("⚠").yellow().bold(),
+                        style(&v.file).bold(),
+                        style(&v.owner).bold(),
+                    );
+                }
+                if !restore.is_empty() {
+                    match write_frozen_bytes(&root, &restore) {
+                        Ok(()) => eprintln!(
+                            "  {} owned-file fence: restored {} clobbered file(s) to their owners",
+                            style("✓").green().bold(),
+                            restore.len()
+                        ),
+                        Err(e) => eprintln!(
+                            "  {} owned-file fence: restore failed ({e}) — leaving the tree as-is",
+                            style("✗").red().bold()
+                        ),
+                    }
+                }
+            }
+        }
         let context_block = if req.context_slice.is_empty() {
             String::new()
         } else {
@@ -14908,6 +15079,22 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 } else {
                     out.text
                 };
+                // OWNED-FILE FENCE (#131): snapshot this file-owning task's authoritative bytes so a later
+                // non-owner clobber can be detected + reverted before the sink. OFF/speculative/sink/no-files
+                // => no capture, byte-identical.
+                if swarm_gate_cfg(
+                    "GOOSE_SWARM_OWNED_FILE_FENCE",
+                    load_config().owned_file_fence,
+                ) && !req.speculative
+                    && req.task_id != "integrate-verify"
+                    && !req.owned_files.is_empty()
+                {
+                    let captured = read_files_bytes(&root, &req.owned_files);
+                    let mut guard = self.owner_snapshots.lock().unwrap();
+                    for (f, b) in captured {
+                        guard.insert(f, (req.task_id.clone(), b));
+                    }
+                }
                 Ok(TaskRunOutput {
                     output,
                     session_id: Some(out.session_id),
@@ -16441,6 +16628,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "unwired_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED", load_config().unwired_demotes_verified),
             "repro_demotes_verified": swarm_gate_cfg("GOOSE_SWARM_REPRO_DEMOTES_VERIFIED", load_config().repro_demotes_verified),
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
+            "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // `review` and `review_repro` also appear in `gates` above, but a campaign screens the LEVERS
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
