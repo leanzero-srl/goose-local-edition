@@ -2147,6 +2147,56 @@ where
     (c, dead, stopped)
 }
 
+/// #135 generic straggler collector for a fleet fanout where EVERY completed task is a usable result and any
+/// completion counts toward the quorum (e.g. SCOUTS — advisory research with no parse/validity gate, so there
+/// is no "dead" concept). Drains `js`; once every task but one has completed (should_arm_straggler_grace on
+/// the completion count), the lone straggler gets `grace_secs` then is aborted. Returns (results in completion
+/// order, stopped count). `n` is the initial task count. Shares the verified grace/abort mechanics with the
+/// draft collector (same 1-day bounded inert timer, same biased/guarded select).
+async fn collect_fleet_with_straggler_stop<R>(
+    mut js: tokio::task::JoinSet<R>,
+    n: usize,
+    grace_secs: u64,
+) -> (Vec<R>, usize)
+where
+    R: Send + 'static,
+{
+    let mut results: Vec<R> = Vec::new();
+    let mut done = 0usize;
+    let mut stopped = 0usize;
+    let grace_timer = tokio::time::sleep(std::time::Duration::from_secs(86_400));
+    tokio::pin!(grace_timer);
+    let mut armed = false;
+    while !js.is_empty() {
+        tokio::select! {
+            biased;
+            joined = js.join_next() => {
+                match joined {
+                    Some(Ok(r)) => {
+                        results.push(r);
+                        done += 1;
+                    }
+                    // A panicked/aborted task still reduces the outstanding count (it will never deliver).
+                    Some(Err(_)) => done += 1,
+                    None => break,
+                }
+                if !armed && should_arm_straggler_grace(n, done) {
+                    grace_timer
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
+                    armed = true;
+                }
+            }
+            _ = &mut grace_timer, if armed => {
+                stopped = js.len();
+                js.abort_all();
+                while js.join_next().await.is_some() {}
+            }
+        }
+    }
+    (results, stopped)
+}
+
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
 /// must NOT block it. Otherwise the run reports FAILED while integrate-verify never ran to check whether the
 /// app actually works (the dependency-blocked false-negative: observed on UNIQ6, where a failed `tests` task
@@ -4044,6 +4094,49 @@ mod tests {
         assert_eq!(stopped, 0, "one valid draft is not a quorum -> never armed");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
+    }
+
+    // Scout collector (generic, every completion counts — advisory phase, no validity gate).
+    #[tokio::test]
+    async fn fleet_straggler_stop_aborts_lone_lagging_scout() {
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { "libraries".to_string() });
+        js.spawn(async { "edge-cases".to_string() });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            "architecture".to_string()
+        });
+        // Two scouts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
+        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
+        assert_eq!(stopped, 1, "the lone lagging scout is stopped");
+        assert_eq!(results.len(), 2, "proceed on the 2 that landed");
+        assert!(!results.contains(&"architecture".to_string()));
+    }
+
+    #[tokio::test]
+    async fn fleet_straggler_stop_keeps_all_when_none_lags() {
+        let mut js = tokio::task::JoinSet::new();
+        for k in ["a", "b", "c"] {
+            let s = k.to_string();
+            js.spawn(async move { s });
+        }
+        let (results, stopped) = collect_fleet_with_straggler_stop(js, 3, 1).await;
+        assert_eq!(stopped, 0);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fleet_straggler_stop_never_arms_below_three() {
+        // n < 3 can never arm — both tasks are awaited even if one is slower.
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { "a".to_string() });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            "b".to_string()
+        });
+        let (results, stopped) = collect_fleet_with_straggler_stop(js, 2, 1).await;
+        assert_eq!(stopped, 0, "no lone straggler concept below 3");
+        assert_eq!(results.len(), 2);
     }
 
     #[test]
@@ -9038,8 +9131,16 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let prompt = user_prompt.to_string();
         let lenses = select_lenses(is_amendment, max_lenses);
+        // #135 straggler-stop for scouts: once 2 of 3 lenses report, stop the lone lagging scout instead of
+        // idling the fleet on it (measured 111s idle on a 199s scout). Advisory phase, so dropping the last
+        // scout only loses one lens of context. grace 0 => OFF => the wrapper is a byte-identical await-all.
+        let scout_grace = if self.straggler_stop {
+            self.straggler_grace_secs.clamp(10, scout_budget.max(10))
+        } else {
+            0
+        };
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet(worker_models, lenses, move |lens, model| {
+        fanout_over_fleet_straggler(worker_models, lenses, scout_grace, move |lens, model| {
             let me = me.clone();
             let exts = research_extensions.clone();
             let prompt = prompt.clone();
@@ -12389,6 +12490,65 @@ where
         if let Ok(r) = h.await {
             results.push(r);
         }
+    }
+    results
+}
+
+/// #135: like `fanout_over_fleet`, but stops the lone lagging task once the others are in. Used for the SCOUT
+/// phase — advisory research the fleet otherwise idles on (measured: 2 scouts done at ~85s, the 3rd ran to
+/// 199s → 111s of two nodes idle). Straggler-stop is sound ONLY when every item runs concurrently (items <=
+/// devices, so nothing is queued behind a busy device) and there is a lone last item to race (>=3 items);
+/// `grace_secs == 0` (feature off) or any other shape falls back to the byte-identical await-all fanout.
+async fn fanout_over_fleet_straggler<T, R, F, Fut>(
+    devices: Vec<String>,
+    items: Vec<T>,
+    grace_secs: u64,
+    f: F,
+) -> Vec<R>
+where
+    T: Send + 'static,
+    R: Send + 'static,
+    F: Fn(T, String) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = R> + Send + 'static,
+{
+    let n = items.len();
+    if grace_secs == 0 || n < 3 || n > devices.len() {
+        return fanout_over_fleet(devices, items, f).await;
+    }
+    use std::collections::VecDeque;
+    let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
+    let pool = Arc::new(Mutex::new(
+        devices.into_iter().collect::<VecDeque<String>>(),
+    ));
+    let mut js = tokio::task::JoinSet::new();
+    for item in items {
+        let permits = permits.clone();
+        let pool = pool.clone();
+        let f = f.clone();
+        js.spawn(async move {
+            let _permit = permits
+                .acquire_owned()
+                .await
+                .expect("fleet semaphore never closed");
+            let dev = {
+                pool.lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("a device is free whenever a permit is held")
+            };
+            let out = f(item, dev.clone()).await;
+            pool.lock().unwrap().push_back(dev);
+            out
+        });
+    }
+    let (results, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
+    if stopped > 0 {
+        eprintln!(
+            "  {} straggler-stop: {stopped} lagging scout(s) aborted after {grace_secs}s grace — proceeding \
+             on {} of {n}",
+            style("↯").yellow(),
+            results.len()
+        );
     }
     results
 }
