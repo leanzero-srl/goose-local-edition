@@ -216,6 +216,7 @@ export const DEFAULTS: SwarmConfig = {
   retarget: true,
   backbone: true,
   ask_max_q: 3, // swarm.rs ask_max_q — .unwrap_or(3); anything past the cap is guessed, not asked
+  ai_session_name: true, // swarm provider default is ON — title each build's chat with a short AI name
 };
 
 // The keys a preset controls — PORTABLE tuning only. Fleet identity (endpoint, planner_model,
@@ -249,6 +250,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'no_tools_means_ask',
   'grounded_research_only',
   'contract_validate',
+  'ai_session_name',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
@@ -321,6 +323,7 @@ export const GOLDEN: SwarmConfig = {
   // build. Its FIRST measurement falsified the engine's own `frozen: true`: both validated contract stubs
   // failed to parse (invalid syntax, public: []). Every worker is told to honour those stubs.
   contract_validate: true,
+  ai_session_name: true,
 };
 
 export type PresetId = 'golden' | 'default' | 'custom';

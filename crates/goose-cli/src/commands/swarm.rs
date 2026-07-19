@@ -14904,13 +14904,16 @@ impl TaskDispatcher for GooseAgentDispatcher {
              - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
              it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
              round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n\
-             - If a test or command fails unexpectedly, RE-READ the relevant file with `cat` BEFORE \
-             forming any theory. Do NOT speculate about bytecode/.pyc/caching/compilation — check reality.\n\
+             - If a test or command fails, read the ERROR TEXT first — it names the file, line and symbol. \
+             Re-read a file ONLY if the error points at something you do not already have in front of you; \
+             do NOT reflexively `cat` the whole file before every fix. Never speculate about \
+             bytecode/.pyc/caching/compilation — the error text is reality.\n\
              - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
-             - If your task TESTS or BUILDS ON another module, `cat` that module's ACTUAL file for its \
-             exact API, signatures, and behaviour (e.g. the precise SM-2 / formula constants) before \
-             writing code — do NOT guess from the dependency summary; independent guesses DIVERGE and the \
-             tests then disagree with the implementation.\n\
+             - Every dependency's API you may call is ALREADY injected above (under 'API of …' / the frozen \
+             interfaces). USE those exact names, signatures and constants — do NOT re-`cat` a dependency \
+             whose API is shown; independent guesses DIVERGE and the tests then disagree with the code. \
+             Only `cat` a dependency's source when the injected API is MISSING the exact symbol/constant you \
+             must call — and then read just that file, once.\n\
              - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
              SIBLING directories — they are unrelated projects. If the directory is empty, that is \
              expected for a new project: just create your files, do not go looking elsewhere.\n\
