@@ -18090,6 +18090,47 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
             }));
         }
+        // #120/#134 (R1): a task SALVAGED to Done can still have left its deliverable UNWRITTEN — measured on
+        // mustsolve-test4, cli-entry was salvaged after writing only a 24-byte go.mod, cmd/logfold/main.go was
+        // never created, so the app had no runnable binary yet the smoke gate reported verified:true (it only
+        // ran --help + import). A MISSING or EMPTY planned SOURCE deliverable (non-manifest by extension,
+        // non-test) is a HARD finding regardless of task Done/Failed status. Deterministic (a stat, no model).
+        // Same gate as the failed-task block; re-added each round so the fix loop must actually write the file.
+        let missing_deliverable_findings: Vec<String> = if delivery_on
+            || swarm_gate_cfg(
+                "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
+                load_config().failed_tasks_block_green,
+            ) {
+            let mut m: Vec<String> = smoke_all_files
+                .iter()
+                .filter(|f| complete_lang.is_source_file(f) && !complete_lang.is_test_file(f))
+                .filter(|f| !cwd.join(f).metadata().map(|meta| meta.len() > 0).unwrap_or(false))
+                .map(|f| {
+                    format!(
+                        "planned deliverable `{f}` is MISSING or EMPTY — a task was marked done without \
+                         writing it. Create it (the simplest version that satisfies the spec) so the app is \
+                         complete and runnable."
+                    )
+                })
+                .collect();
+            m.sort();
+            m.dedup();
+            m
+        } else {
+            Vec::new()
+        };
+        if !missing_deliverable_findings.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "complete_missing_deliverables",
+                "missing": missing_deliverable_findings.len(),
+                "detail": "planned source deliverables are missing/empty on disk — blocking green + driving the fix loop",
+            }));
+            eprintln!(
+                "  {} {} planned deliverable(s) missing/empty on disk — blocking green",
+                style("!").red().bold(),
+                missing_deliverable_findings.len()
+            );
+        }
         // CROSS-MODULE DRIFT (GOOSE_SWARM_CROSS_MODULE_CHECK, default OFF). Computed ONCE, before the loop:
         // it reads the delivered tree, and re-running it every round would only re-read a tree the fix loop
         // is actively rewriting. Re-added to the findings each round like the failed tasks, so a fix must
@@ -18130,6 +18171,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             verdict
                 .findings
                 .extend(failed_task_findings.iter().cloned());
+            // #120/#134 (R1): a missing/empty planned deliverable blocks green even when a task was salvaged to
+            // Done and the smoke gate is blind to it (it never checks the tree is complete). Re-added each
+            // round so the fix loop must actually write the file.
+            verdict
+                .findings
+                .extend(missing_deliverable_findings.iter().cloned());
             // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
             // the AttributeError only happens at request time), so without this the loop breaks green at
             // round 0 on an app whose main endpoint 500s.
