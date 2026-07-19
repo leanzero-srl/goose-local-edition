@@ -166,6 +166,12 @@ pub struct JudgeConfig {
     /// Master gate for task-splitting (M3): when false, `is_split_candidate` never fires and the judge
     /// never proposes a Verdict::Split, regardless of the threshold. Default false until proven live.
     pub split_enabled: bool,
+    /// #134 REASONING-SPIRAL trip: a worker that has emitted MORE than this many thinking chars with ZERO
+    /// tool calls and NO owned file is stuck in a reasoning spiral (measured: cli-entry streamed 20 799
+    /// thinking chars then the stream died mid-token, never writing main.go). Catch it EARLY (at ~this many
+    /// chars, ~60-120s) with the forceful "write the simplest version NOW" nudge instead of burning the full
+    /// idle-watchdog window. 0 = OFF (byte-identical). GOOSE_SWARM_SPIRAL_THINKING_CHARS overrides.
+    pub spiral_thinking_chars: u64,
 }
 
 impl Default for JudgeConfig {
@@ -185,6 +191,7 @@ impl Default for JudgeConfig {
             // LLM partition safe end-to-end (M4). The scheduler logic + detection are in place and tested;
             // this is the single master switch that lets a real run produce a Verdict::Split.
             split_enabled: false,
+            spiral_thinking_chars: 0,
         }
     }
 }
@@ -319,6 +326,30 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    and the injected dependency APIs. WRITE your owned file(s) NOW — the SIMPLEST version \
                    that satisfies the spec first (a small working file), then refine. A minimal working \
                    file beats endless exploration."
+                .to_string(),
+            proposed_split: None,
+        });
+    }
+    // #134 REASONING-SPIRAL trip (OFF at default cfg.spiral_thinking_chars == 0 → byte-identical): a worker
+    // that has emitted a LOT of thinking with ZERO tool calls and NO file is spiralling (cli-entry: 20 799
+    // thinking chars, stream then died mid-token, never wrote main.go). Catch it EARLY — at the char cap
+    // (~60-120s) — with the forceful "write the simplest version NOW" nudge, instead of burning the whole
+    // idle window. Deterministic: a char count creates the verdict, never a model opinion.
+    if cfg.spiral_thinking_chars > 0
+        && !input.owned_files.is_empty()
+        && !input.any_owned_written
+        && input.worker_tool_calls == Some(0)
+        && input.worker_thinking_chars.unwrap_or(0) >= cfg.spiral_thinking_chars
+        && input.elapsed_secs >= cfg.min_age_secs
+    {
+        return Some(JudgeOutcome {
+            verdict: Verdict::OverReading,
+            confidence: 0.9,
+            hint: "You have written NOTHING and taken no action — you are stuck deliberating (a long \
+                   reasoning spiral). You already have the spec, the file layout, and the injected dependency \
+                   APIs; there is nothing left to work out. STOP thinking and WRITE your owned file(s) NOW: \
+                   the SIMPLEST version that satisfies the spec FIRST (a small working file), then refine it. \
+                   A minimal working file beats a plan you never wrote down."
                 .to_string(),
             proposed_split: None,
         });
