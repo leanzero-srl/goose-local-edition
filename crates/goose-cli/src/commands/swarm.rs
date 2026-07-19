@@ -8341,16 +8341,21 @@ impl GooseAgentDispatcher {
                      Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
                     spec.id, spec.description
                 );
-                // Retry an empty/timed-out stub once with a longer budget (gated; OFF = single 75s attempt,
-                // byte-identical). The per-module empty-reason warning below is ALWAYS on so a silently-empty
-                // CONTRACTS phase — which strips every module's frozen interface — can never recur unseen.
+                // The contract stub is a model call on the SAME fleet as workers, but the old 75/150s budget
+                // was ~5x below the worker budget — measured on mustsolve-test2 it TIMED OUT on all 3 modules
+                // on the 262k-ctx fleet, so every module lost its frozen interface and the granular modules
+                // cascade-FAILED into an unusable app. Give the stub the worker budget (the proven-adequate
+                // fleet timeout) so it actually completes; the gated retry is then a second full-budget attempt.
+                // The per-module empty-reason warning below is ALWAYS on so a silently-empty CONTRACTS phase —
+                // which strips every module's frozen interface — can never recur unseen.
                 let retry_on =
                     swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
                 let attempts = if retry_on { 2 } else { 1 };
+                let stub_budget = me.worker_timeout_secs.max(120);
                 let mut stub = String::new();
                 let mut reason = "empty_text".to_string();
-                for attempt in 0..attempts {
-                    let budget = std::time::Duration::from_secs(if attempt == 0 { 75 } else { 150 });
+                for _attempt in 0..attempts {
+                    let budget = std::time::Duration::from_secs(stub_budget);
                     match tokio::time::timeout(
                         budget,
                         me.run_agent(&model, system.clone(), user.clone(), None, 6, &[], 0, None),
