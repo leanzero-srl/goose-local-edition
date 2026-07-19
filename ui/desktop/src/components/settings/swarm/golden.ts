@@ -115,6 +115,10 @@ export interface SwarmConfig {
   /** #135: seconds the last lagging plan draft gets once the quorum is in, before it is stopped. Clamped to
    *  [10, draft timeout]. Blank = 45. Only used when straggler_stop is on. */
   straggler_grace_secs?: number;
+  /** #135: extend straggler-stop to the CONTRACTS and DETAIL planning steps too. Separate from straggler_stop
+   *  because a stopped contract/detail changes a build input — the module builds without its frozen interface
+   *  (exactly like a timed-out contract; integrate-verify reconciles). At most one module degrades. Default OFF. */
+  straggler_stop_degrade?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -273,6 +277,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'stream_decode_retry',
   'straggler_stop',
   'straggler_grace_secs',
+  'straggler_stop_degrade',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
