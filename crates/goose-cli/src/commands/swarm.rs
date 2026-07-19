@@ -16667,6 +16667,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
+            // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
+            // the campaign's measure.py read them as OFF while they demonstrably drove runs (fan_verify split
+            // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
+            // indistinguishable from OFF — echo the resolved value from the SAME gate the engine branches on.
+            "fan_verify": swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify),
+            "dep_signatures": dep_signatures_on(),
+            "scoped_contracts": scoped_contracts_on(),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // `review` and `review_repro` also appear in `gates` above, but a campaign screens the LEVERS
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
