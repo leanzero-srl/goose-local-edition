@@ -1142,7 +1142,9 @@ function foldEvents(
         description: `Drafting the plan skeleton (candidate ${i + 1})`,
         device: canonDevice(d.model ?? 'planner'),
         model: d.model,
-        status: (planned ? 'done' : 'running') as TurnStatus,
+        // A per-call phase="done" (written when THIS draft's call ends) marks the lane done immediately, so the
+        // node stops showing as working the instant its call finishes — not when the whole phase ends.
+        status: (d.phase === 'done' || planned ? 'done' : 'running') as TurnStatus,
         lastText: d.last_text,
         recent: d.recent,
         reasoning: d.reasoning,
@@ -1185,7 +1187,9 @@ function foldEvents(
       description: desc,
       device: canonDevice(d.model ?? 'planner'),
       model: d.model,
-      status: (over ? 'done' : 'running') as TurnStatus,
+      // Per-call phase="done" (written when THIS call ends) drops the node out of "working" immediately, so a
+      // finished/capped scout stops reading as "Scouting" while the node is actually idle.
+      status: (d.phase === 'done' || over ? 'done' : 'running') as TurnStatus,
       lastText: d.last_text,
       recent: d.recent,
       reasoning: d.reasoning,
