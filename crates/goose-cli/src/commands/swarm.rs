@@ -158,6 +158,13 @@ pub struct SwarmConfig {
     /// Max dispatch attempts per task before it fails (knob: raise for flaky LM Link).
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
+    /// #121: when a fleet node drops the HTTP body mid-stream, the provider surfaces a "Stream decode
+    /// error" that the agent loop swallows into the task's TEXT (not an Err) — so a truncated/false
+    /// verdict would be accepted as done (a silent false-green). When set, the dispatcher detects that
+    /// deterministic signature and re-dispatches the task as Transient (onto a DIFFERENT device) so it
+    /// re-runs and produces a real result. None => default ON (env GOOSE_SWARM_STREAM_RETRY overrides).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_decode_retry: Option<bool>,
     /// MCP extensions (by builder name) every worker gets: "context7" | "web-search" | "doc-processor".
     /// Secrets are read from the environment at runtime, never stored here.
     #[serde(default)]
@@ -735,6 +742,7 @@ impl Default for SwarmConfig {
             ],
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
+            stream_decode_retry: None,
             worker_extensions: Vec::new(),
             planner_also_works: default_planner_also_works(),
             planner_weight: default_planner_weight(),
@@ -2000,6 +2008,36 @@ fn answers_win_floor_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
 
 fn answers_win_floor_enabled(cfg: Option<bool>) -> bool {
     answers_win_floor_resolved(std::env::var("GOOSE_SWARM_ANSWERS_WIN_FLOOR").ok(), cfg)
+}
+
+/// #121 stream-decode retry: env GOOSE_SWARM_STREAM_RETRY wins (0/off/false/no => disabled), else the
+/// config field, else default ON. Default-ON because the guarded branch only fires on the deterministic
+/// body-drop signature; on a clean run it is inert, and OFF is a known-bad silent false-green.
+fn stream_decode_retry_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
+    match env {
+        Some(s) => matches!(
+            s.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        ),
+        None => cfg.unwrap_or(true),
+    }
+}
+
+fn stream_decode_retry_enabled(cfg: Option<bool>) -> bool {
+    stream_decode_retry_resolved(std::env::var("GOOSE_SWARM_STREAM_RETRY").ok(), cfg)
+}
+
+/// #121: does this accumulated task output carry the deterministic mid-stream body-drop signature? The
+/// provider surfaces a dropped HTTP body as ProviderError::NetworkError("Stream decode error: ...") which
+/// the agent reply loop yields as assistant TEXT and then BREAKs — so the error sentence is guaranteed to be
+/// the LAST chunk. Requiring BOTH the "Stream decode error" marker AND that exact trailing sentence makes
+/// this ~zero-false-positive: a genuine verify verdict would have to literally contain the marker string and
+/// end with the resend sentence.
+fn is_stream_decode_interrupt(text: &str) -> bool {
+    text.contains("Stream decode error")
+        && text
+            .trim_end()
+            .ends_with("Please resend your message to try again.")
 }
 
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
@@ -3734,6 +3772,49 @@ mod tests {
         assert!(!answers_win_floor_resolved(
             Some("anything".into()),
             Some(true)
+        ));
+    }
+
+    #[test]
+    fn stream_decode_retry_defaults_on_and_opts_out() {
+        // #121 ships ON: unset env+config resolves TRUE so the false-green fix reaches every user, including
+        // desktop configs that omit the field.
+        assert!(
+            stream_decode_retry_resolved(None, None),
+            "unset defaults ON — the #121 false-green fix reaches users who never toggled it"
+        );
+        assert!(stream_decode_retry_resolved(None, Some(true)));
+        // Explicit opt-OUT restores the legacy accept-as-done path (for the A/B), env winning over config.
+        assert!(!stream_decode_retry_resolved(Some("0".into()), None));
+        assert!(!stream_decode_retry_resolved(
+            Some("off".into()),
+            Some(true)
+        ));
+        assert!(!stream_decode_retry_resolved(None, Some(false)));
+        assert!(stream_decode_retry_resolved(Some("1".into()), Some(false)));
+        assert!(stream_decode_retry_resolved(Some("YES".into()), None));
+    }
+
+    #[test]
+    fn stream_decode_interrupt_predicate_is_deterministic() {
+        // BOTH halves required: the marker AND the exact trailing resend sentence (the agent loop appends it
+        // as the last chunk after a NetworkError, then breaks).
+        let hit = "Network error: Stream decode error: error decoding response body\n\nPlease resend your message to try again.";
+        assert!(is_stream_decode_interrupt(hit));
+        // Trailing whitespace is tolerated (trim_end before the suffix check).
+        assert!(is_stream_decode_interrupt(&format!("{hit}\n  ")));
+        // Marker present but NOT the trailing sentence (e.g. a genuine verdict that merely quotes the phrase)
+        // -> not an interrupt; the run's real output must be preserved.
+        assert!(!is_stream_decode_interrupt(
+            "The app logs a 'Stream decode error' when the socket closes; VERDICT: PASS."
+        ));
+        // The resend sentence WITHOUT the decode marker (some other transient) -> not this predicate.
+        assert!(!is_stream_decode_interrupt(
+            "Some other failure.\n\nPlease resend your message to try again."
+        ));
+        // A normal, clean verdict is never a false positive.
+        assert!(!is_stream_decode_interrupt(
+            "VERDICT: PASS — all endpoints return 200 and balances sum to zero."
         ));
     }
 
@@ -7901,6 +7982,11 @@ pub struct GooseAgentDispatcher {
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
     /// flag is on -> no snapshot taken, no restore, byte-identical.
     owner_snapshots: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    /// #121: when set, a task whose accumulated output carries the deterministic mid-stream body-drop
+    /// signature (`is_stream_decode_interrupt`) is re-dispatched as Transient instead of being accepted as
+    /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
+    /// construction (env GOOSE_SWARM_STREAM_RETRY > config.stream_decode_retry > default ON).
+    stream_decode_retry: bool,
 }
 
 impl GooseAgentDispatcher {
@@ -7920,6 +8006,7 @@ impl GooseAgentDispatcher {
         planner_timeout_secs: u64,
         allow_model_load: bool,
         sampling: SamplingParams,
+        stream_decode_retry: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -7946,6 +8033,7 @@ impl GooseAgentDispatcher {
             sink_review_findings: Mutex::new(Vec::new()),
             clarity_fail: Mutex::new(None),
             owner_snapshots: Mutex::new(HashMap::new()),
+            stream_decode_retry,
         })
     }
 
@@ -15670,6 +15758,27 @@ impl TaskDispatcher for GooseAgentDispatcher {
         }
         match outcome {
             Ok(out) => {
+                // #121 mid-stream body drop: a fleet node can drop the HTTP response body mid-generation.
+                // The provider surfaces it as NetworkError("Stream decode error: …") which the agent reply
+                // loop yields as assistant TEXT ("… Please resend your message to try again.") and BREAKs —
+                // so run_agent_in returns Ok with a TRUNCATED verdict and this branch would otherwise accept
+                // it as done: a SILENT FALSE-GREEN (the verify never actually verified). Detect the
+                // deterministic signature FIRST (before the owned-file/done gates) and re-dispatch as
+                // Transient so the scheduler re-runs the task on a DIFFERENT device and produces a real
+                // result. Bounded by the existing per-task max_attempts. Inert on a clean run (marker absent).
+                if self.stream_decode_retry && is_stream_decode_interrupt(&out.text) {
+                    eprintln!(
+                        "  {} {} on {} ({:.1}s) — provider stream decode error (mid-stream body drop); re-dispatching to another device",
+                        style("↻").yellow().bold(),
+                        style(&req.task_id).bold(),
+                        req.device_id,
+                        secs
+                    );
+                    return Err(DispatchError::Transient(format!(
+                        "stream decode error (mid-stream body drop) on {}",
+                        req.task_id
+                    )));
+                }
                 // Hallucinated-completion guard: a worker can call final_output ("done") WITHOUT ever
                 // writing its owned file — seen repeatedly (a test-archive task; parser/shared-models
                 // subtasks). Verify every owned file now exists and is non-empty; if not, retry. Use
@@ -16949,6 +17058,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 min_p: cfg.min_p,
                 repeat_penalty: cfg.repeat_penalty,
             },
+            stream_decode_retry_enabled(cfg.stream_decode_retry),
         )
         .await?,
     );
