@@ -636,6 +636,63 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
   );
 };
 
+// A per-NODE live strip: one row per physical device the run has used, showing what each node is doing RIGHT
+// NOW (its running task) or "idle". The existing lanes are per-TASK, so parallel work across the fleet — and,
+// just as importantly, an IDLE node during a serial tail — was invisible; this makes the real fleet occupancy
+// (and any starvation) legible at a glance. Derived from the run's OWN device set (no fleet-endpoint join, so
+// no host-id vs model-id naming mismatch). deviceOrder is the same sorted set the lanes color by, so a node's
+// letter/hue is identical here and in its lane rows.
+const FleetStrip: React.FC<{ lanes: TurnLane[]; deviceOrder: string[]; live: boolean }> = ({
+  lanes,
+  deviceOrder,
+  live,
+}) => {
+  if (deviceOrder.length === 0) return null;
+  const runningByDevice = new Map<string, TurnLane>();
+  for (const l of lanes) {
+    if (l.status === 'running' && !runningByDevice.has(l.device)) runningByDevice.set(l.device, l);
+  }
+  const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
+  return (
+    <div className="px-3 py-2 border-b border-border-primary bg-background-primary space-y-1">
+      <div className="text-[10px] uppercase tracking-wide text-text-secondary">
+        Fleet · {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
+        {live ? ` · ${runningByDevice.size} working` : ''}
+      </div>
+      {deviceOrder.map((device, i) => {
+        const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
+        const letter = String.fromCharCode(65 + (i % 26));
+        const lane = runningByDevice.get(device);
+        return (
+          <div key={device} className="flex items-center gap-2 text-xs">
+            <span
+              className="inline-flex items-center justify-center font-mono font-semibold shrink-0"
+              style={{ width: 16, height: 16, borderRadius: 3, background: hue, color: '#0b0b0b', fontSize: 10 }}
+            >
+              {letter}
+            </span>
+            <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
+              {shortName(device)}
+            </span>
+            {lane ? (
+              <>
+                <Loader2
+                  size={12}
+                  className="animate-spin shrink-0"
+                  style={{ color: STATUS_COLOR.running }}
+                />
+                <span className="text-text-secondary truncate">{lane.description || lane.taskId}</span>
+              </>
+            ) : (
+              <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
 // at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean; workingDir?: string }> = ({ items, live, verbose, workingDir }) => {
@@ -2162,6 +2219,12 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           }
         />
       )}
+
+      <FleetStrip
+        lanes={run.lanes}
+        deviceOrder={deviceOrder}
+        live={run.inProgress && !stale && !ended}
+      />
 
       <PhaseTodoList
         phases={run.phaseTodo}
