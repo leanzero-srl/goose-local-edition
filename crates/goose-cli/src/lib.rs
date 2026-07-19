@@ -1,3 +1,7 @@
+// The `levers_resolved` manifest in commands/swarm.rs is one large `serde_json::json!` object whose
+// key count expands `json_internal!` past the default 128-deep macro recursion limit.
+#![recursion_limit = "256"]
+
 #[cfg(not(any(feature = "rustls-tls", feature = "native-tls")))]
 compile_error!("At least one of `rustls-tls` or `native-tls` features must be enabled");
 
