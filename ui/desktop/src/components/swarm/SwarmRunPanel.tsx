@@ -186,11 +186,24 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
   const pill = CALL_KIND_PILL[m.kind];
   const hasOutput = !!call.result && call.result.trim().length > 0;
   const [open, setOpen] = useState(defaultOpen ?? false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // A tool-call summary carries the ABSOLUTE path it acted on (e.g. "cat /Users/…/go.mod", "ls /Users/…/miner/").
+  // Extract it (file OR directory) so a right-click reveals it in Finder — these rows previously fell through to
+  // the native Cut/Copy menu with no Reveal option, which is why it looked "missing everywhere".
+  const callPath = ((call.summary ?? '').match(/(\/[^\s'"`]+[^\s'"`:;,.)])/) ?? [])[1] ?? null;
   return (
     <div className="py-0.5 border-b border-border-primary/30 last:border-0">
       <button
         type="button"
         onClick={() => hasOutput && setOpen((o) => !o)}
+        onContextMenu={
+          callPath
+            ? (e) => {
+                e.preventDefault();
+                setMenu({ x: e.clientX, y: e.clientY });
+              }
+            : undefined
+        }
         className={`w-full flex items-start gap-2 text-left ${hasOutput ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
       >
         <span className="mt-0.5">
@@ -230,6 +243,15 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
         <div className="ml-5 mt-1">
           <MonoOutput text={call.result!.trim()} failed={m.kind === 'malformed'} />
         </div>
+      )}
+      {menu && (
+        <ActivityContextMenu
+          x={menu.x}
+          y={menu.y}
+          path={callPath}
+          lineText={call.summary ?? m.action}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );
