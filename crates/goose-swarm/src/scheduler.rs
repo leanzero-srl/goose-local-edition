@@ -176,6 +176,41 @@ fn owned_file_written(owned_files: &[String]) -> bool {
     owned_files.iter().any(|f| nonempty(f))
 }
 
+/// STRICT variant used by degrade-on-stall (#134/#132): require EVERY *critical* owned file (non-manifest,
+/// non-test source) to be present and non-empty; fall back to `.any()` only when the task owns no critical
+/// files. Unconditionally strict — the degrade path must NEVER promote a task that wrote only a go.mod. Kept
+/// separate from `owned_file_written` so the degrade decision does not depend on the salvage_require_critical
+/// env. The evidence (a366f2b3, mustsolve-test4): a stalled worker EMITS events for hundreds of seconds and
+/// WRITES its owned file before the model hangs mid-generation — so at exhaustion the file is usually on disk.
+fn critical_owned_files_written(owned_files: &[String]) -> bool {
+    let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
+    let critical: Vec<&String> = owned_files
+        .iter()
+        .filter(|f| !looks_like_manifest_file(f) && !looks_like_test_file(f))
+        .collect();
+    if !critical.is_empty() {
+        return critical.iter().all(|f| nonempty(f));
+    }
+    owned_files.iter().any(|f| nonempty(f))
+}
+
+/// The degrade-on-stall decision (#134/#132), extracted so it is unit-testable without a live scheduler run.
+/// Degrade a stall-exhausted task to Done only when ALL hold: the lever is on; it is NOT a content/syntax-gate
+/// failure (that means a written-but-broken file — never promote it); it is not a test task; and its critical
+/// owned files are present non-empty on disk. `enabled == false` => always false => the exhausted arm is
+/// byte-identical.
+fn should_degrade_on_stall(
+    enabled: bool,
+    is_content: bool,
+    id: &str,
+    owned_files: &[String],
+) -> bool {
+    enabled
+        && !is_content
+        && !is_test_task(id, owned_files)
+        && critical_owned_files_written(owned_files)
+}
+
 /// A pool device = one LM Link model id with a capacity weight.
 #[derive(Clone, Debug)]
 pub struct DeviceCfg {
@@ -328,6 +363,7 @@ struct State {
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
     max_attempts: u32,
+    degrade_on_stall: bool,
     sink: Arc<dyn EventSink>,
     attempt_started_at: HashMap<TaskId, Instant>,
     attempt_log: HashMap<TaskId, Vec<AttemptRecord>>,
@@ -780,19 +816,59 @@ impl State {
                     n.attempts.saturating_sub(judge_kills) >= self.max_attempts
                 };
                 if exhausted {
-                    self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
-                    self.fail_descendants(tid);
-                    let attempts = self.attempt_log[tid].len() as u32;
-                    self.sink.emit(&SwarmEvent::TaskCompleted {
-                        task_id: tid.to_string(),
-                        status: "failed".to_string(),
-                        device: dev_id,
-                        model: model_id,
-                        attempts,
-                        elapsed_ms,
-                        session_id: None,
-                        tool_calls: Vec::new(),
+                    // DEGRADE-ON-STALL (#134/#132): a transient exhaustion is usually a mid-generation model
+                    // hang AFTER the worker already wrote its owned file (evidence a366f2b3: stalled workers
+                    // emit events for hundreds of seconds and write their file, then the stream goes silent).
+                    // If the critical owned file is on disk, mark Done(degraded) + relax dependents so a single
+                    // hung core task does not kill the capstone; integrate-verify + R1 gate the file honestly.
+                    // NEVER a CONTENT failure (a syntax-gate reject is a broken file), never a test task, and
+                    // only when the critical files are actually present. OFF by default => byte-identical.
+                    let degrade = self.dag.tasks.get(tid).is_some_and(|n| {
+                        should_degrade_on_stall(
+                            self.degrade_on_stall,
+                            is_content,
+                            &n.spec.id,
+                            &n.spec.owned_files,
+                        )
                     });
+                    let attempts = self.attempt_log[tid].len() as u32;
+                    if degrade {
+                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
+                        self.sink.emit(&SwarmEvent::JudgeVerdict {
+                            task_id: tid.to_string(),
+                            device: dev_id.clone().unwrap_or_default(),
+                            verdict: "degraded_stall".to_string(),
+                            confidence: 1.0,
+                            hint:
+                                "stall-exhausted but owned file written; integrate-verify gates it"
+                                    .to_string(),
+                            action: "degraded".to_string(),
+                        });
+                        self.relax_dependents(tid);
+                        self.sink.emit(&SwarmEvent::TaskCompleted {
+                            task_id: tid.to_string(),
+                            status: "done".to_string(),
+                            device: dev_id,
+                            model: model_id,
+                            attempts,
+                            elapsed_ms,
+                            session_id: None,
+                            tool_calls: Vec::new(),
+                        });
+                    } else {
+                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                        self.fail_descendants(tid);
+                        self.sink.emit(&SwarmEvent::TaskCompleted {
+                            task_id: tid.to_string(),
+                            status: "failed".to_string(),
+                            device: dev_id,
+                            model: model_id,
+                            attempts,
+                            elapsed_ms,
+                            session_id: None,
+                            tool_calls: Vec::new(),
+                        });
+                    }
                 } else {
                     {
                         let n = self.dag.tasks.get_mut(tid).unwrap();
@@ -1669,6 +1745,12 @@ pub struct Scheduler {
     /// the worker prompt — the same channel as `user_decisions`. Empty (default) -> the worker prompt is
     /// byte-identical. Set via `with_doc_facts` so `run_with_decisions`' signature is unchanged.
     doc_facts: String,
+    /// GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, default OFF): when a task exhausts its transient-retry budget
+    /// (a mid-generation model hang) but its CRITICAL owned file is already on disk, mark it Done(degraded) +
+    /// relax dependents instead of fail_descendants — so a single hung core task does not kill the capstone.
+    /// integrate-verify then gates the degraded file honestly (build + R1 missing-deliverable). false =>
+    /// the exhausted arm is byte-identical (fail_descendants).
+    degrade_on_stall: bool,
 }
 
 impl Scheduler {
@@ -1685,6 +1767,7 @@ impl Scheduler {
             speculation_enabled: false,
             pause_file: None,
             doc_facts: String::new(),
+            degrade_on_stall: false,
         }
     }
 
@@ -1718,6 +1801,15 @@ impl Scheduler {
     /// the scheduler is byte-identical. The twin spawns ONLY on a genuinely idle device (1 task per node).
     pub fn with_speculation(mut self) -> Self {
         self.speculation_enabled = true;
+        self
+    }
+
+    /// Enable DEGRADE-ON-STALL (GOOSE_SWARM_DEGRADE_ON_STALL, #134/#132): at transient-retry exhaustion, if the
+    /// stalled task already wrote its critical owned file, mark it Done(degraded) + relax dependents instead of
+    /// failing the whole subtree. OFF by default — with it off the exhausted arm is byte-identical
+    /// (fail_descendants). integrate-verify gates the degraded file honestly downstream.
+    pub fn with_degrade_on_stall(mut self) -> Self {
+        self.degrade_on_stall = true;
         self
     }
 
@@ -1805,6 +1897,7 @@ impl Scheduler {
             dispatched_per_device: HashMap::new(),
             ctx: SharedContext::new(),
             max_attempts: self.max_attempts,
+            degrade_on_stall: self.degrade_on_stall,
             sink: self.sink.clone(),
             attempt_started_at: HashMap::new(),
             attempt_log: HashMap::new(),
@@ -2265,5 +2358,88 @@ mod salvage_tests {
         };
         assert!(off("0") && off("off") && off("FALSE") && off(" no "));
         assert!(!off("1") && !off("true") && !off("anything"));
+    }
+
+    // A fresh temp dir + a helper to write/skip owned files, so the on-disk degrade predicate is exercised for
+    // real (not mocked). Returns absolute paths, since critical_owned_files_written stats the raw path.
+    fn degrade_fixture(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("degrade_{}_{}_{}", tag, std::process::id(), n));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+    fn write_file(dir: &std::path::Path, name: &str, bytes: &str) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn degrade_on_stall_off_is_byte_identical() {
+        // With the lever OFF, no on-disk state can flip the decision -> exhausted arm stays fail_descendants.
+        let dir = degrade_fixture("off");
+        let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
+        assert!(!should_degrade_on_stall(false, false, "cli-entry", &[main]));
+    }
+
+    #[test]
+    fn degrade_on_stall_promotes_only_when_critical_file_written() {
+        let dir = degrade_fixture("crit");
+        let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
+        // ON + non-content + non-test + critical file present -> degrade.
+        assert!(should_degrade_on_stall(
+            true,
+            false,
+            "cli-entry",
+            std::slice::from_ref(&main)
+        ));
+        // A missing critical file must NOT degrade (the test4 failure: shipping with no entrypoint).
+        let missing = dir.join("gone.go").to_string_lossy().into_owned();
+        assert!(!should_degrade_on_stall(
+            true,
+            false,
+            "cli-entry",
+            &[missing]
+        ));
+        // An empty critical file is not "written".
+        let empty = write_file(&dir, "empty.go", "");
+        assert!(!should_degrade_on_stall(true, false, "cli-entry", &[empty]));
+    }
+
+    #[test]
+    fn degrade_on_stall_refuses_content_failures_and_test_tasks() {
+        let dir = degrade_fixture("refuse");
+        let main = write_file(&dir, "main.go", "package main\n");
+        // A CONTENT (syntax-gate) failure means the file is broken -> never degrade even if it exists.
+        assert!(!should_degrade_on_stall(
+            true,
+            true,
+            "cli-entry",
+            std::slice::from_ref(&main)
+        ));
+        // A test task is never salvaged/degraded, even with its file on disk.
+        let tf = write_file(&dir, "miner_test.go", "package miner\n");
+        assert!(!should_degrade_on_stall(true, false, "miner-tests", &[tf]));
+    }
+
+    #[test]
+    fn degrade_on_stall_manifest_only_falls_back_to_any() {
+        // A task owning ONLY a manifest (no critical source) degrades on any-nonempty (there's nothing else to
+        // gate on); it is not a source task, so this cannot ship a broken entrypoint.
+        let dir = degrade_fixture("manifest");
+        let gomod = write_file(&dir, "go.mod", "module x\n");
+        assert!(should_degrade_on_stall(true, false, "manifest", &[gomod]));
+        // But a manifest-only task with an EMPTY manifest still fails (nothing on disk).
+        let dir2 = degrade_fixture("manifest2");
+        let empty_mod = write_file(&dir2, "go.mod", "");
+        assert!(!should_degrade_on_stall(
+            true,
+            false,
+            "manifest",
+            &[empty_mod]
+        ));
     }
 }
