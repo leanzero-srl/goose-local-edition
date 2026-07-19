@@ -669,15 +669,18 @@ const FleetStrip: React.FC<{
   planLanes: TurnLane[];
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
+  detailLanes: TurnLane[];
   deviceOrder: string[];
   live: boolean;
   dev: boolean;
-}> = ({ lanes, planLanes, scoutLanes, contractLanes, deviceOrder, live, dev }) => {
+}> = ({ lanes, planLanes, scoutLanes, contractLanes, detailLanes, deviceOrder, live, dev }) => {
   if (deviceOrder.length === 0) return null;
   // Worker lanes (EXECUTE) + plan-draft lanes (PLAN) always count a node as busy. In DEVELOPER mode also fold the
   // research (scout) and contracts lanes, so those phases show live per-node activity instead of every node idle.
   const runningByDevice = new Map<string, TurnLane>();
-  const sources = dev ? [...lanes, ...planLanes, ...scoutLanes, ...contractLanes] : [...lanes, ...planLanes];
+  const sources = dev
+    ? [...lanes, ...planLanes, ...scoutLanes, ...contractLanes, ...detailLanes]
+    : [...lanes, ...planLanes];
   for (const l of sources) {
     if (l.status === 'running' && !runningByDevice.has(l.device)) runningByDevice.set(l.device, l);
   }
@@ -698,7 +701,10 @@ const FleetStrip: React.FC<{
         const liveGen =
           lane?.lastText?.trim() ||
           lane?.reasoning?.trim() ||
-          (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '');
+          (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '') ||
+          // These coder models draft in the <think> channel, so text stays empty while thinking streams —
+          // show the live thinking (with a marker) so a generating node reads as WORKING, not blank.
+          (lane?.lastThinking?.trim() ? `💭 ${lane.lastThinking.trim()}` : '');
         return (
           <div key={device} className="flex items-start gap-2 text-xs">
             <span
@@ -2068,7 +2074,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       [
         ...run.lanes,
         ...run.planLanes,
-        ...(dev ? [...run.scoutLanes, ...run.contractLanes] : []),
+        ...(dev ? [...run.scoutLanes, ...run.contractLanes, ...run.detailLanes] : []),
       ].map((l) => l.device)
     )
   ).sort();
@@ -2308,6 +2314,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         planLanes={run.planLanes}
         scoutLanes={run.scoutLanes}
         contractLanes={run.contractLanes}
+        detailLanes={run.detailLanes}
         dev={dev}
         deviceOrder={deviceOrder}
         live={run.inProgress && !stale && !ended}
