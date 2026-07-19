@@ -684,12 +684,11 @@ function useSmoothText(target: string, charsPerSec = 110): string {
       const tgt = targetRef.current || '';
       let cur = shownRef.current;
       if (!tgt.startsWith(cur)) {
-        let i = 0;
-        const n = Math.min(cur.length, tgt.length);
-        while (i < n && cur[i] === tgt[i]) i++;
-        cur = tgt.slice(0, i);
-      }
-      if (cur.length < tgt.length) {
+        // Any non-append change — a new tool call, or the tail window SLID past what we've shown (long
+        // thinking) — SNAP to the latest snapshot. Never re-type from a shrunken prefix: that made the text
+        // jump backward and retype, which looked broken.
+        cur = tgt;
+      } else if (cur.length < tgt.length) {
         const step = Math.max(1, Math.round(charsPerSec * dt));
         cur = tgt.slice(0, Math.min(tgt.length, cur.length + step));
       }
@@ -705,18 +704,21 @@ function useSmoothText(target: string, charsPerSec = 110): string {
   return shown;
 }
 
-// The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll.
-const NodeLiveText: React.FC<{ text: string; clampLines: number }> = ({ text, clampLines }) => {
+// The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll, and
+// anchored to the BOTTOM (auto-scrolled) so the NEWEST generation is always visible. A line-clamp from the top
+// would freeze on the oldest text once the stream grew past a few lines.
+const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }) => {
   const shown = useSmoothText(text);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shown]);
   return (
     <div
-      className="mt-0.5 font-mono text-text-secondary break-words"
-      style={{
-        display: '-webkit-box',
-        WebkitLineClamp: clampLines,
-        WebkitBoxOrient: 'vertical',
-        overflow: 'hidden',
-      }}
+      ref={ref}
+      className="mt-0.5 font-mono text-text-secondary break-words whitespace-pre-wrap"
+      style={{ maxHeight: lines * 15, lineHeight: '15px', overflow: 'hidden' }}
     >
       {shown || text}
     </div>
@@ -860,7 +862,7 @@ const FleetStrip: React.FC<{
                   {liveGen && !isExpanded ? (
                     // Typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5 lines to
                     // fill the space, compact/verbose = 2. Click the node to expand the full stream.
-                    <NodeLiveText text={liveGen} clampLines={dev ? 5 : 2} />
+                    <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
                   ) : null}
                 </div>
               ) : (
