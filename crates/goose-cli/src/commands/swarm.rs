@@ -6209,6 +6209,74 @@ fn build_reasoning(texts: &[String]) -> String {
     clip_tail(&joined, 1200)
 }
 
+/// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
+/// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
+/// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
+/// completed call carries `is_mcp` (an honest MCP pill), and (2) the IN-FLIGHT `pending` calls are appended as
+/// provisional records with `ok: null` so the panel shows what a node is CALLING right now, not only what finished.
+#[allow(clippy::too_many_arguments)]
+fn build_worker_digest(
+    tool_calls: &[ToolCallRecord],
+    call_records: &[(String, String, Option<bool>, String)],
+    pending: &std::collections::HashMap<String, (String, bool, String)>,
+    texts: &[String],
+    malformed: usize,
+    thinking_chars: usize,
+    last_thinking: &str,
+    model_id: &str,
+) -> serde_json::Value {
+    let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
+    let recent: Vec<String> = tool_calls
+        .iter()
+        .rev()
+        .take(6)
+        .rev()
+        .map(|t| {
+            format!(
+                "{} {}",
+                t.name,
+                if t.ok == Some(false) { "ERR" } else { "ok" }
+            )
+        })
+        .collect();
+    let lt = texts.last().cloned().unwrap_or_default();
+    let n = lt.chars().count();
+    let last_text: String = if n > 400 {
+        lt.chars().skip(n - 400).collect()
+    } else {
+        lt
+    };
+    let mut calls: Vec<serde_json::Value> = call_records
+        .iter()
+        .rev()
+        .take(60)
+        .rev()
+        .map(|(name, summary, ok, result)| {
+            serde_json::json!({ "name": name, "summary": summary, "ok": ok, "result": result, "is_mcp": is_mcp_tool(name) })
+        })
+        .collect();
+    // In-flight calls (not yet resolved) as provisional records: ok:null → the desktop's classifyCall renders
+    // them as "running…" so a node mid-call reads as CALLING, not idle.
+    for (name, is_mcp, summary) in pending.values() {
+        calls.push(serde_json::json!({
+            "name": name, "summary": summary, "ok": serde_json::Value::Null, "result": "", "is_mcp": is_mcp
+        }));
+    }
+    serde_json::json!({
+        "tool_calls": tool_calls.len(),
+        "errors": errors,
+        "malformed": malformed,
+        "recent": recent,
+        "last_text": last_text,
+        "calls": calls,
+        "reasoning": build_reasoning(texts),
+        "full_reasoning": build_full_reasoning(texts),
+        "thinking_chars": thinking_chars,
+        "last_thinking": tail_chars(last_thinking, 400),
+        "model": model_id,
+    })
+}
+
 /// Per-run JSONL event sink. All writes go through one locked, line-flushed writer; a monotonic
 /// `seq` gives a total order even though scheduler events and CLI-native events interleave.
 struct JsonlSink {
@@ -7977,6 +8045,10 @@ impl GooseAgentDispatcher {
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
         let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        // Coalesce the activity-digest write: it used to fire once per stream event (≈ per token) — thousands of
+        // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
+        // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
+        let mut last_digest_at: Option<tokio::time::Instant> = None;
         // Optional graceful wall-clock cap for the heavy `integrate-verify` SINK worker. A healthy sink
         // can legitimately run ~1400s; a pathological one blows past the run budget with no way for the
         // scheduler to finalize it — the judge's repeated "ok" verdict is a no-op and the watchdog is
@@ -8101,71 +8173,22 @@ impl GooseAgentDispatcher {
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
             if let Some(p) = &activity_file {
-                // A digest of what the worker is actually DOING — the judge reads this as the worker's
-                // live "log": how many actions, how many ERRORED, the last few tool calls, and the worker's
-                // most recent reasoning. This is what lets the semantic judge see a worker re-running a
-                // failing test, looping on the same error, or exploring without producing.
-                let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
-                let recent: Vec<String> = tool_calls
-                    .iter()
-                    .rev()
-                    .take(6)
-                    .rev()
-                    .map(|t| {
-                        format!(
-                            "{} {}",
-                            t.name,
-                            if t.ok == Some(false) { "ERR" } else { "ok" }
-                        )
-                    })
-                    .collect();
-                let lt = texts.last().cloned().unwrap_or_default();
-                let n = lt.chars().count();
-                let last_text: String = if n > 400 {
-                    lt.chars().skip(n - 400).collect()
-                } else {
-                    lt
-                };
-                // Rich per-call history + fuller reasoning for the desktop run panel. The judge only
-                // reads `recent`/`last_text`/`tool_calls`/`errors` above, so these extra keys are inert
-                // to it; unknown-key-tolerant JSON readers ignore them.
-                let calls: Vec<serde_json::Value> = call_records
-                    .iter()
-                    .rev()
-                    .take(60)
-                    .rev()
-                    .map(|(name, summary, ok, result)| {
-                        serde_json::json!({ "name": name, "summary": summary, "ok": ok, "result": result })
-                    })
-                    .collect();
-                let reasoning: String = build_reasoning(&texts);
-                let full_reasoning: String = build_full_reasoning(&texts);
-                let digest = serde_json::json!({
-                    "tool_calls": tool_calls.len(),
-                    "errors": errors,
-                    // Of those errors, the ones the provider rejected before any tool ran. `errors -
-                    // malformed` is the productive remainder (a tool ran and the app said no). Additive key;
-                    // the judge reads only the fields it already knew about.
-                    "malformed": malformed,
-                    "recent": recent,
-                    "last_text": last_text,
-                    "calls": calls,
-                    "reasoning": reasoning,
-                    // The full narration for the desktop panel's "reasoning in plain" view. The judge reads
-                    // only the small fields above; this extra key is inert to it.
-                    "full_reasoning": full_reasoning,
-                    // How much DELIBERATION the worker has streamed. `reasoning`/`full_reasoning` above are
-                    // built from `texts`, which only the Text arm feeds — so on a reasoning model they are
-                    // permanently "", and every counter in this digest reads 0 while the worker is in fact
-                    // producing continuously. These two keys are the only evidence that such a worker is
-                    // alive; `thinking_chars` is what lets the judge tell "still thinking" from "hung".
-                    "thinking_chars": thinking_chars,
-                    "last_thinking": tail_chars(&last_thinking, 400),
-                    // The model that produced this digest — lets the panel label planning-phase lanes (which
-                    // have no task_dispatched event to carry the model) with which node/model generated them.
-                    "model": model_id,
-                });
-                let _ = std::fs::write(p, digest.to_string());
+                let due = last_digest_at
+                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                if due {
+                    let digest = build_worker_digest(
+                        &tool_calls,
+                        &call_records,
+                        &pending,
+                        &texts,
+                        malformed,
+                        thinking_chars,
+                        &last_thinking,
+                        model_id,
+                    );
+                    let _ = std::fs::write(p, digest.to_string());
+                    last_digest_at = Some(tokio::time::Instant::now());
+                }
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
@@ -8176,6 +8199,21 @@ impl GooseAgentDispatcher {
                 is_mcp,
                 ok: None,
             });
+        }
+        // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
+        // so write the terminal state exactly once here (pending is drained above → pass an empty map).
+        if let Some(p) = &activity_file {
+            let digest = build_worker_digest(
+                &tool_calls,
+                &call_records,
+                &std::collections::HashMap::new(),
+                &texts,
+                malformed,
+                thinking_chars,
+                &last_thinking,
+                model_id,
+            );
+            let _ = std::fs::write(p, digest.to_string());
         }
 
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
@@ -8501,9 +8539,22 @@ impl GooseAgentDispatcher {
                      sibling directories — they are unrelated projects. You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not on exploring. Stop as soon as you can answer — an early, grounded answer beats a long one.",
                     lens.title, lens.brief, lens.tool_hint
                 );
+                // Write a per-scout activity digest (.swarm/activity/scout-<lens>.json) so the RESEARCH phase is
+                // no longer a black box — the desktop surfaces each scout's live tool calls + generation per node,
+                // exactly like a worker. Was previously invisible (planner-side calls passed activity_key=None).
+                let scout_key = format!("scout-{}", lens.id);
                 let (findings, lookups, timed_out, errored, attempt) = match tokio::time::timeout(
                     std::time::Duration::from_secs(scout_budget),
-                    me.run_agent_timed(&model, system, format!("Task: {prompt}"), None, max_lookups, &exts),
+                    me.run_agent_timed_at(
+                        &model,
+                        system,
+                        format!("Task: {prompt}"),
+                        None,
+                        max_lookups,
+                        &exts,
+                        None,
+                        Some(scout_key.as_str()),
+                    ),
                 )
                 .await
                 {
@@ -8680,13 +8731,25 @@ impl GooseAgentDispatcher {
                     swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
                 let attempts = if retry_on { 2 } else { 1 };
                 let stub_budget = me.worker_timeout_secs.max(120);
+                // Write a per-module contract digest so the CONTRACTS phase shows live per-node activity (dev
+                // verbosity) instead of a black box — the desktop reads .swarm/activity/contract-<id>.json.
+                let contract_key = format!("contract-{}", spec.id);
                 let mut stub = String::new();
                 let mut reason = "empty_text".to_string();
                 for _attempt in 0..attempts {
                     let budget = std::time::Duration::from_secs(stub_budget);
                     match tokio::time::timeout(
                         budget,
-                        me.run_agent(&model, system.clone(), user.clone(), None, 6, &[], 0, None),
+                        me.run_agent(
+                            &model,
+                            system.clone(),
+                            user.clone(),
+                            None,
+                            6,
+                            &[],
+                            0,
+                            Some(contract_key.as_str()),
+                        ),
                     )
                     .await
                     {
@@ -9609,9 +9672,20 @@ impl GooseAgentDispatcher {
                     )
                 };
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
+                // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
+                let detail_key = format!("detail-{id}");
                 let desc = match tokio::time::timeout(
                     std::time::Duration::from_secs(75),
-                    me.run_agent(&model, system, user, None, 6, &[], 0, None),
+                    me.run_agent(
+                        &model,
+                        system,
+                        user,
+                        None,
+                        6,
+                        &[],
+                        0,
+                        Some(detail_key.as_str()),
+                    ),
                 )
                 .await
                 {
