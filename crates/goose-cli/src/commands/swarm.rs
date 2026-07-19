@@ -1584,6 +1584,36 @@ fn drop_unservable_devices(
     (keep, dropped)
 }
 
+/// The no-start guard (#128) is ON unless explicitly killed. It only ever ADDS a refusal on a PROVEN negative,
+/// so the safe direction is on; the kill-switch exists so a misfiring probe can be worked around without a
+/// rebuild. Env only (not a persisted config field) on purpose: a safety guard should not be silently disabled
+/// by a stale serialized config, and a bare-bool `#[serde(default)]` would deserialize to false = off.
+fn require_servable() -> bool {
+    match std::env::var("GOOSE_SWARM_REQUIRE_SERVABLE") {
+        Ok(v) => !matches!(v.trim(), "0" | "false" | "off" | "no"),
+        Err(_) => true,
+    }
+}
+
+/// PROVEN-zero-servable: refuse ONLY when the `/v1/models` catalog demonstrably WORKS (it returned a non-empty
+/// list — a positive control on the SAME endpoint) yet lists NONE of the resident pool's models. That is a
+/// negative PROVEN on the same object, not an observed-empty: `endpoint_model_ids` collapses an empty/unreachable
+/// probe to `None`, and `served == None` never refuses. So this can only fire when every resident alias has been
+/// withdrawn (the LM Link node dropped off the LAN) — the exact case where proceeding dispatches a third (or all)
+/// of the run into instant 400s and a dead run. It can NEVER authorize a bad dispatch — only stop one — so it is
+/// structurally incapable of the false-"there are models" mistake.
+fn all_resident_unservable(
+    pool: &[SwarmDevice],
+    served: Option<&std::collections::HashSet<String>>,
+) -> bool {
+    match served {
+        Some(s) if !s.is_empty() && !pool.is_empty() => {
+            pool.iter().all(|d| !s.contains(&d.model_id))
+        }
+        _ => false,
+    }
+}
+
 fn probe_fleet() {
     println!("\n{}", style("lms ps:").bold());
     match ProcCommand::new(resolve_lms()).arg("ps").output() {
@@ -1591,8 +1621,9 @@ fn probe_fleet() {
         Err(e) => println!("  (lms ps failed: {e})"),
     }
     println!("{}", style("endpoint model ids:").bold());
+    let models_url = format!("{}/v1/models", lms_http_host().trim_end_matches('/'));
     match ProcCommand::new("curl")
-        .args(["-s", "--max-time", "6", "http://localhost:1234/v1/models"])
+        .args(["-s", "--max-time", "6", &models_url])
         .output()
     {
         Ok(out) => {
@@ -4607,6 +4638,47 @@ mod tests {
             dropped.is_empty(),
             "and do not claim drops we did not act on"
         );
+    }
+
+    /// #128 no-start guard: it fires ONLY on a PROVEN negative (the endpoint served a non-empty catalog that
+    /// excludes every resident) and NEVER on an observed-empty. The safety property — a broken/empty probe can
+    /// never refuse — is the one that must not regress, so it is asserted directly here.
+    #[test]
+    fn no_start_guard_fires_only_on_proven_zero_servable() {
+        let pool = vec![
+            dev("local-mihai", "mihai-qwopus3.6-27b-coder-mlx"),
+            dev("mac-gabee", "gabee-qwopus3.6-27b-coder-mlx"),
+        ];
+        // Endpoint WORKS (non-empty) but lists none of our models -> every alias withdrawn -> REFUSE.
+        let disjoint: std::collections::HashSet<String> = [
+            "some-other-model".to_string(),
+            "text-embedding-x".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(
+            all_resident_unservable(&pool, Some(&disjoint)),
+            "non-empty catalog disjoint from the pool is a proven zero -> refuse"
+        );
+        // At least one resident servable -> the pool is fine -> DO NOT refuse.
+        let one_ok: std::collections::HashSet<String> =
+            ["mihai-qwopus3.6-27b-coder-mlx".to_string()]
+                .into_iter()
+                .collect();
+        assert!(
+            !all_resident_unservable(&pool, Some(&one_ok)),
+            "one servable resident means the run can proceed"
+        );
+        // Probe unreachable/empty (None) -> NEVER refuse (the seven-lying-instruments rule).
+        assert!(
+            !all_resident_unservable(&pool, None),
+            "a probe that cannot answer must never gate the run"
+        );
+        // Empty catalog -> None-equivalent -> NEVER refuse.
+        let empty: std::collections::HashSet<String> = std::collections::HashSet::new();
+        assert!(!all_resident_unservable(&pool, Some(&empty)));
+        // Empty pool -> nothing to prove unservable -> NEVER refuse (falls through to the zero-resident branch).
+        assert!(!all_resident_unservable(&[], Some(&disjoint)));
     }
 
     /// THE 40 TURNS THAT CUT THE VERIFIER OFF MID-VERIFY.
@@ -16469,6 +16541,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
     // the resident list. Intersect them before anything is dispatched — see drop_unservable_devices.
     let served = endpoint_model_ids();
+    // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
+    // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
+    // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
+    // probe over a 100%-dead fleet), so in the all-unservable case `fleet_pool` still carries every resident and
+    // this check sees them. served==None (probe empty/unreachable) never trips this — see all_resident_unservable.
+    if require_servable() && all_resident_unservable(&fleet_pool, served.as_ref()) {
+        let ids: Vec<&str> = fleet_pool.iter().map(|d| d.model_id.as_str()).collect();
+        return Err(anyhow!(
+            "The fleet at {} lists models but NONE of the loaded pool [{}] is servable — every LM Link alias \
+             has been withdrawn (a node likely dropped off the LAN). Dispatching now would fail every task in \
+             ~2s. Reload the models in LM Studio (or reconnect the node), then re-run. \
+             Set GOOSE_SWARM_REQUIRE_SERVABLE=0 to override.",
+            cfg.endpoint,
+            ids.join(", ")
+        ));
+    }
     let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
     let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
         if let Some(p) = fleet_planner {
