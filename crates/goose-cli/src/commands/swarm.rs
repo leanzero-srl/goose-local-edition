@@ -540,6 +540,11 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_OWNED_FILE_FENCE env overrides.
     #[serde(default)]
     pub owned_file_fence: bool,
+    /// #134 reasoning-spiral cap: kill+re-dispatch a worker that emits more than this many thinking chars with
+    /// ZERO tool calls and no owned file (a stuck spiral), with a forceful "write now" nudge, instead of
+    /// burning the whole idle window. 0 = OFF (byte-identical). GOOSE_SWARM_SPIRAL_THINKING_CHARS overrides.
+    #[serde(default)]
+    pub spiral_thinking_chars: u64,
     /// CONTRACT RETRY (#131 enabler): the CONTRACTS phase freezes a signature-only interface per module BEFORE
     /// EXECUTE so workers agree on each other's API. It runs on a freshly-loaded 262k-ctx fleet where the FIRST
     /// call is slow; measured on mustsolve-test1, all 3 stubs came back empty within the 75s budget and the
@@ -773,6 +778,7 @@ impl Default for SwarmConfig {
             contract_validate: false,
             relax_contracted_deps: false,
             owned_file_fence: false,
+            spiral_thinking_chars: 0,
             contract_retry: false,
             incremental_replan: false,
             ask_away: false,
@@ -12165,6 +12171,12 @@ impl Judge for GooseAgentDispatcher {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_else(|| JudgeConfig::default().split_threshold_secs),
+            // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
+            // desktop can enable it (env is discarded by `open -n`).
+            spiral_thinking_chars: std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| load_config().spiral_thinking_chars),
             ..JudgeConfig::default()
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
