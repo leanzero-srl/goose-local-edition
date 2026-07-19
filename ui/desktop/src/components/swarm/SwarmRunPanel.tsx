@@ -576,13 +576,16 @@ const ActivityContextMenu: React.FC<{
 
 // One line in the activity timeline. Tone (when set) tints the icon so judge warnings / failures stand out.
 // Right-click reveals a menu — "Reveal in Finder" when the line references a file path, plus Copy.
-const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap }) => {
+const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string }> = ({ it, wrap, workingDir }) => {
   const Icon = ACTIVITY_ICON[it.kind];
   const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [open, setOpen] = useState(false);
   const lineText = `${it.text}${it.sub ? ` — ${it.sub}` : ''}`;
-  const path = resolveActivityPath(lineText, undefined);
+  // Thread the run's cwd so a RELATIVE path in an activity line (the common case, e.g. "Wrote src/foo.ts")
+  // resolves to an absolute path — without it resolveActivityPath returned null and the context menu silently
+  // dropped "Reveal in Finder" + "Copy path" for every relative-path line.
+  const path = resolveActivityPath(lineText, workingDir);
   // A line is clickable-to-expand when it carries a sub detail — in the compact feed that detail is truncated,
   // so a click reveals the full text (wrapped, nothing invented — just what the event already carried).
   const expandable = !!it.sub;
@@ -635,13 +638,13 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean }> = ({ it, wrap
 
 // The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
 // at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
-const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean }> = ({ items, live, verbose }) => {
+const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean; workingDir?: string }> = ({ items, live, verbose, workingDir }) => {
   const shown = verbose ? items : items.slice(-8);
   if (items.length === 0) return null;
   return (
     <div className="px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary">
       {shown.map((it) => (
-        <ActivityLine key={it.seq} it={it} wrap={verbose} />
+        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} />
       ))}
       {live && (
         <div className="flex items-center gap-2 text-xs text-text-secondary">
@@ -2173,6 +2176,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         items={verbose ? run.verboseActivity : run.activity}
         live={run.inProgress && !stale && !ended}
         verbose={verbose}
+        workingDir={workingDir}
       />
 
       {run.planLanes.length > 0 ? (
