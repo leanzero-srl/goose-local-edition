@@ -28,6 +28,26 @@ type ReadinessFetchInit = Parameters<typeof globalThis.fetch>[1];
 export type GooseServeExitSignal = ChildProcess['signalCode'];
 type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Response>;
 
+// Signal goosed's whole process GROUP (posix), not just goosed itself. goosed is spawned as a group leader
+// (`detached`), so a negative-pid signal reaches its child `goose swarm run` too — the process that holds the
+// LM Studio fleet sockets. Without this, the SIGKILL fallback kills goosed but orphans that child, which keeps
+// a fleet node GENERATING from the dead run. Falls back to a direct signal if the group signal fails (ESRCH).
+function killGroupOrProcess(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
+  const pid = proc.pid;
+  if (!pid) {
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {
+      // Already gone — nothing to signal.
+    }
+  }
+}
+
 export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   dir?: string;
   serverSecret: string;
@@ -387,7 +407,14 @@ export const startGooseServe = async ({
     env: buildGooseServeEnv(secretKey, goosePath, additionalEnv),
     cwd: workingDir,
     windowsHide: true,
-    detached: process.platform === 'win32',
+    // Own process GROUP (posix setsid via detached, group tree on win32). goosed's swarm provider spawns a
+    // child `goose swarm run` that drives the LM Studio fleet; on the SIGKILL fallback goosed dies without
+    // running Drop, so its `kill_on_drop` never fires and that child is ORPHANED — it keeps its fleet sockets
+    // open and a node keeps GENERATING from the dead run (the exact symptom seen after a kill/restart). Making
+    // goosed a group leader lets cleanup() signal the whole group (negative pid) so the child dies too, its
+    // socket closes, and LM Studio cancels generation within ~3s (measured). stdio pipes are kept (not
+    // unref'd), so the group is still fully managed by this process.
+    detached: true,
     shell: false as const,
     stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
   };
@@ -557,7 +584,7 @@ export const startGooseServe = async ({
             spawn('taskkill', ['/pid', gooseProcess.pid.toString(), '/f', '/t']);
           }
         } else {
-          gooseProcess.kill('SIGTERM');
+          killGroupOrProcess(gooseProcess, 'SIGTERM');
         }
       } catch (error) {
         logger.error('Error while terminating goose serve process:', error);
@@ -565,7 +592,7 @@ export const startGooseServe = async ({
 
       setTimeout(() => {
         if (!exited && !gooseProcess.killed && process.platform !== 'win32') {
-          gooseProcess.kill('SIGKILL');
+          killGroupOrProcess(gooseProcess, 'SIGKILL');
         }
         finish();
       }, 5000);
