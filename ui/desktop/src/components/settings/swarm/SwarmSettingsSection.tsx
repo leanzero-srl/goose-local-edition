@@ -506,7 +506,7 @@ export default function SwarmSettingsSection() {
               hint="When your spec leaves things open, goose asks you a few questions, and your answers are supposed to raise its confidence in the plan. But if re-planning is on, goose then throws that answered plan away and drafts a fresh one — and the fresh draft asks itself the same questions you already answered, so its confidence collapses and it builds a WORSE plan than the one you improved. Measured: a plan reached 85, was re-drafted, and shipped at 52 — below the bar the questions existed to clear. With this on, once your answers lift the plan to the bar, goose keeps THAT plan. Switching programming language, or defining a product that was blank before, still re-plans — those genuinely make the old plan wrong."
             >
               <SwarmSwitch
-                checked={!!cfg.answers_win_floor}
+                checked={cfg.answers_win_floor !== false}
                 onChange={(v) => set({ answers_win_floor: v })}
               />
             </Row>

@@ -392,10 +392,17 @@ pub struct SwarmConfig {
     /// decisions so clarity collapses — measured live nf-hexohm: rescored to 85, re-planned, shipped 52, BELOW
     /// the floor of 85 the ask existed to satisfy). A language flip or a product first defined by the answer is
     /// STRUCTURAL (wrong-language / placeholder skeleton) and STILL forces a re-plan. A rescore still below the
-    /// floor is pinned as the monotonic `best_plan` (a floor to beat) and re-drafted. Default OFF.
-    /// GOOSE_SWARM_ANSWERS_WIN_FLOOR env overrides.
+    /// floor is pinned as the monotonic `best_plan` (a floor to beat) and re-drafted.
+    /// Default ON (#129): the OLD default OFF was a coupling foot-gun — turning on `ask_replan` alone made a
+    /// non-structural re-plan discard the just-answered, floor-clearing plan and ship a LOWER-confidence one
+    /// (the 52-below-an-85-floor regression). This guard is what stops that, and it is byte-identical to the
+    /// legacy path for every run with `ask_replan` OFF (the true default), so shipping it on costs nothing on
+    /// the default path and only closes the foot-gun for the opt-in. `Option<bool>`, not `bool`, on purpose:
+    /// a bare `#[serde(default)]` bool deserializes to false, so a flipped struct-default would be defeated by
+    /// any persisted config — the Option resolves to true when omitted and only an explicit `=0` opts out.
+    /// GOOSE_SWARM_ANSWERS_WIN_FLOOR env overrides (`0`/`off` to restore the legacy re-plan for A/B or rollback).
     #[serde(default)]
-    pub answers_win_floor: bool,
+    pub answers_win_floor: Option<bool>,
     /// After the build, statically check that no module reads a field off a sibling's class that the class
     /// does not define. THE check for the drift CONTRACTS cannot stop: a real run shipped api.py reading
     /// `body.group_id` while models.py's ExpenseCreate never declared it — a 500 on every POST, reported as
@@ -769,7 +776,7 @@ impl Default for SwarmConfig {
             ask_replan: None,
             retarget_rounds: None,
             retarget_stall_guard: false,
-            answers_win_floor: false,
+            answers_win_floor: None,
             cross_module_check: false,
             ask_max_q: None,
             review_repro: None,
@@ -1974,6 +1981,25 @@ fn ask_replan_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
         ),
         None => cfg.unwrap_or(false),
     }
+}
+
+/// #129: the answers-win-floor guard resolution. env > config > TRUE. Identical env grammar to
+/// `ask_replan_resolved`, but the config-absent default is `true`, not `false` — the guard ships ON so the
+/// `ask_replan` foot-gun can't ship a below-floor plan over the answered one. `Option<bool>` config so an
+/// omitted field resolves to the ON default (a bare bool would deserialize to false and silently disable it);
+/// an explicit env `0`/`off` or a saved config `Some(false)` restores the legacy re-plan for A/B and rollback.
+fn answers_win_floor_resolved(env: Option<String>, cfg: Option<bool>) -> bool {
+    match env {
+        Some(s) => matches!(
+            s.trim().to_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        ),
+        None => cfg.unwrap_or(true),
+    }
+}
+
+fn answers_win_floor_enabled(cfg: Option<bool>) -> bool {
+    answers_win_floor_resolved(std::env::var("GOOSE_SWARM_ANSWERS_WIN_FLOOR").ok(), cfg)
 }
 
 /// integrate-verify runs the PROGRAM end-to-end; it does NOT need the unit-test subtask, and a FAILING test
@@ -3683,6 +3709,32 @@ mod tests {
             "unknown values skip — only explicit on-values re-plan"
         );
         assert!(!ask_replan_enabled(Some(" no ".into())));
+    }
+
+    #[test]
+    fn answers_win_floor_defaults_on_and_opts_out() {
+        // #129: the guard ships ON. Unset env+config resolves TRUE (unlike ask_replan, which defaults off) so a
+        // config that omits the field — every user who never toggled it — gets the foot-gun fix.
+        assert!(
+            answers_win_floor_resolved(None, None),
+            "unset (env+config None) defaults ON — the #129 fix reaches users who never touched it"
+        );
+        assert!(
+            answers_win_floor_resolved(None, Some(true)),
+            "explicit config true stays on"
+        );
+        // Explicit opt-OUT restores the legacy re-plan (for A/B / rollback), env winning over config.
+        assert!(!answers_win_floor_resolved(Some("0".into()), None));
+        assert!(!answers_win_floor_resolved(Some("off".into()), Some(true)));
+        assert!(!answers_win_floor_resolved(None, Some(false)));
+        // Explicit on-values, case-insensitive, env beats a config false.
+        assert!(answers_win_floor_resolved(Some("1".into()), Some(false)));
+        assert!(answers_win_floor_resolved(Some("YES".into()), None));
+        // An unknown env value is NOT an on-value; env-present means env decides, so it is off.
+        assert!(!answers_win_floor_resolved(
+            Some("anything".into()),
+            Some(true)
+        ));
     }
 
     #[test]
@@ -17294,10 +17346,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 std::env::var("GOOSE_SWARM_ASK_REPLAN").ok(),
                 load_config().ask_replan,
             ),
-            "answers_win_floor": swarm_gate_cfg(
-                "GOOSE_SWARM_ANSWERS_WIN_FLOOR",
-                load_config().answers_win_floor,
-            ),
+            "answers_win_floor": answers_win_floor_enabled(load_config().answers_win_floor),
             "relax_contracted_deps": swarm_gate_cfg(
                 "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
                 load_config().relax_contracted_deps,
@@ -17368,11 +17417,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .ok()
         .and_then(|v| v.trim().parse::<u8>().ok())
         .unwrap_or(cfg.struct_stop);
-    // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default OFF): after the user answers the clarify ask and the
+    // GOOSE_SWARM_ANSWERS_WIN_FLOOR (#129, default ON): after the user answers the clarify ask and the
     // deterministic rescore lifts the plan to/over the floor, keep THAT plan instead of letting a
     // non-structural ask_replan re-draft it away (nf-hexohm: rescored 85, re-planned, shipped 52). Read once
-    // outside the loop, same env>config>default precedence as the sibling gates.
-    let answers_win_floor = swarm_gate_cfg("GOOSE_SWARM_ANSWERS_WIN_FLOOR", cfg.answers_win_floor);
+    // outside the loop; env>config>true. Byte-identical to the legacy path whenever ask_replan is OFF (the true
+    // default), since post_answer_action ignores this flag then — so the ON default only closes the ask_replan
+    // foot-gun and never changes a default-config run.
+    let answers_win_floor = answers_win_floor_resolved(
+        std::env::var("GOOSE_SWARM_ANSWERS_WIN_FLOOR").ok(),
+        cfg.answers_win_floor,
+    );
     // ASK-AWAY (Concept A, GOOSE_SWARM_ASK_AWAY, default OFF, byte-identical when OFF): turn the one-shot
     // clarify latch into a BOUNDED multi-round loop that keeps asking the next batch while the plan is below
     // the floor AND material open decisions remain, re-deriving the batch from the TRIMMED open_decisions each
@@ -18010,7 +18064,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // product. Safe: the ask fires before any worker writes a file, so the amended spec
                                 // (not stale files) drives the re-plan.
                                 let product_defined_by_answer = !plan_conf.product_specified;
-                                // #129 (GOOSE_SWARM_ANSWERS_WIN_FLOOR, default OFF, byte-identical when OFF): the
+                                // #129 (GOOSE_SWARM_ANSWERS_WIN_FLOOR, default ON; inert unless ask_replan is on): the
                                 // deterministic rescore above may already have lifted this plan to/over the floor the
                                 // ask existed to satisfy. A NON-structural ask_replan then re-drafts from scratch and
                                 // the fresh weak-fleet clarity probe re-lists the just-answered decisions, so a WORSE
