@@ -18123,12 +18123,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // never created, so the app had no runnable binary yet the smoke gate reported verified:true (it only
         // ran --help + import). A MISSING or EMPTY planned SOURCE deliverable (non-manifest by extension,
         // non-test) is a HARD finding regardless of task Done/Failed status. Deterministic (a stat, no model).
-        // Same gate as the failed-task block; re-added each round so the fix loop must actually write the file.
-        let missing_deliverable_findings: Vec<String> = if delivery_on
+        // Same gate as the failed-task block. RE-EVALUATED PER ROUND inside the loop (a stat of the CURRENT
+        // tree), NOT computed once before it: measured mustsolve-test5, the fix loop WROTE the missing diff.go
+        // /mine.go but a statically-captured finding kept re-adding "MISSING" every round so the app could never
+        // reach green — 3 fix rounds all ended UNVERIFIED on an app the loop had actually repaired. The closure
+        // below is called each round so writing the file genuinely clears the finding. Deterministic (a stat).
+        let missing_deliverable_gate = delivery_on
             || swarm_gate_cfg(
                 "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
                 load_config().failed_tasks_block_green,
-            ) {
+            );
+        let missing_source_deliverables = || -> Vec<String> {
+            if !missing_deliverable_gate {
+                return Vec::new();
+            }
             let mut m: Vec<String> = smoke_all_files
                 .iter()
                 .filter(|f| complete_lang.is_source_file(f) && !complete_lang.is_test_file(f))
@@ -18144,21 +18152,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             m.sort();
             m.dedup();
             m
-        } else {
-            Vec::new()
         };
-        if !missing_deliverable_findings.is_empty() {
-            sink.write_value(serde_json::json!({
-                "event": "complete_missing_deliverables",
-                "missing": missing_deliverable_findings.len(),
-                "detail": "planned source deliverables are missing/empty on disk — blocking green + driving the fix loop",
-            }));
-            eprintln!(
-                "  {} {} planned deliverable(s) missing/empty on disk — blocking green",
-                style("!").red().bold(),
-                missing_deliverable_findings.len()
-            );
-        }
         // CROSS-MODULE DRIFT (GOOSE_SWARM_CROSS_MODULE_CHECK, default OFF). Computed ONCE, before the loop:
         // it reads the delivered tree, and re-running it every round would only re-read a tree the fix loop
         // is actively rewriting. Re-added to the findings each round like the failed tasks, so a fix must
@@ -18193,18 +18187,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
         for round in 0..=rounds {
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
-            // A failed task keeps the loop honest even when the gate is blind (a TS tree with no test step,
-            // an unprofiled language that skips entirely). Re-added every round: the fix loop must clear the
-            // task's real deliverable, not merely survive one pass.
-            verdict
-                .findings
-                .extend(failed_task_findings.iter().cloned());
-            // #120/#134 (R1): a missing/empty planned deliverable blocks green even when a task was salvaged to
-            // Done and the smoke gate is blind to it (it never checks the tree is complete). Re-added each
-            // round so the fix loop must actually write the file.
-            verdict
-                .findings
-                .extend(missing_deliverable_findings.iter().cloned());
+            // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
+            // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
+            // it is the authority: a task that failed DURING the build but whose deliverable the fix loop has
+            // since written and made compile/pass is a WORKING app, and a stale "task X failed" finding must
+            // not pin it red forever. Measured mustsolve-test5: 4 static failed-task findings could never clear,
+            // so the loop churned 3 rounds and ended UNVERIFIED on a repairable app. A genuinely broken app is
+            // still caught — by the gate's own build/test findings, re-run every round below.
+            if !verdict.ran {
+                verdict
+                    .findings
+                    .extend(failed_task_findings.iter().cloned());
+            }
+            // #120/#134 (R1): RE-STAT the tree THIS round so writing a deliverable genuinely clears the finding
+            // (the pre-loop static set pinned the app red forever even after the file existed). A source
+            // deliverable still missing/empty on disk is a HARD finding regardless of task Done/Failed status.
+            let missing_now = missing_source_deliverables();
+            if !missing_now.is_empty() {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_missing_deliverables",
+                    "round": round,
+                    "missing": missing_now.len(),
+                    "detail": "planned source deliverables missing/empty on disk this round — blocking green + driving the fix loop",
+                }));
+            }
+            verdict.findings.extend(missing_now);
             // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
             // the AttributeError only happens at request time), so without this the loop breaks green at
             // round 0 on an app whose main endpoint 500s.
