@@ -667,14 +667,18 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
 const FleetStrip: React.FC<{
   lanes: TurnLane[];
   planLanes: TurnLane[];
+  scoutLanes: TurnLane[];
+  contractLanes: TurnLane[];
   deviceOrder: string[];
   live: boolean;
-}> = ({ lanes, planLanes, deviceOrder, live }) => {
+  dev: boolean;
+}> = ({ lanes, planLanes, scoutLanes, contractLanes, deviceOrder, live, dev }) => {
   if (deviceOrder.length === 0) return null;
-  // Both worker lanes (EXECUTE) and plan-draft lanes (PLAN) count as a node being busy — during planning the
-  // running work IS the drafts, so without them a drafting node would wrongly read "idle".
+  // Worker lanes (EXECUTE) + plan-draft lanes (PLAN) always count a node as busy. In DEVELOPER mode also fold the
+  // research (scout) and contracts lanes, so those phases show live per-node activity instead of every node idle.
   const runningByDevice = new Map<string, TurnLane>();
-  for (const l of [...lanes, ...planLanes]) {
+  const sources = dev ? [...lanes, ...planLanes, ...scoutLanes, ...contractLanes] : [...lanes, ...planLanes];
+  for (const l of sources) {
     if (l.status === 'running' && !runningByDevice.has(l.device)) runningByDevice.set(l.device, l);
   }
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
@@ -716,6 +720,29 @@ const FleetStrip: React.FC<{
                   />
                   <span className="text-text-primary truncate">{lane.description || lane.taskId}</span>
                 </div>
+                {dev && lane.calls && lane.calls.length > 0
+                  ? (() => {
+                      // What this node is DOING right now — its latest tool/MCP call (running… when in-flight).
+                      const last = lane.calls![lane.calls!.length - 1];
+                      const cm = classifyCall(last);
+                      return (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
+                          <span className="text-text-secondary truncate">
+                            {cm.action}
+                            {last.summary ? (
+                              <span className="font-mono opacity-80"> · {last.summary}</span>
+                            ) : null}
+                          </span>
+                          {lane.toolCalls ? (
+                            <span className="ml-auto font-mono text-text-secondary shrink-0">
+                              ⚙{lane.toolCalls}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })()
+                  : null}
                 {liveGen ? (
                   <div
                     className="mt-0.5 font-mono text-text-secondary break-words"
@@ -2033,8 +2060,17 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   // Stable node identity: run.lanes RE-SORTS every poll (running first, then recency), so deriving letters
   // from first-seen lane order made a node's letter/hue flicker between polls. Sort the distinct devices
   // deterministically so ⬢A/hue is fixed for the whole run.
+  // In DEVELOPER mode the research (scout) + contracts lanes enter the pipeline too, so the Fleet strip shows
+  // per-node activity in those phases. In compact/verbose they stay out, so a research/contracts-only run keeps
+  // deviceOrder empty → the FleetStrip renders null exactly as before (byte-identical default view).
   const deviceOrder: string[] = Array.from(
-    new Set([...run.lanes, ...run.planLanes].map((l) => l.device))
+    new Set(
+      [
+        ...run.lanes,
+        ...run.planLanes,
+        ...(dev ? [...run.scoutLanes, ...run.contractLanes] : []),
+      ].map((l) => l.device)
+    )
   ).sort();
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
@@ -2270,6 +2306,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       <FleetStrip
         lanes={run.lanes}
         planLanes={run.planLanes}
+        scoutLanes={run.scoutLanes}
+        contractLanes={run.contractLanes}
+        dev={dev}
         deviceOrder={deviceOrder}
         live={run.inProgress && !stale && !ended}
       />

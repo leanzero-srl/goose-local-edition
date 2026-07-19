@@ -348,6 +348,10 @@ export interface SwarmRunState {
   /** PLAN-phase generation lanes (architect drafts) — what each model produced while decomposing the app.
    *  Separate from `lanes` (build tasks) and excluded from `totals`. */
   planLanes: TurnLane[];
+  /** RESEARCH (scout-<lens>) + CONTRACTS (contract-<id>) per-node lanes — surfaced in developer mode so those
+   *  phases show live per-node activity instead of a spinner. */
+  scoutLanes: TurnLane[];
+  contractLanes: TurnLane[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
   phaseTodo: PhaseTodo[];
   /** End-of-run overview (what built / how to run / next) — null until the run cleanly finishes at DONE. */
@@ -421,6 +425,8 @@ const EMPTY: SwarmRunState = {
   runId: null,
   lanes: [],
   planLanes: [],
+  scoutLanes: [],
+  contractLanes: [],
   phaseTodo: [],
   overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
@@ -986,7 +992,13 @@ type Digest = {
 function foldEvents(
   events: Array<Record<string, unknown>>,
   activity: Record<string, unknown>
-): { lanes: TurnLane[]; totals: SwarmRunTotals; planLanes: TurnLane[] } {
+): {
+  lanes: TurnLane[];
+  totals: SwarmRunTotals;
+  planLanes: TurnLane[];
+  scoutLanes: TurnLane[];
+  contractLanes: TurnLane[];
+} {
   const tasks = new Map<string, TurnLane>();
   const descriptions = new Map<string, string>();
   let seq = 0;
@@ -1126,7 +1138,50 @@ function foldEvents(
     })
     .filter((l) => (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0);
 
-  return { lanes, totals, planLanes };
+  // RESEARCH (scout-<lens>) and CONTRACTS (contract-<id>) now write per-node digests too, so those phases are no
+  // longer a black box. Surface them as lanes, mirroring planLanes — but KEEP a lane that has TOOL CALLS even
+  // before any narration (a scout/contract emits calls before it writes prose, so a text-only filter would hide a
+  // live node mid-lookup). Running until the phase's next stage begins.
+  const researchOver = events.some(
+    (e) =>
+      e['event'] === 'research_completed' ||
+      e['event'] === 'plan_loaded' ||
+      e['event'] === 'task_dispatched'
+  );
+  const contractsOver = events.some((e) => e['event'] === 'task_dispatched');
+  const laneFromDigest = (k: string, desc: string, over: boolean, i: number): TurnLane => {
+    const d = (activity[k] ?? {}) as Digest & { model?: string };
+    return {
+      taskId: k,
+      description: desc,
+      device: canonDevice(d.model ?? 'planner'),
+      model: d.model,
+      status: (over ? 'done' : 'running') as TurnStatus,
+      lastText: d.last_text,
+      recent: d.recent,
+      reasoning: d.reasoning,
+      fullReasoning: d.full_reasoning,
+      calls: d.calls,
+      toolCalls: d.tool_calls,
+      errors: d.errors,
+      seq: i,
+    };
+  };
+  const hasActivity = (l: TurnLane) =>
+    (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
+    (l.calls?.length ?? 0) > 0;
+  const scoutLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^scout-/.test(k))
+    .sort()
+    .map((k, i) => laneFromDigest(k, `Scouting · ${k.replace(/^scout-/, '')}`, researchOver, i))
+    .filter(hasActivity);
+  const contractLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^contract-/.test(k))
+    .sort()
+    .map((k, i) => laneFromDigest(k, `Contract · ${k.replace(/^contract-/, '')}`, contractsOver, i))
+    .filter(hasActivity);
+
+  return { lanes, totals, planLanes, scoutLanes, contractLanes };
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
@@ -1539,7 +1594,10 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           lastRunId.current = null;
           return;
         }
-        const { lanes, totals, planLanes } = foldEvents(data.events, data.activity);
+        const { lanes, totals, planLanes, scoutLanes, contractLanes } = foldEvents(
+          data.events,
+          data.activity
+        );
         const phaseTodo = buildPhaseTodo(data.events, data.activity, {
           clarifyPending: !!data.clarify?.pending,
         });
@@ -1573,6 +1631,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           runId: data.runId,
           lanes,
           planLanes,
+          scoutLanes,
+          contractLanes,
           phaseTodo,
           overview,
           totals,
