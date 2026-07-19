@@ -1,6 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Trash2, Check, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+  Check,
+  Folder,
+  FolderOpen,
+  ExternalLink,
+  MoreVertical,
+  Copy,
+  Pencil,
+  Loader2,
+  AlertCircle,
+  FileText,
+  Hammer,
+  MessageSquare,
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 import { useNavigationContext } from './NavigationContext';
@@ -13,9 +30,8 @@ import {
   type NavItem,
 } from '../../hooks/useNavigationItems';
 import { AppEvents } from '../../constants/events';
-import { InlineEditText } from '../common/InlineEditText';
-import { SessionIndicators } from '../SessionIndicators';
 import { acpRenameSession, acpDeleteSession, type SessionListItem } from '../../acp/sessions';
+import { sessionActivityAt } from '../../utils/dateUtils';
 import { cn } from '../../utils';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -59,6 +75,50 @@ const i18n = defineMessages({
     id: 'navigationPanel.deleteFailed',
     defaultMessage: 'Could not delete chat',
   },
+  rename: {
+    id: 'navigationPanel.rename',
+    defaultMessage: 'Rename',
+  },
+  revealInFinder: {
+    id: 'navigationPanel.revealInFinder',
+    defaultMessage: 'Reveal folder in Finder',
+  },
+  copyPath: {
+    id: 'navigationPanel.copyPath',
+    defaultMessage: 'Copy folder path',
+  },
+  openNewWindow: {
+    id: 'navigationPanel.openNewWindow',
+    defaultMessage: 'Open in new window',
+  },
+  pathCopied: {
+    id: 'navigationPanel.pathCopied',
+    defaultMessage: 'Folder path copied',
+  },
+  moreActions: {
+    id: 'navigationPanel.moreActions',
+    defaultMessage: 'More actions',
+  },
+  kindBuild: {
+    id: 'navigationPanel.kindBuild',
+    defaultMessage: 'build',
+  },
+  kindRecipe: {
+    id: 'navigationPanel.kindRecipe',
+    defaultMessage: 'recipe',
+  },
+  streaming: {
+    id: 'navigationPanel.streaming',
+    defaultMessage: 'Working now',
+  },
+  hasError: {
+    id: 'navigationPanel.hasError',
+    defaultMessage: 'Ended with an error',
+  },
+  messagesLabel: {
+    id: 'navigationPanel.messages',
+    defaultMessage: '{count} msg',
+  },
 });
 
 const navItemClass = (active: boolean) =>
@@ -90,6 +150,138 @@ const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
   );
 };
 
+// Status/kind palette — mirrors the swarm panel's STATUS_COLOR + FORMATION_RAMP so a session reads the same
+// language as its build panel. Solid, saturated hues; the leading tile is a filled sharp square (never a rail).
+const STATUS_COLOR = { running: '#f5a623', done: '#2ecc71', error: '#ff3b30' } as const;
+const LOADING_BLUE = '#2e8bff';
+const UNREAD_GREEN = '#2ecc71';
+// Kind hues for an idle row (no live status): recipe = violet, build = teal, plain chat = neutral slate.
+const KIND_COLOR = { recipe: '#6a5cff', build: '#17c4c4', chat: '#8a8a8a' } as const;
+
+type SessionKind = 'recipe' | 'build' | 'chat';
+
+/** How a row reads at a glance. `hasRecipe` is engine truth; the "build" bucket is a DISPLAY heuristic off the
+ *  app's own auto-name ("Build <brief> — a"), never a verdict — it only picks the glyph, not a status. */
+function sessionKind(session: SessionListItem): SessionKind {
+  if (session.hasRecipe) return 'recipe';
+  if (/^\s*build\b/i.test(session.name)) return 'build';
+  return 'chat';
+}
+
+/** Last path segment of a working dir — the built-app / workspace folder. The primary disambiguator for the
+ *  many identically-named build sessions ("Build logfold — a" ×15), which differ only by folder + time. */
+function folderName(dir: string | undefined): string {
+  if (!dir) return '';
+  const trimmed = dir.replace(/\/+$/, '');
+  const seg = trimmed.split('/').filter(Boolean).pop();
+  return seg ?? trimmed;
+}
+
+/** Bare model name without the provider prefix, capped so it never blows out the row. */
+function shortModel(modelId: string | undefined): string {
+  if (!modelId) return '';
+  const base = modelId.split('/').pop() ?? modelId;
+  return base.length > 20 ? `${base.slice(0, 19)}…` : base;
+}
+
+/** Compact "time since last activity" — the second disambiguator for duplicate titles. */
+function timeAgo(iso: string | undefined): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 45) return 'now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const w = Math.round(d / 7);
+  return w < 5 ? `${w}w ago` : `${Math.round(d / 30)}mo ago`;
+}
+
+// Custom right-click / kebab menu for a session row — solid, sharp-cornered, full-bordered, portaled at the
+// cursor. NEVER a native menu (matches the swarm panel's ActivityContextMenu). Delete has an in-menu confirm
+// step so a single click can't lose a chat.
+const SessionContextMenu: React.FC<{
+  x: number;
+  y: number;
+  hasFolder: boolean;
+  onReveal: () => void;
+  onCopyPath: () => void;
+  onOpenNewWindow: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}> = ({ x, y, hasFolder, onReveal, onCopyPath, onOpenNewWindow, onRename, onDelete, onClose }) => {
+  const intl = useIntl();
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const MENU_W = 220;
+  const left = Math.min(x, window.innerWidth - MENU_W - 8);
+  const top = Math.min(y, window.innerHeight - 240);
+  const itemCls =
+    'w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-background-secondary flex items-center gap-2 disabled:opacity-40 disabled:hover:bg-transparent';
+
+  return createPortal(
+    <>
+      <div
+        className="fixed inset-0 z-[190]"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
+      <div
+        className="fixed z-[200] bg-background-primary border border-border-primary shadow-lg py-1"
+        style={{ left, top, minWidth: MENU_W, borderRadius: 3 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className={itemCls} onClick={onOpenNewWindow}>
+          <ExternalLink size={13} /> {intl.formatMessage(i18n.openNewWindow)}
+        </button>
+        <button className={itemCls} onClick={onReveal} disabled={!hasFolder}>
+          <FolderOpen size={13} /> {intl.formatMessage(i18n.revealInFinder)}
+        </button>
+        <button className={itemCls} onClick={onCopyPath} disabled={!hasFolder}>
+          <Copy size={13} /> {intl.formatMessage(i18n.copyPath)}
+        </button>
+        <button className={itemCls} onClick={onRename}>
+          <Pencil size={13} /> {intl.formatMessage(i18n.rename)}
+        </button>
+        <div className="my-1 border-t border-border-secondary" />
+        {confirming ? (
+          <button
+            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 text-white"
+            style={{ backgroundColor: STATUS_COLOR.error }}
+            onClick={onDelete}
+          >
+            <Check size={13} strokeWidth={3} /> {intl.formatMessage(i18n.confirmDelete)}
+          </button>
+        ) : (
+          <button
+            className={`${itemCls} hover:!bg-transparent`}
+            style={{ color: STATUS_COLOR.error }}
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2 size={13} /> {intl.formatMessage(i18n.deleteChat)}
+          </button>
+        )}
+      </div>
+    </>,
+    document.body
+  );
+};
+
 interface SessionRowProps {
   session: SessionListItem;
   active: boolean;
@@ -98,24 +290,90 @@ interface SessionRowProps {
   onRenamed: () => void;
 }
 
+const KIND_ICON: Record<SessionKind, typeof Hammer> = {
+  recipe: FileText,
+  build: Hammer,
+  chat: MessageSquare,
+};
+
 const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClick, onRenamed }) => {
   const intl = useIntl();
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [editValue, setEditValue] = useState(session.name);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const isStreaming = status?.streamState === 'streaming';
+  const isLoading = status?.streamState === 'loading';
   const hasError = status?.streamState === 'error';
   const hasUnread = status?.hasUnreadActivity ?? false;
 
-  const doDelete = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirming(false);
+  const kind = sessionKind(session);
+  const folder = folderName(session.workingDir);
+  const model = shortModel(session.modelId);
+  const when = timeAgo(sessionActivityAt(session));
+  const KindIcon = KIND_ICON[kind];
+
+  // The leading tile: live status colour wins (running/error/loading), else the kind hue. Solid saturated fill,
+  // dark glyph — reads in both themes, exactly like the swarm FleetStrip node tiles.
+  const live = isStreaming || isLoading || hasError;
+  const tileColor = hasError
+    ? STATUS_COLOR.error
+    : isStreaming
+      ? STATUS_COLOR.running
+      : isLoading
+        ? LOADING_BLUE
+        : KIND_COLOR[kind];
+  const TileGlyph = live ? (hasError ? AlertCircle : Loader2) : KindIcon;
+  const tileTip = hasError
+    ? intl.formatMessage(i18n.hasError)
+    : isStreaming || isLoading
+      ? intl.formatMessage(i18n.streaming)
+      : kind === 'recipe'
+        ? intl.formatMessage(i18n.kindRecipe)
+        : kind === 'build'
+          ? intl.formatMessage(i18n.kindBuild)
+          : '';
+
+  // A row only grows a second (meta) line when it actually has meta — a brand-new empty chat stays one line.
+  const showMeta = !!folder || !!model || session.messageCount > 0;
+
+  const commitRename = useCallback(async () => {
+    const next = editValue.trim();
+    setIsEditing(false);
+    if (!next || next === session.name) return;
+    try {
+      await acpRenameSession(session.id, next);
+      window.dispatchEvent(
+        new CustomEvent(AppEvents.SESSION_RENAMED, {
+          detail: { sessionId: session.id, newName: next, userInitiated: true },
+        })
+      );
+      onRenamed();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : intl.formatMessage(i18n.deleteFailed));
+      setEditValue(session.name);
+    }
+  }, [editValue, session.id, session.name, onRenamed, intl]);
+
+  const startRename = useCallback(() => {
+    if (isStreaming) return;
+    setEditValue(session.name);
+    setIsEditing(true);
+    setMenu(null);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }, [isStreaming, session.name]);
+
+  const doDelete = useCallback(async () => {
+    setMenu(null);
     try {
       await acpDeleteSession(session.id);
-      // If we're deleting the session we're currently viewing, leave it first — otherwise the URL still
-      // carries ?resumeSessionId=<id> and the pair route re-adds the just-deleted session as a ghost.
+      // Leaving the active session first stops the pair route re-adding it as a ghost via ?resumeSessionId.
       if (active) navigate('/');
-      // The sidebar hook listens for SESSION_DELETED and drops the row + refetches.
       window.dispatchEvent(
         new CustomEvent(AppEvents.SESSION_DELETED, { detail: { sessionId: session.id } })
       );
@@ -123,76 +381,163 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
     } catch (err) {
       toast.error(err instanceof Error ? err.message : intl.formatMessage(i18n.deleteFailed));
     }
-  };
+  }, [session.id, active, navigate, intl]);
+
+  const openNewWindow = useCallback(() => {
+    setMenu(null);
+    window.electron.createChatWindow({
+      dir: session.workingDir,
+      resumeSessionId: session.id,
+      viewType: 'pair',
+    });
+  }, [session.workingDir, session.id]);
+
+  const revealFolder = useCallback(() => {
+    setMenu(null);
+    if (session.workingDir) void window.electron.revealInFinder(session.workingDir);
+  }, [session.workingDir]);
+
+  const copyPath = useCallback(() => {
+    setMenu(null);
+    if (!session.workingDir) return;
+    void navigator.clipboard.writeText(session.workingDir);
+    toast.success(intl.formatMessage(i18n.pathCopied));
+  }, [session.workingDir, intl]);
 
   return (
     <div
       onClick={() => !isEditing && onClick()}
-      onMouseLeave={() => setConfirming(false)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
       className={cn(
-        'group flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer text-sm',
-        'hover:bg-background-tertiary/60 transition-colors',
-        active && 'bg-background-tertiary'
+        'group relative flex items-start gap-2.5 px-2.5 py-2 cursor-pointer text-sm',
+        'border border-transparent transition-colors',
+        active
+          ? 'bg-background-tertiary border-border-primary'
+          : 'hover:bg-background-tertiary/50'
       )}
+      style={{ borderRadius: 4 }}
     >
-      <InlineEditText
-        value={session.name}
-        onSave={async (newName) => {
-          await acpRenameSession(session.id, newName);
-          window.dispatchEvent(
-            new CustomEvent(AppEvents.SESSION_RENAMED, {
-              detail: { sessionId: session.id, newName, userInitiated: true },
-            })
-          );
-          onRenamed();
-        }}
-        placeholder={intl.formatMessage(i18n.untitledSession)}
-        disabled={isStreaming}
-        singleClickEdit={false}
-        className="truncate text-text-primary flex-1 !px-0 !py-0 hover:bg-transparent"
-        editClassName="!text-sm"
-        onEditStart={() => setIsEditing(true)}
-        onEditEnd={() => setIsEditing(false)}
-      />
-      {confirming ? (
-        <span className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={doDelete}
-            aria-label={intl.formatMessage(i18n.confirmDelete)}
-            title={intl.formatMessage(i18n.confirmDelete)}
-            className="flex items-center justify-center h-5 w-5 text-white"
-            style={{ backgroundColor: '#ff3b30', borderRadius: 3 }}
-          >
-            <Check className="h-3 w-3" strokeWidth={3} />
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirming(false);
+      <span
+        title={tileTip}
+        aria-label={tileTip}
+        className="mt-0.5 inline-flex items-center justify-center shrink-0"
+        style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: tileColor }}
+      >
+        <TileGlyph
+          className={cn('h-3 w-3', (isStreaming || isLoading) && 'animate-spin')}
+          strokeWidth={2.5}
+          style={{ color: '#0b0b0b' }}
+        />
+      </span>
+
+      <div className="flex-1 min-w-0">
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editValue}
+            maxLength={200}
+            onChange={(e) => setEditValue(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void commitRename();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setEditValue(session.name);
+                setIsEditing(false);
+              }
             }}
-            aria-label={intl.formatMessage(i18n.cancel)}
-            className="flex items-center justify-center h-5 w-5 text-text-secondary hover:text-text-primary border border-border-primary"
+            className="w-full bg-background-primary text-text-primary text-sm px-1.5 py-0.5 border border-border-active outline-none"
             style={{ borderRadius: 3 }}
-          >
-            <X className="h-3 w-3" strokeWidth={3} />
-          </button>
-        </span>
-      ) : (
-        <>
-          <SessionIndicators isStreaming={isStreaming} hasUnread={hasUnread} hasError={hasError} />
-          <button
-            onClick={(e) => {
+          />
+        ) : (
+          <div
+            className="truncate font-medium text-text-primary"
+            title={session.name}
+            onDoubleClick={(e) => {
               e.stopPropagation();
-              setConfirming(true);
+              startRename();
             }}
-            aria-label={intl.formatMessage(i18n.deleteChat)}
-            title={intl.formatMessage(i18n.deleteChat)}
-            disabled={isStreaming}
-            className="shrink-0 opacity-0 group-hover:opacity-100 text-text-secondary hover:text-[#ff3b30] transition-opacity disabled:hidden"
           >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </>
+            {session.name || intl.formatMessage(i18n.untitledSession)}
+          </div>
+        )}
+
+        {showMeta && !isEditing && (
+          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-text-secondary min-w-0">
+            {folder ? (
+              <span
+                className="inline-flex items-center gap-1 min-w-0 max-w-[60%] px-1 py-px border border-border-secondary text-text-primary"
+                style={{ borderRadius: 3 }}
+                title={session.workingDir}
+              >
+                <Folder className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate font-mono">{folder}</span>
+              </span>
+            ) : null}
+            {model ? (
+              <span className="shrink-0 truncate font-mono" title={session.modelId}>
+                {model}
+              </span>
+            ) : null}
+            {session.messageCount > 0 ? (
+              <span
+                className="shrink-0 inline-flex items-center gap-0.5 tabular-nums"
+                title={intl.formatMessage(i18n.messagesLabel, { count: session.messageCount })}
+              >
+                <MessageSquare className="h-2.5 w-2.5" />
+                {session.messageCount}
+              </span>
+            ) : null}
+            {when ? <span className="shrink-0 ml-auto tabular-nums">{when}</span> : null}
+          </div>
+        )}
+      </div>
+
+      {hasUnread && !live ? (
+        <span
+          className="mt-1 shrink-0"
+          aria-label="Has new activity"
+          style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: UNREAD_GREEN }}
+        />
+      ) : null}
+
+      {!isEditing && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            setMenu({ x: r.right - 4, y: r.bottom + 2 });
+          }}
+          aria-label={intl.formatMessage(i18n.moreActions)}
+          title={intl.formatMessage(i18n.moreActions)}
+          className={cn(
+            'shrink-0 -mr-0.5 text-text-secondary hover:text-text-primary transition-opacity',
+            menu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          )}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </button>
+      )}
+
+      {menu && (
+        <SessionContextMenu
+          x={menu.x}
+          y={menu.y}
+          hasFolder={!!session.workingDir}
+          onReveal={revealFolder}
+          onCopyPath={copyPath}
+          onOpenNewWindow={openNewWindow}
+          onRename={startRename}
+          onDelete={doDelete}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );
@@ -302,7 +647,7 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
           <span>{intl.formatMessage(i18n.chats)}</span>
         </button>
         {isChatsExpanded && (
-          <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 mt-1">
+          <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 mt-1 flex flex-col gap-0.5">
             {recentSessions.length === 0 ? (
               <div className="px-3 py-2 text-xs text-text-secondary">
                 {intl.formatMessage(i18n.noChats)}
