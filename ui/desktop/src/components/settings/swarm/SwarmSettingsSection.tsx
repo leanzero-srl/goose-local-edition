@@ -553,10 +553,25 @@ export default function SwarmSettingsSection() {
               <SwarmSwitch checked={!!cfg.contract_retry} onChange={(v) => set({ contract_retry: v })} />
             </Row>
             <Row
+              label="Recover when a node drops the connection mid-generation"
+              hint="A fleet node can drop the network connection partway through generating a task's output. When that happens the error text gets folded into the task's result and goose would otherwise accept that truncated output as done — so a check that never actually finished is reported as passed (a false green). With this on, goose recognizes that dropped-connection signature and re-runs the task on a different machine so it produces a real result. It only ever fires on an actual mid-stream drop; clean runs are untouched. Default on."
+            >
+              <SwarmSwitch
+                checked={cfg.stream_decode_retry !== false}
+                onChange={(v) => set({ stream_decode_retry: v })}
+              />
+            </Row>
+            <Row
               label="Skip the re-plan ladder when the drafts already agree"
               hint="Goose drafts several plans in parallel and, if confidence is low, re-drafts the whole plan again and again — a slow, single-machine loop that rarely improves. With this on, goose measures how much structure the parallel drafts share; when they strongly agree it accepts that plan and skips the re-draft loop entirely. It still asks you a question when the spec itself is genuinely underspecified. Default off."
             >
               <SwarmSwitch checked={!!cfg.diverse_plan} onChange={(v) => set({ diverse_plan: v })} />
+            </Row>
+            <Row
+              label="Stop the lone lagging plan draft once the others agree"
+              hint="Goose drafts several plans in parallel, one per machine, then waits for all of them before scoring. If two of three finish quickly and the third keeps generating, the whole run blocks on that one slow node — up to its full timeout — for a draft the others already cover. With this on, once every draft but one has come back with a valid plan, goose gives the last one a short grace window and then stops it, proceeding on the drafts it already has. It only ever races the single last-place draft, so it never throws away draft variety while more than one is still working. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.straggler_stop} onChange={(v) => set({ straggler_stop: v })} />
             </Row>
             <Row
               label="Nudge a worker stuck thinking to just write"
