@@ -754,7 +754,9 @@ const FleetStrip: React.FC<{
                     className="mt-0.5 font-mono text-text-secondary break-words"
                     style={{
                       display: '-webkit-box',
-                      WebkitLineClamp: 2,
+                      // Developer mode gives the live generation room to breathe (fill the lines) instead of a
+                      // 2-line sliver; compact/verbose stay tight.
+                      WebkitLineClamp: dev ? 5 : 2,
                       WebkitBoxOrient: 'vertical',
                       overflow: 'hidden',
                     }}

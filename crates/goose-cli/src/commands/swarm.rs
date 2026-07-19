@@ -8279,7 +8279,14 @@ impl GooseAgentDispatcher {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::Thinking(t) => {
                                 thinking_chars += t.thinking.chars().count();
-                                last_thinking = t.thinking.clone();
+                                // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
+                                // single token (" the", "ents"), so assigning it made the panel show one word at
+                                // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
+                                // a readable run of the live reasoning instead of the last fragment.
+                                last_thinking.push_str(&t.thinking);
+                                if last_thinking.chars().count() > 1200 {
+                                    last_thinking = tail_chars(&last_thinking, 800);
+                                }
                             }
                             MessageContent::ToolRequest(req) => match req.tool_call.as_ref() {
                                 Ok(tc) => {
