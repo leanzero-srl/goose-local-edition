@@ -89,15 +89,25 @@ impl Default for MemoryServer {
 impl MemoryServer {
     pub fn new() -> Self {
         let instructions = formatdoc! {r#"
-             This extension stores and retrieves categorized information with tagging support.
+             This extension stores and retrieves categorized information with tagging support — it is YOUR
+             long-term memory. Write to it PROACTIVELY, on your own initiative and WITHOUT asking permission
+             first, whenever you learn something worth remembering across sessions.
 
              Storage:
              - Local: .goose/memory/ (project-specific)
              - Global: ~/.config/goose/memory/ (user-wide)
 
-             Save proactively when users share preferences, project configurations, workflow patterns,
-             or recurring commands. Always confirm with the user before saving. Suggest relevant
-             categories and tags, and clarify storage scope (local vs global).
+             CALL remember_memory (do NOT ask the user first) the moment you learn any of these:
+             - a durable USER PREFERENCE or taste (how they like things done; tools, styles, or conventions
+               they favor or reject)
+             - a CORRECTION the user makes ("no, actually…", "don't do X", "always Y") — capture the rule
+               and the reason behind it
+             - a stable PROJECT or ENVIRONMENT fact (paths, hosts, where credentials live, build/run/test
+               commands, naming conventions)
+             - a recurring COMMAND or workflow you had to figure out and would want again next time
+             Choose a fitting category + tags, and the right scope (local for project-specific, global for
+             user-wide). Do NOT store secrets/tokens verbatim, transient chatter, or anything already obvious
+             from the code or repo. Retrieve first when relevant so you build on what you already know.
 
              Use category "*" with retrieve_memories or remove_memory_category to access all entries.
             "#};
@@ -334,7 +344,11 @@ impl MemoryServer {
     /// Stores a memory with optional tags in a specified category
     #[tool(
         name = "remember_memory",
-        description = "Stores a memory with optional tags in a specified category"
+        description = "Save something worth remembering across sessions to your long-term memory. Call this \
+                       PROACTIVELY (without asking first) the moment you learn a durable user preference, a \
+                       correction the user made, a stable project/environment fact (paths, hosts, build/run \
+                       commands, conventions), or a recurring command/workflow. Pick a category + tags and \
+                       scope (local vs global). Do not store secrets verbatim or transient chatter."
     )]
     pub async fn remember_memory(
         &self,
