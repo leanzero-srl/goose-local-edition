@@ -674,6 +674,7 @@ const FleetStrip: React.FC<{
   live: boolean;
   dev: boolean;
 }> = ({ lanes, planLanes, scoutLanes, contractLanes, detailLanes, deviceOrder, live, dev }) => {
+  const [expanded, setExpanded] = useState<string | null>(null);
   if (deviceOrder.length === 0) return null;
   // Worker lanes (EXECUTE) + plan-draft lanes (PLAN) always count a node as busy. In DEVELOPER mode also fold the
   // research (scout) and contracts lanes, so those phases show live per-node activity instead of every node idle.
@@ -698,79 +699,114 @@ const FleetStrip: React.FC<{
         // The ephemeral generation — the last chunk of text/reasoning the model has streamed on this node,
         // updated every turn from the activity digest. This is the "what is it generating right now" that was
         // only ever visible by expanding a lane; surface it inline per node.
+        // Prefer SUBSTANCE over the last raw token. These coder models stream their reasoning in the <think>
+        // channel while the text channel emits tiny fragments (".", " with", "(group"); showing last_text first
+        // made the line flicker one word at a time. So: substantive narration (reasoning) → the readable
+        // thinking run → only then a text fragment → processing marker.
+        const think = lane?.lastThinking?.trim();
         const liveGen =
-          lane?.lastText?.trim() ||
           lane?.reasoning?.trim() ||
+          (think && (lane?.thinkingChars ?? 0) > 0 ? `💭 ${think}` : '') ||
+          lane?.lastText?.trim() ||
           (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '') ||
-          // These coder models draft in the <think> channel, so text stays empty while thinking streams —
-          // show the live thinking (with a marker) so a generating node reads as WORKING, not blank.
-          (lane?.lastThinking?.trim() ? `💭 ${lane.lastThinking.trim()}` : '') ||
-          // Dispatched but no token yet: LM Studio is processing the prompt (can be many seconds on a big
-          // context). Say so, rather than leaving the working node blank.
           (lane?.phase === 'processing' ? 'processing the prompt…' : '');
+        // The full generation for the expandable detail: the whole narration + the recent thinking run.
+        const fullGen = [
+          lane?.fullReasoning?.trim(),
+          think && (lane?.thinkingChars ?? 0) > 0 ? `💭 ${think}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        const isExpanded = expanded === device;
+        const canExpand = !!lane && fullGen.length > 0;
         return (
-          <div key={device} className="flex items-start gap-2 text-xs">
-            <span
-              className="inline-flex items-center justify-center font-mono font-semibold shrink-0 mt-[1px]"
-              style={{ width: 16, height: 16, borderRadius: 3, background: hue, color: '#0b0b0b', fontSize: 10 }}
+          <div key={device}>
+            <div
+              className="flex items-start gap-2 text-xs"
+              style={{ cursor: canExpand ? 'pointer' : 'default' }}
+              onClick={canExpand ? () => setExpanded(isExpanded ? null : device) : undefined}
             >
-              {letter}
-            </span>
-            <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
-              {shortName(device)}
-            </span>
-            {lane ? (
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <Loader2
-                    size={12}
-                    className="animate-spin shrink-0"
-                    style={{ color: STATUS_COLOR.running }}
-                  />
-                  <span className="text-text-primary truncate">{lane.description || lane.taskId}</span>
-                </div>
-                {dev && lane.calls && lane.calls.length > 0
-                  ? (() => {
-                      // What this node is DOING right now — its latest tool/MCP call (running… when in-flight).
-                      const last = lane.calls![lane.calls!.length - 1];
-                      const cm = classifyCall(last);
-                      return (
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
-                          <span className="text-text-secondary truncate">
-                            {cm.action}
-                            {last.summary ? (
-                              <span className="font-mono opacity-80"> · {last.summary}</span>
-                            ) : null}
-                          </span>
-                          {lane.toolCalls ? (
-                            <span className="ml-auto font-mono text-text-secondary shrink-0">
-                              ⚙{lane.toolCalls}
-                            </span>
-                          ) : null}
-                        </div>
-                      );
-                    })()
-                  : null}
-                {liveGen ? (
-                  <div
-                    className="mt-0.5 font-mono text-text-secondary break-words"
-                    style={{
-                      display: '-webkit-box',
-                      // Developer mode gives the live generation room to breathe (fill the lines) instead of a
-                      // 2-line sliver; compact/verbose stay tight.
-                      WebkitLineClamp: dev ? 5 : 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {liveGen}
+              <span
+                className="inline-flex items-center justify-center font-mono font-semibold shrink-0 mt-[1px]"
+                style={{ width: 16, height: 16, borderRadius: 3, background: hue, color: '#0b0b0b', fontSize: 10 }}
+              >
+                {letter}
+              </span>
+              <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
+                {shortName(device)}
+              </span>
+              {lane ? (
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <Loader2
+                      size={12}
+                      className="animate-spin shrink-0"
+                      style={{ color: STATUS_COLOR.running }}
+                    />
+                    <span className="text-text-primary truncate">
+                      {lane.description || lane.taskId}
+                    </span>
+                    {canExpand ? (
+                      <ChevronRight
+                        size={12}
+                        className="shrink-0 text-text-secondary transition-transform"
+                        style={{ transform: isExpanded ? 'rotate(90deg)' : 'none' }}
+                      />
+                    ) : null}
                   </div>
-                ) : null}
+                  {dev && lane.calls && lane.calls.length > 0
+                    ? (() => {
+                        // What this node is DOING right now — its latest tool/MCP call (running… when in-flight).
+                        const last = lane.calls![lane.calls!.length - 1];
+                        const cm = classifyCall(last);
+                        return (
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
+                            <span className="text-text-secondary truncate">
+                              {cm.action}
+                              {last.summary ? (
+                                <span className="font-mono opacity-80"> · {last.summary}</span>
+                              ) : null}
+                            </span>
+                            {lane.toolCalls ? (
+                              <span className="ml-auto font-mono text-text-secondary shrink-0">
+                                ⚙{lane.toolCalls}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })()
+                    : null}
+                  {liveGen && !isExpanded ? (
+                    <div
+                      className="mt-0.5 font-mono text-text-secondary break-words"
+                      style={{
+                        display: '-webkit-box',
+                        // Developer mode gives the live generation room to breathe (fill the lines) instead of a
+                        // 2-line sliver; compact/verbose stay tight. Click the node to expand the full stream.
+                        WebkitLineClamp: dev ? 5 : 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {liveGen}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
+              )}
+            </div>
+            {isExpanded && canExpand ? (
+              // The FULL live generation for this node — its whole narration + the recent reasoning run —
+              // scrollable so a long stream never blows out the panel. Click the node again to collapse.
+              <div
+                className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
+                style={{ borderRadius: 3, maxHeight: 300, overflowY: 'auto' }}
+              >
+                {fullGen}
               </div>
-            ) : (
-              <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
-            )}
+            ) : null}
           </div>
         );
       })}
