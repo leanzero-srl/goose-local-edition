@@ -562,6 +562,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_DEGRADE_ON_STALL env overrides.
     #[serde(default)]
     pub degrade_on_stall: bool,
+    /// FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into per-concern child
+    /// tasks at planning time, so each gets its own small contract stub instead of one whole-package stub that
+    /// times out and cascades an API divergence. OFF by default = byte-identical (the split transform is not run).
+    /// GOOSE_SWARM_SPLIT_FAT env overrides; GOOSE_SWARM_SPLIT_FAT_FILES sets the file-count threshold (default 4).
+    #[serde(default)]
+    pub split_fat: bool,
     /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
     /// modules a UNANIMOUS + dependency-downward-closed majority of the round-1 drafts agreed on (carried
     /// VERBATIM from one source draft), and re-draft ONLY the residual dirty modules against that frozen
@@ -788,6 +794,7 @@ impl Default for SwarmConfig {
             spiral_thinking_chars: 0,
             contract_retry: false,
             degrade_on_stall: false,
+            split_fat: false,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -2175,6 +2182,140 @@ fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) 
 /// Only ever called when the flag is ON; the default path never invokes it, so OFF is byte-identical. No-op
 /// (returns 0) when there is no sink, no fannable module, or the split was already applied. Returns the number
 /// of per-module verify tasks created. Pure — unit-tested without a model.
+/// GOOSE_SWARM_SPLIT_FAT (#131, Mihai's finer-slicing): deterministically split a FAT module — a `hard` task owning
+/// MANY source files (the whole package as ONE task) — into one child per cohesive concern (canonical role, with a
+/// file and its `_test` kept together), each getting its OWN small contract stub. A fat task's single whole-package
+/// stub TIMED OUT on the 262k fleet (measured mustsolve-test5/6: `core-miner` produced NO stub → the package's files
+/// diverged on type names → the app did not compile). Runs in the plan-transform pipeline BEFORE contracts +
+/// fan-verify, so each child auto-gets its own detailer spec, contract stub, and `verify::` task — no extra plumbing.
+/// Children carry the parent's EXTERNAL deps and rely on each other's FROZEN CONTRACTS (not files), exactly like
+/// relax_contracted_deps. Only splits a hard module with >= `min_files` source files that fall into >= 2 roles.
+/// Returns the number of parent modules split; OFF (not called) => byte-identical.
+fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: usize) -> usize {
+    fn id_of(s: &serde_json::Value) -> String {
+        s.get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+    fn base_of(f: &str) -> &str {
+        f.rsplit('/').next().unwrap_or(f)
+    }
+    fn files_of(s: &serde_json::Value) -> Vec<String> {
+        s.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    // Group key: canonical role with any `_test` suffix / `test_` prefix stripped, so an impl file and its test
+    // land in the SAME child (a worker owns a concern end-to-end).
+    fn split_key(f: &str) -> String {
+        let r = canonical_role(f);
+        let r = r.strip_suffix("_test").unwrap_or(&r);
+        let r = r.strip_prefix("test_").unwrap_or(r);
+        r.to_string()
+    }
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    struct Fat {
+        id: String,
+        difficulty: String,
+        deps: Vec<serde_json::Value>,
+        groups: Vec<(String, Vec<String>)>,
+    }
+    let mut fats: Vec<Fat> = Vec::new();
+    for s in arr {
+        let id = id_of(s);
+        if id == "integrate-verify" || id.starts_with("verify::") {
+            continue;
+        }
+        if s.get("difficulty").and_then(|d| d.as_str()) != Some("hard") {
+            continue;
+        }
+        let files = files_of(s);
+        let source: Vec<&String> = files
+            .iter()
+            .filter(|f| !lang.is_test_file(base_of(f)))
+            .collect();
+        if source.len() < min_files {
+            continue;
+        }
+        let mut map: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for f in &files {
+            map.entry(split_key(f)).or_default().push(f.clone());
+        }
+        if map.len() < 2 {
+            continue; // one cohesive concern — nothing to gain by splitting
+        }
+        let deps = s
+            .get("depends_on")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        fats.push(Fat {
+            id,
+            difficulty: "hard".to_string(),
+            deps,
+            groups: map.into_iter().collect(),
+        });
+    }
+    if fats.is_empty() {
+        return 0;
+    }
+    let split_ids: std::collections::HashSet<String> = fats.iter().map(|f| f.id.clone()).collect();
+    let mut parent_children: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut new_children: Vec<serde_json::Value> = Vec::new();
+    for fat in &fats {
+        let mut kids = Vec::new();
+        for (role, files) in &fat.groups {
+            let cid = format!("{}-{}", fat.id, role);
+            kids.push(cid.clone());
+            new_children.push(serde_json::json!({
+                "id": cid,
+                "description": format!(
+                    "(split of {}) the `{}` concern — own ONLY: {}. Use the FROZEN CONTRACTS of sibling concerns \
+                     for their types/functions; do NOT redefine them. Keep the package's exported names consistent \
+                     with those contracts.",
+                    fat.id, role, files.join(", ")
+                ),
+                "depends_on": fat.deps.clone(),
+                "files": files.clone(),
+                "difficulty": fat.difficulty,
+            }));
+        }
+        parent_children.insert(fat.id.clone(), kids);
+    }
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        arr.retain(|s| !split_ids.contains(&id_of(s)));
+        for s in arr.iter_mut() {
+            if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
+                let mut new_deps: Vec<serde_json::Value> = Vec::new();
+                for d in deps {
+                    match d.as_str() {
+                        Some(ds) if parent_children.contains_key(ds) => {
+                            for c in &parent_children[ds] {
+                                new_deps.push(serde_json::json!(c));
+                            }
+                        }
+                        _ => new_deps.push(d.clone()),
+                    }
+                }
+                s["depends_on"] = serde_json::json!(new_deps);
+            }
+        }
+        arr.extend(new_children);
+    }
+    fats.len()
+}
+
 fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     fn id_of(s: &serde_json::Value) -> String {
         s.get("id")
@@ -2465,6 +2606,81 @@ mod tests {
         let before = no_sink.clone();
         assert_eq!(fan_verify_split(&mut no_sink, TargetLang::Python), 0);
         assert_eq!(no_sink, before, "no sink -> plan left byte-identical");
+    }
+
+    #[test]
+    fn split_fat_module_partitions_by_concern() {
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core-miner","depends_on":["types"],"files":["internal/miner/masker.go","internal/miner/tree.go","internal/miner/miner.go","internal/miner/miner_test.go","internal/miner/diff.go"],"difficulty":"hard"},
+                {"id":"types","depends_on":[],"files":["internal/miner/types.go"],"difficulty":"easy"},
+                {"id":"integrate-verify","depends_on":["core-miner","types"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = split_fat_modules(&mut plan, TargetLang::Go, 4);
+        assert_eq!(n, 1, "one fat module split");
+        assert!(fv_task(&plan, "core-miner").is_none(), "fat parent removed");
+        for cid in [
+            "core-miner-masker",
+            "core-miner-tree",
+            "core-miner-miner",
+            "core-miner-diff",
+        ] {
+            assert!(fv_task(&plan, cid).is_some(), "{cid} child created");
+            assert_eq!(
+                fv_deps(&plan, cid),
+                "types",
+                "{cid} carries the parent's external dep"
+            );
+        }
+        // impl + its test land in the SAME child (both map to role 'miner').
+        let miner_files: Vec<String> = fv_task(&plan, "core-miner-miner").unwrap()["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            miner_files.iter().any(|f| f.ends_with("miner.go"))
+                && miner_files.iter().any(|f| f.ends_with("miner_test.go")),
+            "impl + its test stay together"
+        );
+        // Every dependent of the parent re-points onto ALL children; the non-parent dep survives.
+        let iv = fv_deps(&plan, "integrate-verify");
+        for cid in [
+            "core-miner-masker",
+            "core-miner-tree",
+            "core-miner-miner",
+            "core-miner-diff",
+        ] {
+            assert!(iv.contains(cid), "integrate-verify depends on {cid}");
+        }
+        assert!(iv.contains("types"), "non-parent dep preserved");
+        assert!(
+            iv.split(',').all(|d| d != "core-miner"),
+            "the fat parent id is no longer a dependency"
+        );
+    }
+
+    #[test]
+    fn split_fat_noops_below_threshold_and_when_not_hard() {
+        // Below the file threshold -> untouched, byte-identical.
+        let mut small: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[{"id":"m","depends_on":[],"files":["a.go","b.go"],"difficulty":"hard"},{"id":"integrate-verify","depends_on":["m"],"files":[]}]}"#,
+        )
+        .unwrap();
+        let before = small.clone();
+        assert_eq!(split_fat_modules(&mut small, TargetLang::Go, 4), 0);
+        assert_eq!(small, before, "below threshold -> byte-identical");
+        // Not `hard` -> untouched even when it owns many files.
+        let mut easy: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[{"id":"m","depends_on":[],"files":["a.go","b.go","c.go","d.go","e.go"],"difficulty":"medium"},{"id":"integrate-verify","depends_on":["m"],"files":[]}]}"#,
+        )
+        .unwrap();
+        let before2 = easy.clone();
+        assert_eq!(split_fat_modules(&mut easy, TargetLang::Go, 4), 0);
+        assert_eq!(easy, before2, "not hard -> byte-identical");
     }
 
     // ---- QUEUED USER NOTES ------------------------------------------------------------------
@@ -9225,6 +9441,24 @@ impl GooseAgentDispatcher {
             eprintln!(
                 "  · integrate-verify no longer waits on the test subtask(s) ({stripped} dep(s) stripped) — a failing test will not hide whether the app actually runs"
             );
+        }
+        // GOOSE_SWARM_SPLIT_FAT (#131, finer slicing): split a FAT `hard` module (the whole package as one task)
+        // into per-concern children BEFORE contracts/fan-verify, so each child gets its own SMALL contract stub
+        // (a fat whole-package stub timed out → the package diverged → no compile). Runs first so children flow
+        // through every transform below. OFF => not called => byte-identical.
+        if swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat) {
+            let min_files = std::env::var("GOOSE_SWARM_SPLIT_FAT_FILES")
+                .ok()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .filter(|&n| n >= 2)
+                .unwrap_or(4);
+            let split = split_fat_modules(&mut v, lang, min_files);
+            if split > 0 {
+                eprintln!(
+                    "  \u{b7} split-fat: split {split} fat module(s) into per-concern child tasks — each gets its \
+                     OWN small contract stub (the whole-package stub was timing out and cascading a divergence)"
+                );
+            }
         }
         // GOOSE_SWARM_PARALLEL_TESTS backstop: strip a stray cli/entry (or integrate-verify) edge the weak
         // model may have left on a per-leaf-module test, so those tests run in parallel with the cli build.
@@ -16817,6 +17051,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
+            "split_fat": swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat),
             // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
             // the campaign's measure.py read them as OFF while they demonstrably drove runs (fan_verify split
             // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
