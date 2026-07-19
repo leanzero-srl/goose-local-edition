@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
@@ -664,6 +664,86 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
 // (and any starvation) legible at a glance. Derived from the run's OWN device set (no fleet-endpoint join, so
 // no host-id vs model-id naming mismatch). deviceOrder is the same sorted set the lanes color by, so a node's
 // letter/hue is identical here and in its lane rows.
+// Smoothly REVEAL streamed text. The activity digest is polled in discrete ~500ms chunks, so showing each
+// snapshot raw makes the live generation jump a paragraph at a time — choppy, "slowly polled". Instead we type
+// toward the latest snapshot at a steady rate, so the text flows between polls. When the snapshot APPENDS (the
+// common case — the model still generating), we keep typing the new chars; when it changes shape (a new tool
+// call, or the tail window slid past what we've shown), we resync to the longest shared prefix and continue.
+function useSmoothText(target: string, charsPerSec = 110): string {
+  const [shown, setShown] = useState('');
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const shownRef = useRef('');
+  useEffect(() => {
+    let raf = 0;
+    let last = Date.now();
+    const tick = () => {
+      const now = Date.now();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const tgt = targetRef.current || '';
+      let cur = shownRef.current;
+      if (!tgt.startsWith(cur)) {
+        let i = 0;
+        const n = Math.min(cur.length, tgt.length);
+        while (i < n && cur[i] === tgt[i]) i++;
+        cur = tgt.slice(0, i);
+      }
+      if (cur.length < tgt.length) {
+        const step = Math.max(1, Math.round(charsPerSec * dt));
+        cur = tgt.slice(0, Math.min(tgt.length, cur.length + step));
+      }
+      if (cur !== shownRef.current) {
+        shownRef.current = cur;
+        setShown(cur);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [charsPerSec]);
+  return shown;
+}
+
+// The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll.
+const NodeLiveText: React.FC<{ text: string; clampLines: number }> = ({ text, clampLines }) => {
+  const shown = useSmoothText(text);
+  return (
+    <div
+      className="mt-0.5 font-mono text-text-secondary break-words"
+      style={{
+        display: '-webkit-box',
+        WebkitLineClamp: clampLines,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+      }}
+    >
+      {shown || text}
+    </div>
+  );
+};
+
+// The expanded full-generation box — auto-scrolls to the newest text as the stream grows (like a terminal),
+// but only when the user is already near the bottom, so scrolling up to read stays put.
+const NodeExpandBox: React.FC<{ text: string }> = ({ text }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  return (
+    <div
+      ref={ref}
+      className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
+      style={{ borderRadius: 3, maxHeight: 300, overflowY: 'auto' }}
+    >
+      {text}
+    </div>
+  );
+};
+
 const FleetStrip: React.FC<{
   lanes: TurnLane[];
   planLanes: TurnLane[];
@@ -778,35 +858,16 @@ const FleetStrip: React.FC<{
                       })()
                     : null}
                   {liveGen && !isExpanded ? (
-                    <div
-                      className="mt-0.5 font-mono text-text-secondary break-words"
-                      style={{
-                        display: '-webkit-box',
-                        // Developer mode gives the live generation room to breathe (fill the lines) instead of a
-                        // 2-line sliver; compact/verbose stay tight. Click the node to expand the full stream.
-                        WebkitLineClamp: dev ? 5 : 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {liveGen}
-                    </div>
+                    // Typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5 lines to
+                    // fill the space, compact/verbose = 2. Click the node to expand the full stream.
+                    <NodeLiveText text={liveGen} clampLines={dev ? 5 : 2} />
                   ) : null}
                 </div>
               ) : (
                 <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
               )}
             </div>
-            {isExpanded && canExpand ? (
-              // The FULL live generation for this node — its whole narration + the recent reasoning run —
-              // scrollable so a long stream never blows out the panel. Click the node again to collapse.
-              <div
-                className="ml-6 mt-1 mb-1 p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words border border-border-primary bg-background-secondary"
-                style={{ borderRadius: 3, maxHeight: 300, overflowY: 'auto' }}
-              >
-                {fullGen}
-              </div>
-            ) : null}
+            {isExpanded && canExpand ? <NodeExpandBox text={fullGen} /> : null}
           </div>
         );
       })}
