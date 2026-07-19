@@ -169,6 +169,10 @@ export interface TurnLane {
   fullReasoning?: string;
   calls?: SwarmCall[];
   toolCalls?: number;
+  /** Reasoning-channel activity — a node drafting in the <think> channel has thinking but empty text. Used so
+   *  a heavily-generating node counts as WORKING and its thinking previews inline instead of reading "idle". */
+  thinkingChars?: number;
+  lastThinking?: string;
   errors?: number;
   elapsedMs?: number;
   /** How many attempts the task took (from task_completed) — surfaced in the status tooltip. */
@@ -352,6 +356,7 @@ export interface SwarmRunState {
    *  phases show live per-node activity instead of a spinner. */
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
+  detailLanes: TurnLane[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
   phaseTodo: PhaseTodo[];
   /** End-of-run overview (what built / how to run / next) — null until the run cleanly finishes at DONE. */
@@ -427,6 +432,7 @@ const EMPTY: SwarmRunState = {
   planLanes: [],
   scoutLanes: [],
   contractLanes: [],
+  detailLanes: [],
   phaseTodo: [],
   overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
@@ -987,6 +993,11 @@ type Digest = {
   reasoning?: string;
   full_reasoning?: string;
   calls?: SwarmCall[];
+  /** Reasoning-channel activity: these local coder models do their PLAN drafting in the <think> channel, so
+   *  reasoning/last_text stay empty while thinking_chars climbs. A lane with thinking is WORKING — without
+   *  these fields a heavily-generating node reads as "idle — no task". */
+  thinking_chars?: number;
+  last_thinking?: string;
 };
 
 function foldEvents(
@@ -998,6 +1009,7 @@ function foldEvents(
   planLanes: TurnLane[];
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
+  detailLanes: TurnLane[];
 } {
   const tasks = new Map<string, TurnLane>();
   const descriptions = new Map<string, string>();
@@ -1132,11 +1144,20 @@ function foldEvents(
         fullReasoning: d.full_reasoning,
         calls: d.calls,
         toolCalls: d.tool_calls,
+        thinkingChars: d.thinking_chars,
+        lastThinking: d.last_thinking,
         errors: d.errors,
         seq: i,
       };
     })
-    .filter((l) => (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0);
+    // Keep a lane the moment it's WORKING — text OR reasoning-channel thinking. These coder models draft the
+    // plan in the <think> channel, so reasoning/last_text stay empty while thinking_chars climbs; the old
+    // text-only filter dropped a heavily-generating node, so the Fleet strip read "idle" during drafting.
+    .filter(
+      (l) =>
+        (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
+        (l.thinkingChars ?? 0) > 0
+    );
 
   // RESEARCH (scout-<lens>) and CONTRACTS (contract-<id>) now write per-node digests too, so those phases are no
   // longer a black box. Surface them as lanes, mirroring planLanes — but KEEP a lane that has TOOL CALLS even
@@ -1163,13 +1184,16 @@ function foldEvents(
       fullReasoning: d.full_reasoning,
       calls: d.calls,
       toolCalls: d.tool_calls,
+      thinkingChars: d.thinking_chars,
+      lastThinking: d.last_thinking,
       errors: d.errors,
       seq: i,
     };
   };
   const hasActivity = (l: TurnLane) =>
     (l.fullReasoning || l.reasoning || l.lastText || '').trim().length > 0 ||
-    (l.calls?.length ?? 0) > 0;
+    (l.calls?.length ?? 0) > 0 ||
+    (l.thinkingChars ?? 0) > 0;
   const scoutLanes: TurnLane[] = Object.keys(activity)
     .filter((k) => /^scout-/.test(k))
     .sort()
@@ -1180,8 +1204,15 @@ function foldEvents(
     .sort()
     .map((k, i) => laneFromDigest(k, `Contract · ${k.replace(/^contract-/, '')}`, contractsOver, i))
     .filter(hasActivity);
+  // DETAILER (detail-<id>): the "Finalizing the plan" phase fleshes each module skeleton out on the fleet and
+  // writes a per-node digest, so without these lanes the Fleet strip reads "idle" during finalizing too.
+  const detailLanes: TurnLane[] = Object.keys(activity)
+    .filter((k) => /^detail-/.test(k))
+    .sort()
+    .map((k, i) => laneFromDigest(k, `Detailing · ${k.replace(/^detail-/, '')}`, planned, i))
+    .filter(hasActivity);
 
-  return { lanes, totals, planLanes, scoutLanes, contractLanes };
+  return { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes };
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
@@ -1594,7 +1625,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           lastRunId.current = null;
           return;
         }
-        const { lanes, totals, planLanes, scoutLanes, contractLanes } = foldEvents(
+        const { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes } = foldEvents(
           data.events,
           data.activity
         );
@@ -1633,6 +1664,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 2000): Swar
           planLanes,
           scoutLanes,
           contractLanes,
+          detailLanes,
           phaseTodo,
           overview,
           totals,
