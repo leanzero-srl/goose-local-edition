@@ -473,7 +473,7 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-text-secondary min-w-0">
             {folder ? (
               <span
-                className="inline-flex items-center gap-1 min-w-0 max-w-[60%] px-1 py-px border border-border-secondary text-text-primary"
+                className="inline-flex items-center gap-1 min-w-0 max-w-[60%] px-1 py-px border border-border-primary bg-background-muted text-text-primary"
                 style={{ borderRadius: 3 }}
                 title={session.workingDir}
               >
