@@ -136,6 +136,11 @@ export interface SwarmConfig {
    *  the detail for a subtask whose full detailer input is byte-identical to the previous round; a subtask
    *  changed by a new answer/research is correctly re-detailed. Default OFF. */
   detail_memo?: boolean;
+  /** #136: stop a worker that repeats the SAME command returning the SAME output many times in a row. Measured
+   *  live: a worker ran the identical `cat` 31 times and no existing guard saw it (every successful tool result
+   *  resets the progress watchdog). A repeat that returns DIFFERENT output is progress and never counts, and any
+   *  different command in between resets it, so an edit-then-retest cycle can never trip it. Default OFF. */
+  repeat_break?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -299,6 +304,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'sink_lean_prefill',
   'backbone_skip_confident',
   'detail_memo',
+  'repeat_break',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the

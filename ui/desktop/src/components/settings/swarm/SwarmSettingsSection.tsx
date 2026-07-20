@@ -601,6 +601,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Stop a worker that keeps repeating the same command"
+              hint="A worker can get stuck running one command over and over — measured live, one ran the identical `cat` on the same file 31 times and burned its whole time budget on a single machine. Nothing caught it: every successful command counts as progress, so the stall detector kept resetting. With this on, goose stops a worker that repeats the same command with the same output several times in a row over at least a minute, and treats it exactly like any other stalled task (the work it already wrote to disk is still kept). A repeat that returns different output is real progress and never counts, and any different command in between resets it — so an edit-then-retest cycle is never affected. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.repeat_break}
+                onChange={(v) => set({ repeat_break: v })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >

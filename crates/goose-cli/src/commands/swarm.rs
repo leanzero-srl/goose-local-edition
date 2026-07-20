@@ -303,6 +303,19 @@ pub struct SwarmConfig {
     /// None => OFF (byte-identical). env GOOSE_SWARM_DETAIL_MEMO overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail_memo: Option<bool>,
+    /// #136 REPEAT BREAKER: stop a WORKER that issues the SAME tool call returning the SAME result
+    /// REPEAT_BREAK_N times CONSECUTIVELY over at least REPEAT_BREAK_MIN_SECS. MEASURED live
+    /// (val-lean-02/verify::cli-module): 31 identical `cat deals/__main__.py` calls, errors:0, malformed:0 —
+    /// invisible to EVERY existing guard, because message_content_is_productive() counts any ToolResponse as
+    /// productive (so each repeat reset the progress watchdog), the idle watchdog is reset by every token, and
+    /// the deterministic judge is unreachable for `verify::` tasks (judge.rs requires owned files; fan-verify
+    /// plants `files: []`). It only ended when the provider dropped the HTTP body. A repeat with a DIFFERENT
+    /// result is progress and never counts; any intervening different call resets the run, so an edit->retest
+    /// cycle can never trip it. On trip the attempt returns the EXISTING "no productive progress" stall error,
+    /// so downstream handling (salvage / degrade_on_stall / bounded retry) is completely unchanged — this adds
+    /// no new way for a task to fail. None => OFF (byte-identical). env GOOSE_SWARM_REPEAT_BREAK overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_break: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -829,6 +842,7 @@ impl Default for SwarmConfig {
             sink_lean_prefill: None,
             backbone_skip_confident: None,
             detail_memo: None,
+            repeat_break: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2146,6 +2160,51 @@ fn detail_memo_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_DETAIL_MEMO").ok(), cfg)
 }
 
+/// #136 repeat-breaker gate: env GOOSE_SWARM_REPEAT_BREAK wins, else config, else default OFF.
+fn repeat_break_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
+}
+
+/// #136: consecutive identical tool calls that trip the repeat breaker. MEASURED across 268 shell-bearing
+/// tasks in 44 real runs: the longest legitimate consecutive identical run was 4 (`swift build` re-runs); the
+/// one pathology hit 31. 6 leaves a 2-call margin above every observed legitimate run.
+const REPEAT_BREAK_N: usize = 6;
+/// #136: the run must ALSO have burned this many seconds. A deliberate poll loop (re-curl a booting server,
+/// byte-identical "connection refused") can legitimately hit 6 quick repeats in a few seconds; the measured
+/// pathology spent ~18s per call. A pure count would kill the poll loop, so the time floor is the real
+/// false-positive defence and there is deliberately NO count-only escape hatch that bypasses it.
+const REPEAT_BREAK_MIN_SECS: u64 = 60;
+
+// Compile-time guards on both thresholds. MEASURED over 268 shell-bearing tasks in 44 real runs: the longest
+// LEGITIMATE consecutive identical run was 4 (a repeated `swift build`); the one pathology was 31. A runtime
+// assert on a const proves nothing (clippy::assertions_on_constants rightly rejects it) — these fail the
+// BUILD if the thresholds are ever retuned into a range that would cut legitimate work.
+const _: () = assert!(REPEAT_BREAK_N > 4);
+const _: () = assert!(REPEAT_BREAK_N < 31);
+const _: () = assert!(REPEAT_BREAK_MIN_SECS >= 30);
+
+/// #136: identity of one tool call's OUTCOME, for the repeat breaker. A repeat with a DIFFERENT result is
+/// progress (a re-run `pytest` after an edit returns different output) and must not count, so the result is
+/// part of the key — as is `ok`, so a call that flips success/failure breaks the run.
+///
+/// HONESTY about precision: neither term is byte-exact. `summary` is `summarize_tool_call`'s ~200-char
+/// display string and `result` is a 4000-char tail clip, so two genuinely different calls CAN collide. That is
+/// acceptable only because a collision alone is harmless: tripping additionally requires REPEAT_BREAK_N
+/// consecutive collisions AND REPEAT_BREAK_MIN_SECS of wall-clock. Never describe this key as exact.
+fn repeat_call_hash(name: &str, summary: &str, ok: bool, result: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    name.hash(&mut h);
+    0u8.hash(&mut h);
+    summary.hash(&mut h);
+    0u8.hash(&mut h);
+    ok.hash(&mut h);
+    0u8.hash(&mut h);
+    result.hash(&mut h);
+    h.finish()
+}
+
 /// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
 /// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
 /// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
@@ -2804,6 +2863,74 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn repeat_call_hash_keys_on_result_and_ok_not_just_the_command() {
+        let base = repeat_call_hash(
+            "shell",
+            "cat deals/__main__.py",
+            true,
+            "from .cli import cli",
+        );
+        // The measured pathology: identical command, identical result -> identical key (counts as a repeat).
+        assert_eq!(
+            base,
+            repeat_call_hash(
+                "shell",
+                "cat deals/__main__.py",
+                true,
+                "from .cli import cli"
+            )
+        );
+        // THE false-positive defence: same command, DIFFERENT result = progress (a re-run pytest after an
+        // edit). Must NOT be counted as a repeat.
+        assert_ne!(
+            base,
+            repeat_call_hash(
+                "shell",
+                "cat deals/__main__.py",
+                true,
+                "from .cli import main"
+            )
+        );
+        // A call that flips success/failure breaks the run even with identical text.
+        assert_ne!(
+            base,
+            repeat_call_hash(
+                "shell",
+                "cat deals/__main__.py",
+                false,
+                "from .cli import cli"
+            )
+        );
+        // Different command, different tool -> different key.
+        assert_ne!(
+            base,
+            repeat_call_hash("shell", "cat deals/cli.py", true, "from .cli import cli")
+        );
+        assert_ne!(
+            base,
+            repeat_call_hash(
+                "text_editor",
+                "cat deals/__main__.py",
+                true,
+                "from .cli import cli"
+            )
+        );
+        // TRUNCATION COLLISION (documented, deliberately accepted): `summary` is a ~200-char display string
+        // and `result` a 4000-char tail clip, so two genuinely different calls whose visible prefixes match
+        // DO collide. This is safe only because a collision alone cannot trip anything — REPEAT_BREAK_N
+        // consecutive collisions AND REPEAT_BREAK_MIN_SECS of wall-clock are both required. Asserting the
+        // collision keeps the key honest: it is an equality of the OBSERVABLE summary+result, not of the call.
+        let a = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
+        let b = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
+        assert_eq!(a, b, "identical observables must hash equal — collisions are bounded by N + time, not by key precision");
+        // Separator guard: ("ab","c") must not equal ("a","bc").
+        assert_ne!(
+            repeat_call_hash("shell", "ab", true, "c"),
+            repeat_call_hash("shell", "a", true, "bc")
+        );
     }
 
     #[test]
@@ -8520,6 +8647,8 @@ pub struct GooseAgentDispatcher {
     detail_memo: Mutex<HashMap<String, String>>,
     /// #122: gate for `detail_memo`. Resolved once at construction (env > config > default OFF).
     detail_memo_on: bool,
+    /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
+    repeat_break: bool,
 }
 
 impl GooseAgentDispatcher {
@@ -8544,6 +8673,7 @@ impl GooseAgentDispatcher {
         straggler_grace_secs: u64,
         straggler_stop_degrade: bool,
         detail_memo_on: bool,
+        repeat_break: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -8576,6 +8706,7 @@ impl GooseAgentDispatcher {
             straggler_stop_degrade,
             detail_memo: Mutex::new(HashMap::new()),
             detail_memo_on,
+            repeat_break,
         })
     }
 
@@ -8905,7 +9036,36 @@ impl GooseAgentDispatcher {
         // Time of the last PRODUCTIVE event (tool/output/real-text). Only advanced on real progress, so the
         // thinking_only_budget elapses while the stream emits only reasoning.
         let mut last_productive_at = tokio::time::Instant::now();
+        // #136 REPEAT BREAKER. Armed ONLY for dispatched WORKER tasks: `activity_key` is Some for a task lane,
+        // and the planner-side calls (architect/scout/detailer/contract drafts) must never be armed because
+        // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
+        // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
+        // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
+        let repeat_break_on =
+            self.repeat_break && activity_key.is_some() && activity_key != Some("integrate-verify");
+        let mut repeat_hash: Option<u64> = None;
+        let mut repeat_run: usize = 0usize;
+        let mut repeat_run_started = tokio::time::Instant::now();
+        let mut repeat_what = String::new();
         loop {
+            // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
+            // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
+            // successful ToolResponse, so `message_content_is_productive` keeps resetting the progress
+            // watchdog above and the idle watchdog is reset by every token. Deliberately reuses the EXISTING
+            // "no productive progress" stall error so the downstream salvage/degrade path is bit-for-bit the
+            // one that already handles a stalled task — this introduces no new way for a task to fail.
+            if repeat_break_on
+                && repeat_run >= REPEAT_BREAK_N
+                && repeat_run_started.elapsed()
+                    >= std::time::Duration::from_secs(REPEAT_BREAK_MIN_SECS)
+            {
+                return Err(anyhow!(
+                    "agent stalled — no productive progress: repeated the identical tool call {repeat_run}x \
+                     with an identical result over {}s ({})",
+                    repeat_run_started.elapsed().as_secs(),
+                    repeat_what
+                ));
+            }
             // Cut a THINKING-ONLY spiral: no productive event for the whole budget while the stream stays alive
             // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
             // streamed Thinking token drives an iteration here).
@@ -9021,6 +9181,27 @@ impl GooseAgentDispatcher {
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
                                     let result = tool_result_text(&resp.tool_result);
+                                    // #136: track consecutive identical (call, result) outcomes. Computed
+                                    // BEFORE the move into call_records. A repeat with a DIFFERENT result is
+                                    // progress, so it resets the run; an EMPTY result is not counted at all
+                                    // (it carries no state, so counting it would silently degrade the key to
+                                    // name+args and could fire on a legitimately repeated no-output call).
+                                    if repeat_break_on {
+                                        if result.trim().is_empty() {
+                                            repeat_hash = None;
+                                            repeat_run = 0;
+                                        } else {
+                                            let h = repeat_call_hash(&name, &summary, ok, &result);
+                                            if repeat_hash == Some(h) {
+                                                repeat_run += 1;
+                                            } else {
+                                                repeat_hash = Some(h);
+                                                repeat_run = 1;
+                                                repeat_run_started = tokio::time::Instant::now();
+                                                repeat_what = summary.chars().take(80).collect();
+                                            }
+                                        }
+                                    }
                                     call_records.push((name.clone(), summary, Some(ok), result));
                                     tool_calls.push(ToolCallRecord {
                                         name,
@@ -17916,6 +18097,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             straggler_grace_secs(cfg.straggler_grace_secs),
             straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
             detail_memo_enabled(cfg.detail_memo),
+            repeat_break_enabled(cfg.repeat_break),
         )
         .await?,
     );
@@ -18293,6 +18475,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
             "backbone_skip_confident": backbone_skip_confident_enabled(load_config().backbone_skip_confident),
             "detail_memo": detail_memo_enabled(load_config().detail_memo),
+            "repeat_break": repeat_break_enabled(load_config().repeat_break),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
