@@ -126,6 +126,11 @@ export interface SwarmConfig {
   /** #median-slash: drop the frozen contract bundle from the final integrate-verify step's prompt. It RUNS the
    *  built app (reads the real files), so the stubs are dead context that only slows the slowest task. Default OFF. */
   sink_lean_prefill?: boolean;
+  /** #122: skip the backbone-lock round-2 re-draft when round-1 cross-draft agreement is already high (>=90).
+   *  The lock re-drafts the whole fleet a SECOND time (~250s) to pin the consensus modules — but when the free
+   *  drafts already agree they share that structure, so the round is discarded (measured 28/29 real runs, never
+   *  adopted at conf >=90). Keeps the lock for genuinely shaky plans; skips a dead planner round otherwise. Default OFF. */
+  backbone_skip_confident?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -287,6 +292,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'straggler_grace_secs',
   'straggler_stop_degrade',
   'sink_lean_prefill',
+  'backbone_skip_confident',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the

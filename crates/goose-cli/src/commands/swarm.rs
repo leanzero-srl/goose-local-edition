@@ -282,6 +282,17 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_lean_prefill: Option<bool>,
+    /// #122 planning-slash: SKIP the backbone-lock round-2 re-draft when round-1 cross-draft agreement is
+    /// already high (>= BACKBONE_SKIP_CONF_FLOOR). The backbone lock re-drafts the whole fleet a SECOND time
+    /// (a full ~250s planner round) to pin the consensus module set, adopting round 2 only if it scores
+    /// structurally HIGHER. MEASURED across 29 real runs: round 2 was discarded 28 times (96.5%); the sole
+    /// adoption had round-1 conf 85. Every run at conf >= 90 wasted the round. When the free drafts already
+    /// agree strongly they SHARE the structure, so re-drafting to pin that same structure cannot beat it —
+    /// the round is dead time on the critical path before EXECUTE. This guard keeps the lock for genuinely
+    /// shaky plans (conf < floor, its intended rescue use) and skips it when it can only waste time. None =>
+    /// OFF (byte-identical). env GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backbone_skip_confident: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -806,6 +817,7 @@ impl Default for SwarmConfig {
             sink_cap_secs: default_sink_cap_secs(),
             progress_watchdog_secs: 0,
             sink_lean_prefill: None,
+            backbone_skip_confident: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2110,6 +2122,27 @@ fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
 }
 
+/// #122 backbone-skip-confident gate: env GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT wins, else config, else OFF.
+fn backbone_skip_confident_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(
+        std::env::var("GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT").ok(),
+        cfg,
+    )
+}
+
+/// #122: round-1 cross-draft agreement at/above this skips the backbone-lock round-2 re-draft. Derived from
+/// 29 real runs — the sole round-2 adoption had round-1 conf 85; every run at >= 90 discarded the round. 90
+/// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
+const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
+
+/// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
+/// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
+/// free drafts share the structure the lock would pin, so the ~250s round can only be discarded (0/11 adopted
+/// at conf >= 90 in real runs). skip_confident OFF => byte-identical to the pre-#122 behavior (always runs).
+fn should_run_backbone_round2(backbone_on: bool, skip_confident: bool, conf1: u8) -> bool {
+    backbone_on && !(skip_confident && conf1 >= BACKBONE_SKIP_CONF_FLOOR)
+}
+
 /// #135: resolve the straggler grace window (seconds). env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins, else
 /// config, else 45. NOT clamped here — the caller clamps to [10, draft_timeout] once draft_timeout is known.
 fn straggler_grace_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
@@ -2735,6 +2768,30 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn backbone_round2_skips_only_when_lever_on_and_confidence_clears_floor() {
+        // Lever OFF => byte-identical: round 2 runs whenever backbone is on, at any confidence.
+        assert!(should_run_backbone_round2(true, false, 100));
+        assert!(should_run_backbone_round2(true, false, 0));
+        // Lever ON => skip (return false) only at/above the floor; below the floor the rescue re-draft still runs.
+        assert!(!should_run_backbone_round2(
+            true,
+            true,
+            BACKBONE_SKIP_CONF_FLOOR
+        )); // 90 -> skip
+        assert!(!should_run_backbone_round2(true, true, 100)); // verify-*/cov-poll case -> skip
+        assert!(should_run_backbone_round2(
+            true,
+            true,
+            BACKBONE_SKIP_CONF_FLOOR - 1
+        )); // 89 -> still runs
+        assert!(should_run_backbone_round2(true, true, 85)); // the lone historical adoption -> preserved
+        assert!(should_run_backbone_round2(true, true, 53)); // shaky plan -> lock still available
+                                                             // Backbone off => never runs regardless of the skip lever/confidence.
+        assert!(!should_run_backbone_round2(false, false, 100));
+        assert!(!should_run_backbone_round2(false, true, 50));
     }
 
     #[test]
@@ -9566,6 +9623,10 @@ impl GooseAgentDispatcher {
         // lever (confidence stays the round-1 free-draft agreement — the forced round never touches the ask
         // gate). false = today, byte-identical.
         backbone_on: bool,
+        // #122: when true AND backbone_on, SKIP the round-2 re-draft if round-1 agreement >= BACKBONE_SKIP_CONF_
+        // FLOOR. High round-1 agreement => the free drafts already share the structure the lock would pin, so
+        // round 2 cannot beat round 1 (adopted 1/29 in real runs, never at conf >= 90). false = today.
+        backbone_skip_confident: bool,
         // Incremental replan (Phase 1): freeze the unanimous + downward-closed modules VERBATIM and re-draft
         // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher.
         // Takes precedence over `backbone_on` when both are set. false = today, byte-identical.
@@ -10093,7 +10154,7 @@ impl GooseAgentDispatcher {
             // Confidence stays conf1 — the round-1 free-draft agreement — in ALL branches, so the forced round
             // can NEVER inflate the number the ask-floor gate reads (dishonesty eliminated by construction, not
             // by a tuned guard). Off ⇒ this whole block is skipped, byte-identical.
-            } else if backbone_on {
+            } else if should_run_backbone_round2(backbone_on, backbone_skip_confident, conf1) {
                 let backbone = consensus_backbone(&valid1);
                 if backbone.len() >= 2 {
                     eprintln!(
@@ -10132,6 +10193,15 @@ impl GooseAgentDispatcher {
                     eprintln!("  · backbone lock: no shared core (skipping round 2)");
                     (json1, Some(conf1), reason1)
                 }
+            } else if backbone_on {
+                // #122 skip: round-1 agreement is already high, so the free drafts share the structure the lock
+                // would pin — a round-2 re-draft cannot beat round 1 (0/11 adopted at conf >= 90 in real runs).
+                // Skip the full planner round; the plan + confidence are byte-identical to round 1.
+                eprintln!(
+                    "  {} backbone lock skipped: round-1 agreement {conf1}/100 >= {BACKBONE_SKIP_CONF_FLOOR} (drafts already share the structure) — saved a full planner round",
+                    style("↯").yellow()
+                );
+                (json1, Some(conf1), reason1)
             } else {
                 (json1, Some(conf1), reason1)
             }
@@ -18075,6 +18145,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // every run used 2. A run must be able to state what it actually spent.
             "retarget_rounds": retarget_cap,
             "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
+            "backbone_skip_confident": backbone_skip_confident_enabled(load_config().backbone_skip_confident),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
@@ -18201,6 +18272,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let converge = swarm_gate_cfg("GOOSE_SWARM_CONVERGE", cfg.converge);
     // Backbone lock (structure lever): config default OFF unless env overrides. Read once outside the loop.
     let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
+    // #122: skip the backbone round-2 re-draft when round-1 agreement is already high. Read once outside the loop.
+    let backbone_skip_confident = backbone_skip_confident_enabled(cfg.backbone_skip_confident);
     // Incremental replan (Phase 1): config default OFF unless env overrides. Read once outside the loop. Takes
     // precedence over backbone_on inside parallel_plan when both are set.
     let incremental_on = swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", cfg.incremental_replan);
@@ -18317,6 +18390,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         draft_temp,
                         converge,
                         backbone_on,
+                        backbone_skip_confident,
                         incremental_on,
                         diverse_plan_on,
                         struct_stop_val,
