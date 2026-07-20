@@ -8873,6 +8873,12 @@ impl GooseAgentDispatcher {
                         last_productive_at = tokio::time::Instant::now();
                     }
                 }
+                // An MCP tool streaming a progress/log NOTIFICATION during a single long-running call is proof
+                // the tool is actively working — reset the productive clock so the progress-watchdog never cuts
+                // a working tool mid-execution (the productive ToolResponse only arrives after the call ends).
+                Ok(AgentEvent::McpNotification(_)) => {
+                    last_productive_at = tokio::time::Instant::now();
+                }
                 Ok(_) => {}
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
@@ -16471,6 +16477,43 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     secs,
                     if transient { " — will retry" } else { "" }
                 );
+                // #sink-time (progress-watchdog): if the watchdog cut this worker for a thinking-only spiral but
+                // its owned files are ALREADY written non-empty, the deliverable is done — salvage it as done
+                // instead of re-dispatching (which re-runs the whole task up to max_attempts, and typically
+                // re-spirals the same way, wasting fleet time). Sound because the watchdog only fires after the
+                // FULL budget elapsed with NO productive event since the last one: a mid-write worker would have
+                // interspersed tool calls (each resets the clock), so a full-budget thinking-only stall AFTER a
+                // write means the file was finished and the model is just over-thinking. Scoped to the progress
+                // stall only (not idle/network stalls, which still re-route) and requires every owned file present.
+                if transient && s.contains("no productive progress") && !req.owned_files.is_empty()
+                {
+                    let cwd = root.clone();
+                    let all_written =
+                        req.owned_files
+                            .iter()
+                            .all(|f| match cwd.join(f).metadata() {
+                                Ok(m) => {
+                                    m.len() > 0
+                                        || f.ends_with("__init__.py")
+                                        || f.ends_with("py.typed")
+                                }
+                                Err(_) => false,
+                            });
+                    if all_written {
+                        eprintln!(
+                            "  {} {} on {} ({:.1}s) — progress-watchdog stall, but all owned files already written; accepting as done (not re-dispatching)",
+                            style("✓").green().bold(),
+                            style(&req.task_id).bold(),
+                            req.device_id,
+                            secs
+                        );
+                        return Ok(TaskRunOutput {
+                            output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
+                            session_id: None,
+                            tool_calls: Vec::new(),
+                        });
+                    }
+                }
                 if transient {
                     // Best-effort re-warm before re-dispatch — only if model loading is allowed.
                     if self.allow_model_load
