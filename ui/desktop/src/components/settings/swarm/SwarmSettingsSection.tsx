@@ -611,7 +611,7 @@ export default function SwarmSettingsSection() {
             </Row>
             <Row
               label="Stop a step that keeps re-thinking the same thing"
-              hint="Goose's judge only watches the BUILD steps. Everything before that — the research scouts, the planning drafts, the interface and spec writing — runs with no supervision at all, so a step that gets stuck re-reasoning in circles is caught by nothing and burns its whole time budget on one machine while the others sit idle. Measured: one research scout produced 30,403 characters of the same repeated paragraph while two machines were idle. This sets a ceiling on how much reasoning any single step may produce before goose stops it and moves on — research keeps the answers it already has, a planning draft is dropped in favour of the others, and a build step falls back to its normal stalled-task handling. Leave blank to turn it off; 24000 is a good starting point."
+              hint="Goose's judge only watches the BUILD steps. Everything before that — the research scouts, the planning drafts, the interface and spec writing — runs with no supervision at all, so a step that gets stuck re-reasoning in circles is caught by nothing and burns its whole time budget on one machine while the others sit idle. Measured: one research scout produced 30,403 characters of the same repeated paragraph while two machines were idle. This sets a ceiling on how much reasoning any single step may produce before goose stops it and moves on — research keeps the answers it already has, a planning draft is dropped in favour of the others, and a build step falls back to its normal stalled-task handling. Leave blank to turn it off. The number is a BASE budget and goose scales it per step kind from measured data — planning drafts are exempt entirely (healthy ones legitimately reason for tens of thousands of characters), build steps get five times the base, and interface writing three times. 12000 is a reasonable base."
             >
               <NumberField
                 value={cfg.spiral_break_chars ?? null}
@@ -619,6 +619,12 @@ export default function SwarmSettingsSection() {
                 width="w-24"
                 onCommit={(v) => set({ spiral_break_chars: v ?? undefined })}
               />
+            </Row>
+            <Row
+              label="Let the judge watch every step, in every phase"
+              hint="Goose's judge only ever watched the build steps. Research, planning, interface and spec writing ran completely unwatched — which is how a research step spent ten minutes re-writing the same paragraph while two machines sat idle. With this on, the judge looks at what each step is actually producing, starting under a minute in and again every minute, and stops a step that is visibly repeating itself. This catches what a size limit cannot: a planning draft can legitimately reason for 50,000 characters, so only reading the text tells a deep thinker apart from a stuck one. It can only stop that one step — research keeps the answers it has, a planning draft is dropped in favour of the others — and it can never fail your run. Default off."
+            >
+              <SwarmSwitch checked={!!cfg.omni_judge} onChange={(v) => set({ omni_judge: v })} />
             </Row>
             <Row
               label="Also stop a lagging step during contracts and detailing"
