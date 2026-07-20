@@ -141,6 +141,11 @@ export interface SwarmConfig {
    *  resets the progress watchdog). A repeat that returns DIFFERENT output is progress and never counts, and any
    *  different command in between resets it, so an edit-then-retest cycle can never trip it. Default OFF. */
   repeat_break?: boolean;
+  /** #135: cap how much REASONING one call may emit before goose stops it, in characters. This is the only
+   *  supervision that exists outside the build phase — goose's judge only ever looks at build tasks, so a
+   *  scout or planning step that starts repeating itself is watched by nothing. Measured: one scout emitted
+   *  30,403 characters of the same paragraph while two machines sat idle. Blank/0 = off. */
+  spiral_break_chars?: number;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -305,6 +310,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'backbone_skip_confident',
   'detail_memo',
   'repeat_break',
+  'spiral_break_chars',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
