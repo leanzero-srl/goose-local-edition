@@ -1,0 +1,1 @@
+Build a small command-line developer utility that saves time in day-to-day work. Pick something genuinely useful and make it good.
