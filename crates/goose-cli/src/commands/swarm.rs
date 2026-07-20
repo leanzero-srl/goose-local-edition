@@ -274,6 +274,14 @@ pub struct SwarmConfig {
     /// integrate-verify sink (bounded by `sink_cap_secs`).
     #[serde(default)]
     pub progress_watchdog_secs: u64,
+    /// #median-slash: drop the frozen contract bundle (all modules' signature stubs) from the integrate-verify
+    /// SINK's prompt. The sink RUNS the built app end-to-end via the developer extension (reads the real files);
+    /// it does NOT build against the stubs, so the O(N-modules) bundle is dead context that only slows its
+    /// prefill — and the sink is the slowest task (measured 1500s, ran to the cap). Shrinking its prefill speeds
+    /// it so it finishes before the cap. Only the sink is affected; the golden run/checks are untouched. None =>
+    /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sink_lean_prefill: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -797,6 +805,7 @@ impl Default for SwarmConfig {
             scout_budget_secs: default_scout_budget_secs(),
             sink_cap_secs: default_sink_cap_secs(),
             progress_watchdog_secs: 0,
+            sink_lean_prefill: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2094,6 +2103,11 @@ fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
         std::env::var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE").ok(),
         cfg,
     )
+}
+
+/// #median-slash sink-lean-prefill gate: env GOOSE_SWARM_SINK_LEAN_PREFILL wins, else config, else default OFF.
+fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
 }
 
 /// #135: resolve the straggler grace window (seconds). env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins, else
@@ -16086,7 +16100,18 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // neighborhood (deps ∪ consumers ∪ self) so per-worker context is O(degree), not O(total modules).
         // OFF (or an empty neighborhood, e.g. a fix/sink dispatch) => the full bundle path is byte-identical.
         let scoped_contracts_on = scoped_contracts_on();
-        let contracts_block = if contracts_on {
+        // #median-slash: the integrate-verify SINK RUNS the built app (reads the real files); it does not build
+        // against the frozen stubs, so the O(N-modules) contract bundle is dead context that only slows the
+        // slowest task's prefill. Drop it for the sink when enabled. Only the sink is affected; OFF => the full
+        // bundle path is byte-identical.
+        let sink_lean = req.task_id == "integrate-verify"
+            && matches!(
+                std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL")
+                    .ok()
+                    .as_deref(),
+                Some("1" | "on" | "true" | "yes")
+            );
+        let contracts_block = if contracts_on && !sink_lean {
             match self.contracts.get() {
                 Some(b) => {
                     if scoped_contracts_on && !req.neighborhood.is_empty() {
@@ -17426,6 +17451,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             cfg.progress_watchdog_secs.to_string(),
         );
     }
+    // #median-slash: bridge the sink-lean-prefill tunable to the env the worker-prompt build reads (contracts
+    // block). Env wins; else the config value. Absent/false => the full contract bundle path is byte-identical.
+    if std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").is_err() {
+        std::env::set_var(
+            "GOOSE_SWARM_SINK_LEAN_PREFILL",
+            if sink_lean_prefill_enabled(cfg.sink_lean_prefill) {
+                "1"
+            } else {
+                "0"
+            },
+        );
+    }
     // Upstream #10348 applies the default extension timeout (300s) as a HARD per-command kill to developer
     // `shell` calls that omit `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo
     // build`, `npm install`, a big `pytest`/`cargo test`), and our own idle watchdog already bounds a HUNG
@@ -18103,6 +18140,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
                 load_config().clarity_fail_closed,
             ),
+            "sink_lean_prefill": sink_lean_prefill_enabled(load_config().sink_lean_prefill),
             "progress_watchdog_secs": std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())

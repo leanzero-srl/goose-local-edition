@@ -123,6 +123,9 @@ export interface SwarmConfig {
    *  because a stopped contract/detail changes a build input — the module builds without its frozen interface
    *  (exactly like a timed-out contract; integrate-verify reconciles). At most one module degrades. Default OFF. */
   straggler_stop_degrade?: boolean;
+  /** #median-slash: drop the frozen contract bundle from the final integrate-verify step's prompt. It RUNS the
+   *  built app (reads the real files), so the stubs are dead context that only slows the slowest task. Default OFF. */
+  sink_lean_prefill?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -283,6 +286,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'straggler_stop',
   'straggler_grace_secs',
   'straggler_stop_degrade',
+  'sink_lean_prefill',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
