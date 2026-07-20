@@ -16551,11 +16551,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 // so run_agent_in returns Ok with a TRUNCATED verdict and this branch would otherwise accept
                 // it as done: a SILENT FALSE-GREEN (the verify never actually verified). Detect the
                 // deterministic signature FIRST (before the owned-file/done gates) and re-dispatch as
-                // Transient so the scheduler re-runs the task on a DIFFERENT device and produces a real
-                // result. Bounded by the existing per-task max_attempts. Inert on a clean run (marker absent).
+                // Transient so the scheduler re-runs the task and produces a real result. Bounded by the
+                // existing per-task max_attempts. Inert on a clean run (marker absent).
+                //
+                // It does NOT promise a different device, and must not: this runs inside the spawned future
+                // and returns Transient; the SCHEDULER picks the retry's device ~48us later under a different
+                // lock, and on a weight-1 fleet the just-released node is by construction the only free one —
+                // so the retry usually lands on the SAME device. The old wording ("re-dispatching to another
+                // device") was an unverifiable promise that the code could not keep and was observed lying
+                // (val-lean-02: verify::cli-module claimed "another device" and went straight back to
+                // workhorse). The truthful destination is already printed by the `▸ run <task> → <device>`
+                // line emitted by the code that actually decides.
                 if self.stream_decode_retry && is_stream_decode_interrupt(&out.text) {
                     eprintln!(
-                        "  {} {} on {} ({:.1}s) — provider stream decode error (mid-stream body drop); re-dispatching to another device",
+                        "  {} {} on {} ({:.1}s) — provider stream decode error (mid-stream body drop); re-dispatching",
                         style("↻").yellow().bold(),
                         style(&req.task_id).bold(),
                         req.device_id,
