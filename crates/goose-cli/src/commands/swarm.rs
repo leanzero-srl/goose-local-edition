@@ -316,6 +316,19 @@ pub struct SwarmConfig {
     /// no new way for a task to fail. None => OFF (byte-identical). env GOOSE_SWARM_REPEAT_BREAK overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat_break: Option<bool>,
+    /// #135 GLOBAL SPIRAL BREAK — the judge is ABSENT outside EXECUTE. pick_judge_target
+    /// (scheduler.rs) iterates ONLY `self.dag.tasks` and is called from ONE site inside the execute loop, so
+    /// during RESEARCH / PLAN / CONTRACTS / DETAIL there is no DAG and NO supervision exists at all. Planner
+    /// -side calls are unbounded except by their wall-clock budget. MEASURED (nf-poll, 2026-07-20): three
+    /// scouts on three nodes — edge-cases 607 thinking chars (done 96s), architecture 6,312 (done 344s),
+    /// libraries **30,403 and still running at 560s**, re-emitting ONE identical paragraph, while the other
+    /// TWO NODES SAT IDLE. repeat_break correctly abstained (its 6 tool calls were distinct) and
+    /// spiral_thinking_chars could not fire (it is a JUDGE branch gated on owning files; a scout owns none).
+    /// This bounds CUMULATIVE reasoning volume for EVERY call in EVERY phase, at the one seam they all share.
+    /// Deterministic: a char count, never a model opinion. 0/None => OFF (byte-identical).
+    /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spiral_break_chars: Option<usize>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -843,6 +856,7 @@ impl Default for SwarmConfig {
             backbone_skip_confident: None,
             detail_memo: None,
             repeat_break: None,
+            spiral_break_chars: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2165,6 +2179,35 @@ fn repeat_break_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
 }
 
+/// #135 global spiral-break: env GOOSE_SWARM_SPIRAL_BREAK_CHARS wins, else config, else 0 (OFF).
+/// A CHAR budget, not a bool, because the safe threshold depends on the model's verbosity — it must be
+/// tunable without a rebuild. Clamped to a floor well above the worst LEGITIMATE call measured (6,312 chars)
+/// so a mistyped small value cannot start cutting healthy work.
+fn spiral_break_chars_resolved(env: Option<String>, cfg: Option<usize>) -> usize {
+    let v = env
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .or(cfg)
+        .unwrap_or(0);
+    if v == 0 {
+        0
+    } else {
+        v.max(SPIRAL_BREAK_MIN_CHARS)
+    }
+}
+
+fn spiral_break_chars(cfg: Option<usize>) -> usize {
+    spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
+}
+
+/// #135: hard floor for the spiral budget. MEASURED legitimate scouts reached 6,312 thinking chars; the
+/// pathology was 30,403 and climbing. 12,000 is ~2x the worst healthy observation, so no configured value can
+/// cut a call that merely reasons thoroughly. A spiral grows without bound and blows past any floor.
+const SPIRAL_BREAK_MIN_CHARS: usize = 12_000;
+// Compile-time guard: the floor MUST clear the worst LEGITIMATE call measured (a 6,312-char scout), or a
+// configured value could start cutting healthy work. A runtime assert on a const proves nothing
+// (clippy::assertions_on_constants); this fails the BUILD if the floor is ever lowered into that range.
+const _: () = assert!(SPIRAL_BREAK_MIN_CHARS > 6_312);
+
 /// #136: consecutive identical tool calls that trip the repeat breaker. MEASURED across 268 shell-bearing
 /// tasks in 44 real runs: the longest legitimate consecutive identical run was 4 (`swift build` re-runs); the
 /// one pathology hit 31. 6 leaves a 2-call margin above every observed legitimate run.
@@ -2863,6 +2906,37 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn spiral_break_is_off_by_default_and_floored_when_on() {
+        // OFF unless explicitly set — 0 everywhere means byte-identical behaviour.
+        assert_eq!(spiral_break_chars_resolved(None, None), 0);
+        assert_eq!(spiral_break_chars_resolved(None, Some(0)), 0);
+        assert_eq!(spiral_break_chars_resolved(Some("0".into()), None), 0);
+        // env WINS over config, like every sibling lever.
+        assert_eq!(
+            spiral_break_chars_resolved(Some("40000".into()), Some(20000)),
+            40000
+        );
+        assert_eq!(spiral_break_chars_resolved(None, Some(20000)), 20000);
+        // A mistyped SMALL budget cannot cut healthy work: it is floored well above the worst LEGITIMATE
+        // call measured (a 6,312-char scout). Without this, `spiral_break_chars: 500` would kill everything.
+        assert_eq!(
+            spiral_break_chars_resolved(Some("500".into()), None),
+            SPIRAL_BREAK_MIN_CHARS
+        );
+        assert_eq!(
+            spiral_break_chars_resolved(None, Some(1)),
+            SPIRAL_BREAK_MIN_CHARS
+        );
+
+        // Garbage env falls back to config rather than silently arming.
+        assert_eq!(
+            spiral_break_chars_resolved(Some("abc".into()), Some(20000)),
+            20000
+        );
+        assert_eq!(spiral_break_chars_resolved(Some("abc".into()), None), 0);
     }
 
     #[test]
@@ -9043,6 +9117,21 @@ impl GooseAgentDispatcher {
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
         let repeat_break_on =
             self.repeat_break && activity_key.is_some() && activity_key != Some("integrate-verify");
+        // #135 GLOBAL SPIRAL BREAK — the ONLY supervision that exists outside EXECUTE.
+        // Armed for EVERY call in EVERY phase (scout, plan draft, detail, contract, worker), because this
+        // shared agent seam is the single point they all pass through and the judge never sees any of them
+        // except workers. The SINK is exempt for the same reason thinking_only_budget exempts it: it owns no
+        // deliverable, is already bounded by its own wall-clock cap, and re-routing it re-prefills the tree.
+        // SAFE TO ARM EVERYWHERE because every planner-side phase already degrades gracefully on a lost call:
+        // a scout -> "proceeding on N of 3" (research tolerates a missing lens), a plan draft -> best-of-N
+        // drops it ("proceeding on 2 valid of 3"), a detail -> falls back to the skeleton brief (`_ => brief`),
+        // a contract -> the module builds without its frozen interface (identical to a contract timeout),
+        // a worker -> the existing stall path (salvage / degrade_on_stall / bounded retry). 0 => OFF.
+        let spiral_budget = if activity_key == Some("integrate-verify") {
+            0
+        } else {
+            spiral_break_chars(load_config().spiral_break_chars)
+        };
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -9054,6 +9143,16 @@ impl GooseAgentDispatcher {
             // watchdog above and the idle watchdog is reset by every token. Deliberately reuses the EXISTING
             // "no productive progress" stall error so the downstream salvage/degrade path is bit-for-bit the
             // one that already handles a stalled task — this introduces no new way for a task to fail.
+            // #135: cut a REASONING spiral in ANY phase. Deterministic (a char count). Distinct from
+            // repeat_break (identical TOOL CALLS) and from thinking_only_budget (time since a productive
+            // event — which a spiral defeats by making an occasional real tool call). The measured scout made
+            // 6 DISTINCT calls while emitting 30,403 chars, so only cumulative volume separates it.
+            if spiral_budget > 0 && thinking_chars > spiral_budget {
+                return Err(anyhow!(
+                    "agent stalled — no productive progress: reasoning spiral, {thinking_chars} thinking \
+                     chars exceeded the {spiral_budget}-char budget for this call"
+                ));
+            }
             if repeat_break_on
                 && repeat_run >= REPEAT_BREAK_N
                 && repeat_run_started.elapsed()
@@ -18476,6 +18575,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "backbone_skip_confident": backbone_skip_confident_enabled(load_config().backbone_skip_confident),
             "detail_memo": detail_memo_enabled(load_config().detail_memo),
             "repeat_break": repeat_break_enabled(load_config().repeat_break),
+            "spiral_break_chars": spiral_break_chars(load_config().spiral_break_chars),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),

@@ -610,6 +610,17 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Stop a step that keeps re-thinking the same thing"
+              hint="Goose's judge only watches the BUILD steps. Everything before that — the research scouts, the planning drafts, the interface and spec writing — runs with no supervision at all, so a step that gets stuck re-reasoning in circles is caught by nothing and burns its whole time budget on one machine while the others sit idle. Measured: one research scout produced 30,403 characters of the same repeated paragraph while two machines were idle. This sets a ceiling on how much reasoning any single step may produce before goose stops it and moves on — research keeps the answers it already has, a planning draft is dropped in favour of the others, and a build step falls back to its normal stalled-task handling. Leave blank to turn it off; 24000 is a good starting point."
+            >
+              <NumberField
+                value={cfg.spiral_break_chars ?? null}
+                placeholder="off"
+                width="w-24"
+                onCommit={(v) => set({ spiral_break_chars: v ?? undefined })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >
