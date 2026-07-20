@@ -293,6 +293,16 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backbone_skip_confident: Option<bool>,
+    /// #122 planning-slash: MEMOIZE subtask details across retarget/replan rounds. Each retarget/replan round
+    /// re-invokes parallel_plan, which re-details EVERY subtask (~75s LLM call each) even when the subtask is
+    /// byte-identical to the previous round (measured: cov-logfold detailed 14x for a 4-subtask plan over 3
+    /// rounds). This caches the detailer's output keyed on the FULL detailer input (goal + id + brief + owned
+    /// files + research findings — ALL of these are in the prompt and mutate across rounds) so an UNCHANGED
+    /// subtask reuses its detail instead of regenerating it. Identical input => identical spec => zero quality
+    /// cost; a round that changed goal/findings (re-research, answered ask) correctly MISSES and re-details.
+    /// None => OFF (byte-identical). env GOOSE_SWARM_DETAIL_MEMO overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_memo: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -818,6 +828,7 @@ impl Default for SwarmConfig {
             progress_watchdog_secs: 0,
             sink_lean_prefill: None,
             backbone_skip_confident: None,
+            detail_memo: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2130,6 +2141,31 @@ fn backbone_skip_confident_enabled(cfg: Option<bool>) -> bool {
     )
 }
 
+/// #122 detail-memo gate: env GOOSE_SWARM_DETAIL_MEMO wins, else config, else default OFF.
+fn detail_memo_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_DETAIL_MEMO").ok(), cfg)
+}
+
+/// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
+/// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
+/// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
+/// detail that ignores a new user decision. Uses the same order the detailer concatenates.
+fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    goal.hash(&mut h);
+    0u8.hash(&mut h);
+    id.hash(&mut h);
+    0u8.hash(&mut h);
+    brief.hash(&mut h);
+    0u8.hash(&mut h);
+    files.hash(&mut h);
+    0u8.hash(&mut h);
+    findings.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 /// #122: round-1 cross-draft agreement at/above this skips the backbone-lock round-2 re-draft. Derived from
 /// 29 real runs — the sole round-2 adoption had round-1 conf 85; every run at >= 90 discarded the round. 90
 /// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
@@ -2768,6 +2804,52 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn detail_memo_key_includes_goal_and_findings_not_just_id() {
+        // A stable (id, brief, files) MUST NOT collide when goal or findings differ — that is the whole safety
+        // argument: a user answering "argparse not click" appends to goal/findings and must FORCE a re-detail.
+        let base = detail_memo_key("goal A", "cli", "build the cli", "cli.py", "findings X");
+        // identical inputs -> identical key (a real hit)
+        assert_eq!(
+            base,
+            detail_memo_key("goal A", "cli", "build the cli", "cli.py", "findings X")
+        );
+        // goal changed (e.g. USER_DECISIONS appended) -> DIFFERENT key -> re-details, not a stale reuse
+        assert_ne!(
+            base,
+            detail_memo_key("goal B", "cli", "build the cli", "cli.py", "findings X")
+        );
+        // findings changed (re-research appended) -> DIFFERENT key
+        assert_ne!(
+            base,
+            detail_memo_key("goal A", "cli", "build the cli", "cli.py", "findings Y")
+        );
+        // brief / id / files changes each flip the key too
+        assert_ne!(
+            base,
+            detail_memo_key(
+                "goal A",
+                "cli",
+                "build the CLI differently",
+                "cli.py",
+                "findings X"
+            )
+        );
+        assert_ne!(
+            base,
+            detail_memo_key("goal A", "db", "build the cli", "cli.py", "findings X")
+        );
+        assert_ne!(
+            base,
+            detail_memo_key("goal A", "cli", "build the cli", "db.py", "findings X")
+        );
+        // The null separator prevents boundary collisions: ("ab","c") must not equal ("a","bc").
+        assert_ne!(
+            detail_memo_key("g", "ab", "c", "f", "x"),
+            detail_memo_key("g", "a", "bc", "f", "x")
+        );
     }
 
     #[test]
@@ -8431,6 +8513,13 @@ pub struct GooseAgentDispatcher {
     /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
     /// Resolved once at construction (default OFF).
     straggler_stop_degrade: bool,
+    /// #122 DETAIL MEMO: full-input detail key -> detailed spec, reused across retarget/replan rounds so an
+    /// UNCHANGED subtask is not re-detailed (~75s) every round. Empty + never read/written unless
+    /// `detail_memo_on` -> byte-identical when off. Survives across rounds because the dispatcher is a
+    /// persistent Arc across the whole plan loop.
+    detail_memo: Mutex<HashMap<String, String>>,
+    /// #122: gate for `detail_memo`. Resolved once at construction (env > config > default OFF).
+    detail_memo_on: bool,
 }
 
 impl GooseAgentDispatcher {
@@ -8454,6 +8543,7 @@ impl GooseAgentDispatcher {
         straggler_stop: bool,
         straggler_grace_secs: u64,
         straggler_stop_degrade: bool,
+        detail_memo_on: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
@@ -8484,6 +8574,8 @@ impl GooseAgentDispatcher {
             straggler_stop,
             straggler_grace_secs,
             straggler_stop_degrade,
+            detail_memo: Mutex::new(HashMap::new()),
+            detail_memo_on,
         })
     }
 
@@ -10486,6 +10578,37 @@ impl GooseAgentDispatcher {
         };
         let goal = user_prompt.to_string();
         let findings = research_findings.to_string();
+        // #122 DETAIL MEMO: reuse an already-generated detail for a subtask whose FULL detailer input (goal + id
+        // + brief + owned files + findings) is byte-identical to a previous round, instead of re-detailing it
+        // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
+        let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
+            std::collections::HashMap::new();
+        let items: Vec<(usize, String, String, String)> = if self.detail_memo_on {
+            let cache = self.detail_memo.lock().unwrap();
+            let mut remaining = Vec::with_capacity(items.len());
+            let mut reused = 0usize;
+            for (idx, id, brief, files) in items {
+                let key = detail_memo_key(&goal, &id, &brief, &files, &findings);
+                if let Some(desc) = cache.get(&key) {
+                    v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
+                    reused += 1;
+                } else {
+                    memo_keys.insert(idx, (key, brief.clone()));
+                    remaining.push((idx, id, brief, files));
+                }
+            }
+            drop(cache);
+            if reused > 0 {
+                eprintln!(
+                    "  {} detail-memo: reused {reused} unchanged subtask detail(s); re-detailing {} this round",
+                    style("↯").yellow(),
+                    remaining.len()
+                );
+            }
+            remaining
+        } else {
+            items
+        };
         // #135 degrade-straggler-stop for detail: an aborted detail task keeps its skeleton brief (the existing
         // `_ => brief` fallback), so stopping the lone lagger only costs one module a richer spec — never
         // corruption. Usually near-inert: #subtasks > #devices makes it fall back to await-all. grace 0 => OFF.
@@ -10568,6 +10691,19 @@ impl GooseAgentDispatcher {
         })
         .await;
         for (idx, desc) in results {
+            // #122: cache only a REAL detail. The fanout returns the skeleton `brief` verbatim on
+            // timeout/error/filler (the `_ => brief` fallback), so `desc == brief` means "no real detail this
+            // round" — never cache that, else a transient failure freezes in and later rounds never retry.
+            if self.detail_memo_on {
+                if let Some((key, brief)) = memo_keys.get(&idx) {
+                    if &desc != brief {
+                        self.detail_memo
+                            .lock()
+                            .unwrap()
+                            .insert(key.clone(), desc.clone());
+                    }
+                }
+            }
             v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
         }
         // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
@@ -17770,6 +17906,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             straggler_stop_enabled(cfg.straggler_stop),
             straggler_grace_secs(cfg.straggler_grace_secs),
             straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
+            detail_memo_enabled(cfg.detail_memo),
         )
         .await?,
     );
@@ -18146,6 +18283,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "retarget_rounds": retarget_cap,
             "backbone": swarm_gate_cfg("GOOSE_SWARM_BACKBONE", load_config().backbone),
             "backbone_skip_confident": backbone_skip_confident_enabled(load_config().backbone_skip_confident),
+            "detail_memo": detail_memo_enabled(load_config().detail_memo),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),

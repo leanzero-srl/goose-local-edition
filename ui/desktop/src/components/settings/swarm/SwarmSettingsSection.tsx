@@ -592,6 +592,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Don't re-write a plan step that didn't change"
+              hint="When goose isn't confident in its plan it re-drafts the whole thing and tries again — and each time it re-writes the detailed spec for every step from scratch, about a minute per step, even for steps that came out identical to the round before. With this on, goose remembers the detailed spec it already wrote and reuses it for any step whose full input is unchanged; a step that actually changed (because you answered a question or new research came in) is still re-written. Same output, far less repeated work on the slow re-draft rounds. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.detail_memo}
+                onChange={(v) => set({ detail_memo: v })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >

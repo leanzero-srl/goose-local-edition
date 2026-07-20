@@ -131,6 +131,11 @@ export interface SwarmConfig {
    *  drafts already agree they share that structure, so the round is discarded (measured 28/29 real runs, never
    *  adopted at conf >=90). Keeps the lock for genuinely shaky plans; skips a dead planner round otherwise. Default OFF. */
   backbone_skip_confident?: boolean;
+  /** #122: memoize subtask details across re-plan rounds. When goose re-drafts the plan (retarget/replan) it
+   *  otherwise re-details EVERY subtask from scratch (~75s each) even when a subtask is unchanged. This reuses
+   *  the detail for a subtask whose full detailer input is byte-identical to the previous round; a subtask
+   *  changed by a new answer/research is correctly re-detailed. Default OFF. */
+  detail_memo?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -293,6 +298,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'straggler_stop_degrade',
   'sink_lean_prefill',
   'backbone_skip_confident',
+  'detail_memo',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
