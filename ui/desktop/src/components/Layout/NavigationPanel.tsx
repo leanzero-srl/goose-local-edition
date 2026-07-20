@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useSwarmRun } from '../swarm/useSwarmRun';
 import {
   ChevronDown,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   FileText,
   Hammer,
   MessageSquare,
+  Pause,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
@@ -154,6 +156,9 @@ const NavRow: React.FC<NavRowProps> = ({ item, active, onClick }) => {
 // language as its build panel. Solid, saturated hues; the leading tile is a filled sharp square (never a rail).
 const STATUS_COLOR = { running: '#f5a623', done: '#2ecc71', error: '#ff3b30' } as const;
 const LOADING_BLUE = '#2e8bff';
+// Same amber the swarm panel's Paused badge and pause button use — a held run must read identically
+// wherever it appears, or the sidebar and the panel disagree about the same fact.
+const PAUSED_AMBER = '#d97706';
 const UNREAD_GREEN = '#2ecc71';
 // Kind hues for an idle row (no live status): recipe = violet, build = teal, plain chat = neutral slate.
 const KIND_COLOR = { recipe: '#6a5cff', build: '#17c4c4', chat: '#8a8a8a' } as const;
@@ -309,19 +314,31 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, active, status, onClic
 
   // The leading tile: live status colour wins (running/error/loading), else the kind hue. Solid saturated fill,
   // dark glyph — reads in both themes, exactly like the swarm FleetStrip node tiles.
-  const live = isStreaming || isLoading || hasError;
+  const streamLive = isStreaming || isLoading || hasError;
+  // #137: streamState is the CHAT stream, and it stays 'streaming' through a swarm HOLD because the provider
+  // call is still open — so this tile span a run where every fleet node was deliberately idle. Mihai read the
+  // spinner as a hang and resumed a healthy run. Poll ONLY for a row that is already live (a conditional
+  // ARGUMENT, not a conditional hook; an undefined dir makes useSwarmRun return EMPTY without polling), so
+  // this stays one poller for the one running chat rather than one per row.
+  const swarm = useSwarmRun(streamLive ? session.workingDir : undefined);
+  const swarmHeld = swarm.held;
+  const live = streamLive && !swarmHeld;
   const tileColor = hasError
     ? STATUS_COLOR.error
-    : isStreaming
-      ? STATUS_COLOR.running
-      : isLoading
-        ? LOADING_BLUE
-        : KIND_COLOR[kind];
-  const TileGlyph = live ? (hasError ? AlertCircle : Loader2) : KindIcon;
+    : swarmHeld
+      ? PAUSED_AMBER
+      : isStreaming
+        ? STATUS_COLOR.running
+        : isLoading
+          ? LOADING_BLUE
+          : KIND_COLOR[kind];
+  const TileGlyph = swarmHeld ? Pause : live ? (hasError ? AlertCircle : Loader2) : KindIcon;
   const tileTip = hasError
     ? intl.formatMessage(i18n.hasError)
-    : isStreaming || isLoading
-      ? intl.formatMessage(i18n.streaming)
+    : swarmHeld
+      ? 'Swarm paused — nothing is running until you resume'
+      : isStreaming || isLoading
+        ? intl.formatMessage(i18n.streaming)
       : kind === 'recipe'
         ? intl.formatMessage(i18n.kindRecipe)
         : kind === 'build'
