@@ -1688,7 +1688,12 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           meta,
           plan,
           smoke,
-          phase,
+          // PAUSED BEATS THE PHASE LABEL. `phase` is derived purely from task progress, so a held run kept
+          // reading "Building" while every node sat idle — Mihai watched exactly that and reasonably read it
+          // as a hang. `held` is engine truth (the last run_paused with no later run_unpaused), so when the
+          // scheduler has actually reached the hold it OVERRIDES the progress-derived label. The distinction
+          // that matters to someone watching is not which task is next, it is "is this thing working or not".
+          phase: held ? 'Paused' : phase,
           planConfidence,
           confidence,
           askFloor,

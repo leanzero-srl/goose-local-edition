@@ -2317,6 +2317,20 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
                 <MessageCircleQuestion size={10} /> Waiting for you
               </span>
             </Tip>
+          ) : run.held ? (
+            // HELD — engine truth (run_paused with no later run_unpaused). NO SPINNER: a spinning badge is a
+            // claim that work is happening, and while held every node is deliberately idle. MEASURED: Mihai
+            // watched this badge read a spinning "Building" through a 20-minute hold and reasonably concluded
+            // the run had hung. The phase label is suppressed too — "which task is next" is not the question
+            // someone asks when nothing is moving.
+            <Tip label="Held at a task boundary. In-flight work finished and nothing was lost — press ▶ to resume.">
+              <span
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
+                style={{ backgroundColor: AMBER, borderRadius: 2 }}
+              >
+                <Pause size={10} /> Paused
+              </span>
+            </Tip>
           ) : run.inProgress && !stale && !ended && run.phase ? (
             <Tip label={`Current phase: ${run.phase}`}>
               <span
