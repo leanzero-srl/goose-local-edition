@@ -627,6 +627,15 @@ export default function SwarmSettingsSection() {
               <SwarmSwitch checked={!!cfg.omni_judge} onChange={(v) => set({ omni_judge: v })} />
             </Row>
             <Row
+              label="Treat &ldquo;your call&rdquo; in a spec as a decision, not a gap"
+              hint="When your spec hands a decision to goose &mdash; a &ldquo;calls I&rsquo;m leaving to you&rdquo; section, &ldquo;your call&rdquo;, &ldquo;pick something sensible and defend it&rdquo; &mdash; goose used to read that as a spec that forgot to decide. It counted each one against your plan&rsquo;s confidence and then stopped everything to ask you a question you had already answered. Measured on a real build: three delegated decisions dragged confidence from 89 to 52, below the asking threshold, and all three machines sat idle waiting on a human. This inverts it: goose recognises the delegation, makes the call itself, and records what it chose so you can see and challenge it &mdash; and it still asks about anything your spec genuinely never mentions. A spec that says &ldquo;do not guess this, ask me&rdquo; always wins, even in the same paragraph. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.delegated_decisions_ok}
+                onChange={(v) => set({ delegated_decisions_ok: v })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >

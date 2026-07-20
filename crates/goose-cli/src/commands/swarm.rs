@@ -341,6 +341,12 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_OMNI_JUDGE overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omni_judge: Option<bool>,
+    /// #136: a decision the spec explicitly DELEGATES ("your call", "make it and defend it in a comment")
+    /// no longer counts as spec unclarity and no longer becomes a blocking question. It is still emitted, so
+    /// the workers must make the call and document it and the operator can audit what was chosen.
+    /// None => OFF (byte-identical). env GOOSE_SWARM_DELEGATED_OK overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegated_decisions_ok: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -870,6 +876,7 @@ impl Default for SwarmConfig {
             repeat_break: None,
             spiral_break_chars: None,
             omni_judge: None,
+            delegated_decisions_ok: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2195,6 +2202,11 @@ fn repeat_break_enabled(cfg: Option<bool>) -> bool {
 /// #135 omni-judge gate: env GOOSE_SWARM_OMNI_JUDGE wins, else config, else default OFF.
 fn omni_judge_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_OMNI_JUDGE").ok(), cfg)
+}
+
+/// #136: treat a spec-DELEGATED decision as a design choice for the workers, not as spec unclarity.
+fn delegated_decisions_ok(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_DELEGATED_OK").ok(), cfg)
 }
 
 /// #135 omni-judge cadence. Mihai: "you don't need to wait for anything like 10-20k, you will see it
@@ -4879,6 +4891,103 @@ mod tests {
         }
     }
 
+    // ---- #136 DELEGATED DECISIONS ----------------------------------------------------------------
+    // The real spec that caused the bug, trimmed to the shapes that matter.
+    const LOGFOLD_SPEC: &str = "\
+Build `logfold` — a log template miner, in Go, stdlib only.\n\
+\n\
+## The core\n\
+Mask first, then tokenize, then route by a fixed-depth tree. Determinism is required.\n\
+\n\
+## Calls I'm leaving to you\n\
+- **Placeholder vocabulary — typed or flat.** Whether a masked slot renders as a single `<*>` everywhere, or\n\
+  keeps its type (`<NUM>`, `<IP>`, `<UUID>`). Typed reads better and diffs more precisely but grows the\n\
+  masker surface. Your call, but be consistent between the mask stage and the tree-generalization stage.\n\
+- **Template identity across runs.** How a template gets a stable id used by `diff` to match baseline to new\n\
+  — hash of the token sequence? This decision is the whole ballgame; make it and defend it in a comment.\n\
+";
+
+    #[test]
+    fn delegated_decisions_do_not_block_but_a_silent_spec_still_asks() {
+        // A: the spec DELEGATES -> recorded, never asked. This is the measured mtp-base case.
+        let decisions = vec![
+            "Placeholder vocabulary: typed placeholders (<NUM>, <IP>, <UUID>) vs a flat wildcard everywhere. \
+             Typed gives better diff precision but grows the masker surface."
+                .to_string(),
+            "Template identity across runs for diff matching: how a template gets a stable id used by diff to \
+             match baseline to new, and what counts as the same template."
+                .to_string(),
+        ];
+        let (blocking, delegated) = partition_delegated_decisions(&decisions, LOGFOLD_SPEC);
+        assert_eq!(
+            delegated.len(),
+            2,
+            "both are delegated by the spec's own section"
+        );
+        assert!(blocking.is_empty(), "nothing should block: {blocking:?}");
+        // and the confidence recovers, which is the whole point
+        assert_eq!(spec_clarity_score(true, decisions.len()), 68);
+        assert_eq!(spec_clarity_score(true, blocking.len()), 100);
+
+        // B: a decision the spec NEVER MENTIONS must still block. The gate must not become a blanket silencer.
+        let unmentioned = vec![
+            "Which authentication provider should the billing portal use for single sign-on"
+                .to_string(),
+        ];
+        let (blocking, delegated) = partition_delegated_decisions(&unmentioned, LOGFOLD_SPEC);
+        assert_eq!(blocking.len(), 1, "an unmentioned decision MUST still ask");
+        assert!(delegated.is_empty());
+    }
+
+    #[test]
+    fn a_reservation_phrase_outranks_delegation_in_the_same_region() {
+        // C: "do NOT guess — ask me" must win, even sitting inside a delegating section, or one loose
+        // "your call" would silence the questions the author most wanted asked.
+        let spec = "## Calls I'm leaving to you\n\
+                    Styling and output formatting are your call.\n\
+                    The storage backend and retention window are NOT: do not guess them, ask me.\n";
+        let d = vec![
+            "storage backend and retention window for the archived records, no sensible default exists"
+                .to_string(),
+        ];
+        let (blocking, delegated) = partition_delegated_decisions(&d, spec);
+        assert_eq!(blocking.len(), 1, "a reserved decision must still block");
+        assert!(delegated.is_empty());
+    }
+
+    #[test]
+    fn no_delegation_section_is_a_total_passthrough() {
+        // F: with nothing delegating, the partition must return the input unchanged — this is what makes the
+        // lever byte-identical on the specs that do not use delegation language at all.
+        let spec = "Build a CLI that converts markdown to HTML. Support tables and footnotes.";
+        let d = vec![
+            "whether footnote backlinks render inline or collected at the document foot"
+                .to_string(),
+            "which markdown flavour to accept for tables".to_string(),
+        ];
+        let (blocking, delegated) = partition_delegated_decisions(&d, spec);
+        assert_eq!(blocking, d, "unchanged");
+        assert!(delegated.is_empty());
+    }
+
+    #[test]
+    fn a_thin_decision_is_never_assumed_delegated() {
+        // Guard the conservative bias: too few significant tokens to match on => keep asking. A false
+        // "delegated" silences a real question, which is strictly worse than an unnecessary ask.
+        let regions = delegation_regions(LOGFOLD_SPEC);
+        assert!(!regions.is_empty());
+        assert!(!decision_is_delegated("typed or flat", &regions));
+        assert!(!decision_is_delegated("the id", &regions));
+    }
+
+    #[test]
+    fn delegation_lever_defaults_off_and_env_overrides_config() {
+        // Default OFF, and the resolver precedence matches every other lever (env beats config beats default).
+        assert!(!delegated_decisions_ok(None));
+        assert!(delegated_decisions_ok(Some(true)));
+        assert!(!delegated_decisions_ok(Some(false)));
+    }
+
     #[test]
     fn spec_clarity_score_is_continuous_not_a_constant() {
         // Defined product: continuous, decreasing with each material open decision (NOT the old 100/72/50/30
@@ -5141,6 +5250,7 @@ mod tests {
             spec_clarity_reason: "product is pinned; 1 material open decision".into(),
             product_specified: true,
             open_decisions: vec!["which storage backend".into()],
+            delegated_decisions: Vec::new(),
         };
         let b = breakdown_json(&pc).expect("breakdown present when a signal exists");
         assert_eq!(b["final"], 43);
@@ -5182,6 +5292,7 @@ mod tests {
             spec_clarity_reason: String::new(),
             product_specified: prod,
             open_decisions: if dec { vec!["x".into()] } else { vec![] },
+            delegated_decisions: Vec::new(),
         };
         use BindingSignal::*;
         assert_eq!(
@@ -5225,6 +5336,7 @@ mod tests {
             spec_clarity_reason: String::new(),
             product_specified: prod,
             open_decisions: dec,
+            delegated_decisions: Vec::new(),
         };
         assert_eq!(
             retarget_action(&mk(Some(40), Some(80), true, vec![]), true, true),
@@ -7772,6 +7884,10 @@ pub(crate) struct PlanConf {
     spec_clarity_reason: String,
     product_specified: bool,
     open_decisions: Vec<String>,
+    /// #136: decisions the SPEC delegated to the builder. Never asked, never counted as unclarity — but
+    /// never dropped either: the workers still have to make each call and defend it, and the operator must
+    /// be able to audit what was chosen. Empty unless the delegated_decisions_ok lever is on.
+    delegated_decisions: Vec<String>,
 }
 
 /// Which sub-signal is the binding (lower) constraint on plan confidence — decides the retarget action.
@@ -7992,6 +8108,188 @@ fn spec_clarity_score(product_specified: bool, n_decisions: usize) -> u8 {
     }
 }
 
+/// #136 — DELEGATED DECISIONS. A spec that says "your call" has not FAILED to decide; it has decided that the
+/// BUILDER decides. The engine used to read those as unclarity, which is the opposite meaning.
+///
+/// MEASURED 2026-07-20 (run mtp-base, spec gen-logfold-template-miner): the spec carries a section headed
+/// "## Calls I'm leaving to you" whose bullets say "Your call, but be consistent...", "make it and defend it
+/// in a comment", "Pick something honest and tunable". The probe returned those three as material open
+/// decisions, spec_clarity_score(true, 3) = 52, min(agreement 89, 52) = 52 < ask_floor 80, so the ask fired
+/// and three 27b nodes idled waiting on a human for questions the spec had already delegated.
+///
+/// This taxes the BEST specs: the more explicitly an author hands over design authority, the further their
+/// plan confidence is pushed below the floor.
+///
+/// Deterministic on purpose — text over the spec, never a model call. A model opinion may not create or kill
+/// a verdict, and "should this block the fleet" is a verdict.
+const DELEGATION_MARKERS: &[&str] = &[
+    "leaving to you",
+    "leaving it to you",
+    "leave it to you",
+    "leave that to you",
+    "leave this to you",
+    "your call",
+    "up to you",
+    "you decide",
+    "yours to decide",
+    "decide and defend",
+    "designer's choice",
+    "dealer's choice",
+    "either is defensible",
+    "make it and defend",
+    "at your discretion",
+    "i'll leave",
+    "i leave",
+];
+
+/// Phrases by which a spec RESERVES a decision for the user. These OUTRANK a delegation marker in the same
+/// region, so "I'm leaving the styling to you, but do NOT guess the storage backend — ask me" still asks.
+/// Without this, one delegating sentence would silence every question in its neighbourhood.
+const RESERVATION_MARKERS: &[&str] = &[
+    "do not guess",
+    "don't guess",
+    "do not decide",
+    "don't decide",
+    "do not invent",
+    "don't invent",
+    "do not assume",
+    "don't assume",
+    "do not pick",
+    "don't pick",
+    "ask me",
+    "ask first",
+    "must ask",
+    "check with me",
+    "confirm with me",
+];
+
+/// Words too common to carry topical signal when matching a decision to a delegating region.
+const DELEGATION_STOPWORDS: &[&str] = &[
+    "there",
+    "their",
+    "these",
+    "those",
+    "which",
+    "where",
+    "while",
+    "would",
+    "could",
+    "should",
+    "shall",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "because",
+    "before",
+    "being",
+    "below",
+    "between",
+    "during",
+    "further",
+    "having",
+    "other",
+    "under",
+    "until",
+    "whether",
+    "decision",
+    "decisions",
+    "choice",
+    "choices",
+    "option",
+    "options",
+    "default",
+    "defaults",
+    "different",
+    "produce",
+    "produces",
+    "behavior",
+    "behaviour",
+    "sensible",
+    "genuinely",
+    "material",
+];
+
+/// Split a spec into regions that DELEGATE. A markdown heading governs its section until the next heading;
+/// paragraphs are regions too, so a delegating sentence in ordinary prose still counts.
+fn delegation_regions(spec: &str) -> Vec<String> {
+    let mut regions: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let flush = |buf: &mut String, out: &mut Vec<String>| {
+        if !buf.trim().is_empty() {
+            let low = buf.to_lowercase();
+            let delegates = DELEGATION_MARKERS.iter().any(|m| low.contains(m));
+            let reserved = RESERVATION_MARKERS.iter().any(|m| low.contains(m));
+            if delegates && !reserved {
+                out.push(std::mem::take(buf));
+                return;
+            }
+        }
+        buf.clear();
+    };
+    for line in spec.lines() {
+        if line.trim_start().starts_with('#') {
+            flush(&mut current, &mut regions);
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    flush(&mut current, &mut regions);
+    regions
+}
+
+fn delegation_tokens(s: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for w in s
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 5)
+        .filter(|w| !DELEGATION_STOPWORDS.contains(w))
+    {
+        let w = w.to_string();
+        if !seen.contains(&w) {
+            seen.push(w);
+        }
+    }
+    seen
+}
+
+/// Does a delegating region of the spec cover this decision? Conservative BY DESIGN: a false positive
+/// SILENCES a question the user genuinely needed to answer, which is far worse than an unnecessary ask, so
+/// this demands both an absolute and a proportional overlap and refuses to judge thin decisions at all.
+fn decision_is_delegated(decision: &str, regions: &[String]) -> bool {
+    let toks = delegation_tokens(decision);
+    if toks.len() < 3 {
+        return false;
+    }
+    regions.iter().any(|r| {
+        let low = r.to_lowercase();
+        let hits = toks.iter().filter(|t| low.contains(t.as_str())).count();
+        hits >= 3 && hits * 100 / toks.len() >= 34
+    })
+}
+
+/// Split the probe's decisions into the ones that must still BLOCK and the ones the spec DELEGATED.
+/// Delegated decisions are never dropped — the caller emits them so the workers still have to make the call
+/// and defend it, and the operator can still see what was decided.
+fn partition_delegated_decisions(decisions: &[String], spec: &str) -> (Vec<String>, Vec<String>) {
+    let regions = delegation_regions(spec);
+    if regions.is_empty() {
+        return (decisions.to_vec(), Vec::new());
+    }
+    let mut blocking = Vec::new();
+    let mut delegated = Vec::new();
+    for d in decisions {
+        if decision_is_delegated(d, &regions) {
+            delegated.push(d.clone());
+        } else {
+            blocking.push(d.clone());
+        }
+    }
+    (blocking, delegated)
+}
+
 /// #129: the post-answer re-plan decision under GOOSE_SWARM_ANSWERS_WIN_FLOOR. PURE — no env, no I/O — so
 /// it is unit-testable and foldable into the golden formula. `structural` = a language flip or a product
 /// first defined by the answer (those invalidate the drafted skeleton and ALWAYS re-plan). `post_conf` is
@@ -8035,7 +8333,10 @@ fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
     if pc.agreement.is_none() && pc.spec_clarity.is_none() {
         return None;
     }
-    Some(serde_json::json!({
+    // #136: the delegated list is INSERTED below only when non-empty. A `"delegated_decisions": null` key
+    // would still be a new key in every run's JSON, and "byte-identical when the lever is off" has to mean
+    // the key is absent, not present-and-null.
+    let mut out = serde_json::json!({
         "final": pc.final_conf,
         "agreement": pc.agreement,
         "agreement_reason": pc.agreement_reason,
@@ -8043,7 +8344,11 @@ fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
         "spec_clarity_reason": pc.spec_clarity_reason,
         "product_specified": pc.product_specified,
         "open_decisions": pc.open_decisions,
-    }))
+    });
+    if !pc.delegated_decisions.is_empty() {
+        out["delegated_decisions"] = serde_json::json!(pc.delegated_decisions);
+    }
+    Some(out)
 }
 
 /// Canonical ROLE for a source file, used by role-normalized cross-draft agreement: basename, lowercased,
@@ -10788,6 +11093,7 @@ impl GooseAgentDispatcher {
             };
             let (spec_clarity, open_decisions, product_specified) = match &clarity {
                 Some((c, d, p)) => (Some(*c), d.clone(), *p),
+                // (delegated split happens below, once, so the None arms stay byte-identical)
                 // Fail-closed: a dead probe reads as LOW clarity (forces the ask), not as an unmeasured skip.
                 None if fail_closed => (Some(CLARITY_FAILCLOSED), Vec::new(), true),
                 None => (None, Vec::new(), true), // probe failed/timed out → no spec-clarity veto
@@ -10799,6 +11105,34 @@ impl GooseAgentDispatcher {
                      agree perfectly on an invented product. The ask that protects an under-specified spec \
                      cannot fire on this run.",
                     style("!").yellow().bold()
+                );
+            }
+            // #136 — DELEGATION SPLIT. A decision the spec explicitly handed to the builder is a design
+            // choice, not an unclear spec, so it must not lower spec_clarity and must not block the fleet on
+            // a question the author already answered with "you decide". Deterministic text over the spec; a
+            // model opinion may never decide whether to block. Lever OFF => both vectors below are exactly
+            // the probe's output and every downstream value is byte-identical.
+            let (open_decisions, delegated_decisions) =
+                if delegated_decisions_ok(load_config().delegated_decisions_ok) {
+                    partition_delegated_decisions(&open_decisions, user_prompt)
+                } else {
+                    (open_decisions, Vec::new())
+                };
+            // Rescore off the BLOCKING count only. Without this the number still reads 52 while nothing is
+            // actually blocked, which is the dishonest-confidence class the breakdown exists to prevent.
+            let spec_clarity = match (spec_clarity, delegated_decisions.is_empty()) {
+                (Some(_), false) => {
+                    Some(spec_clarity_score(product_specified, open_decisions.len()))
+                }
+                (other, _) => other,
+            };
+            if !delegated_decisions.is_empty() {
+                eprintln!(
+                    "  {} {} decision(s) are DELEGATED by the spec (\"your call\") — recorded as design \
+                     choices for the workers to make and document, not counted as unclarity and not asked: {}",
+                    style("◆").cyan(),
+                    delegated_decisions.len(),
+                    delegated_decisions.join("; ")
                 );
             }
             let unc = open_decisions.join("; ");
@@ -10833,8 +11167,23 @@ impl GooseAgentDispatcher {
             } else if !product_specified {
                 "the product itself is undefined — clarity stays low until you say what to build"
                     .to_string()
+            } else if open_decisions.is_empty() && !delegated_decisions.is_empty() {
+                // Do NOT render "only routine defaults remain" here: the spec DID leave real decisions open,
+                // it just delegated them. Saying "routine" would misdescribe the author's spec back at them.
+                format!(
+                    "product is pinned; {} decision(s) the spec delegated to the builder (\"your call\") are \
+                     recorded as design choices rather than counted as unclarity",
+                    delegated_decisions.len()
+                )
             } else if open_decisions.is_empty() {
                 "product is pinned and only routine defaults remain".to_string()
+            } else if !delegated_decisions.is_empty() {
+                format!(
+                    "product is pinned; {} material open decision(s) still lower clarity ({} more were \
+                     delegated by the spec and are not counted)",
+                    open_decisions.len(),
+                    delegated_decisions.len()
+                )
             } else {
                 format!(
                     "product is pinned; {} material open decision(s) still lower clarity",
@@ -10849,6 +11198,7 @@ impl GooseAgentDispatcher {
                 spec_clarity_reason,
                 product_specified,
                 open_decisions,
+                delegated_decisions,
             };
             (pc, unc)
         } else {
@@ -10860,6 +11210,7 @@ impl GooseAgentDispatcher {
                 spec_clarity_reason: String::new(),
                 product_specified: true,
                 open_decisions: Vec::new(),
+                delegated_decisions: Vec::new(),
             };
             (pc, String::new())
         };
@@ -18766,6 +19117,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "repeat_break": repeat_break_enabled(load_config().repeat_break),
             "spiral_break_chars": spiral_break_chars(load_config().spiral_break_chars),
             "omni_judge": omni_judge_enabled(load_config().omni_judge),
+            "delegated_decisions_ok": delegated_decisions_ok(load_config().delegated_decisions_ok),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
