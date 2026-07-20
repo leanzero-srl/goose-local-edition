@@ -13243,6 +13243,9 @@ fn parse_judge_reply(s: &str) -> JudgeOutcome {
             .map(|h| h.to_string())
             .unwrap_or_else(|| "Your output does not match the spec — correct it now.".to_string()),
         proposed_split: None,
+        // MODEL-AUTHORED: this is the judge LLM's opinion, parsed from its reply. It may STEER (re-dispatch
+        // with a hint) but must never be what FAILS a task — see JudgeOutcome::deterministic.
+        deterministic: false,
     }
 }
 
