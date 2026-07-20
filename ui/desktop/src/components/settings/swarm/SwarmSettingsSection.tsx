@@ -632,6 +632,15 @@ export default function SwarmSettingsSection() {
                 <Row label="Worker timeout (s)" hint="no-progress re-route failsafe per worker (0 = off)">
                   <NumberField value={cfg.worker_timeout_secs} onCommit={(v) => set({ worker_timeout_secs: v ?? 900 })} />
                 </Row>
+                <Row
+                  label="Progress watchdog (s)"
+                  hint="cut a worker that streams reasoning tokens forever without a real tool call, output, or code — measured live, tasks ran 15-26 min emitting only thinking and were never stopped (the worker timeout is idle-based, and thinking resets it). This bounds the max time WITHOUT productive progress; a slow-but-working model keeps resetting it, so only a thinking-only spiral is cut. Never touches the final integrate-verify step (that has its own cap). Try ~720. 0 = off."
+                >
+                  <NumberField
+                    value={cfg.progress_watchdog_secs}
+                    onCommit={(v) => set({ progress_watchdog_secs: v ?? 0 })}
+                  />
+                </Row>
                 <Row label="Planner timeout (s)" hint="hang failsafe for planner-side calls">
                   <NumberField value={cfg.planner_timeout_secs} onCommit={(v) => set({ planner_timeout_secs: v ?? 900 })} />
                 </Row>
