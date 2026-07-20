@@ -820,12 +820,23 @@ const FleetStrip: React.FC<{
               {lane ? (
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <Loader2
-                      size={12}
-                      className="animate-spin shrink-0"
-                      style={{ color: STATUS_COLOR.running }}
-                    />
-                    <span className="text-text-primary truncate">
+                    {/* Only a LIVE run spins. A dead/historical session's lanes are frozen at 'running' (a run
+                        that died mid-task never emits task_completed), so on a non-live run show a static
+                        interrupted marker instead of a fake spinner — this is why opening an old session used to
+                        look like it was still streaming. */}
+                    {live ? (
+                      <Loader2
+                        size={12}
+                        className="animate-spin shrink-0"
+                        style={{ color: STATUS_COLOR.running }}
+                      />
+                    ) : (
+                      <CircleSlash size={12} className="shrink-0" style={{ color: STOPPED }} />
+                    )}
+                    <span
+                      className={`truncate ${live ? 'text-text-primary' : ''}`}
+                      style={live ? undefined : { color: STOPPED }}
+                    >
                       {lane.description || lane.taskId}
                     </span>
                     {canExpand ? (
@@ -860,9 +871,26 @@ const FleetStrip: React.FC<{
                       })()
                     : null}
                   {liveGen && !isExpanded ? (
-                    // Typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5 lines to
-                    // fill the space, compact/verbose = 2. Click the node to expand the full stream.
-                    <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
+                    live ? (
+                      // LIVE: typewriter-smoothed so the stream flows instead of jumping every poll. dev = 5
+                      // lines to fill the space, compact/verbose = 2. Click the node to expand the full stream.
+                      <NodeLiveText text={liveGen} lines={dev ? 5 : 2} />
+                    ) : (
+                      // HISTORICAL/DEAD run: the last frozen snapshot, static + dimmed — NEVER animated, so an
+                      // old session no longer looks like it is still streaming.
+                      <div
+                        className="text-text-secondary whitespace-pre-wrap break-words mt-0.5"
+                        style={{
+                          opacity: 0.6,
+                          display: '-webkit-box',
+                          WebkitLineClamp: dev ? 5 : 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {liveGen}
+                      </div>
+                    )
                   ) : null}
                 </div>
               ) : (
