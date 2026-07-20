@@ -583,6 +583,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Skip the second planning pass when the drafts already agree"
+              hint="After drafting several plans in parallel, goose can lock the shared module list and re-draft the whole plan a second time to try to improve its structure — a full extra planning round on every machine (roughly four minutes). But when the first-round drafts already agree strongly, they've already settled on that same structure, so the second pass can't beat it and gets thrown away (measured: discarded on 28 of 29 real builds, never once kept when agreement was 90 or above). With this on, goose skips that second pass whenever first-round agreement is already high, and still runs it for genuinely shaky plans where it can help. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.backbone_skip_confident}
+                onChange={(v) => set({ backbone_skip_confident: v })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >
