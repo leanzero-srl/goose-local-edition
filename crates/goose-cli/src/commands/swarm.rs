@@ -334,9 +334,10 @@ pub struct SwarmConfig {
     /// agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops plan
     /// confidence below the ask floor and the run ASKS instead of proceeding on cross-draft agreement ALONE
     /// (which agrees perfectly on an INVENTED product — the 2/14 conf-93-95-with-0-questions bug above).
-    /// `unparseable` stays fail-open (the model DID answer, only the JSON didn't fit). Default OFF = today's
-    /// behaviour exactly. GOOSE_SWARM_CLARITY_FAIL_CLOSED env overrides.
-    #[serde(default)]
+    /// `unparseable` stays fail-open (the model DID answer, only the JSON didn't fit). Default ON (#123): a
+    /// probe that DIED must not be treated as "spec is clear" — measured live, a timed-out probe proceeded on
+    /// agreement alone and built without asking. GOOSE_SWARM_CLARITY_FAIL_CLOSED=off restores the old fail-open.
+    #[serde(default = "default_true")]
     pub clarity_fail_closed: bool,
     /// Spec-contract verify (#120): after the smoke gate, run the spec's advertised `python3 -m PKG` entry and
     /// curl each concrete advertised GET endpoint. A 5xx (uninitialised DB) or 404/405 (endpoint never built)
@@ -796,7 +797,7 @@ impl Default for SwarmConfig {
             clarify_spec_bound: None,
             spec_wins: None,
             clarity_probe_secs: None,
-            clarity_fail_closed: false,
+            clarity_fail_closed: true,
             spec_contract: None,
             sink_max_turns: None,
             draft_timeout_secs: None,
@@ -7451,7 +7452,8 @@ fn clarity_probe_secs() -> u64 {
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .or(cfg)
-        .unwrap_or(120)
+        // #123: 120 timed out on a single 27B call at large context; 180 is cheap headroom (still clamped).
+        .unwrap_or(180)
         .clamp(30, 900)
 }
 
@@ -17979,6 +17981,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "straggler_stop": straggler_stop_enabled(load_config().straggler_stop),
             "straggler_stop_degrade": straggler_stop_degrade_enabled(
                 load_config().straggler_stop_degrade,
+            ),
+            "clarity_fail_closed": swarm_gate_cfg(
+                "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
+                load_config().clarity_fail_closed,
             ),
         },
     }));

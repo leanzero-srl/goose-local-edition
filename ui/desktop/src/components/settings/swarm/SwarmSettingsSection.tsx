@@ -473,7 +473,7 @@ export default function SwarmSettingsSection() {
               hint="That same spec-clarity check can die outright — it times out on a busy fleet, the model errors, or it returns nothing at all. When it does, goose today treats the failure as if your spec were clear and builds on how much the drafts agreed with each other — which is exactly how it invented whole products in 2 of 14 builds. With this on, a check that DIED (timed out, errored, or produced nothing) counts as LOW clarity, so goose asks you instead of guessing. A check that ran but returned unreadable output is left alone, so it will not nag you when the spec really was clear."
             >
               <SwarmSwitch
-                checked={!!cfg.clarity_fail_closed}
+                checked={cfg.clarity_fail_closed !== false}
                 onChange={(v) => set({ clarity_fail_closed: v })}
               />
             </Row>
