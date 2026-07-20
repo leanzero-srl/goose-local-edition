@@ -24,6 +24,7 @@ import {
   type RunOverview as RunOverviewData,
 } from './useSwarmRun';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
+import { useFleetStatus } from './useFleet';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
@@ -755,7 +756,19 @@ const FleetStrip: React.FC<{
   deviceOrder: string[];
   live: boolean;
   dev: boolean;
-}> = ({ lanes, planLanes, scoutLanes, contractLanes, detailLanes, deviceOrder, live, dev }) => {
+  /** LM Studio's own live status per node short-name (generating/processingPrompt/idle), for the truth dot. */
+  nodeStatus: Record<string, string>;
+}> = ({
+  lanes,
+  planLanes,
+  scoutLanes,
+  contractLanes,
+  detailLanes,
+  deviceOrder,
+  live,
+  dev,
+  nodeStatus,
+}) => {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (deviceOrder.length === 0) return null;
   // Worker lanes (EXECUTE) + plan-draft lanes (PLAN) always count a node as busy. In DEVELOPER mode also fold the
@@ -817,6 +830,29 @@ const FleetStrip: React.FC<{
               <span className="font-mono text-text-primary shrink-0" style={{ minWidth: 96 }}>
                 {shortName(device)}
               </span>
+              {/* LM Studio's OWN live state for this node (lms ps --json), independent of goose's digest — the
+                  ground-truth "is it generating right now" Mihai asked for. Solid dot: green generating, amber
+                  prompt-processing, dim grey idle; nothing when LM Studio is unreachable. */}
+              {(() => {
+                const st = nodeStatus[shortName(device)];
+                if (!st) return null;
+                const color =
+                  st === 'generating' ? '#22c55e' : st === 'processingPrompt' ? '#f59e0b' : '#4b5563';
+                const label =
+                  st === 'generating'
+                    ? 'generating'
+                    : st === 'processingPrompt'
+                      ? 'processing prompt'
+                      : 'idle';
+                return (
+                  <Tip label={`LM Studio: ${label}`}>
+                    <span
+                      className="shrink-0 mt-[5px]"
+                      style={{ width: 7, height: 7, borderRadius: '50%', background: color }}
+                    />
+                  </Tip>
+                );
+              })()}
               {lane ? (
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
@@ -2179,6 +2215,8 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   className = '',
 }) => {
   const run = useSwarmRun(workingDir);
+  // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per node.
+  const nodeStatus = useFleetStatus();
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   // Default OPEN so the confidence gauge shows on EVERY build, not only when the badge is clicked or an ask
   // fires (Mihai: "I would like to see it for every app"). The badge still collapses it.
@@ -2450,6 +2488,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         dev={dev}
         deviceOrder={deviceOrder}
         live={run.inProgress && !stale && !ended}
+        nodeStatus={nodeStatus}
       />
 
       <PhaseTodoList

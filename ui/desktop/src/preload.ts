@@ -244,6 +244,8 @@ type ElectronAPI = {
   addRecentDir: (dir: string) => Promise<boolean>;
   listRecentDirs: () => Promise<string[]>;
   listGitWorktreeDirs: (dir: string) => Promise<string[]>;
+  /** LM Studio's live per-node status via `lms ps --json`: { identifier: 'generating'|'processingPrompt'|'idle' }. */
+  fleetStatus: () => Promise<Record<string, string>>;
 };
 
 type AppConfigAPI = {
@@ -281,6 +283,7 @@ const electronAPI: ElectronAPI = {
   getBinaryPath: (binaryName: string) => ipcRenderer.invoke('get-binary-path', binaryName),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
+  fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

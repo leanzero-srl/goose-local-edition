@@ -1919,6 +1919,35 @@ ipcMain.handle('list-git-worktree-dirs', async (_event, dir: string) => {
   return await listGitWorktreeDirs(dir);
 });
 
+// LM Studio's OWN live per-node state — the ground truth for "is this node generating RIGHT NOW", which the
+// REST /api/v0/models does NOT expose (it only reports loaded/not-loaded). `lms ps --json` carries the real
+// status per model. Returned as { identifier: 'generating' | 'processingPrompt' | 'idle' }. Empty on any error
+// (lms missing, no server, parse fail) so the caller degrades to the digest-only view. The renderer can't shell
+// this itself; it goes through main.
+ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
+  return await new Promise<Record<string, string>>((resolve) => {
+    const home = process.env.HOME || os.homedir();
+    const lmsHome = `${home}/.lmstudio/bin/lms`;
+    const bin = fsSync.existsSync(lmsHome) ? lmsHome : 'lms';
+    execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
+      if (error) {
+        resolve({});
+        return;
+      }
+      try {
+        const arr = JSON.parse(stdout) as Array<{ identifier?: string; status?: string }>;
+        const map: Record<string, string> = {};
+        for (const m of arr) {
+          if (m.identifier && m.status) map[m.identifier] = m.status;
+        }
+        resolve(map);
+      } catch {
+        resolve({});
+      }
+    });
+  });
+});
+
 ipcMain.handle('get-setting', (_event, key: SettingKey) => {
   const settings = getSettings();
   return settings[key];

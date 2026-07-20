@@ -59,6 +59,39 @@ export function deviceFromModelId(id: string): string {
   return dash > 0 ? bare.slice(0, dash) : bare;
 }
 
+/**
+ * LM Studio's OWN live per-node status via `lms ps --json` (through the main process) — the ground truth for
+ * "is this node generating RIGHT NOW", which the REST /api/v0/models cannot report. Keyed by node short name
+ * (gabee/mihai/workhorse via deviceFromModelId) so the panel can cross-check the goose digest against it.
+ * Empty when LM Studio / lms is unavailable, so the caller degrades to the digest-only view.
+ */
+export function useFleetStatus(pollMs = 1500): Record<string, string> {
+  const [status, setStatus] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const raw = (await window.electron.fleetStatus()) || {};
+        if (!alive) return;
+        const byNode: Record<string, string> = {};
+        for (const [id, st] of Object.entries(raw)) {
+          byNode[deviceFromModelId(id)] = st;
+        }
+        setStatus(byNode);
+      } catch {
+        if (alive) setStatus({});
+      }
+    };
+    poll();
+    const t = setInterval(poll, pollMs);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [pollMs]);
+  return status;
+}
+
 async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
