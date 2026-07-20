@@ -146,6 +146,11 @@ export interface SwarmConfig {
    *  scout or planning step that starts repeating itself is watched by nothing. Measured: one scout emitted
    *  30,403 characters of the same paragraph while two machines sat idle. Blank/0 = off. */
   spiral_break_chars?: number;
+  /** #135: let the JUDGE watch every step in every phase, not just the build steps. It looks at what a step
+   *  is actually producing every minute and stops it if it is visibly repeating itself. This catches what a
+   *  size limit cannot — a planning draft can legitimately reason for 50,000 characters, so only reading the
+   *  text tells a deep thinker from a stuck one. It can only stop the one step; it can never fail a run. */
+  omni_judge?: boolean;
   /** #130: flatten the planner's false-serialization dependency CHAINS between code modules into a flat fan
    *  so the fleet builds independent modules at once (a chain idles all but one node — measured 1 of 3). Safe
    *  because the frozen interface already gives every importer its siblings' signatures and only
@@ -311,6 +316,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'detail_memo',
   'repeat_break',
   'spiral_break_chars',
+  'omni_judge',
 ];
 
 // GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the

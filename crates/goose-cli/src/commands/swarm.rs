@@ -329,6 +329,18 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiral_break_chars: Option<usize>,
+    /// #135 OMNI-JUDGE — the JUDGE, active in EVERY phase, not just build.
+    /// Mihai: "the judge should be active THROUGHOUT, not only in build!!! ... the judge can see signs of
+    /// looping." He is right in a way the data proves: a CHAR CAP cannot police plan drafts, because healthy
+    /// drafts reach 57,443 chars (from runs scoring 100/100) and a spiral looks identical by volume — which is
+    /// why `spiral_budget_for` DISARMS that kind. A judge that READS the text can tell them apart; a threshold
+    /// never can. This runs ONE judge call against a long-running call's own reasoning, in any phase, and
+    /// aborts it only if the judge reports it is repeating itself.
+    /// SAFE ONLY BECAUSE of the provenance fix: a model verdict can no longer terminal-fail a task or a run,
+    /// and every planner-side phase degrades gracefully on a lost call. None => OFF (byte-identical).
+    /// env GOOSE_SWARM_OMNI_JUDGE overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omni_judge: Option<bool>,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -857,6 +869,7 @@ impl Default for SwarmConfig {
             detail_memo: None,
             repeat_break: None,
             spiral_break_chars: None,
+            omni_judge: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -2179,6 +2192,26 @@ fn repeat_break_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_REPEAT_BREAK").ok(), cfg)
 }
 
+/// #135 omni-judge gate: env GOOSE_SWARM_OMNI_JUDGE wins, else config, else default OFF.
+fn omni_judge_enabled(cfg: Option<bool>) -> bool {
+    straggler_stop_resolved(std::env::var("GOOSE_SWARM_OMNI_JUDGE").ok(), cfg)
+}
+
+/// #135 omni-judge cadence. Mihai: "you don't need to wait for anything like 10-20k, you will see it
+/// immediately" — correct, and the earlier version was wrong to gate on a huge char count. A loop is visible
+/// after two or three repetitions (the measured pathologies were obvious within seconds), so waiting for
+/// 26,000 characters threw away minutes of a node per incident. The judge now looks EARLY and REPEATEDLY.
+///
+/// First look this many seconds into a call — long enough that there is something to read, short enough that
+/// a loop is caught in its first minute rather than its tenth.
+const OMNI_JUDGE_FIRST_LOOK_SECS: u64 = 45;
+/// Then re-look this often. A loop that starts late is still caught; a healthy call just keeps passing.
+const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
+/// Minimum reasoning before a look is meaningful — below this there is nothing to assess yet.
+const OMNI_JUDGE_MIN_CHARS: usize = 1_200;
+/// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
+const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
+
 /// #135 global spiral-break: env GOOSE_SWARM_SPIRAL_BREAK_CHARS wins, else config, else 0 (OFF).
 /// A CHAR budget, not a bool, because the safe threshold depends on the model's verbosity — it must be
 /// tunable without a rebuild. Clamped to a floor well above the worst LEGITIMATE call measured (6,312 chars)
@@ -2199,10 +2232,47 @@ fn spiral_break_chars(cfg: Option<usize>) -> usize {
     spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
 }
 
-/// #135: hard floor for the spiral budget. MEASURED legitimate scouts reached 6,312 thinking chars; the
-/// pathology was 30,403 and climbing. 12,000 is ~2x the worst healthy observation, so no configured value can
-/// cut a call that merely reasons thoroughly. A spiral grows without bound and blows past any floor.
+/// #135: hard floor for the spiral budget.
+///
+/// CORRECTED 2026-07-20 — the original floor was derived from ONE scout in ONE run (6,312 chars) and was
+/// WRONG. Re-measured over 428 terminal call digests across every run on disk:
+///   kind        n   p50     p90     max     %cut@12k
+///   worker    205  2,359  19,524  46,165     16.6%
+///   plandraft 116 11,008  24,220  57,443     44.8%   <-- MEDIAN alone is ~the old floor
+///   detail     58      2     511   1,384      0.0%
+///   scout      33  2,635   5,882  46,191      3.0%   (the 46,191 IS the pathology)
+///   contract   17  2,820  11,158  18,518      5.9%
+/// A single global budget cannot serve `detail` (max 1,384) and `plandraft` (max 57,443) — they are 40x
+/// apart — so the budget is now scaled PER CALL KIND by `spiral_budget_for`. This floor applies to the
+/// SMALL kinds (scout/detail) where 12,000 is still ~1.8x the worst healthy observation.
 const SPIRAL_BREAK_MIN_CHARS: usize = 12_000;
+
+/// #135: per-kind multiplier on the configured spiral budget. Derived from the table above — each kind's
+/// budget must sit ABOVE that kind's healthy maximum, or the lever silently kills legitimate work that has
+/// NO retry path. Returns 0 to DISARM the kind entirely.
+fn spiral_budget_for(activity_key: Option<&str>, base: usize) -> usize {
+    if base == 0 {
+        return 0;
+    }
+    match activity_key {
+        // The SINK owns no deliverable and has its own wall-clock cap; re-routing it re-prefills the tree.
+        Some("integrate-verify") => 0,
+        // PLAN DRAFTS ARE DISARMED. A draft is a pure-reasoning call (the top outliers have zero tool calls)
+        // and healthy ones reach 57,443 chars — from runs that scored plan confidence 100/100. There is no
+        // volume threshold that separates a healthy deep draft from a spiral here, and a killed draft is
+        // simply gone from best-of-N. Refusing to guess is the correct answer for this kind.
+        Some(k) if k.starts_with("plandraft-") => 0,
+        // Healthy contracts reach 18,518.
+        Some(k) if k.starts_with("contract-") => base.saturating_mul(3),
+        // Scouts: healthy p90 5,882 and worst healthy 6,673, against a measured 46,191 pathology — a ~7x
+        // gap, the one kind where volume separates cleanly. Base applies.
+        Some(k) if k.starts_with("scout-") => base,
+        // Details are tiny (max 1,384). Base applies with enormous headroom.
+        Some(k) if k.starts_with("detail-") => base,
+        // WORKERS: healthy reach 46,165. 5x the floor (60k) clears that with margin.
+        _ => base.saturating_mul(5),
+    }
+}
 // Compile-time guard: the floor MUST clear the worst LEGITIMATE call measured (a 6,312-char scout), or a
 // configured value could start cutting healthy work. A runtime assert on a const proves nothing
 // (clippy::assertions_on_constants); this fails the BUILD if the floor is ever lowered into that range.
@@ -2906,6 +2976,36 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+    }
+
+    #[test]
+    fn spiral_budget_never_cuts_a_measured_healthy_call() {
+        // Healthy MAXIMA measured over 428 terminal call digests across every run on disk. Each kind's
+        // budget MUST exceed its own healthy max — a killed planner call has NO retry path, so an
+        // under-budget here silently deletes legitimate work. This test is the reason the single global
+        // floor was wrong: it was set from ONE scout and sat BELOW the plandraft MEDIAN (11,008).
+        let base = SPIRAL_BREAK_MIN_CHARS; // 12_000
+        for (key, healthy_max) in [
+            (Some("scout-libraries"), 6_673usize),
+            (Some("detail-cli"), 1_384),
+            (Some("contract-db"), 18_518),
+            (Some("cli-module"), 46_165), // a worker: activity_key is the task id
+        ] {
+            let b = spiral_budget_for(key, base);
+            assert!(
+                b > healthy_max,
+                "{key:?}: budget {b} would cut a MEASURED healthy call of {healthy_max} chars"
+            );
+        }
+        // Plan drafts are DISARMED: healthy ones reach 57,443 with zero tool calls, so no volume
+        // threshold separates deep reasoning from a spiral for this kind.
+        assert_eq!(spiral_budget_for(Some("plandraft-0"), base), 0);
+        // The sink keeps its own wall-clock cap.
+        assert_eq!(spiral_budget_for(Some("integrate-verify"), base), 0);
+        // OFF stays OFF for every kind.
+        for key in [Some("scout-x"), Some("plandraft-0"), Some("worker"), None] {
+            assert_eq!(spiral_budget_for(key, 0), 0);
+        }
     }
 
     #[test]
@@ -9127,11 +9227,19 @@ impl GooseAgentDispatcher {
         // drops it ("proceeding on 2 valid of 3"), a detail -> falls back to the skeleton brief (`_ => brief`),
         // a contract -> the module builds without its frozen interface (identical to a contract timeout),
         // a worker -> the existing stall path (salvage / degrade_on_stall / bounded retry). 0 => OFF.
-        let spiral_budget = if activity_key == Some("integrate-verify") {
-            0
-        } else {
-            spiral_break_chars(load_config().spiral_break_chars)
-        };
+        let spiral_budget = spiral_budget_for(
+            activity_key,
+            spiral_break_chars(load_config().spiral_break_chars),
+        );
+        // #135 OMNI-JUDGE: the JUDGE itself, in EVERY phase. Armed for any call with an activity_key except
+        // the sink. Unlike spiral_budget this READS the reasoning, so it covers the kind a threshold cannot
+        // police at all — plan drafts, where healthy calls reach 57k chars and look identical by volume.
+        let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
+            && activity_key.is_some()
+            && activity_key != Some("integrate-verify");
+        let mut omni_next_look = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
+        let mut omni_looks: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -9143,6 +9251,63 @@ impl GooseAgentDispatcher {
             // watchdog above and the idle watchdog is reset by every token. Deliberately reuses the EXISTING
             // "no productive progress" stall error so the downstream salvage/degrade path is bit-for-bit the
             // one that already handles a stalled task — this introduces no new way for a task to fail.
+            // #135 OMNI-JUDGE: once this call's reasoning crosses the trigger, take ONE look at it with the
+            // JUDGE — the thing that can actually SEE a loop. Runs at most once per call, and only for a call
+            // already reasoning past every healthy p90, so a normal call never pays for it. A LOOPING verdict
+            // aborts THIS call only; it can never fail a task or a run (a model verdict has
+            // JudgeOutcome.deterministic == false, and scheduler.rs's terminal-fail requires it).
+            if omni_judge_on
+                && omni_looks < OMNI_JUDGE_MAX_LOOKS
+                && thinking_chars >= OMNI_JUDGE_MIN_CHARS
+                && tokio::time::Instant::now() >= omni_next_look
+            {
+                omni_looks += 1;
+                omni_next_look = tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(OMNI_JUDGE_INTERVAL_SECS);
+                let tail: String = {
+                    let c: Vec<char> = last_thinking.chars().collect();
+                    c[c.len().saturating_sub(2_000)..].iter().collect()
+                };
+                let ran: Vec<String> = call_records
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|(n, sum, _, _)| format!("{n}: {sum}"))
+                    .collect();
+                let sys = "You inspect a RUNNING agent call and decide ONE thing: is it LOOPING — repeating \
+                     the same reasoning or the same commands without new information? Reply on ONE line as \
+                     VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. \
+                     Say LOOPING only if the SAME content clearly recurs. Deep but ADVANCING reasoning is OK."
+                    .to_string();
+                let user = format!(
+                    "This call has emitted {thinking_chars} characters of reasoning.\n\nMost recent \
+                     reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
+                    if ran.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        ran.join("\n")
+                    }
+                );
+                let pm = self.planner_model.clone();
+                // Box::pin: this is `run_agent` calling `run_agent`, i.e. async recursion (E0733).
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_secs(45),
+                    Box::pin(self.run_agent(&pm, sys, user, None, 1, &[], 0, None)),
+                )
+                .await;
+                if let Ok(Ok(o)) = probe {
+                    if omni_judge_says_looping(&o.text) {
+                        eprintln!(
+                            "  {} omni-judge (look {omni_looks}): this call is LOOPING after {thinking_chars} reasoning chars — stopping it",
+                            style("↯").yellow()
+                        );
+                        return Err(anyhow!(
+                            "agent stalled — no productive progress: the judge read this call's own \
+                             reasoning ({thinking_chars} chars) and reported it is looping"
+                        ));
+                    }
+                }
+            }
             // #135: cut a REASONING spiral in ANY phase. Deterministic (a char count). Distinct from
             // repeat_break (identical TOOL CALLS) and from thinking_only_budget (time since a productive
             // event — which a spiral defeats by making an occasional real tool call). The measured scout made
@@ -13130,7 +13295,13 @@ where
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
     let n = items.len();
-    if grace_secs == 0 || n < 3 || n > devices.len() {
+    // The `n > devices.len()` bail-out that used to be here made straggler-stop DEAD for the fans that need
+    // it most. MEASURED: detail fans are 4-11 items on a 3-device fleet, so 0 of 52 measured detail fans were
+    // EVER eligible; contracts bail out the moment modules > devices. The arming rule below is
+    // "every item but one has finished" — i.e. exactly ONE call outstanding and every other node idle — which
+    // is the true tail of a fan and is correct whether or not the items had to queue. With more items than
+    // devices the items simply queue through the semaphore first and the grace still arms at the real tail.
+    if grace_secs == 0 || n < 3 {
         return fanout_over_fleet(devices, items, f).await;
     }
     // Observability (verify-instrument-reporting-zero): make the straggler PATH visible even on runs where it
@@ -13175,6 +13346,21 @@ where
         );
     }
     results
+}
+
+/// #135 OMNI-JUDGE probe. Asks a model whether an IN-FLIGHT call is repeating itself, from the call's own
+/// recent reasoning plus the commands it has run. This is the piece a threshold cannot do: for a plan draft,
+/// healthy and pathological look IDENTICAL by volume (healthy reach 57k chars), so only reading the text
+/// separates them.
+///
+/// Deliberately conservative — it returns true ONLY on an explicit LOOPING verdict. Anything ambiguous, any
+/// parse failure, any model error reads as "keep going", because a false abort costs a planner call that has
+/// NO retry path. It can never fail a task or a run: it aborts at most this one call, and every phase
+/// degrades gracefully (scout -> N of 3, draft -> best-of-N, detail -> skeleton brief, contract -> no frozen
+/// interface, worker -> the existing stall path).
+fn omni_judge_says_looping(reply: &str) -> bool {
+    let out = parse_judge_reply(reply);
+    matches!(out.verdict, Verdict::Looping | Verdict::OverReading) && out.confidence >= 0.8
 }
 
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
@@ -18579,6 +18765,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "detail_memo": detail_memo_enabled(load_config().detail_memo),
             "repeat_break": repeat_break_enabled(load_config().repeat_break),
             "spiral_break_chars": spiral_break_chars(load_config().spiral_break_chars),
+            "omni_judge": omni_judge_enabled(load_config().omni_judge),
             "incremental_replan": swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", load_config().incremental_replan),
             "retarget_stall_guard": swarm_gate_cfg("GOOSE_SWARM_RETARGET_STALL_GUARD", load_config().retarget_stall_guard),
             "no_tools_means_ask": swarm_gate_cfg("GOOSE_SWARM_NO_TOOLS_MEANS_ASK", load_config().no_tools_means_ask),
