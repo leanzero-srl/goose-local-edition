@@ -38,6 +38,7 @@ import { LEANZERO_WEBSITE_URL } from '../branding';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
+import { useSwarmRun } from './swarm/useSwarmRun';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -136,6 +137,12 @@ export default function BaseChat({
     },
     [session, updateSession]
   );
+
+  // #137: the chat-level indicator had no idea the swarm was HELD, so it kept saying "goose is working on
+  // it…" through a deliberate pause while every fleet node sat idle. Mihai read that as a hang and pressed
+  // resume on a run that was fine. Same working_dir already handed to SwarmRunPanel, so this reads the SAME
+  // engine truth the panel does (last run_paused with no later run_unpaused) — not a second, divergent guess.
+  const swarmRun = useSwarmRun(session?.working_dir);
 
   const recipe = session?.recipe as Recipe | null | undefined;
 
@@ -541,9 +548,13 @@ export default function BaseChat({
               <LoadingGoose
                 chatState={chatState}
                 message={
-                  messages.length > 0
-                    ? getThinkingMessage(messages[messages.length - 1])
-                    : undefined
+                  // A HELD swarm run outranks whatever the chat layer believes: the provider call is still
+                  // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
+                  swarmRun.held
+                    ? 'swarm paused — nothing is running until you resume'
+                    : messages.length > 0
+                      ? getThinkingMessage(messages[messages.length - 1])
+                      : undefined
                 }
               />
             </div>
