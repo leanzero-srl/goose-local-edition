@@ -507,6 +507,30 @@ struct KillJudge {
     target: String,
 }
 
+/// Same as `KillJudge` but its verdict carries DETERMINISTIC provenance — i.e. it stands in for an engine
+/// FACT (a compile error, an owned file never written), not for the judge model's opinion. Only this kind of
+/// verdict is allowed to terminal-fail a task.
+struct DeterministicKillJudge {
+    target: String,
+}
+
+#[async_trait]
+impl Judge for DeterministicKillJudge {
+    async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+        if req.task_id == self.target {
+            JudgeOutcome {
+                verdict: Verdict::Looping,
+                confidence: 1.0,
+                hint: "STOP looping and WRITE the file now".to_string(),
+                proposed_split: None,
+                deterministic: true,
+            }
+        } else {
+            JudgeOutcome::ok()
+        }
+    }
+}
+
 #[async_trait]
 impl Judge for KillJudge {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
@@ -516,6 +540,10 @@ impl Judge for KillJudge {
                 confidence: 1.0,
                 hint: "STOP looping and WRITE the file now".to_string(),
                 proposed_split: None,
+                // This mock stands in for the MODEL judge (it is a `Judge` impl), so it is NOT deterministic
+                // even at confidence 1.0 — which is the whole point of the flag. It can still RE-DISPATCH
+                // (what this test asserts); it just can no longer terminal-fail a task.
+                deterministic: false,
             }
         } else {
             JudgeOutcome::ok()
@@ -773,10 +801,18 @@ async fn judge_fires_when_fleet_is_saturated() {
     );
 }
 
-/// A worker that exhausts its re-dispatch cap and is STILL flagged must be terminal-failed, not left to
-/// spin a node to worker_max_turns. The judge's third action: give up cleanly so the run terminates.
-/// `terminal_min_secs: 0` lets the final attempt be failed immediately; `slow_all` keeps that attempt
-/// alive so the judge acts on it rather than it self-completing.
+/// A worker that exhausts its re-dispatch cap and is STILL flagged by a DETERMINISTIC verdict must be
+/// terminal-failed, not left to spin a node to worker_max_turns. The judge's third action: give up cleanly
+/// so the run terminates. `terminal_min_secs: 0` lets the final attempt be failed immediately; `slow_all`
+/// keeps that attempt alive so the judge acts on it rather than it self-completing.
+///
+/// THIS TEST USED TO USE THE MODEL JUDGE (`KillJudge`) AND ASSERT THE SAME THING. That encoded a rule
+/// violation: the judge MODEL produces its own `confidence`, so gating an irreversible terminal-fail on
+/// confidence alone let a model OPINION fail a task — and because integrate-verify depends on every
+/// verify::<M> under fan-verify, one opinion turned a whole run red (MEASURED: nf-ts-cadence,
+/// over_reading -> re_dispatch x2 -> FAILED at confidence 0.90). `terminal` now also requires
+/// `outcome.deterministic`, so the protection is kept exactly where it is legitimate — an engine FACT —
+/// and the companion test below pins the other half: a model verdict at cap must NOT fail the task.
 #[tokio::test]
 async fn judge_terminal_fails_worker_stuck_at_cap() {
     let runs = Arc::new(Mutex::new(HashMap::new()));
@@ -789,7 +825,7 @@ async fn judge_terminal_fails_worker_stuck_at_cap() {
         slow_all: true,
     });
     let dag = Dag::from_specs(vec![spec("doomed", &[], &["a.py"])]).unwrap();
-    let judge = Arc::new(KillJudge {
+    let judge = Arc::new(DeterministicKillJudge {
         target: "doomed".to_string(),
     });
     let cfg = JudgeConfig {
@@ -811,6 +847,46 @@ async fn judge_terminal_fails_worker_stuck_at_cap() {
         runs.lock().unwrap()[&"doomed".to_string()],
         2,
         "re-dispatched once (kill at cap-0), then terminal-failed on the still-flagged retry"
+    );
+}
+
+/// THE OTHER HALF OF THE RULE: a MODEL-authored verdict must NEVER terminal-fail a task, no matter how
+/// confident it is. `KillJudge` flags at confidence 1.0 and the cap is 1, so under the old code this task
+/// was FAILED. It must now survive: the model keeps its steering power (it re-dispatched once, below) but
+/// the kill decision belongs to a deterministic engine event alone.
+///
+/// The residual cost is real and deliberate: a task only a MODEL can tell is doomed now runs to a
+/// DETERMINISTIC backstop (worker_timeout, or the spiral/repeat breakers) instead of being cut at the judge
+/// cap. That is the accepted trade — a slower doomed task is recoverable, a wrongly-failed run is not.
+#[tokio::test]
+async fn a_model_verdict_at_cap_does_not_terminal_fail() {
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "opinionated".to_string(),
+        delay: Duration::from_millis(20),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![spec("opinionated", &[], &["a.py"])]).unwrap();
+    // The MODEL judge — same flag, same 1.0 confidence, but no deterministic provenance.
+    let judge = Arc::new(KillJudge {
+        target: "opinionated".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        terminal_min_secs: 0,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert!(
+        !report.failed.contains(&"opinionated".to_string()),
+        "a MODEL opinion must never terminal-fail a task — only a deterministic engine event may"
     );
 }
 

@@ -1282,7 +1282,17 @@ impl State {
         // spin a node to worker_max_turns and so the run terminates instead of hanging on a dead worker).
         // Terminal-fail requires a positive cap that has been used up AND a final attempt that has run a
         // meaningful while, so a brief flag on a just-(re)started attempt never fails a task prematurely.
+        // TERMINAL-FAIL REQUIRES A DETERMINISTIC VERDICT. `actionable` gates on
+        // `outcome.confidence >= cfg.intervene_confidence`, but the judge MODEL produces that confidence —
+        // so without this term a model OPINION decides an irreversible failure. MEASURED: nf-ts-cadence's
+        // integrate-verify went `over_reading -> re_dispatch, re_dispatch, FAILED` at confidence 0.90 from
+        // the LLM path; under fan-verify integrate-verify depends on every verify::<M>, so that single model
+        // opinion turned the whole run red. The standing rule is that only a DETERMINISTIC engine event may
+        // create or kill a verdict. A model verdict keeps its full STEERING power (re_dispatch with a hint,
+        // below) — it simply may no longer be the thing that fails a task; that task now runs to its own
+        // deterministic backstop (worker_timeout / the spiral + repeat breakers) instead.
         let terminal = actionable
+            && outcome.deterministic
             && cfg.max_interventions_per_task > 0
             && interv >= cfg.max_interventions_per_task
             && elapsed >= cfg.terminal_min_secs;

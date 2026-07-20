@@ -114,6 +114,17 @@ pub struct JudgeOutcome {
     pub hint: String,
     /// Set only when `verdict == Split`: the child subtasks that partition the too-big task's files.
     pub proposed_split: Option<Vec<ChildSpec>>,
+    /// PROVENANCE. True only for a verdict produced by `deterministic_verdict` — a real engine fact
+    /// (a compile error, an owned file never written, a measured char/tool count). False for anything the
+    /// JUDGE MODEL authored.
+    ///
+    /// This exists because `confidence` cannot carry that distinction: the model produces its own confidence,
+    /// so gating an irreversible action on `confidence >= threshold` lets a model opinion decide it. MEASURED:
+    /// nf-ts-cadence's integrate-verify went `over_reading -> re_dispatch, re_dispatch, FAILED` at confidence
+    /// 0.90 from the LLM path, and because integrate-verify depends on every verify::<M> under fan-verify, one
+    /// model opinion took the whole run's verdict red. The standing rule is that only a DETERMINISTIC engine
+    /// event may create or kill a verdict; `terminal` now requires this flag.
+    pub deterministic: bool,
 }
 
 impl JudgeOutcome {
@@ -123,6 +134,7 @@ impl JudgeOutcome {
             confidence: 1.0,
             hint: String::new(),
             proposed_split: None,
+            deterministic: false,
         }
     }
 
@@ -133,6 +145,7 @@ impl JudgeOutcome {
             confidence: 0.9,
             hint: String::new(),
             proposed_split: Some(children),
+            deterministic: false,
         }
     }
 }
@@ -297,6 +310,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                  core of the spec; a working subset beats a broken whole."
             ),
             proposed_split: None,
+            deterministic: true,
         });
     }
     // Behavioral over-read: the worker has TAKEN many actions (tool calls) yet produced no owned file.
@@ -328,6 +342,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    file beats endless exploration."
                 .to_string(),
             proposed_split: None,
+            deterministic: true,
         });
     }
     // #134 REASONING-SPIRAL trip (OFF at default cfg.spiral_thinking_chars == 0 → byte-identical): a worker
@@ -352,6 +367,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    A minimal working file beats a plan you never wrote down."
                 .to_string(),
             proposed_split: None,
+            deterministic: true,
         });
     }
     // Blind fallback: no file on disk and the clock ran out. Unlike the branch above this one has NO
@@ -389,6 +405,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                     .to_string()
             },
             proposed_split: None,
+            deterministic: true,
         });
     }
     // Finalize-spin: the worker DID produce its owned file(s) but has not touched them in a long
@@ -410,6 +427,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
                    than perfecting it, then finish. If the file already satisfies the spec, report done NOW."
                 .to_string(),
             proposed_split: None,
+            deterministic: true,
         });
     }
     None
@@ -595,5 +613,52 @@ mod tests {
         let mut young = big.clone();
         young.elapsed_secs = 300;
         assert!(!is_split_candidate(&young, &cfg));
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    /// The standing rule: only a DETERMINISTIC engine event may create or kill a verdict. This locks the
+    /// PROVENANCE half of it — every verdict `deterministic_verdict` can emit must be marked deterministic,
+    /// and everything the judge MODEL authors must not be. scheduler.rs's `terminal` reads this flag, so if
+    /// a future branch forgets it, a model opinion silently regains the power to fail a task and a run.
+    #[test]
+    fn model_authored_outcomes_are_never_marked_deterministic() {
+        // The convenience constructors are model/neutral paths — never deterministic.
+        assert!(!JudgeOutcome::ok().deterministic);
+        assert!(
+            !JudgeOutcome::split(vec![]).deterministic,
+            "a SPLIT proposal comes from the judge model — it must not be marked deterministic"
+        );
+    }
+
+    /// A deterministic BrokenCode verdict (a real compile error) must be marked deterministic, otherwise the
+    /// terminal-fail path can never fire for a genuinely broken task and a doomed task spins to its timeout.
+    #[test]
+    fn a_real_compile_error_is_marked_deterministic() {
+        // JudgeInput has no Default — construct it fully so a new field forces this test to be revisited.
+        let input = JudgeInput {
+            task_id: "core".to_string(),
+            description: String::new(),
+            owned_files: vec!["a.py".to_string()],
+            file_contents: vec![("a.py".to_string(), "def f(:".to_string())],
+            compile_errors: vec![("a.py".to_string(), "SyntaxError: bad".to_string())],
+            elapsed_secs: 600,
+            any_owned_written: true,
+            secs_since_last_write: Some(10),
+            worker_tool_calls: Some(3),
+            worker_thinking_chars: Some(100),
+            split_count: 0,
+        };
+        let cfg = JudgeConfig::default();
+        let out =
+            deterministic_verdict(&input, &cfg).expect("a compile error must produce a verdict");
+        assert_eq!(out.verdict, Verdict::BrokenCode);
+        assert!(
+            out.deterministic,
+            "a compile error is an ENGINE FACT — it must be marked deterministic or it can never fail a task"
+        );
     }
 }
