@@ -14,6 +14,10 @@ export interface SwarmConfig {
   worker_max_turns?: number;
   max_attempts?: number;
   worker_timeout_secs?: number;
+  /** #sink-time: max seconds a worker may stream reasoning-only (no productive tool/output/text) before it's
+   *  cut as a thinking-only spiral. 0 = off. The worker timeout is idle-based and thinking resets it, so it
+   *  never catches this; measured live, tasks ran 15-26 min emitting only thinking. Never touches the sink. */
+  progress_watchdog_secs?: number;
   planner_timeout_secs?: number;
   context_cap?: number | null;
   research_planning?: ResearchMode;
@@ -249,6 +253,7 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'worker_max_turns',
   'max_attempts',
   'worker_timeout_secs',
+  'progress_watchdog_secs',
   'planner_timeout_secs',
   'research_planning',
   'parallel_planning',

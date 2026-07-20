@@ -265,6 +265,15 @@ pub struct SwarmConfig {
     /// A/B data on feature-dense builds confirms healthy sinks cluster under the chosen ceiling.
     #[serde(default = "default_sink_cap_secs")]
     pub sink_cap_secs: u64,
+    /// PROGRESS WATCHDOG (seconds): the max continuous wall-time a NON-sink worker may spend WITHOUT a productive
+    /// event (a real tool call/result, final_output, or non-empty non-thinking text) before it is cut as a
+    /// thinking-only spiral. Bounds the "streams reasoning tokens forever, resets the idle watchdog, makes zero
+    /// progress" pathology that `worker_timeout_secs` (an idle watchdog) cannot catch. Progress-shaped, so a
+    /// slow-but-working model survives. DEFAULT 0 = OFF (byte-identical). Set ABOVE a healthy build turn (~3x
+    /// worker_timeout_secs, e.g. 720). `GOOSE_SWARM_PROGRESS_WATCHDOG_SECS` env overrides. Never applies to the
+    /// integrate-verify sink (bounded by `sink_cap_secs`).
+    #[serde(default)]
+    pub progress_watchdog_secs: u64,
     /// All worker models are the SAME model (same weights + tokenizer, quant aside). When true the
     /// planner is told fragments produced independently on different nodes WILL mesh consistently, so
     /// it splits more aggressively — enabling more parallel planning + execution without divergence risk.
@@ -787,6 +796,7 @@ impl Default for SwarmConfig {
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
             sink_cap_secs: default_sink_cap_secs(),
+            progress_watchdog_secs: 0,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
@@ -6661,6 +6671,20 @@ fn is_mcp_tool(name: &str) -> bool {
         && !name.starts_with("platform__")
 }
 
+/// PROGRESS WATCHDOG classifier: does this stream content represent PRODUCTIVE progress (advances the build),
+/// as opposed to reasoning-only or a rejected/malformed emission? A real tool call (parsed OK — including
+/// final_output), any tool RESULT, and non-empty non-thinking TEXT count. Thinking tokens and malformed tool
+/// calls (the provider rejected them before any tool ran) do NOT — so a task that only reasons or only flails
+/// lets the thinking_only_budget elapse and gets cut, while a genuinely-working task keeps resetting it.
+fn message_content_is_productive(c: &MessageContent) -> bool {
+    match c {
+        MessageContent::Text(t) => !t.text.trim().is_empty(),
+        MessageContent::ToolRequest(req) => req.tool_call.is_ok(),
+        MessageContent::ToolResponse(_) => true,
+        _ => false,
+    }
+}
+
 /// A short, human-readable summary of a tool call's arguments for the desktop run panel: the shell
 /// line, the edited path, the search query — whatever field carries the intent. Falls back to a
 /// compact JSON dump. Single-lined and capped so the digest stays small.
@@ -8696,7 +8720,38 @@ impl GooseAgentDispatcher {
         } else {
             None
         };
+        // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
+        // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
+        // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
+        // documented at the digest note above). This SECOND budget bounds the max continuous wall-time a task
+        // may spend WITHOUT a PRODUCTIVE event (a real tool call/result, final_output, or non-empty non-thinking
+        // text). It is PROGRESS-shaped, not wall-clock: a slow-but-working local model emits a tool event every
+        // turn and resets it, so a legitimate long build survives while a thinking-only spiral is cut. 0 = OFF
+        // (byte-identical). Gated OFF for the integrate-verify SINK: the sink owns no deliverables and is bounded
+        // by its own wall-clock cap (GOOSE_SWARM_SINK_CAP_SECS above); re-routing it on a thinking stall would
+        // only re-prefill the whole tree.
+        let thinking_only_budget = if activity_key == Some("integrate-verify") {
+            None
+        } else {
+            std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&s| s > 0)
+                .map(std::time::Duration::from_secs)
+        };
+        // Time of the last PRODUCTIVE event (tool/output/real-text). Only advanced on real progress, so the
+        // thinking_only_budget elapses while the stream emits only reasoning.
+        let mut last_productive_at = tokio::time::Instant::now();
         loop {
+            // Cut a THINKING-ONLY spiral: no productive event for the whole budget while the stream stays alive
+            // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
+            // streamed Thinking token drives an iteration here).
+            if thinking_only_budget.is_some_and(|b| last_productive_at.elapsed() >= b) {
+                return Err(anyhow!(
+                    "agent stalled — no productive progress (tool/output/text) for {}s while streaming reasoning only",
+                    thinking_only_budget.map(|b| b.as_secs()).unwrap_or(0)
+                ));
+            }
             // HARD wall-clock ceiling: finalize the moment the sink deadline passes, regardless of whether
             // the sink is still emitting. The wait/timeout path below only reaches the deadline check on an
             // event GAP (the `Err(_)` arm), so a CONTINUOUSLY-active integrate-verify (steady tokens/tools)
@@ -8733,7 +8788,15 @@ impl GooseAgentDispatcher {
             };
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
+                    // PROGRESS WATCHDOG: a message counts as PRODUCTIVE if it carries a real tool call/result
+                    // (incl. final_output) or non-empty non-thinking text. Reasoning-only (Thinking) and
+                    // malformed tool calls are NOT productive, so a thinking/flailing spiral lets the
+                    // thinking_only_budget elapse and get cut.
+                    let mut productive = false;
                     for content in &msg.content {
+                        if message_content_is_productive(content) {
+                            productive = true;
+                        }
                         match content {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::Thinking(t) => {
@@ -8805,6 +8868,9 @@ impl GooseAgentDispatcher {
                             }
                             _ => {}
                         }
+                    }
+                    if productive {
+                        last_productive_at = tokio::time::Instant::now();
                     }
                 }
                 Ok(_) => {}
@@ -17309,6 +17375,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
+    // Same bridge for the progress watchdog (the read site in run_agent_in reads this env). Env wins; else the
+    // config value (default 0 = OFF, filtered back to OFF by `.filter(|&s| s > 0)` → byte-identical default).
+    if std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS").is_err() {
+        std::env::set_var(
+            "GOOSE_SWARM_PROGRESS_WATCHDOG_SECS",
+            cfg.progress_watchdog_secs.to_string(),
+        );
+    }
     // Upstream #10348 applies the default extension timeout (300s) as a HARD per-command kill to developer
     // `shell` calls that omit `timeout_secs`. Swarm WORKERS routinely run longer single commands (`cargo
     // build`, `npm install`, a big `pytest`/`cargo test`), and our own idle watchdog already bounds a HUNG
@@ -17986,6 +18060,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
                 load_config().clarity_fail_closed,
             ),
+            "progress_watchdog_secs": std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or_else(|| load_config().progress_watchdog_secs),
         },
     }));
 
