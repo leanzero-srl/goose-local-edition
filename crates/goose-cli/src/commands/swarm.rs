@@ -19184,6 +19184,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 load_config().clarity_fail_closed,
             ),
             "sink_lean_prefill": sink_lean_prefill_enabled(load_config().sink_lean_prefill),
+            // MEASURED 2026-07-20 (run allon-1): spec_contract was set in config.yaml, was honoured by the
+            // engine (spec_contract_enabled() at 13237, used at 20563), and was MISSING from this event. The
+            // levers event is the campaign's ONLY ground truth that an arm's lever actually landed, so a
+            // working lever absent from it reads exactly like a lever that never reached the engine — the
+            // precise failure that made every earlier arm a silent control. An audit that omits a lever is an
+            // instrument that lies by omission.
+            "spec_contract": spec_contract_enabled(),
             "progress_watchdog_secs": std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
