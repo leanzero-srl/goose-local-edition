@@ -574,6 +574,15 @@ export default function SwarmSettingsSection() {
               <SwarmSwitch checked={!!cfg.straggler_stop} onChange={(v) => set({ straggler_stop: v })} />
             </Row>
             <Row
+              label="Trim the final check's context so it runs faster"
+              hint="The last step assembles the whole app and runs it end to end — and it's the slowest single step by far (measured: it ran to its 25-minute cap on one build). Its prompt is stuffed with every module's interface signatures, but that step doesn't build against those — it runs the real, finished files. With this on, goose drops that dead context from the final step so it has far less to read before it starts, which makes it finish sooner. It only touches the final integrate-and-run step; the actual checks it performs are unchanged. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.sink_lean_prefill}
+                onChange={(v) => set({ sink_lean_prefill: v })}
+              />
+            </Row>
+            <Row
               label="Also stop a lagging step during contracts and detailing"
               hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
             >
