@@ -1,0 +1,1 @@
+Build a command-line tool for keeping track of things. It should let you add items and see them later. Make it useful.
