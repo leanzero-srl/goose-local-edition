@@ -4971,6 +4971,45 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn model_prose_appended_to_the_prompt_can_never_manufacture_a_delegation() {
+        // THE EXPOSURE, pinned. opts.prompt is appended to by MODEL output at :19660 (research findings) and
+        // :19799 (clarify Q&A), and a retarget round re-plans with the enlarged prompt. Research output
+        // routinely contains "either is defensible" -- which is one of DELEGATION_MARKERS verbatim. If the
+        // partition read the live prompt, the model would be able to silence a question the user needed to
+        // answer, which is the exact direction this gate must never fail in.
+        let operator_spec =
+            "Build a CLI that syncs two folders. It must never delete without a prompt.";
+        let model_appended = "\n\n## RESEARCH FINDINGS\n\
+             - Conflict resolution: either is defensible, your call whether last-write-wins or newest-mtime \
+               wins; pick something sensible and defend it in a comment.\n";
+        let polluted = format!("{operator_spec}{model_appended}");
+        let decision = vec![
+            "Conflict resolution strategy when both sides changed: last-write-wins versus newest-mtime wins, \
+             no sensible default exists and guessing wrong silently loses a user's edits"
+                .to_string(),
+        ];
+
+        // Parsed from the POLLUTED prompt the model would have silenced it...
+        let (blocking_bad, delegated_bad) = partition_delegated_decisions(&decision, &polluted);
+        assert!(
+            !delegated_bad.is_empty() || blocking_bad.len() == 1,
+            "sanity: the polluted text is the risky input"
+        );
+
+        // ...but parsed from the FROZEN operator spec, which says nothing about delegation, it MUST still ask.
+        let (blocking, delegated) = partition_delegated_decisions(&decision, operator_spec);
+        assert_eq!(
+            blocking.len(),
+            1,
+            "the operator never delegated this — it must still block"
+        );
+        assert!(
+            delegated.is_empty(),
+            "model prose must never create a delegation: {delegated:?}"
+        );
+    }
+
+    #[test]
     fn a_thin_decision_is_never_assumed_delegated() {
         // Guard the conservative bias: too few significant tokens to match on => keep asking. A false
         // "delegated" silences a real question, which is strictly worse than an unnecessary ask.
@@ -9100,6 +9139,13 @@ pub struct GooseAgentDispatcher {
     /// one that said "the spec is perfectly clear". Recording the reason is the prerequisite for fixing it —
     /// timeout, unparseable and no_final_output each demand an opposite remedy.
     clarity_fail: Mutex<Option<String>>,
+    /// #136 SAFETY: the OPERATOR's spec as it stood before any model wrote into it. `opts.prompt` is APPENDED
+    /// TO by model output twice — research findings (swarm.rs:19660) and clarify Q&A (:19799) — and a retarget
+    /// round RE-PLANS with that enlarged prompt. Parsing delegation from the live prompt would therefore let
+    /// MODEL PROSE manufacture a delegation region and silence a question the user genuinely needed to answer.
+    /// Research findings routinely contain "either is defensible", which is literally one of the markers.
+    /// Delegation is a property of what the USER wrote, so it is only ever read from this.
+    spec_frozen: Mutex<String>,
     /// OWNED-FILE FENCE (GOOSE_SWARM_OWNED_FILE_FENCE, #131): file -> (owner_task_id, authoritative bytes)
     /// captured when a file-owning task completes. Before the integrate-verify sink runs, any owned file whose
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
@@ -9178,6 +9224,7 @@ impl GooseAgentDispatcher {
             spec_shadows: Mutex::new(HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             clarity_fail: Mutex::new(None),
+            spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
             stream_decode_retry,
             straggler_stop,
@@ -11114,7 +11161,11 @@ impl GooseAgentDispatcher {
             // the probe's output and every downstream value is byte-identical.
             let (open_decisions, delegated_decisions) =
                 if delegated_decisions_ok(load_config().delegated_decisions_ok) {
-                    partition_delegated_decisions(&open_decisions, user_prompt)
+                    // FROZEN spec, never `user_prompt` — see the spec_frozen field comment. Empty (never
+                    // captured) yields no regions, so the partition degrades to "everything blocks", which is
+                    // the safe direction.
+                    let frozen = self.spec_frozen.lock().unwrap().clone();
+                    partition_delegated_decisions(&open_decisions, &frozen)
                 } else {
                     (open_decisions, Vec::new())
                 };
@@ -18740,6 +18791,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         )
         .await?,
     );
+
+    // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
+    // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
+    // RE-PLANS with that enlarged prompt. Delegation is a claim about what the USER wrote, so reading it from
+    // the live prompt would let model prose invent a "your call" region and silence a question the user
+    // actually needed to answer — research output routinely contains "either is defensible", which is one of
+    // the markers verbatim. Captured after the turn-context strip so it is the spec and nothing else.
+    *dispatcher.spec_frozen.lock().unwrap() = opts.prompt.clone();
 
     // Parallel research-planning: scope independent research questions, run them across the fleet,
     // feed the findings into the planner. Best-effort — never blocks the run.
