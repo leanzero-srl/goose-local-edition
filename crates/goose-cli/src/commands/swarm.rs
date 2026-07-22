@@ -6186,6 +6186,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
     }
 
+    /// The sink must not re-do by hand what the engine now checks deterministically. It is the single
+    /// biggest serialization in the run — MEASURED 47% of all node-busy time in h1-treat-4, 26.5 minutes on
+    /// one node while the other two idled.
+    #[test]
+    fn the_thin_join_sheds_work_the_command_probe_now_does() {
+        let full = integrate_verify_spec(TargetLang::Python);
+        let thin = thin_integrate_verify_spec(TargetLang::Python);
+        // verify_commands defaults ON, so the robustness paragraph is gone from the sink's instructions.
+        assert!(full.contains("Then PROBE ROBUSTNESS"));
+        assert!(!thin.contains("Then PROBE ROBUSTNESS"));
+        // Everything only the SINK can do is untouched: the golden values need the spec, and the
+        // corrupt/missing-store probe has no deterministic equivalent yet.
+        for keep in [
+            "GOLDEN-VALUE CHECK",
+            "genuinely distinct",
+            "MALFORMED/corrupt",
+            "SOLE integration gate",
+            "BUILD + ACTUALLY RUN",
+        ] {
+            assert!(
+                thin.contains(keep),
+                "the thin join must still demand: {keep}"
+            );
+        }
+        // And it is strictly SHORTER — the point is removing serial work, not rewording it.
+        assert!(thin.len() < full.len());
+    }
+
     /// A stub the model wrapped in a MARKDOWN FENCE is real code that merely does not parse.
     ///
     /// MEASURED h1-treat-4: 3 of 6 stubs failed `invalid syntax` at 147-3092 bytes with a bare
@@ -12764,6 +12792,30 @@ fn per_module_verify_spec(files: &[String]) -> String {
 /// substitutes for this run — it stays the single end-to-end integration oracle.
 fn thin_integrate_verify_spec(lang: TargetLang) -> String {
     let full = integrate_verify_spec(lang);
+    // The sink is the single biggest serialization in the run — MEASURED 47% of ALL node-busy time in
+    // h1-treat-4 (26.5 min on one node while the other two idled). Anything the engine now checks
+    // DETERMINISTICALLY is duplicated work on the critical path, and worse, work whose verdict is a model
+    // self-report where the engine's is not.
+    //
+    // The robustness probe is exactly that: `verify_commands` now invokes every advertised command with a
+    // nonexistent argument and treats a traceback as a finding, so asking the sink to do it again buys a
+    // weaker version of a check that already ran. Dropped only when that probe is ON; the string is left
+    // intact otherwise, and a replacen that misses changes nothing (the clause simply stays).
+    let full = if swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands) {
+        match (
+            full.find("Then PROBE ROBUSTNESS"),
+            full.find("If the program READS a PERSISTED"),
+        ) {
+            (Some(a), Some(b)) if b > a => {
+                let mut t = full.clone();
+                t.replace_range(a..b, "");
+                t
+            }
+            _ => full,
+        }
+    } else {
+        full
+    };
     let suite = format!("run the test suite ({}), then ", lang.test_cmd());
     let thinned = full.replacen(&suite, "", 1).replacen(
         "Integrate every module and VERIFY the whole program works end-to-end: ",
