@@ -786,6 +786,26 @@ pub struct SwarmConfig {
     /// finding is ever pushed = byte-identical. GOOSE_SWARM_REQUIRE_TESTS overrides.
     #[serde(default)]
     pub require_tests: bool,
+
+    /// Emit ONE unit-test subtask PER MODULE (`test-<module>`, depending only on that module) instead of a
+    /// single monolithic `tests` task, so tests become ready early and run in parallel with the rest of the
+    /// build rather than serialized behind the cli.
+    ///
+    /// THE FEATURE IS UNREACHABLE TODAY — the same dead-lever trap already recorded on `goals`. Its gate is
+    /// `swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true)`, and that `true` is `in_assured_bundle`, NOT a
+    /// default: `resolve_gate` computes `in_assured_bundle && assured`. Nothing sets GOOSE_SWARM_ASSURED (the
+    /// desktop provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so it resolves FALSE on
+    /// every desktop run, and with no config field it could not be switched on from the settings UI at all.
+    /// PROVEN by the corpus: `parallel_tests` is absent from every levers_resolved echo, and 0 of 40 plans
+    /// carry per-module `test-<module>` subtasks — they carry ONE app-wide test task.
+    ///
+    /// This matters for fan_verify: a `verify::<M>` can only run a module-scoped test if a module-scoped
+    /// test EXISTS. Measured over the corpus only 27% of modules have one, and this is the lever that would
+    /// raise that.
+    ///
+    /// `None` (key absent) => `swarm_gate_cfg_bundle` resolves exactly as `swarm_gate` did => unchanged.
+    #[serde(default)]
+    pub parallel_tests: Option<bool>,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -945,6 +965,7 @@ impl Default for SwarmConfig {
             scoped_contracts: None,
             fan_verify: false,
             require_tests: false,
+            parallel_tests: None,
         }
     }
 }
@@ -2597,7 +2618,14 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
             return false;
         }
         let files = files_of(s);
-        id.contains("test") || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(f)))
+        // is_test_file takes a BASE name (the Python arm matches the `test_` prefix), so a full path like
+        // `tests/test_core.py` returned FALSE and the file-based branch never fired. The sibling
+        // relax_contracted_module_deps gets this right via base_of; this one did not.
+        id.contains("test")
+            || (!files.is_empty()
+                && files
+                    .iter()
+                    .all(|f| lang.is_test_file(f.rsplit('/').next().unwrap_or(f))))
     };
     let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
         return 0;
@@ -2616,7 +2644,10 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
         }
         let id = id_of(s);
         for f in files_of(s) {
-            if !lang.is_test_file(&f) {
+            // Same base-name contract as above: with a full path this returned false for a test file, so a
+            // test file could enter the SOURCE owner map — and because `base` strips the `test_` prefix,
+            // `tests/test_core.py` would claim the key `core` and could shadow the real core module.
+            if !lang.is_test_file(f.rsplit('/').next().unwrap_or(&f)) {
                 owner.entry(base(&f)).or_insert_with(|| id.clone());
             }
         }
@@ -10808,7 +10839,11 @@ impl GooseAgentDispatcher {
         // GOOSE_SWARM_PARALLEL_TESTS: emit one test subtask PER leaf module (each depends_on only its own
         // module) so tests become ready early and run in parallel with the cli build, instead of one
         // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
-        let tests_directive = if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true) {
+        let tests_directive = if swarm_gate_cfg_bundle(
+            "GOOSE_SWARM_PARALLEL_TESTS",
+            load_config().parallel_tests,
+            true,
+        ) {
             // Utilization principle, FLEET-RELATIVE (never a fixed count): keep however many identical,
             // interchangeable units there are busy through the whole run; the planner scales the layout to
             // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
@@ -11551,7 +11586,11 @@ impl GooseAgentDispatcher {
         // GOOSE_SWARM_PARALLEL_TESTS backstop: strip a stray cli/entry (or integrate-verify) edge the weak
         // model may have left on a per-leaf-module test, so those tests run in parallel with the cli build.
         // Narrow — only for a test that uniquely maps to one non-cli module; sibling/shared deps are preserved.
-        if swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true) {
+        if swarm_gate_cfg_bundle(
+            "GOOSE_SWARM_PARALLEL_TESTS",
+            load_config().parallel_tests,
+            true,
+        ) {
             let relaxed = relax_test_module_deps(&mut v, lang);
             if relaxed > 0 {
                 eprintln!(
@@ -19561,6 +19600,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // indistinguishable from OFF — echo the resolved value from the SAME gate the engine branches on.
             "fan_verify": swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify),
             "require_tests": swarm_gate_cfg("GOOSE_SWARM_REQUIRE_TESTS", load_config().require_tests),
+            // Absent from this echo entirely until now, which is precisely why it went unnoticed that it
+            // has NEVER resolved true on a desktop run.
+            "parallel_tests": swarm_gate_cfg_bundle(
+                "GOOSE_SWARM_PARALLEL_TESTS",
+                load_config().parallel_tests,
+                true,
+            ),
             "dep_signatures": dep_signatures_on(),
             "scoped_contracts": scoped_contracts_on(),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
