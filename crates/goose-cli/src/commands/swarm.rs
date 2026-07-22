@@ -2877,6 +2877,16 @@ fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: 
     fats.len()
 }
 
+/// Does this subtask id NAME a test task? Word-aware, because the substring check it replaces
+/// (`id.contains("test")`) silently classifies `latest`, `contest`, `attestation` and `fastest-path` as
+/// tests. In fan_verify_split that misfires twice over: such a module gets NO `verify::` task, AND it stays
+/// off the join's re-pointed dep list — so it is verified by nothing at all. Ids are kebab/snake case
+/// (`test-record`, `engine-tests`, `tests-and-readme`), so segment equality is the right test. Pure.
+fn id_names_a_test(id: &str) -> bool {
+    id.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|seg| seg.eq_ignore_ascii_case("test") || seg.eq_ignore_ascii_case("tests"))
+}
+
 fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     fn id_of(s: &serde_json::Value) -> String {
         s.get("id")
@@ -2904,7 +2914,7 @@ fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
             return false;
         }
         let files = files_of(s);
-        id.contains("test")
+        id_names_a_test(&id)
             || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
     };
     let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
@@ -3319,6 +3329,18 @@ mod tests {
         }
         // No verify task for the test subtask.
         assert!(fv_task(&plan, "verify::test-core").is_none());
+        // The thin join the split installs is the one the SINK ACTUALLY RECEIVES. The T2 canonicalizer in
+        // parallel_plan re-writes integrate-verify's description ~200 lines later and used to hardcode the
+        // FULL monolithic spec, so this thin text never reached a worker: every fan_verify run paid for N
+        // extra verify tasks AND still ran the whole suite serially in the sink (36% of all node-busy time
+        // across the corpus). T2 now selects thin_integrate_verify_spec when the split applied.
+        assert_eq!(
+            thin_integrate_verify_spec(TargetLang::Python),
+            fv_task(&plan, "integrate-verify").unwrap()["description"]
+                .as_str()
+                .unwrap(),
+            "the split's thin join must be exactly what T2 canonicalizes to"
+        );
         // The join keeps its exact id, re-points module deps onto the verify tasks, and keeps the non-module
         // (test) dep. Order: mapped existing deps first, then any missing verify tasks appended (none here).
         assert_eq!(
@@ -3338,6 +3360,44 @@ mod tests {
         // The module build tasks themselves are untouched.
         assert_eq!(fv_deps(&plan, "core"), "");
         assert_eq!(fv_deps(&plan, "cli"), "core");
+    }
+
+    /// `id.contains("test")` classified any id with `test` ANYWHERE as a test subtask. A module called
+    /// `latest-prices` therefore got NO `verify::` task and was ALSO left off the join's re-pointed dep
+    /// list — verified by nothing, silently, while reading as a deliberate exclusion.
+    #[test]
+    fn a_module_whose_name_merely_contains_test_is_not_a_test_task() {
+        // Real test ids stay tests (kebab and snake, any case).
+        for id in [
+            "tests",
+            "test-core",
+            "engine-tests",
+            "tests-and-readme",
+            "test_parser",
+            "TESTS",
+        ] {
+            assert!(id_names_a_test(id), "{id} names a test");
+        }
+        // The false positives that cost a module its verify gate.
+        for id in [
+            "latest",
+            "latest-prices",
+            "contest",
+            "attestation",
+            "fastest-path",
+            "testdata",
+        ] {
+            assert!(!id_names_a_test(id), "{id} is NOT a test task");
+        }
+
+        // End to end through the split: `latest-prices` now gets its verify task and the join gates on it.
+        let mut plan = serde_json::json!({"subtasks":[
+            {"id":"latest-prices","files":["latest.py"],"depends_on":[]},
+            {"id":"integrate-verify","files":[],"depends_on":["latest-prices"]}
+        ]});
+        assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 1);
+        assert!(fv_task(&plan, "verify::latest-prices").is_some());
+        assert_eq!(fv_deps(&plan, "integrate-verify"), "verify::latest-prices");
     }
 
     #[test]
@@ -11394,9 +11454,13 @@ impl GooseAgentDispatcher {
         // every module and does ALL verification serially on one node (it stalls) — into a fannable per-module
         // `verify::<M>` task each (read-only, owns nothing, fans like the build tasks) PLUS a THIN
         // integrate-verify join (same id) that does only the irreducible whole-program run. OFF -> byte-identical.
+        // Whether the split ACTUALLY applied — the T2 sink-canonicalizer below must know, because it would
+        // otherwise overwrite the thin join with the full monolithic spec and silently undo the split.
+        let mut fan_verify_applied = false;
         if swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify) {
             let fanned = fan_verify_split(&mut v, lang);
             if fanned > 0 {
+                fan_verify_applied = true;
                 eprintln!(
                     "  \u{b7} fan-verify: split the sink into {fanned} scoped per-module verify task(s) + a thin integrate-verify join (id kept) — the per-module checks fan across the fleet, the join stays the sole end-to-end gate"
                 );
@@ -11435,6 +11499,14 @@ impl GooseAgentDispatcher {
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
             .iter()
             .enumerate()
+            // A `verify::<M>` task's spec is AUTHORED deterministically by per_module_verify_spec, and its
+            // read-only invariants ("you own NOTHING and must WRITE NO files", "do NOT run the whole program
+            // end-to-end, do NOT verify sibling modules") are the ONLY thing keeping the fanned half scoped.
+            // Detailing it hands those invariants to the weak model to re-word, which can drop them entirely —
+            // and it burns one ~75s fleet call per verify task to do it. Skip them: the authored spec is
+            // already implementation-ready. Only reachable when fan_verify is ON (no such id otherwise), so
+            // the default path is byte-identical.
+            .filter(|(_, st)| !st["id"].as_str().unwrap_or("").starts_with("verify::"))
             .map(|(i, st)| {
                 // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
                 // verbatim. Without this the detailer invents a filename that contradicts the owned_files
@@ -11602,6 +11674,16 @@ impl GooseAgentDispatcher {
         // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
         // architect included it in the skeleton (it did in 6/6 runs, so the detailer — high variance — was
         // authoring the one end-to-end gate). Keep a substantive spec-specific detail as EXTRA checks under it.
+        //
+        // The canonical is the THIN join whenever fan_verify actually split the sink. This block runs ~200
+        // lines AFTER fan_verify_split and unconditionally re-wrote the sink's description, so the thin spec
+        // fan_verify_split installed never survived to a worker: the run got N extra verify tasks AND a
+        // full-fat sink that still ran the whole suite itself. thin_integrate_verify_spec was dead code on
+        // the live path, and fan_verify could not remove any serial time — measured, the sink is 36% of all
+        // node-busy time across the corpus. The thin join keeps the ENTIRE end-to-end oracle (build+run the
+        // advertised entry, per-command golden values, multi-output distinctness, robustness probing,
+        // corrupt/missing store probing); it drops only "run the test suite", which the per-module verify
+        // tasks now own. It remains the SOLE integration gate.
         if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
             for s in arr.iter_mut() {
                 if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
@@ -11610,7 +11692,11 @@ impl GooseAgentDispatcher {
                         .and_then(|d| d.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let canonical = integrate_verify_spec(lang);
+                    let canonical = if fan_verify_applied {
+                        thin_integrate_verify_spec(lang)
+                    } else {
+                        integrate_verify_spec(lang)
+                    };
                     s["description"] = serde_json::Value::String(
                         if detailed.trim().len() > 240 && !is_agent_loop_filler(&detailed) {
                             format!(
