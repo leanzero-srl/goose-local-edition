@@ -529,6 +529,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Require the finished app to actually have tests"
+              hint="When goose checks a finished build, it runs the app's test suite — but an app with no tests at all currently passes that check silently, because “no tests ran” looks the same as “every test passed”. That means a build can be reported as verified without a single thing having been checked, and it also means deleting an awkward failing test is a way to turn the build green. With this on, an empty test suite counts as a problem and goose keeps working until the app has real tests that assert the expected values. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.require_tests}
+                onChange={(v) => set({ require_tests: v })}
+              />
+            </Row>
+            <Row
               label="Give each worker its dependencies' interfaces up front"
               hint="Before a worker writes a module, goose can hand it the exact function signatures of the other modules it builds on, extracted deterministically from their code. With this on, workers call the real API instead of guessing it — fewer cases where two modules disagree and the tests break. Default off."
             >
