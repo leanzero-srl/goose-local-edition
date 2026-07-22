@@ -2289,7 +2289,25 @@ const OMNI_JUDGE_FIRST_LOOK_SECS: u64 = 45;
 /// Then re-look this often. A loop that starts late is still caught; a healthy call just keeps passing.
 const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 /// Minimum reasoning before a look is meaningful — below this there is nothing to assess yet.
-const OMNI_JUDGE_MIN_CHARS: usize = 1_200;
+///
+/// RAISED 1_200 -> 4_000 on measured evidence. The judge is asked whether "the SAME content clearly
+/// recurs", and recurrence needs the same thing to appear TWICE. At 1,200 characters — roughly one
+/// paragraph — there is not enough text for that to be observable, so a yes is the weak model
+/// pattern-matching on "this looks repetitive" rather than seeing an actual repeat. It is not a gating
+/// bug: the verdict already requires HIGH confidence, and the model gave HIGH confidence anyway.
+///
+/// MEASURED, three omni fires observed to date:
+///   1,200 chars  -> FALSE positive. Killed `verify-e2e::0` seconds after it started, costing 166s and a
+///                   retry on a task that was doing nothing wrong.
+///   8,988 chars  -> true positive, task retried and completed.
+///   15,097 chars -> true positive, task retried and completed.
+/// 4_000 sits well above the false positive and well below both true ones, and is about the point where
+/// the 2,000-char tail the judge is shown can actually contain a repeat.
+///
+/// Deliberately a raise, not a disable — the intent of #135 stands ("you will see it immediately"; waiting
+/// for 26,000 threw away minutes of a node per incident). This only stops it firing before there is
+/// anything to read.
+const OMNI_JUDGE_MIN_CHARS: usize = 4_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
