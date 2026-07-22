@@ -121,6 +121,36 @@ def assess(root: str, timeout: int = 25) -> Dict[str, object]:
                 first = (o + e).strip().splitlines()
                 broken.append({"command": " ".join([sub] + extra), "why": why,
                                "detail": first[0][:110] if first else ""})
+    # CORRUPT-STORE probe, mirroring the engine (a5c726077). An app that crashes on a damaged data file
+    # is not functional, however cleanly it runs on a good one. MEASURED: verify-6 graded functional here
+    # and shipped complete_result{passed:true} while raising an uncaught sqlite3.DatabaseError.
+    flag = next((f for f in ("--store", "--db", "--database", "--file", "--data", "--path")
+                 if f in (out + err)), None)
+    if flag:
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        store = os.path.join(tmp, "probe.store")
+        try:
+            for sub in subs[:8]:
+                run([flag, store, sub])
+            if os.path.isdir(store):
+                for f in os.listdir(store):
+                    open(os.path.join(store, f), "w").write("GARBAGE{{{\0")
+            elif os.path.exists(store):
+                open(store, "w").write("GARBAGE{{{\0")
+            if os.path.exists(store):
+                for sub in subs[:8]:
+                    o, e, _c = run([flag, store, sub])
+                    if "Traceback (most recent call last)" in (o + e):
+                        last = [l for l in (o + e).splitlines() if l.strip()]
+                        broken.append({"command": f"{sub} (corrupt store)",
+                                       "why": "crashes on a corrupt store",
+                                       "detail": last[-1][:110] if last else ""})
+                        break
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     return {
         "root": root, "entry": pkg,
         "verdict": "functional" if not broken else "broken",
