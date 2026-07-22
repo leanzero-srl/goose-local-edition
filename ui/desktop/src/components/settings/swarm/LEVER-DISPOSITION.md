@@ -53,7 +53,8 @@ Each needs its PRO and CON stated in the hint, so a user knows what they are buy
 | Lever | PRO — what it buys | CON — what it costs |
 |---|---|---|
 | `ask_floor` / `ask_max_q` | goose asks instead of inventing your product. Measured: a run found 5 open decisions on the spec's own "do NOT guess" list. | Interrupts the build and waits on you. Set to 0 for unattended runs. |
-| `fan_verify` | Per-module checks fan across the fleet instead of one serial sink. | Adds N tasks. The sink is still 47% of node-busy time, so the wall-clock win is UNPROVEN. |
+| `fan_verify` | Per-module checks fan across the fleet instead of one serial sink. Pairs with `fan_e2e`. | Adds N tasks. On its own it does not touch the end-to-end run, which was the real bottleneck. |
+| `fan_e2e` | Shards the whole-app end-to-end check by COMMAND across the fleet. MEASURED h1-e2e-2 vs h1-treat-4 on the same spec: execute wall 65.9 -> 33.5 min, occupancy 28.8% -> 41.7%, biggest task 47% -> 21% of node-busy time, app still 9/9. | n=1. Needs `fan_verify`. A terminally-failed shard cascades into the join (see plan B6); not yet observed. |
 | `parallel_tests` | Tests start the moment their module lands, overlapping the build. | More subtasks on a slow fleet; unmeasured. |
 | `relax_contracted_deps` | Independent modules build simultaneously instead of chaining. | Relies on contracts being sound. If a contract is wrong, the modules diverge in parallel. |
 | `best_of_n_skeletons` | More drafts, better plan structure. | Each draft is a full planning call — directly buys quality with minutes. |
