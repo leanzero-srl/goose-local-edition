@@ -479,7 +479,7 @@ export default function SwarmSettingsSection() {
             </Row>
             <Row
               label="Give every worker the app's non-negotiables"
-              hint="Before building, goose distils your spec into a short list of app-wide acceptance criteria and puts them in front of every worker as non-negotiable — so a worker writing one file still knows what the whole app must do. It has never actually run: its switch was wired to a mode nobody turns on, so in every build ever made, no worker has seen one. This makes it reachable. Costs one planning pass; unproven, because it has never run once."
+              hint="Before building, goose distils your spec into a short list of app-wide acceptance criteria and puts them in front of every worker as non-negotiable — so a worker writing one file still knows what the whole app must do. This used to be unreachable — its switch was wired to a mode nobody turns on, so for a long time no worker ever saw one — but it does run now when you turn it on. Costs one planning pass. Still unproven: it has run too few times to say whether it improves the result."
             >
               <SwarmSwitch checked={!!cfg.goals} onChange={(v) => set({ goals: v })} />
             </Row>
