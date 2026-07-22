@@ -108,14 +108,19 @@ def assess(root: str, timeout: int = 25) -> Dict[str, object]:
         return {"root": root, "entry": pkg, "verdict": "unprobeable",
                 "measurable": True, "commands": 0, "broken": 0}
 
+    # Two invocations per command, mirroring the engine's smoke gate exactly so this scoreboard and the
+    # gate can never disagree about whether an app works. Bare catches a broken command; a nonexistent
+    # argument catches the separate class where the happy path works and a typo dumps a traceback — which
+    # is how val-lean-02 graded "functional" while `import __nope__` raised an uncaught FileNotFoundError.
     broken = []
     for sub in subs[:12]:
-        o, e, c = run([sub])
-        why = _classify(o, e, c)
-        if why:
-            first = (o + e).strip().splitlines()
-            broken.append({"command": sub, "why": why,
-                           "detail": first[0][:110] if first else ""})
+        for extra in ([], ["__nope__"]):
+            o, e, c = run([sub] + extra)
+            why = _classify(o, e, c)
+            if why:
+                first = (o + e).strip().splitlines()
+                broken.append({"command": " ".join([sub] + extra), "why": why,
+                               "detail": first[0][:110] if first else ""})
     return {
         "root": root, "entry": pkg,
         "verdict": "functional" if not broken else "broken",
