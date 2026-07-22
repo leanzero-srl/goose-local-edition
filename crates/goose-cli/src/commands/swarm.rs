@@ -533,6 +533,17 @@ pub struct SwarmConfig {
     /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). None = off.
     #[serde(default)]
     pub split: Option<bool>,
+    /// ELECTRON PARITY (2026-07-22). These four were force-set as ENV by the desktop provider and had no
+    /// config field at all, so `smoke`/`contracts`/`complete` resolved TRUE on every desktop run and FALSE
+    /// on every headless CLI run — the same spec could not be reproduced across the two surfaces. They now
+    /// resolve through ONE path (env > config > default) with the default set to what the shipping surface
+    /// has always done, so desktop behaviour is unchanged and headless finally matches it.
+    #[serde(default = "default_true")]
+    pub smoke: bool,
+    #[serde(default = "default_true")]
+    pub contracts: bool,
+    #[serde(default = "default_true")]
+    pub complete: bool,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -922,7 +933,10 @@ impl Default for SwarmConfig {
             answers_win_floor: None,
             cross_module_check: false,
             ask_max_q: None,
-            split: None,
+            split: Some(true),
+            smoke: true,
+            contracts: true,
+            complete: true,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -6125,6 +6139,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    /// ELECTRON PARITY. The desktop provider used to force SMOKE/SPLIT/CONTRACTS/COMPLETE onto the spawned
+    /// engine, so a UI build and a headless `goose swarm run` of the SAME spec ran different engines — the
+    /// four were always on for one and always off for the other. The provider no longer sets them; these
+    /// defaults are what keeps the two surfaces identical, so a change here silently re-splits them.
+    #[test]
+    fn desktop_and_headless_resolve_the_same_quality_gates() {
+        let d = SwarmConfig::default();
+        assert!(d.smoke, "smoke was force-set to 1 for every desktop run");
+        assert!(
+            d.contracts,
+            "contracts was force-set to 1 for every desktop run"
+        );
+        assert!(
+            d.complete,
+            "complete was force-set to 1 for every desktop run"
+        );
+        assert_eq!(
+            d.split,
+            Some(true),
+            "split was force-set to 1 for every desktop run"
+        );
+    }
+
     #[test]
     fn require_tests_separates_an_empty_suite_from_a_passing_one() {
         // OFF: no input can produce a finding => byte-identical to the pre-lever gate.
@@ -11249,7 +11286,7 @@ impl GooseAgentDispatcher {
         // compiles until the integrate-verify sink, so a module never needs another's FILES at its own build
         // step. Every non-test module becomes a root; the sink stays the single join; tests are left untouched.
         // Gated additionally on CONTRACTS being ON (the premise it relies on). OFF -> block skipped, v untouched.
-        if swarm_gate("GOOSE_SWARM_CONTRACTS", true)
+        if swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts)
             && swarm_gate_cfg(
                 "GOOSE_SWARM_RELAX_CONTRACTED_DEPS",
                 load_config().relax_contracted_deps,
@@ -13710,7 +13747,7 @@ impl Judge for GooseAgentDispatcher {
             split_enabled: std::env::var("GOOSE_SWARM_SPLIT")
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or_else(|| load_config().split.unwrap_or(false)),
+                .unwrap_or_else(|| load_config().split.unwrap_or(true)),
             // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
             // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
@@ -16298,7 +16335,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  location or write a second copy at the project root:\n{manifest}\n{owned_part}{existing_block}{dep_block}"
             )
         };
-        let contracts_on = swarm_gate("GOOSE_SWARM_CONTRACTS", true);
+        let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
         // GOOSE_SWARM_CONTRACTS: inject the frozen sibling-module interfaces so every parallel worker
         // builds against ONE agreed contract (kills cross-module drift). No-op until the stub pass (2b)
         // populates the bundle, so this is safe to ship ahead of the generator.
@@ -17755,12 +17792,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // The RESOLVED gate set (assured bundle + explicit overrides applied) so a run's config is legible.
         "assured": assured_enabled(),
         "gates": {
-            "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
+            "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "goals": goals_enabled(),
-            "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
+            "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
-            "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
+            "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // DELIVERY hard-completion gate — read by the desktop to reconcile the "app verified" label so a
             // deterministic-block failure can never sit beside a green claim (default OFF).
             "delivery": swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery),
@@ -18287,11 +18324,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "split": std::env::var("GOOSE_SWARM_SPLIT")
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or_else(|| load_config().split.unwrap_or(false)),
+                .unwrap_or_else(|| load_config().split.unwrap_or(true)),
             "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS").ok(),
-            "complete": swarm_gate("GOOSE_SWARM_COMPLETE", true),
-            "contracts": swarm_gate("GOOSE_SWARM_CONTRACTS", true),
-            "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
+            "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
+            "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
+            "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // #129/#130 levers + ask_replan were firing but ABSENT from this map, so a campaign screen read
             // them as OFF while they demonstrably drove the run (measured: nf-hexohm-fixed shipped 82 via
             // answers_win_floor floor_and_redraft and built a fan via relax_contracted_deps, both invisible here).
@@ -19230,7 +19267,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
     // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
-    let contracts_on = swarm_gate("GOOSE_SWARM_CONTRACTS", true);
+    let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
     // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
     // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
     // CONTRACTS is LANGUAGE-AGNOSTIC: it runs for ANY detected language (Python/TS/Rust/Go each get a native
@@ -19560,7 +19597,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_COMPLETE_CAP_SECS. Unlike GOOSE_SWARM_SMOKE (advisory, one-shot) the FINAL verdict is fed
     // into the run's exit code below, so a still-red app can no longer exit 0 and get delivered as "done".
     // Off by default => this block never runs and the exit path stays byte-identical.
-    let complete_on = swarm_gate("GOOSE_SWARM_COMPLETE", true);
+    let complete_on = swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete);
     let mut complete_failed = false;
     // Hoisted for the end-of-run OVERVIEW: whether the verify oracle actually RAN the built app green (not
     // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
@@ -20137,7 +20174,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_SMOKE: deterministic end-to-end oracle on the produced tree (off by default —
     // GOOSE_SWARM_SMOKE=1). Emits a `smoke` event the eval reads; does not alter the run's exit code.
     // GOOSE_SWARM_COMPLETE (above) supersedes this standalone gate to avoid double-running the suite.
-    let smoke_on = swarm_gate("GOOSE_SWARM_SMOKE", true);
+    let smoke_on = swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke);
     if smoke_on && !complete_on {
         let smoke_lang = detect_language(&opts.prompt, &smoke_all_files);
         let smoke = run_smoke_gate(&std::env::current_dir().unwrap_or_default(), smoke_lang).await;
