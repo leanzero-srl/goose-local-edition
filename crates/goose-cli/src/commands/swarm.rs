@@ -19774,10 +19774,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .values()
             .map(|n| n.spec.clone())
             .filter(|s| {
+                // A TEST module has no interface a sibling needs — nobody imports `test_store` to call it —
+                // so freezing one buys nothing and costs a full worker-budget model call (up to
+                // worker_timeout_secs) on the same fleet the build is waiting for.
+                //
+                // MEASURED h1-treat-4: 3 of the 6 contract calls were for test modules (test-store,
+                // test-cli, test-main) — half the CONTRACTS phase spent on interfaces nobody consumes.
+                // They are also the most reliable source of unparseable stubs: test-store failed
+                // `invalid syntax` in BOTH h1-treat-4 and h1-treat-5, at 3092 and 2086 bytes, because a
+                // test file has no signature-only form to distil.
+                //
+                // is_test_file takes a BASE name, so pass the file name, not the full path.
+                let base_of = |f: &String| -> String {
+                    f.rsplit('/').next().unwrap_or(f.as_str()).to_string()
+                };
                 s.id != "integrate-verify"
                     && s.owned_files
                         .iter()
                         .any(|f| contract_lang.is_source_file(f))
+                    && !s
+                        .owned_files
+                        .iter()
+                        .all(|f| contract_lang.is_test_file(&base_of(f)))
             })
             .collect();
         if !modules.is_empty() {
