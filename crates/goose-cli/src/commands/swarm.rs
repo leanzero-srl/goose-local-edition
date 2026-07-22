@@ -2887,6 +2887,42 @@ fn id_names_a_test(id: &str) -> bool {
         .any(|seg| seg.eq_ignore_ascii_case("test") || seg.eq_ignore_ascii_case("tests"))
 }
 
+/// The deps a `verify::<M>` task needs: M itself, plus whichever subtask WRITES M's own test file(s).
+///
+/// Without that second edge the verify task can dispatch before the test file exists on disk, "run" the
+/// test, and report a pass for something it never executed — the same vacuous-green shape the whole-suite
+/// command produced. Adds no edge when M owns its own tests, or when M has none. Cannot cycle: a
+/// `verify::` task is a fresh leaf that only the sink depends on, so nothing can route back into it. Pure.
+fn verify_task_deps(
+    module_id: &str,
+    own_tests: &[String],
+    arr: &[serde_json::Value],
+) -> Vec<String> {
+    let mut deps = vec![module_id.to_string()];
+    if own_tests.is_empty() {
+        return deps;
+    }
+    for s in arr {
+        let sid = s.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if sid.is_empty() || sid == module_id || sid == "integrate-verify" {
+            continue;
+        }
+        let writes_our_test = s
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .any(|f| own_tests.iter().any(|t| t == f))
+            })
+            .unwrap_or(false);
+        if writes_our_test && !deps.iter().any(|d| d == sid) {
+            deps.push(sid.to_string());
+        }
+    }
+    deps
+}
+
 fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     fn id_of(s: &serde_json::Value) -> String {
         s.get("id")
@@ -2938,13 +2974,42 @@ fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     }
     let module_set: std::collections::HashSet<String> =
         modules.iter().map(|(id, _)| id.clone()).collect();
+    // Which test file belongs to which module: map each module's SOURCE stem to its owner, then read the
+    // plan's test files back through that map. A test file whose stem matches no module, or that a module
+    // does not uniquely own, is deliberately left unassigned — the verify task then runs no test command at
+    // all rather than guessing. Measured over the corpus this assigns a test to 12% of modules; the other
+    // 88% correctly fall back to an import/build check instead of vacuously "passing" an empty suite.
+    let owner: std::collections::HashMap<String, String> = modules
+        .iter()
+        .flat_map(|(id, files)| {
+            files
+                .iter()
+                .filter(|f| !lang.is_test_file(base_of(f)))
+                .map(move |f| (module_stem_of_test_file(f), id.clone()))
+        })
+        .collect();
+    let mut tests_for: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for s in arr {
+        for f in files_of(s) {
+            if !lang.is_test_file(base_of(&f)) {
+                continue;
+            }
+            if let Some(id) = owner.get(&module_stem_of_test_file(&f)) {
+                tests_for.entry(id.clone()).or_default().push(f);
+            }
+        }
+    }
     let new_tasks: Vec<serde_json::Value> = modules
         .iter()
         .map(|(id, files)| {
+            let own_tests = tests_for.get(id).cloned().unwrap_or_default();
             serde_json::json!({
                 "id": format!("verify::{id}"),
-                "description": per_module_verify_spec(lang, files),
-                "depends_on": [id],
+                "description": per_module_verify_spec(lang, files, &own_tests),
+                // A module WITH its own test file must wait for that file to exist, or the verify task runs
+                // against a path that is not there yet and reports a pass for a test it never ran.
+                "depends_on": verify_task_deps(id, &own_tests, arr),
                 "files": [],
                 "difficulty": "medium"
             })
@@ -3315,9 +3380,26 @@ mod tests {
             n, 2,
             "one verify task per file-owning non-test module (core, cli)"
         );
-        // Each module got a scoped, read-only verify task depending only on its module.
-        assert_eq!(fv_deps(&plan, "verify::core"), "core");
+        // `core` owns core.py and `test-core` writes test_core.py, so verify::core is scoped to THAT test
+        // and must wait for the task that writes it — otherwise it runs against a path that does not exist
+        // yet and reports a pass for a test it never executed.
+        assert_eq!(fv_deps(&plan, "verify::core"), "core,test-core");
+        assert!(fv_task(&plan, "verify::core").unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .contains("python3 -m pytest test_core.py"));
+        // `cli` has NO test file of its own: it gets NO extra dep and NO test command at all, rather than
+        // falling back to the whole suite (which collects nothing early and exits CLEAN — a vacuous pass).
         assert_eq!(fv_deps(&plan, "verify::cli"), "cli");
+        let cli_desc = fv_task(&plan, "verify::cli").unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(cli_desc.contains("run NO test command"));
+        assert!(
+            !cli_desc.contains("python3 -m pytest"),
+            "a module with no test of its own must not be handed ANY pytest invocation"
+        );
         for vid in ["verify::core", "verify::cli"] {
             assert!(
                 fv_task(&plan, vid).unwrap()["files"]
@@ -3360,6 +3442,51 @@ mod tests {
         // The module build tasks themselves are untouched.
         assert_eq!(fv_deps(&plan, "core"), "");
         assert_eq!(fv_deps(&plan, "cli"), "core");
+    }
+
+    /// The module→test mapping must cover the conventions the fleet ACTUALLY emits. The sibling in
+    /// relax_test_module_deps strips only a leading `test_`, so it silently fails on Go's `_test.go` and
+    /// TypeScript's `.test.ts` — the two languages carrying the most test files in the corpus.
+    #[test]
+    fn a_test_file_maps_to_the_module_it_tests_across_conventions() {
+        for (path, want) in [
+            ("tests/test_ledger.py", "ledger"),
+            ("test_parser.py", "parser"),
+            ("internal/miner/miner_test.go", "miner"),
+            ("src/engine/__tests__/board.test.ts", "board"),
+            ("src/components/App.spec.tsx", "App"),
+            ("core.py", "core"),
+        ] {
+            assert_eq!(module_stem_of_test_file(path), want, "mapping {path}");
+        }
+    }
+
+    /// A `verify::<M>` scoped to a test file must wait for the task that WRITES that file. Without the edge
+    /// it dispatches early, finds no file, and reports a pass for a test it never ran — the same vacuous
+    /// green the whole-suite command produced (MEASURED verify-6).
+    #[test]
+    fn a_scoped_verify_waits_for_whoever_writes_its_test_file() {
+        let arr = vec![
+            serde_json::json!({"id":"core","files":["core.py"]}),
+            serde_json::json!({"id":"tests","files":["tests/test_core.py"]}),
+            serde_json::json!({"id":"integrate-verify","files":[]}),
+        ];
+        // Scoped to a test somebody ELSE writes -> depend on that writer too.
+        assert_eq!(
+            verify_task_deps("core", &["tests/test_core.py".to_string()], &arr),
+            vec!["core".to_string(), "tests".to_string()]
+        );
+        // No test of its own -> no extra edge (never serialize a module behind an unrelated task).
+        assert_eq!(
+            verify_task_deps("core", &[], &arr),
+            vec!["core".to_string()]
+        );
+        // A module that writes its OWN test adds no self-edge (which would deadlock the DAG).
+        let own = vec![serde_json::json!({"id":"core","files":["core.py","test_core.py"]})];
+        assert_eq!(
+            verify_task_deps("core", &["test_core.py".to_string()], &own),
+            vec!["core".to_string()]
+        );
     }
 
     /// `id.contains("test")` classified any id with `test` ANYWHERE as a test subtask. A module called
@@ -12568,19 +12695,58 @@ fn integrate_verify_spec_inner(lang: TargetLang, boundary_probe: bool) -> String
 /// monolithic sink. It owns no files and writes nothing, so many of these co-run race-free and fan across the
 /// fleet exactly like the module BUILD tasks that already succeed. It does ONLY this module's own import/build
 /// + unit checks; the whole-program end-to-end run is the thin `integrate-verify` join's job, never this one's.
-fn per_module_verify_spec(lang: TargetLang, files: &[String]) -> String {
+fn per_module_verify_spec(lang: TargetLang, files: &[String], test_files: &[String]) -> String {
+    // The WHOLE-SUITE command was a vacuous oracle here. `verify::<M>` depends only on M, so it runs while
+    // siblings and the test task are still being written: pytest then exits 5 ("no tests ran"), which the
+    // model reads as a pass. MEASURED on verify-6 — `verify::analytics-io` reported "No tests/ directory
+    // exists yet — this is expected for a new project" and the run shipped passed+verified. Measured across
+    // all 40 corpus plans, only 12% of modules (19/158) have a uniquely-mappable test file, so there is
+    // usually nothing module-scoped to run at all. Fail CLOSED by doing LESS: the import/build check is
+    // unconditional and deterministic, and a test command is issued ONLY for a test file that provably
+    // belongs to this module. The app-level suite stays with the smoke gate (which now also refuses an empty
+    // suite under require_tests), never with a task that cannot see whether it is running early.
+    let test_clause = if test_files.is_empty() {
+        "This module has NO test file of its own in the plan, so run NO test command — the import/build \
+         check above IS your whole job here. Do NOT run the whole suite to compensate: it would execute \
+         siblings' tests that are still being written, and a suite that collects nothing exits CLEAN, which \
+         proves NOTHING about this module."
+            .to_string()
+    } else {
+        format!(
+            "Then run ONLY this module's own tests: `{}`. Run NOTHING wider than that — not the whole \
+             suite, not a sibling's tests.",
+            lang.test_file_cmd(test_files),
+        )
+    };
     format!(
         "VERIFY THIS ONE MODULE IN ISOLATION. You own NOTHING and must WRITE NO files — this is a read-only \
          per-module gate that runs in parallel with its siblings. Import/build-check every file this module \
-         delivers ({owned}) and run ONLY this module's own unit tests ({test}). Confirm the module's public \
-         surface imports cleanly (no ImportError/SyntaxError/build error) and its own tests pass. Do NOT run \
-         the whole program end-to-end, do NOT verify sibling modules, do NOT redesign the interface — the \
-         final integrate-verify join assembles and runs the whole program. If this module fails to import or \
-         its own tests fail, REPORT the exact error precisely (which file, which symbol, the message); do not \
-         attempt cross-module fixes from here.",
+         delivers ({owned}) and confirm its public surface imports cleanly (no ImportError/SyntaxError/build \
+         error). {test_clause} Do NOT run the whole program end-to-end, do NOT verify sibling modules, do NOT \
+         redesign the interface — the final integrate-verify join assembles and runs the whole program. If \
+         this module fails to import or its own tests fail, REPORT the exact error precisely (which file, \
+         which symbol, the message); do not attempt cross-module fixes from here. Report what you actually \
+         ran and what it printed — never report a check you did not run.",
         owned = files.join(", "),
-        test = lang.test_cmd(),
     )
+}
+
+/// The module base-name a TEST file is a test FOR, across the three conventions the fleet actually emits:
+/// `test_parser.py` -> `parser`, `internal/miner/miner_test.go` -> `miner`, `board.test.ts` -> `board`.
+/// Returns the plain stem when no test marker is present. Pure.
+///
+/// The sibling in `relax_test_module_deps` strips only a leading `test_`, so it silently fails to map Go's
+/// `_test.go` and TypeScript's `.test.ts` — the two languages where the corpus carries the most test files.
+fn module_stem_of_test_file(path: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+    // `.test`/`.spec` (TS/JS) survive the single extension strip above as a trailing segment.
+    let stem = stem
+        .strip_suffix(".test")
+        .or_else(|| stem.strip_suffix(".spec"))
+        .unwrap_or(stem);
+    let stem = stem.strip_prefix("test_").unwrap_or(stem);
+    stem.strip_suffix("_test").unwrap_or(stem).to_string()
 }
 
 /// SINK DECOMPOSITION (Phase-1). The THIN `integrate-verify` join spec — the irreducible serial half. Derived
@@ -16480,6 +16646,40 @@ impl TargetLang {
             TargetLang::Rust => "cargo test",
             TargetLang::Go => "go test ./...",
             TargetLang::Other => "the project's standard test runner for the target language",
+        }
+    }
+
+    /// The command that runs ONLY the given test file(s) — the scoped counterpart of `test_cmd`, for a
+    /// `verify::<M>` task that must never execute a sibling's tests. Go takes the enclosing PACKAGE DIR
+    /// (`go test` is package-scoped and rejects a bare file), Rust takes the file stem as a `--test` target;
+    /// the rest take the paths directly.
+    fn test_file_cmd(self, paths: &[String]) -> String {
+        let joined = paths.join(" ");
+        match self {
+            TargetLang::Python => format!("python3 -m pytest {joined}"),
+            TargetLang::TypeScript => format!("npx vitest run {joined} (or the project's runner)"),
+            TargetLang::Rust => {
+                let targets: Vec<String> = paths
+                    .iter()
+                    .map(|p| format!("--test {}", module_stem_of_test_file(p)))
+                    .collect();
+                format!("cargo test {}", targets.join(" "))
+            }
+            TargetLang::Go => {
+                let mut dirs: Vec<String> = paths
+                    .iter()
+                    .map(|p| match p.rsplit_once('/') {
+                        Some((dir, _)) => format!("./{dir}"),
+                        None => ".".to_string(),
+                    })
+                    .collect();
+                dirs.sort();
+                dirs.dedup();
+                format!("go test {}", dirs.join(" "))
+            }
+            TargetLang::Other => {
+                format!("the project's test runner, scoped to {joined} ONLY")
+            }
         }
     }
 
