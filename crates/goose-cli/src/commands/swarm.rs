@@ -563,6 +563,14 @@ pub struct SwarmConfig {
     /// NOTHING worked. Default ON: a false-green detector that is off by default protects nobody.
     #[serde(default = "default_true")]
     pub verify_commands: bool,
+    /// Shard the whole-program END-TO-END check across the fleet by COMMAND, instead of running every
+    /// advertised command in the single integrate-verify task. fan_verify shards by MODULE, which leaves
+    /// the end-to-end run monolithic — MEASURED h1-treat-4: 26.5 min, 47% of ALL node-busy time, on one
+    /// node while the other two idled. Checking `get` says nothing about checking `compact`, and each shard
+    /// only needs the assembled tree read-only, so they parallelise cleanly.
+    /// Only ever consulted inside the fan_verify branch, so fan_verify OFF stays byte-identical.
+    #[serde(default = "default_true")]
+    pub fan_e2e: bool,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -959,6 +967,7 @@ impl Default for SwarmConfig {
             split_secs: 300,
             complete_cap_secs: 1200,
             verify_commands: true,
+            fan_e2e: true,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -2941,6 +2950,105 @@ fn split_fat_modules(plan: &mut serde_json::Value, lang: TargetLang, min_files: 
 fn id_names_a_test(id: &str) -> bool {
     id.split(|c: char| !c.is_ascii_alphanumeric())
         .any(|seg| seg.eq_ignore_ascii_case("test") || seg.eq_ignore_ascii_case("tests"))
+}
+
+/// The read-only END-TO-END SHARD spec: one slice of the app's advertised commands, checked against the
+/// spec's golden values. Owns nothing and writes nothing, so N of these co-run race-free on one tree.
+fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize) -> String {
+    format!(
+        "END-TO-END SHARD {n} OF {shards}. You own NOTHING and must WRITE NO files — this is a read-only \
+         gate that runs in PARALLEL with its sibling shards on the assembled app. BUILD + ACTUALLY RUN the \
+         program's advertised entry point ({entry}). The spec advertises a list of commands/usages: number \
+         them 1,2,3... in the order the spec gives them, and verify ONLY the ones whose position satisfies \
+         position mod {shards} == {m} — that is, command {n}, then {n} plus {shards}, and so on. Your \
+         siblings own the others; checking theirs wastes the fleet and checking none of yours leaves a hole. \
+         For EACH command you own do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies \
+         and confirm the ACTUAL output equals the SPECIFIC value the spec implies — not merely exit 0, and \
+         never invent an expected output to make it pass. For a MULTI-OUTPUT command (--count N / a list of \
+         N) confirm all N are correct AND genuinely distinct. INVOCATION: the spec's leading program name is \
+         the program ITSELF, never an argument. REPORT precisely what you ran, what it printed, and what you \
+         expected — do NOT fix anything and do NOT edit files; the integrate-verify join owns repair. If you \
+         own no command (the spec advertises fewer than {shards}), say so and stop.",
+        n = shard + 1,
+        m = (shard + 1) % shards,
+        shards = shards,
+        entry = lang.entry_run_example(),
+    )
+}
+
+/// SINK DECOMPOSITION, second axis. `fan_verify_split` shards verification by MODULE, which leaves the
+/// whole-program end-to-end run as ONE task on ONE node — MEASURED 47% of all node-busy time in h1-treat-4
+/// (26.5 min while two nodes idled). But an app's advertised COMMANDS are embarrassingly parallel: checking
+/// `get` says nothing about checking `compact`, and each only needs the assembled tree, which is read-only.
+///
+/// This adds `verify-e2e::<i>` shards that split the command list round-robin across the fleet, each
+/// depending on every `verify::<module>` (so the tree is built) and owning no files (so they co-run
+/// race-free, exactly like the per-module verifies). integrate-verify keeps its id and its role as the sole
+/// REPAIR point and final join, and now gates behind the shards instead of running every command itself.
+///
+/// No-op (0) without a sink, without modules, or when already sharded. Returns the shard count.
+fn fan_e2e_split(plan: &mut serde_json::Value, lang: TargetLang, shards: usize) -> usize {
+    let shards = shards.clamp(2, 4);
+    let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
+        return 0;
+    };
+    if !arr
+        .iter()
+        .any(|s| s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify"))
+        || arr.iter().any(|s| {
+            s.get("id")
+                .and_then(|i| i.as_str())
+                .map(|i| i.starts_with("verify-e2e::"))
+                .unwrap_or(false)
+        })
+    {
+        return 0;
+    }
+    let verify_ids: Vec<String> = arr
+        .iter()
+        .filter_map(|s| s.get("id").and_then(|i| i.as_str()))
+        .filter(|i| i.starts_with("verify::"))
+        .map(String::from)
+        .collect();
+    if verify_ids.is_empty() {
+        return 0;
+    }
+    let new_tasks: Vec<serde_json::Value> = (0..shards)
+        .map(|i| {
+            serde_json::json!({
+                "id": format!("verify-e2e::{i}"),
+                "description": e2e_shard_spec(lang, i, shards),
+                "depends_on": verify_ids,
+                "files": [],
+                "difficulty": "hard"
+            })
+        })
+        .collect();
+    if let Some(arr) = plan.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
+        for s in arr.iter_mut() {
+            if s.get("id").and_then(|i| i.as_str()) != Some("integrate-verify") {
+                continue;
+            }
+            let mut deps: Vec<serde_json::Value> = (0..shards)
+                .map(|i| serde_json::json!(format!("verify-e2e::{i}")))
+                .collect();
+            // Keep any non-verify dep the architect put on the sink.
+            if let Some(old) = s.get("depends_on").and_then(|d| d.as_array()) {
+                for d in old {
+                    let keep = d
+                        .as_str()
+                        .map(|x| !x.starts_with("verify::"))
+                        .unwrap_or(true);
+                    if keep && !deps.iter().any(|e| e == d) {
+                        deps.push(d.clone());
+                    }
+                }
+            }
+            s["depends_on"] = serde_json::json!(deps);
+        }
+        arr.extend(new_tasks);
+    }
+    shards
 }
 
 fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
@@ -6184,6 +6292,53 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Nothing bad => byte-identical, so a healthy run is untouched.
         let all_ok = serde_json::json!({"modules":[{"module":"store","parsed":true},{"module":"cli","parsed":true}]});
         assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
+    }
+
+    /// The END-TO-END run is sharded by COMMAND across the fleet. fan_verify shards by MODULE, which left
+    /// the whole-program check as ONE task on ONE node — MEASURED h1-treat-4: 26.5 min, 47% of ALL
+    /// node-busy time, while two nodes idled. Checking `get` says nothing about checking `compact`.
+    #[test]
+    fn the_end_to_end_run_is_sharded_across_the_fleet() {
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"store","depends_on":[],"files":["kv/store.py"]},
+                {"id":"cli","depends_on":[],"files":["kv/cli.py"]},
+                {"id":"integrate-verify","depends_on":["store","cli"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
+        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3), 3);
+
+        // Three shards exist, own NOTHING (so they co-run race-free), and wait for the per-module verifies.
+        for i in 0..3 {
+            let t = fv_task(&plan, &format!("verify-e2e::{i}")).unwrap();
+            assert!(t["files"].as_array().unwrap().is_empty());
+            assert_eq!(
+                fv_deps(&plan, &format!("verify-e2e::{i}")),
+                "verify::store,verify::cli"
+            );
+        }
+        // Each shard is told a DIFFERENT slice, so together they cover every command exactly once.
+        let s0 = fv_task(&plan, "verify-e2e::0").unwrap()["description"]
+            .as_str()
+            .unwrap();
+        let s1 = fv_task(&plan, "verify-e2e::1").unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(s0.contains("SHARD 1 OF 3") && s1.contains("SHARD 2 OF 3"));
+        assert_ne!(s0, s1);
+        // The join gates behind every shard and is the ONLY one allowed to edit files.
+        assert_eq!(
+            fv_deps(&plan, "integrate-verify"),
+            "verify-e2e::0,verify-e2e::1,verify-e2e::2"
+        );
+        let join = joined_integrate_verify_spec(TargetLang::Python);
+        assert!(join.contains("Do NOT re-run that whole sweep"));
+        assert!(join.contains("ONLY task permitted to edit files"));
+        assert!(join.contains("sole integration gate"));
+        // Idempotent: a second pass must not double-shard.
+        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3), 0);
     }
 
     /// The sink must not re-do by hand what the engine now checks deterministically. It is the single
@@ -11530,6 +11685,16 @@ impl GooseAgentDispatcher {
             let fanned = fan_verify_split(&mut v, lang);
             if fanned > 0 {
                 fan_verify_applied = true;
+                // Second axis: shard the END-TO-END run by command across the fleet, so the whole-program
+                // check stops being one task on one node while the rest of the fleet idles.
+                if swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e) {
+                    let shards = fan_e2e_split(&mut v, lang, worker_count);
+                    if shards > 0 {
+                        eprintln!(
+                            "  \u{b7} fan-e2e: split the end-to-end run into {shards} command shard(s) across the fleet — integrate-verify now joins them instead of running every command itself"
+                        );
+                    }
+                }
                 eprintln!(
                     "  \u{b7} fan-verify: split the sink into {fanned} scoped per-module verify task(s) + a thin integrate-verify join (id kept) — the per-module checks fan across the fleet, the join stays the sole end-to-end gate"
                 );
@@ -11753,6 +11918,18 @@ impl GooseAgentDispatcher {
         // advertised entry, per-command golden values, multi-output distinctness, robustness probing,
         // corrupt/missing store probing); it drops only "run the test suite", which the per-module verify
         // tasks now own. It remains the SOLE integration gate.
+        let arr_has_e2e_shard = v
+            .get("subtasks")
+            .and_then(|s| s.as_array())
+            .map(|a| {
+                a.iter().any(|s| {
+                    s.get("id")
+                        .and_then(|i| i.as_str())
+                        .map(|i| i.starts_with("verify-e2e::"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
         if let Some(arr) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) {
             for s in arr.iter_mut() {
                 if s.get("id").and_then(|i| i.as_str()) == Some("integrate-verify") {
@@ -11761,7 +11938,10 @@ impl GooseAgentDispatcher {
                         .and_then(|d| d.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let canonical = if fan_verify_applied {
+                    let e2e_sharded = fan_verify_applied && arr_has_e2e_shard;
+                    let canonical = if e2e_sharded {
+                        joined_integrate_verify_spec(lang)
+                    } else if fan_verify_applied {
                         thin_integrate_verify_spec(lang)
                     } else {
                         integrate_verify_spec(lang)
@@ -12790,6 +12970,28 @@ fn per_module_verify_spec(files: &[String]) -> String {
 /// robustness oracle verbatim so coverage is NOT weakened. If the source string ever drifts and a replacement
 /// misses, this fails safe to the full monolithic spec (still a complete gate). Per-module green NEVER
 /// substitutes for this run — it stays the single end-to-end integration oracle.
+/// The JOIN spec used when the end-to-end run is SHARDED by command (`fan_e2e`). The shards already ran
+/// every advertised command with golden-value checks in parallel, so the join stops repeating that sweep —
+/// which is what made it 47% of all node-busy time — and does only what cannot be sharded: assemble, run
+/// the advertised entry once, probe the persisted store, and REPAIR anything the shards reported. It stays
+/// the sole repair point and the final gate; a green shard never substitutes for it.
+fn joined_integrate_verify_spec(lang: TargetLang) -> String {
+    format!(
+        "INTEGRATION JOIN — every module was import/build-checked in isolation upstream, and the app's \
+         advertised commands were just verified IN PARALLEL by the end-to-end shards, each with \
+         golden-value checks. Do NOT re-run that whole sweep; it has happened. Your job is the part that \
+         cannot be sharded. (1) ASSEMBLE the program and BUILD + ACTUALLY RUN its advertised entry point \
+         ({entry}) ONCE, confirming it starts and dispatches. (2) READ the shards' reports and FIX, at the \
+         ROOT CAUSE, every wrong output, crash, missing build config or broken command they found — you are \
+         the ONLY task permitted to edit files here. (3) If the program READS a PERSISTED file or database, \
+         probe it against a MALFORMED/corrupt version AND a MISSING one: a corrupt store must give a CLEAN \
+         error and a missing store must start empty cleanly — never an uncaught traceback. Guard the LOAD \
+         path every read command shares. (4) Re-run ONLY the specific commands you changed, to confirm the \
+         fix. A green shard does NOT prove the ASSEMBLED program runs — THIS is the sole integration gate.",
+        entry = lang.entry_run_example(),
+    )
+}
+
 fn thin_integrate_verify_spec(lang: TargetLang) -> String {
     let full = integrate_verify_spec(lang);
     // The sink is the single biggest serialization in the run — MEASURED 47% of ALL node-busy time in
