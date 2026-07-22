@@ -167,6 +167,11 @@ export interface SwarmConfig {
    *  That also makes deleting a failing test a working way to go green. With this on, an empty suite is a
    *  finding and the build is driven to write real tests instead. Default OFF (byte-identical when off). */
   require_tests?: boolean;
+  /** Give each module its OWN test subtask (depending only on that module) instead of one big test task for
+   *  the whole app. Per-module tests are ready as soon as their module is, so they run alongside the rest of
+   *  the build instead of queueing at the end behind the entry point. Unset = the previous behaviour (this
+   *  had no setting at all before, and could never actually switch on). */
+  parallel_tests?: boolean;
   dep_signatures?: boolean;
   scoped_contracts?: boolean;
   owned_file_fence?: boolean;

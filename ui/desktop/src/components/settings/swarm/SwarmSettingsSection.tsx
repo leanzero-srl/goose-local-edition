@@ -529,6 +529,15 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Give each module its own test subtask"
+              hint="By default goose puts all of an app's tests into one task, which can only start once the pieces it tests are finished — so it lands at the very end of the build while the other machines have nothing left to do. With this on, each module gets its own test task that starts the moment that module is done, so testing overlaps the rest of the build. It also gives the per-module checks something real to run: without a test that belongs to a single module there is nothing module-sized to verify. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.parallel_tests}
+                onChange={(v) => set({ parallel_tests: v })}
+              />
+            </Row>
+            <Row
               label="Require the finished app to actually have tests"
               hint="When goose checks a finished build, it runs the app's test suite — but an app with no tests at all currently passes that check silently, because “no tests ran” looks the same as “every test passed”. That means a build can be reported as verified without a single thing having been checked, and it also means deleting an awkward failing test is a way to turn the build green. With this on, an empty test suite counts as a problem and goose keeps working until the app has real tests that assert the expected values. Default off."
             >
