@@ -920,7 +920,7 @@ impl Default for SwarmConfig {
             detail_memo: None,
             repeat_break: None,
             spiral_break_chars: None,
-            omni_judge: None,
+            omni_judge: Some(true),
             delegated_decisions_ok: None,
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
@@ -6151,6 +6151,27 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    /// OMNI-JUDGE is now ON by default — it is the ONLY supervisor that can watch a `verify::` task, because
+    /// every deterministic judge gate in judge.rs requires owned files and a verify task owns none.
+    ///
+    /// Enabling it was only safe once the retry-budget burn was fixed (see scheduler.rs `omni_aborts`): an
+    /// omni abort arrives as a plain Transient with no intervention credit, so it consumed one of the task's
+    /// three attempts. On a verify:: task that is pure loss — the progress-watchdog salvage path requires
+    /// non-empty owned_files, so it cannot rescue one either.
+    #[test]
+    fn omni_judge_is_on_by_default_and_env_still_wins() {
+        assert_eq!(SwarmConfig::default().omni_judge, Some(true));
+        // Config alone (no env) => on.
+        assert!(straggler_stop_resolved(None, Some(true)));
+        // An explicit env override still wins in BOTH directions — the A/B escape hatch must survive
+        // the default flip, or a baseline arm can no longer establish "off".
+        assert!(!straggler_stop_resolved(Some("0".into()), Some(true)));
+        assert!(straggler_stop_resolved(Some("1".into()), Some(false)));
+        // The whitelist is positive: an EMPTY export forces OFF and shadows a config true. Any harness
+        // that exports the var must use a literal 0/1.
+        assert!(!straggler_stop_resolved(Some("".into()), Some(true)));
+    }
+
     /// ELECTRON PARITY. The desktop provider used to force SMOKE/SPLIT/CONTRACTS/COMPLETE onto the spawned
     /// engine, so a UI build and a headless `goose swarm run` of the SAME spec ran different engines — the
     /// four were always on for one and always off for the other. The provider no longer sets them; these

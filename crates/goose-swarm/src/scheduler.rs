@@ -395,6 +395,11 @@ struct State {
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
     prior_hints: HashMap<TaskId, String>,
     interventions: HashMap<TaskId, u32>,
+    /// Omni-judge aborts per task. Counted SEPARATELY from `interventions` on purpose: that map also caps
+    /// how many times the deterministic judge may act on a task (max_interventions_per_task), and spending
+    /// that budget on a model's reasoning-loop abort would leave a genuinely stuck task with no
+    /// deterministic supervisor at the point it needs one most.
+    omni_aborts: HashMap<TaskId, u32>,
     /// Split generation per task: 0 for original tasks, parent+1 for children injected by a split. Feeds
     /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
     split_generation: HashMap<TaskId, u32>,
@@ -806,11 +811,21 @@ impl State {
                         error: Some(msg.clone()),
                         elapsed_ms,
                     });
+                // An OMNI-JUDGE abort is supervision too: a model read the call's own reasoning and stopped
+                // it. It arrives as a plain Transient with no intervention increment, so without this it
+                // burned the task's retry budget — the exact cost the judge-kill exclusion below exists to
+                // avoid. It bites hardest on a `verify::` task, which owns no files: the progress-watchdog
+                // salvage path is disabled for those, so every omni abort was a pure budget burn pushing an
+                // otherwise-healthy verify toward Failed.
+                if msg.contains("the judge read this call's own reasoning") {
+                    *self.omni_aborts.entry(tid.to_string()).or_insert(0) += 1;
+                }
                 let exhausted = {
                     // Judge kills advance n.attempts (for the epoch guard) but are SUPERVISORY, not task
                     // failures — and the judge can be wrong (a borderline over-read). Don't let a judge
                     // intervention burn the transient-retry budget: exclude it from the exhaustion count.
-                    let judge_kills = self.interventions.get(tid).copied().unwrap_or(0);
+                    let judge_kills = self.interventions.get(tid).copied().unwrap_or(0)
+                        + self.omni_aborts.get(tid).copied().unwrap_or(0);
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
                     n.attempts.saturating_sub(judge_kills) >= self.max_attempts
@@ -1923,6 +1938,7 @@ impl Scheduler {
             abort_handles: HashMap::new(),
             prior_hints: HashMap::new(),
             interventions: HashMap::new(),
+            omni_aborts: HashMap::new(),
             split_generation: HashMap::new(),
             judge_running: false,
             idle_jobs: 0,
