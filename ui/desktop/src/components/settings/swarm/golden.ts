@@ -162,6 +162,11 @@ export interface SwarmConfig {
    *  (these fan across the fleet like the build tasks) plus a THIN final integration run. The thin run stays
    *  the sole end-to-end gate; per-module green never substitutes for it. Default OFF (byte-identical when off). */
   fan_verify?: boolean;
+  /** An app that ships NO tests currently reads as GREEN: pytest's "no tests ran" exit is treated exactly
+   *  like a pass, so "nothing was checked" and "everything passed" are indistinguishable to the final gate.
+   *  That also makes deleting a failing test a working way to go green. With this on, an empty suite is a
+   *  finding and the build is driven to write real tests instead. Default OFF (byte-identical when off). */
+  require_tests?: boolean;
   dep_signatures?: boolean;
   scoped_contracts?: boolean;
   owned_file_fence?: boolean;

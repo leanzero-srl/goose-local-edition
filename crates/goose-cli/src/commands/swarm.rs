@@ -773,6 +773,19 @@ pub struct SwarmConfig {
     /// single monolithic sink is emitted exactly as before = byte-identical. GOOSE_SWARM_FAN_VERIFY overrides.
     #[serde(default)]
     pub fan_verify: bool,
+
+    /// An app that ships NO EXECUTABLE TESTS currently claims GREEN. `run_smoke_gate` maps pytest's exit 5
+    /// ("no tests ran") to `CollectVerdict::Ok` and `TestRunVerdict::NoTests`, and ONLY `Failures` pushes a
+    /// finding — so an empty suite is indistinguishable from a passing one, and the complete loop (which
+    /// treats the smoke gate as the authority whenever it RAN) emits passed+verified. MEASURED on verify-6:
+    /// `verify::analytics-io` reported "No tests/ directory exists yet — this is expected", the `tests` task
+    /// reported "the failures are expected", and the run shipped complete_result{passed:true,verified:true}.
+    /// It also makes "delete the failing test" a working strategy for any worker trying to go green.
+    /// When ON, a NoTests / zero-collect verdict becomes a real finding, exactly as the review-fix gate
+    /// already requires `TestRunVerdict::Pass` rather than merely-empty findings. OFF by default => no new
+    /// finding is ever pushed = byte-identical. GOOSE_SWARM_REQUIRE_TESTS overrides.
+    #[serde(default)]
+    pub require_tests: bool,
 }
 
 /// The scout's wall-clock BACKSTOP — not its budget.
@@ -931,6 +944,7 @@ impl Default for SwarmConfig {
             dep_signatures: None,
             scoped_contracts: None,
             fan_verify: false,
+            require_tests: false,
         }
     }
 }
@@ -6030,6 +6044,38 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(oread.hint, "write the file now");
         // HIGH but no real correction -> stays OK (a vague reply can never kill a healthy worker).
         assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
+    }
+
+    /// GOOSE_SWARM_REQUIRE_TESTS. An EMPTY suite is not a PASSING suite.
+    ///
+    /// MEASURED on verify-6 (the only fan_verify run that reached run_finished): `verify::analytics-io`
+    /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
+    /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
+    /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    #[test]
+    fn require_tests_separates_an_empty_suite_from_a_passing_one() {
+        // OFF: no input can produce a finding => byte-identical to the pre-lever gate.
+        for v in [
+            TestRunVerdict::NoTests,
+            TestRunVerdict::Pass,
+            TestRunVerdict::PytestMissing,
+            TestRunVerdict::Failures("boom".to_string()),
+        ] {
+            assert_eq!(require_tests_finding(&v, false), None);
+        }
+        // ON: ONLY the "nothing was checked" verdict becomes a finding.
+        assert!(require_tests_finding(&TestRunVerdict::NoTests, true).is_some());
+        // A real pass stays green, and a real failure keeps its OWN existing finding (never double-reported).
+        assert_eq!(require_tests_finding(&TestRunVerdict::Pass, true), None);
+        assert_eq!(
+            require_tests_finding(&TestRunVerdict::Failures("boom".to_string()), true),
+            None
+        );
+        // A MISSING pytest is inconclusive, never a defect — the gate must not invent one.
+        assert_eq!(
+            require_tests_finding(&TestRunVerdict::PytestMissing, true),
+            None
+        );
     }
 
     #[test]
@@ -11801,6 +11847,27 @@ fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     }
 }
 
+/// GOOSE_SWARM_REQUIRE_TESTS: an app that ships NO executable tests must not read as GREEN.
+///
+/// `interpret_pytest_run` already distinguishes `NoTests` (exit 5) from `Pass` (exit 0), but only `Failures`
+/// pushed a finding — so "nothing was checked" was indistinguishable from "everything passed". The review-fix
+/// gate already gets this right (it requires `TestRunVerdict::Pass`, never merely-empty findings); this brings
+/// the completion gate to the same standard.
+///
+/// `on == false` returns None on every input => no finding is ever pushed => byte-identical. Pure so the
+/// distinction is unit-testable without a python3 on the box.
+fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Option<String> {
+    if !on {
+        return None;
+    }
+    matches!(verdict, TestRunVerdict::NoTests).then(|| {
+        "the app ships NO executable tests (`pytest -q` collected 0) — an empty suite is not a passing \
+         suite. Write real tests that assert the spec's concrete expected values, and never delete or \
+         skip a failing test to go green."
+            .to_string()
+    })
+}
+
 /// The last `n` non-blank lines of `s`, in original order — captures a traceback tail for a hint.
 fn tail_lines(s: &str, n: usize) -> String {
     let mut lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -12154,6 +12221,12 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                         "`pytest -q` failed — the generated tests exercise runtime paths that \
                          `--help`/`--collect-only` never invoke:\n{t}"
                     ));
+                }
+                if let Some(f) = require_tests_finding(
+                    &v,
+                    swarm_gate_cfg("GOOSE_SWARM_REQUIRE_TESTS", load_config().require_tests),
+                ) {
+                    findings.push(f);
                 }
                 Some(v)
             }
@@ -19201,6 +19274,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
             // indistinguishable from OFF — echo the resolved value from the SAME gate the engine branches on.
             "fan_verify": swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify),
+            "require_tests": swarm_gate_cfg("GOOSE_SWARM_REQUIRE_TESTS", load_config().require_tests),
             "dep_signatures": dep_signatures_on(),
             "scoped_contracts": scoped_contracts_on(),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
