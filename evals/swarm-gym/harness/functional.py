@@ -98,7 +98,13 @@ def assess(root: str, timeout: int = 25) -> Dict[str, object]:
     if m and "," in m.group(1) and " " not in m.group(1):
         subs = [x.strip() for x in m.group(1).split(",") if x.strip()]
     if not subs:
-        # Runnable and answers --help, but exposes no discoverable command surface to probe.
+        # No subcommands. The dominant shape here is a SERVER (`--host/--port`), which is the majority app
+        # type in this corpus — 17 of 24 Python apps. It has no command surface to invoke, so probe it the
+        # only way that means anything: start it and see whether it binds and answers.
+        help_blob = out + err
+        if "--port" in help_blob or "--host" in help_blob:
+            return _probe_server(root, pkg, help_blob, timeout)
+        # Runnable and answers --help, but exposes no discoverable surface at all.
         return {"root": root, "entry": pkg, "verdict": "unprobeable",
                 "measurable": True, "commands": 0, "broken": 0}
 
@@ -116,6 +122,78 @@ def assess(root: str, timeout: int = 25) -> Dict[str, object]:
         "commands": len(subs), "broken": len(broken), "failures": broken,
         "measurable": True,
     }
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _probe_server(root: str, pkg: str, help_blob: str, timeout: int) -> Dict[str, object]:
+    """Start the service and see whether it actually BINDS and answers. A server that crashes on startup,
+    or binds and 500s on its own root, is not a functional app however green the run reported.
+
+    Bounded and always cleaned up: the child is killed in a finally, so a probe can never leave a port
+    held or a process behind to contend with the fleet.
+    """
+    import time
+    import urllib.error
+    import urllib.request
+
+    port = _free_port()
+    args = ["python3", "-m", pkg]
+    if "--port" in help_blob:
+        args += ["--port", str(port)]
+    if "--host" in help_blob:
+        args += ["--host", "127.0.0.1"]
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            args, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        deadline = time.time() + min(timeout, 20)
+        bound = False
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                break  # died before binding
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as r:
+                    code = r.getcode()
+                bound = True
+                break
+            except urllib.error.HTTPError as e:
+                # It ANSWERED — a 404 on `/` is fine, a 5xx is the app failing on its own root.
+                code = e.code
+                bound = True
+                break
+            except Exception:
+                time.sleep(0.4)
+        if not bound:
+            tail = ""
+            if proc.poll() is not None:
+                _, e = proc.communicate(timeout=5)
+                tail = (e or "").strip().splitlines()[-1][:110] if (e or "").strip() else ""
+            return {"root": root, "entry": pkg, "verdict": "broken", "kind": "server",
+                    "commands": 1, "broken": 1, "measurable": True,
+                    "failures": [{"command": "serve", "why": "never bound a port", "detail": tail}]}
+        if code >= 500:
+            return {"root": root, "entry": pkg, "verdict": "broken", "kind": "server",
+                    "commands": 1, "broken": 1, "measurable": True,
+                    "failures": [{"command": "GET /", "why": f"http {code}", "detail": ""}]}
+        return {"root": root, "entry": pkg, "verdict": "functional", "kind": "server",
+                "commands": 1, "broken": 0, "measurable": True}
+    except OSError as exc:
+        return {"root": root, "entry": pkg, "verdict": "no-entry",
+                "detail": str(exc)[:120], "measurable": False}
+    finally:
+        if proc and proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
 
 
 def summarise(results: List[Dict[str, object]]) -> Dict[str, object]:
