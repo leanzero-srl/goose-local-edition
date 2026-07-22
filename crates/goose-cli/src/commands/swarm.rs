@@ -12491,20 +12491,39 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 if ok && commands_probe_on {
                     let help_text = combined_output(&out);
                     for sub in advertised_subcommands(&help_text).into_iter().take(12) {
-                        let mut c = tokio::process::Command::new("python3");
-                        c.args(["-m", pkg.as_str(), sub.as_str()])
-                            .current_dir(root)
-                            .env("PYTHONPATH", &pythonpath2);
-                        if let Some(o) = smoke_output(c, 30).await {
+                        // Two invocations per command: BARE, and with a plausibly-BAD argument.
+                        //
+                        // The bare call catches a command that is simply broken. The bad-argument call
+                        // catches the separate and very common class the integrate-verify spec calls out
+                        // in its own words — "A CLI that tracebacks on a user typo is broken" — where the
+                        // happy path works and any unexpected input dumps a Python traceback at the user.
+                        // A NONEXISTENT key/name is the one argument shape that is plausible for almost any
+                        // verb, and an honest app answers it with a clean error, not a stack trace.
+                        for extra in [Vec::new(), vec!["__nope__".to_string()]] {
+                            let mut c = tokio::process::Command::new("python3");
+                            c.arg("-m").arg(pkg.as_str()).arg(sub.as_str());
+                            for e in &extra {
+                                c.arg(e);
+                            }
+                            c.current_dir(root).env("PYTHONPATH", &pythonpath2);
+                            let Some(o) = smoke_output(c, 30).await else {
+                                continue;
+                            };
                             let so = String::from_utf8_lossy(&o.stdout).to_string();
                             let se = String::from_utf8_lossy(&o.stderr).to_string();
-                            if let Some(why) = command_probe_finding(&so, &se, o.status.code()) {
-                                findings.push(format!(
-                                    "`python3 -m {pkg} {sub}` {why} — the app advertises this command and it \
-                                     does not work. `--help` passing proves only that argparse is wired:\n{}",
-                                    tail_lines(&format!("{so}\n{se}"), 12)
-                                ));
-                            }
+                            let Some(why) = command_probe_finding(&so, &se, o.status.code()) else {
+                                continue;
+                            };
+                            let shown = if extra.is_empty() {
+                                sub.clone()
+                            } else {
+                                format!("{sub} __nope__")
+                            };
+                            findings.push(format!(
+                                "`python3 -m {pkg} {shown}` {why} — the app advertises this command and it \
+                                 does not work. `--help` passing proves only that argparse is wired:\n{}",
+                                tail_lines(&format!("{so}\n{se}"), 12)
+                            ));
                         }
                     }
                 }
