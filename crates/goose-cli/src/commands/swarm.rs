@@ -11740,7 +11740,16 @@ impl GooseAgentDispatcher {
             // and it burns one ~75s fleet call per verify task to do it. Skip them: the authored spec is
             // already implementation-ready. Only reachable when fan_verify is ON (no such id otherwise), so
             // the default path is byte-identical.
-            .filter(|(_, st)| !st["id"].as_str().unwrap_or("").starts_with("verify::"))
+            // Both fanned families are AUTHORED deterministically (per_module_verify_spec / e2e_shard_spec)
+            // and carry invariants the detailer would paraphrase away: "you own NOTHING", and — for a shard
+            // — WHICH slice of the command list it owns. A shard whose slice is reworded checks everything
+            // or nothing, which silently undoes the split. `verify-e2e::` does NOT start with `verify::`,
+            // so it needs its own arm; missing it is exactly how the first fan_e2e run got its specs
+            // rewritten.
+            .filter(|(_, st)| {
+                let id = st["id"].as_str().unwrap_or("");
+                !id.starts_with("verify::") && !id.starts_with("verify-e2e::")
+            })
             .map(|(i, st)| {
                 // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
                 // verbatim. Without this the detailer invents a filename that contradicts the owned_files
