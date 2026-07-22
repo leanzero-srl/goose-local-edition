@@ -6161,6 +6161,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    /// A frozen contract stub that does not PARSE is not an interface — it is prose, and the worker that
+    /// receives it writes against nothing.
+    ///
+    /// MEASURED (h1-treat-2): 2 of 3 stubs failed to parse and `cli`'s error was literally
+    /// `invalid character '—'`. The cli worker then called `Store(args.store)`, passing argparse's str
+    /// where store.py annotates `store_path: Path`, and EVERY command of the shipped app died on `.mkdir`
+    /// and `/`. The run still reported passed+verified.
+    #[test]
+    fn smart_punctuation_that_breaks_generated_python_is_normalised() {
+        // The exact killer: an em-dash in code position.
+        let broken =
+            "def init(store_path: Path) -> None:  # create the dir — then the log\n    ...";
+        let fixed = sanitize_generated_source(broken);
+        assert!(!fixed.contains('\u{2014}'), "em-dash must be gone");
+        assert!(fixed.contains("# create the dir - then the log"));
+        // Curly quotes, non-breaking space and ellipsis are the same class of local-model artifact.
+        assert_eq!(
+            sanitize_generated_source("x = \u{2018}a\u{2019}"),
+            "x = 'a'"
+        );
+        assert_eq!(
+            sanitize_generated_source("s = \u{201c}hi\u{201d}"),
+            "s = \"hi\""
+        );
+        assert_eq!(sanitize_generated_source("a\u{00a0}= 1"), "a = 1");
+        // Ordinary ASCII source is returned byte-identical — this can only ever repair, never mangle.
+        let clean = "def f(p: Path) -> None:\n    p.mkdir(parents=True)\n";
+        assert_eq!(sanitize_generated_source(clean), clean);
+    }
+
     /// THE FALSE GREEN THIS WHOLE CHECK EXISTS FOR (MEASURED, h1-treat-2).
     ///
     /// Every command of the produced app was broken, and the run still shipped passed+verified. Nothing
@@ -10528,6 +10558,9 @@ impl GooseAgentDispatcher {
         .await;
         let mut bundle = String::new();
         for (id, stub) in stubs {
+            // Sanitize BEFORE freezing: a stub whose only defect is an em-dash is a real interface that
+            // merely does not parse, and freezing it as-is hands the worker prose instead of a signature.
+            let stub = sanitize_generated_source(&stub);
             let stub = stub.trim();
             if !stub.is_empty() {
                 bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
@@ -13932,6 +13965,23 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
 /// specified, so a parse gap never spuriously forces an ask (conservative — under-ask beats over-ask here).
 fn default_true() -> bool {
     true
+}
+
+/// Replace the SMART PUNCTUATION a local model sprinkles into generated code with its ASCII equivalent.
+///
+/// MEASURED (h1-treat-2): 2 of 3 frozen contract stubs did not parse, and `cli`'s failure was literally
+/// `invalid character '—'`. The worker that then wrote cli.py had NO usable interface for its sibling, so
+/// it called `Store(args.store)` — passing argparse's str where the module annotates `store_path: Path` —
+/// and every command of the shipped app died on `.mkdir` / `/`. The engine reported passed+verified.
+///
+/// This is a signature LOCAL-MODEL failure: em/en dashes and curly quotes are fine in prose and fatal in
+/// source. Pure, and it can only turn invalid Python into valid Python — never the reverse.
+fn sanitize_generated_source(s: &str) -> String {
+    s.replace(['\u{2014}', '\u{2013}', '\u{2212}'], "-")
+        .replace(['\u{2018}', '\u{2019}'], "'")
+        .replace(['\u{201c}', '\u{201d}'], "\"")
+        .replace('\u{00a0}', " ")
+        .replace('\u{2026}', "...")
 }
 
 fn default_split_secs() -> u64 {
