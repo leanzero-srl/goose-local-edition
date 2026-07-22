@@ -312,46 +312,19 @@ impl Provider for SwarmProvider {
             .arg(&brief)
             .arg("--output-format")
             .arg("json");
-        // End-to-end verification for UI-dispatched builds. The smoke gate RUNS the produced program
-        // (e.g. `python3 -m <pkg>` / `pytest --collect-only`) and fires one corrective fix if it crashes,
-        // so a build that produced a broken entry point (e.g. a CLI that raises on every command) is caught
-        // before it is reported "done". This gate is off unless the env var is set or "assured" mode is on;
-        // CLI runs set it explicitly, but the UI provider did not — so UI builds silently skipped end-to-end
-        // verification and shipped broken CLIs. Default it on here; respect an explicit override.
-        if std::env::var("GOOSE_SWARM_SMOKE").is_err() {
-            cmd.env("GOOSE_SWARM_SMOKE", "1");
-        }
-        // Fleet utilization: without splitting, the architect's coarse near-serial plans (a big shared-types
-        // root -> a couple modules -> a lone cli -> a lone integrate-verify) leave 1-2 of 3 fleet nodes idle
-        // most of the wall-clock (observed: peak concurrency 2-3 but most dispatches at concurrency 1). The
-        // split mechanism partitions an over-long, multi-file task into 2-4 independent children so several
-        // workers run in parallel. It is off by default (CLI A/B runs set it; the UI provider did not, which
-        // is why app-dispatched builds starved the fleet). Enable it here, and lower the too-long threshold
-        // from the conservative 900s default to 300s: measured task durations are median 219s / p75 406s, so
-        // 900s split almost nothing while 300s splits the fat multi-file tasks that actually cause the idle.
-        if std::env::var("GOOSE_SWARM_SPLIT").is_err() {
-            cmd.env("GOOSE_SWARM_SPLIT", "1");
-        }
-        if std::env::var("GOOSE_SWARM_SPLIT_SECS").is_err() {
-            cmd.env("GOOSE_SWARM_SPLIT_SECS", "300");
-        }
-        // Quality: two built-but-unenabled gates that the CLI/assured path uses but the UI provider did not.
-        // CONTRACTS freezes signature-only module interfaces before EXECUTE so parallel workers agree on the
-        // shape (the dominant cross-module drift: bookclub ctx.obj, csvql row dict-vs-list, tmpl parser/renderer).
-        // It is also the quality partner for SPLIT — more parallel children means more interfaces to agree on.
-        // COMPLETE verifies the produced app by RUNNING it (language-aware: pytest/`-m` for Python, cargo
-        // build+test+run for Rust) and fixes-until-green within a bounded round budget, refusing to ship a red
-        // app — the "detect AND prevent" the advisory smoke gate lacked (kvstore empty main, wal no-persistence,
-        // taskq won't-compile all shipped). Bounded so a doomed build can't spin: default 2 rounds + a hard cap.
-        if std::env::var("GOOSE_SWARM_CONTRACTS").is_err() {
-            cmd.env("GOOSE_SWARM_CONTRACTS", "1");
-        }
-        if std::env::var("GOOSE_SWARM_COMPLETE").is_err() {
-            cmd.env("GOOSE_SWARM_COMPLETE", "1");
-        }
-        if std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS").is_err() {
-            cmd.env("GOOSE_SWARM_COMPLETE_CAP_SECS", "1200");
-        }
+        // ELECTRON PARITY (2026-07-22): this block used to force SMOKE/SPLIT/SPLIT_SECS/CONTRACTS/COMPLETE/
+        // COMPLETE_CAP_SECS onto the spawned engine because those levers had no config field and were
+        // otherwise unreachable from the desktop (`open -n Goose.app` hands the app its own environment via
+        // LaunchServices, so env set around the app is discarded).
+        //
+        // The side effect was that the desktop and the headless CLI ran DIFFERENT engines: these six were
+        // always on for a UI build and always off for `goose swarm run`, so the same spec could not be
+        // reproduced across the two surfaces and a headless measurement did not describe what users get.
+        //
+        // They are now real config fields defaulting to exactly these values, resolved by the engine through
+        // one path (env > config > default). Desktop behaviour is unchanged; headless now matches it. Forcing
+        // them here as well would re-break it, because env BEATS config — a user who turned one off in
+        // settings would be silently overridden.
         // Convergence molding (steer the weak planner to the simplest canonical decomposition, role-normalize
         // agreement) is now a persisted swarm CONFIG tunable (`converge`, default ON) that the spawned
         // `goose swarm run` reads directly — so it's toggleable from the desktop settings, not forced here.
