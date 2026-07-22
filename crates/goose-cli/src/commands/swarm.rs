@@ -13297,12 +13297,6 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
 
 /// Deterministic Rust smoke oracle: `cargo build` must succeed and `cargo run -- --help` must not PANIC.
 /// A missing `cargo` or no Cargo.toml is inconclusive (ran=false), never a failure.
-/// GOOSE_SWARM_BROWSER_VERIFY: opt-in headless-browser advisory for a static web app. Default-OFF, so the
-/// whole path is dead unless set and the default run is byte-identical.
-fn browser_verify_enabled() -> bool {
-    swarm_gate("GOOSE_SWARM_BROWSER_VERIFY", true)
-}
-
 /// Locate a headless-chromium binary with NO npm/playwright driver: prefer Playwright's cached standalone
 /// `chrome-headless-shell` (newest revision), else a browser on PATH. Returns None if nothing is found — the
 /// caller FAILS OPEN (no finding), so a node without a browser degrades to honest-unverified, never a false
@@ -18959,7 +18953,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "review_verify": swarm_gate("GOOSE_SWARM_REVIEW_VERIFY", true),
             "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
             "smoke": swarm_gate("GOOSE_SWARM_SMOKE", true),
-            "browser_verify": browser_verify_enabled(),
             "review_repro": swarm_gate_cfg_bundle("GOOSE_SWARM_REVIEW_REPRO", load_config().review_repro, false),
             "review_fix": swarm_gate("GOOSE_SWARM_REVIEW_FIX", false),
             // DELIVERY hard-completion gate — read by the desktop to reconcile the "app verified" label so a
@@ -20923,31 +20916,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "findings": advisory.len(),
                         "detail": advisory,
                     }));
-                }
-            }
-            // GOOSE_SWARM_BROWSER_VERIFY (opt-in): a STATIC web app has no runnable test oracle, so it ships
-            // honest-unverified (verified=false) — but a headless load can SURFACE the specific code error
-            // (e.g. a module export never imported -> ReferenceError -> blank page). ADVISORY only: emit the
-            // errors so the operator sees WHAT is wrong; do NOT drive the corrective fix (a phantom fix on a
-            // working-but-needs-server app is the worst outcome), and never gate the exit. Fail-open.
-            if browser_verify_enabled() {
-                let web = run_browser_verify(&cwd).await;
-                if !web.is_empty() {
-                    sink.write_value(serde_json::json!({
-                        "event": "browser_verify_advisory",
-                        "round": round,
-                        "findings": web.len(),
-                        "detail": web,
-                    }));
-                    eprintln!(
-                        "{}",
-                        style(format!(
-                            "browser-verify (advisory, not auto-fixed): {} web console error(s) — {}",
-                            web.len(),
-                            web.first().map(|s| s.as_str()).unwrap_or("")
-                        ))
-                        .yellow()
-                    );
                 }
             }
             sink.write_value(serde_json::json!({
