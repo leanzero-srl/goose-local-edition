@@ -6186,6 +6186,32 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
     }
 
+    /// A stub the model wrapped in a MARKDOWN FENCE is real code that merely does not parse.
+    ///
+    /// MEASURED h1-treat-4: 3 of 6 stubs failed `invalid syntax` at 147-3092 bytes with a bare
+    /// triple-backtick in their tails. The prompt explicitly says "no code fences" and the model's own
+    /// reasoning repeats the instruction back before fencing the block anyway — so this is fixed
+    /// deterministically, not by asking more firmly.
+    #[test]
+    fn a_fenced_stub_is_unwrapped_into_parseable_source() {
+        let fenced = "```python\nclass Store:\n    def get(self, k: str) -> str: ...\n```";
+        let out = strip_code_fences(fenced);
+        assert!(!out.contains("```"));
+        assert!(out.contains("class Store:"));
+        // Unfenced source is returned byte-identical — this can only repair, never mangle.
+        let plain = "class Store:\n    def get(self, k: str) -> str: ...\n";
+        assert_eq!(strip_code_fences(plain), plain);
+        // A stray UNPAIRED fence still yields usable source rather than nothing.
+        let stray = "```\nclass A: ...";
+        assert!(strip_code_fences(stray).contains("class A: ..."));
+        // Prose around a fenced block is dropped with the fence, which is the point.
+        let chatty =
+            "Here are the stubs:\n```python\ndef f(x: int) -> int: ...\n```\nHope that helps!";
+        let out2 = strip_code_fences(chatty);
+        assert!(out2.contains("def f(x: int) -> int: ..."));
+        assert!(!out2.contains("Hope that helps"));
+    }
+
     /// A frozen contract stub that does not PARSE is not an interface — it is prose, and the worker that
     /// receives it writes against nothing.
     ///
@@ -10585,7 +10611,7 @@ impl GooseAgentDispatcher {
         for (id, stub) in stubs {
             // Sanitize BEFORE freezing: a stub whose only defect is an em-dash is a real interface that
             // merely does not parse, and freezing it as-is hands the worker prose instead of a signature.
-            let stub = sanitize_generated_source(&stub);
+            let stub = sanitize_generated_source(&strip_code_fences(&stub));
             let stub = stub.trim();
             if !stub.is_empty() {
                 bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
@@ -14027,6 +14053,43 @@ fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> Str
         }
         out.push_str("### module: ");
         out.push_str(section);
+    }
+    out
+}
+
+/// Unwrap a MARKDOWN CODE FENCE from generated "code" output.
+///
+/// MEASURED (h1-treat-4): 3 of 6 frozen contract stubs failed to parse with `invalid syntax` while being
+/// 147-3092 bytes long, and their captured tails were literally a bare triple-backtick. The stub-gen
+/// prompt says "no prose, no code fences" and the model's own reasoning repeats the instruction back —
+/// then it emits the block fenced anyway. That is a 27B instruction-following failure no prompt wording
+/// fixes, and it cost those modules their frozen interface.
+///
+/// Returns the concatenated contents of the fenced blocks when the text is fenced, else the text
+/// unchanged. A fence is never valid Python, so this can only ever repair.
+fn strip_code_fences(s: &str) -> String {
+    if !s.contains("```") {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut inside = false;
+    for line in s.lines() {
+        if line.trim_start().starts_with("```") {
+            inside = !inside;
+            continue;
+        }
+        if inside {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    // No fenced CONTENT (e.g. a stray unpaired fence) => keep the original minus the fence lines.
+    if out.trim().is_empty() {
+        return s
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("```"))
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     out
 }
