@@ -544,6 +544,16 @@ pub struct SwarmConfig {
     pub contracts: bool,
     #[serde(default = "default_true")]
     pub complete: bool,
+    /// Seconds a task must run before the judge may SPLIT it. The provider forced 300 on every desktop run
+    /// with a measured reason ("median 219s / p75 406s, so 900 split almost nothing while 300 splits the fat
+    /// multi-file tasks that actually cause the idle"), so 300 — not the JudgeConfig 900 — is the shipped
+    /// behaviour this default has to preserve.
+    #[serde(default = "default_split_secs")]
+    pub split_secs: u64,
+    /// Hard wall-clock cap on the fix-until-green COMPLETE loop, so a doomed build cannot spin. The provider
+    /// forced 1200; with no env and no field the cap was NONE (unbounded), which is why this is not optional.
+    #[serde(default = "default_complete_cap_secs")]
+    pub complete_cap_secs: u64,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -937,6 +947,8 @@ impl Default for SwarmConfig {
             smoke: true,
             contracts: true,
             complete: true,
+            split_secs: 300,
+            complete_cap_secs: 1200,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -6159,6 +6171,15 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             d.split,
             Some(true),
             "split was force-set to 1 for every desktop run"
+        );
+        // The NUMERICS matter as much as the bools and I got them wrong first: dropping the force-set
+        // without these fields moved the split threshold 300 -> 900 (the JudgeConfig default), which the
+        // provider had deliberately lowered because "median 219s / p75 406s, so 900 split almost nothing",
+        // and left the fix-until-green loop with NO cap at all instead of 1200s.
+        assert_eq!(d.split_secs, 300, "provider forced SPLIT_SECS=300");
+        assert_eq!(
+            d.complete_cap_secs, 1200,
+            "provider forced COMPLETE_CAP_SECS=1200; 0/absent means an UNBOUNDED fix loop"
         );
     }
 
@@ -13719,6 +13740,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_split_secs() -> u64 {
+    300
+}
+
+fn default_complete_cap_secs() -> u64 {
+    1200
+}
+
 /// Structured-output schema for the spec-ambiguity probe. `product_specified` is the strongest signal —
 /// false means the request never says WHAT to build (the whole product is open), which a weak model tends to
 /// report as a single consolidated decision even though it should force the ask. `material_open_decisions`
@@ -13753,7 +13782,7 @@ impl Judge for GooseAgentDispatcher {
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or_else(|| JudgeConfig::default().split_threshold_secs),
+                .unwrap_or_else(|| load_config().split_secs),
             // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
             // desktop can enable it (env is discarded by `open -n`).
             spiral_thinking_chars: std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
@@ -19607,6 +19636,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let cap_deadline = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
+            .or_else(|| Some(load_config().complete_cap_secs))
             .filter(|&s| s > 0)
             .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
         // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
