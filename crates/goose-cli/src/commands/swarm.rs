@@ -554,6 +554,15 @@ pub struct SwarmConfig {
     /// forced 1200; with no env and no field the cap was NONE (unbounded), which is why this is not optional.
     #[serde(default = "default_complete_cap_secs")]
     pub complete_cap_secs: u64,
+    /// Actually INVOKE the commands the produced app advertises, and fail the gate when one prints an error
+    /// while exiting 0. The smoke gate otherwise only ever runs `--help`, which is the single path that
+    /// still works on an app whose every real command is broken.
+    /// MEASURED h1-treat-2: `init` -> "error: 'str' object has no attribute 'mkdir'" (exit 0), `set` ->
+    /// "error: unsupported operand type(s) for /: 'str' and 'str'" (exit 0), tests green, `--help` green,
+    /// integrate-verify ran 27.9 min and reported success. The run shipped passed+verified on an app where
+    /// NOTHING worked. Default ON: a false-green detector that is off by default protects nobody.
+    #[serde(default = "default_true")]
+    pub verify_commands: bool,
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -949,6 +958,7 @@ impl Default for SwarmConfig {
             complete: true,
             split_secs: 300,
             complete_cap_secs: 1200,
+            verify_commands: true,
             no_tools_means_ask: false,
             backbone: false,
             draft_temp: None,
@@ -6151,6 +6161,62 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    /// THE FALSE GREEN THIS WHOLE CHECK EXISTS FOR (MEASURED, h1-treat-2).
+    ///
+    /// Every command of the produced app was broken, and the run still shipped passed+verified. Nothing
+    /// caught it because NO deterministic gate ever ran a command — the smoke gate only invoked `--help`,
+    /// which works fine on an app where nothing else does.
+    ///
+    /// Note the discriminator is runtime-vs-usage, NOT the exit code. I first wrote this as "printed an
+    /// error but exited 0" after misreading a shell pipeline (`cmd | head; echo $?` reports HEAD's status);
+    /// the app actually exits 1, honestly. Keying on exit code alone would have caught nothing here.
+    #[test]
+    fn a_broken_command_is_a_finding_but_an_honest_usage_error_is_not() {
+        // The two real failures, verbatim from the run — both exited 1, so only the runtime text betrays them.
+        assert!(
+            command_probe_finding("", "error: 'str' object has no attribute 'mkdir'", Some(1))
+                .is_some()
+        );
+        assert!(command_probe_finding(
+            "",
+            "error: unsupported operand type(s) for /: 'str' and 'str'",
+            Some(1)
+        )
+        .is_some());
+        assert!(command_probe_finding("", "Traceback (most recent call last):", Some(1)).is_some());
+
+        // HONEST usage errors must NOT be findings — `raftkv set` with no args SHOULD exit nonzero, and
+        // flagging that would punish every app that gets argument handling right.
+        assert!(command_probe_finding(
+            "",
+            "usage: raftkv set [-h] key value\nraftkv set: error: the following arguments are required: key",
+            Some(2)
+        )
+        .is_none());
+        // A legitimate DOMAIN error, correctly reported and correctly nonzero.
+        assert!(command_probe_finding("", "error: no such key: a", Some(1)).is_none());
+        // Success is success.
+        assert!(command_probe_finding("initialized", "", Some(0)).is_none());
+        assert!(command_probe_finding("a=1\nb=2", "", Some(0)).is_none());
+        // Reporting failure while exiting SUCCESS is still broken by construction.
+        assert!(command_probe_finding("", "error: could not write store", Some(0)).is_some());
+    }
+
+    /// The probe must know what to invoke without guessing: argparse prints the subcommands in its usage
+    /// line, so they are read off deterministically rather than inferred from the spec.
+    #[test]
+    fn advertised_subcommands_are_read_off_the_help_usage_line() {
+        let help = "usage: raftkv [-h] [--store STORE] {init,set,get,del,list,compact} ...";
+        assert_eq!(
+            advertised_subcommands(help),
+            vec!["init", "set", "get", "del", "list", "compact"]
+        );
+        // A help with no subcommand group yields nothing to probe rather than a bad guess.
+        assert!(advertised_subcommands("usage: app [-h] [--flag F]").is_empty());
+        // A brace group that is prose, not a command list, is ignored.
+        assert!(advertised_subcommands("see {the docs, really} for more").is_empty());
+    }
+
     /// OMNI-JUDGE is now ON by default — it is the ONLY supervisor that can watch a `verify::` task, because
     /// every deterministic judge gate in judge.rs requires owned files and a verify task owns none.
     ///
@@ -11845,6 +11911,85 @@ fn require_tests_finding(verdict: &TestRunVerdict, on: bool) -> Option<String> {
     })
 }
 
+/// Does invoking a command produce a RUNTIME failure — as opposed to an honest usage error?
+///
+/// THE FALSE GREEN THIS EXISTS FOR (MEASURED, h1-treat-2): every command of the produced app was broken —
+/// `init` died with "error: 'str' object has no attribute 'mkdir'", `set` with "error: unsupported operand
+/// type(s) for /: 'str' and 'str'" — and the run still shipped complete_result{passed:true,verified:true}.
+/// Nothing caught it because NO DETERMINISTIC GATE EVER RAN A COMMAND: the smoke gate only ever invoked the
+/// entry with `--help`, which is the one path that still works on an app where nothing else does. The
+/// generated tests passed without exercising the real path, and the model-authored integrate-verify ran for
+/// 27.9 minutes and reported success.
+///
+/// The discriminator is runtime-vs-usage, NOT the exit code. `raftkv set` with no arguments exits nonzero
+/// with an argparse usage error and that is CORRECT — flagging it would punish apps that get it right.
+/// A Python exception surfaced to the user is not correct at any exit code.
+fn command_probe_finding(out: &str, err: &str, code: Option<i32>) -> Option<&'static str> {
+    let blob = format!("{out}\n{err}");
+    let low = blob.to_lowercase();
+    // An honest argparse/clap usage error: the invocation was wrong, not the program.
+    let usage_error = low.contains("the following arguments are required")
+        || low.contains("invalid choice")
+        || low.contains("unrecognized arguments")
+        || low.contains("error: argument")
+        || low.contains("usage:");
+    // Python/runtime exception text surfaced to the user, however it was formatted.
+    const RUNTIME: &[&str] = &[
+        "traceback (most recent call last)",
+        "object has no attribute",
+        "unsupported operand type",
+        "is not subscriptable",
+        "not callable",
+        "nonetype",
+        "keyerror",
+        "indexerror",
+        "typeerror",
+        "attributeerror",
+        "valueerror: invalid literal",
+        "no module named",
+    ];
+    if RUNTIME.iter().any(|m| low.contains(m)) {
+        return Some("crashed with a runtime error on a basic invocation");
+    }
+    // Reporting a failure while EXITING SUCCESS is broken by construction: a caller (and this gate) reads
+    // exit 0 as success. Only meaningful once usage errors are excluded.
+    if code == Some(0) && !usage_error {
+        let says_error = low
+            .lines()
+            .any(|l| l.trim_start().starts_with("error:") || l.trim_start().starts_with("fatal:"));
+        if says_error {
+            return Some("printed an error but exited 0");
+        }
+    }
+    None
+}
+
+/// The subcommands an argparse/clap `--help` advertises, read off its usage line. argparse prints them as
+/// `{init,set,get,del,list,compact}`; clap lists them under a `Commands:`/`SUBCOMMANDS:` block. Deterministic
+/// and pure so the probe below never has to guess what the app supports.
+fn advertised_subcommands(help: &str) -> Vec<String> {
+    // split_once, never byte indexing: `help` is arbitrary program output and slicing it by byte offset
+    // panics on a multi-byte character. clippy's string_slice lint caught this.
+    let Some((_, rest)) = help.split_once('{') else {
+        return Vec::new();
+    };
+    let Some((inner, _)) = rest.split_once('}') else {
+        return Vec::new();
+    };
+    if inner.is_empty() || inner.contains(' ') || !inner.contains(',') {
+        return Vec::new();
+    }
+    inner
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .collect()
+}
+
 /// The last `n` non-blank lines of `s`, in original order — captures a traceback tail for a hint.
 fn tail_lines(s: &str, n: usize) -> String {
     let mut lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -12235,6 +12380,9 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         } else {
             format!("src:{existing}")
         };
+        let pythonpath2 = pythonpath.clone();
+        let commands_probe_on =
+            swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands);
         let mut help_cmd = tokio::process::Command::new("python3");
         help_cmd
             .args(["-m", pkg.as_str(), "--help"])
@@ -12250,6 +12398,31 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                         out.status.code().unwrap_or(-1),
                         tail_lines(&combined, 40)
                     ));
+                }
+                // `--help` PASSING proves almost nothing: it is the one path that works on an app whose
+                // every real command is broken. Actually INVOKE the commands the app advertises and hold
+                // them to the one invariant no model is needed to judge — if it prints an error, it must
+                // exit nonzero. MEASURED h1-treat-2: every command printed `error: ...` and exited 0, and
+                // the run shipped verified:true.
+                if ok && commands_probe_on {
+                    let help_text = combined_output(&out);
+                    for sub in advertised_subcommands(&help_text).into_iter().take(12) {
+                        let mut c = tokio::process::Command::new("python3");
+                        c.args(["-m", pkg.as_str(), sub.as_str()])
+                            .current_dir(root)
+                            .env("PYTHONPATH", &pythonpath2);
+                        if let Some(o) = smoke_output(c, 30).await {
+                            let so = String::from_utf8_lossy(&o.stdout).to_string();
+                            let se = String::from_utf8_lossy(&o.stderr).to_string();
+                            if let Some(why) = command_probe_finding(&so, &se, o.status.code()) {
+                                findings.push(format!(
+                                    "`python3 -m {pkg} {sub}` {why} — the app advertises this command and it \
+                                     does not work. `--help` passing proves only that argparse is wired:\n{}",
+                                    tail_lines(&format!("{so}\n{se}"), 12)
+                                ));
+                            }
+                        }
+                    }
                 }
                 Some(ok)
             }
