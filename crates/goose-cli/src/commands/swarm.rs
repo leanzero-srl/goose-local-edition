@@ -14642,6 +14642,75 @@ for mod, path in mods.items():
                 % (node.name, mod)
             )
 
+
+# CROSS-MODULE ARITY (2026-07-22). The dominant measured build defect is a call that does not match its
+# callee's signature across module boundaries — MEASURED val-lean-01: `db.forecast()` called with 0 args
+# against `def forecast(db_path)`, which the run then shipped ("TypeError: forecast() missing 1 required
+# positional argument"). Statically decidable, so it need not wait for someone to run the command.
+#
+# MODULE-AWARE on purpose. `from pkg import db` then `db.f(x)` passes NO implicit self, while `obj.f(x)`
+# does. A first cut that could not tell them apart accepted either arity and therefore accepted
+# everything, silently finding nothing at all — a check that never fires reads exactly like a clean tree.
+# Only calls whose base is a KNOWN IMPORTED MODULE are judged.
+#
+# Deliberately conservative: any signature with *args/**kwargs/keyword-only params or a decorator is
+# skipped (a decorator rewrites arity), as is any call using *splat. Measured over 12 corpus apps this
+# flags val-lean-01 (2 real defects) and nothing else.
+_modfuncs = {}
+for _m, _path in mods.items():
+    try:
+        _t = ast.parse(open(_path, encoding="utf-8", errors="replace").read())
+    except Exception:
+        continue
+    _d = {}
+    for _n in _t.body:
+        if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _a = _n.args
+            if _a.vararg or _a.kwarg or _a.kwonlyargs or _n.decorator_list:
+                continue
+            _pos = len(getattr(_a, "posonlyargs", [])) + len(_a.args)
+            _d[_n.name] = (_pos - len(_a.defaults), _pos)
+    _modfuncs[base(_m)] = _d
+
+for _m, _path in mods.items():
+    try:
+        _t = ast.parse(open(_path, encoding="utf-8", errors="replace").read())
+    except Exception:
+        continue
+    _imported = set()
+    for _n in ast.walk(_t):
+        if isinstance(_n, ast.ImportFrom):
+            for _al in _n.names:
+                if _al.name in _modfuncs:
+                    _imported.add(_al.asname or _al.name)
+        elif isinstance(_n, ast.Import):
+            for _al in _n.names:
+                _b = _al.name.split(".")[-1]
+                if _b in _modfuncs:
+                    _imported.add(_al.asname or _b)
+    for _n in ast.walk(_t):
+        if not isinstance(_n, ast.Call) or not isinstance(_n.func, ast.Attribute):
+            continue
+        if not isinstance(_n.func.value, ast.Name):
+            continue
+        _b = _n.func.value.id
+        if _b not in _imported:
+            continue
+        _sig = _modfuncs.get(_b, {}).get(_n.func.attr)
+        if not _sig:
+            continue
+        if any(isinstance(_x, ast.Starred) for _x in _n.args):
+            continue
+        _cnt = len(_n.args) + len(_n.keywords)
+        _lo, _hi = _sig
+        if not (_lo <= _cnt <= _hi):
+            _rel = os.path.relpath(_path, root)
+            findings.append(
+                "[arity] %s:%d calls %s.%s() with %d argument(s) but it is defined to take %d..%d — "
+                "this raises TypeError the first time the command runs"
+                % (_rel, _n.lineno, _b, _n.func.attr, _cnt, _lo, _hi)
+            )
+
 print(json.dumps({"modules": len(mods), "findings": sorted(set(findings)), "demote_eligible": sorted(set(demote_eligible))}))
 "##;
 
