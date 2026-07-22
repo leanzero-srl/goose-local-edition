@@ -972,7 +972,7 @@ impl Default for SwarmConfig {
             sink_prebuild: false,
             persona: false,
             user_notes: false,
-            contract_validate: false,
+            contract_validate: true,
             relax_contracted_deps: false,
             owned_file_fence: false,
             spiral_thinking_chars: 0,
@@ -6161,6 +6161,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// reported "No tests/ directory exists yet — this is expected", the `tests` task reported "the failures
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
+    /// An unparseable stub must LEAVE the frozen bundle, not merely be warned about.
+    #[test]
+    fn a_stub_that_does_not_parse_is_dropped_from_the_frozen_bundle() {
+        let bundle = "### module: store\nclass Store: ...\n\n### module: cli\ndef main() \u{2014}> None: ...\n\n"
+            .to_string();
+        let validation = serde_json::json!({"modules":[
+            {"module":"store","parsed":true},
+            {"module":"cli","parsed":false,"error":"invalid character '\u{2014}'"}
+        ]});
+        let out = drop_unparseable_stubs(bundle.clone(), &validation);
+        assert!(out.contains("### module: store"), "a good stub is kept");
+        assert!(
+            !out.contains("### module: cli"),
+            "prose that does not parse must not be frozen as an interface"
+        );
+        // Validation absent (it did not run) => byte-identical, so the OFF path cannot change a run.
+        assert_eq!(
+            drop_unparseable_stubs(bundle.clone(), &serde_json::Value::Null),
+            bundle
+        );
+        // Nothing bad => byte-identical, so a healthy run is untouched.
+        let all_ok = serde_json::json!({"modules":[{"module":"store","parsed":true},{"module":"cli","parsed":true}]});
+        assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
+    }
+
     /// A frozen contract stub that does not PARSE is not an interface — it is prose, and the worker that
     /// receives it writes against nothing.
     ///
@@ -13976,6 +14001,36 @@ fn default_true() -> bool {
 ///
 /// This is a signature LOCAL-MODEL failure: em/en dashes and curly quotes are fine in prose and fatal in
 /// source. Pure, and it can only turn invalid Python into valid Python — never the reverse.
+/// Remove from a frozen contract bundle every module whose stub did NOT parse, per the validator's own
+/// per-module verdict. Returns the bundle unchanged when validation did not run (Null) or found nothing
+/// bad, so the OFF path and the healthy path are byte-identical. Pure — unit-tested without python3.
+fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> String {
+    let Some(mods) = validation.get("modules").and_then(|m| m.as_array()) else {
+        return bundle;
+    };
+    let bad: std::collections::HashSet<&str> = mods
+        .iter()
+        .filter(|m| m.get("parsed") == Some(&serde_json::Value::Bool(false)))
+        .filter_map(|m| m.get("module").and_then(|x| x.as_str()))
+        .collect();
+    if bad.is_empty() {
+        return bundle;
+    }
+    let mut out = String::new();
+    for section in bundle.split("### module: ") {
+        if section.trim().is_empty() {
+            continue;
+        }
+        let id = section.lines().next().unwrap_or("").trim();
+        if bad.contains(id) {
+            continue;
+        }
+        out.push_str("### module: ");
+        out.push_str(section);
+    }
+    out
+}
+
 fn sanitize_generated_source(s: &str) -> String {
     s.replace(['\u{2014}', '\u{2013}', '\u{2212}'], "-")
         .replace(['\u{2018}', '\u{2019}'], "'")
@@ -19629,6 +19684,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 } else {
                     serde_json::Value::Null
                 };
+                // DROP the stubs that still do not parse. This block used to gate NOTHING — it printed the
+                // warning above and froze the poisoned bundle anyway. Its reasoning ("a mismatch cannot say
+                // whether the module or the CONTRACT is wrong") is right for a SEMANTIC mismatch and wrong
+                // here: Python that will not parse is not an interface at any reading, so there is nothing
+                // to adjudicate. MEASURED h1-treat-2 — `cli`'s stub failed on `invalid character '—'`, the
+                // cli worker got prose instead of a signature, passed a str where the sibling annotates
+                // Path, and every command of the shipped app crashed.
+                //
+                // A module with NO frozen self-interface is an ALREADY-HANDLED case (identical to a contract
+                // timeout): it builds without one and integrate-verify reconciles. A module handed garbage
+                // is not handled at all — it writes against nothing while believing it has a contract.
+                let bundle = drop_unparseable_stubs(bundle, &contract_validation);
                 dispatcher.set_contracts(bundle);
                 eprintln!("  contracts: frozen interfaces injected into every worker");
                 // The one class-A CONTRACTS milestone for the phase TODO: interfaces were actually frozen
