@@ -64,6 +64,15 @@ def plan_shape(log_path: str) -> Dict[str, object]:
         "verify_tasks_own_nothing": all(
             not (by_id[i].get("files") or []) for i in verify_ids
         ),
+        # A verify:: task must depend on its MODULE and nothing else. An edge onto a test subtask deadlocks
+        # the oracle: MEASURED h1-treat-1, `test-wal` failed and fail_descendants cascaded Failed through
+        # `verify::wal` into `integrate-verify`, so the end-to-end gate never ran and the corrupt-store probe
+        # — the only check that would have caught the shipped defect — never happened.
+        "verify_tasks_depend_only_on_their_module": all(
+            [d for d in (by_id[i].get("deps") or by_id[i].get("depends_on") or [])]
+            == [i[len(VERIFY_PREFIX):]]
+            for i in verify_ids
+        ),
         "measurable": bool(tasks),
     }
 
@@ -111,6 +120,15 @@ def findings_for(shape: Dict[str, object]) -> List[Finding]:
                     evidence=ev,
                     fix_hint="a later plan mutation is overwriting the thin join spec after fan_verify_split",
                 ))
+        if not shape["verify_tasks_depend_only_on_their_module"]:
+            out.append(Finding(
+                id="fanverify-verify-waits-on-a-test", dimension="correctness", severity="high",
+                text="a verify:: task depends on something other than its own module — a failing test now "
+                     "cascades Failed into integrate-verify and the end-to-end gate never runs",
+                evidence=ev,
+                fix_hint="verify::<M> must depend on [M] only; strip_integrate_verify_test_deps exists to "
+                         "keep a failing unit test from blocking the sink, and this routes around it",
+            ))
         if not shape["verify_tasks_own_nothing"]:
             out.append(Finding(
                 id="fanverify-verify-owns-files", dimension="correctness", severity="high",
