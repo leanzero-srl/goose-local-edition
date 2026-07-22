@@ -14694,10 +14694,23 @@ for mod, path in mods.items():
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     protocol_methods.add(id(item))
+    # An @abstractmethod with a `...`/`pass` body is CORRECT by design, exactly like a Protocol method —
+    # the whole point of the decorator is to declare without implementing. Flagging it would report the
+    # idiomatic way to write an interface as unfinished work, and every false positive here spends a
+    # corrective wire-fix attempt vandalising correct code.
+    def _is_abstract(fn):
+        for d in fn.decorator_list:
+            nm = d.attr if isinstance(d, ast.Attribute) else getattr(d, "id", None)
+            if nm in ("abstractmethod", "abstractproperty", "abstractclassmethod",
+                      "abstractstaticmethod"):
+                return True
+        return False
+
     for node in ast.walk(tree):
         if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and id(node) not in protocol_methods
+            and not _is_abstract(node)
             and _is_stub(node)
         ):
             findings.append(
