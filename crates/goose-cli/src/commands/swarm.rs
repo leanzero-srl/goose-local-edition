@@ -2290,7 +2290,15 @@ const OMNI_JUDGE_FIRST_LOOK_SECS: u64 = 45;
 const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 /// Minimum reasoning before a look is meaningful — below this there is nothing to assess yet.
 ///
-/// RAISED 1_200 -> 4_000 on measured evidence. The judge is asked whether "the SAME content clearly
+/// Set to 2_000, having been 1_200 then briefly 4_000. Raising it was the WRONG fix and the data says so:
+/// the judge fired at 1,200, 1,201, 3,759 and 4,003 chars — i.e. immediately past whatever floor was set —
+/// so the threshold only moved WHEN the misread happened, never whether. The real fix is corroboration
+/// (two consecutive LOOPING verdicts, see the abort site), which makes an early first look safe again and
+/// restores the #135 intent of catching a loop in its first minute rather than its tenth.
+///
+/// Kept modestly above the original 1,200 so the first look still has a paragraph or two to read.
+///
+/// ORIGINAL NOTE, retained: RAISED 1_200 -> 4_000 on measured evidence. The judge is asked whether "the SAME content clearly
 /// recurs", and recurrence needs the same thing to appear TWICE. At 1,200 characters — roughly one
 /// paragraph — there is not enough text for that to be observable, so a yes is the weak model
 /// pattern-matching on "this looks repetitive" rather than seeing an actual repeat. It is not a gating
@@ -2307,7 +2315,7 @@ const OMNI_JUDGE_INTERVAL_SECS: u64 = 60;
 /// Deliberately a raise, not a disable — the intent of #135 stands ("you will see it immediately"; waiting
 /// for 26,000 threw away minutes of a node per incident). This only stops it firing before there is
 /// anything to read.
-const OMNI_JUDGE_MIN_CHARS: usize = 4_000;
+const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
@@ -9959,6 +9967,8 @@ impl GooseAgentDispatcher {
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
+        // Consecutive LOOPING verdicts. One is not enough to kill a call — see the abort site.
+        let mut omni_looping_streak: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -10015,7 +10025,29 @@ impl GooseAgentDispatcher {
                 )
                 .await;
                 if let Ok(Ok(o)) = probe {
+                    // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
+                    // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
+                    // whatever the floor is, and every one of those kills was wrong: the tasks completed
+                    // fine on retry. Raising OMNI_JUDGE_MIN_CHARS only moved when the misread happened
+                    // (1,200 -> 4,003), which is the tell that the threshold was never the problem.
+                    //
+                    // A real loop PERSISTS: if the same content is genuinely recurring, the next look one
+                    // interval later still sees it. A one-off is a misread of a call that is merely
+                    // restating a long structured prompt to itself — which is exactly what the e2e shards
+                    // do while getting their bearings. Requiring two CONSECUTIVE LOOPING verdicts costs a
+                    // real loop one extra interval and costs a healthy call nothing.
                     if omni_judge_says_looping(&o.text) {
+                        omni_looping_streak += 1;
+                    } else {
+                        omni_looping_streak = 0;
+                    }
+                    if omni_looping_streak == 1 {
+                        eprintln!(
+                            "  {} omni-judge (look {omni_looks}): possible loop after {thinking_chars} reasoning chars — watching for one more look before acting",
+                            style("·").yellow()
+                        );
+                    }
+                    if omni_looping_streak >= 2 {
                         eprintln!(
                             "  {} omni-judge (look {omni_looks}): this call is LOOPING after {thinking_chars} reasoning chars — stopping it",
                             style("↯").yellow()
