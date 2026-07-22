@@ -6294,6 +6294,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
     }
 
+    /// A corrupt store must give a CLEAN error, never a traceback. The sink's spec already demanded this,
+    /// which made it a model self-report; it is now deterministic.
+    #[test]
+    fn a_corrupt_store_crash_is_a_traceback_not_a_handled_error() {
+        // MEASURED, verbatim from two corpus apps that shipped green.
+        assert!(corrupt_store_crash(
+            "",
+            "Traceback (most recent call last):\n  ValueError: corrupt log entry at line 1"
+        ));
+        assert!(corrupt_store_crash(
+            "",
+            "Traceback (most recent call last):\n  sqlite3.DatabaseError: file is not a database"
+        ));
+        // Doing it RIGHT is not a finding — both apps independently graded 9/9 answer like this.
+        assert!(!corrupt_store_crash("", "error: corrupted log"));
+        assert!(!corrupt_store_crash("", "error: no such key: a"));
+        assert!(!corrupt_store_crash("a=1", ""));
+        // The store flag is read off the app's own --help, never guessed.
+        assert_eq!(
+            store_flag_in_help("usage: kv [-h] [--store STORE] {init,get}"),
+            Some("--store")
+        );
+        assert_eq!(
+            store_flag_in_help("usage: deals [-h] [--db DB] {init,add}"),
+            Some("--db")
+        );
+        // No persisted store advertised => nothing to corrupt, so no probe and no false finding.
+        assert_eq!(store_flag_in_help("usage: calc [-h] {add,sub}"), None);
+    }
+
     /// The END-TO-END run is sharded by COMMAND across the fleet. fan_verify shards by MODULE, which left
     /// the whole-program check as ONE task on ONE node — MEASURED h1-treat-4: 26.5 min, 47% of ALL
     /// node-busy time, while two nodes idled. Checking `get` says nothing about checking `compact`.
@@ -12743,6 +12773,55 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                             ));
                         }
                     }
+                    // CORRUPT-STORE PROBE. The sink's spec demands this ("a corrupt store must give a
+                    // clean error ... NEVER an uncaught JSONDecodeError/parse traceback") which made it a
+                    // model self-report. Do it deterministically: let the app create its own store however
+                    // it likes, fill it with garbage, and re-run. Only a TRACEBACK is a finding — an app
+                    // that prints `error: corrupted log` and exits nonzero is correct.
+                    let subs = advertised_subcommands(&help_text);
+                    if let Some(flag) = store_flag_in_help(&help_text) {
+                        if let Ok(tmp) = tempfile::tempdir() {
+                            let store = tmp.path().join("probe.store");
+                            let sp = store.to_string_lossy().to_string();
+                            let run_one = |sub: &str| -> tokio::process::Command {
+                                let mut c = tokio::process::Command::new("python3");
+                                c.arg("-m").arg(pkg.as_str()).arg(flag).arg(&sp).arg(sub);
+                                c.current_dir(root).env("PYTHONPATH", &pythonpath2);
+                                c
+                            };
+                            for sub in subs.iter().take(8) {
+                                let _ = smoke_output(run_one(sub), 20).await;
+                            }
+                            let corrupted = if store.is_dir() {
+                                std::fs::read_dir(&store)
+                                    .into_iter()
+                                    .flatten()
+                                    .flatten()
+                                    .all(|e| std::fs::write(e.path(), "GARBAGE{{{\0").is_ok())
+                            } else {
+                                store.exists() && std::fs::write(&store, "GARBAGE{{{\0").is_ok()
+                            };
+                            if corrupted {
+                                for sub in subs.iter().take(8) {
+                                    let Some(o) = smoke_output(run_one(sub), 20).await else {
+                                        continue;
+                                    };
+                                    let so = String::from_utf8_lossy(&o.stdout).to_string();
+                                    let se = String::from_utf8_lossy(&o.stderr).to_string();
+                                    if corrupt_store_crash(&so, &se) {
+                                        findings.push(format!(
+                                            "`python3 -m {pkg} {sub}` CRASHES on a corrupt store — a \
+                                             damaged or truncated data file must produce a clean error and \
+                                             a nonzero exit, never an uncaught traceback. Guard the LOAD \
+                                             path every read command shares:\n{}",
+                                            tail_lines(&format!("{so}\n{se}"), 10)
+                                        ));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Some(ok)
             }
@@ -14337,6 +14416,33 @@ fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> Str
         out.push_str(section);
     }
     out
+}
+
+/// The path-like CLI option an app uses for its persisted store, read off its own `--help`.
+/// None when the app advertises no such option, in which case there is no store to corrupt.
+fn store_flag_in_help(help: &str) -> Option<&'static str> {
+    const FLAGS: &[&str] = &[
+        "--store",
+        "--db",
+        "--database",
+        "--file",
+        "--data",
+        "--path",
+    ];
+    FLAGS.iter().copied().find(|f| help.contains(f))
+}
+
+/// Is this output an UNCAUGHT crash on a corrupt store, as opposed to a clean handled error?
+///
+/// The integrate-verify spec already demands this check in its own words — "a corrupt store must give a
+/// clean error ... NEVER an uncaught JSONDecodeError/parse traceback" — which made it a model self-report.
+/// MEASURED: h1-treat-5 raises an uncaught `ValueError: corrupt log entry` on 3 commands and verify-6 an
+/// uncaught `sqlite3.DatabaseError: file is not a database` on 3, and verify-6 shipped passed+verified.
+///
+/// Only a TRACEBACK counts. An app that prints `error: corrupted log` and exits nonzero is doing exactly
+/// the right thing, and the two apps independently graded 9/9 both do.
+fn corrupt_store_crash(out: &str, err: &str) -> bool {
+    format!("{out}\n{err}").contains("Traceback (most recent call last)")
 }
 
 /// Unwrap a MARKDOWN CODE FENCE from generated "code" output.
