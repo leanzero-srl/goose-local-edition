@@ -19389,7 +19389,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // `version` exists because NO version field existed in any run log: attributing a result to a build
     // meant trusting a note someone typed. A number the engine did not emit is not evidence.
-    sink.write_value(serde_json::json!({
+    let mut levers_event = serde_json::json!({
         "event": "levers_resolved",
         // WHICH BUILD PRODUCED THIS RUN.
         // CARGO_PKG_VERSION alone is USELESS here and I shipped it that way first: the workspace crate
@@ -19523,7 +19523,63 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or_else(|| load_config().progress_watchdog_secs),
         },
-    }));
+    });
+    // Split from the literal above ONLY because a single json! macro of this width blows the macro
+    // recursion limit. It is the same event and the same object.
+    let extra_levers = serde_json::json!({
+            // OBSERVABILITY DEBT (2026-07-22 audit): 43 SwarmConfig fields the desktop can set were absent
+            // from this event, so NO run could prove what it actually used and NO lever could ever be
+            // graduated on evidence. `goals` is the sharpest case — it has a UI toggle and a live gate, and
+            // still nothing in any run log said whether it was on. This closes the gap for every remaining
+            // BOOL lever plus the tuning numerics a campaign arm would vary. Device rows (weight/enabled/
+            // instances) and per-run CLI overrides stay out: they are echoed by run_started, not levers.
+            "goals": goals_enabled(),
+            "occupancy": load_config().occupancy,
+            "write_first": load_config().write_first,
+            "ask_away": load_config().ask_away,
+            "research_scouts": load_config().research_scouts,
+            "parallel_planning": load_config().parallel_planning,
+            "dynamic_replan_cfg": load_config().dynamic_replan,
+            "planner_also_works": load_config().planner_also_works,
+            "homogeneous_models": load_config().homogeneous_models,
+            "allow_model_load": load_config().allow_model_load,
+            "worker_max_turns": load_config().worker_max_turns,
+            "worker_timeout_secs": load_config().worker_timeout_secs,
+            "planner_timeout_secs": load_config().planner_timeout_secs,
+            "max_attempts": load_config().max_attempts,
+            "max_replans": load_config().max_replans,
+            "max_research_questions": load_config().max_research_questions,
+            "best_of_n_skeletons": load_config().best_of_n_skeletons,
+            "scout_budget_secs": load_config().scout_budget_secs,
+            "scout_max_lookups": load_config().scout_max_lookups,
+            "sink_cap_secs": load_config().sink_cap_secs,
+            "struct_stop": load_config().struct_stop,
+            "spiral_thinking_chars": load_config().spiral_thinking_chars,
+            "planner_weight": load_config().planner_weight,
+            "ask_rounds_max": load_config().ask_rounds_max,
+            "sink_max_turns": load_config().sink_max_turns,
+            "clarity_probe_secs": load_config().clarity_probe_secs,
+            "draft_timeout_secs": load_config().draft_timeout_secs,
+            "draft_temp": load_config().draft_temp,
+            "straggler_grace_secs": load_config().straggler_grace_secs,
+            "context_cap": load_config().context_cap,
+            "max_tool_response_chars": load_config().max_tool_response_chars,
+            "temperature": load_config().temperature,
+            "top_p": load_config().top_p,
+            "min_p": load_config().min_p,
+            "repeat_penalty": load_config().repeat_penalty,
+    });
+    if let (Some(dst), Some(src)) = (
+        levers_event
+            .get_mut("levers")
+            .and_then(|v| v.as_object_mut()),
+        extra_levers.as_object(),
+    ) {
+        for (k, v) in src {
+            dst.insert(k.clone(), v.clone());
+        }
+    }
+    sink.write_value(levers_event);
 
     // The user's verbatim answers, hoisted so they outlive the plan loop and can reach EVERY worker.
     // The BINDING block below is built inside the loop; without this, it died with the loop and the only
