@@ -20738,6 +20738,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let mut m: Vec<String> = smoke_all_files
                 .iter()
                 .filter(|f| complete_lang.is_source_file(f) && !complete_lang.is_test_file(f))
+                // An empty `__init__.py` / `py.typed` is CORRECT — an empty __init__.py IS the standard
+                // package marker, and a task that leaves it empty did its job. MEASURED: the `entry` task
+                // owns raftkv/__init__.py + __main__.py, writes __main__.py, and correctly leaves
+                // __init__.py empty (0 bytes) — every run. This gate flagged that as "marked done without
+                // writing it" and burned a whole fix round re-creating a file that was never wrong. The
+                // owned-file salvage path already exempts these two names; this now matches it.
+                .filter(|f| {
+                    let base = f.rsplit('/').next().unwrap_or(f);
+                    base != "__init__.py" && base != "py.typed"
+                })
                 .filter(|f| !cwd.join(f).metadata().map(|meta| meta.len() > 0).unwrap_or(false))
                 .map(|f| {
                     format!(
