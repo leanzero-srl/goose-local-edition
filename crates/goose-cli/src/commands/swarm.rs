@@ -259,10 +259,18 @@ pub struct SwarmConfig {
     #[serde(default = "default_scout_max_lookups")]
     pub scout_max_lookups: u32,
     /// Wall-clock cap (seconds) for the heavy `integrate-verify` SINK worker only: on expiry it is finalized
-    /// as DONE (not failed/re-routed) and the deterministic smoke gate backstops. Set ABOVE a healthy sink
-    /// (~1400s) — a cap BELOW a legitimately-productive sink truncates the run's ONLY golden-value pass, so
-    /// DEFAULT 0 = OFF (byte-identical). `GOOSE_SWARM_SINK_CAP_SECS` env overrides. Enable per-workload once
-    /// A/B data on feature-dense builds confirms healthy sinks cluster under the chosen ceiling.
+    /// as DONE (not failed/re-routed) and the deterministic smoke gate backstops.
+    ///
+    /// DEFAULT 1800 (30 min), raised from 0/OFF on measured evidence. The historical objection to a default
+    /// — "a cap truncates the run's ONLY golden-value pass" — no longer holds under fan_e2e: the golden
+    /// checks now run in the verify-e2e SHARDS, in parallel, BEFORE the join, so the join is an
+    /// assemble+repair+store-probe step and not the sole verifier. The cap can therefore ONLY ever bite a
+    /// LOOPING join, never a healthy one: MEASURED join durations cluster at 311s / 477s / 1252s / 1591s for
+    /// healthy runs and 4326s (72 min) for the one that looped — re-running the same four test blocks five
+    /// times over, all passing (h1-e2e-4, verified from its activity log). 1800 sits comfortably above every
+    /// healthy join and below the loop, so cutting a >30-min join loses nothing: every check already ran.
+    /// Finalizing as DONE cannot cause a spurious RED; the smoke gate (command + bad-input + corrupt-store
+    /// probes) is the correctness backstop. `GOOSE_SWARM_SINK_CAP_SECS` still overrides; 0 disables.
     #[serde(default = "default_sink_cap_secs")]
     pub sink_cap_secs: u64,
     /// PROGRESS WATCHDOG (seconds): the max continuous wall-time a NON-sink worker may spend WITHOUT a productive
@@ -876,7 +884,9 @@ fn default_scout_max_lookups() -> u32 {
 }
 
 fn default_sink_cap_secs() -> u64 {
-    0 // OFF — see the field doc; capping the sink truncates the only golden-value pass, so opt-in only.
+    // 1800s (30 min). Under fan_e2e the shards do the golden-value pass, so this bounds only a LOOPING join
+    // — healthy joins cluster well under it (311-1591s measured); the one loop ran 4326s. See the field doc.
+    1800
 }
 
 impl Default for SwarmConfig {
