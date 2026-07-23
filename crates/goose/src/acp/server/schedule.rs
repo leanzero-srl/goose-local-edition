@@ -9,10 +9,12 @@ use goose_sdk_types::custom_requests::{
 use tokio::fs;
 
 use super::{build_session_info, GooseAcpAgent, ResultExt};
+use crate::agents::types::SuccessCheck;
 use crate::recipe::validate_recipe::validate_recipe_template_from_content;
 use crate::recipe::Recipe;
-use crate::agents::types::SuccessCheck;
-use crate::scheduler::{get_default_scheduled_recipes_dir, LoopConfig, ScheduledJob, SchedulerError};
+use crate::scheduler::{
+    get_default_scheduled_recipes_dir, LoopConfig, ScheduledJob, SchedulerError,
+};
 
 fn validate_schedule_id(id: &str) -> Result<(), agent_client_protocol::Error> {
     let is_valid = !id.is_empty()

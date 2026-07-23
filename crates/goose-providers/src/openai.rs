@@ -564,7 +564,8 @@ impl Provider for OpenAiProvider {
             .ok()
             .and_then(|cache| cache.get(&model_config.model_name).copied())
         {
-            return Ok(self.apply_local_context_cap(cached.unwrap_or_else(|| model_config.context_limit())));
+            return Ok(self
+                .apply_local_context_cap(cached.unwrap_or_else(|| model_config.context_limit())));
         }
 
         const N_CTX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
