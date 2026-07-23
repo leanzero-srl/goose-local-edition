@@ -951,7 +951,7 @@ impl Default for SwarmConfig {
             clarity_probe_secs: None,
             clarity_fail_closed: true,
             spec_contract: None,
-            sink_max_turns: None,
+            sink_max_turns: Some(120),
             draft_timeout_secs: None,
             goals: None,
             ask_replan: None,
