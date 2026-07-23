@@ -1036,10 +1036,45 @@ impl Default for SwarmConfig {
     }
 }
 
+/// Deep-merge `over` INTO `base`: for objects, recurse key-by-key; a NULL in `over` means "leave the
+/// base default" (never overwrite a real default with null); any non-object leaf in `over` replaces base.
+fn merge_json(base: &mut serde_json::Value, over: serde_json::Value) {
+    match (base, over) {
+        (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
+            for (k, v) in o {
+                if v.is_null() {
+                    continue;
+                }
+                merge_json(b.entry(k).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+/// Load the swarm config with the STRUCT DEFAULT as the base, so a key OMITTED from config.yaml keeps the
+/// intended default rather than serde's TYPE default (None/false).
+///
+/// `get_param::<SwarmConfig>()` deserializes the `swarm:` block directly, and serde fills a missing key with
+/// the FIELD TYPE's default (None/false), NOT the `Default for SwarmConfig` value — so every non-type
+/// default (e.g. `sink_max_turns: Some(120)`, the whole baked golden formula) was silently reverted whenever
+/// a swarm block existed, which is always. Merging the raw config OVER `SwarmConfig::default()` fixes the
+/// entire class at once, and makes the resolvers correct too (a `cfg.unwrap_or(false)` now sees the merged
+/// `Some(golden)`). Falls back to the old typed read on any serialization hiccup, so it can only be safer.
 fn load_config() -> SwarmConfig {
-    Config::global()
-        .get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
-        .unwrap_or_default()
+    let cfg = Config::global();
+    let Ok(mut base) = serde_json::to_value(SwarmConfig::default()) else {
+        return cfg
+            .get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
+            .unwrap_or_default();
+    };
+    if let Ok(raw) = cfg.get(SWARM_CONFIG_KEY, false) {
+        merge_json(&mut base, raw);
+    }
+    serde_json::from_value(base).unwrap_or_else(|_| {
+        cfg.get_param::<SwarmConfig>(SWARM_CONFIG_KEY)
+            .unwrap_or_default()
+    })
 }
 
 fn save_config(cfg: &SwarmConfig) -> Result<()> {
