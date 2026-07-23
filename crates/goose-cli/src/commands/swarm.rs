@@ -19299,6 +19299,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the sink, dep_signatures/scoped_contracts fed workers). A lever missing from the map is
             // indistinguishable from OFF — echo the resolved value from the SAME gate the engine branches on.
             "fan_verify": swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify),
+            "fan_e2e": swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e),
+            "verify_commands": swarm_gate_cfg("GOOSE_SWARM_VERIFY_COMMANDS", load_config().verify_commands),
             "require_tests": swarm_gate_cfg("GOOSE_SWARM_REQUIRE_TESTS", load_config().require_tests),
             // Absent from this echo entirely until now, which is precisely why it went unnoticed that it
             // has NEVER resolved true on a desktop run.
