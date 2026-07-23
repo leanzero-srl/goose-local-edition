@@ -6384,6 +6384,14 @@
             "format": "date-time",
             "nullable": true
           },
+          "loop_config": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LoopConfig"
+              }
+            ],
+            "nullable": true
+          },
           "parameters": {
             "type": "array",
             "items": {
