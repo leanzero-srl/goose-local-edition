@@ -529,6 +529,24 @@ export default function SwarmSettingsSection() {
               />
             </Row>
             <Row
+              label="Split the final end-to-end check by command"
+              hint="The final whole-app check runs every command your spec advertises — and even split across the fleet by module, that end-to-end run stays one task on one machine while the others idle. With this on, the commands themselves are divided across the machines: each checks a slice (one does init/set, another get/del, and so on), all at once, and the last step just assembles the app, fixes whatever they reported, and checks the saved-data handling. Measured to roughly halve that final phase. Needs the per-module split above. Default off."
+            >
+              <SwarmSwitch
+                checked={!!cfg.fan_e2e}
+                onChange={(v) => set({ fan_e2e: v })}
+              />
+            </Row>
+            <Row
+              label="Actually run the app's commands when verifying"
+              hint="When goose checks a finished build it confirms the app starts and answers --help — but --help works fine on an app whose every real command is broken. With this on, the check actually RUNS each advertised command, and runs each with a bad argument too, so an app that crashes on a real command or dumps a traceback on a typo is caught instead of shipped as working. On by default."
+            >
+              <SwarmSwitch
+                checked={cfg.verify_commands !== false}
+                onChange={(v) => set({ verify_commands: v })}
+              />
+            </Row>
+            <Row
               label="Give each module its own test subtask"
               hint="By default goose puts all of an app's tests into one task, which can only start once the pieces it tests are finished — so it lands at the very end of the build while the other machines have nothing left to do. With this on, each module gets its own test task that starts the moment that module is done, so testing overlaps the rest of the build. It also gives the per-module checks something real to run: without a test that belongs to a single module there is nothing module-sized to verify. Default off."
             >

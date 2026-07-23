@@ -162,6 +162,15 @@ export interface SwarmConfig {
    *  (these fan across the fleet like the build tasks) plus a THIN final integration run. The thin run stays
    *  the sole end-to-end gate; per-module green never substitutes for it. Default OFF (byte-identical when off). */
   fan_verify?: boolean;
+  /** Split the final whole-app check by COMMAND across the fleet: instead of one task running every
+   *  advertised command in sequence on one node, each node checks a slice of the commands in parallel, and
+   *  the final step just assembles, repairs what they found, and probes the store. Needs the per-module split
+   *  on. Measured to roughly halve the end-to-end phase; a node no longer runs the whole check alone. */
+  fan_e2e?: boolean;
+  /** Actually RUN the app's advertised commands (and each with a bad argument) as part of the final check,
+   *  instead of only checking that --help works. Catches an app whose commands crash or dump a traceback on
+   *  a typo — which --help passing never reveals. On by default. */
+  verify_commands?: boolean;
   /** An app that ships NO tests currently reads as GREEN: pytest's "no tests ran" exit is treated exactly
    *  like a pass, so "nothing was checked" and "everything passed" are indistinguishable to the final gate.
    *  That also makes deleting a failing test a working way to go green. With this on, an empty suite is a
