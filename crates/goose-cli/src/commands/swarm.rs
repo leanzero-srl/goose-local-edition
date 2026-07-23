@@ -451,7 +451,7 @@ pub struct SwarmConfig {
     /// MEASURED: 3 of 9 sinks died ON the worker cap of 40 — their last words are literally "I've reached the
     /// maximum number of actions I can do without user input." The sink depends on every task and must verify
     /// the whole tree; a worker owns 1-3 files. They were given the same budget.
-    #[serde(default)]
+    #[serde(default = "default_sink_max_turns")]
     pub sink_max_turns: Option<u32>,
     /// Wall-clock seconds ONE skeleton draft may take. `None` = 480 (unchanged). Clamped [60, 1800].
     /// GOOSE_SWARM_DRAFT_TIMEOUT_SECS env overrides.
@@ -674,7 +674,7 @@ pub struct SwarmConfig {
     /// accepted raw on a non-empty check and its text is never persisted, so the interface every worker is
     /// told to honour cannot be audited afterwards. Observability only — it gates nothing. OFF by default.
     /// GOOSE_SWARM_CONTRACT_VALIDATE env overrides.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub contract_validate: bool,
 
     /// #130 backstop: flatten the architect's false-serialization dependency CHAINS into a FLAT FAN. CONTRACTS
@@ -890,6 +890,15 @@ struct ScoutBudget {
 /// until an arbitrary clock ran out. A scout that finishes in 3 turns finishes in 3 turns.
 fn default_scout_max_lookups() -> u32 {
     10
+}
+
+fn default_sink_max_turns() -> Option<u32> {
+    // Some(120), NOT the bare-serde None. A bare #[serde(default)] on an Option field yields
+    // Option::default() = None whenever config.yaml has a `swarm:` block (it does), so the struct
+    // Default impl's Some(120) never reached the config path — MEASURED: h1-e2e-4 AND h1-e2e-5 both
+    // resolved sink_max_turns=None => the worker cap of 40, never 120. A named default fn is the only way
+    // a non-None Option default actually applies through serde.
+    Some(120)
 }
 
 fn default_progress_watchdog_secs() -> u64 {
@@ -6611,6 +6620,33 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             d.complete_cap_secs, 1200,
             "provider forced COMPLETE_CAP_SECS=1200; 0/absent means an UNBOUNDED fix loop"
         );
+    }
+
+    /// A `swarm:` block that OMITS a key must still get the intended DEFAULT, not the type default.
+    ///
+    /// MEASURED bug: sink_max_turns used a bare #[serde(default)], so on a config.yaml WITH a swarm block
+    /// (every real install) the missing key deserialized to Option::default() = None -> the worker cap of
+    /// 40, never the struct Default's Some(120). h1-e2e-4 and h1-e2e-5 BOTH ran at None/40, which confounded
+    /// a before/after I drew from them. A non-type default only applies through serde via a named fn.
+    #[test]
+    fn omitted_config_keys_resolve_to_the_intended_default_not_the_type_default() {
+        // A realistic partial swarm block: sets some keys, omits the ones with named defaults.
+        let cfg: SwarmConfig = serde_yaml::from_str("persona: true\nconverge: true\n").unwrap();
+        assert_eq!(
+            cfg.sink_max_turns,
+            Some(120),
+            "Option default must survive an omitted key, not collapse to None"
+        );
+        assert!(
+            cfg.contract_validate,
+            "must default ON, not to bool's false"
+        );
+        assert!(cfg.verify_commands);
+        assert!(cfg.fan_e2e);
+        assert_eq!(cfg.sink_cap_secs, 1800);
+        assert_eq!(cfg.progress_watchdog_secs, 900);
+        // And a key that IS set is honoured.
+        assert!(cfg.persona);
     }
 
     #[test]
