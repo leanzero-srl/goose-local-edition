@@ -58,7 +58,7 @@ Each needs its PRO and CON stated in the hint, so a user knows what they are buy
 | `parallel_tests` | Tests start the moment their module lands, overlapping the build. | More subtasks on a slow fleet; unmeasured. |
 | `relax_contracted_deps` | Independent modules build simultaneously instead of chaining. | Relies on contracts being sound. If a contract is wrong, the modules diverge in parallel. |
 | `best_of_n_skeletons` | More drafts, better plan structure. | Each draft is a full planning call — directly buys quality with minutes. |
-| `sink_max_turns` | The final check can actually finish. Measured: 5 of 9 sinks never reached a verdict; 3 died exactly on the worker cap. | Each step costs ~1 min on a local model. The main quality/speed dial. |
+| `sink_max_turns` | The final check can actually finish. MEASURED before/after (h1-e2e-4 cap 40 vs h1-e2e-5 cap 120, same spec): at 40 the join maxed out mid-work and shipped 8/9 with SILENT corruption handling; at 120 it finished, reached the corrupt-store check, and shipped 9/9 that answers a corrupt store with `store error: corrupt log`. Now defaults to 120. | Each turn costs ~1 min on a local model. |
 | `worker_timeout_secs`, `planner_timeout_secs`, `progress_watchdog_secs`, `context_cap` | Stop a wedged or spiralling step. | Too tight cuts healthy work; a killed planner call has no retry path. |
 | `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `draft_temp` | Model tuning for your specific local weights. | Wrong values degrade every call. Blank = model default. |
 | `research_planning`, `research_scouts`, `scout_*`, `max_research_questions` | Grounds the plan in looked-up fact. | Costs a phase; with no lookup tools it is the model's own knowledge, not research. |
