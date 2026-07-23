@@ -9967,8 +9967,10 @@ impl GooseAgentDispatcher {
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
-        // Consecutive LOOPING verdicts. One is not enough to kill a call — see the abort site.
+        // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
+        // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
+        let mut omni_prev_looping_tail: Option<u64> = None;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -10036,10 +10038,34 @@ impl GooseAgentDispatcher {
                     // restating a long structured prompt to itself — which is exactly what the e2e shards
                     // do while getting their bearings. Requiring two CONSECUTIVE LOOPING verdicts costs a
                     // real loop one extra interval and costs a healthy call nothing.
+                    // Content-gated corroboration. A real loop shows the SAME reasoning again on the next
+                    // look; a call that merely reasons SLOWLY shows DIFFERENT (advanced) reasoning, even if
+                    // the judge misreads both as looping. MEASURED h1-e2e-5: `cli` was killed twice at 4,141
+                    // and 4,133 chars — both looks landed in the same early "restating the plan" window
+                    // because 60s was not enough for a slow call to move on, and each look independently
+                    // said LOOPING. Requiring the tail to RECUR — not just a second verdict — means a call
+                    // that advanced between looks is never killed.
+                    let tail_hash = {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        // Coarse: whitespace-collapsed, so trivial reformatting is not "new content".
+                        tail.split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .hash(&mut h);
+                        h.finish()
+                    };
                     if omni_judge_says_looping(&o.text) {
-                        omni_looping_streak += 1;
+                        if omni_prev_looping_tail == Some(tail_hash) {
+                            omni_looping_streak += 1;
+                        } else {
+                            // First LOOPING on this content — arm, but do not yet count toward the kill.
+                            omni_looping_streak = 1;
+                        }
+                        omni_prev_looping_tail = Some(tail_hash);
                     } else {
                         omni_looping_streak = 0;
+                        omni_prev_looping_tail = None;
                     }
                     if omni_looping_streak == 1 {
                         eprintln!(
