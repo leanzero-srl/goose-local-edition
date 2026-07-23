@@ -936,8 +936,8 @@ impl Default for SwarmConfig {
             ],
             worker_max_turns: default_worker_max_turns(),
             max_attempts: default_max_attempts(),
-            stream_decode_retry: None,
-            straggler_stop: None,
+            stream_decode_retry: Some(true),
+            straggler_stop: Some(true),
             straggler_grace_secs: None,
             straggler_stop_degrade: None,
             worker_extensions: Vec::new(),
@@ -947,10 +947,10 @@ impl Default for SwarmConfig {
             research_planning: ResearchPlanningMode::On,
             max_research_questions: default_max_research(),
             scout_max_lookups: default_scout_max_lookups(),
-            dynamic_replan: default_dynamic_replan(),
+            dynamic_replan: true,
             max_replans: default_max_replans(),
-            research_scouts: default_research_scouts(),
-            parallel_planning: default_parallel_planning(),
+            research_scouts: true,
+            parallel_planning: true,
             worker_timeout_secs: default_worker_timeout_secs(),
             planner_timeout_secs: default_planner_timeout_secs(),
             allow_model_load: false,
@@ -964,33 +964,33 @@ impl Default for SwarmConfig {
             scout_budget_secs: default_scout_budget_secs(),
             sink_cap_secs: default_sink_cap_secs(),
             progress_watchdog_secs: 900,
-            sink_lean_prefill: None,
-            backbone_skip_confident: None,
-            detail_memo: None,
-            repeat_break: None,
-            spiral_break_chars: None,
+            sink_lean_prefill: Some(true),
+            backbone_skip_confident: Some(true),
+            detail_memo: Some(true),
+            repeat_break: Some(true),
+            spiral_break_chars: Some(12000),
             omni_judge: Some(true),
-            delegated_decisions_ok: None,
+            delegated_decisions_ok: Some(true),
             homogeneous_models: false,
             speed_weights: std::collections::HashMap::new(),
             ask_floor: None,
-            converge: default_converge(),
+            converge: true,
             diverse_plan: false,
-            struct_stop: default_struct_stop(),
-            retarget: false,
-            clarify_spec_bound: None,
-            spec_wins: None,
+            struct_stop: 80,
+            retarget: true,
+            clarify_spec_bound: Some(true),
+            spec_wins: Some(true),
             clarity_probe_secs: None,
             clarity_fail_closed: true,
-            spec_contract: None,
+            spec_contract: Some(true),
             sink_max_turns: Some(120),
             draft_timeout_secs: None,
             goals: None,
             ask_replan: None,
             retarget_rounds: None,
-            retarget_stall_guard: false,
-            answers_win_floor: None,
-            cross_module_check: false,
+            retarget_stall_guard: true,
+            answers_win_floor: Some(true),
+            cross_module_check: true,
             ask_max_q: None,
             split: Some(true),
             smoke: true,
@@ -1000,19 +1000,19 @@ impl Default for SwarmConfig {
             complete_cap_secs: 1200,
             verify_commands: true,
             fan_e2e: true,
-            no_tools_means_ask: false,
-            backbone: false,
+            no_tools_means_ask: true,
+            backbone: true,
             draft_temp: None,
-            author_pitfalls: false,
+            author_pitfalls: true,
             review: false,
-            unwired_demotes_verified: false,
-            grounded_research_only: false,
-            ts_smoke_tests: false,
-            failed_tasks_block_green: false,
+            unwired_demotes_verified: true,
+            grounded_research_only: true,
+            ts_smoke_tests: true,
+            failed_tasks_block_green: true,
             delivery: false,
-            sink_prebuild: false,
-            persona: false,
-            user_notes: false,
+            sink_prebuild: true,
+            persona: true,
+            user_notes: true,
             contract_validate: true,
             relax_contracted_deps: false,
             owned_file_fence: false,
@@ -1029,9 +1029,9 @@ impl Default for SwarmConfig {
             doc_prefetch: false,
             dep_signatures: None,
             scoped_contracts: None,
-            fan_verify: false,
-            require_tests: false,
-            parallel_tests: None,
+            fan_verify: true,
+            require_tests: true,
+            parallel_tests: Some(true),
         }
     }
 }
@@ -6682,6 +6682,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(cfg.progress_watchdog_secs, 900);
         // And a key that IS set is honoured.
         assert!(cfg.persona);
+    }
+
+    /// load_config MERGES the config over the struct Default, so the baked golden formula survives an
+    /// omitted key even though a bare #[serde(default)] on the field alone would not. This exercises the
+    /// exact merge path load_config uses (to_value(default) -> merge partial -> from_value).
+    #[test]
+    fn the_merge_path_keeps_baked_golden_defaults_for_omitted_keys() {
+        let mut base = serde_json::to_value(SwarmConfig::default()).unwrap();
+        // A user config that sets ONE unrelated key and omits the whole golden bundle.
+        let partial: serde_json::Value = serde_json::json!({ "persona": false });
+        merge_json(&mut base, partial);
+        let cfg: SwarmConfig = serde_json::from_value(base).unwrap();
+        // The omitted golden levers keep their baked ON default (this is what a bare serde default lost).
+        assert!(cfg.fan_verify && cfg.require_tests && cfg.author_pitfalls);
+        assert_eq!(cfg.spec_wins, Some(true));
+        assert_eq!(cfg.straggler_stop, Some(true));
+        assert_eq!(cfg.parallel_tests, Some(true));
+        assert_eq!(cfg.spiral_break_chars, Some(12000));
+        assert_eq!(cfg.struct_stop, 80);
+        assert_eq!(cfg.sink_max_turns, Some(120));
+        // The explicitly-set key wins over the default, and a NULL would keep the default.
+        assert!(
+            !cfg.persona,
+            "an explicit value overrides the baked default"
+        );
     }
 
     #[test]
