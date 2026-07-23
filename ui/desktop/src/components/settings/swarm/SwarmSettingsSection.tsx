@@ -16,7 +16,6 @@ import { useSwarmLogMode, SWARM_LOG_MODES } from '../../swarm/useVerboseSwarm';
 import {
   type SwarmConfig,
   DEFAULTS,
-  GOLDEN,
   RESEARCH_MODES,
   type ResearchMode,
   PRESETS,
@@ -233,26 +232,18 @@ function ModelPicker({
  * (devices/speed_weights/endpoint). A solid azure fill marks the active preset; a solid amber chip flags a
  * diverged "Custom" config. Custom control per the hard UI rules — never a native <select>.
  */
-function PresetBar({
-  active,
-  onApply,
-}: {
-  active: PresetId;
-  onApply: (id: 'golden' | 'default') => void;
-}) {
+function PresetBar({ active, onApply }: { active: PresetId; onApply: () => void }) {
   return (
     <div
       className="flex items-center justify-between gap-3 border border-border-primary px-3 py-2"
       style={{ borderRadius: 3 }}
     >
       <div className="min-w-0">
-        <div className="text-sm font-semibold text-text-primary">Preset</div>
+        <div className="text-sm font-semibold text-text-primary">Golden formula</div>
         <div className="text-xs text-text-secondary truncate">
           {active === 'golden'
-            ? 'Golden formula — the tested tuning that builds passing apps'
-            : active === 'default'
-              ? 'Defaults — faithful to goose’s built-in values'
-              : 'Custom — your own tuning'}
+            ? 'Running the tested tuning that builds passing apps — everything below is at its golden value.'
+            : 'You’ve changed a setting below. The golden formula is one click away.'}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -264,25 +255,22 @@ function PresetBar({
             Custom
           </span>
         )}
-        {PRESETS.map((p) => {
-          const on = active === p.id;
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onApply(p.id)}
-              className={`px-3 py-1 text-xs font-semibold border border-border-primary ${
-                on ? 'text-background-primary' : 'text-text-primary hover:bg-background-secondary'
-              }`}
-              style={{
-                borderRadius: 3,
-                backgroundColor: on ? (p.id === 'golden' ? '#2e8bff' : '#5b6472') : 'transparent',
-              }}
-            >
-              {p.label}
-            </button>
-          );
-        })}
+        {PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={onApply}
+            disabled={active === 'golden'}
+            className={`px-3 py-1 text-xs font-semibold border border-border-primary ${
+              active === 'golden'
+                ? 'text-text-secondary opacity-50 cursor-default'
+                : 'text-text-primary hover:bg-background-secondary'
+            }`}
+            style={{ borderRadius: 3, backgroundColor: 'transparent' }}
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -342,10 +330,7 @@ export default function SwarmSettingsSection() {
     [upsert]
   );
 
-  const applyPreset = useCallback(
-    (id: 'golden' | 'default') => set(presetPatch(id === 'golden' ? GOLDEN : DEFAULTS)),
-    [set]
-  );
+  const applyPreset = useCallback(() => set(presetPatch(DEFAULTS)), [set]);
   const activePreset = detectPreset(cfg);
 
   // Node weight rows: the configured pool (its ids are what speed_weights keys match against), or the live
@@ -418,17 +403,17 @@ export default function SwarmSettingsSection() {
             </Row>
             <Row
               label="Ask when uncertain"
-              hint="When the planner isn't confident in how to break the app down, pause and ask YOU a few clarifying questions in the run panel instead of guessing. Best for a weak local planner."
+              hint="When the planner isn't confident how to break the app down, it pauses and asks YOU a few clarifying questions instead of guessing. On by default — the single most useful choice for a weak local planner. Turn it off (0) for an unattended/CI build that must never block on a human."
             >
               <SwarmSwitch
-                checked={(cfg.ask_floor ?? 0) > 0}
-                onChange={(v) => set({ ask_floor: v ? 70 : 0 })}
+                checked={(cfg.ask_floor ?? 80) > 0}
+                onChange={(v) => set({ ask_floor: v ? 80 : 0 })}
               />
             </Row>
-            {(cfg.ask_floor ?? 0) > 0 ? (
+            {(cfg.ask_floor ?? 80) > 0 ? (
               <Row
                 label="How many questions it may ask"
-                hint="goose asks at most this many at once — and anything it does not ask, it decides for you. One build turned up five choices only you could make (equal or uneven splits, fewest transfers or pay-who-you-owe, cents or decimals, and two more); it asked about three and quietly picked the rest itself. Raise this and it asks instead of picking."
+                hint="goose asks at most this many at once — and anything it does not ask, it decides for you. One build turned up five choices only you could make; it asked about three and quietly picked the rest. Raise this and it asks instead of picking."
               >
                 <NumberField
                   value={cfg.ask_max_q}
@@ -436,268 +421,6 @@ export default function SwarmSettingsSection() {
                 />
               </Row>
             ) : null}
-            {(cfg.ask_floor ?? 0) > 0 ? (
-              <Row
-                label="Only offer answers your spec allows"
-                hint="Stops goose offering you choices your own spec already ruled out. One build asked “SQLite, JSON, or CSV?” for a spec that said storage MUST be tab-separated — every option broke the spec, so there was no right answer to click. It had read the spec; the question prompt just talked it out of it, with a worked example that answered storage questions with SQLite/JSON no matter what, and two nudges toward “the most common choice”. With this on, anything your spec fixes is not up for question, and goose asks about what you actually left open."
-              >
-                <SwarmSwitch
-                  checked={!!cfg.clarify_spec_bound}
-                  onChange={(v) => set({ clarify_spec_bound: v })}
-                />
-              </Row>
-            ) : null}
-            <Row
-              label="Re-plan after you answer the questions"
-              hint="Goose plans BEFORE it asks you anything — so the plan you get was drafted while it still did not know your answers. Today it keeps that plan and just forwards your answers to each worker. That is often fine and saves ~15 minutes. It is NOT fine when the drafts disagreed with each other: answering fixes how clear your SPEC is, but it cannot make three drafts agree — so the score stays stuck where it was and goose builds anyway, below your bar, on a plan made before you spoke. Turn this on and it re-plans with your answers, which also lets it re-draft toward agreement. Costs one full planning pass."
-            >
-              <SwarmSwitch checked={!!cfg.ask_replan} onChange={(v) => set({ ask_replan: v })} />
-            </Row>
-            <Row
-              label="Your spec beats anything goose researched"
-              hint="When goose researches a decision you left open, it writes the answer into your spec labelled “settled — do not re-ask”, with nothing saying your own words come first. So a guess it made can quietly outrank what you actually wrote — and a note you type mid-build loses to it, because notes are told the spec wins. With this on, researched answers are DEFAULTS: where one contradicts something you fixed, your spec is right and goose ignores it. Each one also says which decision it was answering, and the run records exactly what goose added to your spec."
-            >
-              <SwarmSwitch checked={!!cfg.spec_wins} onChange={(v) => set({ spec_wins: v })} />
-            </Row>
-            <Row
-              label="Seconds goose may spend working out if your spec is clear"
-              hint="Before building, goose checks whether your spec actually pins down what to build — that check is what makes it ask you questions instead of guessing. It runs alongside the planning drafts on the same nodes, and each node handles one request at a time, so on a busy fleet it can wait in the queue until it gives up. When it gives up, goose does not tell you it gave up: it proceeds on how much the drafts agreed with EACH OTHER, which says nothing about whether YOUR spec was clear, and reports high confidence with no questions. Two of fourteen builds did exactly that and invented the whole product. Give it room."
-            >
-              <NumberField
-                value={cfg.clarity_probe_secs}
-                onCommit={(v) => set({ clarity_probe_secs: v ?? 120 })}
-              />
-            </Row>
-            <Row
-              label="Ask you when the spec-clarity check itself fails"
-              hint="That same spec-clarity check can die outright — it times out on a busy fleet, the model errors, or it returns nothing at all. When it does, goose today treats the failure as if your spec were clear and builds on how much the drafts agreed with each other — which is exactly how it invented whole products in 2 of 14 builds. With this on, a check that DIED (timed out, errored, or produced nothing) counts as LOW clarity, so goose asks you instead of guessing. A check that ran but returned unreadable output is left alone, so it will not nag you when the spec really was clear."
-            >
-              <SwarmSwitch
-                checked={cfg.clarity_fail_closed !== false}
-                onChange={(v) => set({ clarity_fail_closed: v })}
-              />
-            </Row>
-            <Row
-              label="Give every worker the app's non-negotiables"
-              hint="Before building, goose distils your spec into a short list of app-wide acceptance criteria and puts them in front of every worker as non-negotiable — so a worker writing one file still knows what the whole app must do. This used to be unreachable — its switch was wired to a mode nobody turns on, so for a long time no worker ever saw one — but it does run now when you turn it on. Costs one planning pass. Still unproven: it has run too few times to say whether it improves the result."
-            >
-              <SwarmSwitch checked={!!cfg.goals} onChange={(v) => set({ goals: v })} />
-            </Row>
-            <Row
-              label="How many steps the final whole-app check may take"
-              hint="At the end, one worker builds the app, runs every command your spec advertises, checks the output is right, and fixes what is broken. It gets the same step budget as a worker that owns a single file — and it runs out: in 5 of 9 builds it never reached a verdict, 3 of them stopping mid-check with “I've reached the maximum number of actions I can do without user input”. The build still reported a result. Raise this so the check can finish; each step costs about a minute on local models, so this is the quality-versus-speed knob that matters most."
-            >
-              <NumberField
-                value={cfg.sink_max_turns}
-                onCommit={(v) => set({ sink_max_turns: v ?? 40 })}
-              />
-            </Row>
-            <Row
-              label="Actually call the app's endpoints before calling it verified"
-              hint="The final check confirms the code imports and `--help` runs — but never that the app HONORS what your spec advertised. So an app whose endpoints return a 500 (its database was never created) or whose list endpoint was simply never built (405) still passes as verified. Two of two test apps did exactly that. With this on, goose starts the app the way your spec says to (`python3 -m yourapp`) and calls each endpoint you listed: a server error or a missing endpoint fails the build and triggers a fix, and an app that never even starts its server is marked unverified instead of green. Deterministic — it reads your spec, no model judgement. (Python web apps for now.)"
-            >
-              <SwarmSwitch
-                checked={!!cfg.spec_contract}
-                onChange={(v) => set({ spec_contract: v })}
-              />
-            </Row>
-            <Row
-              label="Keep the plan you just answered instead of re-planning it away"
-              hint="When your spec leaves things open, goose asks you a few questions, and your answers are supposed to raise its confidence in the plan. But if re-planning is on, goose then throws that answered plan away and drafts a fresh one — and the fresh draft asks itself the same questions you already answered, so its confidence collapses and it builds a WORSE plan than the one you improved. Measured: a plan reached 85, was re-drafted, and shipped at 52 — below the bar the questions existed to clear. With this on, once your answers lift the plan to the bar, goose keeps THAT plan. Switching programming language, or defining a product that was blank before, still re-plans — those genuinely make the old plan wrong."
-            >
-              <SwarmSwitch
-                checked={cfg.answers_win_floor !== false}
-                onChange={(v) => set({ answers_win_floor: v })}
-              />
-            </Row>
-            <Row
-              label="Let the fleet build independent modules at the same time"
-              hint="Some planner models chain the modules one behind another — module B waits for module A, C waits for B — even when B only needs A's function SIGNATURES, which goose already hands every worker up front. That chain forces the fleet to build one module at a time: on a three-machine fleet, two sit idle (measured on a Rust build, 1 of 3 busy). With this on, goose drops those needless waits so every independent module starts at once, and keeps only the final whole-app check waiting on all of them. A test that must run against its own module is left alone. Needs the interface-sharing step on, which it is by default."
-            >
-              <SwarmSwitch
-                checked={!!cfg.relax_contracted_deps}
-                onChange={(v) => set({ relax_contracted_deps: v })}
-              />
-            </Row>
-            <Row
-              label="Split the final whole-app check across the fleet"
-              hint="At the end of a build goose runs one big check that puts the app together and verifies everything — every module's tests, the build, running the app, checking each command's output. Today that whole check runs on a single machine in one long pass, and because it can only start once every module is finished, the other machines sit idle while it grinds — and on hard builds it stalls out before it reaches a verdict. With this on, goose gives each module its own quick check that runs the moment that module is done, so those spread across the fleet alongside the build work, and the final step shrinks to just the one thing that can't be split up: assembling the app and running it end to end once. That final run is still the real gate — a module passing its own check never counts as the whole app working. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.fan_verify}
-                onChange={(v) => set({ fan_verify: v })}
-              />
-            </Row>
-            <Row
-              label="Split the final end-to-end check by command"
-              hint="The final whole-app check runs every command your spec advertises — and even split across the fleet by module, that end-to-end run stays one task on one machine while the others idle. With this on, the commands themselves are divided across the machines: each checks a slice (one does init/set, another get/del, and so on), all at once, and the last step just assembles the app, fixes whatever they reported, and checks the saved-data handling. Measured to roughly halve that final phase. Needs the per-module split above. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.fan_e2e}
-                onChange={(v) => set({ fan_e2e: v })}
-              />
-            </Row>
-            <Row
-              label="Actually run the app's commands when verifying"
-              hint="When goose checks a finished build it confirms the app starts and answers --help — but --help works fine on an app whose every real command is broken. With this on, the check actually RUNS each advertised command, and runs each with a bad argument too, so an app that crashes on a real command or dumps a traceback on a typo is caught instead of shipped as working. On by default."
-            >
-              <SwarmSwitch
-                checked={cfg.verify_commands !== false}
-                onChange={(v) => set({ verify_commands: v })}
-              />
-            </Row>
-            <Row
-              label="Give each module its own test subtask"
-              hint="By default goose puts all of an app's tests into one task, which can only start once the pieces it tests are finished — so it lands at the very end of the build while the other machines have nothing left to do. With this on, each module gets its own test task that starts the moment that module is done, so testing overlaps the rest of the build. It also gives the per-module checks something real to run: without a test that belongs to a single module there is nothing module-sized to verify. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.parallel_tests}
-                onChange={(v) => set({ parallel_tests: v })}
-              />
-            </Row>
-            <Row
-              label="Require the finished app to actually have tests"
-              hint="When goose checks a finished build, it runs the app's test suite — but an app with no tests at all currently passes that check silently, because “no tests ran” looks the same as “every test passed”. That means a build can be reported as verified without a single thing having been checked, and it also means deleting an awkward failing test is a way to turn the build green. With this on, an empty test suite counts as a problem and goose keeps working until the app has real tests that assert the expected values. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.require_tests}
-                onChange={(v) => set({ require_tests: v })}
-              />
-            </Row>
-            <Row
-              label="Give each worker its dependencies' interfaces up front"
-              hint="Before a worker writes a module, goose can hand it the exact function signatures of the other modules it builds on, extracted deterministically from their code. With this on, workers call the real API instead of guessing it — fewer cases where two modules disagree and the tests break. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.dep_signatures} onChange={(v) => set({ dep_signatures: v })} />
-            </Row>
-            <Row
-              label="Scope each worker's shared contracts to its neighbors"
-              hint="The frozen module interfaces goose shares with every worker can be trimmed to just the modules a given worker actually depends on, instead of the whole set — less noise in each prompt, so the model stays focused on what it needs. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.scoped_contracts} onChange={(v) => set({ scoped_contracts: v })} />
-            </Row>
-            <Row
-              label="Fence each worker to the files it owns"
-              hint="Workers share one project folder, so one worker can accidentally overwrite a file another module owns to make its own code build — clobbering the real work. With this on, goose snapshots each task's files when it finishes and, before the final assembly, restores any file a non-owner overwrote, so the owner's work always wins. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.owned_file_fence} onChange={(v) => set({ owned_file_fence: v })} />
-            </Row>
-            <Row
-              label="Retry an empty module-interface stub"
-              hint="Before building, goose freezes each module's public interface so workers agree on each other's API. On a cold fleet the first of those calls can time out, leaving a module with no frozen interface and workers guessing. With this on, a timed-out stub is retried once with a longer budget. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.contract_retry} onChange={(v) => set({ contract_retry: v })} />
-            </Row>
-            <Row
-              label="Recover when a node drops the connection mid-generation"
-              hint="A fleet node can drop the network connection partway through generating a task's output. When that happens the error text gets folded into the task's result and goose would otherwise accept that truncated output as done — so a check that never actually finished is reported as passed (a false green). With this on, goose recognizes that dropped-connection signature and re-runs the task on a different machine so it produces a real result. It only ever fires on an actual mid-stream drop; clean runs are untouched. Default on."
-            >
-              <SwarmSwitch
-                checked={cfg.stream_decode_retry !== false}
-                onChange={(v) => set({ stream_decode_retry: v })}
-              />
-            </Row>
-            <Row
-              label="Skip the re-plan ladder when the drafts already agree"
-              hint="Goose drafts several plans in parallel and, if confidence is low, re-drafts the whole plan again and again — a slow, single-machine loop that rarely improves. With this on, goose measures how much structure the parallel drafts share; when they strongly agree it accepts that plan and skips the re-draft loop entirely. It still asks you a question when the spec itself is genuinely underspecified. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.diverse_plan} onChange={(v) => set({ diverse_plan: v })} />
-            </Row>
-            <Row
-              label="Stop the lone lagging plan draft once the others agree"
-              hint="Goose drafts several plans in parallel, one per machine, then waits for all of them before scoring. If two of three finish quickly and the third keeps generating, the whole run blocks on that one slow node — up to its full timeout — for a draft the others already cover. With this on, once every draft but one has come back with a valid plan, goose gives the last one a short grace window and then stops it, proceeding on the drafts it already has. It only ever races the single last-place draft, so it never throws away draft variety while more than one is still working. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.straggler_stop} onChange={(v) => set({ straggler_stop: v })} />
-            </Row>
-            <Row
-              label="Trim the final check's context so it runs faster"
-              hint="The last step assembles the whole app and runs it end to end — and it's the slowest single step by far (measured: it ran to its 25-minute cap on one build). Its prompt is stuffed with every module's interface signatures, but that step doesn't build against those — it runs the real, finished files. With this on, goose drops that dead context from the final step so it has far less to read before it starts, which makes it finish sooner. It only touches the final integrate-and-run step; the actual checks it performs are unchanged. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.sink_lean_prefill}
-                onChange={(v) => set({ sink_lean_prefill: v })}
-              />
-            </Row>
-            <Row
-              label="Skip the second planning pass when the drafts already agree"
-              hint="After drafting several plans in parallel, goose can lock the shared module list and re-draft the whole plan a second time to try to improve its structure — a full extra planning round on every machine (roughly four minutes). But when the first-round drafts already agree strongly, they've already settled on that same structure, so the second pass can't beat it and gets thrown away (measured: discarded on 28 of 29 real builds, never once kept when agreement was 90 or above). With this on, goose skips that second pass whenever first-round agreement is already high, and still runs it for genuinely shaky plans where it can help. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.backbone_skip_confident}
-                onChange={(v) => set({ backbone_skip_confident: v })}
-              />
-            </Row>
-            <Row
-              label="Don't re-write a plan step that didn't change"
-              hint="When goose isn't confident in its plan it re-drafts the whole thing and tries again — and each time it re-writes the detailed spec for every step from scratch, about a minute per step, even for steps that came out identical to the round before. With this on, goose remembers the detailed spec it already wrote and reuses it for any step whose full input is unchanged; a step that actually changed (because you answered a question or new research came in) is still re-written. Same output, far less repeated work on the slow re-draft rounds. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.detail_memo}
-                onChange={(v) => set({ detail_memo: v })}
-              />
-            </Row>
-            <Row
-              label="Stop a worker that keeps repeating the same command"
-              hint="A worker can get stuck running one command over and over — measured live, one ran the identical `cat` on the same file 31 times and burned its whole time budget on a single machine. Nothing caught it: every successful command counts as progress, so the stall detector kept resetting. With this on, goose stops a worker that repeats the same command with the same output several times in a row over at least a minute, and treats it exactly like any other stalled task (the work it already wrote to disk is still kept). A repeat that returns different output is real progress and never counts, and any different command in between resets it — so an edit-then-retest cycle is never affected. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.repeat_break}
-                onChange={(v) => set({ repeat_break: v })}
-              />
-            </Row>
-            <Row
-              label="Stop a step that keeps re-thinking the same thing"
-              hint="Goose's judge only watches the BUILD steps. Everything before that — the research scouts, the planning drafts, the interface and spec writing — runs with no supervision at all, so a step that gets stuck re-reasoning in circles is caught by nothing and burns its whole time budget on one machine while the others sit idle. Measured: one research scout produced 30,403 characters of the same repeated paragraph while two machines were idle. This sets a ceiling on how much reasoning any single step may produce before goose stops it and moves on — research keeps the answers it already has, a planning draft is dropped in favour of the others, and a build step falls back to its normal stalled-task handling. Leave blank to turn it off. The number is a BASE budget and goose scales it per step kind from measured data — planning drafts are exempt entirely (healthy ones legitimately reason for tens of thousands of characters), build steps get five times the base, and interface writing three times. 12000 is a reasonable base."
-            >
-              <NumberField
-                value={cfg.spiral_break_chars ?? null}
-                placeholder="off"
-                width="w-24"
-                onCommit={(v) => set({ spiral_break_chars: v ?? undefined })}
-              />
-            </Row>
-            <Row
-              label="Let the judge watch every step, in every phase"
-              hint="Goose's judge only ever watched the build steps. Research, planning, interface and spec writing ran completely unwatched — which is how a research step spent ten minutes re-writing the same paragraph while two machines sat idle. With this on, the judge looks at what each step is actually producing, starting under a minute in and again every minute, and stops a step that is visibly repeating itself. This catches what a size limit cannot: a planning draft can legitimately reason for 50,000 characters, so only reading the text tells a deep thinker apart from a stuck one. It can only stop that one step — research keeps the answers it has, a planning draft is dropped in favour of the others — and it can never fail your run. Default off."
-            >
-              <SwarmSwitch checked={!!cfg.omni_judge} onChange={(v) => set({ omni_judge: v })} />
-            </Row>
-            <Row
-              label="Treat &ldquo;your call&rdquo; in a spec as a decision, not a gap"
-              hint="When your spec hands a decision to goose &mdash; a &ldquo;calls I&rsquo;m leaving to you&rdquo; section, &ldquo;your call&rdquo;, &ldquo;pick something sensible and defend it&rdquo; &mdash; goose used to read that as a spec that forgot to decide. It counted each one against your plan&rsquo;s confidence and then stopped everything to ask you a question you had already answered. Measured on a real build: three delegated decisions dragged confidence from 89 to 52, below the asking threshold, and all three machines sat idle waiting on a human. This inverts it: goose recognises the delegation, makes the call itself, and records what it chose so you can see and challenge it &mdash; and it still asks about anything your spec genuinely never mentions. A spec that says &ldquo;do not guess this, ask me&rdquo; always wins, even in the same paragraph. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.delegated_decisions_ok}
-                onChange={(v) => set({ delegated_decisions_ok: v })}
-              />
-            </Row>
-            <Row
-              label="Also stop a lagging step during contracts and detailing"
-              hint="Before building, goose freezes each module's interface and writes a detailed spec for each subtask — both spread one task per machine. If one machine runs long (measured: 7+ minutes on one while the other two sat idle), the whole build waits. With this on, once every task but one has finished, goose gives the last one a short grace window and then stops it: that module just builds without its frozen interface (the same thing that already happens when a contract times out — the final whole-app check reconciles it). At most one module is ever affected. This is a stronger version of the plan-draft stop above, kept separate because it can change what a worker builds from. Default off."
-            >
-              <SwarmSwitch
-                checked={!!cfg.straggler_stop_degrade}
-                onChange={(v) => set({ straggler_stop_degrade: v })}
-              />
-            </Row>
-            <Row
-              label="Nudge a worker stuck thinking to just write"
-              hint="A local model can get stuck streaming its reasoning without ever writing a file, burning the whole time budget on one task. With this on, once a worker has thought past a threshold with nothing written, goose interrupts it with a firm 'stop planning, write the simplest version now' and re-dispatches — a productive retry in a minute or two instead of a wasted seven. Default off."
-            >
-              <SwarmSwitch
-                checked={(cfg.spiral_thinking_chars ?? 0) > 0}
-                onChange={(v) => set({ spiral_thinking_chars: v ? 8000 : 0 })}
-              />
-            </Row>
-            <Row
-              label="Name each build's chat with a short AI title"
-              hint="By default a swarm build's entry in the chat list is just the first few words of your brief (like 'Build X — a'). With this on, goose asks a local model for a short, meaningful title (like 'logfold — Go log-template miner') when the build starts. It's one cheap call that runs off to the side, so it never delays the build. Off by default because on a busy fleet that extra call can wait in line behind the planning work."
-            >
-              <SwarmSwitch
-                checked={!!cfg.ai_session_name}
-                onChange={(v) => set({ ai_session_name: v })}
-              />
-            </Row>
           </div>
 
           <div className="text-xs text-text-secondary pt-1">
@@ -720,7 +443,7 @@ export default function SwarmSettingsSection() {
             <>
               <PresetBar active={activePreset} onApply={applyPreset} />
 
-              <Group title="Reliability">
+              <Group title="Advanced — timeouts &amp; budgets" cost="Per-hardware tuning. The defaults are the golden formula; change these only for an unusually fast or slow fleet.">
                 <Row label="Worker max turns" hint="cap per worker before it must finish">
                   <NumberField value={cfg.worker_max_turns} onCommit={(v) => set({ worker_max_turns: v ?? 40 })} />
                 </Row>
@@ -750,21 +473,12 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Pipeline (parallelism)">
-                <Row label="Research planning" hint="off / on / auto (auto = only with source files)">
+              <Group title="Research &amp; planning">
+                <Row label="Research planning" hint="off / on / auto (auto = only with source files). Grounds the plan in looked-up fact; costs a research phase.">
                   <Segmented options={RESEARCH_MODES} value={(cfg.research_planning ?? 'on') as ResearchMode} onChange={(v) => set({ research_planning: v })} />
-                </Row>
-                <Row label="Parallel planning" hint="write subtask specs across the fleet at once">
-                  <SwarmSwitch checked={!!cfg.parallel_planning} onChange={(v) => set({ parallel_planning: v })} />
-                </Row>
-                <Row label="Dynamic replan" hint="re-plan mid-run when the tree drifts">
-                  <SwarmSwitch checked={!!cfg.dynamic_replan} onChange={(v) => set({ dynamic_replan: v })} />
                 </Row>
                 <Row label="Max replans" hint="cap on dynamic-replan rounds">
                   <NumberField value={cfg.max_replans} onCommit={(v) => set({ max_replans: v ?? 2 })} />
-                </Row>
-                <Row label="Research scouts" hint="parallel fixed-lens scouts vs serial scoping">
-                  <SwarmSwitch checked={cfg.research_scouts !== false} onChange={(v) => set({ research_scouts: v })} />
                 </Row>
                 <Row label="Max research questions" hint="scoping questions before planning">
                   <NumberField value={cfg.max_research_questions} onCommit={(v) => set({ max_research_questions: v ?? 4 })} />
@@ -789,148 +503,12 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Plan confidence" cost="Buys: a plan the fleet agrees on, and goose asking you instead of guessing. Costs: planning minutes — each extra draft round is another pass over the whole fleet.">
-
+              <Group title="Verification" cost="goose already runs its full verification suite on every build — real end-to-end command checks, per-module import gates, contract-stub parsing, cross-module wiring. That is baked in and always on. Below is one EXTRA, optional check on top.">
                 <Row
-                  label="Convergence molding"
-                  hint="steer the weak planner to one canonical decomposition + measure agreement role-normalized — the proven way to raise plan confidence. ON by default."
-                >
-                  <SwarmSwitch checked={cfg.converge !== false} onChange={(v) => set({ converge: v })} />
-                </Row>
-                <Row
-                  label="Dynamic retarget"
-                  hint="when confidence is below the ask floor, re-draft toward consensus or research the open decisions BEFORE asking you. Needs 'Ask when uncertain' on. Experimental — adds planning time."
-                >
-                  <SwarmSwitch checked={!!cfg.retarget} onChange={(v) => set({ retarget: v })} />
-                </Row>
-                <Row
-                  label="Backbone-lock"
-                  hint="extract the module set a majority of drafts agree on, lock it, and re-draft so the fleet's plans genuinely converge. Experimental — adds a second draft round."
-                >
-                  <SwarmSwitch checked={!!cfg.backbone} onChange={(v) => set({ backbone: v })} />
-                </Row>
-                <Row label="Draft temperature" hint="temperature for skeleton drafting only (blank = model default)">
-                  <NumberField value={cfg.draft_temp ?? null} placeholder="default" onCommit={(v) => set({ draft_temp: v })} />
-                </Row>
-                <Row
-                  label="Stop re-planning when it stops improving"
-                  hint="when goose is unsure about its plan it re-drafts it again and again, hoping the drafts agree better. Measured on a real build, they got worse — 84 to 70 to 52 over three rounds, an hour of every machine, and it shipped the first plan anyway. This stops after a round that fails to beat the best so far. It cannot cost you quality: the best plan is kept either way."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.retarget_stall_guard}
-                    onChange={(v) => set({ retarget_stall_guard: v })}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="Research" cost="Buys: goose stops inventing YOUR product decisions. Costs: it stops and waits for you. Measured: it spent 65 minutes failing to answer what you answered in under two.">
-                <Row
-                  label="Ask me when it has nothing to search with"
-                  hint="if no search tools are set up, goose currently still sends open decisions off to 'research' — which can only invent an answer and then treat it as settled. With this on it asks you instead. Measured: it spent 65 minutes failing to answer what you answered in under two."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.no_tools_means_ask}
-                    onChange={(v) => set({ no_tools_means_ask: v })}
-                  />
-                </Row>
-                <Row
-                  label="Only trust research it actually looked up"
-                  hint="when goose researches an open decision, a finding only counts as settled if it truly searched the web or docs. A pure guess still informs the plan but no longer silences the question — so a product choice goose merely assumed still gets asked."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.grounded_research_only}
-                    onChange={(v) => set({ grounded_research_only: v })}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="While it builds" cost="Buys: the worker is told the convention BEFORE it writes, not corrected after. Costs: almost nothing — these add prompt text, not extra model calls.">
-                <Row
-                  label="Tell the author the domain rules up front"
-                  hint="gives the worker the known-correct conventions its task touches (cron day-of-week, timezones, money precision, off-by-one) BEFORE it writes the code, instead of only catching the mistake in review. Only the rules that match the task are sent."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.author_pitfalls}
-                    onChange={(v) => set({ author_pitfalls: v })}
-                  />
-                </Row>
-                <Row
-                  label="Check the agreed interfaces are real"
-                  hint="before building, goose freezes an interface contract so parallel workers agree. It is never checked — a worker can be handed prose instead of an interface and nobody knows. This records what was actually frozen and whether it parses. It only reports; it changes nothing about the build."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.contract_validate}
-                    onChange={(v) => set({ contract_validate: v })}
-                  />
-                </Row>
-                <Row
-                  label="Check the modules agree about each other"
-                  hint="parallel workers write different files. One can read a field off another's class that the class doesn't have — and the app builds, imports, and passes its tests, then crashes on the first real request. This reads the finished code and finds those disagreements. Model-free, so it can't be argued with."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.cross_module_check}
-                    onChange={(v) => set({ cross_module_check: v })}
-                  />
-                </Row>
-                <Row
-                  label="Let me add notes while it builds"
-                  hint="a build runs for hours and today you can only speak to it once, at the start. With this on, notes you add are picked up by the next task goose starts — never interrupting work already in flight. They are background, not orders: the spec still wins."
-                >
-                  <SwarmSwitch checked={!!cfg.user_notes} onChange={(v) => set({ user_notes: v })} />
-                </Row>
-              </Group>
-
-              <Group title="Before it says done" cost="Buys: goose stops calling a broken app verified — 7 runs have. Costs: real minutes. Every check here RUNS something, and a failed check triggers a fix round.">
-                <Row
-                  label="Run the app's own tests before calling it verified"
-                  hint="for TypeScript/JavaScript projects, runs the test script the project itself declares. Python already does this; TS was only being compiled, so an app whose tests fail could still be reported as verified."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.ts_smoke_tests}
-                    onChange={(v) => set({ ts_smoke_tests: v })}
-                  />
-                </Row>
-                <Row
-                  label="Show the checker the app's real interface first"
-                  hint="before goose verifies the finished app, it runs the entry point and reads its actual --help, so its checks target the interface the app really has. Without this it guesses from the spec — and a wrong guess has made it 'fix' a working app."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.sink_prebuild}
-                    onChange={(v) => set({ sink_prebuild: v })}
-                  />
-                </Row>
-                <Row
-                  label="Check for dead code after the build"
-                  hint="reads the finished code and finds modules that were built but nothing imports — they can never run. Model-free, so it can't be argued with. Also finds unimplemented stubs."
+                  label="Also flag dead code after the build"
+                  hint="reads the finished code and flags modules that were built but nothing imports — they can never run. Model-free. OFF by default: it occasionally flags an intentional standalone script as dead. Turn it on for stricter builds where every module must be wired in."
                 >
                   <SwarmSwitch checked={!!cfg.review} onChange={(v) => set({ review: v })} />
-                </Row>
-                <Row
-                  label="Dead code un-verifies the run"
-                  hint="if a module is built but imported by nothing and goose can't wire it up, the run stops claiming it was verified. Standalone scripts are never counted — they're meant to be run directly. Needs the dead-code check on."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.unwired_demotes_verified}
-                    onChange={(v) => set({ unwired_demotes_verified: v })}
-                  />
-                </Row>
-                <Row
-                  label="Keep working if a task failed"
-                  hint="if one of the build's own tasks fails outright, goose keeps trying to finish it instead of declaring the app done. Today it only checks the smoke gate, so a failed task can still be reported as verified. Bonus tasks are never counted."
-                >
-                  <SwarmSwitch
-                    checked={!!cfg.failed_tasks_block_green}
-                    onChange={(v) => set({ failed_tasks_block_green: v })}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="Learning" cost="Buys: goose gets faster at a stack the more you build it. Costs: one reflection pass at the end of a build that worked.">
-                <Row
-                  label="Learn from builds that worked"
-                  hint="after an app builds and verifies, goose reflects on what worked and writes a reusable skill for that stack — then starts from it next time instead of re-deriving it. It records the structure, never your app's features, and the skill is a plain file you can read, edit, or delete."
-                >
-                  <SwarmSwitch checked={!!cfg.persona} onChange={(v) => set({ persona: v })} />
                 </Row>
               </Group>
 

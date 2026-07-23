@@ -253,41 +253,43 @@ export interface SwarmConfig {
   [k: string]: unknown; // preserve fields we don't edit (devices, worker_extensions, …)
 }
 
-// Panel baseline = faithful to the Rust `Default for SwarmConfig` (swarm.rs:240-290).
+// The golden formula is now the ENGINE's own `Default for SwarmConfig` (crates/goose-cli/src/commands/
+// swarm.rs) — ~40 proven levers baked ON, so an empty config.yaml already runs the exact formula the
+// headless campaign shipped 9/9 apps with. `goose swarm run` merges config.yaml OVER that default, so the
+// deployed desktop app behaves identically to the headless golden run unless a value is DELIBERATELY set.
+//
+// DEFAULTS below is the panel's mirror of that bake, restricted to the keys this panel still exposes.
+// The invariant that keeps deployed == headless: every value here MUST equal the engine's baked default,
+// so seeding/persisting the config block can never write a value that diverges from what goose already
+// does by default. Editing a control writes a deliberate override; every untouched key stays golden.
+// The ~40 baked levers that used to be toggles here are intentionally NOT listed — they are the golden
+// formula, governed by the engine, and left out of config.yaml so a later re-tune of the bake is picked up.
 export const DEFAULTS: SwarmConfig = {
-  endpoint: 'http://localhost:1234',
-  planner_model: 'qwen/qwen3.6-27b',
-  worker_max_turns: 40,
-  max_attempts: 3,
-  worker_timeout_secs: 900, // default_worker_timeout_secs (swarm.rs:82); panel previously wrongly showed 420
-  planner_timeout_secs: 900, // default_planner_timeout_secs (swarm.rs:88)
-  research_planning: 'on',
-  parallel_planning: true,
-  dynamic_replan: true,
-  max_research_questions: 4,
-  max_replans: 2,
-  research_scouts: true,
-  best_of_n_skeletons: 1,
-  planner_also_works: true,
-  planner_weight: 1,
-  homogeneous_models: false,
-  allow_model_load: false,
-  scout_budget_secs: 900,
-  scout_max_lookups: 10,
-  converge: true, // default_converge (swarm.rs) — the proven agreement raiser, ON by default
-  // Mihai: "don't let goose start implementing something below 80 — research until confidence is > 80."
-  // Floor 80 + retarget ON so a sub-80 plan RE-DRAFTS toward consensus (and asks) to raise the meter before
-  // EXECUTE, instead of building a low-confidence plan. Backbone on too — the structural convergence lever.
-  ask_floor: 80,
-  retarget: true,
-  backbone: true,
-  ask_max_q: 3, // swarm.rs ask_max_q — .unwrap_or(3); anything past the cap is guessed, not asked
-  ai_session_name: true, // swarm provider default is ON — title each build's chat with a short AI name
+  endpoint: 'http://localhost:1234', // default_endpoint
+  planner_model: 'qwen/qwen3.6-27b', // default_planner
+  worker_max_turns: 40, // default_worker_max_turns
+  max_attempts: 3, // default_max_attempts
+  worker_timeout_secs: 900, // default_worker_timeout_secs
+  progress_watchdog_secs: 900, // baked
+  planner_timeout_secs: 900, // default_planner_timeout_secs
+  research_planning: 'on', // ResearchPlanningMode::On
+  max_research_questions: 4, // default_max_research
+  max_replans: 2, // default_max_replans
+  scout_max_lookups: 10, // default_scout_max_lookups
+  scout_budget_secs: 900, // default_scout_budget_secs
+  best_of_n_skeletons: 1, // default_best_of_n_skeletons
+  planner_also_works: true, // default_planner_also_works
+  planner_weight: 1, // default_planner_weight
+  homogeneous_models: false, // baked — heterogeneous fleet is the common case
+  allow_model_load: false, // baked — warm fleet only unless asked
+  ask_floor: 80, // baked Some(80) — never build below the bar; ask instead (+5 weak-planner bump -> 85)
+  ask_max_q: 3, // baked Some(3)
+  review: false, // baked false — the AST dead-code review is an OPTIONAL extra check (see the panel)
 };
 
-// The keys a preset controls — PORTABLE tuning only. Fleet identity (endpoint, planner_model,
-// devices, speed_weights, worker_extensions) and free-form sampling are intentionally NOT touched,
-// so applying a preset never clobbers a machine-specific pool.
+// The keys the "reset to golden" control restores — the panel's own tunable subset. Fleet identity
+// (endpoint, planner_model, devices, speed_weights, worker_extensions) and free-form sampling are
+// intentionally NOT reset, so a reset never clobbers a machine-specific pool.
 export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'worker_max_turns',
   'max_attempts',
@@ -295,134 +297,37 @@ export const PRESET_KEYS: (keyof SwarmConfig)[] = [
   'progress_watchdog_secs',
   'planner_timeout_secs',
   'research_planning',
-  'parallel_planning',
-  'dynamic_replan',
   'max_research_questions',
   'max_replans',
-  'research_scouts',
+  'scout_max_lookups',
+  'scout_budget_secs',
   'best_of_n_skeletons',
   'planner_also_works',
   'planner_weight',
   'homogeneous_models',
   'allow_model_load',
-  // The consultation set (see GOLDEN below). In PRESET_KEYS so the preset actually applies them —
-  // a value in GOLDEN that is not listed here is decoration.
   'ask_floor',
   'ask_max_q',
-  'clarify_spec_bound',
-  'ask_replan',
-  'spec_wins',
-  'sink_max_turns',
-  'clarity_probe_secs',
-  'no_tools_means_ask',
-  'grounded_research_only',
-  'contract_validate',
-  'ai_session_name',
-  'stream_decode_retry',
-  'straggler_stop',
-  'straggler_grace_secs',
-  'straggler_stop_degrade',
-  'sink_lean_prefill',
-  'backbone_skip_confident',
-  'detail_memo',
-  'repeat_break',
-  'spiral_break_chars',
-  'omni_judge',
-  'delegated_decisions_ok',
+  'review',
 ];
 
-// GOLDEN = the exact tuning that produced the passing exploration apps. NOTE it diverges from the
-// Rust defaults in several load-bearing ways: dynamic_replan OFF, best_of_n 2, max_replans 1,
-// homogeneous_models ON, worker_timeout 420. The reliability GATE half of the golden formula
-// (GOOSE_SWARM_ASSURED + REVIEW_REPRO + REVIEW_FIX) is env-layer only today and is the deferred,
-// Rust-backed half — not settable from this panel yet.
-//
-// THE CONSULTATION SET, added 2026-07-17. These four are here on MECHANISM evidence — a deterministic
-// engine event proving each fired — never on an A/B, because an A/B cannot decide this: Fisher's exact on
-// a 1-vs-1 table returns p=1.000 for EVERY possible outcome, and at ~25-37% base failure there is a 37.5%
-// chance an inert lever fabricates a win. Detecting a real effect needs ~46 runs. So the bar for entry is:
-// (1) the engine event proves it fired, and (2) it is STRUCTURALLY INCAPABLE of making the app worse.
-// All four clear both. Measured on the same spec, three configurations:
-//     levers off (what shipped):  5 open decisions · 0 asked · 5 INVENTED · confidence laundered 30 -> 96
-//     levers on, ask cap 3:       5 open · 3 asked · 2 invented in silence · confidence 30 (honest)
-//     levers on, ask_max_q 6:     5 open · 5 asked · 0 invented
-// The spec had exactly five "DELIBERATELY NOT DECIDED — do NOT guess them" items. The shipping default
-// guessed all five and reported 96/100 confidence about it.
-export const GOLDEN: SwarmConfig = {
-  worker_max_turns: 40,
-  max_attempts: 3,
-  worker_timeout_secs: 420,
-  planner_timeout_secs: 900,
-  research_planning: 'on',
-  parallel_planning: true,
-  dynamic_replan: false,
-  max_research_questions: 4,
-  max_replans: 1,
-  research_scouts: true,
-  best_of_n_skeletons: 2,
-  planner_also_works: true,
-  planner_weight: 1,
-  homogeneous_models: true,
-  allow_model_load: false,
-  // Never build below the bar; ask instead. (The engine adds +5 for a weak planner, so 80 -> 85 on a 27B.)
-  ask_floor: 80,
-  // Was 3, and it TRUNCATED with a bare .take(): two of five decisions were invented anyway, silently.
-  // A cap that discards user consultation is not a safety limit. 6 covers a spec's realistic open set.
-  ask_max_q: 6,
-  // Asking the user is only worth anything if the OPTIONS are answerable. A run offered "SQLite / JSON /
-  // CSV" against a spec that mandated tab-separated storage: five questions asked, and on that one there
-  // was no correct click. Consulting the user with illegal choices is worse than not asking — it launders
-  // a spec violation into "the user chose it".
-  clarify_spec_bound: true,
-  // Consulting the user is pointless if the engine can overwrite the answer. The retarget writes researched
-  // guesses INTO the spec as "settled defaults, do not re-ask" — and the user's own live notes are told the
-  // spec wins, so the guess beats the human typing the truth at it. This makes those defaults subordinate,
-  // labelled, and recorded. Same family as clarify_spec_bound: nothing may edit a FIXED requirement.
-  spec_wins: true,
-  // The verifier must be able to FINISH. 3 of 9 sinks died on the worker cap of 40 mid-verify — and the run
-  // still reported a verdict. A verifier that was cut off has not verified anything, and "verified" on an
-  // interrupted check is the false green this whole formula exists to prevent. 120 is not a measured optimum;
-  // it is enough headroom that the cap stops being the thing that ends the check.
-  sink_max_turns: 120,
-  // The probe that decides whether to ASK died on 2 of 14 runs and took the entire consultation with it
-  // (conf 95, zero questions, product invented). The fleet is PARALLEL:1, so the probe queues behind the
-  // drafts it runs alongside and can burn 120s without reaching the model. 300 buys it a real chance; the
-  // engine now records WHY it failed, so this number can be judged on evidence rather than on my hunch.
-  clarity_probe_secs: 300,
-  // With no lookup tools nothing is lookupable, so an open decision goes to the USER, not to a research
-  // round that can only guess. Cost: a pause. It cannot worsen the app — it replaces an invented answer
-  // with the user's real one.
-  no_tools_means_ask: true,
-  // The same failure through the second door: an INVENTED finding may no longer mark a decision "settled".
-  // Measured: research reported "0 actually looked up, 5 counted as settled" and that lifted the meter
-  // over the floor, silencing the ask for the whole run.
-  grounded_research_only: true,
-  // Pure annotation — it only adds `validated` to an event that already fires, so it cannot change a
-  // build. Its FIRST measurement falsified the engine's own `frozen: true`: both validated contract stubs
-  // failed to parse (invalid syntax, public: []). Every worker is told to honour those stubs.
-  contract_validate: true,
-  ai_session_name: true,
-};
+// The golden formula IS the default now, so there is one preset: the golden baseline itself, one click away.
+export const GOLDEN: SwarmConfig = DEFAULTS;
 
-export type PresetId = 'golden' | 'default' | 'custom';
+export type PresetId = 'golden' | 'custom';
 
-export const PRESETS: { id: 'golden' | 'default'; label: string; values: SwarmConfig }[] = [
-  { id: 'golden', label: 'Golden formula', values: GOLDEN },
-  { id: 'default', label: 'Defaults', values: DEFAULTS },
+export const PRESETS: { id: 'golden'; label: string; values: SwarmConfig }[] = [
+  { id: 'golden', label: 'Reset to golden formula', values: DEFAULTS },
 ];
 
-/** Which preset (if any) the current config's tunable subset exactly matches. */
+/** Whether the current config's tunable subset still matches the golden baseline, or the user has diverged. */
 export function detectPreset(cfg: SwarmConfig): PresetId {
-  const matches = (p: SwarmConfig) =>
-    PRESET_KEYS.every((k) => {
-      const a = cfg[k];
-      const b = p[k];
-      // treat undefined on the config side as "not diverging" only if the preset also omits it
-      return a === b || (a == null && b == null);
-    });
-  if (matches(GOLDEN)) return 'golden';
-  if (matches(DEFAULTS)) return 'default';
-  return 'custom';
+  const matches = PRESET_KEYS.every((k) => {
+    const a = cfg[k];
+    const b = DEFAULTS[k];
+    return a === b || (a == null && b == null);
+  });
+  return matches ? 'golden' : 'custom';
 }
 
 /** A preset's values restricted to the PRESET_KEYS (never touches fleet identity / sampling). */
