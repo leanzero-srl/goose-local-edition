@@ -277,10 +277,19 @@ pub struct SwarmConfig {
     /// event (a real tool call/result, final_output, or non-empty non-thinking text) before it is cut as a
     /// thinking-only spiral. Bounds the "streams reasoning tokens forever, resets the idle watchdog, makes zero
     /// progress" pathology that `worker_timeout_secs` (an idle watchdog) cannot catch. Progress-shaped, so a
-    /// slow-but-working model survives. DEFAULT 0 = OFF (byte-identical). Set ABOVE a healthy build turn (~3x
-    /// worker_timeout_secs, e.g. 720). `GOOSE_SWARM_PROGRESS_WATCHDOG_SECS` env overrides. Never applies to the
-    /// integrate-verify sink (bounded by `sink_cap_secs`).
-    #[serde(default)]
+    /// slow-but-working model survives. `GOOSE_SWARM_PROGRESS_WATCHDOG_SECS` env overrides. Never applies to
+    /// the integrate-verify sink (bounded by `sink_cap_secs`).
+    ///
+    /// DEFAULT 900 (15 min), raised from 0/OFF on measured evidence. Only ever bites a CONTINUOUS
+    /// thinking-only stretch — a real tool call resets it — so it is safely above legitimate slow work: the
+    /// corpus analysis found productive tasks running at most ~13 min PAST the idle watchdog while emitting
+    /// tokens, and those all made periodic tool calls, so their longest thinking-only stretch was far under
+    /// 15 min. MEASURED h1-e2e-6: a test-cli task streamed 45,026 thinking chars over 26 min with only 5 tool
+    /// calls, on ONE node while the other two idled — the exact "streams reasoning forever" pathology this
+    /// bounds. A cut routes through the existing salvage path: a file-owning worker whose files are already
+    /// written is accepted as DONE (the extra thinking produces no more file), else it retries — so this
+    /// cannot ship a truncated deliverable. env overrides; 0 disables.
+    #[serde(default = "default_progress_watchdog_secs")]
     pub progress_watchdog_secs: u64,
     /// #median-slash: drop the frozen contract bundle (all modules' signature stubs) from the integrate-verify
     /// SINK's prompt. The sink RUNS the built app end-to-end via the developer extension (reads the real files);
@@ -883,6 +892,10 @@ fn default_scout_max_lookups() -> u32 {
     10
 }
 
+fn default_progress_watchdog_secs() -> u64 {
+    900 // 15 min of CONTINUOUS thinking-only; a real tool call resets it. See the field doc.
+}
+
 fn default_sink_cap_secs() -> u64 {
     // 1800s (30 min). Under fan_e2e the shards do the golden-value pass, so this bounds only a LOOPING join
     // — healthy joins cluster well under it (311-1591s measured); the one loop ran 4326s. See the field doc.
@@ -941,7 +954,7 @@ impl Default for SwarmConfig {
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
             sink_cap_secs: default_sink_cap_secs(),
-            progress_watchdog_secs: 0,
+            progress_watchdog_secs: 900,
             sink_lean_prefill: None,
             backbone_skip_confident: None,
             detail_memo: None,
