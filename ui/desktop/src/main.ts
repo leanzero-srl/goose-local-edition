@@ -2263,7 +2263,28 @@ ipcMain.handle('select-import-session-file', async () => {
 ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
   try {
     if (!workingDir || typeof workingDir !== 'string') return null;
-    const swarmDir = path.join(expandTilde(workingDir), '.swarm');
+    // The engine writes .swarm/current-run.json {run_id, dir} at the START of every run, in the directory
+    // we spawned it in. FOLLOW IT rather than guessing. Guessing "newest run-*.jsonl in this dir" had two
+    // failure modes: it re-rendered a FINISHED run from hours ago as the live panel the moment a new turn
+    // began (a 4h-old stopped run shown with its whole checklist), and it could not see a run at all once
+    // the engine redirected the build out of the spawn dir (it refuses to treat $HOME as an app tree).
+    // Absent breadcrumb = a run older than this mechanism, so fall back to the previous behaviour.
+    const spawnSwarmDir = path.join(expandTilde(workingDir), '.swarm');
+    let swarmDir = spawnSwarmDir;
+    let pinnedRunFile: string | null = null;
+    try {
+      const ptr = JSON.parse(
+        await fs.readFile(path.join(spawnSwarmDir, 'current-run.json'), 'utf8')
+      ) as { run_id?: string; dir?: string };
+      if (ptr?.dir) {
+        const dir = path.join(expandTilde(ptr.dir), '.swarm');
+        if (await fs.stat(dir).then(() => true, () => false)) swarmDir = dir;
+      }
+      if (ptr?.run_id) pinnedRunFile = `run-${ptr.run_id}.jsonl`;
+    } catch {
+      /* no breadcrumb (older run, or the engine has not written it yet) — fall through */
+    }
+
     const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
     const runFiles = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
     if (runFiles.length === 0) return null;
@@ -2278,8 +2299,11 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       })
     );
     withMtime.sort((a, b) => b.m - a.m);
-    const runFile = withMtime[0].f;
-    const mtime = withMtime[0].m;
+    // The breadcrumb names the run EXACTLY; only fall back to newest-by-mtime if that file is not there.
+    const pinned = pinnedRunFile ? withMtime.find((x) => x.f === pinnedRunFile) : undefined;
+    const chosen = pinned ?? withMtime[0];
+    const runFile = chosen.f;
+    const mtime = chosen.m;
 
     const raw = await fs.readFile(path.join(swarmDir, runFile), 'utf8').catch(() => '');
     const events = raw
@@ -2421,6 +2445,11 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
 
     return {
       runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
+      // Where this run ACTUALLY lives. Differs from workingDir whenever the engine redirected the build
+      // (it refuses to treat $HOME as an app tree). Everything that writes back into the run — the pause
+      // sentinel, the notes inbox, activity file paths — must target THIS, not the spawn dir, or it lands
+      // somewhere the engine never reads and fails silently.
+      dir: path.dirname(swarmDir),
       mtime: freshest,
       heartbeat,
       events,

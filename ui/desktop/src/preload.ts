@@ -124,6 +124,8 @@ type ElectronAPI = {
   readFile: (directory: string) => Promise<FileResponse>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
+    /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
+    dir: string;
     mtime: number;
     heartbeat: number | null;
     events: Array<Record<string, unknown>>;
