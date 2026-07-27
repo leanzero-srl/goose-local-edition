@@ -18624,6 +18624,24 @@ fn is_unsafe_app_root(dir: &Path, home: &Path) -> bool {
     home.starts_with(dir)
 }
 
+/// Point the desktop run panel at THIS run: `<spawn_dir>/.swarm/current-run.json`, written before any
+/// phase starts. Best-effort — a run must never fail because a breadcrumb could not be written.
+///
+/// `spawn_dir` is the directory the desktop handed us (the session working dir, which is what the panel
+/// polls); `run_dir` is where the run actually builds, which differs whenever resolve_app_root redirects.
+fn publish_current_run(spawn_dir: &Path, run_dir: &Path, run_id: &str) {
+    let dir = spawn_dir.join(".swarm");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let body = serde_json::json!({
+        "run_id": run_id,
+        "dir": run_dir.display().to_string(),
+        "started_at": chrono::Utc::now().to_rfc3339(),
+    });
+    let _ = std::fs::write(dir.join("current-run.json"), body.to_string());
+}
+
 /// The directory a run may treat as THE APP. Never the user's home, never an ancestor of it.
 ///
 /// The desktop spawns `goose swarm run` with the session working directory, and with no project dir chosen
@@ -18808,7 +18826,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // NEVER let the run treat $HOME as the app tree — see resolve_app_root. This also moves the process
     // cwd, so the `std::env::current_dir()` reads further down (the contracts cleanup, entry_help, the AST
     // and drift scans) all land on the build dir rather than the user's home.
-    let working_dir = resolve_app_root(std::env::current_dir()?, &run_id)?;
+    let spawn_dir = std::env::current_dir()?;
+    let working_dir = resolve_app_root(spawn_dir.clone(), &run_id)?;
+    // Tell the desktop WHICH run is current, and where it lives. The panel used to guess by picking the
+    // newest run-*.jsonl under the session's working dir, which has no notion of "current": it re-rendered a
+    // FINISHED run from hours earlier the instant a new turn started (observed: a 4h-old stopped run shown
+    // as the live panel), and it could not follow a run at all once resolve_app_root redirected the build
+    // out of the spawn dir. The breadcrumb is written in the dir the desktop passed us, so it is always
+    // where the panel is looking, and it is rewritten at the START of every run.
+    publish_current_run(&spawn_dir, &working_dir, &run_id);
     let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
     // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
     // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.

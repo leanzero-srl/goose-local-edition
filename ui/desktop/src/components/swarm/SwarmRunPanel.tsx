@@ -2215,6 +2215,10 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   className = '',
 }) => {
   const run = useSwarmRun(workingDir);
+  // The run's OWN directory. The engine redirects the build out of the spawn dir when that dir is
+  // $HOME, so everything run-relative — the pause sentinel, the notes inbox, activity file paths —
+  // must target this. Passing the session dir instead writes where the engine never looks.
+  const runDir = run.runDir ?? workingDir;
   // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per node.
   const nodeStatus = useFleetStatus();
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
@@ -2376,7 +2380,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
             // lost) and resume re-running nothing. Amber (not red) + a ‖/▶ glyph so it never reads as the
             // terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
             <button
-              onClick={() => window.electron.swarmSetPaused(workingDir, !run.pauseRequested)}
+              onClick={() => runDir && window.electron.swarmSetPaused(runDir, !run.pauseRequested)}
               className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
               style={{
                 borderRadius: 2,
@@ -2441,7 +2445,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
 
       {/* While it is actually building — not ended, and not already blocked on a clarify prompt (that one
           is a question awaiting YOUR answer; two input boxes at once would be a puzzle). */}
-      {!ended && !clarifyPending && workingDir ? <NoteBox workingDir={workingDir} /> : null}
+      {!ended && !clarifyPending && runDir ? <NoteBox workingDir={runDir} /> : null}
 
       {ended && outcome ? (
         <TerminalBanner
@@ -2460,7 +2464,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           overview={run.overview}
           phaseTodo={run.phaseTodo}
           deviceOrder={deviceOrder}
-          workingDir={workingDir}
+          workingDir={runDir}
         />
       ) : null}
 
@@ -2511,14 +2515,14 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         stale={stale}
         activity={run.activityDigests}
         plan={run.plan}
-        workingDir={workingDir}
+        workingDir={runDir}
       />
 
       <ActivityFeed
         items={verbose ? run.verboseActivity : run.activity}
         live={run.inProgress && !stale && !ended}
         verbose={verbose}
-        workingDir={workingDir}
+        workingDir={runDir}
       />
 
       {run.planLanes.length > 0 ? (

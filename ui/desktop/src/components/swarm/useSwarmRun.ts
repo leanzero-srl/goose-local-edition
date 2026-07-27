@@ -350,6 +350,10 @@ export interface RunOverview {
 export interface SwarmRunState {
   present: boolean;
   runId: string | null;
+  /** Where the run actually lives. Differs from the session working dir when the engine redirected the
+   *  build (it refuses to treat $HOME as an app tree). Anything writing BACK into the run — pause, notes,
+   *  activity file paths — must use this, or it writes where the engine never looks. */
+  runDir: string | null;
   lanes: TurnLane[];
   /** PLAN-phase generation lanes (architect drafts) — what each model produced while decomposing the app.
    *  Separate from `lanes` (build tasks) and excluded from `totals`. */
@@ -430,6 +434,7 @@ export interface SwarmRunState {
 const EMPTY: SwarmRunState = {
   present: false,
   runId: null,
+  runDir: null,
   lanes: [],
   planLanes: [],
   scoutLanes: [],
@@ -1703,6 +1708,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           summary,
           startedAt,
           clarify: data.clarify,
+          runDir: data.dir ?? null,
           mtime: data.mtime,
           heartbeat: data.heartbeat,
           pauseRequested: !!data.pauseRequested,
