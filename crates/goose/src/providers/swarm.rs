@@ -46,6 +46,19 @@ pub struct SwarmProvider {
     working_dir: Option<PathBuf>,
 }
 
+/// What the engine's OWN event log says about a run. Read after the child exits, so a failed run can be
+/// described from its record rather than from whatever text happened to be last on stderr.
+#[derive(Default)]
+struct RunTrace {
+    brief: String,
+    phase: &'static str,
+    planned: usize,
+    done: usize,
+    failed: usize,
+    in_flight: Vec<String>,
+    finished: bool,
+}
+
 impl SwarmProvider {
     fn resolve_command() -> String {
         if let Ok(cmd) = std::env::var("SWARM_COMMAND") {
@@ -79,6 +92,156 @@ impl SwarmProvider {
             }
         }
         String::new()
+    }
+
+    /// Parse the run's JSONL generically (goose does not depend on goose-swarm, and an unknown event must
+    /// never break the summary). Pure over a `&str` so it is unit-testable without a run. LAST event wins:
+    /// the engine emits `contracts` before `plan_loaded`, so no fixed phase order may be assumed.
+    fn trace_from_log(log: &str) -> RunTrace {
+        let mut t = RunTrace {
+            phase: "starting up",
+            ..Default::default()
+        };
+        let (mut dispatched, mut settled): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for line in log.lines() {
+            let Ok(e) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let id = e
+                .get("task_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            match e.get("event").and_then(Value::as_str).unwrap_or_default() {
+                "run_started" => {
+                    t.brief = e
+                        .get("prompt")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                }
+                "scouts_planned" => t.phase = "planning the research",
+                "research_completed" | "contracts" => t.phase = "planning the build",
+                "plan_loaded" => {
+                    t.planned = e
+                        .get("task_count")
+                        .and_then(Value::as_u64)
+                        .or_else(|| {
+                            e.get("tasks")
+                                .and_then(Value::as_array)
+                                .map(|a| a.len() as u64)
+                        })
+                        .unwrap_or(0) as usize;
+                    t.phase = "planning the build";
+                }
+                "task_dispatched" => {
+                    dispatched.push(id);
+                    t.phase = "building";
+                }
+                "task_completed" => {
+                    settled.push(id);
+                    match e.get("status").and_then(Value::as_str) {
+                        Some("done") | None => t.done += 1,
+                        _ => t.failed += 1,
+                    }
+                }
+                "task_failed" => {
+                    settled.push(id);
+                    t.failed += 1;
+                }
+                "smoke" | "review" | "complete_result" => t.phase = "verifying the app",
+                "run_finished" => {
+                    t.finished = true;
+                    t.phase = "finishing up";
+                }
+                _ => {}
+            }
+        }
+        dispatched.retain(|d| !settled.contains(d) && !d.is_empty());
+        dispatched.sort();
+        dispatched.dedup();
+        t.in_flight = dispatched;
+        t
+    }
+
+    /// The failure message a PERSON reads. The old one pasted the last 1500 characters of the engine's
+    /// stderr — but stderr is the human PROGRESS log (stdout is reserved for the report JSON), so the chat
+    /// got `▸ run cli → local-mihai-…`, phase banners and internal env hints such as
+    /// `GOOSE_SWARM_JUDGE=0 to disable` as the explanation for a dead build, usually starting mid-line
+    /// because the slice cuts anywhere. It answered none of the four questions a user actually has.
+    ///
+    /// The run's own record answers all of them, and the full stderr is already teed to
+    /// `.swarm/engine-stderr.log`, so nothing is lost by not re-pasting a slice of it here.
+    fn failure_summary(&self, code: Option<i32>, stderr: &str) -> String {
+        let spawn_dir = self
+            .working_dir
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        // The breadcrumb is the only link from the dir we spawned in to where the run actually built —
+        // resolve_app_root redirects out of $HOME into ~/goose-builds/<run-id>.
+        let run_dir = std::fs::read_to_string(spawn_dir.join(".swarm").join("current-run.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| {
+                let dir = v.get("dir").and_then(Value::as_str)?.to_string();
+                let id = v.get("run_id").and_then(Value::as_str)?.to_string();
+                Some((PathBuf::from(dir), id))
+            });
+
+        let (trace, log_line) = match &run_dir {
+            Some((dir, id)) => {
+                let log = dir.join(".swarm").join(format!("run-{id}.jsonl"));
+                let t = std::fs::read_to_string(&log)
+                    .map(|s| Self::trace_from_log(&s))
+                    .unwrap_or_default();
+                (t, format!("\nFull log: `{}`", log.display()))
+            }
+            None => (RunTrace::default(), String::new()),
+        };
+
+        // WHY it stopped. A signal (no exit code) is the Stop button or a kill; a non-zero code is the
+        // engine returning an error. Never guess beyond what the status actually says.
+        let why = match code {
+            None => "It was stopped (interrupted or killed).",
+            Some(c) => &format!("The engine exited with error code {c}."),
+        };
+
+        let mut out = String::from("**The build stopped before it finished.**\n\n");
+        out.push_str(why);
+        out.push_str(&format!("\nIt got as far as: {}.", trace.phase));
+        if trace.planned > 0 {
+            out.push_str(&format!(
+                "\nTasks: {} of {} finished",
+                trace.done, trace.planned
+            ));
+            if trace.failed > 0 {
+                out.push_str(&format!(", {} failed", trace.failed));
+            }
+            out.push('.');
+        }
+        if !trace.in_flight.is_empty() {
+            out.push_str(&format!(
+                "\nStill running when it stopped: {}.",
+                trace.in_flight.join(", ")
+            ));
+        }
+        if let Some((dir, _)) = &run_dir {
+            out.push_str(&format!("\n\nWhat it wrote is in `{}`.", dir.display()));
+        }
+        out.push_str(&log_line);
+        // Only when the run left no record at all is stderr worth showing — and then just a short tail, so
+        // a spawn failure (the engine never started) is still diagnosable.
+        if run_dir.is_none() {
+            let tail: String = stderr.lines().rev().take(8).collect::<Vec<_>>().join("\n");
+            let tail: String = tail.lines().rev().collect::<Vec<_>>().join("\n");
+            if !tail.trim().is_empty() {
+                out.push_str(&format!(
+                    "\n\nThe engine left no run record. Last output:\n\n```\n{tail}\n```"
+                ));
+            }
+        }
+        out
     }
 
     /// Format a `RunReport` JSON blob into a concise assistant summary. Parsed generically (goose does not
@@ -442,9 +605,7 @@ impl Provider for SwarmProvider {
             Self::summarize_report(&stdout)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let tail: String = stderr.chars().rev().take(1500).collect::<String>();
-            let tail: String = tail.chars().rev().collect();
-            format!("**Swarm run failed.**\n\n{tail}")
+            self.failure_summary(output.status.code(), &stderr)
         };
 
         let message = Message::assistant().with_text(summary);
@@ -452,5 +613,83 @@ impl Provider for SwarmProvider {
             message,
             ProviderUsage::new(self.name.clone(), Usage::default()),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Event shapes taken from a REAL killed run (~/goose-builds/swarm-.../run-*.jsonl): `plan_loaded`
+    /// carries `task_count`, `task_completed` carries `status` + `task_id`.
+    const REAL_SHAPE: &str = r#"{"event":"run_started","prompt":"Build a Python CLI expense tracker","working_dir":"/x"}
+{"event":"scouts_planned","lenses":["a","b"]}
+{"event":"research_completed"}
+{"event":"contracts"}
+{"event":"plan_loaded","task_count":12,"plan_confidence":88}
+{"event":"task_dispatched","task_id":"store"}
+{"event":"task_dispatched","task_id":"cli"}
+{"event":"task_dispatched","task_id":"models"}
+{"event":"task_completed","task_id":"cli","status":"done"}
+{"event":"judge_verdict","task_id":"store"}
+"#;
+
+    #[test]
+    fn trace_reads_how_far_the_run_actually_got() {
+        let t = SwarmProvider::trace_from_log(REAL_SHAPE);
+        assert_eq!(t.planned, 12);
+        assert_eq!(t.done, 1);
+        assert_eq!(t.failed, 0);
+        assert_eq!(t.phase, "building");
+        // Dispatched but never settled — what was in flight when it stopped.
+        assert_eq!(t.in_flight, vec!["models".to_string(), "store".to_string()]);
+        assert!(!t.finished);
+        assert!(t.brief.contains("expense tracker"));
+    }
+
+    /// A garbage or partial line must never break the summary — the log is read while it is still being
+    /// written, so the last line is routinely truncated.
+    #[test]
+    fn trace_tolerates_garbage_and_a_truncated_last_line() {
+        let t = SwarmProvider::trace_from_log(
+            "not json\n{\"event\":\"plan_loaded\",\"task_count\":3}\n{\"event\":\"task_comp",
+        );
+        assert_eq!(t.planned, 3);
+        assert_eq!(t.done, 0);
+    }
+
+    #[test]
+    fn a_failed_task_is_counted_as_failed_not_done() {
+        let t = SwarmProvider::trace_from_log(
+            "{\"event\":\"plan_loaded\",\"task_count\":2}\n\
+             {\"event\":\"task_completed\",\"task_id\":\"a\",\"status\":\"failed\"}\n\
+             {\"event\":\"task_completed\",\"task_id\":\"b\",\"status\":\"done\"}",
+        );
+        assert_eq!(t.done, 1);
+        assert_eq!(t.failed, 1);
+        assert!(t.in_flight.is_empty());
+    }
+
+    /// The whole point: the message must NOT be the engine's progress log. It answers what happened, how
+    /// far it got, and where the files are — and never pastes phase banners or env-var hints.
+    #[test]
+    fn failure_summary_is_a_verdict_not_a_log_dump() {
+        let p = SwarmProvider {
+            name: "swarm".into(),
+            command: "goose".into(),
+            working_dir: Some(std::env::temp_dir().join("goose_no_such_run_dir")),
+        };
+        let noisy = "▶  EXECUTE   subtasks run IN PARALLEL across the fleet\n\
+                     idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)\n\
+                     ▸ run cli → local-mihai-qwopus3.6-27b-coder-mt";
+        let out = p.failure_summary(None, noisy);
+        assert!(out.starts_with("**The build stopped before it finished.**"));
+        assert!(out.contains("stopped (interrupted or killed)"));
+        // No breadcrumb here, so a SHORT tail is allowed as the last resort — but never the old 1500-char
+        // mid-line slice presented as the explanation.
+        assert!(out.contains("left no run record"));
+        assert!(!out.contains("GOOSE_SWARM_JUDGE=0 to disable\n▸ run cli") || out.len() < 900);
+        let exited = p.failure_summary(Some(2), "");
+        assert!(exited.contains("error code 2"));
     }
 }
