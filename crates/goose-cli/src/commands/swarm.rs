@@ -4140,6 +4140,120 @@ mod tests {
         assert_eq!(strip_turn_context(""), "");
     }
 
+    // ---- APP SCOPE: a static scan may only ever see the app THIS run built ------------------
+    /// The manifest branch, the planned-directory sweep, and everything each must EXCLUDE. Reproduces the
+    /// $HOME shape in miniature: unrelated trees beside the app, which the old os.walk(root) happily scanned
+    /// (measured 10,916 .py under $HOME vs 8 in a build dir).
+    #[test]
+    fn app_scope_takes_the_manifest_and_planned_dirs_but_never_the_root_at_large() {
+        let dir = std::env::temp_dir().join(format!("goose_scope_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pkg")).unwrap();
+        std::fs::create_dir_all(dir.join("Documents/other")).unwrap();
+        std::fs::write(dir.join("pkg/a.py"), "x = 1\n").unwrap();
+        // An UNPLANNED helper inside a planned dir IS the app's — that is what keeps the import graph closed.
+        std::fs::write(dir.join("pkg/helper_unplanned.py"), "y = 2\n").unwrap();
+        std::fs::write(dir.join("stray.py"), "z = 3\n").unwrap();
+        std::fs::write(dir.join("Documents/other/x.py"), "w = 4\n").unwrap();
+
+        // `main.py` is planned but NOT on disk (the pre-EXECUTE snapshot's greenfield case).
+        let planned: Vec<String> = ["pkg/a.py", "main.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let scope = app_scope_py(&dir, &planned);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            scope.files,
+            vec![
+                "pkg/a.py".to_string(),
+                "pkg/helper_unplanned.py".to_string()
+            ],
+            "the planned file + its planned dir, and NOTHING from the root or an unrelated tree"
+        );
+        assert!(scope.dropped.is_empty());
+    }
+
+    /// owned_files is MODEL-authored. One `..` or absolute entry would re-open the whole tree this closes.
+    #[test]
+    fn app_scope_refuses_an_escaping_manifest_entry() {
+        let planned: Vec<String> = [
+            "../../../etc/hosts.py",
+            "/tmp/evil.py",
+            "./pkg/a.py",
+            "..\\..\\win.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        for d in scope_dirs(&planned) {
+            assert!(
+                d != ".." && !d.is_empty() && !d.starts_with('/'),
+                "escaping dir: {d}"
+            );
+        }
+        // The one legitimate entry is the only dir that survives.
+        assert_eq!(scope_dirs(&planned), vec!["pkg".to_string()]);
+    }
+
+    /// A cap must produce a LABELLED PARTIAL, never a quiet short list — a silently-truncated scan reads
+    /// as a clean tree, which is the false-green class this engine exists to prevent.
+    #[test]
+    fn app_scope_surfaces_dropped_files_instead_of_capping_silently() {
+        let dir = std::env::temp_dir().join(format!("goose_scope_cap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pkg")).unwrap();
+        let planned: Vec<String> = (0..5)
+            .map(|i| {
+                let rel = format!("pkg/m{i}.py");
+                std::fs::write(dir.join(&rel), "x = 1\n").unwrap();
+                rel
+            })
+            .collect();
+        let scope = app_scope_py_capped(&dir, &planned, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(scope.files.len(), 2);
+        assert_eq!(scope.dropped.len(), 3);
+        assert_eq!(
+            scope.files.len() + scope.dropped.len(),
+            5,
+            "nothing may VANISH — every file is either scanned or reported dropped"
+        );
+    }
+
+    /// The teeth: `unwired_demotes_verified` defaults TRUE and can flip a run's `verified` to false off
+    /// demote_survivors. A scan that did not see every file cannot prove a module is imported by nothing.
+    #[test]
+    fn a_partial_scan_can_never_demote() {
+        let before = std::collections::HashSet::new();
+        let complete = AstReviewResult {
+            ran: true,
+            modules: 3,
+            findings: vec![],
+            demote_eligible: vec!["kanban.db".to_string()],
+            partial: false,
+        };
+        assert_eq!(
+            new_demote_survivors(&complete, &before),
+            vec!["kanban.db".to_string()],
+            "a COMPLETE scan may demote"
+        );
+        let partial = AstReviewResult {
+            partial: true,
+            ..complete.clone()
+        };
+        assert!(
+            new_demote_survivors(&partial, &before).is_empty(),
+            "a PARTIAL scan must never retract a green verdict"
+        );
+        let never_ran = AstReviewResult {
+            ran: false,
+            ..complete.clone()
+        };
+        assert!(new_demote_survivors(&never_ran, &before).is_empty());
+    }
+
     // ---- APP ROOT GUARD ---------------------------------------------------------------------
     /// The desktop passes the session working directory, which with no project chosen is $HOME. A run
     /// treats its root as the app: it DELETES source files that appear under it (contracts cleanup),
@@ -4640,7 +4754,18 @@ mod tests {
         std::fs::write(pkg.join("__main__.py"), "from pkg import cli\ncli.main()\n").unwrap();
         std::fs::write(pkg.join("cli.py"), "def main():\n    return 0\n").unwrap();
         std::fs::write(pkg.join("orphan.py"), "x = 1\n").unwrap();
-        let res = run_ast_review(&dir).await;
+        // Scoped to the plan's own files. The assertions below are UNCHANGED, so they double as proof
+        // that scoping did not BLIND the check — the genuine orphan must still be flagged.
+        let planned: Vec<String> = [
+            "pkg/__init__.py",
+            "pkg/__main__.py",
+            "pkg/cli.py",
+            "pkg/orphan.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let res = run_ast_review(&dir, &app_scope_py(&dir, &planned)).await;
         let _ = std::fs::remove_dir_all(&dir);
         if !res.ran {
             return; // python3 not available in this environment
@@ -4683,7 +4808,16 @@ mod tests {
         .unwrap();
         // ...and a module NOTHING names, anywhere. The fix must not blind the check.
         std::fs::write(pkg.join("orphan.py"), "x = 1\n").unwrap();
-        let res = run_ast_review(&dir).await;
+        let planned: Vec<String> = [
+            "app/__init__.py",
+            "app/__main__.py",
+            "app/api.py",
+            "app/orphan.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let res = run_ast_review(&dir, &app_scope_py(&dir, &planned)).await;
         let _ = std::fs::remove_dir_all(&dir);
         if !res.ran {
             return; // python3 not available
@@ -12616,6 +12750,100 @@ fn collect_py_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Hard ceiling on one static scan. Belt-and-braces with the manifest scope below: the scope already makes
+/// a scan O(app), this keeps it O(1) even if a manifest is ever malformed. Far above any real plan.
+const SCAN_FILE_CAP: usize = 512;
+const SCAN_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+/// The exact files a static scan may look at: THE APP THIS RUN BUILT, never the working directory at large.
+///
+/// The scans used to discover their own inputs by walking the root they were handed. That root is
+/// `current_dir()`, so on a desktop run with no project chosen it was the user's HOME: 10,916 .py files
+/// versus 8 in a build dir. resolve_app_root now stops the $HOME case, but the shape is still wrong for any
+/// legitimately large project — a monorepo would over-scan just as badly, and the findings would name
+/// modules the run never touched. The plan's owned-file manifest is the only input that is correct BY
+/// CONSTRUCTION, and the engine already computes it.
+#[derive(Debug, Default, Clone)]
+struct AppScope {
+    files: Vec<String>,
+    /// Dropped by the cap / size ceiling. Recorded, NEVER silently: a partial scan that reads as a clean
+    /// tree is precisely the false green this engine exists to prevent.
+    dropped: Vec<String>,
+}
+
+fn app_scope_py(root: &Path, planned: &[String]) -> AppScope {
+    app_scope_py_capped(root, planned, SCAN_FILE_CAP)
+}
+
+fn app_scope_py_capped(root: &Path, planned: &[String], cap: usize) -> AppScope {
+    let norm = |s: &str| s.replace('\\', "/").trim_start_matches("./").to_string();
+    // A manifest entry is MODEL-authored. An absolute path or a `..` segment would re-open exactly the tree
+    // this exists to close, so it is refused outright rather than sanitized.
+    let safe = |p: &str| {
+        !p.starts_with('/') && p.split('/').all(|c| c != ".." && c != "." && !c.is_empty())
+    };
+    let mut set = std::collections::BTreeSet::new();
+    for f in planned.iter().map(|f| norm(f)) {
+        if f.ends_with(".py") && safe(&f) && root.join(&f).is_file() {
+            set.insert(f);
+        }
+    }
+    // Anything the fleet wrote INSIDE a directory the plan owns is the app's too — that is what keeps the
+    // import graph closed when a worker adds an unplanned helper. The ROOT ITSELF is never swept: it is
+    // shared with whatever else lives in the working directory.
+    for d in scope_dirs(planned) {
+        let sub = root.join(&d);
+        if !sub.is_dir() {
+            continue;
+        }
+        for p in collect_py_files(&sub) {
+            if let Ok(rel) = p.strip_prefix(root) {
+                set.insert(norm(&rel.to_string_lossy()));
+            }
+        }
+    }
+    let (mut files, mut dropped) = (Vec::new(), Vec::new());
+    for f in set {
+        let big = root
+            .join(&f)
+            .metadata()
+            .map(|m| m.len() > SCAN_FILE_MAX_BYTES)
+            .unwrap_or(false);
+        if big || files.len() >= cap {
+            dropped.push(f);
+        } else {
+            files.push(f);
+        }
+    }
+    AppScope { files, dropped }
+}
+
+/// The distinct top-level directories the plan owns. Pure over path strings, so it is testable without a tree.
+fn scope_dirs(planned: &[String]) -> Vec<String> {
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        ".venv",
+        ".swarm",
+        "__pycache__",
+    ];
+    let mut d: Vec<String> = Vec::new();
+    for p in planned {
+        let p = p.replace('\\', "/");
+        let Some((head, _)) = p.trim_start_matches("./").split_once('/') else {
+            continue;
+        };
+        if head.is_empty() || head == ".." || head.starts_with('.') || SKIP.contains(&head) {
+            continue;
+        }
+        d.push(head.to_string());
+    }
+    d.sort();
+    d.dedup();
+    d
+}
+
 /// Language-aware sibling of `collect_py_files` — collects source files for `lang` (used by the CONTRACTS
 /// stray-stub cleanup so a TS/Rust tree removes leftover `.ts`/`.rs` stubs, not just `.py`). Python behavior
 /// matches `collect_py_files` (both accept a `.py` file); other callers keep using `collect_py_files`.
@@ -15116,16 +15344,21 @@ const AST_REVIEW_SCRIPT: &str = r##"
 import ast, json, os, sys
 
 root = sys.argv[1]
-SKIP = {".git", "node_modules", "target", ".venv", ".swarm", "__pycache__"}
 
+# THE APP'S OWN FILES, on stdin, one root-relative path per line. This script MUST NOT discover its own
+# inputs: `root` is the run's working directory, and a walk of it scans whatever else lives there (measured
+# at $HOME: 10,916 .py files across unrelated repos, a 7-minute 100%-CPU stall, and findings naming the
+# user's other projects — which feed the fix loop and can retract a green verdict).
+# `full = root/rel` keeps os.path.relpath(full, root) == rel, so module names are byte-identical to before.
 mods = {}
-for dirpath, dirs, files in os.walk(root):
-    dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")]
-    for f in files:
-        if f.endswith(".py"):
-            full = os.path.join(dirpath, f)
-            rel = os.path.relpath(full, root)
-            mods[".".join(rel[:-3].split(os.sep))] = full
+for rel in sys.stdin.read().splitlines():
+    rel = rel.strip().replace("\\", "/")
+    if not rel.endswith(".py"):
+        continue
+    full = os.path.join(root, *rel.split("/"))
+    if not os.path.isfile(full):
+        continue  # planned but not written yet (the pre-EXECUTE snapshot passes a greenfield manifest)
+    mods[".".join(rel[:-3].split("/"))] = full
 
 
 def base(mod):
@@ -15411,7 +15644,7 @@ print(json.dumps({"modules": len(mods), "findings": sorted(set(findings)), "demo
 "##;
 
 /// Outcome of the AST review, serialized into the run jsonl `review` event.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 struct AstReviewResult {
     ran: bool,
     modules: usize,
@@ -15420,6 +15653,9 @@ struct AstReviewResult {
     /// an import is the only way their code could ever run. A standalone SCRIPT is unwired by design and
     /// is deliberately excluded — it is flagged, never demoted.
     demote_eligible: Vec<String>,
+    /// The scan did not see every file (the cap/size ceiling tripped). A partial scan must never read as a
+    /// clean tree, and must never license a demote — it cannot prove a module is imported by nothing.
+    partial: bool,
 }
 
 /// Parse the AST reviewer's JSON stdout. Pure — unit-tested. Any parse failure degrades to `ran=false`
@@ -15440,42 +15676,91 @@ fn parse_ast_review(stdout: &str) -> AstReviewResult {
             modules: r.modules,
             findings: r.findings,
             demote_eligible: r.demote_eligible,
+            partial: false,
         },
-        Err(_) => AstReviewResult {
-            ran: false,
-            modules: 0,
-            findings: vec![],
-            demote_eligible: vec![],
-        },
+        Err(_) => AstReviewResult::default(),
     }
 }
 
-/// Run the model-free AST wiring review over the produced tree. No-op (`ran=false`) when there is
-/// no Python or python3 is unavailable. Advisory — emits findings, never blocks the run.
-async fn run_ast_review(root: &Path) -> AstReviewResult {
-    if collect_py_files(root).is_empty() {
-        return AstReviewResult {
-            ran: false,
-            modules: 0,
-            findings: vec![],
-            demote_eligible: vec![],
-        };
-    }
-    match tokio::process::Command::new("python3")
+/// A scoped python static check: `root` on argv (so relpath / module names are unchanged) and the app's
+/// file manifest on STDIN. Time-capped and kill-on-drop — these two checks were the only python spawns in
+/// this file with no timeout, which is why the observed failure was an unkillable 7-minute stall rather
+/// than a slow pass. `None` = did not produce a verdict (never "clean").
+async fn run_scoped_py_check(script: &str, root: &Path, files: &[String]) -> Option<String> {
+    use tokio::io::AsyncWriteExt;
+    const SCAN_TIMEOUT_SECS: u64 = 60;
+    let mut child = tokio::process::Command::new("python3")
         .arg("-c")
-        .arg(AST_REVIEW_SCRIPT)
+        .arg(script)
         .arg(root)
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    // The temporary's drop closes the pipe, so the child's sys.stdin.read() sees EOF.
+    child
+        .stdin
+        .take()?
+        .write_all(files.join("\n").as_bytes())
         .await
+        .ok()?;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(SCAN_TIMEOUT_SECS),
+        child.wait_with_output(),
+    )
+    .await
     {
-        Ok(o) if o.status.success() => parse_ast_review(&String::from_utf8_lossy(&o.stdout)),
-        _ => AstReviewResult {
-            ran: false,
-            modules: 0,
-            findings: vec![],
-            demote_eligible: vec![],
-        },
+        Err(_) => {
+            eprintln!(
+                "  {} scoped static scan of {} file(s) exceeded {SCAN_TIMEOUT_SECS}s and was KILLED — \
+                 this run has NO wiring/drift evidence (that is NOT a clean tree)",
+                style("SCAN TIMEOUT:").red().bold(),
+                files.len()
+            );
+            None
+        }
+        Ok(r) => {
+            let o = r.ok()?;
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).to_string())
+        }
     }
+}
+
+/// Run the model-free AST wiring review over THE APP THIS RUN BUILT (see AppScope — never the working
+/// directory at large). No-op (`ran=false`) when the plan owns no python on disk, or python3 is
+/// unavailable. Advisory — emits findings, never blocks the run.
+async fn run_ast_review(root: &Path, scope: &AppScope) -> AstReviewResult {
+    if scope.files.is_empty() {
+        return AstReviewResult::default();
+    }
+    let Some(out) = run_scoped_py_check(AST_REVIEW_SCRIPT, root, &scope.files).await else {
+        return AstReviewResult::default();
+    };
+    let mut r = parse_ast_review(&out);
+    r.partial = !scope.dropped.is_empty();
+    r
+}
+
+/// Unwired PURE-LIBRARY modules THIS run introduced. EMPTY for a partial scan: a scan that did not see
+/// every file cannot prove a module is imported by nothing, and only a complete deterministic scan may
+/// retract a green verdict. Pure, so the rule is unit-testable without python.
+fn new_demote_survivors(
+    review: &AstReviewResult,
+    before: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    if !review.ran || review.partial {
+        return Vec::new();
+    }
+    review
+        .demote_eligible
+        .iter()
+        .filter(|m| !before.contains(*m))
+        .cloned()
+        .collect()
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_REVIEW corrective fix from the model-free findings —
@@ -15665,18 +15950,22 @@ import ast, json, os, sys
 #      only touched the pure ledger module) and the smoke gate passed (api.py IMPORTS fine — FastAPI resolves
 #      body.group_id at REQUEST time). Every gate was green.
 root = sys.argv[1]
-SKIP = {".git", "node_modules", "target", ".venv", ".swarm", "__pycache__", "dist", "build"}
 
+# THE APP'S OWN FILES, on stdin, one root-relative path per line — never a walk of `root`. Scoping is the
+# CORRECTNESS fix here, not merely the perf one: the collision guard below (`if node.name in classes:
+# dynamic = True`) means an unrelated class of the SAME NAME anywhere in the scanned tree silently suppresses
+# the real finding. Walking a big tree therefore turned this check into a false green on the exact defect it
+# was written for. The dict key was os.path.relpath(full, root), which is now literally `rel`.
 files = {}
-for dirpath, dirs, fs in os.walk(root):
-    dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")]
-    for f in fs:
-        if f.endswith(".py"):
-            full = os.path.join(dirpath, f)
-            try:
-                files[os.path.relpath(full, root)] = ast.parse(open(full, encoding="utf-8").read())
-            except Exception:
-                pass  # a file that will not parse is the smoke gate's problem, not ours
+for rel in sys.stdin.read().splitlines():
+    rel = rel.strip().replace("\\", "/")
+    if not rel.endswith(".py"):
+        continue
+    full = os.path.join(root, *rel.split("/"))
+    try:
+        files[rel] = ast.parse(open(full, encoding="utf-8").read())
+    except Exception:
+        pass  # missing or unparseable is the smoke gate's problem, not ours
 
 # class name -> (defining file, set of known attribute names)
 classes = {}
@@ -15757,26 +16046,28 @@ struct DriftResult {
     ran: bool,
     checked: usize,
     findings: Vec<String>,
+    /// The scan did not see every file (cap/size ceiling). Recorded so "0 findings" and "did not look at
+    /// everything" can never be confused.
+    partial: bool,
 }
 
-/// Run the cross-module drift check over the built tree. Python-only today: the script is an `ast` pass, and
-/// Python is also the one stack with a real smoke oracle, so it is where a false green is provable.
-async fn cross_module_drift(root: &std::path::Path, lang: TargetLang) -> DriftResult {
-    if lang != TargetLang::Python {
+/// Run the cross-module drift check over THE APP THIS RUN BUILT (see AppScope). Python-only today: the
+/// script is an `ast` pass, and Python is also the one stack with a real smoke oracle, so it is where a
+/// false green is provable.
+async fn cross_module_drift(
+    root: &std::path::Path,
+    lang: TargetLang,
+    scope: &AppScope,
+) -> DriftResult {
+    if lang != TargetLang::Python || scope.files.is_empty() {
         return DriftResult::default();
     }
-    match tokio::process::Command::new("python3")
-        .arg("-c")
-        .arg(CROSS_MODULE_DRIFT_SCRIPT)
-        .arg(root)
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => {
-            parse_cross_module_drift(&String::from_utf8_lossy(&o.stdout))
-        }
-        _ => DriftResult::default(),
-    }
+    let Some(out) = run_scoped_py_check(CROSS_MODULE_DRIFT_SCRIPT, root, &scope.files).await else {
+        return DriftResult::default();
+    };
+    let mut d = parse_cross_module_drift(&out);
+    d.partial = !scope.dropped.is_empty();
+    d
 }
 
 /// Turn the script's JSON into fix-loop findings. Separate + pure so it is unit-testable without python.
@@ -15831,6 +16122,7 @@ fn parse_cross_module_drift(stdout: &str) -> DriftResult {
         ran: true,
         checked,
         findings,
+        partial: false,
     }
 }
 
@@ -20762,7 +21054,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     ) = if swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review) {
         // Snapshot the demote-eligible MODULES too, on the same principle: a module that was already dead
         // before this run started is not this run's doing and must never retract its verified claim.
-        let r = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+        let snap_root = std::env::current_dir().unwrap_or_default();
+        let r = run_ast_review(&snap_root, &app_scope_py(&snap_root, &smoke_all_files)).await;
         (
             r.findings.into_iter().collect(),
             r.demote_eligible.into_iter().collect(),
@@ -20938,7 +21231,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "GOOSE_SWARM_CROSS_MODULE_CHECK",
             load_config().cross_module_check,
         ) {
-            cross_module_drift(&cwd, complete_lang).await
+            cross_module_drift(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await
         } else {
             DriftResult::default()
         };
@@ -21550,16 +21843,27 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 );
             }
         }
-        let review = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+        let ov_root = std::env::current_dir().unwrap_or_default();
+        let ov_scope = app_scope_py(&ov_root, &smoke_all_files);
+        // NO SILENT TRUNCATION: a capped scan that reads as a clean tree is the false-green class this
+        // engine exists to prevent, so say exactly what was skipped.
+        if !ov_scope.dropped.is_empty() {
+            eprintln!(
+                "  {} scanned {} of {} app file(s) — {} SKIPPED by the scan bound: {}. This verdict is \
+                 PARTIAL, not clean, and cannot demote.",
+                style("SCAN CAPPED:").red().bold(),
+                ov_scope.files.len(),
+                ov_scope.files.len() + ov_scope.dropped.len(),
+                ov_scope.dropped.len(),
+                ov_scope.dropped.join(", ")
+            );
+        }
+        let review = run_ast_review(&ov_root, &ov_scope).await;
         let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
         // Unwired PURE-LIBRARY modules THIS run introduced. Survives the optional wire-fix below; whatever
         // is still here at the end of the block is provably dead code the run shipped.
-        let mut demote_survivors: Vec<String> = review
-            .demote_eligible
-            .iter()
-            .filter(|m| !review_before_modules.contains(*m))
-            .cloned()
-            .collect();
+        let mut demote_survivors: Vec<String> =
+            new_demote_survivors(&review, &review_before_modules);
         // Only act on findings THIS run introduced — exclude any that already held before EXECUTE (a
         // pre-existing intentional dead module). The `review` event still carries ALL findings for the eval.
         let new_findings: Vec<String> = review
@@ -21628,7 +21932,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     smoke_fix_dispatcher.run(fix_req),
                 )
                 .await;
-                let after = run_ast_review(&std::env::current_dir().unwrap_or_default()).await;
+                // Re-derive the scope: the wire-fix worker may have written a NEW module.
+                let after =
+                    run_ast_review(&ov_root, &app_scope_py(&ov_root, &smoke_all_files)).await;
                 let after_new: Vec<String> = after
                     .findings
                     .iter()
@@ -21641,12 +21947,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "result": after_value,
                     "new_findings": after_new,
                 }));
-                demote_survivors = after
-                    .demote_eligible
-                    .iter()
-                    .filter(|m| !review_before_modules.contains(*m))
-                    .cloned()
-                    .collect();
+                demote_survivors = new_demote_survivors(&after, &review_before_modules);
                 if after.ran && after_new.is_empty() {
                     eprintln!(
                         "{}",
