@@ -222,7 +222,7 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
               </span>
             ) : null}
             {m.kind !== 'ok' ? (
-              <span className="text-[10px]" style={{ color: m.kind === 'malformed' ? color : 'var(--text-secondary)' }}>
+              <span className="text-[10px]" style={{ color: m.kind === 'malformed' ? color : 'var(--color-text-secondary)' }}>
                 {m.outcome}
               </span>
             ) : null}
@@ -260,23 +260,43 @@ const CallRow: React.FC<{ call: SwarmCall; defaultOpen?: boolean }> = ({ call, d
 
 // The worker's full narration, rendered as readable PROSE (not mono), capped with a Show-all escape hatch.
 // In developer mode it starts fully expanded (no cap).
-const ReasoningBlock: React.FC<{ text: string; forceOpen?: boolean; label?: string }> = ({
-  text,
-  forceOpen,
-  label,
-}) => {
+//
+// LIVE generations FOLLOW the output. While a node is still generating, a top-anchored clip shows the
+// OLDEST text and hides the part being written — you watch a node think and read a stale paragraph. When
+// live the box scrolls itself to the newest line instead, so the thing moving is the thing you can see.
+const ReasoningBlock: React.FC<{
+  text: string;
+  forceOpen?: boolean;
+  label?: string;
+  live?: boolean;
+}> = ({ text, forceOpen, label, live }) => {
   const [expandedState, setExpanded] = useState(false);
   const expanded = expandedState || !!forceOpen;
   const words = text.split(/\s+/).filter(Boolean).length;
   const big = text.length > 1200;
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!live) return;
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [text, live]);
+  const capped = !expanded && big;
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
-        {label || 'Reasoning'}
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          {label || 'Reasoning'}
+        </span>
+        {live ? (
+          <span className="text-[9px] font-bold uppercase tracking-[0.08em]" style={{ color: CALL_OK }}>
+            live
+          </span>
+        ) : null}
       </div>
       <div
-        className={`text-xs text-text-primary break-words leading-relaxed bg-background-primary border border-border-primary px-2 py-1.5 ${!expanded && big ? 'max-h-[22rem] overflow-hidden' : ''}`}
-        style={{ borderRadius: 3 }}
+        ref={bodyRef}
+        className={`text-[13px] text-text-primary break-words bg-background-primary border border-border-primary px-2.5 py-2 ${capped ? (live ? 'max-h-[22rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden') : ''}`}
+        style={{ borderRadius: 3, lineHeight: 1.65 }}
       >
         {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
             arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
@@ -460,6 +480,7 @@ const LaneRow: React.FC<{
               {reasoning && (
                 <ReasoningBlock
                   text={reasoning}
+                  live={live}
                   forceOpen={dev || live}
                   // Developer: name the model so it's unmistakable WHOSE generation this is.
                   label={dev ? `${live ? 'Generating' : 'Reasoning'} · ${lane.model ?? lane.device}` : undefined}
@@ -467,7 +488,7 @@ const LaneRow: React.FC<{
               )}
               {calls.length > 0 ? (
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
                     Tool calls · {lane.toolCalls ?? calls.length}
                   </div>
                   <div
@@ -981,32 +1002,68 @@ export const confColorVsFloor = (v: number, floor: number | null): string => {
   return v >= floor - 20 ? AMBER : STATUS_COLOR.error;
 };
 
-// One labelled sub-bar (agreement / spec-clarity): a solid fill in the value's threshold color over a
-// bordered track (not a faded tint), so the LOWER (binding) signal visibly reads as the culprit.
-const ConfBar: React.FC<{ label: string; value: number }> = ({ label, value }) => (
-  <div className="flex items-center gap-2 text-[11px]">
-    <span className="w-20 shrink-0 text-text-secondary">{label}</span>
-    <div
-      className="flex-1 h-1.5 bg-background-primary border border-border-primary overflow-hidden"
-      style={{ borderRadius: 2 }}
-    >
+// One signal (agreement / spec-clarity). The value leads at full weight in its own colour, the track is a
+// real 6px bar with a SOLID fill (never a tint), and the engine's reason sits directly under it at full
+// measure instead of being indented into a narrow gutter.
+//
+// The fill is keyed to the ENGINE'S ASK FLOOR, not a UI-invented 70/40 band: `final = min(agreement,
+// specClarity)`, so a signal under the floor is precisely the one that made goose ask. Colouring it against
+// a different threshold than the headline is how the headline went amber while its own cause read green.
+const ConfSignal: React.FC<{
+  label: string;
+  value: number;
+  reason?: string | null;
+  binding: boolean;
+  askFloor?: number | null;
+}> = ({ label, value, reason, binding, askFloor = null }) => {
+  const col = confColorVsFloor(value, askFloor);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-text-primary">
+          {label}
+        </span>
+        {binding ? (
+          <span
+            className="text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-px text-background-primary"
+            style={{ backgroundColor: col, borderRadius: 2 }}
+          >
+            binding
+          </span>
+        ) : null}
+        <span
+          className="ml-auto text-[17px] font-extrabold leading-none tabular-nums"
+          style={{ color: col }}
+        >
+          {value}
+        </span>
+      </div>
       <div
-        className="h-full"
-        style={{ width: `${Math.max(0, Math.min(100, value))}%`, backgroundColor: confColor(value) }}
-      />
+        className="h-1.5 bg-background-primary border border-border-primary overflow-hidden"
+        style={{ borderRadius: 2 }}
+      >
+        <div
+          className="h-full"
+          style={{
+            width: `${Math.max(0, Math.min(100, value))}%`,
+            backgroundColor: col,
+            transition: 'width 500ms ease-out',
+          }}
+        />
+      </div>
+      {reason ? (
+        <div className="text-[11px] leading-snug text-text-secondary">{reason}</div>
+      ) : null}
     </div>
-    <span className="w-6 text-right tabular-nums" style={{ color: confColor(value) }}>
-      {value}
-    </span>
-  </div>
-);
+  );
+};
 
 // Radial arc gauge for the headline plan confidence — a 270° sweep in the value's threshold color over a
 // neutral track, the big number centered. Solid saturated stroke, sharp/flat (no soft glow or faded tint):
 // the visual anchor of the confidence panel. Pure SVG, theme-aware via CSS vars.
 const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | null }> = ({
   value,
-  size = 76,
+  size = 104,
   askFloor = null,
 }) => {
   const v = Math.max(0, Math.min(100, Math.round(value)));
@@ -1017,14 +1074,14 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
   const fill = (v / 100) * sweep * circ;
   const col = confColorVsFloor(v, askFloor);
   return (
-    <svg width={size} height={size} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`plan confidence ${v} of 100`}>
+    <svg width={size} height={size} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`plan confidence ${v} of 100${askFloor != null ? `, your bar is ${askFloor}` : ''}`}>
       <circle
         cx="40"
         cy="40"
         r={r}
         fill="none"
-        stroke="var(--border-primary)"
-        strokeWidth="7"
+        stroke="var(--color-border-primary)"
+        strokeWidth="9"
         strokeDasharray={`${track} ${circ}`}
         transform="rotate(135 40 40)"
       />
@@ -1034,17 +1091,35 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         r={r}
         fill="none"
         stroke={col}
-        strokeWidth="7"
+        strokeWidth="9"
         strokeDasharray={`${fill} ${circ}`}
         transform="rotate(135 40 40)"
         style={{ transition: 'stroke-dasharray 500ms ease-out' }}
       />
+      {/* YOUR BAR, drawn on the ring. Without it the colour is an unexplained hue; with it the number is
+          visibly above or below the line the engine actually judged it against. Solid, never a tint. */}
+      {askFloor != null ? (
+        <rect
+          x={40 + r - 6.5}
+          y="38.6"
+          width="13"
+          height="2.8"
+          fill="var(--color-text-primary)"
+          transform={`rotate(${135 + (Math.max(0, Math.min(100, askFloor)) / 100) * 270} 40 40)`}
+        />
+      ) : null}
       <text
         x="40"
         y="39"
         textAnchor="middle"
         dominantBaseline="middle"
-        style={{ fill: col, fontSize: 23, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
+        style={{
+          fill: col,
+          fontSize: 27,
+          fontWeight: 800,
+          letterSpacing: -0.6,
+          fontVariantNumeric: 'tabular-nums',
+        }}
       >
         {v}
       </text>
@@ -1056,7 +1131,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         y="55.5"
         textAnchor="middle"
         dominantBaseline="middle"
-        style={{ fill: col, fontSize: 9, fontWeight: 600, letterSpacing: 0.5, opacity: 0.85 }}
+        style={{ fill: col, fontSize: 9, fontWeight: 700, letterSpacing: 0.5 }}
       >
         /100
       </text>
@@ -1135,56 +1210,70 @@ const ConfidenceBreakdownBody: React.FC<{
       ? 'Answer the questions below — each resolves an open decision. Goose can also research the undecided points.'
       : 'Researching the undecided points to firm up the spec.';
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-3">
+    <div className="space-y-4">
+      <div className="flex items-center gap-4">
         <ConfGauge value={conf.final} askFloor={askFloor} />
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-text-secondary">Plan confidence</div>
-          <div className="text-[12px] font-medium mt-0.5" style={{ color: confColorVsFloor(conf.final, askFloor) }}>
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+            Plan confidence
+          </div>
+          <div
+            className="text-[15px] font-bold leading-snug mt-1"
+            style={{ color: confColorVsFloor(conf.final, askFloor) }}
+          >
             {confVerdict(conf.final, askFloor)}
           </div>
+          {askFloor != null ? (
+            <div className="text-[11px] text-text-secondary mt-1">
+              Your bar is <span className="font-bold text-text-primary">{askFloor}</span> — below it, goose
+              asks you instead of guessing.
+            </div>
+          ) : null}
         </div>
       </div>
-      <div className="space-y-2">
-        <div>
-          <ConfBar label="Agreement" value={conf.agreement} />
-          {conf.agreementReason ? (
-            <div className="text-[10px] text-text-secondary mt-0.5 pl-[5.5rem]">
-              {conf.agreementReason}
-            </div>
-          ) : null}
-        </div>
-        <div>
-          <ConfBar label="Spec clarity" value={conf.specClarity} />
-          {conf.specClarityReason ? (
-            <div className="text-[10px] text-text-secondary mt-0.5 pl-[5.5rem]">
-              {conf.specClarityReason}
-            </div>
-          ) : null}
-        </div>
+      {/* Full border, never a left rail. The two signals are one group because the LOWER of them IS the
+          headline score — showing them apart hides that relationship. */}
+      <div
+        className="border border-border-primary px-3 py-3 space-y-4"
+        style={{ borderRadius: 3 }}
+      >
+        <ConfSignal
+          label="Agreement"
+          value={conf.agreement}
+          reason={conf.agreementReason}
+          binding={conf.agreement <= conf.specClarity}
+          askFloor={askFloor}
+        />
+        <ConfSignal
+          label="Spec clarity"
+          value={conf.specClarity}
+          reason={conf.specClarityReason}
+          binding={conf.specClarity < conf.agreement}
+          askFloor={askFloor}
+        />
       </div>
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
           What&apos;s holding it back
         </div>
         {showDecisions ? (
           <ul className="space-y-0.5">
             {conf.openDecisions.map((d, i) => (
-              <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+              <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
                 <span className="text-text-secondary shrink-0">·</span>
                 <span>{d}</span>
               </li>
             ))}
           </ul>
         ) : (
-          <div className="text-[11px] text-text-primary">{holdingBack}</div>
+          <div className="text-[12px] leading-relaxed text-text-primary">{holdingBack}</div>
         )}
       </div>
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-text-secondary mb-1">
+        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
           What would raise it
         </div>
-        <div className="text-[11px] text-text-primary">{raiseIt}</div>
+        <div className="text-[12px] leading-relaxed text-text-primary">{raiseIt}</div>
       </div>
       {trail && trail.length >= 2 ? (
         <div className="flex items-center gap-2">
@@ -1592,7 +1681,7 @@ const PhaseTodoRow: React.FC<{
         ) : null}
         <span
           className="shrink-0 font-medium"
-          style={{ color: item.state === 'pending' ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+          style={{ color: item.state === 'pending' ? 'var(--color-text-secondary)' : 'var(--color-text-primary)' }}
         >
           {item.label}
         </span>
@@ -1902,7 +1991,7 @@ const ClarifyPrompt: React.FC<{
             {showPlan ? (
               <ul className="px-2 pb-2 space-y-0.5">
                 {plan.map((t) => (
-                  <li key={t.id} className="text-[11px] text-text-primary flex gap-1.5">
+                  <li key={t.id} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
                     <span className="text-text-secondary shrink-0">·</span>
                     <InlineMarkdown content={t.description || t.id} />
                   </li>
@@ -2064,7 +2153,7 @@ const RunOverview: React.FC<{
               </div>
               <ul className="space-y-0.5">
                 {overview.features.map((f, i) => (
-                  <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+                  <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
                     <span className="text-text-secondary shrink-0">·</span>
                     <span>{f}</span>
                   </li>
@@ -2121,7 +2210,7 @@ const RunOverview: React.FC<{
           <div className={hdr}>What&apos;s next</div>
           <ul className="space-y-0.5">
             {overview.next.map((n, i) => (
-              <li key={i} className="text-[11px] text-text-primary flex gap-1.5">
+              <li key={i} className="text-[12px] leading-relaxed text-text-primary flex gap-1.5">
                 <span className="text-text-secondary shrink-0">→</span>
                 <span>{n}</span>
               </li>
@@ -2419,7 +2508,7 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
                 ? { borderRadius: 2, borderColor: '#b14cff', color: '#b14cff' }
                 : verbose
                   ? { borderRadius: 2, borderColor: '#2e8bff', color: '#2e8bff' }
-                  : { borderRadius: 2, borderColor: 'var(--border-primary)', color: 'var(--text-secondary)' }
+                  : { borderRadius: 2, borderColor: 'var(--color-border-primary)', color: 'var(--color-text-secondary)' }
             }
             title={
               dev
