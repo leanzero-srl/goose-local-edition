@@ -4140,6 +4140,43 @@ mod tests {
         assert_eq!(strip_turn_context(""), "");
     }
 
+    // ---- APP ROOT GUARD ---------------------------------------------------------------------
+    /// The desktop passes the session working directory, which with no project chosen is $HOME. A run
+    /// treats its root as the app: it DELETES source files that appear under it (contracts cleanup),
+    /// COPIES it whole (entry_help), and WALKS it (AST + drift scans). MEASURED at $HOME: 10,916 .py
+    /// scanned vs 8 in a build dir, a 7-minute stall before any dispatch, and ~638 GB of attempted copy.
+    #[test]
+    fn home_and_its_ancestors_are_never_a_valid_app_root() {
+        let home = Path::new("/Users/mihaiperdum");
+        // The exact desktop default, and every ancestor of it.
+        for bad in ["/Users/mihaiperdum", "/Users", "/"] {
+            assert!(
+                is_unsafe_app_root(Path::new(bad), home),
+                "{bad} must never be treated as the app tree"
+            );
+        }
+        // A real project dir — including the build dir we redirect INTO — stays untouched.
+        for ok in [
+            "/Users/mihaiperdum/goose-builds/swarm-20260727-190000000",
+            "/Users/mihaiperdum/Projects/goose",
+            "/tmp/scratch",
+            "/Users/someone-else",
+        ] {
+            assert!(
+                !is_unsafe_app_root(Path::new(ok), home),
+                "{ok} is a legitimate project root and must be left alone"
+            );
+        }
+    }
+
+    /// The redirect target must itself be a SAFE root, or resolve_app_root would recurse into the same bug.
+    #[test]
+    fn the_redirect_target_is_itself_a_safe_root() {
+        let home = Path::new("/Users/mihaiperdum");
+        let target = home.join("goose-builds").join("swarm-20260727-190000000");
+        assert!(!is_unsafe_app_root(&target, home));
+    }
+
     // ---- ORPHAN / STUB FILE DETECTION -------------------------------------------------------
     #[test]
     fn orphan_source_files_flags_only_the_unplanned() {
@@ -18580,6 +18617,50 @@ fn strip_turn_context(goal: &str) -> &str {
     }
 }
 
+/// True when `dir` is the user's home directory or an ancestor of it (`/`, `/Users`, …). Pure over paths
+/// so it is unit-testable without touching the process environment. `home.starts_with(dir)` is exactly
+/// "dir is home or contains home", which is the whole rule.
+fn is_unsafe_app_root(dir: &Path, home: &Path) -> bool {
+    home.starts_with(dir)
+}
+
+/// The directory a run may treat as THE APP. Never the user's home, never an ancestor of it.
+///
+/// The desktop spawns `goose swarm run` with the session working directory, and with no project dir chosen
+/// that is the user's HOME. Everything in this file is written on the premise that the working directory
+/// IS the app tree, and against $HOME each of those becomes a real hazard — all three MEASURED.
+/// The CONTRACTS stray-stub cleanup `remove_file`s every source file that appears under the root during
+/// the phase, so a download or an editor autosave in ~ would be deleted with the error discarded.
+/// `entry_help` copies the whole tree into a TempDir with no depth or byte budget (~638 GB from $HOME).
+/// The AST wiring and cross-module scans walk it — 10,916 .py under $HOME versus 8 in a build dir — which
+/// stalled 7 minutes at 100% CPU BEFORE any task dispatched, produced findings naming the user's unrelated
+/// repos, and let a same-named class in some other repo silently suppress a real drift finding.
+/// So scaffold into a dedicated per-run build dir instead — exactly what a headless run does. The process
+/// cwd is moved too, because the sites above read `std::env::current_dir()` directly; redirecting only the
+/// returned path would leave every one of them still pointed at $HOME.
+fn resolve_app_root(cwd: PathBuf, run_id: &str) -> Result<PathBuf> {
+    let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+    else {
+        return Ok(cwd);
+    };
+    if !is_unsafe_app_root(&cwd, &home) {
+        return Ok(cwd);
+    }
+    let dir = home.join("goose-builds").join(run_id);
+    std::fs::create_dir_all(&dir)?;
+    std::env::set_current_dir(&dir)?;
+    eprintln!(
+        "{} {} is your home directory, not a project — building in {} instead.\n  \
+         (a run treats its working directory as the app: it cleans, copies and scans it)",
+        style("WORKING DIR:").yellow().bold(),
+        cwd.display(),
+        style(dir.display()).cyan()
+    );
+    Ok(dir)
+}
+
 pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // The goal is the spec the user wrote — not the desktop's per-turn scaffolding in front of it. Strip it
     // ONCE, at the entry, so every downstream consumer (the research question's short_goal, spec_clarity's
@@ -18723,10 +18804,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     }
 
     let json = opts.output_format == "json";
-    let working_dir = std::env::current_dir()?;
-    let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
-
     let run_id = format!("swarm-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S%3f"));
+    // NEVER let the run treat $HOME as the app tree — see resolve_app_root. This also moves the process
+    // cwd, so the `std::env::current_dir()` reads further down (the contracts cleanup, entry_help, the AST
+    // and drift scans) all land on the build dir rather than the user's home.
+    let working_dir = resolve_app_root(std::env::current_dir()?, &run_id)?;
+    let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
     // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
     // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
     let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
