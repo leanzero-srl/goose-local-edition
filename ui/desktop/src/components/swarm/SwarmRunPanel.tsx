@@ -9,6 +9,8 @@ import {
 import {
   useSwarmRun,
   classifyCall,
+  collapseRepeats,
+  substantiveChunk,
   resolveActivityPath,
   type TurnStatus,
   type TurnLane,
@@ -301,7 +303,7 @@ const ReasoningBlock: React.FC<{
         {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
             arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
             `__init__.py` reads as bold syntax, so the file list rendered as **init**.py. */}
-        <StructuredContent content={text} />
+        <StructuredContent content={collapseRepeats(text)} />
       </div>
       {big && (
         <button
@@ -739,10 +741,13 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
   return (
     <div
       ref={ref}
-      className="mt-0.5 font-mono text-text-secondary break-words whitespace-pre-wrap"
-      style={{ maxHeight: lines * 15, lineHeight: '15px', overflow: 'hidden' }}
+      className="mt-0.5 text-text-secondary break-words whitespace-pre-wrap"
+      style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden' }}
     >
-      {shown || text}
+      {/* Model-authored text arrives with `backticks` and **bold**; rendered raw it showed its own
+          asterisks. InlineMarkdown gives code fragments a chip so they read differently from the prose,
+          and tolerates a half-streamed marker (an unclosed ** is just text). */}
+      <InlineMarkdown content={shown || text} />
     </div>
   );
 };
@@ -819,13 +824,23 @@ const FleetStrip: React.FC<{
         // channel while the text channel emits tiny fragments (".", " with", "(group"); showing last_text first
         // made the line flicker one word at a time. So: substantive narration (reasoning) → the readable
         // thinking run → only then a text fragment → processing marker.
-        const think = lane?.lastThinking?.trim();
+        // A looping model repeats the same block; collapse it so the box says '⟲ ×3' instead of
+        // pasting it three times (measured: a scout tail was one paragraph repeated 3x).
+        const think = collapseRepeats(lane?.lastThinking?.trim() ?? '');
+        // SUBSTANCE GATE. The text channel emits single-token fragments ("m", ".", " with"), so an
+        // ungated fallback renders a busy node as one meaningless letter — observed live: a node
+        // mid-generation displaying just "m". A fragment is not worth a line; fall through to the recent
+        // activity or the processing marker instead. Same test the expanded reasoning already applies.
+        const substantive = substantiveChunk;
         const liveGen =
-          lane?.reasoning?.trim() ||
+          substantive(lane?.reasoning) ||
           (think && (lane?.thinkingChars ?? 0) > 0 ? `💭 ${think}` : '') ||
-          lane?.lastText?.trim() ||
-          (lane?.recent && lane.recent.length > 0 ? lane.recent[lane.recent.length - 1] : '') ||
-          (lane?.phase === 'processing' ? 'processing the prompt…' : '');
+          substantive(lane?.lastText) ||
+          (lane?.recent && lane.recent.length > 0
+            ? substantive(lane.recent[lane.recent.length - 1])
+            : '') ||
+          (lane?.phase === 'processing' ? 'processing the prompt…' : '') ||
+          (lane?.status === 'running' ? 'generating…' : '');
         // The full generation for the expandable detail: the whole narration + the recent thinking run.
         const fullGen = [
           lane?.fullReasoning?.trim(),
