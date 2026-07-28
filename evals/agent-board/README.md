@@ -116,6 +116,37 @@ edit, so planning and verification overhead is the entire cost. That is why `bui
 The lesson the board is built around: at the sample sizes anyone will sit through, most differences
 are not differences. Saying so is the whole point.
 
+### Running Claude through the SWARM ENGINE (the fair comparison)
+
+Single-agent cloud vs local swarm compares harnesses, not models. To get engine-vs-engine, an
+OpenAI-compatible gateway (LiteLLM) fronts Bedrock and the swarm points at it — `swarm.rs:19175`
+sets `LMSTUDIO_HOST` from `swarm.endpoint`, and `lmstudio` is an OpenAI-format client, so no engine
+change is needed.
+
+```bash
+litellm --config ~/.config/agent-board/litellm-bedrock.yaml --port 4000
+python3 runner/proxy_fidelity.py            # MUST print GATEWAY TRUSTED first
+python3 runner/swarm_profile.py --apply cloud-haiku --nodes 3
+GOOSE_SWARM_REQUIRE_SERVABLE=0 python3 runner/episode.py --target swarm --label cloud-swarm-haiku-3node ...
+python3 runner/swarm_profile.py --restore   # always
+```
+
+Three traps, each of which silently produced a wrong answer before being found:
+
+- **Never round-trip `config.yaml` through pyyaml.** goose reads it with serde_yaml (YAML 1.2) where
+  `research_planning: on` is the STRING `"on"`. pyyaml is YAML 1.1, where `on` is a BOOLEAN, so a
+  load/dump cycle writes `true`, the whole swarm block fails to deserialise, and the engine falls
+  back to BAKED DEFAULTS with no error printed. `swarm_profile.py` edits text surgically instead.
+- **A run builds its pool from `lms ps`, not from `config.devices`.** `pool show` reads the config,
+  but the run asks the endpoint for the LIVE model ids — so the gateway must answer to those exact
+  names, and `GOOSE_SWARM_REQUIRE_SERVABLE=0` is needed to get past the servability check.
+- **Gate the gateway before trusting it.** `proxy_fidelity.py` sends the same tool-calling request
+  through the gateway and native Bedrock and requires the same tool and arguments. A gateway that
+  mangled tool calls would cripple Claude and flatter the local fleet — a fake nobody would notice.
+
+Because of the shadow aliases, the event stream's `model=` field is the swarm's own alias, not the
+backend. **The card reports the entrant LABEL, never that field.**
+
 ### Known gaps
 
 - No watchdog. If the machine sleeps or a supervisor dies, resume is manual (`board.py` re-run,
