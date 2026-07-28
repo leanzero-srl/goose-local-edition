@@ -60,6 +60,7 @@ def main() -> int:
     ap.add_argument("--entrant", help="run only this entrant, e.g. local-single")
     ap.add_argument("--out", type=Path, default=BOARD / "runs")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--allow-busy", action="store_true")
     args = ap.parse_args()
 
     cfg = load_board(args.config)
@@ -83,7 +84,7 @@ def main() -> int:
             results.append(run_episode(
                 fixture, tick["target"], tick["rep"], args.out,
                 provider=tick.get("provider"), model=tick.get("model"), label=tick["name"],
-                env_file=tick.get("env_file")))
+                env_file=tick.get("env_file"), allow_busy=args.allow_busy))
         except Exception as exc:  # a bad tick must never kill the board
             print(f"[tick FAILED] {tick['name']} rep{tick['rep']}: {exc}", flush=True)
 
