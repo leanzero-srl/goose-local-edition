@@ -1,0 +1,26 @@
+id: ledgerfold-hard
+vertical: repair
+difficulty: hard
+
+target_test: "tests/test_ledgerfold.py::test_ties_round_away_from_zero"
+
+protected:
+  - tests/test_ledgerfold.py
+
+controls:
+  reference: 1.0      # ROUND_HALF_EVEN -> ROUND_HALF_UP, staying in Decimal
+  broken_float: 0.0   # fixes the ties via float arithmetic, loses precision on large amounts
+  broken_noop: 0.0    # changes nothing
+
+# WHY THIS IS THE HARD RUNG.
+#
+# The seed rounds ties to even, so 0.125 becomes 12 cents instead of 13. The failing test names the
+# symptom. The trap is HOW you fix it: the intuitive repair is to leave Decimal and do
+# `floor(float(amount) * 100 + 0.5)`, which gets both ties right and silently destroys precision on
+# amounts past float's 15-16 significant digits — caught by test_large_amounts_stay_exact.
+#
+# So a correct repair requires knowing that money is not a float, which is a different kind of
+# knowledge from reading a traceback. Both the ties AND the exactness invariant must survive, and
+# the two pull in opposite directions for anyone reaching for the obvious fix.
+#
+# Synthetic, no git history, nothing upstream to retrieve.
