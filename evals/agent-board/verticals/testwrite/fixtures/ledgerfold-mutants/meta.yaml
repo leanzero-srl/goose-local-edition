@@ -1,0 +1,37 @@
+id: ledgerfold-mutants
+vertical: testwrite
+difficulty: hard
+
+protected:
+  - ledgerfold/money.py
+  - ledgerfold/invoice.py
+  - ledgerfold/__init__.py
+
+mutants:
+  - m01_ties_to_even
+  - m02_wrong_places
+  - m03_abs_amount
+  - m04_from_minor_sign
+  - m05_remainder_to_last
+  - m06_remainder_off_by_1
+  - m07_sign_dropped
+  - m08_no_ways_check
+  - m09_total_drops_last
+  - m10_allocate_first
+
+controls:
+  reference: 1.0
+  broken_trivial: 0.0
+  broken_partial: 0.3    # measured: a happy-path suite kills only 3 of 10
+
+# THE HARD RUNG FOR TEST-WRITING.
+#
+# slugkit-mutants has six obvious mutants and frontier models kill all six, so it cannot rank them.
+# These ten are subtle and spread across two modules: rounding direction, the default scale, sign
+# handling on negatives, the inverse of from_minor, which end of a split gets the remainder, an
+# off-by-one in that split, a dropped guard, a dropped line in the total, and an allocate that uses
+# the first line instead of the invoice.
+#
+# A happy-path suite kills almost none of them. Catching them requires testing negatives, ties,
+# boundaries and the round trip — which is exactly the difference between a suite that documents
+# behaviour and one that would actually catch a regression.
