@@ -9,6 +9,12 @@
         "shiftlog-medium",
         "ledgerfold-hard"
       ]
+    },
+    "testwrite": {
+      "probe": "testwrite",
+      "fixtures": [
+        "slugkit-mutants"
+      ]
     }
   },
   "_baselines": "Model ids verified live on this account: GET bedrock.us-east-1/foundation-models plus a real converse call returning tokens for each. Credentials come from a file OUTSIDE the repo and never enter an episode record.",
