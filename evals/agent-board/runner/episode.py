@@ -300,6 +300,7 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     (episode_dir / "stdout.txt").write_text(stdout or "")
     (episode_dir / "stderr.txt").write_text(stderr or "")
 
+    crashed = exit_code not in (0, None) and not timed_out
     graded_root = effective_workspace(workspace)
     if graded_root != workspace:
         (episode_dir / "relocated.txt").write_text(str(graded_root))
@@ -321,9 +322,15 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
         "wall_secs": wall,
         "exit_code": exit_code,
         "timed_out": timed_out,
-        "crashed": exit_code not in (0, None) and not timed_out,
+        "crashed": crashed,
         "graded_root": str(graded_root),
-        "score": probe["score"],
+        # A run that never terminated did not DELIVER, however correct the tree it left behind.
+        # Scoring the artifact anyway would let an agent that spins for an hour tie one that
+        # finished in thirty seconds. The probe verdict is kept alongside, so "the code was right
+        # but the run never stopped" stays visible instead of being silently rounded to failure.
+        "score": 0.0 if (timed_out or crashed) else probe["score"],
+        "artifact_score": probe["score"],
+        "scored_zero_for": ("timeout" if timed_out else "crash") if (timed_out or crashed) else None,
         "probe": probe,
         "claim": claim,
         "false_green": bool(claim.get("claimed_pass")) and probe["score"] == 0.0,
