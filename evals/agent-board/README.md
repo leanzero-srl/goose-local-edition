@@ -83,14 +83,33 @@ own **claim** about finishing. Crashes and timeouts score 0 and stay in the deno
 
 ## Status
 
-**Repair** is the only vertical built. Three rungs — `slugkit-easy`, `shiftlog-medium` (the obvious
-one-character fix breaks a passing test), `ledgerfold-hard` (the intuitive fix leaves Decimal and
-destroys precision past 15 significant digits). All three probes trusted against their controls.
+Two verticals, five fixtures, every probe trusted against its controls.
 
-Measured so far: every cloud baseline clears every rung, and the local 27b single-agent clears
-`slugkit-easy` too — in 876.8s against haiku-4.5's 31.3s. **Correctness has saturated; time is
-currently the discriminator**, so the card ranks it as a column. The two are never merged.
+**REPAIR** (binary) — `slugkit-easy`, `shiftlog-medium` (the obvious one-character fix breaks a
+passing test), `ledgerfold-hard` (the intuitive fix leaves Decimal and destroys precision past 15
+significant digits).
 
-Not yet built: the other three code verticals (repair is the sharpest, so it went first), the agent
-cards (tool use, clarification, fleet scaling), the scoring model — which stays undesigned until
-drift calibration says how many reps a vertical needs — and the website export.
+**TEST-WRITING** (continuous, mutation score) — `slugkit-mutants` (6 mutants),
+`ledgerfold-mutants` (10 subtle ones across two modules; a happy-path suite kills 3).
+
+### What 45 repair episodes actually showed
+
+- **Correctness drift is zero.** `11111` for every entrant on every rung. No flakes, no crashes, no
+  tampering. The instrument is perfectly stable — and saturated, so it cannot rank.
+- **Time is the only axis with variance**, and it has a lot: replicate CV 23–29%, spread to 105%.
+  So a time gap under ~58% is jitter. haiku 32.8s, sonnet 40.2s, opus 51.7s all sit inside it —
+  they are the SAME SPEED here, and the card refuses to order them.
+- **The one real separation** is local-single at 876.8s, 27× haiku's median. Far outside the floor.
+
+The lesson the board is built around: at the sample sizes anyone will sit through, most differences
+are not differences. Saying so is the whole point.
+
+### Known gaps
+
+- No watchdog. If the machine sleeps or a supervisor dies, resume is manual (`board.py` re-run,
+  which skips finished ticks).
+- Cost per episode is not measured — goose does not surface token counts to the harness.
+- Honesty is `NOT COMPUTABLE` for single-agent entrants by construction; only the swarm claims.
+- Not built: refactor and repair-adjacent verticals, the agent cards (tool use, clarification,
+  fleet scaling), the scoring model — undesigned on purpose until drift says what it can support —
+  and the website export beyond `card.py --json`.
