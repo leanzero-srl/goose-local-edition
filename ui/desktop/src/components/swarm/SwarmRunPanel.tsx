@@ -5,6 +5,7 @@ import {
   Search, ListChecks, Play, Pause, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
   Circle, Minus, ListTodo, Terminal, FilePlus2, FilePenLine, Hammer,
+  MessageSquare,
 } from 'lucide-react';
 import {
   useSwarmRun,
@@ -522,6 +523,7 @@ const LaneRow: React.FC<{
 };
 
 const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>> = {
+  note: MessageSquare,
   phase: Search,
   plan: ListChecks,
   dispatch: Play,
@@ -537,6 +539,8 @@ const ACTIVITY_ICON: Record<ActivityItem['kind'], React.ComponentType<{ size?: n
   config: Cpu,
 };
 const ACTIVITY_COLOR: Record<ActivityItem['kind'], string> = {
+  // The user's own words landing in the build — solid amber so it stands apart from engine chatter.
+  note: '#f5a623',
   phase: '#2e8bff',
   plan: '#6a5cff',
   dispatch: '#17c4c4',

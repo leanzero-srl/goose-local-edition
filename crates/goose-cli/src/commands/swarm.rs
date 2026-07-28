@@ -665,8 +665,13 @@ pub struct SwarmConfig {
     #[serde(default)]
     pub persona: bool,
     /// Let the user add background notes WHILE a build runs (the run is 2+ hours; today the only input is the
-    /// one-shot clarify ask). Notes land in .swarm/inbox/ and are folded into the NEXT dispatched worker, so a
-    /// live worker is never disturbed. Advisory only — the spec always wins. OFF by default.
+    /// one-shot clarify ask). Notes land in .swarm/inbox/ and are folded into EVERY worker dispatched from
+    /// then until the run ends — never into one already in flight, so a live worker is never disturbed.
+    /// (This comment used to say "the NEXT dispatched worker", which was never what the code did and would
+    /// be worse if it were: with N nodes dispatching at once, "the next worker" is a lottery among unrelated
+    /// tasks.) Scoped to the run, so a note cannot leak into a later build in the same directory, and capped
+    /// so an inbox cannot tax every prompt. Each delivery is recorded as a `user_notes_delivered` event.
+    /// Advisory only — the spec always wins. ON by default.
     /// GOOSE_SWARM_USER_NOTES env overrides.
     #[serde(default)]
     pub user_notes: bool,
@@ -3832,7 +3837,7 @@ mod tests {
         std::fs::write(inbox.join("ignore.txt"), "not a note").unwrap();
         std::fs::write(inbox.join("1700000004-d.json"), r#"{"text":"   "}"#).unwrap();
 
-        let out = read_user_notes(dir.path());
+        let out = read_user_notes(dir.path(), 0).block;
         let first = out.find("prefer stdlib").expect("first note present");
         let second = out.find("already seeded").expect("second note present");
         assert!(
@@ -3849,10 +3854,10 @@ mod tests {
     #[test]
     fn no_inbox_means_no_notes_and_a_byte_identical_prompt() {
         let dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(read_user_notes(dir.path()), "");
+        assert_eq!(read_user_notes(dir.path(), 0).block, "");
         // An empty inbox is the same as none.
         std::fs::create_dir_all(dir.path().join(".swarm").join("inbox")).unwrap();
-        assert_eq!(read_user_notes(dir.path()), "");
+        assert_eq!(read_user_notes(dir.path(), 0).block, "");
     }
 
     // ---- LEARN & REFLECT --------------------------------------------------------------------
@@ -4138,6 +4143,99 @@ mod tests {
         let unclosed = "<turn-context>\n<current-time>2026</current-time>\nBuild an app.";
         assert_eq!(strip_turn_context(unclosed), unclosed);
         assert_eq!(strip_turn_context(""), "");
+    }
+
+    // ---- USER NOTES: run scoping + budget ----------------------------------------------------
+    /// THE CROSS-RUN LEAK. Nothing ever cleared `.swarm/inbox` (run_swarm clears only `.swarm/prereview`),
+    /// so before the cutoff every note ever written to a project dir was injected into every worker of every
+    /// FUTURE run there — under a header claiming it was "added while this build was running". Yesterday's
+    /// "the DB is already seeded" silently steered today's fresh build.
+    #[test]
+    fn a_note_from_a_previous_run_is_not_delivered_to_this_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let inbox = dir.path().join(".swarm").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(
+            inbox.join("1700000000000.json"),
+            r#"{"text":"STALE: the DB is already seeded"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            inbox.join("1800000000000.json"),
+            r#"{"text":"FRESH: prefer stdlib over new deps"}"#,
+        )
+        .unwrap();
+
+        let d = read_user_notes(dir.path(), 1_750_000_000_000);
+        assert!(
+            d.block.contains("FRESH"),
+            "this run's note must be delivered"
+        );
+        assert!(
+            !d.block.contains("STALE"),
+            "a previous run's note must NEVER ride this run: {}",
+            d.block
+        );
+        assert_eq!(d.ids, vec!["1800000000000.json".to_string()]);
+
+        // The note is SCOPED OUT, never destroyed — a crash must not lose one, and an older cutoff sees it.
+        assert!(read_user_notes(dir.path(), 0).block.contains("STALE"));
+        assert!(inbox.join("1700000000000.json").is_file());
+    }
+
+    /// A hand-placed file with no epoch prefix is the deliberate escape hatch for a standing instruction:
+    /// it has no run to belong to, so it is always in scope.
+    #[test]
+    fn a_standing_note_without_a_timestamp_is_always_delivered() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let inbox = dir.path().join(".swarm").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(
+            inbox.join("standing-orders.json"),
+            r#"{"text":"always write tests first"}"#,
+        )
+        .unwrap();
+        let d = read_user_notes(dir.path(), i64::MAX);
+        assert!(d.block.contains("always write tests first"));
+    }
+
+    /// The block rides EVERY dispatch for the rest of the run, so an unbounded inbox taxes every prompt on a
+    /// fleet whose own worker prompt warns that large context degrades quality. Keep the NEWEST, report the
+    /// rest — a silently-trimmed block would make the user think a note landed when it did not.
+    #[test]
+    fn the_notes_block_is_bounded_and_reports_what_it_dropped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let inbox = dir.path().join(".swarm").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        for i in 0..40 {
+            std::fs::write(
+                inbox.join(format!("18000000000{i:02}.json")),
+                serde_json::json!({ "text": format!("note {i} {}", "x".repeat(100)) }).to_string(),
+            )
+            .unwrap();
+        }
+        let d = read_user_notes(dir.path(), 0);
+        assert!(
+            d.block.chars().count() < 2500,
+            "block must stay bounded, got {}",
+            d.block.chars().count()
+        );
+        assert!(d.dropped > 0, "dropped notes must be COUNTED, never silent");
+        assert_eq!(
+            d.ids.len() + d.dropped,
+            40,
+            "every in-scope note is either delivered or reported dropped — none may vanish"
+        );
+        // The NEWEST guidance is what survives.
+        assert!(d.block.contains("note 39"));
+    }
+
+    #[test]
+    fn note_epoch_ms_reads_the_desktops_filename_shape() {
+        assert_eq!(note_epoch_ms("1785213270712.json"), Some(1_785_213_270_712));
+        assert_eq!(note_epoch_ms("1700000002-b.json"), Some(1_700_000_002));
+        assert_eq!(note_epoch_ms("standing-orders.json"), None);
+        assert_eq!(note_epoch_ms(".json"), None);
     }
 
     // ---- APP SCOPE: a static scan may only ever see the app THIS run built ------------------
@@ -9839,6 +9937,14 @@ pub struct GooseAgentDispatcher {
     detail_memo_on: bool,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
+    /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
+    /// contained, and the scheduler's `task_dispatched` fires before the prompt is built — so without this
+    /// there is no way to record that a user's note was delivered. Measured: a note was written, the engine
+    /// read it correctly, and NOTHING in the run log or the UI could show it had happened.
+    events: Arc<dyn EventSink>,
+    /// Notes older than this belong to a PREVIOUS run in the same directory (nothing ever cleared the inbox).
+    /// Epoch-ms of this run's start.
+    notes_since_ms: i64,
 }
 
 impl GooseAgentDispatcher {
@@ -9851,6 +9957,8 @@ impl GooseAgentDispatcher {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
+        events: Arc<dyn EventSink>,
+        notes_since_ms: i64,
         worker_max_turns: u32,
         worker_extensions: Vec<ExtensionConfig>,
         planner_model: String,
@@ -9876,6 +9984,8 @@ impl GooseAgentDispatcher {
             provider,
             session_manager,
             permission_manager,
+            events,
+            notes_since_ms,
             working_dir,
             worker_max_turns,
             worker_extensions,
@@ -16190,7 +16300,35 @@ async fn validate_contract_bundle(bundle: &str) -> Option<serde_json::Value> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
-/// QUEUED USER NOTES (GOOSE_SWARM_USER_NOTES, default OFF).
+/// Ceiling on the user-notes block. It rides EVERY dispatch for the rest of the run, so an unbounded inbox
+/// silently taxes every worker prompt. Mirrors `dep_budget`, which caps injected dependency APIs.
+const USER_NOTES_BUDGET_CHARS: usize = 1500;
+
+/// What the user's queued notes actually contributed to ONE dispatch.
+#[derive(Debug, Default, Clone)]
+struct DeliveredNotes {
+    /// The prompt block. Empty = nothing was injected.
+    block: String,
+    /// Inbox filenames actually delivered — the join key between what the user typed and what a worker saw.
+    ids: Vec<String>,
+    /// Notes in scope but cut by the char budget. Reported, never silent.
+    dropped: usize,
+}
+
+/// The epoch-ms prefix of an inbox filename (the desktop writes `${Date.now()}.json`). `None` when there is
+/// no leading digit run — a hand-placed `standing-orders.json` is deliberately never scoped out.
+fn note_epoch_ms(file_name: &str) -> Option<i64> {
+    let digits: String = file_name
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok()
+}
+
+/// QUEUED USER NOTES (GOOSE_SWARM_USER_NOTES, baked ON in the struct default).
 ///
 /// A swarm run is 2+ hours. Today the ONLY user input channel is the one-shot clarify ask at planning time —
 /// after that the user watches the whole build with no way to help, even while SEEING it go wrong. Mihai:
@@ -16203,41 +16341,79 @@ async fn validate_contract_bundle(bundle: &str) -> Option<serde_json::Value> {
 /// through the channel that already exists. It also makes each write atomic and gives a natural id.
 ///
 /// Notes are never deleted (a crash must not lose one) and never block. Re-reading is idempotent: a note is
-/// CONTEXT that rides every subsequent dispatch, exactly as the pillars do.
-fn read_user_notes(root: &std::path::Path) -> String {
+/// CONTEXT that rides every SUBSEQUENT DISPATCH OF THIS RUN, exactly as the pillars do — it is not handed to
+/// one arbitrary worker. (The config field's doc used to claim "the NEXT dispatched worker"; that was wrong
+/// and is now corrected there. One-shot would be the WORSE semantics: with N nodes dispatching concurrently,
+/// "the next worker" is a lottery among unrelated tasks, so the user would silently steer one of them while
+/// believing they had steered the build.)
+///
+/// SCOPED TO THIS RUN by `since_ms`. Nothing ever cleared `.swarm/inbox` — run_swarm clears only
+/// `.swarm/prereview` — so before this, every note ever written to a project dir was injected into every
+/// worker of every FUTURE run there, forever, under a header claiming it was "added while this build was
+/// running". Yesterday's "the DB is already seeded" silently steered today's fresh build. A timestamp cutoff
+/// fixes that as a pure predicate: no rename, no move, no torn state if the process dies mid-dispatch, and a
+/// note is never lost — only out of scope. A filename with no parseable epoch prefix is ALWAYS delivered,
+/// which is the deliberate escape hatch for a hand-placed standing note.
+fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
     let dir = root.join(".swarm").join("inbox");
     let Ok(rd) = std::fs::read_dir(&dir) else {
-        return String::new(); // no inbox => no notes => byte-identical
+        return DeliveredNotes::default(); // no inbox => no notes => byte-identical prompt
     };
     let mut notes: Vec<(String, String)> = rd
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            // Out of scope for THIS run: an older run's note left in a reused project dir.
+            if note_epoch_ms(&name).is_some_and(|ms| ms < since_ms) {
+                return None;
+            }
             let raw = std::fs::read_to_string(e.path()).ok()?;
             let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
             let text = v.get("text")?.as_str()?.trim().to_string();
             if text.is_empty() {
                 return None;
             }
-            let name = e.file_name().to_string_lossy().to_string();
             Some((name, text))
         })
         .collect();
     if notes.is_empty() {
-        return String::new();
+        return DeliveredNotes::default();
     }
     notes.sort(); // filename is epoch-ms-prefixed => chronological
-    let body = notes
+
+    // BOUND THE PROMPT TAX. This block rides EVERY dispatch for the rest of the run, on a fleet whose own
+    // worker prompt warns that a large context is slow and degrades quality on local models. Keep the NEWEST
+    // notes (the freshest guidance is the relevant guidance), then restore chronological order.
+    let mut kept: Vec<(String, String)> = Vec::new();
+    let mut used = 0usize;
+    let mut dropped = 0usize;
+    for n in notes.iter().rev() {
+        let cost = n.1.chars().count() + 3;
+        if used + cost > USER_NOTES_BUDGET_CHARS && !kept.is_empty() {
+            dropped += 1;
+            continue;
+        }
+        used += cost;
+        kept.push(n.clone());
+    }
+    kept.reverse();
+
+    let body = kept
         .iter()
         .map(|(_, t)| format!("- {t}"))
         .collect::<Vec<_>>()
         .join("\n");
-    format!(
-        "\n\n## NOTES FROM THE USER (added while this build was running)\n\
-         The user is watching this build and added the following as BACKGROUND. Take it into account for the \
-         work you are doing now. It does NOT override the spec or any decision already made — where they \
-         disagree, the spec wins. If a note does not concern your task, ignore it.\n\n{body}\n"
-    )
+    DeliveredNotes {
+        block: format!(
+            "\n\n## NOTES FROM THE USER (added while this build was running)\n\
+             The user is watching this build and added the following as BACKGROUND. Take it into account for the \
+             work you are doing now. It does NOT override the spec or any decision already made — where they \
+             disagree, the spec wins. If a note does not concern your task, ignore it.\n\n{body}\n"
+        ),
+        ids: kept.into_iter().map(|(id, _)| id).collect(),
+        dropped,
+    }
 }
 
 /// Harvest the judge's corrective hints from a finished run's own event log.
@@ -17796,8 +17972,22 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // START of a worker's life, so a live worker is never mutated. The dispatcher already does exactly
         // this class of read here (read_prereview_findings). Placed before the pillars so it reads as
         // background, never as something that outranks a NON-NEGOTIABLE.
+        // QUEUED USER NOTES. Scoped to THIS run, and RECORDED: the delivery event is the only thing that can
+        // prove a note the user typed ever reached a worker. Everything else (the file on disk, the lever
+        // being on) only shows it was *possible*.
         let notes_block = if swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes) {
-            read_user_notes(&self.working_dir)
+            let d = read_user_notes(&self.working_dir, self.notes_since_ms);
+            if !d.ids.is_empty() {
+                self.events.write_value(serde_json::json!({
+                    "event": "user_notes_delivered",
+                    "task_id": req.task_id,
+                    "attempt": req.attempt,
+                    "notes": d.ids,
+                    "count": d.ids.len(),
+                    "dropped": d.dropped,
+                }));
+            }
+            d.block
         } else {
             String::new()
         };
@@ -19115,6 +19305,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
 
     let json = opts.output_format == "json";
     let run_id = format!("swarm-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S%3f"));
+    // Notes written BEFORE this instant belong to a previous run in the same directory — nothing has ever
+    // cleared .swarm/inbox, so without a cutoff they ride every worker of every future build there.
+    let run_started_ms = chrono::Utc::now().timestamp_millis();
     // NEVER let the run treat $HOME as the app tree — see resolve_app_root. This also moves the process
     // cwd, so the `std::env::current_dir()` reads further down (the contracts cleanup, entry_help, the AST
     // and drift scans) all land on the build dir rather than the user's home.
@@ -19329,6 +19522,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let dispatcher = Arc::new(
         GooseAgentDispatcher::new(
             working_dir.clone(),
+            sink.clone(),
+            run_started_ms,
             worker_max_turns,
             worker_extensions,
             cfg.planner_model.clone(),

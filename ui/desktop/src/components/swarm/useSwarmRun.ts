@@ -253,6 +253,7 @@ export interface PhaseTodo {
 }
 
 export type ActivityKind =
+  | 'note'
   | 'phase'
   | 'plan'
   | 'dispatch'
@@ -933,6 +934,19 @@ function buildActivity(events: Array<Record<string, unknown>>): {
             tone: judgeTone(verdict),
           });
         }
+        break;
+      }
+      // The user typed something mid-build; this is the engine confirming a worker actually received it.
+      // Not verbose-only: it is the user's own input landing, which they should always see.
+      case 'user_notes_delivered': {
+        const n = num(e['count']) ?? (arr(e['notes']) as unknown[]).length;
+        const dropped = num(e['dropped']) ?? 0;
+        verbose({
+          kind: 'note',
+          text: `Your note${n === 1 ? '' : `s (${n})`} reached ${str(e['task_id'])}`,
+          sub: dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
+          tone: 'good',
+        });
         break;
       }
       case 'pre_review': {
