@@ -33,8 +33,12 @@ def ok(db, *args):
 
 @pytest.fixture
 def led(tmp_path):
+    """Best-effort setup. `init` is graded by its OWN tests below and must never be able to zero
+    the suite: an early version asserted success here, so one missing subcommand cascaded into all
+    44 tests failing on a build that was otherwise largely correct. A contract suite with a shared
+    setup step that can fail has no resolution, which is the same disease as saturation."""
     db = tmp_path / "l.db"
-    ok(db, "init")
+    run(db, "init")
     return db
 
 
@@ -48,6 +52,10 @@ def books(led):
 
 
 # ── accounts ──────────────────────────────────────────────────────────────────────────────────
+
+def test_init_is_a_supported_command(tmp_path):
+    assert run(tmp_path / "i.db", "init").returncode == 0
+
 
 def test_account_add_prints_an_integer_id(led):
     assert ok(led, "account", "add", "cash", "--type", "asset").isdigit()
