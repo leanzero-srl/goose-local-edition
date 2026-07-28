@@ -26,8 +26,10 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes"))
 import common  # noqa: E402
+import fleet  # noqa: E402
 import repair  # noqa: E402
 import testwrite  # noqa: E402
 
@@ -256,7 +258,7 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
                 provider: Optional[str] = None, model: Optional[str] = None,
                 label: Optional[str] = None, timeout: Optional[int] = None,
                 env_file: Optional[str] = None, allow_busy: bool = False,
-                wait_for_fleet: int = 0) -> Dict:
+                wait_for_fleet: int = 0, nodes: Optional[int] = None) -> Dict:
     meta = common.load_meta(fixture)
     probe_mod = probe_for(meta)
     tag = label or model or ("local-swarm" if target == "swarm" else "local-single")
@@ -284,6 +286,10 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     child_env = dict(os.environ, **load_env_file(env_file))
     started = time.monotonic()
     timed_out = False
+    # Fleet scaling: an entrant declaring `nodes` runs against exactly that many devices, and the
+    # user's pool is restored afterwards whatever happens.
+    pool_ctx = fleet.sized(binary, nodes) if (nodes and target == "swarm") else None
+    active_nodes = pool_ctx.__enter__() if pool_ctx else None
     # start_new_session gives the engine its own process group, so a timeout can take its workers
     # down with it instead of leaving them orphaned against the fleet.
     proc = subprocess.Popen(cmd, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -295,6 +301,12 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
         timed_out, exit_code = True, None
         terminate_group(proc)
         stdout, stderr = proc.communicate()
+    finally_err = None
+    if pool_ctx:
+        try:
+            pool_ctx.__exit__(None, None, None)
+        except Exception as exc:  # restoring the pool must never mask the episode result
+            finally_err = str(exc)
     wall = round(time.monotonic() - started, 1)
 
     (episode_dir / "stdout.txt").write_text(stdout or "")
@@ -324,6 +336,9 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
         "timed_out": timed_out,
         "crashed": crashed,
         "graded_root": str(graded_root),
+        "nodes": nodes,
+        "active_nodes": active_nodes,
+        "pool_restore_error": finally_err,
         # A run that never terminated did not DELIVER, however correct the tree it left behind.
         # Scoring the artifact anyway would let an agent that spins for an hour tie one that
         # finished in thirty seconds. The probe verdict is kept alongside, so "the code was right
@@ -353,6 +368,7 @@ def main() -> int:
     ap.add_argument("--label")
     ap.add_argument("--timeout", type=int)
     ap.add_argument("--env-file", help="path to a credentials file OUTSIDE the repo")
+    ap.add_argument("--nodes", type=int, help="swarm pool size for this episode (1|2|3)")
     ap.add_argument("--wait-for-fleet", type=int, default=0, metavar="SECS",
                     help="wait up to SECS for the fleet to go idle instead of refusing")
     ap.add_argument("--allow-busy", action="store_true",
@@ -361,7 +377,7 @@ def main() -> int:
 
     record = run_episode(args.fixture, args.target, args.rep, args.out,
                          args.provider, args.model, args.label, args.timeout,
-                         args.env_file, args.allow_busy, args.wait_for_fleet)
+                         args.env_file, args.allow_busy, args.wait_for_fleet, args.nodes)
     return 0 if record["complete"] else 1
 
 
