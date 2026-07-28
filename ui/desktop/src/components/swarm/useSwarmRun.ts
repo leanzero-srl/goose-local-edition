@@ -845,6 +845,12 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         if (b) confidence = b;
         const pc = num(e['plan_confidence']);
         if (typeof pc === 'number') setConf(pc);
+        // plan_loaded ALSO carries the floor, and it is the only place it appears on a run where goose did
+        // not need to ask. Reading it only from low_confidence_ask meant the bar was known precisely when
+        // the swarm had paused for you, and unknown on every confident run — so the gauge's floor marker
+        // and the "your bar is N" line silently never rendered for the healthy case.
+        const afp = num(e['ask_floor']);
+        if (typeof afp === 'number') askFloor = afp;
         const tasks = arr(e['tasks']) as Array<Record<string, unknown>>;
         plan = tasks.map((t) => ({
           id: str(t['id']),
