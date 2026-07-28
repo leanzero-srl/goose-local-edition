@@ -74,6 +74,11 @@ const BLUE = '#2e8bff';
 // A solid slate for a run that stopped without finishing — neutral (not an error) but dark enough for white
 // banner text (grey #8a8a8a fails contrast on white). Distinct from the amber "running" and red "failed".
 const STOPPED = '#4b5563';
+// Body colour for MODEL-GENERATED text (live generations, reasoning). Solid, never a tint or an opacity
+// fade. --color-text-secondary (#969696, 5.72:1 on the panel) clears AA and is correct for labels, but a
+// paragraph of 13px prose in it reads dulled; this is 10.6:1 — bright enough to read at length without the
+// glare of pure #fff. Chrome (labels, counts, hints) deliberately stays on the secondary token.
+const GEN_TEXT = '#c9cdd3';
 
 // Human duration from minutes: seconds under a minute, else "Nm Ss".
 function fmtDuration(min: number): string {
@@ -297,8 +302,8 @@ const ReasoningBlock: React.FC<{
       </div>
       <div
         ref={bodyRef}
-        className={`text-[13px] text-text-primary break-words bg-background-primary border border-border-primary px-2.5 py-2 ${capped ? (live ? 'max-h-[22rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden') : ''}`}
-        style={{ borderRadius: 3, lineHeight: 1.65 }}
+        className={`text-[13px] break-words bg-background-primary border border-border-primary px-2.5 py-2 ${capped ? (live ? 'max-h-[22rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden') : ''}`}
+        style={{ borderRadius: 3, lineHeight: 1.65, color: GEN_TEXT }}
       >
         {/* Prose gets the markdown path; a STRUCTURED payload gets a code path. The plan skeleton used to
             arrive here as raw JSON and markdown both reflowed it into an unreadable wall AND corrupted it —
@@ -741,8 +746,8 @@ const NodeLiveText: React.FC<{ text: string; lines: number }> = ({ text, lines }
   return (
     <div
       ref={ref}
-      className="mt-0.5 text-text-secondary break-words whitespace-pre-wrap"
-      style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden' }}
+      className="mt-0.5 break-words whitespace-pre-wrap"
+      style={{ maxHeight: lines * 16, lineHeight: '16px', overflow: 'hidden', color: GEN_TEXT }}
     >
       {/* Model-authored text arrives with `backticks` and **bold**; rendered raw it showed its own
           asterisks. InlineMarkdown gives code fragments a chip so they read differently from the prose,
@@ -1078,7 +1083,7 @@ const ConfSignal: React.FC<{
 // the visual anchor of the confidence panel. Pure SVG, theme-aware via CSS vars.
 const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | null }> = ({
   value,
-  size = 104,
+  size = 76,
   askFloor = null,
 }) => {
   const v = Math.max(0, Math.min(100, Math.round(value)));
@@ -1096,7 +1101,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         r={r}
         fill="none"
         stroke="var(--color-border-primary)"
-        strokeWidth="9"
+        strokeWidth="8"
         strokeDasharray={`${track} ${circ}`}
         transform="rotate(135 40 40)"
       />
@@ -1106,7 +1111,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         r={r}
         fill="none"
         stroke={col}
-        strokeWidth="9"
+        strokeWidth="8"
         strokeDasharray={`${fill} ${circ}`}
         transform="rotate(135 40 40)"
         style={{ transition: 'stroke-dasharray 500ms ease-out' }}
@@ -1130,7 +1135,7 @@ const ConfGauge: React.FC<{ value: number; size?: number; askFloor?: number | nu
         dominantBaseline="middle"
         style={{
           fill: col,
-          fontSize: 27,
+          fontSize: 24,
           fontWeight: 800,
           letterSpacing: -0.6,
           fontVariantNumeric: 'tabular-nums',
@@ -1225,8 +1230,8 @@ const ConfidenceBreakdownBody: React.FC<{
       ? 'Answer the questions below — each resolves an open decision. Goose can also research the undecided points.'
       : 'Researching the undecided points to firm up the spec.';
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4">
+    <div className="space-y-3.5">
+      <div className="flex items-center gap-3.5">
         <ConfGauge value={conf.final} askFloor={askFloor} />
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
