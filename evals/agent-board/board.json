@@ -13,7 +13,8 @@
     "testwrite": {
       "probe": "testwrite",
       "fixtures": [
-        "slugkit-mutants"
+        "slugkit-mutants",
+        "ledgerfold-mutants"
       ]
     }
   },
