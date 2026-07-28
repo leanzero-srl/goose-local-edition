@@ -23,6 +23,8 @@ BAR_WIDTH = 20
 
 TITLES = {
     "repair": ("REPAIR", "Can the agent fix a real defect without breaking anything?"),
+    "build": ("BUILD FROM SPEC",
+              "Does the app it built actually meet the written contract? (hidden tests / total)"),
     "testwrite": ("TEST WRITING",
                   "Would these tests actually catch a bug? (mutation score: mutants killed / K)"),
 }

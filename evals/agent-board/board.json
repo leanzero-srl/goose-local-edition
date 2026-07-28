@@ -16,6 +16,12 @@
         "slugkit-mutants",
         "ledgerfold-mutants"
       ]
+    },
+    "build": {
+      "probe": "build",
+      "fixtures": [
+        "taskq-spec"
+      ]
     }
   },
   "_baselines": "Model ids verified live on this account: GET bedrock.us-east-1/foundation-models plus a real converse call returning tokens for each. Credentials come from a file OUTSIDE the repo and never enter an episode record.",

@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes"))
+import build  # noqa: E402
 import common  # noqa: E402
 import fleet  # noqa: E402
 import repair  # noqa: E402
@@ -39,7 +40,7 @@ CAPS = {"swarm": 3600, "single": 1200}
 # The grader is chosen by the fixture's own `vertical`, never by which module happened to be
 # imported first. Grading a test-writing episode with the repair probe would look for a target_test
 # that does not exist and score a working suite zero.
-PROBES = {"repair": repair, "testwrite": testwrite}
+PROBES = {"repair": repair, "testwrite": testwrite, "build": build}
 
 
 def probe_for(meta: Dict) -> object:

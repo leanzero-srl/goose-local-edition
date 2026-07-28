@@ -1,0 +1,25 @@
+id: taskq-spec
+vertical: build
+difficulty: medium
+package: taskq
+
+protected: []
+
+controls:
+  reference: 1.0
+  broken_partial: 0.75   # measured: ordering and the json key contract fail, 6 of 8 pass
+
+# WHY THIS VERTICAL EXISTS, AND WHY IT IS SCORED THIS WAY.
+#
+# Repair measured a one-line edit and every entrant cleared it. That is the wrong shape for a SWARM:
+# a 3-node run spent 52 minutes, 11 dispatches and 4 retries on a single-character fix, because
+# planning and verification overhead dominates when there is nothing to parallelise. Construction is
+# where a fleet should actually pay for itself, so this is the vertical that can answer whether it
+# does.
+#
+# The contract suite is hidden — dropped into a snapshot after the run — so it cannot be read, edited
+# or accidentally satisfied. The agent's OWN tests are left on disk as evidence and never executed:
+# a suite the candidate wrote and the candidate passes measures nothing.
+#
+# The score is continuous (contract tests passed / total). Binary saturated; a metric with no
+# resolution cannot rank anyone.
