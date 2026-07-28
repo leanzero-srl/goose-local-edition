@@ -42,6 +42,12 @@
       "nodes": 3
     },
     {
+      "name": "cloud-swarm-haiku-3node",
+      "target": "swarm",
+      "baseline": true,
+      "_note": "Claude through the goose swarm engine via the LiteLLM gateway; needs swarm_profile.py --apply cloud-haiku and GOOSE_SWARM_REQUIRE_SERVABLE=0"
+    },
+    {
       "name": "local-single",
       "target": "single",
       "provider": "lmstudio",
