@@ -1,0 +1,25 @@
+id: ledgerd-service
+vertical: build
+difficulty: hard
+package: ledgerd
+
+protected: []
+
+controls:
+  reference: 1.0
+
+# THE FLAGSHIP FIXTURE — a complex app, in the shape of the campaign specs (raftkv, settle,
+# spendlog), not a toy.
+#
+# The earlier build fixture had EIGHT contract tests and every entrant scored 8/8. A leaderboard
+# where everyone reads 100.0 ranks nobody, which is the failure this replaces.
+#
+# ledgerd is a double-entry accounting service: money in exact minor units, five account types with
+# opposite sign conventions, multi-leg entries that must sum to zero, as-of balance queries,
+# reversal with once-only semantics, a trial balance whose totals must agree, and nine distinct
+# error paths. It has natural module boundaries (money / store / domain / cli) so a swarm has
+# something real to parallelise — which is what makes the 1-vs-2-vs-3-node card meaningful.
+#
+# The contract is wide on purpose: ~45 hidden tests. A build that gets the happy path but muddles a
+# sign convention, or forgets as-of, or lets a reversal be reversed, lands in the 40-70 band instead
+# of at 100. That spread IS the product.

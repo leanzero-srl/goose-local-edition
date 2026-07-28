@@ -20,7 +20,8 @@
     "build": {
       "probe": "build",
       "fixtures": [
-        "taskq-spec"
+        "taskq-spec",
+        "ledgerd-service"
       ]
     }
   },
