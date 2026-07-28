@@ -61,6 +61,21 @@ def time_noise_threshold(episodes: List[Dict]) -> float:
     return 2 * worst
 
 
+def _numerator(probe: Dict) -> int:
+    """killed (test-writing) / passed (build). Repair reports neither and stays binary."""
+    for key in ("killed", "passed"):
+        if key in probe:
+            return probe[key] or 0
+    return 0
+
+
+def _denominator(probe: Dict) -> int:
+    for key in ("mutants", "total"):
+        if key in probe:
+            return probe[key] or 0
+    return 0
+
+
 def load_episodes(runs: Path) -> List[Dict]:
     out = []
     for path in sorted(runs.glob("*/episode.json")):
@@ -84,11 +99,15 @@ def summarise(episodes: List[Dict]) -> List[Dict]:
         # A continuous vertical reports killed/K per episode. Counting only score==1.0 would throw
         # the resolution away and turn mutation score back into the binary that already saturated.
         # Every mutant is its own Bernoulli trial, so the pooled kills carry the interval.
-        mutant_totals = [(e["probe"].get("killed", 0), e["probe"].get("mutants", 0))
-                         for e in eps if e["probe"].get("mutants")]
-        if mutant_totals:
-            passes = sum(k for k, _ in mutant_totals)
-            trials = sum(m for _, m in mutant_totals)
+        # Any probe reporting a numerator over a denominator is continuous: mutants killed for
+        # test-writing, hidden contract tests passed for build. Keyed on the pair rather than on one
+        # vertical's vocabulary, because the build card silently fell back to counting EPISODES
+        # (2/2) instead of pooling its 8-test contract.
+        graded = [(_numerator(e["probe"]), _denominator(e["probe"])) for e in eps]
+        graded = [(a, b) for a, b in graded if b]
+        if graded:
+            passes = sum(a for a, _ in graded)
+            trials = sum(b for _, b in graded)
             p, lo, hi = wilson(passes, trials)
             denom = trials
         else:
