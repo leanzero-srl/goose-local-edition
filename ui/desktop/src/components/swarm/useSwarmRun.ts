@@ -941,6 +941,15 @@ function buildActivity(events: Array<Record<string, unknown>>): {
       case 'user_notes_delivered': {
         const n = num(e['count']) ?? (arr(e['notes']) as unknown[]).length;
         const dropped = num(e['dropped']) ?? 0;
+        // BOTH feeds. This is the user's OWN input landing in the build — the one activity line they are
+        // entitled to see without switching the panel to verbose. (Verified live: it was reaching only the
+        // verbose feed, so a delivery the engine had recorded showed nowhere in the default view.)
+        compact({
+          kind: 'note',
+          text: `Your note${n === 1 ? '' : `s (${n})`} reached ${str(e['task_id'])}`,
+          sub: dropped > 0 ? `${dropped} older note(s) left out to keep the prompt small` : undefined,
+          tone: 'good',
+        });
         verbose({
           kind: 'note',
           text: `Your note${n === 1 ? '' : `s (${n})`} reached ${str(e['task_id'])}`,
