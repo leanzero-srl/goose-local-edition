@@ -70,15 +70,21 @@ def resolve_root(workspace: Path, seed: Path) -> Optional[Path]:
     return best if best_score else None
 
 
-def run_suite(root: Path, timeout: int = PYTEST_TIMEOUT) -> Dict[str, str]:
-    """Execute the suite and return {test_id: outcome}. A collection error is not an empty suite."""
+def run_suite(root: Path, timeout: int = PYTEST_TIMEOUT,
+              only: Optional[List[str]] = None) -> Dict[str, str]:
+    """Execute the suite and return {test_id: outcome}. A collection error is not an empty suite.
+
+    `only` restricts pytest to specific paths. Without it pytest collects the WHOLE tree — which in
+    build-from-spec meant the agent's own tests ran alongside the hidden contract and inflated its
+    score to 21/21 against a contract of 10. A candidate must never be graded on a suite it wrote.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "report.xml"
         env = dict(os.environ, PYTHONPATH=str(root), PYTHONDONTWRITEBYTECODE="1")
         try:
             subprocess.run(
                 [sys.executable, "-m", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider",
-                 f"--junitxml={report}"],
+                 f"--junitxml={report}", *(only or [])],
                 cwd=root, capture_output=True, text=True, timeout=timeout, env=env,
             )
         except subprocess.TimeoutExpired:

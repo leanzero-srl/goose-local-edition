@@ -27,6 +27,13 @@ from common import load_meta, run_suite, snapshot
 CONTRACT_DIR = "probe_tests"
 
 
+def contract_files(fixture: Path) -> List[str]:
+    """The contract test FILENAMES. They are copied flat into the graded tree, so pytest is
+    pointed at these names — pointing it at the directory collects nothing, and pointing it at
+    the tree collects the agent's own tests."""
+    return sorted(p.name for p in (fixture / CONTRACT_DIR).glob("test_*.py"))
+
+
 def _contract_ids(fixture: Path) -> List[str]:
     """Run the contract suite against the reference to learn what a perfect score looks like."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -34,7 +41,7 @@ def _contract_ids(fixture: Path) -> List[str]:
         root.mkdir()
         _copy_into(fixture / "controls/reference", root)
         _copy_into(fixture / CONTRACT_DIR, root)
-        return sorted(run_suite(root))
+        return sorted(run_suite(root, only=contract_files(fixture)))
 
 
 def _copy_into(src: Path, dest: Path) -> None:
@@ -54,10 +61,10 @@ def grade(fixture: Path, workspace: Path) -> Dict:
         graded = snapshot(workspace, Path(tmp) / "graded")
         # The agent must not have shipped anything named like the hidden suite; if it did, it is
         # about to be overwritten, and that is worth recording rather than silently resolving.
-        collision = graded / CONTRACT_DIR
-        if collision.exists():
-            result["tampered"] = True
-            result["tampered_files"].append(CONTRACT_DIR)
+        for name in contract_files(fixture):
+            if (graded / name).exists():
+                result["tampered"] = True
+                result["tampered_files"].append(name)
         _copy_into(fixture / CONTRACT_DIR, graded)
 
         if package and not (graded / package).is_dir():
@@ -69,7 +76,9 @@ def grade(fixture: Path, workspace: Path) -> Dict:
                 result["reason"] = f"no {package}/ package was produced"
                 return result
 
-        outcomes = run_suite(graded)
+        # ONLY the hidden contract. Collecting the whole tree ran the agent's own tests too
+        # and scored one episode 21/21 against a 10-test contract.
+        outcomes = run_suite(graded, only=contract_files(fixture))
 
     if "::collection-error" in outcomes:
         result["reason"] = "the contract suite could not be collected against this tree"
