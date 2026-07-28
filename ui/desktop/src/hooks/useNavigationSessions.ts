@@ -14,7 +14,10 @@ import {
 // storage cap — every session is kept in the sessions.db. It was 25, which made older chats "vanish" from the
 // visible list as new builds arrived (they were never deleted). Raised so weeks of builds stay visible; a
 // dedicated "all sessions" view (SessionListView) remains the place to browse the full history.
-const MAX_RECENT_SESSIONS = 200;
+/// How many recent chats the navigation list RENDERS. Purely a render cap — every session stays in the DB
+/// and remains reachable from the session history view. Exported so tests assert against the real value
+/// instead of a copy: this was raised 25 -> 200 and the test kept asserting 25, failing ever since.
+export const MAX_RECENT_SESSIONS = 200;
 
 export function prependUnique(
   prev: SessionListItem[],
