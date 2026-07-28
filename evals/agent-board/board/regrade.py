@@ -42,8 +42,13 @@ def regrade_one(record: Dict, episode_dir: Path, reason: str) -> Dict:
         {"at": dt.datetime.now(dt.timezone.utc).isoformat(), "reason": reason, **superseded})
     record["probe"] = probe
     record["artifact_score"] = probe["score"]
-    # The delivery rule is unchanged by a regrade: a run that never finished still scores zero.
-    record["score"] = 0.0 if record.get("scored_zero_for") else probe["score"]
+    # The delivery rule is DERIVED from what the run did, never read back from a stored field. A
+    # supervisor that started before the rule existed recorded a timed-out swarm as score 1.0 — the
+    # rule was right, the running process simply predated it. Deriving it here repairs those records
+    # instead of trusting whatever they happened to save.
+    not_delivered = "timeout" if record.get("timed_out") else ("crash" if record.get("crashed") else None)
+    record["scored_zero_for"] = not_delivered
+    record["score"] = 0.0 if not_delivered else probe["score"]
     record["regraded"] = True
     return record
 
