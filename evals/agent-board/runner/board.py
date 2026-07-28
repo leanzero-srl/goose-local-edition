@@ -87,7 +87,7 @@ def main() -> int:
                 fixture, tick["target"], tick["rep"], args.out,
                 provider=tick.get("provider"), model=tick.get("model"), label=tick["name"],
                 env_file=tick.get("env_file"), allow_busy=args.allow_busy,
-                wait_for_fleet=args.wait_for_fleet))
+                wait_for_fleet=args.wait_for_fleet, nodes=tick.get("nodes")))
         except (Exception, SystemExit) as exc:  # SystemExit is NOT an Exception; a
             # refused or misconfigured tick must never take the whole night with it
             print(f"[tick FAILED] {tick['name']} rep{tick['rep']}: {exc}", flush=True)
