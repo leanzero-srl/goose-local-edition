@@ -6,7 +6,8 @@
       "probe": "repair",
       "fixtures": [
         "slugkit-easy",
-        "shiftlog-medium"
+        "shiftlog-medium",
+        "ledgerfold-hard"
       ]
     }
   },
