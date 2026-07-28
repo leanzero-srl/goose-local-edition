@@ -63,3 +63,30 @@ def test_export_reports_integrity_counters():
     assert integrity["crashes_and_timeouts_stay_in_denominator"] is True
     assert integrity["episodes"] >= 0
     assert isinstance(integrity["scored_zero_for_not_finishing"], list)
+
+
+def test_regrade_derives_delivery_status_rather_than_trusting_the_record():
+    """The load-bearing case: a supervisor that predated the timeout rule saved score 1.0 for a run
+    that timed out. Regrade must repair that from `timed_out`, not read back the missing field."""
+    import regrade
+
+    record = {"vertical": "repair", "fixture": "slugkit-easy", "score": 1.0,
+              "timed_out": True, "crashed": False, "scored_zero_for": None,
+              "probe": {"score": 1.0, "passed": 1, "total": 1}, "graded_root": ""}
+
+    class _Probe:
+        @staticmethod
+        def grade(_fixture, _root):
+            return {"score": 1.0, "passed": 1, "total": 1, "tampered": False, "reason": "ok"}
+
+    original = regrade.PROBES["repair"]
+    regrade.PROBES["repair"] = _Probe
+    try:
+        out = regrade.regrade_one(dict(record), regrade.BOARD, "test")
+    finally:
+        regrade.PROBES["repair"] = original
+
+    assert out["score"] == 0.0, "a timed-out run must not keep a passing score"
+    assert out["artifact_score"] == 1.0, "the correct artifact must stay visible"
+    assert out["scored_zero_for"] == "timeout"
+    assert out["supersedes"][-1]["score"] == 1.0, "history must be kept, not overwritten"
