@@ -92,6 +92,18 @@ significant digits).
 **TEST-WRITING** (continuous, mutation score) — `slugkit-mutants` (6 mutants),
 `ledgerfold-mutants` (10 subtle ones across two modules; a happy-path suite kills 3).
 
+### The swarm result
+
+3 nodes, `slugkit-easy`, **timed out at exactly the 3600s cap**: 11 dispatches, 4 retries, one
+replan — for a ONE-LINE fix. The artifact was correct (it found `result.rstrip("-")` and never
+touched the protected test file); it simply could not stop. haiku-4.5 did the same repair in 31s.
+
+Recorded as `score 0.0`, `artifact_score 1.0`, `scored_zero_for: timeout`, so "got it right, could
+not finish" stays legible rather than being flattened into an ordinary failure.
+
+The reading: repair is the wrong SHAPE for a swarm. There is nothing to parallelise in a one-line
+edit, so planning and verification overhead is the entire cost. That is why `build` exists.
+
 ### What 45 repair episodes actually showed
 
 - **Correctness drift is zero.** `11111` for every entrant on every rung. No flakes, no crashes, no
