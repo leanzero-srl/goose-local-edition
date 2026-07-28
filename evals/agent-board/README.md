@@ -92,6 +92,43 @@ significant digits).
 **TEST-WRITING** (continuous, mutation score) — `slugkit-mutants` (6 mutants),
 `ledgerfold-mutants` (10 subtle ones across two modules; a happy-path suite kills 3).
 
+### ENGINE vs ENGINE — the comparison that matters
+
+Same engine, same fixture (`slugkit-easy`), same three-worker shape; only the model backend differs.
+
+| | tasks | dispatched | completed | retries | run_finished | wall | score |
+|---|---|---|---|---|---|---|---|
+| local swarm (qwen 27b x3) | 7 | 11 | 6 | **4** | no | **3600s timeout** | **0.0** |
+| cloud swarm (Haiku 4.5 x3) | 7 | 7 | **7** | **0** | yes | **295s** | **1.0** |
+
+**The swarm architecture is not the problem.** Given a fast, reliable model the engine dispatched
+exactly its plan, completed every task with zero retries, ran the gates, emitted `complete_result`
+and `run_finished`, and delivered a correct fix in under five minutes.
+
+With local models the same engine needed 11 dispatches for 7 tasks, retried 4 times — every one a
+`stream decode error (mid-stream body drop)` from the LAN — finished 6 of 7, and never emitted
+`run_finished` at all.
+
+That is a different diagnosis from the one the local run alone supported ("the swarm is bad at small
+tasks"). It is model throughput and LAN stream stability, not the architecture. Only the
+engine-vs-engine run could separate them.
+
+Caveats held: n=1 per side, and the cloud run includes ~40s hand-answering a low-confidence clarify
+gate that Claude raised and the local run never did.
+
+### CORRECTNESS SATURATES FOR THE LOCAL FLEET TOO
+
+The local 27b, single-agent, on the hardest fixtures authored:
+
+| fixture | vertical | result | wall |
+|---|---|---|---|
+| `slugkit-easy` | repair | pass | 877s |
+| `ledgerfold-hard` | repair | pass — took the Decimal route, **not** the float trap | 589s |
+| `ledgerfold-mutants` | testwrite | **10/10 mutants killed** | 1163s |
+
+It writes the same correct code as Opus 5 and kills every mutant a frontier model kills. The gap is
+**time (18-27x), not capability** — on tasks of this size.
+
 ### The swarm result
 
 3 nodes, `slugkit-easy`, **timed out at exactly the 3600s cap**: 11 dispatches, 4 retries, one
