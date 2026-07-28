@@ -261,7 +261,26 @@ export default function UserMessage({ message, onMessageUpdate }: UserMessagePro
               <div className="flex flex-col group">
                 {textContent.trim() && (
                   <div className="flex bg-text-primary text-background-primary rounded-xl py-2.5 px-4">
-                    <div ref={contentRef}>
+                    <div
+                      ref={contentRef}
+                      // COPYING A MESSAGE MUST GIVE BACK ITS SOURCE. The rendered DOM has already consumed
+                      // the markdown — a mouse-selection copy of a prompt full of `code` and a numbered
+                      // list yields flat prose, so pasting it into a new chat loses every marker and the
+                      // message re-renders plain. The copy BUTTON always got this right (it puts the source
+                      // on text/plain); a hand selection did not. When the selection covers essentially the
+                      // whole message, hand over the source instead. A partial selection is left alone —
+                      // someone quoting one sentence wants that sentence, not the whole markdown blob.
+                      onCopy={(e) => {
+                        const sel = window.getSelection();
+                        const el = contentRef.current;
+                        if (!sel || !el || sel.isCollapsed) return;
+                        const picked = sel.toString().replace(/\s+/g, ' ').trim();
+                        const whole = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+                        if (!whole || picked.length < whole.length * 0.9) return;
+                        e.clipboardData.setData('text/plain', textContent);
+                        e.preventDefault();
+                      }}
+                    >
                       <MarkdownContent
                         content={textContent}
                         className="!text-inherit prose-a:!text-inherit prose-headings:!text-inherit prose-strong:!text-inherit prose-em:!text-inherit prose-li:!text-inherit prose-p:!text-inherit user-message"
