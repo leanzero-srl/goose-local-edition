@@ -61,6 +61,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=BOARD / "runs")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--allow-busy", action="store_true")
+    ap.add_argument("--wait-for-fleet", type=int, default=1800, metavar="SECS",
+                    help="how long a local tick waits for the fleet (0 = refuse immediately)")
     args = ap.parse_args()
 
     cfg = load_board(args.config)
@@ -84,8 +86,10 @@ def main() -> int:
             results.append(run_episode(
                 fixture, tick["target"], tick["rep"], args.out,
                 provider=tick.get("provider"), model=tick.get("model"), label=tick["name"],
-                env_file=tick.get("env_file"), allow_busy=args.allow_busy))
-        except Exception as exc:  # a bad tick must never kill the board
+                env_file=tick.get("env_file"), allow_busy=args.allow_busy,
+                wait_for_fleet=args.wait_for_fleet))
+        except (Exception, SystemExit) as exc:  # SystemExit is NOT an Exception; a
+            # refused or misconfigured tick must never take the whole night with it
             print(f"[tick FAILED] {tick['name']} rep{tick['rep']}: {exc}", flush=True)
 
     scored = [r for r in results if r.get("complete")]

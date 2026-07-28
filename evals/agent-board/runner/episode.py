@@ -27,10 +27,24 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes"))
+import common  # noqa: E402
 import repair  # noqa: E402
+import testwrite  # noqa: E402
 
 BOARD = Path(__file__).resolve().parents[1]
 CAPS = {"swarm": 3600, "single": 1200}
+
+# The grader is chosen by the fixture's own `vertical`, never by which module happened to be
+# imported first. Grading a test-writing episode with the repair probe would look for a target_test
+# that does not exist and score a working suite zero.
+PROBES = {"repair": repair, "testwrite": testwrite}
+
+
+def probe_for(meta: Dict) -> object:
+    vertical = meta.get("vertical")
+    if vertical not in PROBES:
+        raise SystemExit(f"no probe for vertical {vertical!r}; known: {sorted(PROBES)}")
+    return PROBES[vertical]
 
 
 def goose_binary() -> Path:
@@ -99,14 +113,29 @@ def load_env_file(path: Optional[str]) -> Dict[str, str]:
     return env
 
 
+CLOUD_PROVIDER_MARKERS = ("aws_bedrock", "anthropic", "openai", "databricks", "gcpvertexai")
+
+
 def running_engines(exclude_pid: Optional[int] = None) -> List[int]:
-    """PIDs of goose engines already working. Used to refuse a contended measurement."""
+    """PIDs of goose engines currently holding the LOCAL fleet.
+
+    A cloud episode runs `goose run` too, so matching on the binary alone would make every local
+    tick queue behind Bedrock traffic it does not share a single GPU with. The provider flag in the
+    child's own argv is what distinguishes them.
+    """
     try:
-        out = subprocess.run(["pgrep", "-f", r"goose (swarm run|run) "],
+        out = subprocess.run(["pgrep", "-fl", r"goose (swarm run|run) "],
                              capture_output=True, text=True, timeout=15).stdout
     except (subprocess.SubprocessError, OSError):
         return []
-    pids = [int(p) for p in out.split() if p.isdigit()]
+    pids = []
+    for line in out.splitlines():
+        pid, _, argv = line.partition(" ")
+        if not pid.isdigit():
+            continue
+        if any(marker in argv for marker in CLOUD_PROVIDER_MARKERS):
+            continue
+        pids.append(int(pid))
     return [p for p in pids if p != exclude_pid and p != os.getpid()]
 
 
@@ -122,16 +151,23 @@ def uses_local_fleet(target: str, provider: Optional[str]) -> bool:
     return target == "swarm" or (provider or "").lower().startswith(LOCAL_PROVIDERS)
 
 
-def assert_fleet_idle(allow_busy: bool, target: str, provider: Optional[str]) -> None:
+def assert_fleet_idle(allow_busy: bool, target: str, provider: Optional[str],
+                      wait_secs: int = 0) -> None:
     """A run against a busy fleet measures CONTENTION, not capability.
 
     This exists because a killed supervisor left an orphaned `goose swarm` engine running for 33
     minutes, parented to launchd, quietly competing for the same three nodes as the next episode.
     Nothing would have flagged it — the numbers would just have been worse, and wrongly attributed
     to the model.
+
+    For an unattended board, WAITING beats refusing: an overnight run that aborts because something
+    else briefly held the fleet has thrown away the night. Refusing is the interactive default.
     """
     if not uses_local_fleet(target, provider):
         return
+    deadline = time.monotonic() + wait_secs
+    while running_engines() and time.monotonic() < deadline:
+        time.sleep(15)
     busy = running_engines()
     if not busy:
         return
@@ -209,8 +245,10 @@ def agent_command(target: str, prompt: str, provider: Optional[str], model: Opti
 def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
                 provider: Optional[str] = None, model: Optional[str] = None,
                 label: Optional[str] = None, timeout: Optional[int] = None,
-                env_file: Optional[str] = None, allow_busy: bool = False) -> Dict:
-    meta = repair._load_meta(fixture)
+                env_file: Optional[str] = None, allow_busy: bool = False,
+                wait_for_fleet: int = 0) -> Dict:
+    meta = common.load_meta(fixture)
+    probe_mod = probe_for(meta)
     tag = label or model or ("local-swarm" if target == "swarm" else "local-single")
     episode_id = f"{fixture.name}__{target}__{tag}__r{rep}".replace("/", "-")
     episode_dir = out_root / episode_id
@@ -221,7 +259,7 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
             print(f"[skip] {episode_id} already complete (score {record['score']})")
             return record
 
-    assert_fleet_idle(allow_busy, target, provider)
+    assert_fleet_idle(allow_busy, target, provider, wait_for_fleet)
 
     if episode_dir.exists():
         shutil.rmtree(episode_dir)
@@ -255,14 +293,14 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     graded_root = effective_workspace(workspace)
     if graded_root != workspace:
         (episode_dir / "relocated.txt").write_text(str(graded_root))
-    probe = repair.grade(fixture, graded_root)
+    probe = probe_mod.grade(fixture, graded_root)
     claim = extract_claim(episode_dir)
 
     record = {
         "episode_id": episode_id,
         "complete": True,
         "fixture": fixture.name,
-        "vertical": meta.get("vertical", "repair"),
+        "vertical": meta["vertical"],
         "difficulty": meta.get("difficulty"),
         "target": target,
         "provider": provider,
@@ -298,13 +336,15 @@ def main() -> int:
     ap.add_argument("--label")
     ap.add_argument("--timeout", type=int)
     ap.add_argument("--env-file", help="path to a credentials file OUTSIDE the repo")
+    ap.add_argument("--wait-for-fleet", type=int, default=0, metavar="SECS",
+                    help="wait up to SECS for the fleet to go idle instead of refusing")
     ap.add_argument("--allow-busy", action="store_true",
                     help="measure even though another engine is running (records contention)")
     args = ap.parse_args()
 
     record = run_episode(args.fixture, args.target, args.rep, args.out,
                          args.provider, args.model, args.label, args.timeout,
-                         args.env_file, args.allow_busy)
+                         args.env_file, args.allow_busy, args.wait_for_fleet)
     return 0 if record["complete"] else 1
 
 
