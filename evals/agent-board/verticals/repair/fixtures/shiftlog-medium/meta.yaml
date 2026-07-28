@@ -1,0 +1,27 @@
+id: shiftlog-medium
+vertical: repair
+difficulty: medium
+
+target_test: "tests/test_shiftlog.py::test_allows_shifts_that_only_touch"
+
+protected:
+  - tests/test_shiftlog.py
+
+controls:
+  reference: 1.0       # strict overlap AND a merge that understands touching
+  broken_naive: 0.0    # the obvious one-character fix, and only that
+  broken_noop: 0.0     # changes nothing
+
+# WHY THIS IS HARDER THAN slugkit-easy, and why that is the point.
+#
+# `overlaps` is wrong: it treats touching spans as overlapping. Making it strict fixes the target
+# test in one character — and immediately breaks test_merge_joins_touching_blocks, because
+# merge_busy was silently relying on the same bug to join adjacent blocks.
+#
+# So a correct repair is TWO edits, and it requires noticing that a second caller depended on the
+# defect. That is the difference between reading a failing assertion and understanding a codebase,
+# and it is exactly what broken_naive exists to catch. An agent that scores 1.0 on slugkit-easy and
+# 0.0 here has told us something a single-difficulty benchmark could not.
+#
+# Synthetic, no git history, no upstream to look up, and the failing test names the symptom
+# (touching shifts are rejected) rather than the cause.
