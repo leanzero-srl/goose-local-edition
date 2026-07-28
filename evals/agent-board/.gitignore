@@ -1,0 +1,8 @@
+# Episode output: workspaces, agent transcripts, event logs. Regenerable, large, and it can carry
+# whatever the agent happened to write — evidence bundles are published deliberately, never by
+# accidentally committing a run directory.
+runs/
+
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,31 @@
+{
+  "board_version": "board-0",
+  "_comment": "JSON, not YAML, because the harness must run with a bare Python and no pip install. Per-fixture meta.yaml stays YAML: it is flat, human-authored, and its comments explain why a defect is a fair test.",
+
+  "verticals": {
+    "repair": {
+      "probe": "repair",
+      "fixtures": ["slugkit-easy"]
+    }
+  },
+
+  "_baselines": "Model ids verified live on this account: GET bedrock.us-east-1/foundation-models plus a real converse call returning tokens for each. Credentials come from a file OUTSIDE the repo and never enter an episode record.",
+
+  "entrants": [
+    { "name": "local-swarm-3node", "target": "swarm" },
+    { "name": "local-single", "target": "single" },
+
+    { "name": "haiku-4.5", "target": "single", "baseline": true,
+      "provider": "aws_bedrock", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "env_file": "~/.config/agent-board/bedrock.env" },
+    { "name": "sonnet-5", "target": "single", "baseline": true,
+      "provider": "aws_bedrock", "model": "us.anthropic.claude-sonnet-5",
+      "env_file": "~/.config/agent-board/bedrock.env" },
+    { "name": "opus-5", "target": "single", "baseline": true,
+      "provider": "aws_bedrock", "model": "us.anthropic.claude-opus-5",
+      "env_file": "~/.config/agent-board/bedrock.env" }
+  ],
+
+  "reps": 5,
+  "shuffle_seed": 20260728
+}
