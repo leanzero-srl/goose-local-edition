@@ -124,19 +124,29 @@ def running_engines(exclude_pid: Optional[int] = None) -> List[int]:
     child's own argv is what distinguishes them.
     """
     try:
-        out = subprocess.run(["pgrep", "-fl", r"goose (swarm run|run) "],
+        out = subprocess.run(["pgrep", "-f", r"goose (swarm run|run) "],
                              capture_output=True, text=True, timeout=15).stdout
     except (subprocess.SubprocessError, OSError):
         return []
-    pids = []
-    for line in out.splitlines():
-        pid, _, argv = line.partition(" ")
-        if not pid.isdigit():
+    holding = []
+    for token in out.split():
+        if not token.isdigit():
             continue
+        pid = int(token)
+        if pid in (exclude_pid, os.getpid()):
+            continue
+        # argv is read PER PID. A prompt containing newlines splits one process across several
+        # lines of `pgrep -fl` output, which hid the --provider flag on a line the parser skipped
+        # and made every cloud episode look like it was holding the fleet.
+        try:
+            argv = subprocess.run(["ps", "-o", "command=", "-p", token],
+                                  capture_output=True, text=True, timeout=10).stdout
+        except (subprocess.SubprocessError, OSError):
+            argv = ""
         if any(marker in argv for marker in CLOUD_PROVIDER_MARKERS):
             continue
-        pids.append(int(pid))
-    return [p for p in pids if p != exclude_pid and p != os.getpid()]
+        holding.append(pid)
+    return holding
 
 
 LOCAL_PROVIDERS = ("lmstudio", "ollama", "localai", "llama")
