@@ -138,8 +138,13 @@ touched the protected test file); it simply could not stop. haiku-4.5 did the sa
 Recorded as `score 0.0`, `artifact_score 1.0`, `scored_zero_for: timeout`, so "got it right, could
 not finish" stays legible rather than being flattened into an ordinary failure.
 
-The reading: repair is the wrong SHAPE for a swarm. There is nothing to parallelise in a one-line
-edit, so planning and verification overhead is the entire cost. That is why `build` exists.
+**This reading was wrong and the engine-vs-engine run above corrected it.** From the local run alone
+the obvious conclusion was "repair is the wrong shape for a swarm — nothing to parallelise, so
+overhead is the whole cost". Then the same engine on Haiku completed the same fixture in 295s with
+zero retries. The overhead is not what killed it; local throughput and LAN stream stability are.
+
+Kept here deliberately, because the sequence is the point: a single-arm result supported a confident,
+plausible, wrong diagnosis, and only the controlled comparison overturned it.
 
 ### What 45 repair episodes actually showed
 
