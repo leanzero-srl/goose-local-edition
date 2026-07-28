@@ -52,6 +52,34 @@ def plan_ticks(cfg: Dict, only_vertical: str | None, only_entrant: str | None) -
     return ticks
 
 
+# Measured medians from this fleet, in seconds. Ticks are NOT fungible: a swarm tick costs forty
+# minutes of three machines, a Bedrock tick costs ninety seconds and some money. Printing one tick
+# count without the hours behind it is how someone starts a 60-hour run thinking it is an overnight.
+TICK_SECONDS = {"swarm": 2700, "single-local": 900, "single-cloud": 90}
+
+
+def tick_cost(tick: Dict) -> int:
+    if tick["target"] == "swarm":
+        return TICK_SECONDS["swarm"]
+    provider = (tick.get("provider") or "").lower()
+    local = provider.startswith(("lmstudio", "ollama", "localai", "llama"))
+    return TICK_SECONDS["single-local" if local else "single-cloud"]
+
+
+def estimate_cost(ticks: List[Dict], runs: Path) -> str:
+    done = {p.parent.name for p in runs.glob("*/episode.json")} if runs.exists() else set()
+    remaining = [t for t in ticks if not any(t["name"] in d and t["fixture"] in d for d in done)]
+    total = sum(tick_cost(t) for t in remaining)
+    by_kind: Dict[str, int] = {}
+    for t in remaining:
+        kind = "swarm" if t["target"] == "swarm" else (
+            "local single" if (t.get("provider") or "").startswith("lmstudio") else "cloud")
+        by_kind[kind] = by_kind.get(kind, 0) + tick_cost(t)
+    parts = ", ".join(f"{k} {v / 3600:.1f}h" for k, v in sorted(by_kind.items()))
+    return (f"  ~{total / 3600:.1f}h of wall clock for {len(remaining)} remaining ticks "
+            f"({parts}). Use --ticks to cap it.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", type=Path, default=BOARD / "board.json")
@@ -73,6 +101,7 @@ def main() -> int:
     rounds = cfg["reps"] if not args.ticks else "partial"
     print(f"board {cfg['board_version']}: {len(ticks)} ticks "
           f"({len(ticks) // max(cfg['reps'], 1)} per round, {rounds} rounds planned)")
+    print(estimate_cost(ticks, args.out))
     if args.dry_run:
         for i, t in enumerate(ticks, 1):
             print(f"  {i:3d}  {t['vertical']}/{t['fixture']}  {t['name']}  rep{t['rep']}")
