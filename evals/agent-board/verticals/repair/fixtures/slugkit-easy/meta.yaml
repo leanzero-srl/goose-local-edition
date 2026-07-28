@@ -1,0 +1,22 @@
+id: slugkit-easy
+vertical: repair
+difficulty: easy
+
+# The one test that must go from red to green. Everything else that is green
+# at seed time must STAY green — that is the regression half of the score.
+target_test: "tests/test_slugkit.py::test_max_len_never_ends_with_hyphen"
+
+# Hashed before the run and RESTORED from pristine before grading. A run that
+# edits any of these is flagged `tampered` and scores 0.
+protected:
+  - tests/test_slugkit.py
+
+# Controls the probe must satisfy before it is trusted (see probes/repair.py --self-test).
+controls:
+  reference: 1.0          # the correct fix — must score a perfect 1.0
+  broken_regression: 0.0  # passes the target test, breaks test_truncates_mid_word
+  broken_noop: 0.0        # changes nothing — target test still red
+
+# Why this defect is a fair test rather than a lookup: the package is synthetic,
+# has no git history, no upstream to search for, and the failing assertion names
+# the SYMPTOM (a trailing hyphen) rather than the fix.
