@@ -71,7 +71,12 @@ def summarise(episodes: List[Dict]) -> List[Dict]:
             "crashed": sum(1 for e in eps if e.get("crashed") or e.get("timed_out")),
             "baseline": e_is_baseline(eps[0]),
         })
-    rows.sort(key=lambda r: -r["pct"])
+    # Correctness first, then time. Measured on this corpus: every cloud baseline clears every
+    # repair rung, and the local 27b clears them too — 876.8s against haiku's 31.3s. When pass
+    # rates saturate, time is the only thing left that separates entrants, so it is a ranked column
+    # and not a footnote. The two are never merged into one score: a fast wrong answer and a slow
+    # right one are different failures and must stay legible as such.
+    rows.sort(key=lambda r: (-r["pct"], r["median_secs"]))
 
     # Overlapping intervals are not an ordering. Equal rank numbers say so on the page.
     rank = 0
@@ -110,8 +115,14 @@ def render(vertical: str, rows: List[Dict]) -> str:
     tied = [r for r in rows if sum(1 for x in rows if x["rank"] == r["rank"]) > 1]
     lines += ["", f"n={total_n} per entrant · reporting only, no composite — drift not yet calibrated"]
     if tied:
-        names = ", ".join(sorted({r["label"] for r in tied}))
-        lines.append(f"TIED (intervals overlap, refusing to order): {names}")
+        names = ", ".join(r["label"] for r in tied)
+        lines.append(f"TIED on correctness (intervals overlap, refusing to order): {names}")
+        fastest, slowest = min(tied, key=lambda r: r["median_secs"]), max(tied, key=lambda r: r["median_secs"])
+        if fastest["median_secs"] > 0 and slowest is not fastest:
+            ratio = slowest["median_secs"] / fastest["median_secs"]
+            lines.append(f"  ...but {fastest['label']} is {ratio:.0f}x quicker than "
+                         f"{slowest['label']} ({fastest['median_secs']:.0f}s vs "
+                         f"{slowest['median_secs']:.0f}s). Same answer, different price.")
     lines.append("cost/episode: not measured — goose does not surface token counts to the harness")
     return "\n".join(lines)
 
