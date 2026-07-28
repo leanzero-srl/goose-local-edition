@@ -19,11 +19,12 @@ import datetime as dt
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes"))
 import repair  # noqa: E402
@@ -98,6 +99,84 @@ def load_env_file(path: Optional[str]) -> Dict[str, str]:
     return env
 
 
+def running_engines(exclude_pid: Optional[int] = None) -> List[int]:
+    """PIDs of goose engines already working. Used to refuse a contended measurement."""
+    try:
+        out = subprocess.run(["pgrep", "-f", r"goose (swarm run|run) "],
+                             capture_output=True, text=True, timeout=15).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
+    pids = [int(p) for p in out.split() if p.isdigit()]
+    return [p for p in pids if p != exclude_pid and p != os.getpid()]
+
+
+def assert_fleet_idle(allow_busy: bool) -> None:
+    """A run against a busy fleet measures CONTENTION, not capability.
+
+    This exists because a killed supervisor left an orphaned `goose swarm` engine running for 33
+    minutes, parented to launchd, quietly competing for the same three nodes as the next episode.
+    Nothing would have flagged it — the numbers would just have been worse, and wrongly attributed
+    to the model.
+    """
+    busy = running_engines()
+    if not busy:
+        return
+    message = (f"another goose engine is already running (pid {', '.join(map(str, busy))}). "
+               f"An episode started now measures contention, not capability.")
+    if allow_busy:
+        print(f"[warn] {message} Continuing because --allow-busy was passed.")
+        return
+    raise SystemExit(f"[refused] {message}\n"
+                     f"          Kill it, or pass --allow-busy to measure anyway.")
+
+
+def terminate_group(proc: subprocess.Popen) -> None:
+    """Kill the engine AND its children. subprocess's own timeout kills only the direct child, so a
+    swarm's workers would survive as orphans and poison the next episode."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+
+
+def extract_claim(episode_dir: Path) -> Dict:
+    """The CLAIM side of the honesty card — what the run said about itself.
+
+    Only the swarm emits a STRUCTURED claim (`complete_result{passed}`). A single-agent run exits 0
+    whether or not it worked, and reading success out of the model's closing prose would be exactly
+    the self-report this benchmark refuses to treat as evidence. So honesty is marked NOT COMPUTABLE
+    for those entrants rather than inferred, and the card reports the coverage instead of hiding it.
+    """
+    log = episode_dir / "run.jsonl"
+    if not log.is_file():
+        return {"available": False,
+                "reason": "single-agent goose emits no structured completion claim"}
+    claimed, finished = None, False
+    for raw in log.read_text(errors="replace").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "complete_result":
+            claimed = event.get("passed")
+        elif event.get("event") == "run_finished":
+            finished = True
+    if claimed is None:
+        return {"available": False, "run_finished": finished,
+                "reason": "no complete_result in the stream (gate off, or the run never got there)"}
+    return {"available": True, "claimed_pass": bool(claimed), "run_finished": finished}
+
+
 def agent_command(target: str, prompt: str, provider: Optional[str], model: Optional[str],
                   binary: Path, episode_dir: Path) -> list[str]:
     if target == "swarm":
@@ -116,7 +195,7 @@ def agent_command(target: str, prompt: str, provider: Optional[str], model: Opti
 def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
                 provider: Optional[str] = None, model: Optional[str] = None,
                 label: Optional[str] = None, timeout: Optional[int] = None,
-                env_file: Optional[str] = None) -> Dict:
+                env_file: Optional[str] = None, allow_busy: bool = False) -> Dict:
     meta = repair._load_meta(fixture)
     tag = label or model or ("local-swarm" if target == "swarm" else "local-single")
     episode_id = f"{fixture.name}__{target}__{tag}__r{rep}".replace("/", "-")
@@ -127,6 +206,8 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
         if record.get("complete"):
             print(f"[skip] {episode_id} already complete (score {record['score']})")
             return record
+
+    assert_fleet_idle(allow_busy)
 
     if episode_dir.exists():
         shutil.rmtree(episode_dir)
@@ -141,14 +222,17 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     child_env = dict(os.environ, **load_env_file(env_file))
     started = time.monotonic()
     timed_out = False
+    # start_new_session gives the engine its own process group, so a timeout can take its workers
+    # down with it instead of leaving them orphaned against the fleet.
+    proc = subprocess.Popen(cmd, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=child_env, start_new_session=True)
     try:
-        proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=cap,
-                              env=child_env)
-        exit_code, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = proc.communicate(timeout=cap)
+        exit_code = proc.returncode
+    except subprocess.TimeoutExpired:
         timed_out, exit_code = True, None
-        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        terminate_group(proc)
+        stdout, stderr = proc.communicate()
     wall = round(time.monotonic() - started, 1)
 
     (episode_dir / "stdout.txt").write_text(stdout or "")
@@ -158,6 +242,7 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     if graded_root != workspace:
         (episode_dir / "relocated.txt").write_text(str(graded_root))
     probe = repair.grade(fixture, graded_root)
+    claim = extract_claim(episode_dir)
 
     record = {
         "episode_id": episode_id,
@@ -178,6 +263,8 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
         "graded_root": str(graded_root),
         "score": probe["score"],
         "probe": probe,
+        "claim": claim,
+        "false_green": bool(claim.get("claimed_pass")) and probe["score"] == 0.0,
         "build": build_info(binary),
     }
     done.write_text(json.dumps(record, indent=2))
@@ -197,11 +284,13 @@ def main() -> int:
     ap.add_argument("--label")
     ap.add_argument("--timeout", type=int)
     ap.add_argument("--env-file", help="path to a credentials file OUTSIDE the repo")
+    ap.add_argument("--allow-busy", action="store_true",
+                    help="measure even though another engine is running (records contention)")
     args = ap.parse_args()
 
     record = run_episode(args.fixture, args.target, args.rep, args.out,
                          args.provider, args.model, args.label, args.timeout,
-                         args.env_file)
+                         args.env_file, args.allow_busy)
     return 0 if record["complete"] else 1
 
 
