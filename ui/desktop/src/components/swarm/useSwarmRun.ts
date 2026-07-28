@@ -482,6 +482,59 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 // not that wall truncated. Strip md emphasis/code fences, drop the "Subtask: [id]" lead, cut at the first
 // structural section marker (Owned files / Implementation / a blank line), collapse whitespace, cap length.
 // Falls back to the id when nothing usable remains.
+/// Is this streamed chunk worth showing as a node's live line?
+///
+/// The coder models stream reasoning in the <think> channel while the TEXT channel emits single-token
+/// fragments — "m", ".", " with", "(group". An ungated fallback therefore renders a busy node as one
+/// meaningless letter (observed live: a node mid-generation showing just "m"). A fragment is not a
+/// sentence; better to fall through to the recent activity than to print it.
+export function substantiveChunk(t?: string | null): string {
+  return t && t.trim().length >= 8 && /[a-zA-Z]{3,}/.test(t) ? t.trim() : '';
+}
+
+/// A looping model emits the SAME line over and over. Showing it verbatim turns the thinking box into a
+/// wall of repeats — measured live: a scout's 2000-char thinking tail was one paragraph repeated three
+/// times, 15 duplicate lines. Fold each run of identical lines into one and SAY how many times it repeated.
+/// This never hides the loop; it makes it legible as a loop, which is the useful fact.
+/// Pure + exported so it is unit-testable.
+export function collapseRepeats(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let n = 1;
+    while (i + n < lines.length && lines[i + n] === line) n += 1;
+    if (line.trim().length === 0) {
+      // A run of blank lines is SPACING, not repetition — keep it exactly as authored.
+      for (let k = 0; k < n; k += 1) out.push(line);
+    } else {
+      out.push(n > 1 ? `${line}  ⟲ ×${n}` : line);
+    }
+    i += n;
+  }
+  // A whole BLOCK can repeat too (the measured case). Detect a repeated tail-block of >= 2 lines.
+  const nonEmpty = out.filter((l) => l.trim().length > 0);
+  if (nonEmpty.length >= 6) {
+    const half = Math.floor(nonEmpty.length / 2);
+    for (let size = half; size >= 3; size -= 1) {
+      const tail = nonEmpty.slice(-size).join('\n');
+      const before = nonEmpty.slice(0, -size).join('\n');
+      if (before.endsWith(tail)) {
+        let reps = 2;
+        let rest = before.slice(0, before.length - tail.length).replace(/\n$/, '');
+        while (rest.endsWith(tail)) {
+          reps += 1;
+          rest = rest.slice(0, rest.length - tail.length).replace(/\n$/, '');
+        }
+        const head = rest.trim().length > 0 ? `${rest}\n` : '';
+        return `${head}${tail}\n\n⟲ the model repeated the block above ${reps}× — it is looping.`;
+      }
+    }
+  }
+  return out.join('\n');
+}
+
 export function cleanTaskTitle(desc: string | undefined, id: string): string {
   if (!desc) return id;
   // TRIM first: the architect's descriptions start with "\n\n", which would make the "\n\s*\n" cut match at
