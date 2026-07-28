@@ -23,6 +23,8 @@ BAR_WIDTH = 20
 
 TITLES = {
     "repair": ("REPAIR", "Can the agent fix a real defect without breaking anything?"),
+    "testwrite": ("TEST WRITING",
+                  "Would these tests actually catch a bug? (mutation score: mutants killed / K)"),
 }
 
 
@@ -77,11 +79,23 @@ def summarise(episodes: List[Dict]) -> List[Dict]:
     rows = []
     for label, eps in groups.items():
         n = len(eps)
-        passes = sum(1 for e in eps if e["score"] == 1.0)
-        p, lo, hi = wilson(passes, n)
+        # A continuous vertical reports killed/K per episode. Counting only score==1.0 would throw
+        # the resolution away and turn mutation score back into the binary that already saturated.
+        # Every mutant is its own Bernoulli trial, so the pooled kills carry the interval.
+        mutant_totals = [(e["probe"].get("killed", 0), e["probe"].get("mutants", 0))
+                         for e in eps if e["probe"].get("mutants")]
+        if mutant_totals:
+            passes = sum(k for k, _ in mutant_totals)
+            trials = sum(m for _, m in mutant_totals)
+            p, lo, hi = wilson(passes, trials)
+            denom = trials
+        else:
+            passes = sum(1 for e in eps if e["score"] == 1.0)
+            denom = n
+            p, lo, hi = wilson(passes, n)
         walls = sorted(e["wall_secs"] for e in eps)
         rows.append({
-            "label": label, "n": n, "passes": passes,
+            "label": label, "n": n, "passes": passes, "denom": denom,
             "pct": 100 * p, "lo": 100 * lo, "hi": 100 * hi,
             "median_secs": walls[len(walls) // 2],
             "tampered": sum(1 for e in eps if e["probe"]["tampered"]),
@@ -130,7 +144,7 @@ def render(vertical: str, rows: List[Dict], episodes: Optional[List[Dict]] = Non
         if row["crashed"]:
             note += f"  crashed/timeout {row['crashed']}"
         lines.append(
-            f" {row['rank']}  {row['label']:<20s} {row['passes']}/{row['n']}  "
+            f" {row['rank']}  {row['label']:<20s} {row['passes']}/{row['denom']}  "
             f"{row['pct']:5.1f} ±{half:4.1f}  {bar}  {row['median_secs']:6.1f}s  {tag}{note}")
 
     tied = [r for r in rows if sum(1 for x in rows if x["rank"] == r["rank"]) > 1]
