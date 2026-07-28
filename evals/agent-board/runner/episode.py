@@ -110,7 +110,19 @@ def running_engines(exclude_pid: Optional[int] = None) -> List[int]:
     return [p for p in pids if p != exclude_pid and p != os.getpid()]
 
 
-def assert_fleet_idle(allow_busy: bool) -> None:
+LOCAL_PROVIDERS = ("lmstudio", "ollama", "localai", "llama")
+
+
+def uses_local_fleet(target: str, provider: Optional[str]) -> bool:
+    """Only entrants served by the local fleet can contend for it.
+
+    A Bedrock episode shares nothing with a running swarm, so refusing it would serialise the whole
+    board for no measurement benefit — the guard has to know WHICH resource is scarce.
+    """
+    return target == "swarm" or (provider or "").lower().startswith(LOCAL_PROVIDERS)
+
+
+def assert_fleet_idle(allow_busy: bool, target: str, provider: Optional[str]) -> None:
     """A run against a busy fleet measures CONTENTION, not capability.
 
     This exists because a killed supervisor left an orphaned `goose swarm` engine running for 33
@@ -118,6 +130,8 @@ def assert_fleet_idle(allow_busy: bool) -> None:
     Nothing would have flagged it — the numbers would just have been worse, and wrongly attributed
     to the model.
     """
+    if not uses_local_fleet(target, provider):
+        return
     busy = running_engines()
     if not busy:
         return
@@ -207,7 +221,7 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
             print(f"[skip] {episode_id} already complete (score {record['score']})")
             return record
 
-    assert_fleet_idle(allow_busy)
+    assert_fleet_idle(allow_busy, target, provider)
 
     if episode_dir.exists():
         shutil.rmtree(episode_dir)
