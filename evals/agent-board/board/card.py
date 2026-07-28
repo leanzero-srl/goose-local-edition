@@ -35,7 +35,9 @@ def wilson(passes: int, n: int) -> Tuple[float, float, float]:
     denom = 1 + Z * Z / n
     centre = (p + Z * Z / (2 * n)) / denom
     half = Z / denom * math.sqrt(p * (1 - p) / n + Z * Z / (4 * n * n))
-    return p, max(0.0, centre - half), min(1.0, centre + half)
+    # Clamped to contain p: at n=100, 100/100 lands the upper bound on 0.9999999999999999 and a
+    # band that excludes its own point estimate is not a band.
+    return p, min(max(0.0, centre - half), p), max(min(1.0, centre + half), p)
 
 
 def load_episodes(runs: Path) -> List[Dict]:
