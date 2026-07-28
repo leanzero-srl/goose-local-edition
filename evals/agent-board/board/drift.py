@@ -88,13 +88,28 @@ def report(episodes: List[Dict], target_points: float) -> str:
                      f"{100 * wilson_half_width(passes, n):>8.1f}{mde(p, n):>8.1f}   {seq}")
 
     lines += ["", "WHAT THIS INSTRUMENT CAN RESOLVE"]
-    for (fixture, label), eps in sorted(groups.items()):
-        n = len(eps)
-        p = sum(1 for e in eps if e["score"] == 1.0) / n
-        lines.append(f"  {fixture} / {label}: at n={n} this cannot separate entrants closer than "
+    by_fixture: Dict[str, List[float]] = defaultdict(list)
+    for (fixture, label), eps in groups.items():
+        by_fixture[fixture].append(sum(1 for e in eps if e["score"] == 1.0) / len(eps))
+
+    for fixture, rates in sorted(by_fixture.items()):
+        entrants = [k for k in groups if k[0] == fixture]
+        n = min(len(groups[k]) for k in entrants)
+        # A fixture every entrant clears (or every entrant fails) ranks nobody, and no number of
+        # reps changes that. Printing a rep count here would say "run more" when the honest answer
+        # is "this fixture is the wrong instrument".
+        if len(rates) > 1 and (all(r == 1.0 for r in rates) or all(r == 0.0 for r in rates)):
+            where = "passes" if rates[0] == 1.0 else "fails"
+            lines.append(f"  {fixture}: SATURATED — every entrant {where} ({len(rates)} entrants, "
+                         f"n={n}). It cannot rank them at ANY number of reps; it needs a harder "
+                         f"rung, not more runs.")
+            continue
+        p = sum(rates) / len(rates)
+        lines.append(f"  {fixture}: at n={n} this cannot separate entrants closer than "
                      f"{mde(p, n):.0f} points.")
         lines.append(f"      reaching ±{target_points:.0f} points needs about "
-                     f"{reps_needed(p, target_points)} reps per prompt.")
+                     f"{reps_needed(p, target_points)} reps per prompt "
+                     f"(worst-case variance when the rate is pinned at 0 or 1).")
 
     flat = [e for e in episodes]
     if flat:
