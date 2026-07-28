@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getSessionDisplayName, shouldShowNewChatTitle } from '../sessions';
-import { prependUnique } from '../hooks/useNavigationSessions';
+import { MAX_RECENT_SESSIONS, prependUnique } from '../hooks/useNavigationSessions';
 import type { SessionListItem } from '../acp/sessions';
 import type { Session } from '../types/session';
 
@@ -91,10 +91,23 @@ describe('prependUnique', () => {
     expect(result).toBe(prev);
   });
 
-  it('caps the list at 25 sessions', () => {
-    const prev = Array.from({ length: 25 }, (_, i) => makeListItem({ id: `s-${i}` }));
-    const result = prependUnique(prev, makeListItem({ id: 'new' }));
-    expect(result).toHaveLength(25);
+  // Asserts against the EXPORTED cap, never a copy of the number. The previous version hardcoded 25;
+  // when the render cap was deliberately raised to 200 the test kept asserting 25 and had been failing
+  // ever since — a stale test that reported a healthy change as a regression.
+  it('caps the rendered list at MAX_RECENT_SESSIONS and puts the newest first', () => {
+    const full = Array.from({ length: MAX_RECENT_SESSIONS }, (_, i) =>
+      makeListItem({ id: `s-${i}` })
+    );
+    const result = prependUnique(full, makeListItem({ id: 'new' }));
+    expect(result).toHaveLength(MAX_RECENT_SESSIONS);
     expect(result[0].id).toBe('new');
+    // The OLDEST is the one dropped, not an arbitrary entry.
+    expect(result.some((s) => s.id === `s-${MAX_RECENT_SESSIONS - 1}`)).toBe(false);
+    expect(result.some((s) => s.id === 's-0')).toBe(true);
+  });
+
+  it('does not truncate a list that is under the cap', () => {
+    const few = Array.from({ length: 3 }, (_, i) => makeListItem({ id: `s-${i}` }));
+    expect(prependUnique(few, makeListItem({ id: 'new' }))).toHaveLength(4);
   });
 });
