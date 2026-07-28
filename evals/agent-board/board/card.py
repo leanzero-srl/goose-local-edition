@@ -15,7 +15,7 @@ import json
 import math
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 BOARD = Path(__file__).resolve().parents[1]
 Z = 1.96
@@ -38,6 +38,23 @@ def wilson(passes: int, n: int) -> Tuple[float, float, float]:
     # Clamped to contain p: at n=100, 100/100 lands the upper bound on 0.9999999999999999 and a
     # band that excludes its own point estimate is not a band.
     return p, min(max(0.0, centre - half), p), max(min(1.0, centre + half), p)
+
+
+def time_noise_threshold(episodes: List[Dict]) -> float:
+    """Two worst-case replicate CVs, in percent. Below this, a time gap is jitter."""
+    by_label: Dict[str, List[float]] = defaultdict(list)
+    for ep in episodes:
+        by_label[ep["label"]].append(ep["wall_secs"])
+    worst = 0.0
+    for secs in by_label.values():
+        if len(secs) < 2:
+            continue
+        mean = sum(secs) / len(secs)
+        if not mean:
+            continue
+        sd = math.sqrt(sum((s - mean) ** 2 for s in secs) / len(secs))
+        worst = max(worst, 100 * sd / mean)
+    return 2 * worst
 
 
 def load_episodes(runs: Path) -> List[Dict]:
@@ -93,9 +110,11 @@ def e_is_baseline(ep: Dict) -> bool:
     return (ep.get("provider") or "").startswith("aws_") or (ep.get("provider") == "anthropic")
 
 
-def render(vertical: str, rows: List[Dict]) -> str:
+def render(vertical: str, rows: List[Dict], episodes: Optional[List[Dict]] = None) -> str:
+    episodes = episodes or []
     title, question = TITLES.get(vertical, (vertical.upper(), ""))
-    total_n = min((r["n"] for r in rows), default=0)
+    ns = [r["n"] for r in rows] or [0]
+    total_n = f"{min(ns)}" if min(ns) == max(ns) else f"{min(ns)}-{max(ns)}"
     lines = [f"{title}", question, ""]
     if not rows:
         return "\n".join(lines + ["  no episodes yet"])
@@ -125,6 +144,17 @@ def render(vertical: str, rows: List[Dict]) -> str:
             lines.append(f"  ...but {fastest['label']} is {ratio:.0f}x quicker than "
                          f"{slowest['label']} ({fastest['median_secs']:.0f}s vs "
                          f"{slowest['median_secs']:.0f}s). Same answer, different price.")
+        # Time is not exempt from the noise floor just because correctness saturated. Measured
+        # replicate CV is 23-29%, so entrants inside ~2 CV are the SAME speed and ordering them by
+        # median would invent a ranking out of jitter — the exact failure the TIED rule exists for.
+        threshold = time_noise_threshold(episodes)
+        if threshold:
+            same_speed = [r["label"] for r in rows
+                          if r["median_secs"] <= fastest["median_secs"] * (1 + threshold / 100)]
+            if len(same_speed) > 1:
+                lines.append(f"  Time differences under {threshold:.0f}% are replicate noise "
+                             f"(worst CV {threshold / 2:.0f}%), so these are the SAME speed and the "
+                             f"order between them is arbitrary: {', '.join(same_speed)}.")
     lines.append("cost/episode: not measured — goose does not surface token counts to the harness")
 
     claimed = sum(r["claims"] for r in rows)
@@ -155,7 +185,7 @@ def main() -> int:
 
     episodes = [e for e in load_episodes(args.runs) if e["vertical"] == args.vertical]
     rows = summarise(episodes)
-    print(render(args.vertical, rows))
+    print(render(args.vertical, rows, episodes))
     if args.json:
         args.json.write_text(json.dumps(
             {"vertical": args.vertical, "rows": rows, "episodes": len(episodes)}, indent=2))

@@ -111,11 +111,37 @@ def report(episodes: List[Dict], target_points: float) -> str:
                      f"{reps_needed(p, target_points)} reps per prompt "
                      f"(worst-case variance when the rate is pinned at 0 or 1).")
 
-    flat = [e for e in episodes]
-    if flat:
-        walls = sorted(e["wall_secs"] for e in flat)
-        lines += ["", f"wall-clock per episode: median {walls[len(walls) // 2]:.0f}s, "
-                      f"min {walls[0]:.0f}s, max {walls[-1]:.0f}s (no trimming)"]
+    # When correctness pins at 100%, TIME is the only axis with variance left, so its drift is the
+    # figure that decides whether a speed claim survives someone re-running it.
+    lines += ["", "TIME DRIFT — the axis that still has variance"]
+    lines.append(f"{'entrant':<20}{'n':>3}{'median':>9}{'min':>8}{'max':>8}{'spread':>9}{'CV':>7}")
+    time_groups: Dict[str, List[float]] = defaultdict(list)
+    for ep in episodes:
+        time_groups[ep["label"]].append(ep["wall_secs"])
+    medians = {}
+    for label, secs in sorted(time_groups.items()):
+        secs.sort()
+        n = len(secs)
+        med = secs[n // 2]
+        medians[label] = med
+        mean = sum(secs) / n
+        var = sum((s - mean) ** 2 for s in secs) / n
+        cv = 100 * math.sqrt(var) / mean if mean else 0.0
+        spread = 100 * (secs[-1] - secs[0]) / med if med else 0.0
+        lines.append(f"{label:<20}{n:>3}{med:>8.1f}s{secs[0]:>7.1f}s{secs[-1]:>7.1f}s"
+                     f"{spread:>8.0f}%{cv:>6.0f}%")
+
+    if len(medians) > 1:
+        worst_cv = max(
+            100 * math.sqrt(sum((s - sum(v) / len(v)) ** 2 for s in v) / len(v)) / (sum(v) / len(v))
+            for v in time_groups.values() if len(v) > 1 and sum(v))
+        fastest = min(medians, key=medians.get)
+        slowest = max(medians, key=medians.get)
+        ratio = medians[slowest] / medians[fastest] if medians[fastest] else 0
+        lines.append(f"  worst replicate CV is {worst_cv:.0f}%, so a time difference under roughly "
+                     f"{2 * worst_cv:.0f}% is replicate noise, not a finding.")
+        lines.append(f"  {slowest} is {ratio:.0f}x {fastest}'s median — far outside that, so the "
+                     f"gap is real.")
     return "\n".join(lines)
 
 
