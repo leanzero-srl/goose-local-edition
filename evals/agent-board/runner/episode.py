@@ -354,7 +354,11 @@ def run_episode(fixture: Path, target: str, rep: int, out_root: Path,
     }
     done.write_text(json.dumps(record, indent=2))
     flag = "TAMPERED " if probe["tampered"] else ""
-    print(f"[tick] {episode_id}  score={probe['score']:.1f} {flag}({wall}s) — {probe['reason']}")
+    if record["scored_zero_for"]:
+        flag += f"{record['scored_zero_for'].upper()} "
+    # Print the DELIVERED score. Printing probe['score'] announced a timed-out swarm run as
+    # "score=1.0" in the log while the record correctly held a zero — a line someone would quote.
+    print(f"[tick] {episode_id}  score={record['score']:.1f} {flag}({wall}s) — {probe['reason']}")
     return record
 
 
