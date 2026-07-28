@@ -1,0 +1,32 @@
+id: slugkit-mutants
+vertical: testwrite
+difficulty: medium
+
+# In this vertical the SOURCE is protected, not the tests — the tests are the agent's deliverable.
+# A run that "fixes" the code to suit its tests is measuring nothing.
+protected:
+  - slugkit/core.py
+  - slugkit/__init__.py
+
+mutants:
+  - m1_no_lower
+  - m2_no_collapse
+  - m3_wrong_separator
+  - m4_no_final_strip
+  - m5_off_by_one
+  - m6_accepts_zero
+
+controls:
+  reference: 1.0        # a thorough suite kills every mutant
+  broken_trivial: 0.0   # `assert True` — passes on pristine code, catches nothing
+  broken_partial: 0.5   # happy path only — kills 3 of 6, measured not guessed
+
+# WHY THIS VERTICAL MATTERS MORE THAN IT LOOKS.
+#
+# Repair is binary, and binary saturates — every cloud baseline cleared all three repair rungs, so
+# the card could not rank them. Mutation score is CONTINUOUS: killed/K. It separates a suite that
+# checks behaviour from one that checks nothing, and there is no way to farm it. `assert True`
+# passes the code and kills zero mutants, which is exactly the 0.0 it deserves.
+#
+# Two gates, both required. The suite must first PASS on pristine code — a suite that fails on
+# correct code is worthless however many mutants it happens to kill.
