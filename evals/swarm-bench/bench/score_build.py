@@ -405,15 +405,10 @@ def _(c: Ctx):
              "the page works but gives the operator little to act on")
 
 
-@check("error_detail_quality", "D")
-def _(c: Ctx):
-    body = c.notfound_body or {}
-    has_error = "error" in body
-    extra = len([k for k in body if k != "error"])
-    return g((0.6 if has_error else 0.0) + min(extra * 0.2, 0.4),
-             f"404 body keys: {sorted(body)}",
-             "an error with no detail gives the caller nothing to act on")
-
+# REMOVED: error_detail_quality. It scored a 404 body of {"error": "not_found"} at 60% and wanted
+# extra keys — but that body is EXACTLY what spec-build.md specifies. A check that penalises precise
+# compliance with the stated contract is a preference dressed as a defect, and fails the traceability
+# test in the legitimacy rule. Deleted rather than rebased: there is no defect here to measure.
 
 # ── gathering ─────────────────────────────────────────────────────────────────────────────────
 

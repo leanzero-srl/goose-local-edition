@@ -58,10 +58,19 @@ def check_cursor_pagination(trace: List[Dict], _r: Dict) -> Dict:
             "consequence": "offset paging against a cursor API silently returns wrong or repeated rows"}
 
 def check_fetched_every_page(trace: List[Dict], _r: Dict) -> Dict:
-    pages = {e.get("page") for e in _list_calls(trace) if e["status"] == 200}
-    return {"ok": pages >= {0, 1, 2},
-            "detail": f"pages fetched: {sorted(p for p in pages if p is not None)}",
-            "consequence": "an unfetched page is silently missing payments"}
+    """Did the client paginate to EXHAUSTION — i.e. see the page whose next_cursor is null?
+
+    Was keyed on a `page` field the trace stopped emitting when paging became offset-based, so it
+    read an empty set and scored zero against a client that had in fact fetched everything. Keyed on
+    the server's own end-of-collection marker now, which cannot drift with the paging scheme.
+    """
+    ok200 = [e for e in _list_calls(trace) if e["status"] == 200]
+    reached_end = any(e.get("last") for e in ok200)
+    offsets = sorted({e.get("offset") for e in ok200 if e.get("offset") is not None})
+    return {"ok": reached_end,
+            "detail": f"{len(ok200)} pages, offsets {offsets[:6]}{'...' if len(offsets) > 6 else ''}, "
+                      f"reached end: {reached_end}",
+            "consequence": "stopping before next_cursor is null silently drops the tail"}
 
 
 def check_short_page_not_treated_as_end(trace: List[Dict], _r: Dict) -> Dict:
