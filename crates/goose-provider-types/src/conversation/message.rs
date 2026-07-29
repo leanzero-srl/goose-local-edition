@@ -859,6 +859,14 @@ impl Message {
         self.with_id(format!("msg_{}", Uuid::new_v4()))
     }
 
+    pub fn with_generated_id_if_missing(self) -> Self {
+        if self.id.is_some() {
+            self
+        } else {
+            self.with_generated_id()
+        }
+    }
+
     /// Add any MessageContent to the message
     pub fn with_content(mut self, content: MessageContentBlock) -> Self {
         self.content.push(content);
