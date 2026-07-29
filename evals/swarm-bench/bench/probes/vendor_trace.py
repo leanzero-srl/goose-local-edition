@@ -127,10 +127,17 @@ def check_cursor_expiry_recovery(trace: List[Dict], _r: Dict) -> Dict:
                 "consequence": "n/a — masked by an earlier failure"}
     after = [e for e in scoped if e["seq"] > gone[0]["seq"]
              and e["path"] == "/v1/payments" and e["method"] == "GET"]
-    restarted = any("cursor" not in e["query"] for e in after)
-    resent = any(e["query"].get("cursor") == gone[0]["query"].get("cursor") for e in after)
+    # A re-send only counts BEFORE the restart. Cursors are deterministic strings, so once the client
+    # has correctly restarted, walking to page 2 again produces the same cursor value legitimately —
+    # and it answers 200, not 410. Measured: Opus restarted correctly and this check still flagged it,
+    # which would have been a fabricated deduction. Only the window between the 410 and the restart
+    # can contain a genuine re-send.
+    restart_at = next((e["seq"] for e in after if "cursor" not in e["query"]), None)
+    restarted = restart_at is not None
+    window = [e for e in after if restart_at is None or e["seq"] < restart_at]
+    resent = any(e["query"].get("cursor") == gone[0]["query"].get("cursor") for e in window)
     return {"ok": restarted and not resent,
-            "detail": f"restarted from page 0: {restarted}; re-sent the dead cursor: {resent}",
+            "detail": f"restarted from page 0: {restarted}; re-sent the dead cursor first: {resent}",
             "consequence": "an expired cursor treated as the end of data silently truncates the ledger"}
 
 
