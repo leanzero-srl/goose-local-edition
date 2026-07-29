@@ -27,8 +27,15 @@ API_KEY = "sk_test_meridian"
 
 # Page sizes are deliberately uneven. Page 2 is SHORT while more data follows, so a client that stops
 # when len(data) < limit silently drops the tail — which the docs warn about explicitly.
-PAGE_SIZES = [25, 5, 17]
-TOTAL_PAYMENTS = sum(PAGE_SIZES)  # 47
+# 247 rows against a documented max page of 100. That gap is deliberate: it makes request
+# efficiency a real discriminator (3 requests at limit=100 vs 10 at the default 25) while still
+# guaranteeing every client makes enough requests to meet the whole trap chain. With a collection
+# smaller than one page, an efficient client would fetch everything in one call and never encounter
+# the 429/410 behaviours at all.
+TOTAL_PAYMENTS = 247
+DEFAULT_LIMIT = 25
+MAX_LIMIT = 100
+SHORT_PAGE_AT = 25   # offset where a deliberately short page is returned, whatever limit was asked
 RETRY_AFTER_SECS = 2
 # Triggers are keyed to (page, which-visit) rather than a raw request counter, so EVERY well-behaved
 # client meets all three regardless of how many requests it happens to make. A count-based trigger is
@@ -41,9 +48,13 @@ RETRY_AFTER_SECS = 2
 #   page2 (1st) -> 410 cursor_expired            -> must RESTART from page 0
 #   page0 (2nd) -> 429 Retry-After: <HTTP-date>  (date form)
 #   page0 (3rd) -> 200, then pages 1,2 complete
-THROTTLE_SECONDS_ON = (1, 1)   # (page, visit) -> 429 with seconds
-CURSOR_EXPIRES_ON = (2, 1)     # (page, visit) -> 410 gone
-THROTTLE_HTTPDATE_ON = (0, 2)  # (page, visit) -> 429 with an HTTP-date
+# Keyed to the client's Nth list request WITHIN the graded phase. Every client now makes at least
+# three (247 rows, max 100 per page), so the chain is reachable regardless of page size:
+#   req 2 -> 429 Retry-After: seconds
+#   req 3 -> 410 cursor_expired  (must restart from the first page)
+#   first request after the 410 -> 429 Retry-After: HTTP-date
+THROTTLE_SECONDS_NTH = 2
+CURSOR_EXPIRES_NTH = 3
 
 
 def _build_payments() -> List[Dict]:
@@ -84,11 +95,6 @@ def _build_payments() -> List[Dict]:
 
 
 PAYMENTS = _build_payments()
-PAGE_BOUNDS: List[tuple] = []
-_start = 0
-for _size in PAGE_SIZES:
-    PAGE_BOUNDS.append((_start, _start + _size))
-    _start += _size
 
 
 def true_order_ids() -> List[str]:
@@ -118,21 +124,21 @@ class State:
 STATE: Optional[State] = None
 
 
-def _page_for_cursor(cursor: Optional[str]) -> int:
+def _offset_for_cursor(cursor: Optional[str]) -> int:
     if not cursor:
         return 0
     try:
-        return int(json.loads(bytes.fromhex(cursor).decode())["p"])
+        return int(json.loads(bytes.fromhex(cursor).decode())["o"])
     except Exception:
         return -1
 
 
-def _cursor_for_page(page: int) -> str:
-    return json.dumps({"p": page}).encode().hex()
+def _cursor_for_offset(offset: int) -> str:
+    return json.dumps({"o": offset}).encode().hex()
 
 
-def _etag_for(page: int) -> str:
-    digest = hashlib.sha256(f"meridian-page-{page}".encode()).hexdigest()[:16]
+def _etag_for(offset: int, limit: int) -> str:
+    digest = hashlib.sha256(f"meridian-{offset}-{limit}".encode()).hexdigest()[:16]
     return f'"{digest}"'
 
 
@@ -196,27 +202,36 @@ class Handler(BaseHTTPRequestHandler):
         assert STATE is not None
         params = parse_qs(parsed.query)
         cursor = (params.get("cursor") or [None])[0]
+        raw_limit = (params.get("limit") or [str(DEFAULT_LIMIT)])[0]
+        try:
+            limit = min(max(int(raw_limit), 1), MAX_LIMIT)
+        except ValueError:
+            limit = DEFAULT_LIMIT
 
-        page_probe = _page_for_cursor(cursor)
         with STATE.lock:
             STATE.list_requests += 1
-            STATE.page_visits[page_probe] = STATE.page_visits.get(page_probe, 0) + 1
-            visit = (page_probe, STATE.page_visits[page_probe])
-
-            def fire(trigger) -> bool:
-                if visit == trigger and trigger not in STATE.fired:
-                    STATE.fired.add(trigger)
-                    return True
-                return False
-
-            throttle = fire(THROTTLE_SECONDS_ON)
-            httpdate = fire(THROTTLE_HTTPDATE_ON)
-            expire = fire(CURSOR_EXPIRES_ON) and bool(cursor)
+            nth = STATE.list_requests
+            throttle = nth == THROTTLE_SECONDS_NTH and "secs" not in STATE.fired
+            if throttle:
+                STATE.fired.add("secs")
+            expire = (nth == CURSOR_EXPIRES_NTH and bool(cursor)
+                      and "gone" not in STATE.fired)
+            if expire:
+                STATE.fired.add("gone")
+            httpdate = ("gone" in STATE.fired and "date" not in STATE.fired
+                        and not expire and not throttle)
+            if httpdate:
+                STATE.fired.add("date")
 
         if throttle:
             self._trace(429, {"retry_after": RETRY_AFTER_SECS, "form": "seconds"})
             self._json(429, {"error": "rate_limited"},
                        headers={"Retry-After": str(RETRY_AFTER_SECS)})
+            return
+
+        if expire:
+            self._trace(410, {"reason": "cursor_expired"})
+            self._json(410, {"error": "cursor_expired"})
             return
 
         if httpdate:
@@ -226,30 +241,32 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "rate_limited"}, headers={"Retry-After": stamp})
             return
 
-        if expire:
-            self._trace(410, {"reason": "cursor_expired"})
-            self._json(410, {"error": "cursor_expired"})
-            return
-        page = _page_for_cursor(cursor)
-        if page < 0 or page >= len(PAGE_BOUNDS):
+        offset = _offset_for_cursor(cursor)
+        if offset < 0 or offset > TOTAL_PAYMENTS:
             self._trace(400)
             self._json(400, {"error": "bad_cursor"})
             return
 
-        etag = _etag_for(page)
+        take = limit
+        if offset == SHORT_PAGE_AT and limit > 5:
+            take = 5  # documented: a short page may appear at any position, and is NOT the end
+
+        etag = _etag_for(offset, take)
         if self.headers.get("If-None-Match") == etag:
-            self._trace(304, {"page": page})
+            self._trace(304, {"offset": offset})
             self._send(304, None, headers={"ETag": etag})
             return
 
-        lo, hi = PAGE_BOUNDS[page]
-        data = [{k: v for k, v in p.items() if not k.startswith("_")} for p in PAYMENTS[lo:hi]]
+        rows = PAYMENTS[offset:offset + take]
+        data = [{k: v for k, v in p.items() if not k.startswith("_")} for p in rows]
+        nxt = offset + len(rows)
         payload = {
             "data": data,
-            "next_cursor": _cursor_for_page(page + 1) if page + 1 < len(PAGE_BOUNDS) else None,
+            "next_cursor": _cursor_for_offset(nxt) if nxt < TOTAL_PAYMENTS else None,
             "total": TOTAL_PAYMENTS,
         }
-        self._trace(200, {"page": page, "returned": len(data)})
+        self._trace(200, {"offset": offset, "returned": len(data), "limit": limit,
+                          "last": nxt >= TOTAL_PAYMENTS})
         self._json(200, payload, headers={"ETag": etag})
 
     def do_POST(self):  # noqa: N802
@@ -354,7 +371,7 @@ def main() -> int:
     args = ap.parse_args()
     serve(args.port, args.trace)
     print(f"meridian mock on http://127.0.0.1:{args.port}  trace={args.trace}")
-    print(f"  {TOTAL_PAYMENTS} payments over pages {PAGE_SIZES}; api key {API_KEY}")
+    print(f"  {TOTAL_PAYMENTS} payments, max limit {MAX_LIMIT}; api key {API_KEY}")
     try:
         while True:
             time.sleep(3600)
