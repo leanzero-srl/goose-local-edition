@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from probes import vendor_trace  # noqa: E402
 
-EXPECTED_TOTAL = 47
+EXPECTED_TOTAL = 247
 PAYMENT_KEYS = {"id", "amount_minor", "currency", "created_at", "status"}
 EXPECTED_SUM = sum(1000 + i * 137 for i in range(EXPECTED_TOTAL))
 TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
@@ -355,7 +355,10 @@ def _(c: Ctx):
     """
     if not c.sync1_reqs:
         return g(0.0, "no vendor requests observed", "n/a")
-    optimum = 1  # limit=100 fetches all 47 in a single request
+    # MEASURED by walking the chain optimally at limit=100: 3 pages + one 429 retry + the 410
+    # restart + the HTTP-date retry = 7. Not a guess, and not 1 — the trap chain is unavoidable, so
+    # charging a client for it would be a deduction no implementation could escape.
+    optimum = 7
     ratio = optimum / c.sync1_reqs
     return g(ratio, f"{c.sync1_reqs} vendor requests for the first sync (optimum {optimum})",
              "paging at the default size multiplies request count and rate-limit exposure")
