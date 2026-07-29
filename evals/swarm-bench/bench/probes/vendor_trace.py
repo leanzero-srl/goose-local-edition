@@ -25,7 +25,10 @@ def exercise_phase(trace: List[Dict]) -> List[Dict]:
     phase — reading the docs is research, not client behaviour.
     """
     for i, entry in enumerate(trace):
-        if entry.get(PHASE_MARKER) == "exercise":
+        # ANY marker opens the graded window. Matching only the literal "exercise" meant the build
+        # flow's sync1/sync2 markers were invisible and the whole trace was graded — including the
+        # agent's own development testing, which is exactly what the marker exists to exclude.
+        if entry.get(PHASE_MARKER):
             return trace[i + 1:]
     return trace  # no marker (e.g. an older trace) — grade everything rather than nothing
 

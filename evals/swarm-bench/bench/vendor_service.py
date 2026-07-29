@@ -299,6 +299,28 @@ class Handler(BaseHTTPRequestHandler):
 PHASE_MARKER = "__phase__"
 
 
+def mark_phase(name: str, reset: bool = None) -> None:
+    """Record a boundary in the trace so the grader can attribute requests to a phase.
+
+    Without it, the agent's own development testing is indistinguishable from the delivered client's
+    behaviour — measured: Opus's one-shot 429 was consumed at trace seq 3 while the graded run began
+    at seq 38, so the retry check graded throwaway scratch code.
+    """
+    assert STATE is not None
+    # Reset defaults to ON only for the FIRST graded phase. The second sync must meet an API that
+    # has already thrown its one-shot 429 and 410, or the conditional-refetch ratio measures a
+    # re-run of the throttle chain instead of the caching behaviour it is meant to grade.
+    if reset is None:
+        reset = not name.endswith("2")
+    with STATE.lock:
+        if reset:
+            STATE.list_requests = 0
+            STATE.page_visits.clear()
+            STATE.fired.clear()
+            STATE.idempotency.clear()
+    STATE.record({PHASE_MARKER: name, "method": "-", "path": "-", "status": 0, "query": {}})
+
+
 def begin_exercise_phase() -> None:
     """Reset the one-shot behaviours and mark the trace, so grading measures the DELIVERED client.
 
