@@ -405,6 +405,51 @@ def _(c: Ctx):
              "the page works but gives the operator little to act on")
 
 
+@check("store_atomic_upsert", "D")
+def _(c: Ctx):
+    """A single atomic upsert, or select-then-insert? Traceable to the spec's "must be updated, not
+    duplicated" plus "run repeatedly" — the read-then-write shape loses that race under concurrency."""
+    src = (c.pkg / "store.py").read_text(errors="replace") if (c.pkg / "store.py").is_file() else ""
+    if not src:
+        return g(0.0, "no store.py", "n/a")
+    atomic = re.search(r"ON CONFLICT|INSERT OR REPLACE|INSERT OR IGNORE|REPLACE INTO", src, re.I)
+    racy = re.search(r"SELECT[^;]*WHERE[^;]*id", src, re.I) and re.search(r"INSERT INTO", src, re.I)
+    return g(1.0 if atomic else (0.3 if racy else 0.0),
+             "atomic upsert" if atomic else ("select-then-insert" if racy else "no upsert found"),
+             "read-then-write duplicates rows when two syncs overlap")
+
+
+@check("store_indexed", "D")
+def _(c: Ctx):
+    """247 rows upserted per sync: without a key on id every upsert is a full scan."""
+    src = (c.pkg / "store.py").read_text(errors="replace") if (c.pkg / "store.py").is_file() else ""
+    hit = re.search(r"PRIMARY KEY|UNIQUE|CREATE\s+(UNIQUE\s+)?INDEX", src, re.I)
+    return g(1.0 if hit else 0.0, "keyed" if hit else "no primary key or index on the payment id",
+             "every upsert becomes a full table scan; sync cost grows quadratically")
+
+
+@check("client_timeouts", "D")
+def _(c: Ctx):
+    """A vendor that accepts the connection and never answers must not hang the sync forever."""
+    src = (c.pkg / "meridian.py").read_text(errors="replace") if (c.pkg / "meridian.py").is_file() else ""
+    hit = re.search(r"timeout\s*=", src)
+    return g(1.0 if hit else 0.0, "timeout set" if hit else "no request timeout",
+             "one unresponsive vendor call hangs the sync with no recovery")
+
+
+@check("ui_error_actionable", "D")
+def _(c: Ctx):
+    """The spec asks for text a user can ACT on, not merely the word "error"."""
+    if not c.html.strip():
+        return g(0.0, "no page", "n/a")
+    actionable = re.search(r"try again|retry|check your connection|is the server running|refresh",
+                           c.html, re.I)
+    generic = re.search(r"error|failed", c.html, re.I)
+    return g(1.0 if actionable else (0.4 if generic else 0.0),
+             "actionable guidance" if actionable else ("generic error text" if generic else "none"),
+             "an error the user cannot act on is only marginally better than a blank screen")
+
+
 # REMOVED: error_detail_quality. It scored a 404 body of {"error": "not_found"} at 60% and wanted
 # extra keys — but that body is EXACTLY what spec-build.md specifies. A check that penalises precise
 # compliance with the stated contract is a preference dressed as a defect, and fails the traceability
