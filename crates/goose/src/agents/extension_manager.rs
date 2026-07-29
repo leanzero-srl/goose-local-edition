@@ -50,7 +50,7 @@ use crate::prompt_template;
 use crate::subprocess::configure_subprocess;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, ErrorData, GetPromptResult,
-    Meta, Prompt, Resource, ResourceContents, ServerInfo, Tool,
+    MetaObject, Prompt, Resource, ResourceContents, ServerInfo, Tool,
 };
 use rmcp::transport::auth::{AuthClient, CredentialStore};
 use schemars::_private::NoSerialize;
@@ -364,7 +364,7 @@ fn insert_trusted_tool_update_meta(
         TRUSTED_TOOL_UPDATE_META_KEY.to_string(),
         Value::Object(trusted_meta),
     );
-    result.meta = Some(Meta(meta_map));
+    result.meta = Some(MetaObject(meta_map));
 }
 
 fn is_unprefixed_extension(config: &ExtensionConfig) -> bool {
@@ -1436,7 +1436,7 @@ impl ExtensionManager {
                             );
 
                             tool.name = public_name.into();
-                            tool.meta = Some(rmcp::model::Meta(meta_map));
+                            tool.meta = Some(rmcp::model::MetaObject(meta_map));
 
                             let mut schema = (*tool.input_schema).clone();
                             if super::tool_schema_normalize::normalize_input_schema(
@@ -2213,7 +2213,7 @@ mod tests {
                             "Render a chart".to_string(),
                             Arc::new(json!({}).as_object().unwrap().clone()),
                         );
-                        t.meta = Some(Meta(
+                        t.meta = Some(MetaObject(
                             json!({ "ui": { "resourceUri": "ui://autovisualiser/chart" } })
                                 .as_object()
                                 .unwrap()
@@ -2224,6 +2224,7 @@ mod tests {
                 ],
                 next_cursor: None,
                 meta: None,
+                ..Default::default()
             })
         }
 
@@ -2741,6 +2742,7 @@ mod tests {
                 ],
                 next_cursor: None,
                 meta: None,
+                ..Default::default()
             })
         }
 
@@ -2887,7 +2889,7 @@ mod tests {
     #[test]
     fn test_remove_untrusted_mcp_app_meta_strips_spoofed_payload() {
         let mut result = CallToolResult::success(vec![]);
-        result.meta = Some(Meta(
+        result.meta = Some(MetaObject(
             serde_json::from_value(serde_json::json!({
                 "goose": {
                     "mcpApp": {
