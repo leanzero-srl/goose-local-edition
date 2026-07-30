@@ -63,23 +63,30 @@ def axis_research(ev: List[Dict], vendor_trace: List[Dict]) -> Dict:
     tools = first(ev, "research_tools")
     checks = {}
 
-    if done:
+    could_look_up = bool(tools and tools.get("can_look_things_up"))
+
+    if not done:
+        checks["grounded_ratio"] = g(None, "no research_completed event (research off?)")
+    elif not could_look_up:
+        # Grounding is IMPOSSIBLE without lookup tools, so scoring it zero blames the run for the
+        # environment. The engine self-disables context7/web-search when their keys are absent and
+        # (with grounded_research_only + no_tools_means_ask on) correctly refuses to treat an
+        # invented finding as settled. Not measurable, not a defect.
+        checks["grounded_ratio"] = g(
+            None, f"{done.get('findings') or 0} findings, but no lookup tools were attached — "
+                  f"grounding was not achievable")
+    else:
         findings = done.get("findings") or 0
         grounded = done.get("grounded") or 0
         checks["grounded_ratio"] = g(
             grounded / findings if findings else 0.0,
             f"{grounded}/{findings} findings were grounded in an actual lookup",
             "an invented finding presented as research is a guess the run then treats as settled")
-    else:
-        checks["grounded_ratio"] = g(None, "no research_completed event (research off?)")
 
-    if tools:
-        checks["had_lookup_tools"] = g(
-            1.0 if tools.get("can_look_things_up") else 0.0,
-            f"available: {tools.get('available') or 'none'}",
-            "with no lookup tools every 'research' finding is model reasoning wearing a hat")
-    else:
-        checks["had_lookup_tools"] = g(None, "no research_tools event")
+    # Availability is an ENVIRONMENT fact, not a model behaviour: reported for coverage, never scored.
+    checks["had_lookup_tools"] = g(
+        None, f"available: {(tools or {}).get('available') or 'none'} "
+              f"(environment, not scored)") if tools else g(None, "no research_tools event")
 
     # Independent of the engine's own accounting: did anything actually read the vendor docs?
     read_docs = sum(1 for e in vendor_trace if "docs" in str(e.get("path", "")))
@@ -114,7 +121,10 @@ def axis_planning(ev: List[Dict], build_score: Optional[float]) -> Dict:
 
     tasks = plan.get("tasks") or []
     ids = {t.get("id") for t in tasks}
-    dangling = [d for t in tasks for d in (t.get("deps") or []) if d.split("::")[0] not in ids]
+    # Match the FULL id. `verify::store` and `verify-e2e::0` are complete task ids, not
+    # namespaced references — splitting on "::" looked for a task called "verify" and reported 10
+    # dangling deps on a perfectly valid DAG. That nearly sent me into swarm.rs to fix the engine.
+    dangling = [d for t in tasks for d in (t.get("deps") or []) if d not in ids]
     checks["dag_valid"] = g(
         1.0 if not dangling else 0.0,
         f"{len(dangling)} dependencies point at no planned task",
