@@ -43,6 +43,21 @@ PLAN: List[Dict] = [
 
 FLOOR_GATE = {"entrant": "local-single", "min_score": 0.10}
 
+# A cap that truncates the work measures the CAP, not the entrant. Measured: every local run hit the
+# flat 2400s ceiling — local-single still reached 84.1% because it got far enough, while the swarm
+# entrants were cut off mid-build and scored 17-38%, which said nothing about the swarm at all.
+# Cloud models finish this task in 250-700s; the local fleet needs far longer, and the swarm longer
+# still because it plans, dispatches, judges and gates before it writes much.
+TIMEOUT_BY_ENTRANT = {
+    "opus-5": 1800, "sonnet-5": 1800, "haiku-4.5": 1800,
+    "local-single": 5400,
+    "swarm-1node": 9000, "swarm-2node": 9000, "swarm-3node": 9000,
+}
+
+
+def timeout_for(entrant: str, default: int) -> int:
+    return TIMEOUT_BY_ENTRANT.get(entrant, default)
+
 # Transient provider failures are the norm on a long unattended run, not the exception: 500, 529
 # Overloaded, throttling, a dropped stream. None of them say anything about the model's ability, so
 # an episode that dies on one must be RETRIED, not recorded as a score of zero. A zero from an
@@ -158,7 +173,10 @@ def main() -> int:
             unit_no += 1
             nxt = units[unit_no] if unit_no < total else None
             avg = (sum(durations) / len(durations)) if durations else 600.0
-            remaining = (total - unit_no) * avg
+            # Remaining time from each unit's OWN cap where we have one, so a 2.5h swarm episode is
+            # not averaged away behind six 8-minute cloud runs.
+            remaining = sum(min(timeout_for(e, int(avg)), 9000) * 0.8
+                            for e, _r, _w in units[unit_no:])
             print(f"\n>>> [{unit_no}/{total}] {clock()}  NOW: {item['entrant']} rep{rep}"
                   f" — {item['why']}"
                   f"\n    NEXT: {(nxt[0] + ' rep' + str(nxt[1])) if nxt else 'process scoring'}"
@@ -170,7 +188,8 @@ def main() -> int:
             # One item must NEVER kill the sweep. SystemExit is not an Exception and slips through
             # a bare `except Exception` — that has already taken down a whole board once.
             try:
-                v = run_one(item["entrant"], rep, args.out, port, args.timeout)
+                v = run_one(item["entrant"], rep, args.out, port,
+                            timeout_for(item["entrant"], args.timeout))
             except (Exception, SystemExit):
                 print(f"[fail] {item['entrant']} rep{rep}\n{traceback.format_exc()[-800:]}",
                       flush=True)
