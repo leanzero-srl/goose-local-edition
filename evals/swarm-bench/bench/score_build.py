@@ -418,11 +418,23 @@ def _(c: Ctx):
     src = (c.pkg / "store.py").read_text(errors="replace") if (c.pkg / "store.py").is_file() else ""
     if not src:
         return g(0.0, "no store.py", "n/a")
-    atomic = re.search(r"ON CONFLICT|INSERT OR REPLACE|INSERT OR IGNORE|REPLACE INTO", src, re.I)
+    # ON CONFLICT ... DO UPDATE is the only form that MERGES. INSERT OR REPLACE deletes the old row
+    # and inserts a new one, silently dropping columns the write omits and firing delete triggers;
+    # INSERT OR IGNORE keeps stale data instead of updating it. Both write, neither upserts.
+    # Scope to the PAYMENTS write. A whole-file scan matched an unrelated ON CONFLICT in the
+    # last_sync/meta write and reported a non-atomic payments upsert as atomic — the check passed a
+    # build whose sync path had genuinely lost its merge clause.
+    stmt = re.search(r"INSERT[^;\"']*?INTO\s+payments.*?(?=\"\"\"|;|\Z)", src, re.I | re.S)
+    scope = stmt.group(0) if stmt else src
+    atomic = re.search(r"ON CONFLICT[^;]*DO UPDATE", scope, re.I | re.S)
+    weaker = re.search(r"INSERT OR REPLACE|INSERT OR IGNORE|REPLACE INTO", scope, re.I)
     racy = re.search(r"SELECT[^;]*WHERE[^;]*id", src, re.I) and re.search(r"INSERT INTO", src, re.I)
-    return g(1.0 if atomic else (0.3 if racy else 0.0),
-             "atomic upsert" if atomic else ("select-then-insert" if racy else "no upsert found"),
-             "read-then-write duplicates rows when two syncs overlap")
+    return g(1.0 if atomic else (0.5 if weaker else (0.3 if racy else 0.0)),
+             "ON CONFLICT DO UPDATE (true merge)" if atomic else
+             ("INSERT OR REPLACE/IGNORE — writes but does not merge" if weaker else
+              ("select-then-insert" if racy else "no upsert found")),
+             "REPLACE deletes and reinserts, dropping omitted columns; IGNORE keeps stale rows; "
+             "read-then-write duplicates when two syncs overlap")
 
 
 @check("store_indexed", "D")
