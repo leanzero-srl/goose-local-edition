@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   Puzzle,
   Repeat,
+  Gauge,
   Settings,
   Zap,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'apps', path: '/apps', label: 'Apps', icon: AppWindow },
   { id: 'scheduler', path: '/schedules', label: 'Scheduler', icon: Clock },
   { id: 'loop', path: '/loop', label: 'Loop', icon: Repeat },
+  { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
   { id: 'extensions', path: '/extensions', label: 'Extensions', icon: Puzzle },
   { id: 'sessions', path: '/sessions', label: 'Session History', icon: History },
 ];

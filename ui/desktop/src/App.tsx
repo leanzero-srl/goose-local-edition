@@ -33,6 +33,7 @@ import SettingsView, { SettingsViewOptions } from './components/settings/Setting
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
 import LoopView from './components/loop/LoopView';
+import BenchmarkView from './components/benchmark/BenchmarkView';
 import ProviderSettings from './components/settings/providers/ProviderSettingsPage';
 import { AppLayout } from './components/Layout/AppLayout';
 import { ChatProvider, DEFAULT_CHAT_TITLE } from './contexts/ChatContext';
@@ -215,6 +216,10 @@ const SchedulesRoute = () => {
 
 const RecipesRoute = () => {
   return <RecipesView />;
+};
+
+const BenchmarkRoute = () => {
+  return <BenchmarkView />;
 };
 
 const LoopRoute = () => {
@@ -671,6 +676,7 @@ export function AppInner() {
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
               <Route path="loop" element={<LoopRoute />} />
+            <Route path="benchmark" element={<BenchmarkRoute />} />
               <Route path="skills" element={<SkillsRoute />} />
               <Route path="memories" element={<MemoriesRoute />} />
               <Route path="permission" element={<PermissionRoute />} />

@@ -122,6 +122,12 @@ type ElectronAPI = {
   } | null>;
   getBinaryPath: (binaryName: string) => Promise<string>;
   readFile: (directory: string) => Promise<FileResponse>;
+  /** Read the last benchmark result from disk, or null on first run. */
+  benchmarkRead: () => Promise<unknown | null>;
+  /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row. */
+  benchmarkRun: (nodes: number) => Promise<unknown>;
+  /** POST a result to leanzero.net. Must go through main: the renderer CSP blocks external hosts. */
+  benchmarkPublish: (row: unknown) => Promise<{ ok: boolean; error?: string }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -285,6 +291,9 @@ const electronAPI: ElectronAPI = {
   getBinaryPath: (binaryName: string) => ipcRenderer.invoke('get-binary-path', binaryName),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
+  benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
+  benchmarkRun: (nodes: number) => ipcRenderer.invoke('benchmark-run', nodes),
+  benchmarkPublish: (row: unknown) => ipcRenderer.invoke('benchmark-publish', row),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),

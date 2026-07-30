@@ -4525,5 +4525,8 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Create a new session with the edited message"
+  },
+  "navigation.itemBenchmark": {
+    "defaultMessage": "Benchmark"
   }
 }
