@@ -11,7 +11,8 @@ use crate::formats::openai::{
     create_request_with_options, get_cost, get_usage, response_to_message, OpenAiFormatOptions,
 };
 use crate::formats::openai_responses::{
-    create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
+    create_responses_request_for_model, get_responses_usage, responses_api_to_message,
+    ResponsesApiResponse,
 };
 use crate::images::ImageFormat;
 use crate::openai_compatible::{
@@ -272,6 +273,80 @@ impl OpenAiProviderBuilder {
 }
 
 impl OpenAiProvider {
+    pub async fn stream_for_model(
+        &self,
+        model_config: &ModelConfig,
+        wire_model: &str,
+        capability_model: &str,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let mut payload = create_responses_request_for_model(
+            model_config,
+            wire_model,
+            capability_model,
+            system,
+            messages,
+            tools,
+        )?;
+        payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
+        self.stream_responses_payload(model_config, payload).await
+    }
+
+    async fn stream_responses_payload(
+        &self,
+        model_config: &ModelConfig,
+        payload: serde_json::Value,
+    ) -> Result<MessageStream, ProviderError> {
+        let mut log = start_log(model_config, &payload)?;
+        let response = self
+            .with_retry(|| async {
+                handle_status(
+                    self.api_client
+                        .request(&Self::map_base_path(
+                            &self.base_path,
+                            "responses",
+                            OPEN_AI_DEFAULT_RESPONSES_PATH,
+                        ))
+                        .model_headers(model_config)?
+                        .response_post(&payload)
+                        .await?,
+                )
+                .await
+            })
+            .await
+            .inspect_err(|e| {
+                let _ = log.error(e);
+            })?;
+        if self.supports_streaming {
+            stream_responses_compat(response, log)
+        } else {
+            let json: serde_json::Value = response.json().await.map_err(|e| {
+                ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
+            })?;
+            let parsed: ResponsesApiResponse =
+                serde_json::from_value(json.clone()).map_err(|e| {
+                    ProviderError::ExecutionError(format!(
+                        "Failed to parse responses API response: {}",
+                        e
+                    ))
+                })?;
+            let message = responses_api_to_message(&parsed)?;
+            let usage_data = get_responses_usage(&parsed);
+            let usage_json = json.get("usage").unwrap_or(&serde_json::Value::Null);
+            let mut usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
+            if let Some(cost) = get_cost(usage_json) {
+                usage = usage.with_cost(cost, CostSource::ProviderReported);
+            }
+            log.write(
+                &serde_json::to_value(&message).unwrap_or_default(),
+                Some(&usage_data),
+            )?;
+            Ok(super::base::stream_from_single_message(message, usage))
+        }
+    }
+
     #[doc(hidden)]
     pub fn new(api_client: ApiClient) -> Self {
         Self {
@@ -584,6 +659,13 @@ impl Provider for OpenAiProvider {
         &self.name
     }
 
+    async fn refresh_credentials(&self) -> Result<(), ProviderError> {
+        self.api_client
+            .refresh_credentials()
+            .await
+            .map_err(|error| ProviderError::Authentication(error.to_string()))
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }
@@ -655,61 +737,17 @@ impl Provider for OpenAiProvider {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         if self.should_use_responses_api_for_provider(&model_config.model_name) {
-            let mut payload = create_responses_request(model_config, system, messages, tools)?;
-            payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
-
-            let mut log = start_log(model_config, &payload)?;
-
-            let response = self
-                .with_retry(|| async {
-                    let payload_clone = payload.clone();
-                    let resp = self
-                        .api_client
-                        .request(&Self::map_base_path(
-                            &self.base_path,
-                            "responses",
-                            OPEN_AI_DEFAULT_RESPONSES_PATH,
-                        ))
-                        .model_headers(model_config)?
-                        .response_post(&payload_clone)
-                        .await?;
-                    handle_status(resp).await
-                })
-                .await
-                .inspect_err(|e| {
-                    let _ = log.error(e);
-                })?;
-
-            if self.supports_streaming {
-                stream_responses_compat(response, log)
-            } else {
-                let json: serde_json::Value = response.json().await.map_err(|e| {
-                    ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
-                })?;
-
-                let responses_api_response: ResponsesApiResponse =
-                    serde_json::from_value(json.clone()).map_err(|e| {
-                        ProviderError::ExecutionError(format!(
-                            "Failed to parse responses API response: {}",
-                            e
-                        ))
-                    })?;
-
-                let message = responses_api_to_message(&responses_api_response)?;
-                let usage_data = get_responses_usage(&responses_api_response);
-                let usage_json = json.get("usage").unwrap_or(&serde_json::Value::Null);
-                let mut usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
-                if let Some(cost) = get_cost(usage_json) {
-                    usage = usage.with_cost(cost, CostSource::ProviderReported);
-                }
-
-                log.write(
-                    &serde_json::to_value(&message).unwrap_or_default(),
-                    Some(&usage_data),
-                )?;
-
-                Ok(super::base::stream_from_single_message(message, usage))
-            }
+            let (wire_model, _) =
+                crate::formats::openai::extract_reasoning_effort(&model_config.model_name);
+            self.stream_for_model(
+                model_config,
+                &wire_model,
+                &model_config.model_name,
+                system,
+                messages,
+                tools,
+            )
+            .await
         } else {
             let payload = create_request_with_options(
                 model_config,

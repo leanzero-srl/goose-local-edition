@@ -1402,13 +1402,39 @@ pub fn create_request_with_options(
     for_streaming: bool,
     format_options: OpenAiFormatOptions,
 ) -> anyhow::Result<Value, Error> {
+    let (wire_model_name, _) = extract_reasoning_effort(&model_config.model_name);
+    create_request_for_model_with_options(
+        model_config,
+        &wire_model_name,
+        &model_config.model_name,
+        system,
+        messages,
+        tools,
+        image_format,
+        for_streaming,
+        format_options,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_request_for_model_with_options(
+    model_config: &ModelConfig,
+    wire_model_name: &str,
+    capability_model_name: &str,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+    image_format: &ImageFormat,
+    for_streaming: bool,
+    format_options: OpenAiFormatOptions,
+) -> anyhow::Result<Value, Error> {
     if model_config.model_name.starts_with("o1-mini") {
         return Err(anyhow!(
             "o1-mini model is not currently supported since goose uses tool calling and o1-mini does not support it. Please use o1 or o3 models instead."
         ));
     }
 
-    let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
+    let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(capability_model_name);
     let is_reasoning_model = is_openai_responses_model(&model_name);
     let supports_xai_effort = supports_xai_reasoning_effort(&model_name);
     let reasoning_effort = if is_reasoning_model {
@@ -1439,7 +1465,7 @@ pub fn create_request_with_options(
     messages_array.extend(messages_spec);
 
     let mut payload = json!({
-        "model": model_name,
+        "model": wire_model_name,
         "messages": messages_array
     });
 
