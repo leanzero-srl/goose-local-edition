@@ -41,3 +41,23 @@ understate whatever it measures.
 Task 5 — the six-axis process scorer over swarm runs. Everything it needs is mapped: event names,
 fields, and gaps are in the plan; `research_completed{grounded}`, `plan_confidence_breakdown`,
 `judge_verdict` and `complete_result{passed,verified}` are the primary sources.
+
+## Swarm results, first full sweep (2026-07-30)
+
+| entrant | score | wall | timed out | reading |
+|---|---|---|---|---|
+| swarm-3node | **90.0%** | 9000s | yes | finished the work before the cap bit |
+| swarm-1node | 46.0% | 9000s | yes | truncated — discard and re-run at 16200s |
+| swarm-2node | 9.2% | 2519s | **NO** | **a real failure, not a cap artifact** |
+
+**swarm-2node is the interesting one.** It exited CLEANLY at 42 minutes with Tier A at 100% —
+every named module present, all 8 interface methods declared, server healthy, page served — and
+Tier B at 0%: `sync_completeness 0/247`, `total_field None`, `summary_accuracy None`.
+
+It built a complete, correctly-structured application whose vendor integration does not work, then
+stopped and declared itself done. That is exactly the failure class this benchmark was built to
+detect and that an artifact-only grader would score as "well structured". The four-tier split is
+what makes it legible: A 100 / B 0 is a precise diagnosis, not a number.
+
+Worth noting the swarm is NOT uniformly weak — 3 nodes reached 90.0%, comfortably above the local
+single-agent's 84.1%. The spread across node counts is real and needs untruncated reps to explain.
