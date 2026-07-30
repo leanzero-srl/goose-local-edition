@@ -60,8 +60,13 @@ print(f"{'entrant':<16}{'rep':>4}{'score':>8}   A    B    C    D   scorer")
 for v in rows:
     t = v.get('tiers', {})
     cell = lambda k: f"{100 * t.get(k, {}).get('mean', 0):>3.0f}%"
+    nodes = v.get('actual_nodes')
+    tag = v.get('scorer_version', 'UNVERSIONED')
+    if v.get('entrant','').startswith('swarm'):
+        want = v['entrant'].split('-')[1].rstrip('node')
+        tag += f"  pool={nodes}" + ("  !! MISMATCH" if str(nodes) != want else "")
     print(f"{v.get('entrant', '?'):<16}{v.get('rep', 0):>4}{100 * v.get('score', 0):>7.1f}%  "
-          f"{cell('A')} {cell('B')} {cell('C')} {cell('D')}  {v.get('scorer_version', 'UNVERSIONED')}")
+          f"{cell('A')} {cell('B')} {cell('C')} {cell('D')}  {tag}")
 stale = {v.get('scorer_version') for v in rows}
 if len(stale) > 1:
     print(f"\n!! mixed scorer versions {sorted(x or 'UNVERSIONED' for x in stale)} — "
