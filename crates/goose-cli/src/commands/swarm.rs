@@ -19241,6 +19241,33 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .green()
             .bold()
         );
+        // GOOSE_SWARM_MAX_NODES caps the auto-pool. The pool is built from `lms ps`, so a device
+        // disabled via `swarm pool disable` is silently re-added the moment it is resident — which
+        // makes node-count experiments impossible from outside the engine (measured: a 1-node and a
+        // 3-node run reported an identical 2-node pool). Deterministic order, so N is reproducible.
+        let fleet_pool = match std::env::var("GOOSE_SWARM_MAX_NODES")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+        {
+            Some(max) if max < fleet_pool.len() => {
+                let mut capped = fleet_pool.clone();
+                capped.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+                capped.truncate(max);
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "GOOSE_SWARM_MAX_NODES={} — using {} of {} resident nodes",
+                        max,
+                        capped.len(),
+                        fleet_pool.len()
+                    ))
+                    .yellow()
+                );
+                capped
+            }
+            _ => fleet_pool,
+        };
         fleet_pool
     } else if cfg.allow_model_load {
         eprintln!(
