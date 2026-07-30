@@ -1,4 +1,4 @@
-use anstream::println;
+use anstream::{adapter::strip_str, println};
 use bat::WrappingMode;
 use console::{measure_text_width, style, Color, StyledObject, Term};
 use goose::config::Config;
@@ -15,7 +15,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rmcp::model::{CallToolRequestParams, JsonObject, PromptArgument};
 use serde_json::Value;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::io::{Error, IsTerminal, Write};
 use std::path::Path;
@@ -559,6 +559,17 @@ fn render_tool_response(resp: &ToolResponse, debug: bool) {
     }
 }
 
+pub(super) fn sanitize_terminal_line(line: &str) -> String {
+    strip_str(line)
+        .flat_map(str::chars)
+        .filter(|character| *character == '\t' || !character.is_control())
+        .collect()
+}
+
+fn print_tool_output_line(line: &str) {
+    println!("    {}", style(sanitize_terminal_line(line)).dim());
+}
+
 fn print_tool_output(text: &str) {
     if text.is_empty() {
         return;
@@ -575,13 +586,13 @@ fn print_tool_output(text: &str) {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= max_lines {
         for line in &lines {
-            println!("    {}", style(line).dim());
+            print_tool_output_line(line);
         }
     } else {
         let head = max_lines / 2;
         let tail = max_lines - head;
         for line in &lines[..head] {
-            println!("    {}", style(line).dim());
+            print_tool_output_line(line);
         }
         println!(
             "    {}",
@@ -593,7 +604,7 @@ fn print_tool_output(text: &str) {
             .italic()
         );
         for line in &lines[lines.len() - tail..] {
-            println!("    {}", style(line).dim());
+            print_tool_output_line(line);
         }
     }
 }
@@ -1463,7 +1474,7 @@ pub fn display_cost_usage(provider: &str, model: &str, usage: &Usage) {
 pub struct McpSpinners {
     bars: HashMap<String, ProgressBar>,
     log_spinner: Option<ProgressBar>,
-
+    shell_output_lines: VecDeque<String>,
     multi_bar: MultiProgress,
 }
 
@@ -1472,6 +1483,7 @@ impl McpSpinners {
         McpSpinners {
             bars: HashMap::new(),
             log_spinner: None,
+            shell_output_lines: VecDeque::new(),
             multi_bar: MultiProgress::new(),
         }
     }
@@ -1492,6 +1504,13 @@ impl McpSpinners {
         });
 
         spinner.set_message(message.to_string());
+    }
+
+    pub fn log_shell_output(&mut self, lines: Vec<String>, max_lines: usize) {
+        let message = update_recent_lines(&mut self.shell_output_lines, lines, max_lines);
+        if !message.is_empty() {
+            self.log(&message);
+        }
     }
 
     pub fn update(&mut self, token: &str, value: f64, total: Option<f64>, message: Option<&str>) {
@@ -1520,8 +1539,25 @@ impl McpSpinners {
         if let Some(spinner) = self.log_spinner.as_mut() {
             spinner.disable_steady_tick();
         }
+        self.shell_output_lines.clear();
         self.multi_bar.clear()
     }
+}
+
+fn update_recent_lines(
+    recent_lines: &mut VecDeque<String>,
+    lines: impl IntoIterator<Item = String>,
+    max_lines: usize,
+) -> String {
+    recent_lines.extend(lines);
+    while recent_lines.len() > max_lines {
+        recent_lines.pop_front();
+    }
+    recent_lines
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n  ")
 }
 
 #[cfg(test)]
@@ -1529,6 +1565,42 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::env;
+
+    #[test]
+    fn recent_lines_accumulate_across_updates() {
+        let mut recent_lines = VecDeque::new();
+        let mut rendered = String::new();
+
+        for line in ["one", "two", "three", "four"] {
+            rendered = update_recent_lines(&mut recent_lines, [line.to_string()], 3);
+        }
+
+        assert_eq!(rendered, "two\n  three\n  four");
+    }
+
+    #[test]
+    fn terminal_line_sanitizer_removes_escape_sequences_and_controls() {
+        assert_eq!(
+            sanitize_terminal_line(
+                "\x1b[31mred\x1b[0m \x1b[2J\x1b[H\
+                 \x1b]0;spoofed title\x07\
+                 \x1b]52;c;Y2xpcGJvYXJk\x1b\\safe"
+            ),
+            "red safe"
+        );
+        assert_eq!(
+            sanitize_terminal_line("before\x08after\x07\r\tvisible"),
+            "beforeafter\tvisible"
+        );
+    }
+
+    #[test]
+    fn terminal_line_sanitizer_preserves_plain_unicode_text() {
+        assert_eq!(
+            sanitize_terminal_line("goose 🪿\t日本語"),
+            "goose 🪿\t日本語"
+        );
+    }
 
     #[test]
     fn formats_subagent_tool_call_names() {
