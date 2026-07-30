@@ -51,7 +51,10 @@ FLOOR_GATE = {"entrant": "local-single", "min_score": 0.10}
 TIMEOUT_BY_ENTRANT = {
     "opus-5": 1800, "sonnet-5": 1800, "haiku-4.5": 1800,
     "local-single": 5400,
-    "swarm-1node": 9000, "swarm-2node": 9000, "swarm-3node": 9000,
+    # 9000s still truncated swarm-1node (structure built, ZERO vendor requests made). The
+    # swarm front-loads planning, dispatch, judging and gates before writing much, so it
+    # needs a genuinely long ceiling or the score measures the ceiling.
+    "swarm-1node": 16200, "swarm-2node": 16200, "swarm-3node": 16200,
 }
 
 
