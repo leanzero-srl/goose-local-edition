@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,10 +62,18 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         cmd = [str(GOOSE), "run", "--provider", "lmstudio",
                "--model", "mihai-qwopus3.6-27b-coder-mtp", "-t", prompt]
     elif entrant.startswith("swarm"):
-        # swarm-<N>node -> size the pool to N before dispatching, and restore it afterwards.
-        # The pool is sized by enabling/disabling devices — the engine has no --devices flag and
-        # ignores an env var here. Verified earlier in this project: `pool enable|disable <id>`.
-        nodes = int("".join(ch for ch in entrant if ch.isdigit()) or 3)
+        # swarm-<N>node -> ask for N nodes. NOTE: the engine AUTO-POOLS from what is resident on the
+        # fleet (`lms ps`), so `pool enable|disable` does not reliably constrain a run — measured:
+        # swarm-1node and swarm-3node both reported the SAME 2-node pool in run_started, making the
+        # whole node-scaling comparison meaningless. We still set the pool (it is the only lever
+        # available), but the verdict records the pool the run ACTUALLY used and the analysis must
+        # trust that, never the label.
+        # Parse the COUNT, not every digit in the name: "".join(digits of "swarm-1node") is "10",
+        # because "node" contains a zero. Every swarm run therefore asked for 10 nodes and enabled
+        # the whole pool — so swarm-1node, -2node and -3node all ran the SAME configuration and the
+        # node-scaling comparison measured nothing.
+        match = re.match(r"swarm-(\d+)node", entrant)
+        nodes = int(match.group(1)) if match else 3
         listing = subprocess.run([str(GOOSE), "swarm", "pool", "show"],
                                  capture_output=True, text=True).stdout
         ids = [ln.split()[1] for ln in listing.splitlines()
@@ -105,7 +114,22 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
         server.shutdown()
 
     verdict = score_build.evaluate(ctx)
-    verdict.update({"entrant": entrant, "rep": rep, "agent": agent})
+    # The pool the run REALLY used, straight from run_started. A label like "swarm-3node" is an
+    # intention; this is the fact, and a mismatch invalidates any node-scaling claim.
+    actual_pool = None
+    run_log = workdir / "run.jsonl"
+    if run_log.is_file():
+        for line in run_log.read_text(errors="replace").splitlines():
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            if e.get("event") == "run_started":
+                actual_pool = [d.get("model_id") for d in (e.get("pool") or [])]
+                break
+    verdict.update({"entrant": entrant, "rep": rep, "agent": agent,
+                    "actual_pool": actual_pool,
+                    "actual_nodes": len(actual_pool) if actual_pool is not None else None})
     (workdir / "verdict.json").write_text(json.dumps(verdict, indent=2))
     return verdict
 
