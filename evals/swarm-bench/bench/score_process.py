@@ -98,7 +98,13 @@ def axis_planning(ev: List[Dict], build_score: Optional[float]) -> Dict:
     plan = first(ev, "plan_loaded")
     checks = {}
     if not plan:
-        return {"plan_present": g(0.0, "no plan_loaded event", "the run never produced a plan")}
+        # A single-agent run has no planning PHASE to grade. Scoring it zero would fabricate a
+        # defect out of an architecture difference — the mirror image of the vacuous-credit bug.
+        # Absent because the run crashed is a real 0; absent because there is no swarm is n/a.
+        if not ev:
+            return {"plan_present": g(None, "no swarm event stream — nothing to grade")}
+        return {"plan_present": g(0.0, "swarm ran but emitted no plan_loaded",
+                                  "the run never produced a plan")}
 
     count = plan.get("task_count") or 0
     # A band, not a target: too few means no decomposition, too many means thrash.
@@ -207,6 +213,8 @@ def axis_judge(ev: List[Dict], build_ok: Optional[bool]) -> Dict:
 def axis_delivery(ev: List[Dict], build_score: Optional[float]) -> Dict:
     finished = first(ev, "run_finished")
     result = first(ev, "complete_result")
+    if not ev:
+        return {"run_finished": g(None, "no swarm event stream — nothing to grade")}
     checks = {
         "run_finished": g(1.0 if finished else 0.0,
                           "run_finished emitted" if finished else "no run_finished — the run crashed"

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import traceback
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
 
@@ -33,6 +34,11 @@ PLAN: List[Dict] = [
     {"entrant": "local-single", "reps": 1, "why": "FEASIBILITY GATE — local must clear the floor"},
     {"entrant": "sonnet-5", "reps": 2, "why": "baseline"},
     {"entrant": "haiku-4.5", "reps": 2, "why": "baseline"},
+    # The swarm entrants are the only ones that emit a process event stream, so they are the only
+    # ones the six-axis scorer can fully grade. Node count is the operator's headline comparison.
+    {"entrant": "swarm-1node", "reps": 1, "why": "process axes + node scaling"},
+    {"entrant": "swarm-2node", "reps": 1, "why": "process axes + node scaling"},
+    {"entrant": "swarm-3node", "reps": 1, "why": "process axes + node scaling"},
 ]
 
 FLOOR_GATE = {"entrant": "local-single", "min_score": 0.10}
@@ -52,6 +58,15 @@ def looks_transient(text: str) -> bool:
     return any(marker in low for marker in TRANSIENT)
 
 
+def clock() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def eta(seconds: float) -> str:
+    """Wall-clock moment, not a duration. 'finishes in 20 minutes' forces the reader to do sums."""
+    return (datetime.now() + timedelta(seconds=seconds)).strftime("%H:%M")
+
+
 def done_marker(out: Path, entrant: str, rep: int) -> Path:
     return out / f"{entrant}-r{rep}" / "verdict.json"
 
@@ -65,6 +80,7 @@ def run_one(entrant: str, rep: int, out: Path, port: int, timeout: int) -> Dict:
             if v.get("scorer_version") == score_build.SCORER_VERSION:
                 print(f"[skip] {entrant} rep{rep} already done on {v['scorer_version']} "
                       f"({100 * v['score']:.1f}%)", flush=True)
+                v["skipped"] = True
                 return v
             print(f"[stale] {entrant} rep{rep} was scored by "
                   f"{v.get('scorer_version', 'an unversioned grader')}, current is "
@@ -134,15 +150,23 @@ def main() -> int:
         f"  {n + 1}. {e} rep{r} — {w}" for n, (e, r, w) in enumerate(units)) + "\n", flush=True)
 
     results: List[Dict] = []
+    durations: List[float] = []
     port = args.port_base
     unit_no = 0
     for item in PLAN:
         for rep in range(item["reps"]):
             unit_no += 1
             nxt = units[unit_no] if unit_no < total else None
-            print(f"\n>>> [{unit_no}/{total}] NOW: {item['entrant']} rep{rep} — {item['why']}"
-                  f"\n    NEXT: {(nxt[0] + ' rep' + str(nxt[1])) if nxt else 'sweep complete'}",
+            avg = (sum(durations) / len(durations)) if durations else 600.0
+            remaining = (total - unit_no) * avg
+            print(f"\n>>> [{unit_no}/{total}] {clock()}  NOW: {item['entrant']} rep{rep}"
+                  f" — {item['why']}"
+                  f"\n    NEXT: {(nxt[0] + ' rep' + str(nxt[1])) if nxt else 'process scoring'}"
+                  f", starting ~{eta(avg)}"
+                  f"\n    SWEEP ETA: ~{eta(avg + remaining)}"
+                  f" ({(avg + remaining) / 60:.0f} min left over {total - unit_no + 1} episodes)",
                   flush=True)
+            unit_started = time.time()
             # One item must NEVER kill the sweep. SystemExit is not an Exception and slips through
             # a bare `except Exception` — that has already taken down a whole board once.
             try:
@@ -152,6 +176,8 @@ def main() -> int:
                       flush=True)
                 v = {"entrant": item["entrant"], "rep": rep, "score": 0.0, "failed": True}
             results.append(v)
+            if not v.get("skipped"):
+                durations.append(time.time() - unit_started)
             port += MAX_ATTEMPTS
             (args.out / "sweep-progress.json").write_text(json.dumps(results, indent=2))
 
@@ -166,7 +192,16 @@ def main() -> int:
                 break
             print(f"[GATE OK] {item['entrant']} cleared the floor at {100 * best:.1f}%", flush=True)
 
-    print("\n=== SWEEP COMPLETE ===", flush=True)
+    # CHAIN, do not defer. Leaving the next stage for a human to trigger is how a loop stalls.
+    print(f"\n[{clock()}] chaining: process scoring over every episode that produced a run log",
+          flush=True)
+    try:
+        subprocess.run([sys.executable, "-u", str(HERE / "score_all_process.py"),
+                        "--out", str(args.out)], timeout=900)
+    except Exception:
+        print(f"[warn] process scoring failed\n{traceback.format_exc()[-500:]}", flush=True)
+
+    print(f"\n=== SWEEP COMPLETE {clock()} ===", flush=True)
     for r in results:
         tag = "FAILED" if r.get("failed") else f"{100 * r['score']:.1f}%"
         print(f"  {r.get('entrant'):<14} rep{r.get('rep')}  {tag}", flush=True)
