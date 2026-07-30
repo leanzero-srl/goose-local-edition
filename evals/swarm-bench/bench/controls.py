@@ -1,0 +1,159 @@
+"""Prove the grader works in BOTH directions before any score is believed.
+
+Three properties, and only the third is usually tested:
+
+  HIGH   a known-good build scores high
+  LOW    a deliberately broken build scores low
+  ISOLATION  each injected defect fails ONLY its own check
+
+Isolation is the one that matters most and is almost never checked. A grader with a shared
+precondition collapses a mostly-correct build to zero — measured twice in this project, once when a
+missing subcommand took a 43/45 build to 0/44, and once when a stale trace field scored a correct
+paginator 0%. Both looked like devastating model failures and were neither.
+
+Defects are injected into a COPY of a real known-good tree, so the control tests the grader against
+the same shape of artifact it will grade in production, not a hand-written strawman.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+from typing import Callable, Dict, List
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import score_build  # noqa: E402
+import vendor_service  # noqa: E402
+
+ROOT = HERE.parent
+
+
+def _sub(path: Path, pattern: str, repl: str) -> bool:
+    if not path.is_file():
+        return False
+    text = path.read_text(errors="replace")
+    new = re.sub(pattern, repl, text, count=1)
+    if new == text:
+        return False
+    path.write_text(new)
+    return True
+
+
+# Each defect: (name, mutate, checks it SHOULD break). Anything else breaking is a cascade.
+DEFECTS: List[Dict] = [
+    {
+        "name": "no_frontend",
+        "expect": {"modules_present", "serves_page", "ui_states", "ui_currency",
+                   "ui_offline", "ui_polish", "ui_error_actionable"},
+        "apply": lambda pkg: shutil.rmtree(pkg / "web", ignore_errors=True) or True,
+    },
+    {
+        # A method the app never calls at runtime: the AST check must notice, and nothing else may.
+        # The first version of this defect renamed `last_sync`, which IS called on the health path —
+        # the server then crashed and 24 checks cascaded. That was a badly designed control, not a
+        # grader fault: a defect that breaks the app at runtime SHOULD break everything downstream.
+        "name": "declared_iface_incomplete",
+        "expect": {"interfaces_declared"},
+        "apply": lambda pkg: _sub(pkg / "meridian.py", r"def total_count\(",
+                                  "def _total_count_renamed("),
+    },
+    {
+        "name": "default_limit_wrong",
+        "expect": {"local_pagination"},
+        "apply": lambda pkg: _sub(pkg / "api.py", r"\b25\b", "7"),
+    },
+    {
+        # Keep the write CORRECT but make it non-atomic in shape, so only the finesse check moves.
+        # Deleting `ON CONFLICT` outright broke the SQL and nothing persisted at all — again a bad
+        # control rather than a bad grader.
+        "name": "upsert_not_atomic",
+        "expect": {"store_atomic_upsert"},
+        # Same table, same columns, still writes — only the ATOMIC form is removed, replaced by
+        # INSERT OR REPLACE. Renaming the table instead broke persistence entirely and cascaded,
+        # which tested nothing about the atomicity check.
+        "apply": lambda pkg: (
+            _sub(pkg / "store.py", r"INSERT INTO payments", "INSERT OR REPLACE INTO payments")
+            and _sub(pkg / "store.py", r"ON CONFLICT\(id\)[^\"]*?(?=\"\"\")", "")),
+    },
+]
+
+
+def run_control(name: str, workdir: Path, port: int, out: Path) -> Dict:
+    trace = out / f"trace-control-{name}.jsonl"
+    server = vendor_service.serve(port, trace)
+    try:
+        ctx = score_build.gather(workdir, port, workdir / "control.db", trace,
+                                 mark_phase=vendor_service.mark_phase)
+    finally:
+        server.shutdown()
+    return score_build.evaluate(ctx)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--good", type=Path, default=ROOT / "runs/build/opus-5-r0")
+    ap.add_argument("--out", type=Path, default=ROOT / "runs/controls")
+    ap.add_argument("--port", type=int, default=8990)
+    args = ap.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    if not (args.good / "vendorsync").is_dir():
+        raise SystemExit(f"no known-good tree at {args.good}")
+
+    print("CONTROL 1/2 — the known-good build must score HIGH\n")
+    good_dir = args.out / "good"
+    shutil.rmtree(good_dir, ignore_errors=True)
+    shutil.copytree(args.good, good_dir, ignore=shutil.ignore_patterns(
+        "*.db", "verdict.json", "process.json", "__pycache__", ".swarm"))
+    good = run_control("good", good_dir, args.port, args.out)
+    good_fail = {c["check"] for c in good["checks"] if c["score"] < 1.0}
+    print(f"  known-good scored {100 * good['score']:.1f}%   "
+          f"({len(good_fail)} check(s) below full: {sorted(good_fail) or 'none'})")
+    ok_high = good["score"] >= 0.85
+    print(f"  {'PASS' if ok_high else 'FAIL'} — needs >= 85%\n")
+
+    print("CONTROL 2/2 — each injected defect must fail ONLY its own checks\n")
+    failures = 0
+    port = args.port + 1
+    for defect in DEFECTS:
+        wd = args.out / defect["name"]
+        shutil.rmtree(wd, ignore_errors=True)
+        shutil.copytree(args.good, wd, ignore=shutil.ignore_patterns(
+            "*.db", "verdict.json", "process.json", "__pycache__", ".swarm"))
+        pkg = wd / "vendorsync"
+        if not defect["apply"](pkg):
+            print(f"  {defect['name']:<22} SKIPPED — the mutation did not apply to this tree")
+            continue
+
+        got = run_control(defect["name"], wd, port, args.out)
+        port += 1
+        broke = {c["check"] for c in got["checks"] if c["score"] < 1.0}
+        newly = broke - good_fail
+        expected, cascade = defect["expect"], newly - defect["expect"]
+        hit = newly & expected
+
+        status = "PASS" if hit and not cascade else "FAIL"
+        failures += status == "FAIL"
+        print(f"  {defect['name']:<22} {100 * got['score']:>5.1f}%  {status}")
+        print(f"      broke as intended : {sorted(hit) or 'NOTHING — the defect went undetected'}")
+        if cascade:
+            print(f"      CASCADE           : {sorted(cascade)}")
+        if not hit:
+            print(f"      expected to break : {sorted(expected)}")
+
+    verdict = "GRADER TRUSTED" if ok_high and not failures else \
+              f"GRADER NOT TRUSTED — {failures + (0 if ok_high else 1)} control failure(s)"
+    print(f"\n{verdict}")
+    (args.out / "controls.json").write_text(json.dumps(
+        {"known_good": good["score"], "failures": failures, "trusted": ok_high and not failures},
+        indent=2))
+    return 0 if ok_high and not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
