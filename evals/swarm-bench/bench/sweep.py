@@ -180,7 +180,7 @@ def main() -> int:
             print(f"\n>>> [{unit_no}/{total}] {clock()}  NOW: {item['entrant']} rep{rep}"
                   f" — {item['why']}"
                   f"\n    NEXT: {(nxt[0] + ' rep' + str(nxt[1])) if nxt else 'process scoring'}"
-                  f", starting ~{eta(avg)}"
+                  f", starting ~{eta(min(timeout_for(item['entrant'], int(avg)), 9000) * 0.8)}"
                   f"\n    SWEEP ETA: ~{eta(avg + remaining)}"
                   f" ({(avg + remaining) / 60:.0f} min left over {total - unit_no + 1} episodes)",
                   flush=True)
