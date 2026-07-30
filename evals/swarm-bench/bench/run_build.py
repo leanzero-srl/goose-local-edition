@@ -61,6 +61,18 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         cmd = [str(GOOSE), "run", "--provider", "lmstudio",
                "--model", "mihai-qwopus3.6-27b-coder-mtp", "-t", prompt]
     elif entrant.startswith("swarm"):
+        # swarm-<N>node -> size the pool to N before dispatching, and restore it afterwards.
+        # The pool is sized by enabling/disabling devices — the engine has no --devices flag and
+        # ignores an env var here. Verified earlier in this project: `pool enable|disable <id>`.
+        nodes = int("".join(ch for ch in entrant if ch.isdigit()) or 3)
+        listing = subprocess.run([str(GOOSE), "swarm", "pool", "show"],
+                                 capture_output=True, text=True).stdout
+        ids = [ln.split()[1] for ln in listing.splitlines()
+               if ln.strip().startswith(("enabled", "disabled")) and len(ln.split()) > 1]
+        for i, dev in enumerate(ids):
+            subprocess.run([str(GOOSE), "swarm", "pool",
+                            "enable" if i < nodes else "disable", dev],
+                           capture_output=True, text=True)
         cmd = [str(GOOSE), "swarm", "run", prompt, "--output-format", "json",
                "--log-file", str(workdir / "run.jsonl")]
     else:
