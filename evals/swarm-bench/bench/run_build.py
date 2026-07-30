@@ -62,26 +62,12 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         cmd = [str(GOOSE), "run", "--provider", "lmstudio",
                "--model", "mihai-qwopus3.6-27b-coder-mtp", "-t", prompt]
     elif entrant.startswith("swarm"):
-        # swarm-<N>node -> ask for N nodes. NOTE: the engine AUTO-POOLS from what is resident on the
-        # fleet (`lms ps`), so `pool enable|disable` does not reliably constrain a run — measured:
-        # swarm-1node and swarm-3node both reported the SAME 2-node pool in run_started, making the
-        # whole node-scaling comparison meaningless. We still set the pool (it is the only lever
-        # available), but the verdict records the pool the run ACTUALLY used and the analysis must
-        # trust that, never the label.
-        # Parse the COUNT, not every digit in the name: "".join(digits of "swarm-1node") is "10",
-        # because "node" contains a zero. Every swarm run therefore asked for 10 nodes and enabled
-        # the whole pool — so swarm-1node, -2node and -3node all ran the SAME configuration and the
-        # node-scaling comparison measured nothing.
+        # GOOSE_SWARM_MAX_NODES caps the auto-pool inside the engine. `swarm pool disable` cannot do
+        # this: the pool is rebuilt from `lms ps` on every run, so a disabled-but-resident device is
+        # silently re-added — measured, a 1-node and a 3-node run both reported the same 2-node pool.
         match = re.match(r"swarm-(\d+)node", entrant)
         nodes = int(match.group(1)) if match else 3
-        listing = subprocess.run([str(GOOSE), "swarm", "pool", "show"],
-                                 capture_output=True, text=True).stdout
-        ids = [ln.split()[1] for ln in listing.splitlines()
-               if ln.strip().startswith(("enabled", "disabled")) and len(ln.split()) > 1]
-        for i, dev in enumerate(ids):
-            subprocess.run([str(GOOSE), "swarm", "pool",
-                            "enable" if i < nodes else "disable", dev],
-                           capture_output=True, text=True)
+        env = {**env, "GOOSE_SWARM_MAX_NODES": str(nodes)}
         cmd = [str(GOOSE), "swarm", "run", prompt, "--output-format", "json",
                "--log-file", str(workdir / "run.jsonl")]
     else:
