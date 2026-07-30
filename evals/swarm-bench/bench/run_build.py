@@ -102,13 +102,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--entrant", default="opus-5")
     ap.add_argument("--reps", type=int, default=1)
+    ap.add_argument("--only-rep", type=int,
+                    help="run exactly this rep index instead of 0..reps-1")
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--port", type=int, default=8850)
     ap.add_argument("--out", type=Path, default=ROOT / "runs/build")
     args = ap.parse_args()
 
     verdicts = []
-    for rep in range(args.reps):
+    reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))
+    for rep in reps:
         v = run(args.entrant, rep, args.out, args.timeout, args.port + rep)
         verdicts.append(v)
         print(score_build.format_report(
