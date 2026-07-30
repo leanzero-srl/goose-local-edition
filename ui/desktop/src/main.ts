@@ -2260,6 +2260,82 @@ ipcMain.handle('select-import-session-file', async () => {
 // per-node turn loops live. A `goose swarm run` writes a structured event stream to
 // <workingDir>/.swarm/run-<id>.jsonl and a per-turn digest per worker to <workingDir>/.swarm/activity/<task>.json.
 // This returns the newest run's parsed events + the activity digests; the renderer folds them into node lanes.
+// ── Benchmark ────────────────────────────────────────────────────────────────────────────────
+// Three handlers the renderer cannot do itself: spawning the swarm engine, reading the result off
+// disk, and POSTing to leanzero.net. The last one MUST live here — the renderer CSP allowlist
+// (utils/csp.ts) permits only loopback and github, so a renderer-side fetch to the site is blocked.
+
+const BENCH_DIR = path.join(os.homedir(), '.config', 'goose', 'benchmark');
+const BENCH_RESULT = path.join(BENCH_DIR, 'result.json');
+
+ipcMain.handle('benchmark-read', async () => {
+  try {
+    return JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8'));
+  } catch {
+    return null; // no previous run is the normal first-run state
+  }
+});
+
+ipcMain.handle('benchmark-run', async (_event, nodes: number) => {
+  const repo = path.join(os.homedir(), 'Projects', 'goose');
+  const runner = path.join(repo, 'evals', 'swarm-bench', 'bench', 'run_build.py');
+  try {
+    await fs.access(runner);
+  } catch {
+    throw new Error('benchmark harness not found at ' + runner);
+  }
+  const entrant = `swarm-${nodes}node`;
+  return await new Promise((resolve, reject) => {
+    const child = spawn(
+      'python3',
+      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '16200'],
+      { cwd: path.join(repo, 'evals', 'swarm-bench'), detached: true }
+    );
+    let tail = '';
+    child.stdout?.on('data', (d) => (tail = (tail + d.toString()).slice(-4000)));
+    child.stderr?.on('data', (d) => (tail = (tail + d.toString()).slice(-4000)));
+    child.on('error', reject);
+    child.on('close', async () => {
+      try {
+        const verdictPath = path.join(
+          repo, 'evals', 'swarm-bench', 'runs', 'build', `${entrant}-r0`, 'verdict.json'
+        );
+        const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
+        const row = {
+          label: `Your fleet · ${v.actual_nodes ?? nodes} node${(v.actual_nodes ?? nodes) > 1 ? 's' : ''}`,
+          score: v.score,
+          tiers: {
+            A: v.tiers?.A?.mean ?? 0, B: v.tiers?.B?.mean ?? 0,
+            C: v.tiers?.C?.mean ?? 0, D: v.tiers?.D?.mean ?? 0,
+          },
+          nodes: v.actual_nodes ?? nodes,
+          mine: true,
+          scorerVersion: v.scorer_version ?? 'unknown',
+        };
+        await fs.mkdir(BENCH_DIR, { recursive: true });
+        await fs.writeFile(BENCH_RESULT, JSON.stringify(row, null, 2));
+        resolve(row);
+      } catch (err) {
+        reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
+      }
+    });
+  });
+});
+
+ipcMain.handle('benchmark-publish', async (_event, row: unknown) => {
+  try {
+    const res = await fetch('https://leanzero.net/api/benchmark-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(row),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return { ok: true, ...(await res.json().catch(() => ({}))) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
   try {
     if (!workingDir || typeof workingDir !== 'string') return null;

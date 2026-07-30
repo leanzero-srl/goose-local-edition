@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useSwarmRun } from '../swarm/useSwarmRun';
+import { useEdition } from '../../contexts/EditionContext';
 import {
   ChevronDown,
   ChevronRight,
@@ -553,13 +554,16 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
   const { extensionsList } = useConfig();
 
   const appsExtensionEnabled = !!extensionsList?.find((ext) => ext.name === 'apps')?.enabled;
+  const { isLocal } = useEdition();
 
   const visibleItems = useMemo<NavItem[]>(() => {
     return NAV_ITEMS.filter((item) => {
       if (item.path === '/apps') return appsExtensionEnabled;
+      // Benchmark measures a local fleet, so it has no meaning in an upstream-flavoured build.
+      if (item.path === '/benchmark') return isLocal;
       return true;
     });
-  }, [appsExtensionEnabled]);
+  }, [appsExtensionEnabled, isLocal]);
 
   const isActive = useCallback((path: string) => location.pathname === path, [location.pathname]);
 
