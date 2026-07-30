@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 # local-single is the feasibility gate: if the local fleet cannot resolve the task at all, every
 # cloud baseline captured afterwards is wasted effort.
 PLAN: List[Dict] = [
-    {"entrant": "opus-5", "reps": 1, "why": "true number on the corrected scorer"},
+    {"entrant": "opus-5", "reps": 2, "why": "true number on the corrected scorer"},
     {"entrant": "local-single", "reps": 1, "why": "FEASIBILITY GATE — local must clear the floor"},
     {"entrant": "sonnet-5", "reps": 2, "why": "baseline"},
     {"entrant": "haiku-4.5", "reps": 2, "why": "baseline"},
