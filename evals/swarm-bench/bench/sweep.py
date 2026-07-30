@@ -19,6 +19,8 @@ import traceback
 from pathlib import Path
 from typing import Dict, List
 
+import score_build  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
@@ -35,6 +37,20 @@ PLAN: List[Dict] = [
 
 FLOOR_GATE = {"entrant": "local-single", "min_score": 0.10}
 
+# Transient provider failures are the norm on a long unattended run, not the exception: 500, 529
+# Overloaded, throttling, a dropped stream. None of them say anything about the model's ability, so
+# an episode that dies on one must be RETRIED, not recorded as a score of zero. A zero from an
+# overloaded endpoint is a fabricated deduction with extra steps.
+TRANSIENT = ("500", "502", "503", "529", "overloaded", "rate limit", "throttl",
+             "timed out", "timeout", "connection reset", "stream decode", "temporarily")
+MAX_ATTEMPTS = 3
+BACKOFF_SECS = (60, 240)
+
+
+def looks_transient(text: str) -> bool:
+    low = (text or "").lower()
+    return any(marker in low for marker in TRANSIENT)
+
 
 def done_marker(out: Path, entrant: str, rep: int) -> Path:
     return out / f"{entrant}-r{rep}" / "verdict.json"
@@ -46,31 +62,60 @@ def run_one(entrant: str, rep: int, out: Path, port: int, timeout: int) -> Dict:
     if marker.is_file():
         try:
             v = json.loads(marker.read_text())
-            print(f"[skip] {entrant} rep{rep} already done ({100 * v['score']:.1f}%)", flush=True)
-            return v
+            if v.get("scorer_version") == score_build.SCORER_VERSION:
+                print(f"[skip] {entrant} rep{rep} already done on {v['scorer_version']} "
+                      f"({100 * v['score']:.1f}%)", flush=True)
+                return v
+            print(f"[stale] {entrant} rep{rep} was scored by "
+                  f"{v.get('scorer_version', 'an unversioned grader')}, current is "
+                  f"{score_build.SCORER_VERSION} — re-running so the table stays comparable",
+                  flush=True)
         except Exception:
             pass  # unreadable verdict: fall through and redo it
 
-    print(f"[run ] {entrant} rep{rep} (port {port}, cap {timeout}s)", flush=True)
     started = time.time()
-    try:
-        subprocess.run(
-            [sys.executable, "-u", str(HERE / "run_build.py"),
-             "--entrant", entrant, "--only-rep", str(rep),
-             "--timeout", str(timeout), "--port", str(port), "--out", str(out)],
-            timeout=timeout + 900, start_new_session=True)
-    except subprocess.TimeoutExpired:
-        print(f"[warn] {entrant} rep{rep} exceeded the outer cap", flush=True)
-    except Exception:
-        print(f"[fail] {entrant} rep{rep}\n{traceback.format_exc()[-800:]}", flush=True)
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        print(f"[run ] {entrant} rep{rep} attempt {attempt}/{MAX_ATTEMPTS} "
+              f"(port {port + attempt - 1}, cap {timeout}s)", flush=True)
+        tail = ""
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-u", str(HERE / "run_build.py"),
+                 "--entrant", entrant, "--only-rep", str(rep),
+                 "--timeout", str(timeout), "--port", str(port + attempt - 1), "--out", str(out)],
+                timeout=timeout + 900, start_new_session=True,
+                capture_output=True, text=True)
+            tail = (proc.stdout or "") + (proc.stderr or "")
+            print(tail[-3000:], flush=True)
+        except subprocess.TimeoutExpired:
+            tail = "outer cap exceeded"
+            print(f"[warn] {entrant} rep{rep} exceeded the outer cap", flush=True)
+        except Exception:
+            tail = traceback.format_exc()
+            print(f"[fail] {entrant} rep{rep}\n{tail[-800:]}", flush=True)
 
-    if marker.is_file():
-        v = json.loads(marker.read_text())
-        print(f"[done] {entrant} rep{rep} {100 * v['score']:.1f}%  "
-              f"({round(time.time() - started)}s)", flush=True)
-        return v
-    print(f"[fail] {entrant} rep{rep} produced no verdict", flush=True)
-    return {"entrant": entrant, "rep": rep, "score": 0.0, "failed": True}
+        if marker.is_file():
+            try:
+                v = json.loads(marker.read_text())
+            except Exception:
+                v = None
+            if v and v.get("scorer_version") == score_build.SCORER_VERSION:
+                print(f"[done] {entrant} rep{rep} {100 * v['score']:.1f}%  "
+                      f"({round(time.time() - started)}s, attempt {attempt})", flush=True)
+                return v
+
+        if attempt < MAX_ATTEMPTS and looks_transient(tail):
+            wait = BACKOFF_SECS[min(attempt - 1, len(BACKOFF_SECS) - 1)]
+            print(f"[retry] {entrant} rep{rep} hit a transient provider failure — "
+                  f"waiting {wait}s then retrying (attempt {attempt + 1}/{MAX_ATTEMPTS})", flush=True)
+            time.sleep(wait)
+            continue
+        break
+
+    print(f"[fail] {entrant} rep{rep} produced no verdict after {MAX_ATTEMPTS} attempt(s)",
+          flush=True)
+    return {"entrant": entrant, "rep": rep, "score": 0.0, "failed": True,
+            "reason": "no verdict after retries"}
 
 
 def main() -> int:
@@ -107,7 +152,7 @@ def main() -> int:
                       flush=True)
                 v = {"entrant": item["entrant"], "rep": rep, "score": 0.0, "failed": True}
             results.append(v)
-            port += 1
+            port += MAX_ATTEMPTS
             (args.out / "sweep-progress.json").write_text(json.dumps(results, indent=2))
 
         if item["entrant"] == FLOOR_GATE["entrant"]:

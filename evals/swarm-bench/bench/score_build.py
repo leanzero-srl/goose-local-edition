@@ -47,6 +47,12 @@ PAYMENT_KEYS = {"id", "amount_minor", "currency", "created_at", "status"}
 EXPECTED_SUM = sum(1000 + i * 137 for i in range(EXPECTED_TOTAL))
 TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
 
+# Bump on ANY change to a check, a weight, or the fixture. A verdict carrying a different version is
+# not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
+# scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
+# cheaper model appeared to beat a stronger one.
+SCORER_VERSION = "sb-3"
+
 
 # ── http helpers ──────────────────────────────────────────────────────────────────────────────
 
@@ -570,7 +576,8 @@ def evaluate(c: Ctx) -> Dict:
         mean = sum(r["score"] for r in sub) / len(sub) if sub else 0.0
         tiers[tier] = {"mean": round(mean, 4), "checks": len(sub), "weight": weight}
         weighted += mean * weight
-    return {"score": round(weighted, 4), "tiers": tiers, "checks": rows}
+    return {"score": round(weighted, 4), "scorer_version": SCORER_VERSION,
+            "tiers": tiers, "checks": rows}
 
 
 def format_report(result: Dict, title: str = "") -> str:
