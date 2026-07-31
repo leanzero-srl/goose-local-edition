@@ -727,6 +727,12 @@ pub struct SwarmConfig {
     /// complete_verify caught it three rounds running, and the fix worker could not repair it. OFF by
     /// default => the fix prompt is byte-identical to today.
     pub read_on_fix: bool,
+    /// Emit only the rules that apply to the task's KIND. The generic worker prompt is the
+    /// implementer's; measured over 1,282 dispatches, ~60% of tasks receive instructions written for
+    /// a different job, and a test-author is told "NEVER read the project's TEST files" while owning
+    /// one. This SUBTRACTS rules per kind — it never adds a persona, which is measured null on this
+    /// model class. OFF by default => byte-identical prompts.
+    pub kind_prompt: bool,
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
     /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
     /// dependents instead of failing the whole subtree — so one hung core task does not kill the capstone.
@@ -1031,6 +1037,7 @@ impl Default for SwarmConfig {
             spiral_thinking_chars: 0,
             contract_retry: false,
             read_on_fix: false,
+            kind_prompt: false,
             degrade_on_stall: false,
             split_fat: false,
             incremental_replan: false,
@@ -18014,6 +18021,54 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        let is_test_author = req.owned_files.iter().any(|f| {
+            lang.is_test_file(
+                std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(""),
+            )
+        });
+        let kind_prompt_on = swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt);
+        // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
+        // to is the contradiction that produced SyntaxErrors in shipped test files.
+        let reading_rules = if kind_prompt_on && is_test_author {
+            "- DON'T OVER-READ the project, but DO read what you are testing: the SOURCE module under \
+             test (to get its real signatures) and YOUR OWN test file after you write it. Do not read \
+             the rest of the suite or re-read the whole project.\n"
+        } else if kind_prompt_on {
+            "- DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs above — \
+             that is enough to start. Read AT MOST the ONE file you will edit, then ACT. Read one \
+             specific SOURCE file only if you must call its exact API. Verify by RUNNING, not by \
+             re-reading.\n"
+        } else {
+            "- DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs/outputs \
+             above — that is enough to start. Read AT MOST the ONE file you will edit (for an amendment), \
+             then ACT. Do NOT re-read the whole project to 'understand it first'; if you catch yourself \
+             reading many files or thinking 'let me first read everything / understand the codebase', STOP \
+             and write/edit now. NEVER read the project's TEST files (`test_*.py`/`*_test.py`) — they are \
+             not your dependencies and tell you nothing you need; reading the test suite is wasted turns \
+             (a worker just burned 13 reads on 6 test files and wrote nothing). Read ONE specific SOURCE \
+             file only if you must call its exact API. Trust the manifest + dependency context; verify by \
+             RUNNING (pytest), not by re-reading.\n"
+        };
+        // "STOP WHEN GREEN" is meaningless to a task that authors tests rather than satisfying them.
+        let stopping_rules = if kind_prompt_on && is_test_author {
+            "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
+             module. Run it once to prove it collects and executes — a test file with a SyntaxError or \
+             a bad import is worse than none. Then finish; do not chase coverage.\n"
+        } else if kind_prompt_on {
+            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
+             re-run pytest more than ~2 times, and pick a sensible default for anything UNSPECIFIED \
+             rather than agonizing over it.\n"
+        } else {
+            "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
+             re-run pytest more than ~2 times and do NOT keep tweaking an UNSPECIFIED detail (e.g. whether \
+             multiple filters use AND vs OR): pick the sensible default, note it in one line, and STOP — a \
+             worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
+             already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
+             one.\n"
+        };
         let worker_directive = lang.directive();
         // GOOSE_SWARM_READ_ON_FIX: a FIX worker owns no files and is repairing a defect the per-task
         // gates already proved is real. The implementer prohibitions below ("read AT MOST the ONE file
@@ -18022,6 +18077,23 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // 'path'` — a mismatch between __main__.py and store.py that is BY DEFINITION not visible in one
         // file. complete_verify caught it three rounds running and the fix worker could not repair it,
         // because the rules forbade reading the second file the defect lives in.
+        // GOOSE_SWARM_KIND_PROMPT: emit only the rules that apply to THIS task's kind.
+        //
+        // The generic prompt is not neutral — it is the IMPLEMENTER's role prompt, sent to every kind.
+        // MEASURED over 1,282 corpus dispatches: implementer 40.1%, test-author 31.1%, entrypoint
+        // 16.1%, owns-nothing 12.1%, so ~60% receive instructions authored for a different job. The
+        // sharpest case is a contradiction, not a preference: 406 dispatches OWN a test_*.py file and
+        // are told "NEVER read the project's TEST files" — the file they must produce is the file they
+        // may not open — and "STOP WHEN GREEN, the moment your file's tests pass" when they have no
+        // tests of their own to green. Test tasks are 15/35 of all failures, dominant verdict
+        // broken_code with a SyntaxError in the test file, which a worker forbidden to open its own
+        // output cannot catch.
+        //
+        // This SUBTRACTS rules; it never adds a persona. Role-as-identity is measured null on this
+        // model class (Qwen 7B/14B/32B, +/-2%, p>0.05). The mechanism that pays is instruction
+        // density: Qwen-27B perfect-compliance is 0.588 at N=10 rules, 0.350 at N=20, 0.094 at N=40,
+        // and small models fail by wholesale OMISSION, so every rule silently evicts another. Every
+        // kind here sees FEWER rules than today and none sees more.
         let is_fix_round = req.owned_files.is_empty() && !req.all_files.is_empty();
         let read_on_fix =
             is_fix_round && swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix);
@@ -18093,21 +18165,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
              you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
              completely and also do NOT create a `plan.json`.\n\
-             - DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs/outputs \
-             above — that is enough to start. Read AT MOST the ONE file you will edit (for an amendment), \
-             then ACT. Do NOT re-read the whole project to 'understand it first'; if you catch yourself \
-             reading many files or thinking 'let me first read everything / understand the codebase', STOP \
-             and write/edit now. NEVER read the project's TEST files (`test_*.py`/`*_test.py`) — they are \
-             not your dependencies and tell you nothing you need; reading the test suite is wasted turns \
-             (a worker just burned 13 reads on 6 test files and wrote nothing). Read ONE specific SOURCE \
-             file only if you must call its exact API. Trust the manifest + dependency context; verify by \
-             RUNNING (pytest), not by re-reading.\n\
-             - STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
-             re-run pytest more than ~2 times and do NOT keep tweaking an UNSPECIFIED detail (e.g. whether \
-             multiple filters use AND vs OR): pick the sensible default, note it in one line, and STOP — a \
-             worker once ran pytest 12 times agonizing over an unspecified detail while the suite was \
-             already green. Perfect is the enemy of done; a green, finished task beats an endlessly-polished \
-             one.\n\
+             {reading_rules}{stopping_rules}\
              \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
         );
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
@@ -20011,6 +20069,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "read_on_fix": swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix),
+            "kind_prompt": swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt),
             "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
             "split_fat": swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat),
             // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
