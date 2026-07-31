@@ -720,6 +720,13 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CONTRACT_RETRY env overrides.
     #[serde(default)]
     pub contract_retry: bool,
+    /// Suspend the implementer read-prohibitions during a FIX round. A fix worker owns no files and is
+    /// repairing a defect the gates already reproduced by RUNNING the app; a cross-module signature
+    /// mismatch is by definition not visible in the one file the implementer rules allow it to read.
+    /// MEASURED: swarm-3node died on `Store.__init__() got an unexpected keyword argument 'path'`,
+    /// complete_verify caught it three rounds running, and the fix worker could not repair it. OFF by
+    /// default => the fix prompt is byte-identical to today.
+    pub read_on_fix: bool,
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
     /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
     /// dependents instead of failing the whole subtree — so one hung core task does not kill the capstone.
@@ -1023,6 +1030,7 @@ impl Default for SwarmConfig {
             owned_file_fence: false,
             spiral_thinking_chars: 0,
             contract_retry: false,
+            read_on_fix: false,
             degrade_on_stall: false,
             split_fat: false,
             incremental_replan: false,
@@ -18007,8 +18015,35 @@ impl TaskDispatcher for GooseAgentDispatcher {
             String::new()
         };
         let worker_directive = lang.directive();
+        // GOOSE_SWARM_READ_ON_FIX: a FIX worker owns no files and is repairing a defect the per-task
+        // gates already proved is real. The implementer prohibitions below ("read AT MOST the ONE file
+        // you will edit", "STOP WHEN GREEN") are correct for a first pass and actively harmful here:
+        // MEASURED on swarm-3node, the app died on `Store.__init__() got an unexpected keyword argument
+        // 'path'` — a mismatch between __main__.py and store.py that is BY DEFINITION not visible in one
+        // file. complete_verify caught it three rounds running and the fix worker could not repair it,
+        // because the rules forbade reading the second file the defect lives in.
+        let is_fix_round = req.owned_files.is_empty() && !req.all_files.is_empty();
+        let read_on_fix =
+            is_fix_round && swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix);
+        let fix_directive = if read_on_fix {
+            "\nYOU ARE FIXING A PROVEN DEFECT, NOT WRITING NEW CODE. The rules about not reading are \
+             SUSPENDED for this task, because the failure below was already reproduced by running the \
+             app and may span SEVERAL files:\n\
+             - READ every file named in the error, and the file that DEFINES any symbol the error \
+             mentions. A signature mismatch lives in TWO files — the caller and the callee — and you \
+             cannot fix it from one.\n\
+             - Before editing, confirm the REAL signature/behaviour by reading the definition. Do NOT \
+             guess it and do NOT trust an injected contract over the actual source here.\n\
+             - Fix the side that is WRONG relative to the project's own spec, not whichever is easier \
+             to edit.\n\
+             - You own no files by default: you may edit ANY file the fix requires.\n\
+             - Do not stop at the first green sub-test; re-run the failing command itself and confirm \
+             THAT passes.\n"
+        } else {
+            ""
+        };
         let system_prompt = format!(
-            "You are a WORKER on a local AI swarm. {worker_directive}Complete EXACTLY the task below using your tools, \
+            "You are a WORKER on a local AI swarm. {worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
              in the current working directory. Write correct, minimal code; do nothing beyond the task. \
              When finished, briefly state what you produced.\n\
              SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
@@ -19975,6 +20010,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "contract_validate": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_VALIDATE", load_config().contract_validate),
             "owned_file_fence": swarm_gate_cfg("GOOSE_SWARM_OWNED_FILE_FENCE", load_config().owned_file_fence),
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
+            "read_on_fix": swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix),
             "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
             "split_fat": swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat),
             // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
