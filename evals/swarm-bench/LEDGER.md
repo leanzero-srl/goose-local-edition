@@ -94,3 +94,46 @@ confidence calibration: the run declares high confidence and earns a low score.
 **This is the finding the whole benchmark existed to produce.** An artifact-only grader would say
 "the swarm is bad". The tier split plus the process axes say something actionable instead: planning,
 judging and honesty are fine, and the defect is cross-worker interface agreement.
+
+## Root-cause dig (2026-07-31) — three corrections to my own first diagnosis
+
+**1. `drop_unparseable_stubs` is NOT missing — it is wired and working.** `swarm.rs:21069` already
+drops a stub that fails to parse, with a comment describing this exact failure class. My first read
+("the broken stub is injected") was WRONG. The worker gets *nothing* rather than garbage.
+
+That still loses the run, because nothing fills the hole. The comment claims "a module with NO frozen
+self-interface is an ALREADY-HANDLED case: it builds without one and **integrate-verify
+reconciles**." It does not reconcile — see below.
+
+**2. The integrator role ALREADY EXISTS. It just did not run.**
+
+`integrate-verify` is in the plan for every run. In swarm-3node:
+
+    planned=17  dispatched=18  completed=17
+    PLANNED BUT NEVER DISPATCHED: integrate-verify
+    dispatched but never completed: test-meridian
+
+    integrate-verify deps: [verify-e2e::0, verify-e2e::1, verify-e2e::2]  -> ALL THREE COMPLETED
+
+So it was unblocked and simply never got its turn: the run went into the fix loop over a failing
+sibling (`complete_failed_tasks: ["test-meridian-client"]`), burned three `complete_verify` rounds,
+and ended with `integrate-verify` still unscheduled.
+
+**This is the structural defect.** The task that reconciles cross-module interfaces sits at the TAIL
+of the DAG, so it is the first casualty of round exhaustion or a failing sibling — it is skipped
+precisely when the run is in trouble, which is exactly when it is needed. A safety net gated behind
+everything else succeeding is not a safety net.
+
+**3. The gates are healthy and honest.** `complete_verify` ran 3 rounds, `passed:false` every time,
+and the run refused to claim green (DELIVERY 100%). Detection works. What fails is REPAIR — and the
+fix loop runs with implementer-role constraints ("read AT MOST the ONE file you will edit"), so a
+cross-module signature mismatch is structurally invisible to the loop meant to fix it.
+
+### Revised fix, much smaller than "build an integrator"
+
+- Make integration verification **unconditional**: run it before the completion gate regardless of
+  sibling failures or round exhaustion. It is a safety net; it must not be schedulable-away.
+- When a contract is dropped for not parsing, **derive** the interface from the plan's declared
+  signatures instead of leaving the module with no contract at all.
+- In a FIX round, lift the single-file reading restriction — the defect being fixed is by definition
+  not in one file.
