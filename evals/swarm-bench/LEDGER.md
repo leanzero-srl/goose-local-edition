@@ -137,3 +137,64 @@ cross-module signature mismatch is structurally invisible to the loop meant to f
   signatures instead of leaving the module with no contract at all.
 - In a FIX round, lift the single-file reading restriction — the defect being fixed is by definition
   not in one file.
+
+## Node-direction research (workflow, 9 agents, 2026-07-31)
+
+**The operator's intuition was right, and sharper than expected.** 1,282 corpus dispatches classified
+by owned-file basename + task_id:
+
+  implementer      514  (40.1%)   <- the prompt was written for THIS kind
+  test-author      399  (31.1%)
+  entrypoint       206  (16.1%)
+  owns-nothing     155  (12.1%)
+
+So **59.9% of dispatches receive instructions authored for a different job.** The generic prompt is
+not neutral — it is the implementer's role prompt, sent to everyone.
+
+**The unambiguous contradiction:** 406 dispatches own a `test_*.py` file and are told
+*"NEVER read the project's TEST files … reading the test suite is wasted turns"* (swarm.rs:18100)
+and *"STOP WHEN GREEN. The MOMENT your file's tests pass"* (18105). **The file they must produce is
+the file they may not open**, and they have no tests of their own to green. Test tasks are 15/35 of
+all failed tasks and their dominant judge verdict is `broken_code` with a SyntaxError in the test
+file (unterminated string x3) — which a worker forbidden to open its own output cannot catch.
+
+**But role-as-IDENTITY is measured null on this model class.** Qwen2.5 7B/14B/32B, seven roles,
+accuracy delta +/-2%, p>0.05; ablating role-sensitive neurons degrades all roles identically
+(arXiv 2510.24677). "You are a QA Engineer" buys exactly zero. Any gain must come from WHICH RULES
+FIRE and WHAT FILES ARE VISIBLE, never from a persona label.
+
+**The density argument is the strong one.** The shared prompt is 68 lines / ~1,370 tokens / 30-50
+discrete rules, 7x NEVER + 11x NOT. Qwen-27B perfect-compliance: 0.588 at N=10 instructions, 0.350
+at N=20, **0.094 at N=40**. The fleet obeys every rule under 1 time in 10, and small models fail by
+wholesale OMISSION at 20-34:1 over modification — so each rule silently evicts another, invisibly.
+Per-kind gating makes every kind see FEWER rules and none see more. That pays even if role identity
+is worth nothing.
+
+**The internal asymmetry that settles it:** swarm.rs already contains ~16 role-specific system
+prompts (scoper, scout, architect, detailer, planner, contract writer, judge, pre-reviewer, skeptic,
+replanner…). Every one is read-only / planner-side. **The one role that WRITES CODE is the one
+generic prompt.**
+
+### Adversarial result: 3/3 lenses REFUTED the proposal
+
+Not implemented. The objections that stuck:
+- prompt interventions do not transfer between small models (AgentFloor, 16 models: one directive
+  lifted one model +100pp and was null on four others; structured plan/execute prompts REGRESSED all
+  16 by -5 to -33pp). n=1 proves nothing.
+- removing "don't over-read" buys turns and costs WALL CLOCK, and the fleet already dies on wall
+  clock: verify/integrate median 492s vs 136s implementation, retries are "timed out after 900s",
+  "stream decode error", "agent stalled 420s", "reasoning spiral, 60002 thinking tokens".
+- per-kind prompts must never drift into per-kind AGENTS: E2EDevBench, same backbone, 45.72% single
+  -> 49.48% two-role -> **27.71% three-role**.
+
+Expected recovery if done well: single-digit to low-teens, NOT 39 (Aider's architect split is
++3.1 to +4.6pp same-model). The 39-point 1-node gap has other terms.
+
+### Two NON-prompt bugs the research surfaced — both verified in source
+
+1. **A failing integrator is invisible to the green gate.** `green_blocking_failed`
+   (swarm.rs:17312) filters out `owns_nothing` tasks; `integrate-verify` owns nothing and is the
+   most-failed task id (9x). So the one task that reconciles cross-module interfaces cannot block a
+   green claim. VERIFIED by reading the function.
+2. **verify/integrate fails by TIMEOUT, not wrongness** — 96% judge-ok, 492s median. That is a
+   budget/context problem, not a prompt problem.
