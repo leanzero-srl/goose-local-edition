@@ -67,7 +67,11 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         # silently re-added — measured, a 1-node and a 3-node run both reported the same 2-node pool.
         match = re.match(r"swarm-(\d+)node", entrant)
         nodes = int(match.group(1)) if match else 3
-        env = {**env, "GOOSE_SWARM_MAX_NODES": str(nodes)}
+        # GOOSE_SWARM_READ_ON_FIX: the arm under test. A fix worker owns no files and is repairing a
+        # defect the gates already reproduced by running the app; the implementer read-prohibitions
+        # make a cross-module signature mismatch structurally invisible to it.
+        env = {**env, "GOOSE_SWARM_MAX_NODES": str(nodes),
+               "GOOSE_SWARM_READ_ON_FIX": os.environ.get("GOOSE_SWARM_READ_ON_FIX", "1")}
         cmd = [str(GOOSE), "swarm", "run", prompt, "--output-format", "json",
                "--log-file", str(workdir / "run.jsonl")]
     else:
