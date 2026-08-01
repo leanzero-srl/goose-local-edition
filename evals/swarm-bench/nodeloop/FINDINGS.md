@@ -399,6 +399,38 @@ The honest correction: the meridian failure was **not** caused by workers being 
 was caused by the detailer timing out, which is a different defect with a different fix — and one
 already shipped.
 
+## F15 — RETRACTION: "edge-cases is always the dropped scout" is NOT established
+
+The lens reorder shipped on that claim, and verifying it live refuted the evidence behind it.
+
+The reorder itself landed — `scouts_planned` on the new engine reads
+`['edge-cases', 'architecture', 'libraries']`. But `scout-edge-cases.json` STILL lacks `phase: done`,
+and so does `scout-libraries.json`, while `research_completed` reports **2 findings**. Two files
+missing the marker and two findings returned is a contradiction, and it exposes the instrument.
+
+Reading the source settles it: a scout that blows its OWN budget returns a `ResearchFinding` carrying
+an apology string (`"(scout 'x' exceeded Ns budget — skipped…)"`) and **is counted**. Only a
+straggler-ABORTED scout vanishes, because an aborted task never reaches the match arm that would name
+it. Both cases leave an activity file without `phase: done`. So that field **conflates two different
+failures, over-counts drops, and cannot identify the casualty** — which is exactly what I used it for.
+
+**What survives:** every run measured planned 3 lenses and returned 2, so precisely one lens is lost
+every time. **What does not survive:** the claim that it is always `edge-cases`.
+
+The reorder is harmless either way — byte-identical when straggler-stop is off, and it only changes
+which lens is last — but it was justified by an unvalidated inference and should be re-judged once
+the attribution is real.
+
+So the fix is observability, not another guess: `research_completed` now carries **`lenses_returned`**,
+taken from each finding's `kind`. Diffed against `scouts_planned.lenses` that names the dropped lens
+deterministically, on every run, forever. Held for the next pass boundary — the loop is mid-campaign
+and a rebuild invalidates the backlog.
+
+This is the fourth instrument failure today, and the pattern is stable enough to name: **every one was
+an inference I made from a signal that was never designed to answer my question.** The thunk bug, the
+two-verifier conflation, the dead-agent-as-refutation, and now a heartbeat field read as a completion
+marker.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
