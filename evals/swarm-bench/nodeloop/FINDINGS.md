@@ -27,7 +27,34 @@ required headers. Tier C moved 14.3% → 85.7%.
 
 Commit `dfd67e84d`.
 
-## F2 — Node count is not a variable on this fleet, and cannot be made one from the engine
+## F2 — SUPERSEDED 2026-08-01 10:15 — node count IS a variable now
+
+Mihai gave each host's loaded model a distinct identifier (`mihai-` / `workhorse-` / `gabee-`).
+Everything below about the collapse was true of the fleet as it stood and is left intact, because
+it explains why every earlier node-scaling number in this project is void. What is no longer true
+is the conclusion that it could never be measured.
+
+Re-proven after the change, by the same probe that condemned the old fleet: three concurrent calls,
+one per identifier, put **all three instances into `generating` at once** (7.7 / 10.0 / 13.4 s —
+one call's latency each, not serialized). And the engine's own `run_started.pool` for
+`baseline-n3-r0` now lists **three devices**, one per host:
+
+```
+mac-gabee-...              model=gabee-...      weight=1
+local-mihai-...            model=mihai-...      weight=1
+worksmacstudio-workhorse-  model=workhorse-...  weight=1
+```
+
+The loop now varies node count as its primary dimension (3, 1, 2 on baseline, then the
+dispatch-quality arms at 3), and voids any unit whose actual pool differs from the one it asked for.
+
+**One comparability warning:** the three hosts are not identical. `gabee` runs **Q6_K at ctx
+193792** while `mihai` and `workhorse` run **Q8_0 at ctx 262144**. So a 3-node run includes a
+lower-quant node that a 1-node run does not, and `pick_device` will route to it. Any node-count
+delta is a delta of "this fleet", not of "N identical workers" — worth stating before a number
+gets read as more general than it is.
+
+### The original finding, kept because it voids the old numbers
 
 Three hosts (Local, WorksMacStudio.lan, Mac.lan) all serve one identifier. Two probes against the
 fleet exactly as it is:

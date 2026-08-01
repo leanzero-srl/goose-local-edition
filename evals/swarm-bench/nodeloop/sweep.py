@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""The unattended loop: measure the swarm's DISPATCH QUALITY arm by arm, forever.
+"""The unattended loop: does the swarm get BETTER with more nodes, and are its instructions specific?
 
-Why this exists rather than another node-count sweep. Two probes against the fleet as it stands
-(3 hosts, all serving one identifier) established that LM Studio exposes exactly ONE addressable
-worker: a host-qualified instance name is rejected with HTTP 400, and three concurrent calls on
-the shared identifier were all served by a single host while the other two never left idle. The
-engine's own `run_started.pool` agrees — every run on disk built a 1-device pool. Node count is
-therefore not a variable on this fleet, and pretending otherwise measures nothing.
+Node count became measurable on 2026-08-01 when the fleet was given three distinct LM Studio
+identifiers. Before that all three hosts served one identifier, LM Studio exposed exactly one
+addressable worker, and every run labelled 1node/2node/3node built the same 1-device pool — so the
+project's "more nodes make it worse" table compared a configuration with itself. Proven at the time
+by a concurrency probe: three simultaneous calls were all served by one host while the other two
+never left idle. Re-proven after the re-identification: three concurrent calls, one per identifier,
+put ALL THREE instances into `generating` at once.
 
-What IS a variable, and what the three runs on disk already show, is how specific an instruction
-each worker receives:
+So this loop measures two things that were previously unmeasurable and are the whole of goal one:
 
-    run              detail fell back to the architect one-liner   build score
-    swarm-1node-r0   2 of 14                                       44.2%
-    swarm-2node-r0   1 of 16                                       86.7%
-    swarm-3node-r0   0 of 14                                       90.0%
+  NODES        does build quality and fleet occupancy actually improve at 2 and 3 nodes
+  DISPATCH     is each node given a SPECIFIC instruction, or a generic one
 
-So the loop's unit is an ARM (one dispatch-quality lever) measured over replicates, and its
-primary readout is a deterministic mechanism count from dispatch_audit.py, not a score delta —
-because a 46-point replicate spread makes any 1-vs-1 score comparison uninterpretable.
+The second is not a side question. Three runs of an identical 1-node config scored 44.2 / 86.7 /
+90.0% — a 46-point spread — and the spread tracked exactly how many workers got the architect's
+one-liner instead of a detailed spec (2, 1 and 0 respectively). Any node-count effect must clear
+that spread to mean anything, which is why every cell is replicated and why the mechanism counts
+from dispatch_audit.py matter more than the score.
 
-Operating rules this file implements, each of which has already cost a real overnight run:
-  - a result not on disk did not happen: every unit persists result.json the moment it finishes
-  - resumable: a unit with a complete result is skipped, so a killed loop resumes where it stopped
+Operating rules below each cost a real overnight run at some point:
+  - a result not on disk did not happen: every unit persists its result the moment it finishes
+  - resumable: a completed unit is skipped, so a killed loop resumes where it stopped
   - one bad unit never kills the sweep, and SystemExit is NOT an Exception
-  - a provider/fleet blip is retried with backoff, never recorded as a score of zero
+  - a fleet blip is retried with backoff, never recorded as a score of zero
   - a flat timeout measures the timeout: timed_out is recorded and checked before interpreting
-  - children are killed by process GROUP, or an orphan contends for the fleet unnoticed
-  - it ends only on the STOP sentinel, never on a counter — when the backlog drains it raises the
-    replicate target and keeps going, which is exactly what a 46-point spread calls for
+  - children die by process GROUP, or an orphan contends for the fleet unnoticed
+  - a unit whose ACTUAL pool differs from the one it asked for is VOID, never averaged in
+  - it ends only on the STOP sentinel, never on a counter
 """
 from __future__ import annotations
 
@@ -55,48 +55,67 @@ OUT = HERE.parent / "runs" / "nodeloop"
 STOP = HERE / "STOP"
 QUEUE = HERE / "QUEUE"
 PORT_BASE = 8930
-TIMEOUT = 16200          # 4.5h. Measured swarm walls are 1.9-2.5h; a cap that truncates the work
-                         # measures the cap, not the entrant.
-ENTRANT = "swarm-1node"  # the pool is 1 device regardless; this names it honestly.
-MIN_REPS = 3             # n=1 is uninterpretable against the measured spread.
+TIMEOUT = 16200          # 4.5h. A cap that truncates the work measures the cap, not the entrant.
+MIN_REPS = 3             # n=1 is uninterpretable against a measured 46-point spread.
 TRANSIENT = ("500", "502", "503", "529", "overloaded", "rate limit", "throttl",
              "connection reset", "stream decode", "temporarily", "unreachable")
 MAX_ATTEMPTS = 3
 BACKOFF = (60, 240)
 
-# Each arm sets exactly ONE thing against baseline, so any delta is attributable to it.
-# `gate` is the prediction written down BEFORE the run, where it can fail.
+WATCHDOG_POLL_SECS = 60
+HEARTBEAT_STALE_SECS = 600   # the engine writes it every 5s; 10 min dead is wedged, not busy
+MIN_FREE_GB = 15
+
+# Each arm varies exactly ONE thing against baseline, and carries a prediction written down BEFORE
+# the run, where it can fail.
 ARMS = [
     {
         "name": "baseline",
         "env": {},
-        "gate": "establishes the replicate spread and the detail-fallback rate. Re-measured "
-                "rather than assumed: a stale baseline turns fleet drift into a false win.",
+        "gate": "establishes the replicate spread, the detail-fallback rate, and the node curve. "
+                "Re-measured rather than assumed: a stale baseline turns fleet drift into a false win.",
     },
     {
         "name": "kind_prompt",
         "env": {"GOOSE_SWARM_KIND_PROMPT": "1"},
-        "gate": "72-80% of dispatches currently receive rules written for another job, and 3-5 "
-                "per run own a test_*.py while being told never to read test files. Gating rules "
-                "by task kind should cut kind_mismatch_pct toward zero. A prior adversarial pass "
-                "refuted the naive version and put the score recovery in single digits, so the "
-                "mechanism count is the readout here, not the build score.",
+        "gate": "72-80% of dispatches receive rules written for another job, and 3-5 per run own a "
+                "test_*.py while being told never to read test files. Gating rules by task kind "
+                "should drive kind_mismatch_pct toward zero. A prior adversarial pass refuted the "
+                "naive version and put score recovery in single digits, so the MECHANISM count is "
+                "the readout, not the build score.",
     },
     {
         "name": "scoped_contracts",
         "env": {"GOOSE_SWARM_SCOPED_CONTRACTS": "1"},
-        "gate": "every worker currently receives the FULL frozen-contract bundle rather than its "
-                "DAG neighborhood, so irrelevant interface text grows with the plan's width. "
-                "scope_contract_bundle (coherence.rs:303) is written and unused.",
+        "gate": "every worker receives the FULL frozen-contract bundle rather than its DAG "
+                "neighborhood, so irrelevant interface text grows with the plan's width — the one "
+                "instruction defect that gets WORSE as nodes are added. scope_contract_bundle "
+                "(coherence.rs:303) is written and unused.",
     },
     {
         "name": "doc_prefetch",
         "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
         "gate": "doc_facts is the only un-paraphrased scout->worker channel. Tier C is graded on "
-                "vendor-doc compliance and is the tier that collapsed (14.3%) in the run whose "
-                "meridian module got a 95-char brief.",
+                "vendor-doc compliance and collapsed to 14.3% in the run whose meridian module got "
+                "a 95-char brief.",
     },
 ]
+
+# Goal one is the node curve, so the node levels come first and every pass covers all three. An
+# early stop then still leaves a balanced design rather than three reps of one node count.
+NODE_LEVELS = (3, 1, 2)
+
+
+def cells() -> list[dict]:
+    """(nodes, arm) pairs in priority order: the node curve first, then the dispatch-quality arms.
+
+    The quality arms run at 3 nodes because that is the configuration whose behaviour we want to
+    ship, and because scoped_contracts is predicted to matter MORE the wider the fleet.
+    """
+    base = ARMS[0]
+    out = [{"nodes": n, "arm": base} for n in NODE_LEVELS]
+    out += [{"nodes": max(NODE_LEVELS), "arm": a} for a in arms_now()[1:]]
+    return out
 
 
 def now() -> str:
@@ -107,16 +126,20 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def unit_dir(arm: str, rep: int) -> Path:
-    return OUT / f"{arm}-r{rep}"
+def unit_name(arm: str, nodes: int, rep: int) -> str:
+    return f"{arm}-n{nodes}-r{rep}"
 
 
-def result_path(arm: str, rep: int) -> Path:
-    return unit_dir(arm, rep) / "nodeloop-result.json"
+def unit_dir(arm: str, nodes: int, rep: int) -> Path:
+    return OUT / unit_name(arm, nodes, rep)
 
 
-def complete(arm: str, rep: int) -> bool:
-    p = result_path(arm, rep)
+def result_path(arm: str, nodes: int, rep: int) -> Path:
+    return unit_dir(arm, nodes, rep) / "nodeloop-result.json"
+
+
+def complete(arm: str, nodes: int, rep: int) -> bool:
+    p = result_path(arm, nodes, rep)
     if not p.is_file():
         return False
     try:
@@ -131,71 +154,6 @@ def looks_transient(tail: str) -> bool:
     return any(t in low for t in TRANSIENT)
 
 
-def run_unit(arm: dict, rep: int, port: int) -> dict:
-    """One episode: build, grade the artifact, then grade the INSTRUCTIONS it was given."""
-    import run_build  # imported late so a syntax error there cannot stop the loop from starting
-
-    prev = dict(os.environ)
-    dog = Watchdog(f"{arm['name']} rep{rep}")
-    dog.start()
-    try:
-        for k, v in arm["env"].items():
-            os.environ[k] = v
-        verdict = run_build.run(ENTRANT, rep, OUT, TIMEOUT, port)
-    finally:
-        dog.done()
-        os.environ.clear()
-        os.environ.update(prev)
-
-    # run_build names its outputs after the ENTRANT, so every arm's rep0 would overwrite the last
-    # one's tree AND its vendor trace. Re-home both under the arm, or the evidence for an arm is
-    # silently the next arm's.
-    src = OUT / f"{ENTRANT}-r{rep}"
-    dst = unit_dir(arm["name"], rep)
-    if src.exists():
-        if dst.exists():
-            shutil.rmtree(dst)
-        src.rename(dst)
-    trace_src = OUT / f"trace-{ENTRANT}-r{rep}.jsonl"
-    if trace_src.exists():
-        trace_src.replace(dst / "vendor-trace.jsonl")
-
-    audit = {}
-    run_log = dst / "run.jsonl"
-    if run_log.is_file():
-        try:
-            audit = dispatch_audit.audit(run_log)
-            audit.pop("per_dispatch", None)   # kept in run.jsonl; the summary is what we compare
-        except Exception as exc:  # noqa: BLE001 - a broken instrument must be visible, not fatal
-            audit = {"audit_error": f"{type(exc).__name__}: {exc}"}
-
-    return {
-        "arm": arm["name"],
-        "rep": rep,
-        "env": arm["env"],
-        "gate": arm["gate"],
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-        "score": verdict.get("score"),
-        "tiers": verdict.get("tiers"),
-        # An aborted unit's score is not a measurement of anything, exactly like a timed-out one.
-        # Both are excluded from every mean rather than averaged in as a bad result.
-        "aborted": dog.reason is not None,
-        "abort_reason": dog.reason,
-        "timed_out": (verdict.get("agent") or {}).get("timed_out"),
-        "wall_secs": (verdict.get("agent") or {}).get("secs"),
-        "actual_pool": verdict.get("actual_pool"),
-        "actual_nodes": verdict.get("actual_nodes"),
-        "scorer_version": verdict.get("scorer_version"),
-        "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
-        "audit": audit,
-    }
-
-
-WATCHDOG_POLL_SECS = 60
-HEARTBEAT_STALE_SECS = 600   # the engine writes it every 5s; 10 min dead is wedged, not busy
-MIN_FREE_GB = 15
-
-
 def engine_pids() -> list[int]:
     try:
         r = subprocess.run(["pgrep", "-f", "goose swarm run"],
@@ -208,13 +166,10 @@ def engine_pids() -> list[int]:
 class Watchdog(threading.Thread):
     """Cut a DOOMED unit loose instead of waiting out its 4.5h cap.
 
-    A wedged run does not fail — it sits there holding the single addressable worker until the
-    timeout, and a cap that truncates work measures the cap rather than the swarm. So the moment a
-    unit is provably not going to produce a usable result, kill its engine and let the loop move to
-    the next arm. The LOOP is never stopped by this; only the unit is.
-
-    Every trip condition below is a fact about the process or the filesystem, never an inference
-    from how long something is taking. A slow unit is not a doomed one.
+    A wedged run does not fail — it sits there holding fleet capacity until the timeout, and a cap
+    that truncates work measures the cap rather than the swarm. The LOOP is never stopped by this;
+    only the unit is. Every trip condition is a fact about the process or the filesystem, never an
+    inference from how long something is taking, because a slow unit is not a doomed one.
     """
 
     def __init__(self, label: str) -> None:
@@ -227,7 +182,7 @@ class Watchdog(threading.Thread):
         pids = engine_pids()
         if len(pids) > 1:
             return (f"{len(pids)} engines running at once {pids} — an orphan is contending for the "
-                    f"single addressable worker and will skew this unit and every later one")
+                    f"fleet and will skew this unit and every later one")
         if pids:
             beats = sorted(OUT.glob("*/heartbeat"), key=lambda p: p.stat().st_mtime, reverse=True)
             if beats:
@@ -265,34 +220,85 @@ class Watchdog(threading.Thread):
 
 
 def kill_strays() -> None:
-    """An orphaned engine contends for the shared fleet and poisons the next unit silently."""
+    for pid in engine_pids():
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            log(f"[warn] killed stray engine pgroup for pid {pid}")
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
+    """One episode: build, grade the artifact, then grade the INSTRUCTIONS it was given."""
+    import run_build  # imported late so a syntax error there cannot stop the loop from starting
+
+    entrant = f"swarm-{nodes}node"   # run_build reads the N and sets GOOSE_SWARM_MAX_NODES
+    prev = dict(os.environ)
+    dog = Watchdog(unit_name(arm["name"], nodes, rep))
+    dog.start()
     try:
-        out = subprocess.run(["pgrep", "-f", "goose swarm run"],
-                             capture_output=True, text=True, timeout=20)
-        for pid in [p for p in out.stdout.split() if p.strip().isdigit()]:
-            try:
-                os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
-                log(f"[warn] killed stray engine pgroup for pid {pid}")
-            except (ProcessLookupError, PermissionError):
-                pass
-    except Exception:
-        pass
+        for k, v in arm["env"].items():
+            os.environ[k] = v
+        verdict = run_build.run(entrant, rep, OUT, TIMEOUT, port)
+    finally:
+        dog.done()
+        os.environ.clear()
+        os.environ.update(prev)
 
+    # run_build names its outputs after the ENTRANT, so two arms at the same node count and rep
+    # would overwrite each other's tree AND vendor trace. Re-home both under the unit.
+    src = OUT / f"{entrant}-r{rep}"
+    dst = unit_dir(arm["name"], nodes, rep)
+    if src.exists():
+        if dst.exists():
+            shutil.rmtree(dst)
+        src.rename(dst)
+    trace_src = OUT / f"trace-{entrant}-r{rep}.jsonl"
+    if trace_src.exists():
+        trace_src.replace(dst / "vendor-trace.jsonl")
 
-def backlog(target_reps: int) -> list[tuple[dict, int]]:
-    units = []
-    for rep in range(target_reps):
-        for arm in arms_now():
-            if not complete(arm["name"], rep):
-                units.append((arm, rep))
-    return units
+    audit = {}
+    run_log = dst / "run.jsonl"
+    if run_log.is_file():
+        try:
+            audit = dispatch_audit.audit(run_log)
+            audit.pop("per_dispatch", None)   # kept in run.jsonl; the summary is what we compare
+        except Exception as exc:  # noqa: BLE001 - a broken instrument must be visible, not fatal
+            audit = {"audit_error": f"{type(exc).__name__}: {exc}"}
+
+    actual = verdict.get("actual_nodes")
+    # The label is an intention; run_started.pool is the fact. A mismatch has silently voided a
+    # whole campaign before, so it voids the unit here rather than being averaged in.
+    void = actual is not None and actual != nodes
+
+    return {
+        "arm": arm["name"],
+        "nodes": nodes,
+        "rep": rep,
+        "env": arm["env"],
+        "gate": arm["gate"],
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "score": verdict.get("score"),
+        "tiers": verdict.get("tiers"),
+        "aborted": dog.reason is not None,
+        "abort_reason": dog.reason,
+        "timed_out": (verdict.get("agent") or {}).get("timed_out"),
+        "wall_secs": (verdict.get("agent") or {}).get("secs"),
+        "actual_pool": verdict.get("actual_pool"),
+        "actual_nodes": actual,
+        "void": void,
+        "void_reason": (f"asked for {nodes} nodes, engine built {actual}" if void else None),
+        "scorer_version": verdict.get("scorer_version"),
+        "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
+        "audit": audit,
+    }
 
 
 def arms_now() -> list[dict]:
-    """ARMS plus anything appended to the QUEUE file, so arms can be added without a restart.
+    """ARMS plus anything appended to QUEUE, so arms can be added without restarting the loop.
 
-    A running interpreter does not see source edits, so a new arm added to ARMS in this file would
-    never reach a loop that is already up. The QUEUE is re-read every pass.
+    A running interpreter never sees a source edit, so a new arm added to ARMS in this file would
+    not reach a loop that is already up. QUEUE is re-read every pass.
     """
     arms = list(ARMS)
     if QUEUE.is_file():
@@ -311,35 +317,55 @@ def arms_now() -> list[dict]:
     return arms
 
 
-def summarise() -> None:
-    """Mechanism first, score second — the score alone cannot clear a 46-point spread."""
-    rows: dict[str, list[dict]] = {}
+def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
+    units = []
+    for rep in range(target_reps):
+        for c in cells():
+            if not complete(c["arm"]["name"], c["nodes"], rep):
+                units.append((c["arm"], c["nodes"], rep))
+    return units
+
+
+def read_results() -> list[dict]:
+    rs = []
     for f in sorted(OUT.glob("*/nodeloop-result.json")):
         try:
-            r = json.loads(f.read_text())
+            rs.append(json.loads(f.read_text()))
         except Exception:
             continue
-        rows.setdefault(r["arm"], []).append(r)
-    if not rows:
+    return rs
+
+
+def summarise() -> None:
+    """Mechanism first, score second — a score alone cannot clear a 46-point spread."""
+    rs = read_results()
+    if not rs:
         return
+    groups: dict[tuple[str, int], list[dict]] = {}
+    for r in rs:
+        groups.setdefault((r.get("arm"), r.get("nodes")), []).append(r)
     log("")
-    log(f"{'arm':<18}{'n':>2}  {'score mean':>10} {'spread':>7}   "
-        f"{'fallbacks':>9} {'kind-mismatch%':>15}  pool")
-    for arm, rs in sorted(rows.items()):
-        ok = [r for r in rs if not r.get("timed_out") and not r.get("aborted")]
-        sc = [r["score"] for r in ok if r.get("score") is not None]
+    log(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
+        f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
+    for (arm, nodes), g in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
+        ok = [r for r in g if not r.get("timed_out") and not r.get("aborted")
+              and not r.get("void") and r.get("score") is not None]
+        sc = [r["score"] for r in ok]
         fb = [r["audit"].get("detail_fallback_count") for r in ok
               if isinstance(r.get("audit"), dict)
               and r["audit"].get("detail_fallback_count") is not None]
         km = [r["audit"].get("kind_mismatch_pct") for r in ok
               if isinstance(r.get("audit"), dict)
               and r["audit"].get("kind_mismatch_pct") is not None]
-        pools = {r.get("actual_nodes") for r in rs}
+        wl = [r["wall_secs"] for r in ok if r.get("wall_secs")]
         mean = f"{sum(sc) / len(sc):.1%}" if sc else "-"
         spread = f"{(max(sc) - min(sc)) * 100:.0f}pts" if len(sc) > 1 else "-"
-        fbs = f"{sum(fb) / len(fb):.1f}" if fb else "-"
-        kms = f"{sum(km) / len(km):.1f}" if km else "-"
-        log(f"{arm:<18}{len(rs):>2}  {mean:>10} {spread:>7}   {fbs:>9} {kms:>15}  {sorted(pools)}")
+        log(f"{arm:<18}{nodes if nodes is not None else '?':>5}{len(g):>3}  "
+            f"{mean:>10} {spread:>8}  "
+            f"{(sum(fb) / len(fb) if fb else 0):>9.1f} "
+            f"{(sum(km) / len(km) if km else 0):>9.1f} "
+            f"{(sum(wl) / len(wl) / 60 if wl else 0):>9.0f}  "
+            f"{sum(1 for r in g if r.get('void'))}")
     log("")
 
 
@@ -348,6 +374,7 @@ def main() -> int:
     log("=" * 78)
     log(f"nodeloop starting {datetime.now().isoformat(timespec='seconds')}  "
         f"pid={os.getpid()}  audit={dispatch_audit.AUDIT_VERSION}")
+    log(f"node levels {NODE_LEVELS}, arms {[a['name'] for a in arms_now()]}, min reps {MIN_REPS}")
     log(f"stop with: touch {STOP}")
     log("=" * 78)
 
@@ -363,40 +390,39 @@ def main() -> int:
 
         todo = backlog(target)
         if not todo:
-            # Never end on a counter. More replicates is the single most useful thing this loop
-            # can do next, because every verdict here is limited by n, not by ideas.
+            # Never end on a counter. More replicates is the most useful thing this loop can do
+            # next, because every verdict here is limited by n, not by ideas.
             target += 1
             log(f"[grow] {now()} backlog drained — raising replicate target to n={target}")
             summarise()
             continue
 
-        arm, rep = todo[0]
+        arm, nodes, rep = todo[0]
+        label = unit_name(arm["name"], nodes, rep)
         eta = ""
         if durations:
             avg = sum(durations) / len(durations)
-            done_at = time.time() + avg
-            eta = (f"  (~{datetime.fromtimestamp(done_at).strftime('%H:%M')}, "
-                   f"{len(todo)} units left ~"
+            eta = (f"  (~{datetime.fromtimestamp(time.time() + avg).strftime('%H:%M')}, "
+                   f"{len(todo)} left ~"
                    f"{datetime.fromtimestamp(time.time() + avg * len(todo)).strftime('%a %H:%M')})")
-        nxt = f"{todo[1][0]['name']} rep{todo[1][1]}" if len(todo) > 1 else "raise n"
+        nxt = unit_name(todo[1][0]["name"], todo[1][1], todo[1][2]) if len(todo) > 1 else "raise n"
         log("")
-        log(f">>> {now()}  NOW: {arm['name']} rep{rep}   [{len(todo)} in backlog, n target {target}]"
-            f"{eta}")
+        log(f">>> {now()}  NOW: {label}   [{len(todo)} in backlog, n target {target}]{eta}")
         log(f"    NEXT: {nxt}")
         log(f"    gate: {arm['gate']}")
 
         kill_strays()
         started = time.time()
         result = None
+        tail = ""
         for attempt in range(MAX_ATTEMPTS):
             try:
-                result = run_unit(arm, rep, port)
+                result = run_unit(arm, nodes, rep, port)
                 port += 1
-                tail = ""
                 break
             except (Exception, SystemExit) as exc:   # SystemExit is NOT an Exception
                 tail = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-800:]}"
-                log(f"[fail] {now()} {arm['name']} rep{rep} attempt {attempt}: {tail[:300]}")
+                log(f"[fail] {now()} {label} attempt {attempt}: {tail[:300]}")
                 port += 1
                 if attempt < MAX_ATTEMPTS - 1 and looks_transient(tail):
                     wait = BACKOFF[min(attempt, len(BACKOFF) - 1)]
@@ -406,29 +432,43 @@ def main() -> int:
                 break
 
         if result is None:
-            # Record the failure. A crashed unit that leaves nothing behind is a hole in the
-            # sample indistinguishable from one that was never scheduled.
-            d = unit_dir(arm["name"], rep)
+            # Record the failure. A crashed unit that leaves nothing behind is a hole in the sample
+            # indistinguishable from one that was never scheduled.
+            d = unit_dir(arm["name"], nodes, rep)
             d.mkdir(parents=True, exist_ok=True)
-            result = {"arm": arm["name"], "rep": rep, "env": arm["env"], "gate": arm["gate"],
+            result = {"arm": arm["name"], "nodes": nodes, "rep": rep, "env": arm["env"],
+                      "gate": arm["gate"],
                       "finished_at": datetime.now().isoformat(timespec="seconds"),
                       "score": None, "failed": True, "error": tail,
                       "audit_version": dispatch_audit.AUDIT_VERSION, "audit": {}}
 
         durations.append(time.time() - started)
-        result_path(arm["name"], rep).parent.mkdir(parents=True, exist_ok=True)
-        result_path(arm["name"], rep).write_text(json.dumps(result, indent=2))
+        result_path(arm["name"], nodes, rep).parent.mkdir(parents=True, exist_ok=True)
+        result_path(arm["name"], nodes, rep).write_text(json.dumps(result, indent=2))
 
         a = result.get("audit") or {}
         if result.get("aborted"):
-            log(f"[abort] {now()} {arm['name']} rep{rep} CUT LOOSE — {result.get('abort_reason')}")
-        log(f"[done] {now()} {arm['name']} rep{rep}  score="
+            log(f"[abort] {now()} {label} CUT LOOSE — {result.get('abort_reason')}")
+        log(f"[done] {now()} {label}  score="
             f"{result['score'] if result.get('score') is not None else 'FAILED'}  "
-            f"aborted={result.get('aborted')}  "
-            f"timed_out={result.get('timed_out')}  pool={result.get('actual_nodes')}  "
+            f"pool={result.get('actual_nodes')}/{nodes}  void={result.get('void')}  "
+            f"aborted={result.get('aborted')}  timed_out={result.get('timed_out')}  "
             f"fallbacks={a.get('detail_fallback_count')}  "
             f"kind_mismatch={a.get('kind_mismatch_pct')}%  "
             f"({round(durations[-1] / 60)} min)")
+
+        # FEASIBILITY GATE. If the very first unit cannot get the pool it asked for, every later
+        # unit is measuring the same thing under different labels — which is exactly how this
+        # project's node-scaling table came to compare a configuration with itself. Stop and say so
+        # rather than spend a night producing an answer to a question nobody asked.
+        if len(read_results()) == 1 and result.get("void"):
+            log(f"[STOP] {now()} FEASIBILITY GATE FAILED: {result.get('void_reason')}. "
+                f"The engine is not building the pool the sweep asks for, so node-count cells are "
+                f"not distinguishable. Stopping instead of producing an uninterpretable table.")
+            STOP.write_text(f"feasibility gate: {result.get('void_reason')}\n")
+            summarise()
+            return 2
+
         summarise()
 
 
