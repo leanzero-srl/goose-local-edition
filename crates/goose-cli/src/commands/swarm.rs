@@ -12293,9 +12293,26 @@ impl GooseAgentDispatcher {
             // or nothing, which silently undoes the split. `verify-e2e::` does NOT start with `verify::`,
             // so it needs its own arm; missing it is exactly how the first fan_e2e run got its specs
             // rewritten.
+            // And the JOIN itself, once fan_verify has split the sink: `fan_verify_split` installs
+            // `thin_integrate_verify_spec` as its description, so from that moment integrate-verify is
+            // authored deterministically exactly like the two families above, and all three reasons apply
+            // unchanged. Detailing it is worse than wasteful here — on a detail fallback the brief written
+            // back IS the thin spec, and T2 below then appends it under the canonical joined spec, so the
+            // join is told "Do NOT re-run that whole sweep; it has happened" and, 1081 characters later,
+            // "run EVERY command/usage the SPEC advertises ... For EACH command do a GOLDEN-VALUE CHECK".
+            // MEASURED: 10 of 11 fan_e2e-shaped runs in ~/goose-builds carry the thin spec appended
+            // VERBATIM — byte-identical across five different app specs, which no model-authored detail
+            // could be — and h1-e2e-4's join then ran 4327s, 63.7% of all node-busy time, WORSE than the
+            // 47% single-sink figure that motivated sharding the e2e run in the first place.
+            // Skipping it also reclaims one detail-budget call from the pre-dispatch critical path.
+            // Only reachable when fan_verify actually split (no thin spec otherwise), so the default path
+            // with fan_verify OFF is byte-identical.
             .filter(|(_, st)| {
                 let id = st["id"].as_str().unwrap_or("");
-                !id.starts_with("verify::") && !id.starts_with("verify-e2e::")
+                let authored_deterministically = id.starts_with("verify::")
+                    || id.starts_with("verify-e2e::")
+                    || (fan_verify_applied && id == "integrate-verify");
+                !authored_deterministically
             })
             .map(|(i, st)| {
                 // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
