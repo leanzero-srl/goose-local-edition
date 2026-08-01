@@ -476,6 +476,41 @@ This does not invalidate the campaign — the dispatch-quality arms all run at 3
 unaffected — but the **node curve specifically must be read with it stated**, and it should be
 reported alongside any n=1-vs-n=3 number rather than discovered afterwards.
 
+## F18 — Round 3 recovered: 3 survivors, 10 real-defects-with-refuted-fixes, 20 refuted
+
+Re-run from cache with the three-state vote rule: **71/71 agents, 0 errors, 0 unverified**. The
+truncated pass had reported 1 survivor and 27 "refutations"; 27 was never a count of refutations.
+
+**Survived intact:**
+- the confidence/ask/retarget apparatus gated on `n > 1` (see F17 — now confirmed firing live)
+- the contract validator is **Python-only** while the CONTRACTS phase is language-agnostic, so on a
+  non-Python build the whole validation silently does nothing (`swarm.rs:21217`). Inert for this
+  campaign — the spec is Python — but real for Go/Rust/TS beds.
+- **the empty-bundle guard runs BEFORE the drop** (`swarm.rs:21205`), so a bundle emptied by
+  `drop_unparseable_stubs` still reports `frozen: true` and prints the success line. `swarm-3node-r0`
+  already showed one module's stub dropped; had they all been dropped, the run would have claimed a
+  frozen contract bundle it did not have.
+
+**Most campaign-relevant of the ten with refuted fixes:**
+- **straggler-stop makes the research-findings ORDER race-determined** (`swarm.rs:2700`) — a
+  replicate-variance source, in a campaign whose entire problem is a 46-point replicate spread.
+- **the straggler grace is measured from the ARMING instant, not the straggler's own start**
+  (`swarm.rs:2686`) — the mechanism behind the consistently-lost lens. My F15 retraction was about
+  *which* lens is lost, not *whether* one is; this confirms the latter.
+- **a straggler abort emits no engine event** (`swarm.rs:14749`) — exactly the gap `lenses_returned`
+  (`9bb8d413d`) closes. Independent corroboration that the fix targets a real hole.
+- **PILLARS is a one-node serial phase between CONTRACTS and the first dispatch that consumes nothing
+  CONTRACTS produces** (`swarm.rs:21277`) — a candidate for overlapping the pre-dispatch critical path.
+- **the backbone round-2 re-draft is a SECOND fleet-wide draft round existing only at `n > 1`**
+  (`swarm.rs:11929`) — another node-count-conditional planning cost, corroborating F17.
+
+**A correction to my own F17 attribution.** The defect verifier confirmed the `n > 1` gating but
+*refuted* my causal claim that it explains the pre-dispatch growth: from the runs' own timestamps,
+**research alone went 262.7 s → 419.8 s, so 157.1 s of the 347.4 s delta — 45% — accrues before
+`levers_resolved` and never enters `parallel_plan` at all.** The confidence apparatus is a real
+node-count-conditional cost, but it is not the main term. Where the rest of the pre-dispatch delta
+lives is still unattributed.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
