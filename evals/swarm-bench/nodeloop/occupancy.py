@@ -160,6 +160,16 @@ def analyse(path) -> dict:
             total += cur_e - cur_s
         return total
 
+    # THE PHANTOM-TAIL DETECTOR. A span that ends at the last observed event is only legitimate for
+    # a task still outstanding there. If a task HAS a completion and still owns a span running to the
+    # end of the run, the pairing invented time — which is exactly how one retry was credited 83
+    # minutes on a 122-minute run and inverted a published conclusion. Phantom time on a 3-node pool
+    # hides under the wall*N ceiling, so no aggregate invariant can see it; it has to be caught here,
+    # at the span.
+    phantom_tail = sorted({
+        t for t, iv in per_task_spans.items()
+        if done.get(t) and any(abs((e or 0) - (t_end or 0)) < 1e-6 for _, e in iv)
+    })
     per_device = {d: union_secs(iv) for d, iv in per_device_spans.items()}
     # Union per TASK too, for the same reason: a retried task has overlapping spans, and summing
     # them produced a "share of node-busy" of 1.118 — a share above 1.0, which is nonsense and is
@@ -260,12 +270,22 @@ def analyse(path) -> dict:
         "critical_path_secs": round(critical, 1),
         "max_useful_nodes": round(max_useful, 2) if max_useful else None,
         "ceiling_occupancy_at_pool": round(ceiling_occ, 4) if ceiling_occ is not None else None,
+        "phantom_tail_tasks": phantom_tail,
         "idle_node_jobs": idle_jobs,
         # A dispatch with no completion means "still running" only while the run is still going. On
         # a FINISHED run the same shape means the task never completed at all — a failure, not work
         # in progress — and calling it in-flight made three archived, finished runs look live.
         "finished": any(e.get("event") == "run_finished" for e in events),
-        "unfinished_tasks": sum(1 for t, ds in disp.items() if len(ds) > len(done.get(t, []))),
+        # A task is unfinished when its LAST dispatch has no completion at or after it. Counting
+        # "more dispatches than completions" calls every RETRY unfinished — 2 dispatches, 1
+        # completion — even though the retry completed. That stale counter survived the pairing fix
+        # and was caught by the harness self-test on its first real run, which is the whole point of
+        # having one.
+        "unfinished_tasks": sum(
+            1 for t, ds in disp.items()
+            if (lambda last: last is not None and not any(
+                c is not None and c >= last for c in done.get(t, [])))(
+                max((s for s, _ in ds if s is not None), default=None))),
     }
 
 

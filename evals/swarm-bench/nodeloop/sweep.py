@@ -317,6 +317,22 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         except Exception as exc:  # noqa: BLE001 - a broken instrument must be visible, not fatal
             audit = {"audit_error": f"{type(exc).__name__}: {exc}"}
 
+    # ADVERSARIAL AUDIT OF THE HARNESS, every unit, not just of the swarm. Six instrument failures in
+    # one day and two published before being caught; a unit whose own instruments cannot pass their
+    # controls and invariants is not evidence, and must be MARKED rather than quietly averaged in.
+    # It never stops the loop — a harness fault must not silently discard fleet time.
+    harness = {"ok": None, "detail": ""}
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "selftest.py"), str(dst)],
+                           capture_output=True, text=True, timeout=600)
+        harness = {"ok": r.returncode == 0, "detail": (r.stdout + r.stderr).strip()[:2000]}
+        if not harness["ok"]:
+            log(f"[HARNESS] {unit_name(arm['name'], nodes, rep)} FAILED its own audit — this unit is "
+                f"NOT evidence:\n{harness['detail']}")
+    except Exception as exc:  # noqa: BLE001 - an audit that cannot run is an audit that failed
+        harness = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+        log(f"[HARNESS] audit could not run: {harness['detail']}")
+
     actual = verdict.get("actual_nodes")
     # The label is an intention; run_started.pool is the fact. A mismatch has silently voided a
     # whole campaign before, so it voids the unit here rather than being averaged in.
@@ -401,7 +417,8 @@ def summarise() -> None:
         f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
     for (arm, nodes), g in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
         ok = [r for r in g if not r.get("timed_out") and not r.get("aborted")
-              and not r.get("void") and r.get("score") is not None]
+              and not r.get("void") and r.get("harness_ok") is not False
+              and r.get("score") is not None]
         sc = [r["score"] for r in ok]
         fb = [r["audit"].get("detail_fallback_count") for r in ok
               if isinstance(r.get("audit"), dict)
