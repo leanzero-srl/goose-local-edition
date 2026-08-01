@@ -299,6 +299,15 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_lean_prefill: Option<bool>,
+    /// Give the verify-e2e shards the ADVERTISED SURFACE enumerated by the engine from the frozen
+    /// operator spec, instead of telling them to "number them in the order the spec gives them" while
+    /// giving them no spec. MEASURED: three shards of one run each derived a different list — lengths
+    /// 1, 1 and 3 — from the README the build itself wrote, so the modulo partition was neither
+    /// disjoint nor complete and the shard with an empty slice reported clean. None => OFF
+    /// (byte-identical), as is a spec with no extractable endpoint table.
+    /// env GOOSE_SWARM_E2E_ORACLE overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_oracle: Option<bool>,
     /// #122 planning-slash: SKIP the backbone-lock round-2 re-draft when round-1 cross-draft agreement is
     /// already high (>= BACKBONE_SKIP_CONF_FLOOR). The backbone lock re-drafts the whole fleet a SECOND time
     /// (a full ~250s planner round) to pin the consensus module set, adopting round 2 only if it scores
@@ -1014,6 +1023,7 @@ impl Default for SwarmConfig {
             clarity_fail_closed: true,
             spec_contract: Some(true),
             sink_max_turns: Some(120),
+            e2e_oracle: None,
             draft_timeout_secs: None,
             goals: None,
             ask_replan: None,
@@ -3105,12 +3115,95 @@ fn id_names_a_test(id: &str) -> bool {
 
 /// The read-only END-TO-END SHARD spec: one slice of the app's advertised commands, checked against the
 /// spec's golden values. Owns nothing and writes nothing, so N of these co-run race-free on one tree.
-fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize) -> String {
+/// Deterministically extract the ADVERTISED SURFACE from the operator's frozen spec, as numbered
+/// items an e2e shard can partition without inventing the list itself.
+///
+/// THE DEFECT THIS EXISTS FOR. `e2e_shard_spec` tells each shard to "number them 1,2,3... in the
+/// order the spec gives them, and verify ONLY the ones whose position mod {shards} == {m}" — and the
+/// shard never receives the spec. MEASURED across the shard reports of one run: one shard reported
+/// the spec "advertises only ONE command/usage mode", another "advertises 3 commands/usages", and a
+/// third checked nothing at all, reporting "there is no command whose position satisfies position
+/// mod 3 == 2". A modulo over lists of different lengths is not a partition — coverage was neither
+/// disjoint nor complete, and a shard that enumerated an empty slice returned no findings, which
+/// reads as a pass.
+///
+/// The sibling fan that works does exactly this: `per_module_verify_spec` interpolates
+/// `files.join(", ")`, so the engine names the slice and the model cannot re-derive it. The rule is
+/// that a fan must ENUMERATE ITS ITEMS, not merely supply a selector over them.
+///
+/// Pure, and deliberately narrow: it returns METHOD PATH -> EXPECTED triples only, never spec prose,
+/// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
+/// the caller emits today's string byte-for-byte.
+fn spec_advertised_surface(spec: &str) -> Vec<String> {
+    let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
+    let mut out = Vec::new();
+    for line in spec.lines() {
+        let line = line.trim();
+        if !line.starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = line.trim_matches('|').split('|').collect();
+        if cells.len() < 3 {
+            continue;
+        }
+        let method = unwrap_cell(cells[0]).to_uppercase();
+        if !matches!(
+            method.as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+        ) {
+            continue; // header row, separator row, or a table that is not an endpoint table
+        }
+        let path = unwrap_cell(cells[1]);
+        if !path.starts_with('/') {
+            continue;
+        }
+        let expected = unwrap_cell(cells[2]);
+        out.push(if expected.is_empty() {
+            format!("{method} {path}")
+        } else {
+            format!("{method} {path} -> EXPECT {expected}")
+        });
+    }
+    out
+}
+
+fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[String]) -> String {
+    // THE LIST, ENUMERATED BY THE ENGINE. Without it each shard re-derives "the commands the spec
+    // advertises" from whatever spec-shaped artifact is in the tree — the README the build itself
+    // wrote — and MEASURED, three shards of one run derived lists of length 1, 1 and 3. A modulo over
+    // lists of different lengths is not a partition, so coverage was neither disjoint nor complete
+    // and the shard that enumerated an empty slice reported clean. The sibling fan that works,
+    // per_module_verify_spec, interpolates files.join(", ") for exactly this reason.
+    //
+    // Empty oracle => the block is empty and the sentence below is the original, byte for byte, so a
+    // spec with no extractable surface behaves exactly as it does today.
+    let (numbered, selector) = if oracle.is_empty() {
+        (
+            String::new(),
+            "The spec advertises a list of commands/usages: number them 1,2,3... in the order the \
+             spec gives them, and verify ONLY the ones whose position satisfies"
+                .to_string(),
+        )
+    } else {
+        let list = oracle
+            .iter()
+            .enumerate()
+            .map(|(i, item)| format!("  {}. {item}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (
+            format!(
+                "\n\nTHE ADVERTISED SURFACE — this numbered table IS the list, taken verbatim from the \
+                 operator's spec. Do NOT re-derive it from any file in the working directory; a README \
+                 in the tree was written by this build and is not the spec:\n{list}\n\n"
+            ),
+            "Verify ONLY the numbered items above whose position satisfies".to_string(),
+        )
+    };
     format!(
         "END-TO-END SHARD {n} OF {shards}. You own NOTHING and must WRITE NO files — this is a read-only \
          gate that runs in PARALLEL with its sibling shards on the assembled app. BUILD + ACTUALLY RUN the \
-         program's advertised entry point ({entry}). The spec advertises a list of commands/usages: number \
-         them 1,2,3... in the order the spec gives them, and verify ONLY the ones whose position satisfies \
+         program's advertised entry point ({entry}).{numbered}{selector} \
          position mod {shards} == {m} — that is, command {n}, then {n} plus {shards}, and so on. Your \
          siblings own the others; checking theirs wastes the fleet and checking none of yours leaves a hole. \
          For EACH command you own do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies \
@@ -3138,7 +3231,12 @@ fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize) -> String {
 /// REPAIR point and final join, and now gates behind the shards instead of running every command itself.
 ///
 /// No-op (0) without a sink, without modules, or when already sharded. Returns the shard count.
-fn fan_e2e_split(plan: &mut serde_json::Value, lang: TargetLang, shards: usize) -> usize {
+fn fan_e2e_split(
+    plan: &mut serde_json::Value,
+    lang: TargetLang,
+    shards: usize,
+    oracle: &[String],
+) -> usize {
     let shards = shards.clamp(2, 4);
     let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
         return 0;
@@ -3168,7 +3266,7 @@ fn fan_e2e_split(plan: &mut serde_json::Value, lang: TargetLang, shards: usize) 
         .map(|i| {
             serde_json::json!({
                 "id": format!("verify-e2e::{i}"),
-                "description": e2e_shard_spec(lang, i, shards),
+                "description": e2e_shard_spec(lang, i, shards, oracle),
                 "depends_on": verify_ids,
                 "files": [],
                 "difficulty": "hard"
@@ -6731,6 +6829,111 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// it carries is thin_integrate_verify_spec — which is >240 chars and used to pass the
     /// "substantive detail" test, producing a prompt that said both "Do NOT re-run that whole sweep"
     /// and "run EVERY command the SPEC advertises". Measured in 10 of 11 fan_e2e-shaped runs.
+    /// The extractor must produce the SAME list every time from the operator spec, because that is
+    /// the entire point: three shards partitioning one engine-enumerated list rather than three
+    /// lists they each derived from the build's own README.
+    #[test]
+    fn spec_advertised_surface_enumerates_the_real_endpoint_table() {
+        // The real spec's shape, verbatim from evals/swarm-bench/spec-build.md.
+        let spec = "\
+## 3. `vendorsync/api.py`\n\n\
+| Method | Path | Response |\n\
+|---|---|---|\n\
+| `GET` | `/api/health` | `{\"status\": \"ok\", \"payments\": <int>}` |\n\
+| `GET` | `/api/summary` | `{\"count\": <int>, \"currency\": \"EUR\"}` |\n\
+| `POST` | `/api/sync` | `{\"fetched\": <int>, \"inserted\": <int>}` |\n\n\
+`limit` defaults to 25 and is capped at 100.\n";
+        let items = spec_advertised_surface(spec);
+        assert_eq!(
+            items.len(),
+            3,
+            "three endpoint rows, header and separator skipped: {items:?}"
+        );
+        assert!(
+            items[0].starts_with("GET /api/health -> EXPECT"),
+            "{:?}",
+            items[0]
+        );
+        assert!(
+            items[2].starts_with("POST /api/sync -> EXPECT"),
+            "{:?}",
+            items[2]
+        );
+        // DETERMINISM is the whole point — the same spec must yield the same list, so three shards
+        // partition one list instead of three they each invented.
+        assert_eq!(items, spec_advertised_surface(spec));
+        // PROSE MUST NOT SURVIVE. A read-only shard handed a build order is the failure this is
+        // deliberately narrow to avoid.
+        assert!(
+            !items.iter().any(|i| i.contains("defaults to 25")),
+            "{items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| i.contains("vendorsync/api.py")),
+            "{items:?}"
+        );
+
+        // A spec with no endpoint table yields NOTHING, so the caller emits today's string
+        // byte-for-byte and the change is inert rather than half-applied.
+        assert!(spec_advertised_surface("# Build a CLI\n\nIt should be fast.\n").is_empty());
+        assert!(spec_advertised_surface("").is_empty());
+        // A markdown table that is not an endpoint table must not be mistaken for one.
+        assert!(
+            spec_advertised_surface("| Name | Type |\n|---|---|\n| `id` | `str` |\n").is_empty()
+        );
+    }
+
+    /// OFF must be byte-identical, and ON must give every shard the SAME list. Those two together
+    /// are the whole fix: the defect was three shards partitioning three different lists.
+    #[test]
+    fn the_e2e_oracle_is_inert_when_empty_and_identical_across_shards() {
+        let off_0 = e2e_shard_spec(TargetLang::Python, 0, 3, &[]);
+        assert!(
+            off_0.contains("number them 1,2,3... in the order the spec gives them"),
+            "an empty oracle must emit today's sentence verbatim"
+        );
+        assert!(!off_0.contains("THE ADVERTISED SURFACE"));
+
+        let oracle = vec![
+            "GET /api/health -> EXPECT {\"status\": \"ok\"}".to_string(),
+            "POST /api/sync -> EXPECT {\"fetched\": <int>}".to_string(),
+        ];
+        let shards: Vec<String> = (0..3)
+            .map(|i| e2e_shard_spec(TargetLang::Python, i, 3, &oracle))
+            .collect();
+        for (i, sh) in shards.iter().enumerate() {
+            assert!(
+                sh.contains("THE ADVERTISED SURFACE"),
+                "shard {i} lost the table"
+            );
+            assert!(sh.contains("1. GET /api/health"), "shard {i} lost item 1");
+            assert!(sh.contains("2. POST /api/sync"), "shard {i} lost item 2");
+            assert!(
+                !sh.contains("number them 1,2,3... in the order the spec gives them"),
+                "shard {i} still tells the model to derive the list itself"
+            );
+        }
+        // EVERY shard sees the identical list — the property the partition depends on and the one
+        // that was false in production, where three shards enumerated lists of length 1, 1 and 3.
+        // Collect the numbered lines rather than byte-slicing between two markers: this prompt is
+        // prose with em-dashes, and a byte slice landing mid-character panics — the hazard
+        // pitfall_items() already documents in this file, and clippy::string_slice caught it here.
+        let table = |s: &String| {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| {
+                    l.starts_with(|c: char| c.is_ascii_digit()) && l.contains(" -> EXPECT ")
+                })
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(table(&shards[0]), table(&shards[1]));
+        assert_eq!(table(&shards[1]), table(&shards[2]));
+        // The selector still differs per shard, or there is no partition at all.
+        assert!(shards[0].contains("position mod 3 == 1"));
+        assert!(shards[1].contains("position mod 3 == 2"));
+    }
+
     #[test]
     fn the_join_is_not_handed_the_sweep_it_was_told_to_skip() {
         // The two engine-authored specs really do contradict each other, which is why appending one
@@ -6836,7 +7039,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         )
         .unwrap();
         assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
-        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3), 3);
+        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3, &[]), 3);
 
         // Three shards exist, own NOTHING (so they co-run race-free), and wait for the per-module verifies.
         for i in 0..3 {
@@ -6866,7 +7069,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(join.contains("ONLY task permitted to edit files"));
         assert!(join.contains("sole integration gate"));
         // Idempotent: a second pass must not double-shard.
-        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3), 0);
+        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3, &[]), 0);
     }
 
     /// The sink must not re-do by hand what the engine now checks deterministically. It is the single
@@ -12358,7 +12561,20 @@ impl GooseAgentDispatcher {
                 // Second axis: shard the END-TO-END run by command across the fleet, so the whole-program
                 // check stops being one task on one node while the rest of the fleet idles.
                 if swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e) {
-                    let shards = fan_e2e_split(&mut v, lang, worker_count);
+                    // ENGINE-ENUMERATED ORACLE, gated. spec_frozen is the OPERATOR's spec as it
+                    // stood before any model wrote into it (opts.prompt is mutated by retarget), so
+                    // it is the only honest source for "what the spec advertises". OFF, or a spec
+                    // with no extractable endpoint table, yields an empty slice and the shard spec
+                    // is byte-identical to today.
+                    let oracle: Vec<String> = if swarm_gate_cfg(
+                        "GOOSE_SWARM_E2E_ORACLE",
+                        load_config().e2e_oracle.unwrap_or(false),
+                    ) {
+                        spec_advertised_surface(&self.spec_frozen.lock().unwrap().clone())
+                    } else {
+                        Vec::new()
+                    };
+                    let shards = fan_e2e_split(&mut v, lang, worker_count, &oracle);
                     if shards > 0 {
                         eprintln!(
                             "  \u{b7} fan-e2e: split the end-to-end run into {shards} command shard(s) across the fleet — integrate-verify now joins them instead of running every command itself"
@@ -20421,6 +20637,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // could not say whether a green owed itself to a salvage. Parsed exactly as the engine
             // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
+            "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(false)),
             "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
                 .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
                 .unwrap_or(true),

@@ -121,6 +121,21 @@ ARMS = [
                 "equivalent to the serial one and that is a defect worth more than the speedup.",
     },
     {
+        "name": "e2e_oracle",
+        "env": {"GOOSE_SWARM_E2E_ORACLE": "1"},
+        "gate": "fan_e2e does not currently partition: e2e_shard_spec tells each shard to number the "
+                "advertised commands 'in the order the spec gives them' and never gives it the spec, "
+                "so each derives the list from the README the build itself wrote. MEASURED on one "
+                "run: three shards derived lists of length 1, 1 and 3, and the one that enumerated "
+                "an empty slice reported clean. This arm hands every shard the SAME engine-extracted "
+                "table from spec_frozen. PREDICTION: tier C and the e2e-derived checks rise, because "
+                "the shards start checking the operator's endpoints rather than the build's own "
+                "documentation — and crucially the shards' reports should stop citing the README. If "
+                "tier C does NOT move but the reports stop citing the README, the oracle landed and "
+                "the app was already right; if the reports still cite the README, the injection is "
+                "not reaching them and the arm has failed regardless of the score.",
+    },
+    {
         "name": "doc_prefetch",
         "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
         "gate": "doc_facts is the only un-paraphrased scout->worker channel. Tier C is graded on "
