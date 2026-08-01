@@ -2537,11 +2537,31 @@ fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &st
 /// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
-/// Wall-clock budget for ONE subtask's detail expansion. Named rather than inline because the number is
-/// load-bearing: exceeding it does not fail the task, it silently hands the worker the architect's
-/// one-line brief as its entire spec, and the `detail_fallback` event now records the budget it lost to
-/// so a run's own log says whether the ceiling was the cause.
-const DETAIL_BUDGET_SECS: u64 = 75;
+/// Wall-clock budget for ONE subtask's detail expansion. Load-bearing: exceeding it does not fail the
+/// task, it silently hands the worker the architect's one-line brief as its entire spec.
+const DETAIL_BUDGET_SECS_DEFAULT: u64 = 75;
+
+/// How long ONE detail expansion may take. Env > default; clamped [30, 900]. Default unchanged, so a
+/// run that sets nothing is byte-identical.
+///
+/// 75 is a bare literal pinned at the OBSERVED MAXIMUM of the call it bounds, which is the wrong place
+/// for a ceiling: normal variance then lands on the far side of it. Measured across the runs on disk —
+/// the SAME `meridian` brief was detailed in 44.5s on one run and blew through 75s on another, and the
+/// run that lost it shipped a 95-character spec for the module tier C exists to grade, scoring 14.3%
+/// there against 85.7% for the run that kept it. The sibling CONTRACT fanout — same call shape, same
+/// fleet — already abandoned a small fixed budget for `worker_timeout_secs.max(120)` after a mass stub
+/// failure, and its comment records exactly that reasoning.
+///
+/// Deliberately NOT raised here. The default stays 75 so the campaign's baseline arm is unchanged and
+/// a `detail_budget` arm is attributable to this one constant; the number gets baked once a replicated
+/// arm says what it should be, not because the argument sounds right.
+fn detail_budget_secs() -> u64 {
+    std::env::var("GOOSE_SWARM_DETAIL_BUDGET_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DETAIL_BUDGET_SECS_DEFAULT)
+        .clamp(30, 900)
+}
 
 /// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
 /// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
@@ -12394,8 +12414,9 @@ impl GooseAgentDispatcher {
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
                 // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
                 let detail_key = format!("detail-{id}");
+                let detail_budget = detail_budget_secs();
                 let (desc, fallback_reason) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(DETAIL_BUDGET_SECS),
+                    std::time::Duration::from_secs(detail_budget),
                     me.run_agent(
                         &model,
                         system,
@@ -12433,7 +12454,7 @@ impl GooseAgentDispatcher {
                         "task_id": id,
                         "reason": fallback_reason,
                         "brief_chars": brief.len(),
-                        "budget_secs": DETAIL_BUDGET_SECS,
+                        "budget_secs": detail_budget,
                     }));
                     eprintln!(
                         "  {} detail {} ({:.0}s) — {} at {}s; the worker gets the skeleton line, not a spec",
@@ -12441,7 +12462,7 @@ impl GooseAgentDispatcher {
                         style(&id).bold(),
                         started.elapsed().as_secs_f64(),
                         fallback_reason,
-                        DETAIL_BUDGET_SECS,
+                        detail_budget,
                     );
                 } else {
                     eprintln!(
@@ -20217,6 +20238,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "scout_budget_secs": load_config().scout_budget_secs,
             "scout_max_lookups": load_config().scout_max_lookups,
             "sink_cap_secs": load_config().sink_cap_secs,
+            // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
+            // worker gets a real spec or the architect's one-liner, so the run must say what it was.
+            "detail_budget_secs": detail_budget_secs(),
             "struct_stop": load_config().struct_stop,
             "spiral_thinking_chars": load_config().spiral_thinking_chars,
             "planner_weight": load_config().planner_weight,
