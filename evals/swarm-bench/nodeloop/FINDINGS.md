@@ -74,6 +74,28 @@ task kind and asserts both score directions, the vacuous-truth case, and an empt
 
 ---
 
+## F5 — I almost published "every finding was refuted" off a broken harness
+
+Adversarial round 1 returned `survivors: []` with the note *"every finding was refuted — report
+that plainly, do not soften it"*. That was **my bug, not a result.** The workflow's inner
+`parallel([...])` was passed promises instead of thunks, so all 34 verification calls failed and
+`votes` was empty for every finding — and my survival test was `votes.length > 0 && kills === 0`,
+which turns "nothing was checked" into "it did not survive".
+
+Four finder agents had in fact raised **38 findings**, none of which was ever tested. Recovering
+them needed a second correction: my journal parser read `label`, but the field is `key`, so the
+first recovery attempt also printed zero. Two blind instruments in a row, both reporting a
+confident zero.
+
+This is the project's standing law firing twice in five minutes: **a zero is usually a broken
+instrument, not an empty world** — and before any zero licenses a conclusion, prove the query can
+see the thing at all. The `24 agents completed` count is what refused the first zero, and the raw
+journal shape is what refused the second.
+
+Round 1 now dedupes by site before verifying, because three lenses independently raised the 75s
+detail budget and three raised the missing event. Independent rediscovery is recorded as
+corroboration rather than spent as three separate verifications.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
