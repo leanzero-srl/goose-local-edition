@@ -1762,6 +1762,29 @@ otherwise, and both would have been wrong in the same direction — toward a mor
 For the record, so the next reader does not repeat it: **during a run the trace is
 `runs/nodeloop/trace-<unit>.jsonl`; after it, `<unit>/vendor-trace.jsonl`.**
 
+## F49 addendum — the derived budget is 420s here, not 900, and the worst case needs watching
+
+Checking my own fix rather than trusting the commit message. F49 says the detail budget now derives
+from `worker_timeout_secs` "baked at 900". The BAKED default is 900; **this machine's config.yaml sets
+`worker_timeout_secs: 420`**, so the live derivation is `420.max(75)` = **420 seconds**, 5.6x the old
+ceiling rather than 12x. The fix is still correct — it removes a bare literal and ties the ceiling to
+the same source its sibling uses — but the number is 420 and the record should say so.
+
+**The worst case is now larger and is worth measuring, not assuming.** The ceiling only binds on
+FAILURE: a successful detail was measured at 44.5s, so the typical fan is unchanged. But I raised TWO
+ceilings — the per-call timeout and the straggler grace — so a fan of 17 tasks over 3 devices where
+several calls hang could in principle spend far longer in the prefix than the ~7 minutes a 75s
+ceiling allowed. Work-stealing means one slow item does not block the others, and the contracts
+fanout has run with exactly this derivation without trouble, so the risk is bounded rather than
+absent.
+
+`detail_completed{secs, spec_chars}` exists precisely so the next runs settle this instead of me
+reasoning about it: it gives the duration distribution the ceiling has to clear, and the prefix
+measurement in `prefix.py` shows whether the fan got slower. **If the prefix grows materially while
+`detail_fallback` goes to zero, the right answer is a ceiling between the two — sized from the
+distribution, not from either literal.** That is the question the first post-boundary baseline unit
+now answers, and it is why that cell carries two questions rather than one.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
