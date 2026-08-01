@@ -1236,6 +1236,40 @@ really was 1.
 The three baseline 3-node units on disk are NOT affected: their pool already contained the planner
 model, `planner` never appears as a dispatch device in them, and their peak concurrency is 3.
 
+## F39 — killing the engine first lets the supervisor record a truncated run as a finished one
+
+Found immediately after acting on F38, by checking what the kill actually wrote instead of assuming
+it wrote nothing.
+
+The unit killed at 57 minutes was recorded as:
+
+    score 0.2999   void false   aborted false   timed_out false   actual_nodes 1
+
+Indistinguishable from a completed run, and it went straight into the results table as a clean 1-node
+row at 30.0% — next to a 3-node row at 42.7%. That reads as "one node is much worse than three", which
+is a conclusion drawn from a run that was stopped early AND had two workers.
+
+**Why.** The stop sequence killed the engine's process group first and the sweep supervisor about two
+seconds later. In that window the supervisor did exactly what it is built to do: noticed the engine
+exit, scored the half-finished tree, and persisted a result. Nothing in that path knows the difference
+between "the engine finished" and "the engine was killed".
+
+**Fixed:** the supervisor is killed FIRST, then the engine, in `loop.sh`'s stop path. A supervisor that
+is already dead cannot score a corpse.
+
+The row itself was voided by hand on deterministic evidence — 11 dispatches across `mac-gabee` (5) and
+`planner` (6) in a cell that asked for one node — with the pre-void score kept as
+`score_before_void` so the row is auditable rather than erased. The 3-surface check that catches this
+class automatically ships at the next boundary.
+
+Two lessons, and the second is the general one:
+
+- A kill is not a no-op. Whatever is watching will interpret the silence, and its interpretation is
+  usually "done".
+- **Check what an intervention WROTE, not just that it worked.** The kill succeeded — engine gone,
+  fleet idle, exactly as intended — and it still produced a corrupt row. "It worked" and "it left the
+  world in the state I wanted" are different claims.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

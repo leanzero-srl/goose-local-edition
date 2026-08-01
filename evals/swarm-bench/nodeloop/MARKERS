@@ -25,6 +25,10 @@ retarget_discarded
 # The fn name is not in the binary; this literal is, and it sits after the {points_at} interpolation.
 weaken, skip or delete a check
 
+# pool_resolved / planner gate: a 1-node cell was running two workers (F38)
+pool_resolved
+GOOSE_SWARM_PLANNER_ALSO_WORKS
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
