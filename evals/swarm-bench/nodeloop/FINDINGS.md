@@ -1672,6 +1672,34 @@ signal it fires on. Re-aiming it needs the `retarget` off/on arm to establish wh
 at all — written down now: build score unchanged within the replicate spread, wall-clock down 10-20%.
 If the score DROPS, the redraft is buying something real and this reading was wrong.
 
+## F50 — the redraft ladder, caught live: 48 minutes, 27,806 characters discarded, floor never reached
+
+The current unit is the cleanest evidence yet, and it was produced by simply watching the log.
+
+    +17.4m  redraft   conf 68  best_of_n 3->4    17 tasks discarded, 11,291 chars of model-authored spec
+    +27.7m  redraft   conf 80  best_of_n 4->5    15 tasks discarded,  6,246 chars
+    +39.7m  redraft   conf 81  best_of_n 5->6    18 tasks discarded, 10,269 chars
+    +48.4m  low_confidence_ask                   gave up, asked the human
+    +48.5m  low_confidence_ask_timeout           nobody answered; proceeding
+
+**48.4 minutes before a single task was dispatched. 27,806 characters of model-authored
+specification thrown away** — real work the fleet produced, implementers and tests, excluding the
+engine-generated verify/e2e specs that regenerate for free. And the confidence never reached the 85
+floor: 68 → 80 → 81, decelerating, then it asked a human instead.
+
+This confirms the prediction in F49 that **growing `best_of_n` to raise agreement can fail to raise
+it**: the pool went 3→4→5→6 and the gain went +12, +1, then nothing. More drafts means more chances
+one disagrees on task count, and agreement is exactly draft-count parity.
+
+Meanwhile `detail_fallback` fired **13 times** across those rounds, `meridian` — the module owning the
+vendor contract, the measured predictor of a functional build — losing its spec **four separate
+times**. The engine re-derived the whole plan three times and never once retried the one call whose
+failure predicts the build failing.
+
+**F48 is confirmed in the same log.** `low_confidence_ask` → `low_confidence_ask_timeout` in exactly
+**5 seconds**, against the 1800s default it had this morning. The clarify block-poll no longer idles
+the fleet for half an hour.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
