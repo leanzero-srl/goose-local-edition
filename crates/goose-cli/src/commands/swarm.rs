@@ -8355,6 +8355,24 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             ),
             None
         );
+
+        // THE REAL PYTEST TRACEBACK, in the shape of the first finding this engine ever emitted. Its
+        // FIRST frame is CPython's own threading.py and the app frame is ABSOLUTE. Neither may
+        // escape: a stdlib path sends a fix shard to repair CPython, and an absolute path keys the
+        // file-group differently from the rest of the engine and breaks the shadow tree's
+        // promote-by-relative-path. Latent until F41 made the fan fire.
+        let tb = "`pytest -q` failed:\n    File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/threading.py\", line 1024, in run\n    File \"/Users/x/runs/unit/vendorsync/meridian.py\", line 40, in serve";
+        assert_eq!(
+            extract_file_from_finding(tb, &files).as_deref(),
+            Some("vendorsync/meridian.py"),
+            "a traceback must resolve to the OWNED, repo-relative file — never the stdlib, never absolute"
+        );
+
+        // Naming only files this run does not own resolves to NOTHING; the serial fix path handles
+        // it. Inventing an owner is worse than admitting there is none.
+        let foreign =
+            "File \"/opt/homebrew/Cellar/python@3.14/lib/python3.14/socket.py\", line 9, in x";
+        assert_eq!(extract_file_from_finding(foreign, &files), None);
     }
 
     #[test]
@@ -17920,8 +17938,37 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
             }
         }
     }
+    // RESOLVE AGAINST THE FILES THIS RUN OWNS. A pytest traceback names ABSOLUTE paths, and the first
+    // frame is routinely CPython's own stdlib —
+    // `/opt/homebrew/.../python3.14/threading.py` appeared as the first `File "..."` line in the very
+    // first real finding this engine emitted. Unfiltered, that becomes a FileGroup, and
+    // `complete_parallel` dispatches a fix shard that owns it: an agent sent to repair CPython, or to
+    // write an absolute path into a shadow tree that promotes by relative path.
+    //
+    // Latent until now because the fan never fired — five of six finding shapes resolved to nothing
+    // (F41). Fixing the extractor made this reachable, which is the whole reason "treat 'I fixed
+    // that' as a hypothesis" is a rule.
+    //
+    // With an EMPTY file list there is nothing to resolve against, so the old behaviour stands — that
+    // is the unit-test path; every real call site passes the run's planned files.
     if let Some(f) = src.clone().or_else(|| last.clone()) {
-        return Some(f);
+        if all_files.is_empty() {
+            return Some(f);
+        }
+        // Exact, then longest-suffix: a traceback's absolute path ends with the repo-relative one.
+        if all_files.iter().any(|a| normalize_rel_path(a) == f) {
+            return Some(f);
+        }
+        if let Some(owned) = all_files
+            .iter()
+            .map(|a| normalize_rel_path(a))
+            .filter(|a| f.ends_with(&format!("/{a}")) || f.ends_with(a.as_str()))
+            .max_by_key(|a| a.len())
+        {
+            return Some(owned);
+        }
+        // Named a real file, but not one this run owns (stdlib, site-packages, a sibling checkout).
+        // Fall through to the module resolver rather than aiming a fix shard outside the app.
     }
     // A DOTTED MODULE resolved against the files this run actually planned. The AST review names a
     // module, never a path — "function 'log_message' in module 'vendorsync.api' is a STUB" — and it
