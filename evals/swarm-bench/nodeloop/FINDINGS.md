@@ -275,6 +275,38 @@ the slow tail, not on the ~50 s mean. If fallbacks do not drop, the ceiling is n
 whole line of reasoning is wrong.* The constant gets baked when a replicated arm says what it should
 be — not because the argument sounds convincing.
 
+## F11 — `scoped_contracts` cannot work under this planner, and I nearly spent three runs proving it
+
+It was queued as a campaign arm on the reasoning that every worker receives the FULL frozen-contract
+bundle, so irrelevant interface text grows with the fan. Round 2's adversarial pass confirmed the
+defect but refuted the fix, and checking its claim against real plans settled it:
+
+**Zero inter-module dependency edges among code modules, in all three runs measured.** Every code
+module is a root. That is by design — the architect prompt says *"Default to a FLAT FAN: make every
+module a root with no deps"* (`swarm.rs:11493`), and `relax_contracted_deps` exists to flatten any
+chain that survives it.
+
+So a worker's DAG neighbourhood is **itself**. Scoping the bundle to it would delete every sibling
+interface and leave only the module's own stub — the one interface it does not need, since it is the
+thing writing it. Under a flat fan the full bundle is the *correct* bundle. The lever is inert at
+best and destructive at worst, and its precondition is precisely what the planner works to prevent.
+
+Arm removed before it ran; a warning comment now sits on `scoped_contracts_on()`. Measurement time
+is the scarce resource here — roughly two hours per unit, three units per arm — and a lever
+predicted broken on evidence does not earn three replicates. It becomes meaningful only if plans
+ever carry real inter-module edges.
+
+**The three other recovered round-2 defects, triaged and not yet acted on:**
+- the dynamic-replan await sits on the dispatch loop and can freeze all placement for up to 25
+  minutes (`scheduler.rs:2050`). The refuter's counter-proposal is a resolvable replan budget in
+  this repo's established shape (`draft_timeout_secs` / `clarity_probe_secs`), plus making expiry
+  distinguishable so a timeout does not consume the replan budget. It also honestly notes the gain
+  is small by construction: the gate only fires when two nodes are already idle.
+- every parallel fix shard reports the same device id while running on a different host
+  (`swarm.rs:21823`) — an observability defect. The refuter's better idea: emit a per-shard event
+  carrying {task_id, device, model}, since `device_id` never reaches an event and no fix to a
+  console label can be seen fire.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

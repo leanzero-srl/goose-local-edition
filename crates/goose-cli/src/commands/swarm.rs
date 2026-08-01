@@ -17484,6 +17484,16 @@ fn dep_signatures_on() -> bool {
 
 /// SWARM-COHERENCE Phase-1 (DAG-scoped context): scope the frozen-contract bundle to a worker's DAG
 /// neighborhood. Not in the assured bundle → default OFF (byte-identical).
+///
+/// ⚠ DO NOT TURN THIS ON without first changing the planner. MEASURED across three real plans
+/// (evals/swarm-bench/runs/*/run.jsonl, plan_loaded): **zero** inter-module dependency edges among
+/// code modules, in every one. That is not an accident — the architect prompt says "Default to a
+/// FLAT FAN: make every module a root with no deps" (swarm.rs:11493), and `relax_contracted_deps`
+/// exists to flatten any chain that survives it. So a worker's DAG neighborhood is just ITSELF, and
+/// scoping the bundle to it deletes every SIBLING interface while keeping only the module's own stub
+/// — the one interface it does not need, because it is the thing writing it. Under a flat fan the
+/// FULL bundle is the correct bundle, and this lever is inert at best and destructive at worst.
+/// It becomes meaningful only if the plan ever carries real inter-module edges.
 fn scoped_contracts_on() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_SCOPED_CONTRACTS",
