@@ -68,6 +68,10 @@ if not rows:
 versions = {r.get('audit_version') for rs in rows.values() for r in rs}
 if len(versions) > 1:
     print(f"!! mixed audit versions {versions} — these rows are NOT comparable\n")
+builds = {r.get('engine_build') for rs in rows.values() for r in rs}
+if len(builds) > 1:
+    print(f"!! MIXED ENGINE BUILDS {builds} — rows across a rebuild measure different engines")
+    print("   and are NOT comparable. Re-baseline rather than averaging across the boundary.\n")
 print(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
       f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
 for (arm, nodes), rs in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):

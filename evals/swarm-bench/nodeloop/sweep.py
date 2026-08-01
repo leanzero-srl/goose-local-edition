@@ -160,12 +160,35 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
         r = json.loads(p.read_text())
     except Exception:
         return False
-    return r.get("audit_version") == dispatch_audit.AUDIT_VERSION
+    # A unit is only "done" if it was measured by the CURRENT instrument AND on the CURRENT engine.
+    # Checking the instrument alone left a hole with teeth: after a rebuild, a stale unit still
+    # counts as complete, gets skipped forever, and quietly contributes a row measured on a
+    # different binary. That is the exact shape of the failure that once published a table showing
+    # the cheaper model winning — every part of the loop did its job and the conclusion was wrong.
+    return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION
+            and r.get("engine_build") == engine_build())
 
 
 def looks_transient(tail: str) -> bool:
     low = (tail or "").lower()
     return any(t in low for t in TRANSIENT)
+
+
+def engine_build() -> str:
+    """Identify the ENGINE BINARY a unit ran on.
+
+    Results already carry scorer_version and audit_version, but nothing identified the engine — and
+    that gap cost a campaign: 34 hours of backlog were queued against a binary built before the
+    levers the arms set even existed, so `detail_budget` would have set an env var the binary
+    ignores and recorded a confident "no effect". mtime+size is enough to tell two builds apart and
+    costs nothing; a content hash of a 235 MB binary would not be worth its own runtime.
+    """
+    try:
+        import run_build
+        st = run_build.GOOSE.stat()
+        return f"{int(st.st_mtime)}-{st.st_size}"
+    except Exception as exc:  # noqa: BLE001 - an unknown build must be visible, never silently absent
+        return f"unknown:{type(exc).__name__}"
 
 
 def engine_pids() -> list[int]:
@@ -303,6 +326,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "void": void,
         "void_reason": (f"asked for {nodes} nodes, engine built {actual}" if void else None),
         "scorer_version": verdict.get("scorer_version"),
+        "engine_build": engine_build(),
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
     }
@@ -454,7 +478,8 @@ def main() -> int:
                       "gate": arm["gate"],
                       "finished_at": datetime.now().isoformat(timespec="seconds"),
                       "score": None, "failed": True, "error": tail,
-                      "audit_version": dispatch_audit.AUDIT_VERSION, "audit": {}}
+                      "audit_version": dispatch_audit.AUDIT_VERSION,
+                      "engine_build": engine_build(), "audit": {}}
 
         durations.append(time.time() - started)
         result_path(arm["name"], nodes, rep).parent.mkdir(parents=True, exist_ok=True)
