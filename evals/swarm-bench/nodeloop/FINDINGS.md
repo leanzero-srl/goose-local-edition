@@ -511,6 +511,54 @@ truncated pass had reported 1 survivor and 27 "refutations"; 27 was never a coun
 node-count-conditional cost, but it is not the main term. Where the rest of the pre-dispatch delta
 lives is still unattributed.
 
+## F19 — The cross-check failed, and it was MY instrument that was wrong (caught by design this time)
+
+The engine now emits `detail_fallback`, so for the first time the shape-based inference could be
+checked against engine truth on the same run:
+
+| instrument | says |
+|---|---|
+| engine `detail_fallback` events | **3** — `store`, `meridian-client`, `test-api`, all `reason=timeout` |
+| my `dispatch_audit` shape inference | **1** — only `test-api` |
+
+**Neither is broken. They answer different questions**, and I had been treating them as one.
+`confidence_retarget` fired a redraft (`best_of_n 3→4`), so the detail calls that failed in round 1
+were re-run and succeeded, and `plan_loaded` holds the FINAL plan. The events count **detail-call
+failures in any round**; the plan records **what a worker actually received**.
+
+So the instrument now reports both, named for what they measure:
+- `shipped_one_liners` — what the workers got. **The quality number.**
+- `detail_fallback_events` — how unreliable the detail call is. **The mechanism number.**
+
+This is the fifth instrument problem today and the first one caught **by design** rather than by
+stumbling into a contradiction — the cross-check existed precisely because the previous four taught
+me to build one. It also means F1's original table (fallbacks vs build score, measured before the
+event existed) counted shipped one-liners, which is the right number for that claim.
+
+**And the redraft is a real recovery mechanism.** Two of three failed details were repaired by a
+retarget round the run took because agreement scored 81 against a floor of 85. That is a
+node-count-conditional safety net a 1-node run cannot have (F17), which raises the stakes on the
+n=1-vs-n=3 comparability warning rather than lowering them.
+
+## F20 — The `frozen: true` survivor bites on a live run
+
+Round 3's third survivor, confirmed on this run's own `contracts` event:
+
+```
+frozen: true   modules: 4
+  store      parsed=False  bytes=775  err="expected ':'"   <- DROPPED
+  meridian   parsed=True   bytes=785
+  api        parsed=True   bytes=176
+  cli        parsed=True   bytes=280
+```
+
+The event claims **4 frozen modules** when only 3 survived `drop_unparseable_stubs`. The
+empty-bundle guard runs before the drop, so the count and the `frozen: true` flag are both stale.
+
+`store` is also one of the three modules whose detail call timed out — so on this run the same
+module lost its detailed spec *and* its frozen interface, and the run reported a full contract
+bundle either way.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

@@ -200,8 +200,15 @@ def audit(path) -> dict:
     unmeasurable = [p["task_id"] for p in per_dispatch if not p["instruction_measurable"]]
     zero_ctx = sum(1 for p in per_dispatch if (p["context_slice_len"] or 0) == 0)
 
-    # Distinct tasks (not dispatches) whose spec never got past the architect's one-liner.
+    # TWO different questions, and conflating them cost me a wrong number on the first run that
+    # emitted both. `detail_fallback` events count DETAIL-CALL FAILURES in any planning round; the
+    # final `plan_loaded` records WHAT A WORKER ACTUALLY RECEIVED. A retarget redraft can fail a
+    # detail in round 1 and succeed in round 2, so the engine reported 3 fallbacks while only 1
+    # one-liner shipped — neither instrument was broken, they answer different things.
+    #   shipped_one_liners    -> what the workers got. The quality number.
+    #   detail_fallback_events -> how unreliable the detail call is. The mechanism number.
     briefed = sorted({tid for tid, desc in plan.items() if is_skeleton_brief(desc)})
+    fallback_events = [e for e in events if e.get("event") == "detail_fallback"]
 
     scored = [p["specificity_score"] for p in per_dispatch if p["specificity_score"] is not None]
     lens = sorted(p["specificity"]["chars"] for p in per_dispatch if p["specificity"])
@@ -226,8 +233,14 @@ def audit(path) -> dict:
         "test_author_contradiction_count": contradiction,
         "instruction_unmeasurable_count": len(unmeasurable),
         "instruction_unmeasurable_tasks": sorted(set(unmeasurable)),
+        "shipped_one_liners": len(briefed),
+        "shipped_one_liner_tasks": briefed,
+        # Kept under the old key so existing result rows stay readable; it IS the shipped count.
         "detail_fallback_count": len(briefed),
         "detail_fallback_tasks": briefed,
+        "detail_fallback_events": len(fallback_events),
+        "detail_fallback_reasons": sorted({e.get("reason") for e in fallback_events}),
+        "detail_fallback_event_tasks": sorted({e.get("task_id") for e in fallback_events}),
         "planned_tasks": len(plan),
         "zero_context_slice_count": zero_ctx,
         "specificity_mean": round(sum(scored) / len(scored), 3) if scored else None,
@@ -256,9 +269,10 @@ def render(a: dict) -> str:
                f"({a['kind_mismatch_pct']}%) got rules written for another job")
     out.append(f"  test-author told 'never read TEST files' : "
                f"{a['test_author_contradiction_count']}")
-    out.append(f"  DETAIL FELL BACK to the architect one-liner: "
-               f"{a['detail_fallback_count']} of {a['planned_tasks']} tasks "
-               f"{a['detail_fallback_tasks']}")
+    out.append(f"  SHIPPED one-liners (what workers got): "
+               f"{a['shipped_one_liners']} of {a['planned_tasks']} tasks {a['shipped_one_liner_tasks']}")
+    out.append(f"  detail-call FAILURES (engine event, any round): {a['detail_fallback_events']} "
+               f"{a['detail_fallback_event_tasks']} reasons={a['detail_fallback_reasons']}")
     out.append(f"  instruction NOT in log (split/fix children): "
                f"{a['instruction_unmeasurable_count']} {a['instruction_unmeasurable_tasks']}")
     out.append(f"  zero dependency context : {a['zero_context_slice_count']} of {a['dispatches']}")
