@@ -228,6 +228,53 @@ justifies a fix yet.** Note also that round 1's adversarial pass REFUTED both "r
 and "add a retry" on code-reading grounds; if the campaign shows fallbacks rising with node count,
 those refutations deserve re-examination against evidence they did not have.
 
+## F9 — My adversarial harness was throwing away two-thirds of its confirmed findings
+
+Round 2 returned **0 survivors of 32** and instructed me to report that plainly. Before believing a
+zero I checked the harness: 68 result records = 4 finders + 64 verifiers, no failures, and the
+verdict mix was **59 refute-HIGH and 5 confirm-HIGH**. So the verification genuinely ran — but five
+HIGH confirmations coexisting with zero survivors is not a coherent verdict, and that is what
+exposed the flaw.
+
+**The two verifiers answer different questions.** `votes[0]` asks *is the defect real?*; `votes[1]`
+asks *is the proposed fix sound?* They are not redundant voters. My rule killed a finding if
+**either** refuted it, which silently conflates "this is not a defect" with "this is a real defect
+whose fix is wrong" — and discards the second class entirely.
+
+Replaying round 1 from cache with the corrected rule (0 tokens, 24 ms):
+
+| | old rule | corrected |
+|---|---|---|
+| survived intact | 2 | **2** |
+| real defect, fix refuted | *(discarded)* | **22** |
+| genuinely refuted | 32 | **10** |
+
+Twenty-two confirmed defects had been thrown away. The refutations are substantive and several
+propose a *better* fix than the finder did — which is exactly the signal the old rule destroyed.
+
+## F10 — The detail budget is pinned at the p100 of the call it bounds
+
+Three independently-raised findings (#1, #5, #16 of the recovered 22) were each refuted with a
+variant of *"the defect is real, but a one-constant change is strictly cheaper and strictly better"*.
+The measurement in those refutations is the point:
+
+> the SAME `meridian` brief was detailed in **44.5 s** on one run and blew through **75 s** on
+> another. The run that lost it shipped a 95-character spec for the module tier C exists to grade —
+> 14.3% there, against 85.7% for the run that kept it.
+
+75 s is a bare literal sitting at the *observed maximum* of the call it bounds, so ordinary variance
+lands on the far side of it. The sibling CONTRACT fanout — same call shape, same fleet — already
+abandoned a small fixed budget for `worker_timeout_secs.max(120)` after a mass stub failure, and its
+comment records that reasoning.
+
+**Deliberately not raised.** `detail_budget_secs()` now resolves env > default with the default still
+**75**, so baseline stays byte-identical, and the value is echoed in `levers_resolved`. A
+`detail_budget` arm (300 s) enters the campaign with a falsifiable prediction written down before the
+run: *fallbacks go to ~0 and pre-execute wall grows only slightly, because the budget is a ceiling on
+the slow tail, not on the ~50 s mean. If fallbacks do not drop, the ceiling is not the cause and this
+whole line of reasoning is wrong.* The constant gets baked when a replicated arm says what it should
+be — not because the argument sounds convincing.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

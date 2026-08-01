@@ -93,6 +93,19 @@ ARMS = [
                 "(coherence.rs:303) is written and unused.",
     },
     {
+        "name": "detail_budget",
+        "env": {"GOOSE_SWARM_DETAIL_BUDGET_SECS": "300"},
+        "gate": "the 75s detail budget is a bare literal pinned at the OBSERVED MAXIMUM of the call "
+                "it bounds, so normal variance lands on the far side of it: the SAME meridian brief "
+                "was detailed in 44.5s on one run and blew through 75s on another, and the run that "
+                "lost it shipped a 95-char spec for the module tier C grades (14.3% vs 85.7%). The "
+                "sibling contract fanout already abandoned a small fixed budget for "
+                "worker_timeout_secs.max(120) after a mass stub failure. PREDICTION: "
+                "detail_fallback_count goes to ~0 and pre-execute wall grows only slightly, because "
+                "the budget is a ceiling on the slow tail, not the mean (~50s). If fallbacks do NOT "
+                "drop, the cause is not the ceiling and this whole line of reasoning is wrong.",
+    },
+    {
         "name": "doc_prefetch",
         "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
         "gate": "doc_facts is the only un-paraphrased scout->worker channel. Tier C is graded on "
