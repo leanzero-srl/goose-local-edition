@@ -108,10 +108,66 @@ PY
     done
     echo "aborted $N engine process group(s); the loop continues with the next unit"
     ;;
+  boundary)
+    # THE PASS BOUNDARY, as a procedure rather than as memory. Engine fixes accumulate while a
+    # campaign runs, because rebuilding mid-campaign voids comparability (complete() requires a
+    # matching engine_build). Crossing the boundary is a multi-step sequence with real failure
+    # modes, and I did it by hand once: rebuild only while the fleet is IDLE, VERIFY the markers
+    # landed because compiling is not shipping, and never restart on a binary that is missing one.
+    #
+    #   ./loop.sh boundary MARKER [MARKER...]
+    #
+    # Each MARKER is a string that MUST appear in the rebuilt binary — typically the env var or
+    # event name of a fix being shipped. With no markers it refuses, because a boundary crossed
+    # without verification is the exact failure this exists to prevent.
+    shift || true
+    if [ "$#" -eq 0 ]; then
+      echo "refusing: name at least one MARKER that must be present in the rebuilt binary."
+      echo "  e.g. ./loop.sh boundary GOOSE_SWARM_DETAIL_BUDGET_SECS detail_fallback"
+      exit 2
+    fi
+    GOOSE_BIN="$HOME/Projects/goose/target/release/goose"
+    BEFORE=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
+    echo "== 1. stopping the loop and the in-flight unit"
+    touch STOP
+    for P in $(pgrep -f 'goose swarm run'); do
+      kill -9 -- "-$(ps -o pgid= -p "$P" | tr -d ' ')" 2>/dev/null || kill -9 "$P" 2>/dev/null
+    done
+    kill -9 "$(pgrep -f 'nodeloop/sweep.py' | head -1)" 2>/dev/null
+    sleep 2
+    echo "== 2. fleet must be IDLE before a rebuild (it shares this machine's CPU)"
+    ~/.lmstudio/bin/lms ps --json 2>/dev/null | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+busy=[i['identifier'] for i in d if i.get('status') not in ('idle',None)]
+print('   busy:',busy or 'none')
+sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run when idle."; exit 1; }
+    echo "== 3. rebuilding (nice, so a resident node keeps its CPU)"
+    ( cd "$HOME/Projects/goose" && . bin/activate-hermit >/dev/null 2>&1;       nice -n 5 cargo build --release -p goose-cli 2>&1 | tail -2 )
+    echo "== 4. VERIFYING the markers actually shipped — compiling is not shipping"
+    MISSING=0
+    for M in "$@"; do
+      printf "   %-38s " "$M"
+      if strings "$GOOSE_BIN" 2>/dev/null | grep -qF -- "$M"; then echo present; else echo ABSENT; MISSING=1; fi
+    done
+    AFTER=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
+    echo "== engine_build $BEFORE -> $AFTER"
+    if [ "$MISSING" -ne 0 ]; then
+      echo "REFUSING to restart: a marker is missing from the binary. Fix it before crossing."
+      exit 1
+    fi
+    if [ "$BEFORE" = "$AFTER" ]; then
+      echo "REFUSING to restart: the binary did not change. Nothing was rebuilt."
+      exit 1
+    fi
+    echo "== 5. boundary is safe to cross. Old results are now stale by engine_build and will NOT"
+    echo "      be counted; park them (mv ../runs/nodeloop ../runs/nodeloop-preboundary-<n>) if you"
+    echo "      want them out of the way, then: ./loop.sh start"
+    ;;
   stop)
     touch STOP
     echo "STOP written — the loop exits after the current unit (results are kept)."
     ;;
   *)
-    echo "usage: $0 {start|status|check|watch|results|abort|stop|resume}"; exit 2 ;;
+    echo "usage: $0 {start|status|check|watch|results|abort|boundary|stop|resume}"; exit 2 ;;
 esac
