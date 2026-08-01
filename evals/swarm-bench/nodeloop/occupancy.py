@@ -275,7 +275,13 @@ def render(a: dict) -> str:
         out.append(f"  only ONE node working for {a['solo_node_secs']}s "
                    f"({a['solo_share_of_wall']} of wall) — more nodes cannot shorten that")
     mu, ceil = a.get("max_useful_nodes"), a.get("ceiling_occupancy_at_pool")
-    if mu:
+    if mu and not a.get("finished"):
+        # The critical path only GROWS as a run proceeds, so this ratio falls monotonically and a
+        # mid-run reading is not a verdict about the plan. Measured on one live run it read 3.58,
+        # then 2.93, then 2.19 within an hour — the same plan, three different "answers".
+        out.append(f"  plan ceiling: NOT YET MEANINGFUL — the run is unfinished, and the critical "
+                   f"path only grows (currently would read {mu})")
+    elif mu:
         verdict = ("the PLAN is the ceiling — more nodes cannot help this run"
                    if mu < (a["pool_size"] or 1)
                    else "the plan could use more nodes than the fleet has")
