@@ -21254,6 +21254,32 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "conf_after": serde_json::Value::Null,
                                     "detail": format!("best_of_n {prev}→{effective_best_of_n}"),
                                 }));
+                                // WHAT THE REDRAFT THROWS AWAY. `continue` re-enters parallel_plan, which
+                                // re-runs the skeleton drafts AND the whole detail fan from scratch.
+                                // MEASURED on a 3-node baseline: the discarded round cost 582s and the
+                                // replacement 710s, so 83% of a 1556s pre-dispatch prefix was planning and a
+                                // third of it was done twice.
+                                //
+                                // Whether that is waste depends on how many of these modules come back
+                                // unchanged in the plan that ships — and nothing recorded it, because
+                                // `plan_loaded` fires once, at the end, for the surviving plan only. So this
+                                // is deliberately a MEASUREMENT and not a cache: emit what is being discarded,
+                                // intersect it against `plan_loaded` afterwards, and only build a reuse path
+                                // if the hit rate justifies one. Threshold-free on purpose — raw description
+                                // lengths, so the instrument picks the criterion rather than this event
+                                // baking one in.
+                                sink.write_value(serde_json::json!({
+                                    "event": "retarget_discarded",
+                                    "round": retarget_round,
+                                    "tasks": dag.tasks.values()
+                                        .map(|n| serde_json::json!({
+                                            "id": n.spec.id,
+                                            "desc_chars": n.spec.description.trim().len(),
+                                            "owned_files": n.spec.owned_files,
+                                            "deps": n.spec.deps,
+                                        }))
+                                        .collect::<Vec<_>>(),
+                                }));
                                 continue;
                             }
                             RetargetAction::ReResearch(decisions) => {
