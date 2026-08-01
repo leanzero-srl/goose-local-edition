@@ -144,6 +144,24 @@ ARMS = [
     # spend hours of fleet time to produce an INERT result. doc_fetch replaces it with a fetch that
     # needs no extension and no key.
     {
+        "name": "retarget_off",
+        "env": {"GOOSE_SWARM_RETARGET": "0"},
+        "gate": "THE most expensive mechanism in the engine, judged on its INTENT rather than its own "
+                "metric. It exists to make the build functional and predictable; what it optimises is "
+                "cross-draft AGREEMENT, which is literally whether the plan drafts emitted task counts "
+                "within 1 of each other (spread 1 = 88, spread 0 = 100; spec_clarity scores 100 in "
+                "every run and never binds). Four of five shipped plans scored exactly 88 — including "
+                "one that never redrafted — and the three with build scores went 88.7 / 50.0 / 42.7 at "
+                "identical confidence. MEASURED LIVE (F50): three rounds, 68->80->81, best_of_n "
+                "3->4->5->6, NEVER reached the 85 floor, 48.4 MINUTES before any dispatch, and 27,806 "
+                "chars of model-authored spec discarded — while detail_fallback fired 13x and the "
+                "module owning the vendor contract lost its spec four times. "
+                "PREDICTION: build score UNCHANGED within the replicate spread, wall-clock down "
+                "10-20%, and the pre-dispatch prefix roughly halved. If the score DROPS below the "
+                "spread, the redraft buys something real that this reading missed and it stays — that "
+                "is the outcome that would make this arm worth more than a speedup.",
+    },
+    {
         "name": "sink_review",
         "env": {"GOOSE_SWARM_SINK_REVIEW": "1"},
         "gate": "the SINK owns 100% of the solo window in 2 of 3 measured runs — 543-1045s with two "
@@ -182,15 +200,72 @@ ARMS = [
 NODE_LEVELS = (3, 1, 2)
 
 
-def cells() -> list[dict]:
-    """(nodes, arm) pairs in priority order: the node curve first, then the dispatch-quality arms.
+# EVERY CELL ANSWERS A QUESTION, and the READOUT decides how many replicates it needs.
+#
+# Mihai, after a night that produced findings and no measurements: "don't just run this loop for the
+# sake of it — each run should have a purpose." A twelfth baseline replicate answers nothing that the
+# third did not.
+#
+# The rule that makes the queue short: a MECHANISM readout is a fact about the code and is valid at
+# n=1 — "did `/v1` reach plan_loaded", "did detail_fallback go to zero", "did the fan fire". Only a
+# SCORE comparison needs n>=3, because only a score has to clear the 46-point replicate spread. Most
+# of what is worth knowing right now is mechanism, so most cells are n=1.
+#
+# `reps` is the replicate count for THIS cell; `asks` is the question, printed in the log so an
+# operator reading it knows why the fleet is spending two hours.
+QUESTIONS: list[dict] = [
+    {"arm": "baseline", "nodes": 3, "reps": 3,
+     "asks": "the replicate spread on this engine (every score comparison is measured against it), "
+             "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
+             "is a mechanism readout and is answered by the FIRST unit, not the third."},
+    {"arm": "doc_fetch", "nodes": 3, "reps": 1,
+     "asks": "does the engine fetching the vendor document put `/v1` into plan_loaded? This is the "
+             "measured cause of every bad build on this bench (F34/F36), so it is the highest-value "
+             "question here. MECHANISM readout: count `/v1` in the plan and `doc_fetched{ok:true}`. "
+             "n=1 is sufficient — if the fetch lands and the paths are still wrong, the splice is not "
+             "reaching the decomposition and the score is irrelevant."},
+    {"arm": "retarget_off", "nodes": 3, "reps": 3,
+     "asks": "does the confidence redraft buy anything? MEASURED: 3 rounds, 48.4 minutes before any "
+             "dispatch, 27,806 chars of model-authored spec discarded, and it never reached its own "
+             "floor. PREDICTION registered in F49: build score unchanged within the replicate spread, "
+             "wall-clock down 10-20%. This one needs n=3 because the readout IS the score — if it "
+             "DROPS, the redraft buys something real and the reading was wrong."},
+    {"arm": "complete_parallel", "nodes": 3, "reps": 1,
+     "asks": "now that F41 taught the finding-extractor to read backticked paths and dotted modules, "
+             "does the repair fan actually fire? MECHANISM: count `complete_fix_wave` / per-file fix "
+             "shards. Before F41 five of six real finding shapes resolved to nothing, so the fan had "
+             "nothing to fan and this arm would have measured silence."},
+    {"arm": "sink_review", "nodes": 3, "reps": 1,
+     "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
+             "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
+             "`sink_review{prewarmed>0}`. If prewarmed is 0 with the lever on, the producer still "
+             "cannot see its precondition and the fix is incomplete."},
+    {"arm": "kind_prompt", "nodes": 3, "reps": 1,
+     "asks": "does gating worker rules by task kind drive kind_mismatch_pct toward zero? 72-83% of "
+             "dispatches currently get rules written for another job. MECHANISM readout."},
+    {"arm": "e2e_oracle", "nodes": 3, "reps": 1,
+     "asks": "do the e2e shards stop deriving their checklist from the build's own README and start "
+             "from the engine-extracted surface? MECHANISM: the shard reports must stop citing the "
+             "README. Can fail independently of the score."},
+]
 
-    The quality arms run at 3 nodes because that is the configuration whose behaviour we want to
-    ship, and because scoped_contracts is predicted to matter MORE the wider the fleet.
-    """
-    base = ARMS[0]
-    out = [{"nodes": n, "arm": base} for n in NODE_LEVELS]
-    out += [{"nodes": max(NODE_LEVELS), "arm": a} for a in arms_now()[1:]]
+# The node curve — goal one — runs LAST, deliberately. It is 6 units of fleet time and it measures
+# the CURRENT engine; running it before the mechanism arms would measure a configuration that the
+# mechanism arms are about to change.
+NODE_CURVE = [{"arm": "baseline", "nodes": n, "reps": 3} for n in (1, 2)]
+
+
+def cells() -> list[dict]:
+    """One entry per (arm, nodes) cell, in the order the questions are worth asking."""
+    by_name = {a["name"]: a for a in arms_now()}
+    out = []
+    for q in QUESTIONS + [{**c, "asks": "the node curve: does build quality and fleet occupancy "
+                                        "actually improve at this node count? Goal one."}
+                          for c in NODE_CURVE]:
+        arm = by_name.get(q["arm"])
+        if arm is None:
+            continue  # an arm named here but not defined yet is skipped, never silently substituted
+        out.append({"nodes": q["nodes"], "arm": arm, "reps": q["reps"], "asks": q["asks"]})
     return out
 
 
@@ -593,9 +668,25 @@ def arms_now() -> list[dict]:
 
 
 def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
+    """Units still owed, ordered so the cheapest decisive question comes first.
+
+    A cell's OWN `reps` bounds it, not a global n. A mechanism readout — did `/v1` reach the plan,
+    did the fan fire, did detail_fallback go to zero — is a fact about the code and is settled by one
+    unit; only a SCORE comparison has to clear the 46-point replicate spread. `target_reps` still
+    RAISES a cell above its own floor when the backlog drains, so a long night deepens the score
+    cells instead of inventing new ones.
+    """
     units = []
     for rep in range(target_reps):
         for c in cells():
+            # A MECHANISM cell (reps == 1) is DONE after one unit — "did `/v1` reach the plan" does
+            # not get truer with a second run, and re-running it is the "loop for the sake of it"
+            # this design exists to stop. A SCORE cell grows with target_reps instead, so a long
+            # night deepens the comparisons that have to clear the replicate spread rather than
+            # inventing new questions nobody asked.
+            cap = 1 if c.get("reps", 1) == 1 else max(c.get("reps", 1), target_reps)
+            if rep >= cap:
+                continue
             if not complete(c["arm"]["name"], c["nodes"], rep):
                 units.append((c["arm"], c["nodes"], rep))
     return units
@@ -650,7 +741,11 @@ def main() -> int:
     log("=" * 78)
     log(f"nodeloop starting {datetime.now().isoformat(timespec='seconds')}  "
         f"pid={os.getpid()}  audit={dispatch_audit.AUDIT_VERSION}")
-    log(f"node levels {NODE_LEVELS}, arms {[a['name'] for a in arms_now()]}, min reps {MIN_REPS}")
+    qs = cells()
+    log(f"{len(qs)} question(s) queued; each cell carries its own replicate target "
+        f"(mechanism readouts n=1, score comparisons n=3):")
+    for c in qs:
+        log(f"    [{c['arm']['name']}@{c['nodes']}n x{c['reps']}] {c['asks'][:110]}")
     log(f"stop with: touch {STOP}")
     log("=" * 78)
 
@@ -685,6 +780,10 @@ def main() -> int:
         log("")
         log(f">>> {now()}  NOW: {label}   [{len(todo)} in backlog, n target {target}]{eta}")
         log(f"    NEXT: {nxt}")
+        asks = next((c.get("asks") for c in cells()
+                     if c["arm"]["name"] == arm["name"] and c["nodes"] == nodes), None)
+        if asks:
+            log(f"    ASKS: {asks}")
         log(f"    gate: {arm['gate']}")
 
         kill_strays()
