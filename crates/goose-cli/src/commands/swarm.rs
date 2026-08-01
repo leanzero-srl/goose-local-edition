@@ -827,6 +827,21 @@ pub struct SwarmConfig {
     /// byte-identical to today's worker prompt. GOOSE_SWARM_DOC_PREFETCH env overrides.
     #[serde(default)]
     pub doc_prefetch: bool,
+    /// Fetch every http(s) document the SPEC names, in the engine, and splice it VERBATIM into both the
+    /// planner's channel and every worker's. `doc_prefetch` forwards only findings where
+    /// `grounded == is_mcp && ok`, so with no research extension attached — the state of every run on
+    /// this machine — it forwards nothing and is byte-identical to baseline. This needs no extension and
+    /// no key: the engine performs the GET, so what it splices is grounded by construction.
+    ///
+    /// BOTH channels, deliberately. `doc_prefetch` feeds workers only, and the measured failure was in
+    /// the PLAN: the run whose `plan_loaded` carried the vendor's path prefix built a working client and
+    /// the two whose plans did not built one that 404s on every call. Feeding only the workers leaves the
+    /// architect guessing at the fact the whole decomposition is built on.
+    ///
+    /// OFF by default => no fetch, no event, both blocks empty => byte-identical.
+    /// GOOSE_SWARM_DOC_FETCH env overrides.
+    #[serde(default)]
+    pub doc_fetch: bool,
     /// SWARM-COHERENCE Phase-1 (Tier-A, deterministic — no model). When injecting an already-built
     /// dependency's source into a consumer's prompt, inject only its DETERMINISTICALLY-EXTRACTED exported
     /// SIGNATURES (function/method signatures with bodies removed; type/const/var declarations kept) instead
@@ -1069,6 +1084,7 @@ impl Default for SwarmConfig {
             write_first: false,
             research_tools: false,
             doc_prefetch: false,
+            doc_fetch: false,
             dep_signatures: None,
             scoped_contracts: None,
             fan_verify: true,
@@ -3131,6 +3147,49 @@ fn id_names_a_test(id: &str) -> bool {
 /// `files.join(", ")`, so the engine names the slice and the model cannot re-derive it. The rule is
 /// that a fan must ENUMERATE ITS ITEMS, not merely supply a selector over them.
 ///
+/// Every http(s) URL the spec names, in order, deduped. This is the input to the deterministic doc
+/// fetch, and it exists because a spec can hand the fleet a document nobody is able to open.
+///
+/// MEASURED, three baseline units on an identical config: the one whose plan carried the vendor's
+/// `/v1` path prefix scored 88.7%, and the two whose plans did not scored 50.0% and 42.7% with every
+/// vendor call returning 404. The prefix is stated six times in the document the spec points at and
+/// zero times in the spec itself, so getting it right was a coin flip — and `research_tools`
+/// reported `available: [], can_look_things_up: false` on all three, because the research extensions
+/// are context7 / web-search and both need an API key this machine does not have. The spec said
+/// "Read it before you start"; nothing in the run was able to.
+///
+/// So the fetch is the ENGINE's, not a model's: no key, no extension, no tool call to hallucinate.
+/// A document the engine retrieved is grounded by construction, which is exactly the property
+/// `doc_prefetch` demands (`grounded == is_mcp && ok`) and never gets here.
+///
+/// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
+/// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
+/// that differs from the real one by one character.
+fn spec_doc_urls(spec: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (idx, _) in spec.match_indices("http") {
+        let Some(rest) = spec.get(idx..) else {
+            continue;
+        };
+        if !(rest.starts_with("http://") || rest.starts_with("https://")) {
+            continue;
+        }
+        let end = rest
+            .find(|c: char| c.is_whitespace() || "`'\"<>()[]{},;".contains(c))
+            .unwrap_or(rest.len());
+        let Some(head) = rest.get(..end) else {
+            continue;
+        };
+        let url = head.trim_end_matches('.').to_string();
+        // A bare origin is the app's own base URL, not a document; fetching it teaches nothing and on
+        // this bench it is the very service the build is supposed to write a client for.
+        if url.split("://").nth(1).is_some_and(|r| r.contains('/')) && !out.contains(&url) {
+            out.push(url);
+        }
+    }
+    out
+}
+
 /// Pure, and deliberately narrow: it returns METHOD PATH -> EXPECTED triples only, never spec prose,
 /// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
 /// the caller emits today's string byte-for-byte.
@@ -6835,6 +6894,35 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// A path scraped THROUGH a markdown backtick is not an endpoint, and treating it as one
     /// fabricated a 404 finding against a correct app — twice in one graded verdict — which then
     /// blocked green and drove the fix loop.
+    /// The URL the whole build depends on arrives wrapped in backticks, so a scan that stops at
+    /// whitespace fetches an address one character off the real one — and a 404 here is
+    /// indistinguishable from a spec that named no documentation at all. The bare origin on the next
+    /// line must NOT be fetched: it is the service the build is writing a client for, not a document.
+    #[test]
+    fn spec_doc_urls_takes_the_document_and_not_the_bare_origin() {
+        let spec = "The Meridian API documentation is at `http://127.0.0.1:8930/v1/docs`. Read it \
+                    before you start. Base URL `http://127.0.0.1:8930`, API key `sk_test_meridian`.";
+        let got = spec_doc_urls(spec);
+        assert_eq!(
+            got,
+            vec!["http://127.0.0.1:8930/v1/docs".to_string()],
+            "{got:?}"
+        );
+        assert!(
+            spec_doc_urls("no links here, just prose about http status codes").is_empty(),
+            "a spec naming no document must fetch nothing"
+        );
+        // Trailing sentence punctuation is not part of the address, and a repeat is not a second doc.
+        let dup = spec_doc_urls(
+            "See https://example.test/api/docs. Again: https://example.test/api/docs)",
+        );
+        assert_eq!(
+            dup,
+            vec!["https://example.test/api/docs".to_string()],
+            "{dup:?}"
+        );
+    }
+
     #[test]
     fn spec_get_endpoints_does_not_scrape_across_a_backtick() {
         // The exact sentence from the real spec that produced "GET /`".
@@ -20429,6 +20517,81 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             );
         }
     }
+    // DOC-FETCH. Deliberately AFTER the research block, because that block ASSIGNS research_findings
+    // (it does not append), so anything spliced earlier is discarded. And deliberately OUTSIDE it: a
+    // spec that names a document names it whether or not a research phase was configured.
+    if swarm_gate_cfg("GOOSE_SWARM_DOC_FETCH", cfg.doc_fetch) {
+        const DOC_MAX_URLS: usize = 3;
+        const DOC_MAX_BYTES: usize = 24_000;
+        let urls = spec_doc_urls(&opts.prompt);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .unwrap_or_default();
+        let mut fetched: Vec<String> = Vec::new();
+        for url in urls.iter().take(DOC_MAX_URLS) {
+            let (status, body, err) = match client.get(url).send().await {
+                Ok(r) => {
+                    let code = r.status().as_u16();
+                    match r.text().await {
+                        Ok(t) => (code, t, String::new()),
+                        Err(e) => (code, String::new(), e.to_string()),
+                    }
+                }
+                Err(e) => (0, String::new(), e.to_string()),
+            };
+            let ok = (200..300).contains(&status) && !body.trim().is_empty();
+            let truncated = body.len() > DOC_MAX_BYTES;
+            let text = if truncated {
+                body.chars().take(DOC_MAX_BYTES).collect::<String>()
+            } else {
+                body.clone()
+            };
+            // The event carries the OUTCOME, not the intent. A fetch that 404s must not read as a fetch
+            // that happened: the whole point of this mechanism is that the fact reaching the fleet was
+            // retrieved, and a screen that cannot tell those apart is the INERT-as-pass trap again.
+            sink.write_value(serde_json::json!({
+                "event": "doc_fetched",
+                "url": url,
+                "ok": ok,
+                "status": status,
+                "bytes": text.len(),
+                "truncated": truncated,
+                "error": err,
+            }));
+            if ok {
+                fetched.push(format!("### {url}\n{}", text.trim()));
+            }
+        }
+        if !fetched.is_empty() {
+            let block = format!(
+                "## Documentation retrieved from the spec's own URLs\nThis text was fetched by the \
+                 engine from the address the spec gave. It is the source of truth for every endpoint \
+                 path, header, parameter and status code below. Use the paths EXACTLY as written here \
+                 — do not shorten them, do not re-derive them from the base URL, do not assume a \
+                 convention.\n\n{}",
+                fetched.join("\n\n")
+            );
+            if research_findings.trim().is_empty() {
+                research_findings = block.clone();
+            } else {
+                research_findings = format!("{block}\n\n{research_findings}");
+            }
+            if doc_facts.trim().is_empty() {
+                doc_facts = block;
+            } else {
+                doc_facts = format!("{block}\n\n{doc_facts}");
+            }
+            eprintln!(
+                "{}",
+                style(format!(
+                    "docs: fetched {} document(s) from the spec — verbatim to the planner and every worker",
+                    fetched.len()
+                ))
+                .green()
+            );
+        }
+    }
     // Research is done (or was skipped — then this is ~t_start, research_min ~= 0).
     let t_research = std::time::Instant::now();
 
@@ -20611,6 +20774,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "grounded_research_only": swarm_gate_cfg("GOOSE_SWARM_GROUNDED_RESEARCH_ONLY", load_config().grounded_research_only),
             "research_tools": swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", load_config().research_tools),
             "doc_prefetch": swarm_gate_cfg("GOOSE_SWARM_DOC_PREFETCH", load_config().doc_prefetch),
+            "doc_fetch": swarm_gate_cfg("GOOSE_SWARM_DOC_FETCH", load_config().doc_fetch),
             "author_pitfalls": author_pitfalls_on(),
             "sink_prebuild": swarm_gate_cfg("GOOSE_SWARM_SINK_PREBUILD", load_config().sink_prebuild),
             "ts_smoke_tests": swarm_gate_cfg("GOOSE_SWARM_TS_SMOKE_TESTS", load_config().ts_smoke_tests),
