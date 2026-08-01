@@ -1446,6 +1446,41 @@ the sink (543-1045s, one node, by construction);
 and the repair tail (1668-3180s, 2-3 sequential fix calls — the largest of the three, and the one
 whose fan could not see its own findings until F41).
 
+## F44 — `sink_review` reported itself ON for months while the half that fills its queue was OFF
+
+The other real zero from F42, and unlike `replanned` this one is a defect.
+
+`sink_review` puts otherwise-idle nodes on read-only whole-tree reviews **while the sink runs** —
+precisely the window F43 measured as the biggest idle block in the run: `integrate-verify` owns
+**100% of the solo time in 2 of 3 units, 543-1045s, with two nodes doing nothing.**
+
+The mechanism has two halves and they disagreed about the default:
+
+| half | where | default |
+|---|---|---|
+| PRODUCER — fills the queue | `scheduler.rs` `pick_sink_review` | `std::env::var(...).unwrap_or(**false**)` |
+| CONSUMER — drains + re-verifies | `swarm.rs` | `swarm_gate(..., **true**)` |
+| what the run TELLS you | `levers_resolved` | `swarm_gate(..., **true**)` |
+
+So every run emitted `sink_review: true`, the consumer was live, the queue was never filled,
+`prewarmed` was always empty, and the event never fired. An operator auditing levers would read
+`true` and believe it. **The mechanism has never executed once.**
+
+Both halves now read one resolver, `goose_swarm::sink_review_enabled()`, exported so there is a single
+answer rather than two. The default stays **OFF** — the truthful one, matching every measurement taken
+so far — so baseline does not shift underneath the campaign, and `levers_resolved` now reports what is
+actually happening. Turning it on is an ARM with a written prediction, not a silent flip.
+
+Also fixed while here: `sink_prebuild`'s doc said "OFF by default" while the Default impl has said
+`true` since the golden-formula bake. The behaviour was right and the documentation was months stale —
+which is how it ended up on the unobservable list in F42 under a false description.
+
+**The pattern worth naming.** Three defects today have the same shape: a mechanism that reports one
+thing and does another (`sink_review` on/off), an event that reports a count where the texts were
+needed (`complete_verify`), and a pool event emitted before the pool was final (`run_started.pool`).
+In each case the run was not lying about the outcome — it was lying about itself, and every downstream
+verdict inherited that.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

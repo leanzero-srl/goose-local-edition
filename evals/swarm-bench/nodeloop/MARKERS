@@ -37,6 +37,9 @@ finding_texts
 task_split
 speculated
 
+# F44: the two halves of sink_review now read ONE resolver
+GOOSE_SWARM_SINK_REVIEW
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

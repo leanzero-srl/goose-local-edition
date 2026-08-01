@@ -25,4 +25,6 @@ pub use judge::{
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
 };
 pub use replan::{ReplanContext, Replanner};
-pub use scheduler::{AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome};
+pub use scheduler::{
+    sink_review_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
+};

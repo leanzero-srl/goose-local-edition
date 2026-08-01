@@ -41,6 +41,20 @@ use tokio::sync::{Mutex, Notify};
 /// Default OFF because it is a real behaviour change, not merely a restoration: handing a child the parent's
 /// whole spec risks it writing its SIBLINGS' files. `child_description` therefore leads with a hard
 /// file-scope header, and the lever gets an A/B before it is trusted.
+/// The ONE resolution of GOOSE_SWARM_SINK_REVIEW. Both halves of the mechanism — this crate's
+/// producer and goose-cli's drain — must read the same answer, or the run reports a lever it is not
+/// running.
+pub fn sink_review_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_SINK_REVIEW")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn split_inherit_spec_enabled() -> bool {
     matches!(
         std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
@@ -1110,10 +1124,19 @@ impl State {
     /// None unless the flag is on AND the sink is in flight AND a device is free (mirrors pick_prereview's
     /// claim so it never oversubscribes). Released by the IdleSlotGuard.
     fn pick_sink_review(&mut self) -> Option<(String, usize, String, usize)> {
-        let on = std::env::var("GOOSE_SWARM_SINK_REVIEW")
-            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-            .unwrap_or(false);
-        if !on || !self.sink_in_flight() {
+        // ONE default, shared with the consumer. These two halves disagreed: this producer defaulted
+        // OFF while run_swarm's drain and `levers_resolved` both defaulted ON — so every run REPORTED
+        // sink_review enabled, the queue was never filled, `prewarmed` was always empty and the event
+        // never fired. Measured as a real zero across three runs before the cause was found, and an
+        // operator auditing levers would have read `sink_review: true` and believed it.
+        //
+        // This is the mechanism that exists to fill the biggest idle window there is: the SINK owns
+        // 100% of the solo time in 2 of 3 measured runs (543-1045s with two nodes idle). It has never
+        // run once.
+        //
+        // The default stays OFF — the truthful one, matching every measurement taken so far — so
+        // baseline does not shift underneath the campaign. Turning it on is an ARM, not a silent flip.
+        if !sink_review_enabled() || !self.sink_in_flight() {
             return None;
         }
         let claimed_device = self

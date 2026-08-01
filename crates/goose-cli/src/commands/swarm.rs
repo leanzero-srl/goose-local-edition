@@ -661,7 +661,9 @@ pub struct SwarmConfig {
     /// Closes the engine's one measured regression (a spec-distilled check used `--db` after the subcommand
     /// while the app built it as a global before it; a correct app went red and the fix loop broke 2 passing
     /// tests chasing it). Purely factual — asserts no defect, commands no fix. Python-only today (entry_help
-    /// is). OFF by default. GOOSE_SWARM_SINK_PREBUILD env overrides.
+    /// is). ON by default since the golden-formula bake (this doc said OFF for months while the
+    /// Default impl said true — the doc was stale, the behaviour was correct).
+    /// GOOSE_SWARM_SINK_PREBUILD env overrides.
     #[serde(default)]
     pub sink_prebuild: bool,
     /// LEARN & REFLECT: after a build that PROVABLY worked (built AND verified), goose reflects on what it
@@ -20403,7 +20405,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "goals": goals_enabled(),
             "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
-            "sink_review": swarm_gate("GOOSE_SWARM_SINK_REVIEW", true),
+            "sink_review": goose_swarm::sink_review_enabled(),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
             // DELIVERY hard-completion gate — read by the desktop to reconcile the "app verified" label so a
             // deterministic-block failure can never sit beside a green claim (default OFF).
@@ -23176,7 +23178,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // DURING the sink, then re-verify each against the FINAL post-sink tree (fail-closed) — a finding the sink
     // obsoleted or a torn read is refuted + dropped. Overlapping the review with the sink (vs running it cold
     // after) is the throughput win; the re-gate keeps delivered quality unchanged. Advisory (drives no fix).
-    let sink_review_on = swarm_gate("GOOSE_SWARM_SINK_REVIEW", true);
+    // Same resolver the scheduler's producer uses — the two used to disagree, and the run
+    // advertised a lever whose queue nothing ever filled.
+    let sink_review_on = goose_swarm::sink_review_enabled();
     if sink_review_on && !fleet_models.is_empty() {
         let prewarmed = smoke_fix_dispatcher.drain_sink_review();
         if !prewarmed.is_empty() {
