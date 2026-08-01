@@ -296,6 +296,29 @@ def abandon_decision(unit: Path, arm: dict, nodes: int, elapsed: float) -> tuple
             reasons.append(f"pool is {actual}, cell asked for {nodes} — VOID by construction, the row "
                            f"can never be evidence")
 
+    # 1b. THE POOL EVENT UNDER-REPORTS. `run_started.pool` is emitted before the engine may push the
+    #     PLANNER on as an extra worker device, so it is not the worker count. MEASURED on the 1-node
+    #     unit: pool of 1, dispatches to `mac-gabee-…` AND `planner`, peak of TWO devices working at
+    #     once. A node-count cell that quietly runs an extra worker is the same defect that produced
+    #     this project's original "more nodes make it worse" table, and the check above cannot see it
+    #     because the pool really is 1.
+    #
+    #     Two independent readings, because the fix and the detector must not share an assumption:
+    #     `pool_resolved` when the engine emits it, and otherwise the DISPATCH RECORD itself, which no
+    #     engine build can misreport.
+    resolved = next((e for e in events if e.get("event") == "pool_resolved"), None)
+    if resolved is not None and resolved.get("worker_count") not in (None, nodes):
+        conf = 1.0
+        reasons.append(f"pool_resolved says {resolved.get('worker_count')} worker device(s), cell "
+                       f"asked for {nodes} (planner_pushed={resolved.get('planner_pushed')}) — VOID")
+    dispatched_devices = {e.get("device") for e in events
+                          if e.get("event") == "task_dispatched" and e.get("device")}
+    if len(dispatched_devices) > nodes:
+        conf = 1.0
+        reasons.append(f"{len(dispatched_devices)} distinct devices received dispatches "
+                       f"{sorted(dispatched_devices)} but the cell asked for {nodes} — VOID; the run "
+                       f"used more workers than the cell is labelled with")
+
     # 2. THE ARM CANNOT FIRE. An arm sets env vars; if the running binary has no such lever, the arm
     #    is byte-identical to baseline and would be recorded as "no effect" — a fabricated null. This
     #    already happened: 34 hours were queued against a binary with no GOOSE_SWARM_DETAIL_BUDGET_SECS.

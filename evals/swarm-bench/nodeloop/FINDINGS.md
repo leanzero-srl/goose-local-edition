@@ -1196,6 +1196,46 @@ make it pass by deleting the assertion that found the bug.
 
 No model judges any of this. It is a stat and a dependency edge.
 
+## F38 — the node curve was about to measure 2 vs 3 and call it 1 vs 3
+
+Caught live, 57 minutes into the first 1-node unit, by reading its events instead of waiting for its
+score. The unit was killed rather than given another hour.
+
+`run_started.pool` reported **one** device. The run dispatched to **two**:
+
+    devices that received dispatches: {'mac-gabee-qwen3.6-27b-fable-fusi': 5, 'planner': 5}
+    PEAK CONCURRENT devices actually working: 2
+
+Both worked at once — `api` on gabee and `meridian` on the planner were dispatched in the same
+second, and the planner finished `meridian` and started `store` while gabee was still on `api`.
+
+**Why.** `planner_also_works` (default **true**) pushes the planner on as an extra worker device
+*unless its model is already in the pool*. At `MAX_NODES=3` the pool contains the planner's model, so
+nothing is pushed and the run has three. At `MAX_NODES=1` the pool is one other device, so the planner
+IS pushed and the run has two. The intended 1 → 2 → 3 curve was really **2 → 2-or-3 → 3**: nearly flat
+by construction, which is the exact false conclusion — "more nodes do not help" — that this project
+exists to correct, arrived at by a different route than last time.
+
+**Why no instrument caught it.** `run_started.pool` is emitted from `enabled`, *before* the push. It
+is the field every harness reads as ground truth for "how many nodes did this run have", and it is not
+the worker count. The void check compared it to the requested count and passed, because the pool
+really was 1.
+
+**Fixed on three surfaces, deliberately not sharing an assumption.**
+
+1. Engine — a new `pool_resolved` event emitted after the device list is final, carrying every device
+   that can receive work, `worker_count`, and `planner_pushed`. Emitted as its own event rather than
+   by correcting `run_started`, so nothing already parsing that event changes meaning underneath it.
+2. Engine — `GOOSE_SWARM_PLANNER_ALSO_WORKS` now gates the push, and the sweep sets it to `0`, so N
+   nodes means N workers. **The 3-node cell is unaffected** — nothing was ever pushed there — which is
+   what makes this a correction rather than a change of subject.
+3. Harness — the void check reads `pool_resolved` when present, and *independently* counts the
+   distinct devices in the dispatch record, which no engine build can misreport. Either exceeding the
+   cell's node count voids the row.
+
+The three baseline 3-node units on disk are NOT affected: their pool already contained the planner
+model, `planner` never appears as a dispatch device in them, and their peak concurrency is 3.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

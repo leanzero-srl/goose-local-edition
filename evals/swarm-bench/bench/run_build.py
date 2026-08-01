@@ -70,7 +70,17 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         # GOOSE_SWARM_READ_ON_FIX: the arm under test. A fix worker owns no files and is repairing a
         # defect the gates already reproduced by running the app; the implementer read-prohibitions
         # make a cross-module signature mismatch structurally invisible to it.
+        # GOOSE_SWARM_PLANNER_ALSO_WORKS: the engine pushes the PLANNER on as an extra worker device
+        # unless the planner's model is already in the pool (swarm.rs, `planner_also_works`, default
+        # true). MEASURED: at MAX_NODES=1 the pool was one device, the planner model was not in it, the
+        # planner was pushed, and the run dispatched 5 tasks to each with a peak of TWO devices working
+        # at once — while `run_started.pool` reported 1, because it is emitted before the push. At
+        # MAX_NODES=3 the planner model IS in the pool, nothing is pushed, and the run has three. So a
+        # node-count sweep was about to compare 2 against 3 while labelling it 1 against 3.
+        # Off here, so N nodes means N workers. The 3-node cell is unaffected (nothing was ever pushed
+        # there), which is what makes this a correction rather than a change of subject.
         env = {**env, "GOOSE_SWARM_MAX_NODES": str(nodes),
+               "GOOSE_SWARM_PLANNER_ALSO_WORKS": "0",
                "GOOSE_SWARM_READ_ON_FIX": os.environ.get("GOOSE_SWARM_READ_ON_FIX", "1")}
         cmd = [str(GOOSE), "swarm", "run", prompt, "--output-format", "json",
                "--log-file", str(workdir / "run.jsonl")]
