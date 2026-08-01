@@ -19999,6 +19999,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // The only number that says whether anything was RESEARCHED.
             "grounded": grounded_n,
             "looked_nothing_up": findings.len() - grounded_n,
+            // WHICH lenses came back. A count alone cannot say which scout was lost, and the straggler
+            // path makes that question load-bearing: `collect_with_straggler_stop` ABORTS the lone
+            // lagging scout, and an aborted task never reaches the match arm that would name it, so it
+            // leaves no apology string and no event — it simply is not in `findings`. Every run measured
+            // planned 3 lenses and returned 2, so exactly one is lost every time, and until now the only
+            // way to guess which was to read `.swarm/activity/scout-*.json` for a missing `phase: done`.
+            // That inference is WRONG: a scout that blows its own budget still RETURNS (with an apology
+            // string) and is counted, while its activity file also lacks `phase: done` — so the file
+            // conflates "aborted" with "timed out but reported", over-counts drops, and cannot identify
+            // the casualty. Diff this against `scouts_planned.lenses` and the answer is deterministic.
+            "lenses_returned": findings.iter().map(|f| f.kind.as_str()).collect::<Vec<_>>(),
         }));
         if grounded_n == 0 && !findings.is_empty() {
             eprintln!(
