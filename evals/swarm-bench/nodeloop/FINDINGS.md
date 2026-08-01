@@ -1785,6 +1785,43 @@ measurement in `prefix.py` shows whether the fan got slower. **If the prefix gro
 distribution, not from either literal.** That is the question the first post-boundary baseline unit
 now answers, and it is why that cell carries two questions rather than one.
 
+## F52 — the first `finding_texts` ever emitted exposed a defect that F41 had just made reachable
+
+The event that decides green carried only a count until tonight. The first one it emitted on the new
+engine paid for itself immediately.
+
+The single finding holding this build red is a `pytest -q` failure, and its text is a Python traceback
+whose **first frame is CPython's own stdlib**:
+
+    `pytest -q` failed — the generated tests exercise runtime paths that `--help` never invoke:
+        File "/opt/homebrew/.../python3.14/threading.py", line 1024, in run
+        File "/Users/.../runs/nodeloop/swarm-3node-r0/vendorsync/api.py", line 40, in serve
+
+I ported the extractor and ran it on that exact text. It returned
+`/Users/.../swarm-3node-r0/vendorsync/api.py` — **an absolute path, not one of the run's owned
+files**. Two consequences, both live:
+
+1. `group_findings_by_file` keys the partition on that absolute path, while every other part of the
+   engine uses repo-relative. A fix shard would own a path its shadow tree promotes by a different
+   name.
+2. Reorder the frames — entirely plausible, tracebacks vary — and the extractor returns
+   **CPython's `threading.py`**. `complete_parallel` would then dispatch an agent to repair the Python
+   standard library.
+
+**F41 made this reachable.** Before it, five of six finding shapes resolved to nothing, so the fan
+never fired and the bug never mattered. Fixing the extractor to make the fan work turned a latent
+defect into a live one — which is exactly why "treat 'I fixed that' as a hypothesis" is a rule, and
+why `complete_parallel` is a queued arm rather than a flipped default.
+
+**Fixed:** an extracted path must resolve to a file the run actually owns — exact match first, then
+longest repo-relative suffix, so a traceback's absolute path maps back to `vendorsync/meridian.py`. A
+path naming only files the run does not own resolves to NOTHING and goes to the serial fix path;
+inventing an owner is worse than admitting there is none. With an empty file list the old behaviour
+stands, which is the unit-test path — every real call site passes the run's planned files.
+
+Both cases pinned by tests built from the real traceback, and the guard is verified to BITE: removing
+the restriction fails the suite.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
