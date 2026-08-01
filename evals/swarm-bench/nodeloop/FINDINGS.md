@@ -1729,6 +1729,39 @@ never achieved (84 < 85, shipped anyway), while the two modules that matter most
 80 characters and `detail_fallback` fired 13 times. The machinery optimised the proxy to exhaustion
 and left the predictor unprotected — F49 and F50 in one run.
 
+## Correction — I read the vendor trace at its destination, mid-run, and nearly published two fabricated findings
+
+Caught by my own rule, one step before writing it down. The reading was **0 vendor requests**, and I
+had already drafted two findings on it: that no node read the vendor documentation this run, and that
+the `verify-e2e` shards completed without exercising the vendor.
+
+Both were false. `sweep.py` writes the trace to `runs/nodeloop/trace-<unit>.jsonl` **during** the run
+and only `.replace()`s it into `<unit>/vendor-trace.jsonl` when the unit FINISHES. I was checking the
+destination, which does not exist until the end. The live file has **11 requests**:
+
+    200 GET  /v1/docs      x4      <- a node DID read the documentation
+    200 GET  /v1/payments  x4
+    429 GET  /v1/payments  x1      <- and exercised the throttle
+    201 POST /v1/payments  x1
+    409 POST /v1/payments  x1      <- and the idempotency replay
+
+All `curl/8.7.1` — exploration by a node, not the built app, which has not run yet. So the F51
+prediction is still live and untested.
+
+**What it actually shows is F35 for the third consecutive run.** A node read the documentation
+thoroughly enough to trip the 429 and the 409, and `/v1` still appears in **zero** task descriptions
+in `plan_loaded`. The fact was discovered and died with the node that discovered it. That is exactly
+what the `doc_fetch` arm exists to remove — the engine fetching the document itself does not depend on
+a node happening to curl it and then on that knowledge surviving into the decomposition.
+
+**The rule that saved it:** a zero is usually a broken instrument, so prove the query can see the
+thing at all before letting the zero license a conclusion. I checked whether the file existed rather
+than trusting `0`, and the check cost one command. Two findings would have gone into the ledger
+otherwise, and both would have been wrong in the same direction — toward a more dramatic story.
+
+For the record, so the next reader does not repeat it: **during a run the trace is
+`runs/nodeloop/trace-<unit>.jsonl`; after it, `<unit>/vendor-trace.jsonl`.**
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
