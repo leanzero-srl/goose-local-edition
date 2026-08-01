@@ -1323,6 +1323,53 @@ Measured while checking: the produced app's own suite runs in **6.4s** against a
 2 failed / 46 passed, so the runtime oracle is not being timed out — whatever held that build red,
 it was not a silent gate.
 
+## F41 — the repair tail is 2-3 sequential model calls, and the fan meant to split them can't see its work
+
+The tail after the last `task_completed`, measured on all three parked units: **27.8 / 32.2 / 53.0
+minutes — 22% / 26% / 44% of the run.** It emits **no `task_dispatched` events at all**, which is why
+`occupancy.py` reads ~0 there and why overall occupancy (0.50) is so far below execute occupancy
+(0.93).
+
+Timing every gap inside it shows the shape is simple and identical across runs:
+
+    complete_verify round=0   findings=1     +0.1m   (deterministic — instant)
+    ...                                     +19.4m   <- A FIX CALL
+    complete_verify round=1   findings=2    +13.4m   <- A FIX CALL
+    complete_verify round=2   findings=1     +0.0m
+    review                    findings=1    +20.0m   <- A FIX CALL
+    review_after_fix          findings=0
+
+Everything deterministic (drift, verify, overview) is under 0.2 min. **The entire tail is 2-3 model
+fix calls of 8-20 minutes each, run one after another on one device while the other two idle.**
+
+**The fan that exists to split this cannot see its work.** `complete_parallel` groups findings by file
+and fans one shadow-isolated shard per group — a proper fan, it enumerates its items. But
+`extract_file_from_finding` matched only two shapes, both pytest-traceback: a leading `path:line:` and
+`File "path"`. Porting it to Python and running it on the finding strings the real runs actually
+produced:
+
+| finding shape | seen | resolved to a file |
+|---|---|---|
+| AST review — "function 'log_message' in module 'vendorsync.api' is a STUB" | **3 of 3 runs** | **no** |
+| spec_contract — "GET /… returned 404" | every run | no (correctly — it names no file) |
+| cross-module drift — "module 'A' reads a field 'B' does not define" | yes | **no** |
+| "planned deliverable \`vendorsync/store.py\` is MISSING" | yes | **no** |
+| the F37 failed-task finding (path in backticks) | new | **no** |
+| pytest traceback | when tests fail | yes |
+
+Five of six, including the only two present in every run. The fan was well built and had almost
+nothing to fan — the third instance of this exact class, after the judge-side splitter that never
+fires and the e2e fan that did not partition.
+
+**Fixed:** the extractor now also takes a path in BACKTICKS anywhere in the sentence (engine-authored
+findings put it mid-sentence), and resolves a DOTTED MODULE against the run's own planned file list —
+so a module can only ever map to a file this run really owns, and an invented path can never aim a fix
+shard at nothing. First match wins, because these findings are written subject-first; taking the last
+pointed the drift fix at the module that was correct. A finding that genuinely names no file stays
+unassigned and goes to the serial path, which is where it belongs.
+
+Pinned by a test built from the real strings, not from invented ones.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
