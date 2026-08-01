@@ -17857,6 +17857,18 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // Hand the worker the AGREED layout: the full file manifest (so imports match where modules
         // actually live) and its OWN exact paths (so it never writes a divergent copy to the cwd root).
         // Gated on the manifest, not owned_files — integrate-verify owns nothing but most needs the map.
+        // ONE classifier, resolved once, used by BOTH sites. `kind_prompt` is read again at its
+        // original site below; hoisting the binding here is what keeps the two in step. Installing a
+        // second, independent kind test at this block would let the two disagree the moment either
+        // drifts — which is precisely the failure this is fixing.
+        let kind_prompt_on = swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt);
+        // A fanned READ-ONLY gate: owns nothing AND belongs to a verify family. `integrate-verify`
+        // owns nothing too and is deliberately excluded — it IS the run's sole repair point, so the
+        // write-and-fix directive is correct for it. Same predicate as `is_fix_round` below, and that
+        // is the point: this defect existed at TWO sites with the identical shape and only one was
+        // fixed, because I patched the instance in front of me instead of the class.
+        let read_only_shard = req.owned_files.is_empty()
+            && (req.task_id.starts_with("verify::") || req.task_id.starts_with("verify-e2e::"));
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
@@ -17867,7 +17879,18 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 .map(|f| format!("  {f}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let owned_part = if req.owned_files.is_empty() {
+            let owned_part = if read_only_shard && kind_prompt_on {
+                // The sink's directive below orders this task to RUN the program end-to-end, to FIX
+                // the offending file, and to WIRE every command — while its own user message says
+                // "You own NOTHING and must WRITE NO files" and "Run NO test command at all". The
+                // race-freedom of N parallel shards over one tree rests on those prohibitions, and a
+                // shard that obeys the system prompt instead edits files its siblings are reading.
+                // Subtracting the paragraph is the whole change: this kind sees FEWER rules, never more.
+                "You own no file and must WRITE NO file. The manifest above is a MAP, not a work list \
+                 — your task statement below says exactly which files to check and what to run. Report \
+                 what you actually ran and what it printed, and never a check you did not run.\n\n"
+                    .to_string()
+            } else if req.owned_files.is_empty() {
                 "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
                  above actually exists on disk and the tests cover each module. CRITICAL: a green pytest \
                  suite does NOT prove the program works — unit tests usually call functions directly and \
@@ -18229,7 +18252,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     .unwrap_or(""),
             )
         });
-        let kind_prompt_on = swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt);
+        // (resolved above layout_block so both sites share one value)
         // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
         // to is the contradiction that produced SyntaxErrors in shipped test files.
         let reading_rules = if kind_prompt_on && is_test_author {
