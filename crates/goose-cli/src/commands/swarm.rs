@@ -6685,6 +6685,47 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// are expected", and the run still shipped complete_result{passed:true, verified:true}. The mechanism is
     /// that only `Failures` ever pushed a finding, so NoTests was silently green.
     /// An unparseable stub must LEAVE the frozen bundle, not merely be warned about.
+    /// `fanout_over_fleet` promises "Results come back in item order" and the straggler variant
+    /// bills itself as the same thing with a tail-stop — but its collector pushed in COMPLETION
+    /// order, which is race-determined across nodes. MEASURED: two runs of one config produced
+    /// [libraries, architecture] and [architecture, libraries], changing the research block handed
+    /// to the planner by ordering alone. This pins the promise for every caller: scouts, the frozen
+    /// contract bundle, and the detail fan.
+    #[test]
+    fn the_straggler_fanout_returns_results_in_item_order_not_completion_order() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Item 0 is deliberately the SLOWEST, so completion order is the exact reverse of item order.
+        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
+        let out = rt.block_on(fanout_over_fleet_straggler(
+            vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            items,
+            0, // grace 0 => the await-all path, which already promised item order
+            "test",
+            |(idx, delay): (usize, u64), _dev: String| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                idx
+            },
+        ));
+        assert_eq!(out, vec![0, 1, 2, 3], "await-all path must be item-ordered");
+
+        // And the STRAGGLER path, which is the one that was returning completion order.
+        let items = vec![(0usize, 90u64), (1, 60), (2, 30), (3, 1)];
+        let out = rt.block_on(fanout_over_fleet_straggler(
+            vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            items,
+            30, // non-zero grace => the indexed collector path
+            "test",
+            |(idx, delay): (usize, u64), _dev: String| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                idx
+            },
+        ));
+        assert!(
+            out.windows(2).all(|w| w[0] < w[1]),
+            "straggler path must be item-ordered, got {out:?}"
+        );
+    }
+
     #[test]
     fn a_stub_that_does_not_parse_is_dropped_from_the_frozen_bundle() {
         let bundle = "### module: store\nclass Store: ...\n\n### module: cli\ndef main() \u{2014}> None: ...\n\n"
@@ -14782,7 +14823,23 @@ where
         devices.into_iter().collect::<VecDeque<String>>(),
     ));
     let mut js = tokio::task::JoinSet::new();
-    for item in items {
+    // Spawn INDEXED so the results can be restored to item order below. `fanout_over_fleet`
+    // documents "Results come back in item order" and this function bills itself as "like
+    // `fanout_over_fleet`, but stops the lone lagging task" — yet the collector pushes each result
+    // as it JOINS, i.e. in completion order, which is race-determined on a multi-node fleet.
+    //
+    // That silently made three callers nondeterministic. MEASURED across two runs of the same
+    // config: one completed libraries then architecture, the other architecture then libraries, so
+    // the research block handed to the planner differed by ordering alone. The same collector also
+    // feeds `generate_contracts`, which builds the FROZEN CONTRACT BUNDLE by iterating the returned
+    // Vec — so the "### module:" sections every worker is told to honour were emitted in race order
+    // too. And `detail_memo_key` hashes the findings string, so a reorder also misses the memo.
+    //
+    // In a campaign whose entire problem is a 46-point replicate spread, an engine lever that
+    // injects ordering nondeterminism into the planner's own prompt is a variance source worth
+    // removing outright. Sorting here fixes every caller at the seam that made the promise, rather
+    // than at one call site while the seam keeps lying to the others.
+    for (idx, item) in items.into_iter().enumerate() {
         let permits = permits.clone();
         let pool = pool.clone();
         let f = f.clone();
@@ -14799,10 +14856,12 @@ where
             };
             let out = f(item, dev.clone()).await;
             pool.lock().unwrap().push_back(dev);
-            out
+            (idx, out)
         });
     }
-    let (results, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
+    let (mut indexed, stopped) = collect_fleet_with_straggler_stop(js, n, grace_secs).await;
+    indexed.sort_by_key(|(i, _)| *i);
+    let results: Vec<R> = indexed.into_iter().map(|(_, r)| r).collect();
     if stopped > 0 {
         eprintln!(
             "  {} straggler-stop: {stopped} lagging {noun}(s) aborted after {grace_secs}s grace — proceeding \
