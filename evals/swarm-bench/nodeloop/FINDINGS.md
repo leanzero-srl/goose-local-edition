@@ -366,6 +366,39 @@ resolves to `None` instead of `Some(120)`. That is the serde-default gotcha this
 been bitten by once, and it means the running campaign has a sink turn cap of 40, not 120. Not fixed
 here: changing it mid-campaign would void comparability. It belongs in the pass-boundary rebuild.
 
+## F14 — "Workers are starved of the spec" is mostly WRONG, and I was heading toward shipping it
+
+Two of round 1's recovered defects said workers cannot see the product spec. Both were confirmed as
+defects and both had their fixes refuted, and reading *why* corrects a story I had been assembling
+all session.
+
+**Fix workers are not context-starved.** With `owned_files` empty, `dep_block` already injects the
+current on-disk source of every non-test source file at 3,500 chars each up to a 14,000 budget, plus
+the full unscoped contract bundle, the pillars, verbatim `user_decisions`, `doc_facts` and retrieved
+pitfalls. What is absent is pre-build **intent**, not context. And the codebase has a documented rule
+against supplying distilled intent: a check distilled from the spec once used `--db` after the
+subcommand where the app had built it as a global before it, *"a CORRECT app went red, and the fix
+loop then broke 2 passing tests chasing the phantom. That is why the pillar checks are advisory to
+this day… The fix is to remove the guess, not to mitigate it downstream."*
+
+**Injecting the spec into the sink would make things worse, not better.** `sink_lean_prefill` exists
+specifically to *remove* bytes from `integrate-verify` because it is the slowest task; in the 90% run
+it took 1,719 s against an 1,800 s cap — **81 seconds of margin**. Adding ~3.9 kB pushes the best run
+toward a cap whose expiry finalizes the task DONE without finishing, which is the silent-false-green
+class the engine already fights. And `owned_files.is_empty()` is not even the right predicate: in one
+run the sink owned `README.md`, and `swarm.rs:17780` already documents and handles exactly that.
+
+**The one narrow gap that survives all five objections** is the `verify-e2e::` shards. They are told
+to confirm the actual output equals *"the SPECIFIC value the spec implies"* while never seeing the
+spec — and unlike the sink they are short, parallel and nowhere near a cap. `spec_frozen`
+(`swarm.rs:9920`, "the OPERATOR's spec as it stood before any model wrote into it") already exists,
+so the machinery is there and only the audience is wrong. Not shipped: no fix verifier has attacked
+that version yet, and it goes to the next adversarial round rather than straight into the engine.
+
+The honest correction: the meridian failure was **not** caused by workers being blind to the spec. It
+was caused by the detailer timing out, which is a different defect with a different fix — and one
+already shipped.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
