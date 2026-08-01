@@ -803,6 +803,50 @@ rather than a redundancy. 433 of 433 pass.
 already claimed, rather than trusting my own commit message. Two of today's engine fixes have now
 turned out to be partial on re-examination.
 
+## F28 — The engine's fan-a-fat-task mechanism cannot reach the tasks that need it
+
+Mihai: *"we need to find ways to fan this out more without breaking it and without having generic
+instructions."* Checking whether `split_inherit_spec` was worth an arm answered a bigger question.
+
+**Zero splits across all six runs on disk.** `judge_verdict` actions are only `observed`,
+`re_dispatch` and `failed` — never `split`. So the splitter, which is the engine's mechanism for
+fanning a too-big task across idle nodes, has never fired here.
+
+`is_split_candidate` (`judge.rs:218`) requires, among other things:
+
+```
+input.elapsed_secs >= cfg.split_threshold_secs   (900s)
+input.owned_files.len() >= 2                     <- this one
+```
+
+And the architect is instructed to keep files *"small and single-responsibility"*, one per module.
+Measured on the finished 3-node run:
+
+| task | share of node-busy | owned files | splittable? |
+|---|---|---|---|
+| `test-meridian` | **22.5%** | 1 | **no — owns one file** |
+| `integrate-verify` | **18.7%** | 0 | **no — owns nothing** |
+| `test-api` | 14.9% | 1 | under the threshold |
+
+**41% of all node-busy time sits in tasks that are simultaneously over the split threshold and
+structurally unsplittable.** The mechanism is aimed at a shape — one worker owning several files —
+that this planner is explicitly told not to produce. It is not off, not broken, and not misconfigured:
+it is unreachable by construction.
+
+This also settles `split_inherit_spec`: **not queued as an arm.** A lever on a path that never fires
+would burn three units to measure nothing. It stays echoed in `levers_resolved` so its inertness is
+visible rather than assumed.
+
+**The design rule this implies, from every fan that worked and every one that didn't:** a fan is
+legitimate only when each node's instruction is COMPUTED from its own item — an index, a file, a
+module. `e2e_shard_spec` computes a command slice from `position mod shards`; `split_fat_modules`
+computes a per-concern file scope. Both are specific by construction. The judge-side split copies a
+label and produces 43 characters, which is the generic-instruction failure in its purest form.
+
+So fanning a single-file task means finding a **computable partition that is not files** — for a test
+task, the behaviours it must cover; for the sink, the commands it must check (which `fan_e2e` already
+does). That is a planner change, and it goes to a design round rather than into the engine tonight.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
