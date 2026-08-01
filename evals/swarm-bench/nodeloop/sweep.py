@@ -50,6 +50,7 @@ sys.path.insert(0, str(BENCH))   # run_build, score_build, vendor_service
 sys.path.insert(0, str(HERE))    # nodeloop's own instrument — must precede BENCH on the path
 
 import dispatch_audit  # noqa: E402
+import prefix  # noqa: E402
 
 OUT = HERE.parent / "runs" / "nodeloop"
 STOP = HERE / "STOP"
@@ -463,6 +464,15 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         except Exception as exc:  # noqa: BLE001 - a broken instrument must be visible, not fatal
             audit = {"audit_error": f"{type(exc).__name__}: {exc}"}
 
+    # The pre-dispatch window is 25% of the run and emits no task event, so occupancy.py is blind to
+    # it. Measured on three units: planning is 68-83% of it, and a confidence redraft does the whole
+    # thing twice. Run per unit rather than by hand, because an instrument nobody runs is a comment.
+    pre = {}
+    try:
+        pre = prefix.analyse(dst)
+    except Exception as exc:  # noqa: BLE001
+        pre = {"prefix_error": f"{type(exc).__name__}: {exc}"}
+
     # ADVERSARIAL AUDIT OF THE HARNESS, every unit, not just of the swarm. Six instrument failures in
     # one day and two published before being caught; a unit whose own instruments cannot pass their
     # controls and invariants is not evidence, and must be MARKED rather than quietly averaged in.
@@ -508,6 +518,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "engine_build": engine_build(),
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
+        "prefix": pre,
     }
 
 
@@ -675,8 +686,13 @@ def main() -> int:
             f"{result['score'] if result.get('score') is not None else 'FAILED'}  "
             f"pool={result.get('actual_nodes')}/{nodes}  void={result.get('void')}  "
             f"aborted={result.get('aborted')}  timed_out={result.get('timed_out')}  "
-            f"fallbacks={a.get('detail_fallback_count')}  "
+            f"fallbacks={a.get('detail_fallback_count')}"
+            f"{'(+' + str(len(a.get('ghost_fallback_tasks') or [])) + ' ghost)' if a.get('ghost_fallback_tasks') else ''}"
+            f"{' ON:' + ','.join(a.get('shipped_one_liner_tasks') or []) if a.get('shipped_one_liner_tasks') else ''}  "
             f"kind_mismatch={a.get('kind_mismatch_pct')}%  "
+            f"prefix={(result.get('prefix') or {}).get('prefix_secs')}s"
+            f"/plan{(result.get('prefix') or {}).get('planning_secs')}s"
+            f"/redraft{(result.get('prefix') or {}).get('redraft_rounds')}  "
             f"({round(durations[-1] / 60)} min)")
 
         # FEASIBILITY GATE. If the very first unit cannot get the pool it asked for, every later
