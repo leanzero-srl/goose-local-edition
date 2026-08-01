@@ -214,6 +214,96 @@ def engine_pids() -> list[int]:
         return []
 
 
+def median_unit_secs() -> float | None:
+    """Median wall of units that actually finished, so "too long" is measured, not guessed."""
+    walls = []
+    for f in OUT.glob("*/nodeloop-result.json"):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("wall_secs") and not r.get("timed_out") and not r.get("aborted"):
+            walls.append(r["wall_secs"])
+    if not walls:
+        return None
+    walls.sort()
+    return walls[len(walls) // 2]
+
+
+def abandon_decision(unit: Path, arm: dict, nodes: int, elapsed: float) -> tuple[float, list[str]]:
+    """How confident are we that this unit can NO LONGER inform goal one? 0..1 with reasons.
+
+    The watchdog above kills what is BROKEN. This decides what is POINTLESS, which is a different and
+    harder question, and the one that actually costs weeks: a unit that got the wrong pool runs its
+    full ~2 hours and is only marked VOID afterwards. Nothing about that row was ever going to be
+    evidence, and the fleet time was spent to learn something already known at minute one.
+
+    Deliberately asymmetric. Killing a HEALTHY unit costs a full re-run and poisons the replicate
+    count, so every predicate here must be something already DECIDED — a fact about this run that no
+    amount of further work can change — not a prediction that it will go badly. A slow unit is not a
+    doomed one, and a unit producing a BAD score is doing its job.
+    """
+    reasons: list[str] = []
+    conf = 0.0
+    log_path = unit / "run.jsonl"
+    events = []
+    if log_path.is_file():
+        for line in log_path.read_text(errors="replace").splitlines():
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                continue
+
+    # 1. VOID BY CONSTRUCTION. run_started carries the pool the engine actually built. If it is not
+    #    the pool this cell asked for, the row is excluded from every mean no matter how it ends —
+    #    so finishing it buys nothing. This is certain, not probable, and it is knowable at minute 1.
+    started = next((e for e in events if e.get("event") == "run_started"), None)
+    if started is not None:
+        actual = len(started.get("pool") or [])
+        if actual and actual != nodes:
+            conf = 1.0
+            reasons.append(f"pool is {actual}, cell asked for {nodes} — VOID by construction, the row "
+                           f"can never be evidence")
+
+    # 2. THE ARM CANNOT FIRE. An arm sets env vars; if the running binary has no such lever, the arm
+    #    is byte-identical to baseline and would be recorded as "no effect" — a fabricated null. This
+    #    already happened: 34 hours were queued against a binary with no GOOSE_SWARM_DETAIL_BUDGET_SECS.
+    for var in arm.get("env", {}):
+        try:
+            import run_build
+            out = subprocess.run(["strings", str(run_build.GOOSE)],
+                                 capture_output=True, text=True, timeout=120)
+            if var not in out.stdout:
+                conf = 1.0
+                reasons.append(f"{var} is ABSENT from the engine binary — this arm cannot fire and "
+                               f"would record a fabricated 'no effect'")
+        except Exception:
+            pass
+        break   # one probe is enough; strings over 235MB is not free
+
+    # 3. PLANNING STUCK. No task has been dispatched well past the point where every observed run had
+    #    started dispatching. Not proof of doom, so it is weighted below the kill line on its own.
+    if events and not any(e.get("event") == "task_dispatched" for e in events):
+        if elapsed > 3600:
+            conf = max(conf, 0.85)
+            reasons.append(f"{elapsed / 60:.0f} min elapsed with ZERO dispatches — planning has not "
+                           f"produced a single task (observed pre-dispatch is ~25-31 min)")
+        elif elapsed > 2400:
+            conf = max(conf, 0.5)
+            reasons.append(f"{elapsed / 60:.0f} min with no dispatch yet (observed ~25-31 min)")
+
+    # 4. FAR BEYOND THE MEASURED NORM. Uses the median of units that actually finished, so it adapts
+    #    rather than encoding a guess. Alone it is under the line — slow is not doomed — but it
+    #    compounds with anything else.
+    med = median_unit_secs()
+    if med and elapsed > 2.5 * med:
+        conf = max(conf, 0.6)
+        reasons.append(f"{elapsed / 60:.0f} min is {elapsed / med:.1f}x the median finished unit "
+                       f"({med / 60:.0f} min)")
+
+    return min(conf, 1.0), reasons
+
+
 class Watchdog(threading.Thread):
     """Cut a DOOMED unit loose instead of waiting out its 4.5h cap.
 
@@ -223,11 +313,20 @@ class Watchdog(threading.Thread):
     inference from how long something is taking, because a slow unit is not a doomed one.
     """
 
-    def __init__(self, label: str) -> None:
+    ABANDON_AT = 0.8   # kill only on something already DECIDED; a wrong kill costs a full re-run
+
+    def __init__(self, label: str, unit: Path, arm: dict, nodes: int) -> None:
         super().__init__(daemon=True)
         self._stop = threading.Event()
         self.label = label
+        self.unit = unit
+        self.arm = arm
+        self.nodes = nodes
+        self.started_at = time.time()
         self.reason: str | None = None
+        self.abandoned = False
+        self.abandon_confidence = 0.0
+        self.abandon_reasons: list[str] = []
 
     def doomed(self) -> str | None:
         pids = engine_pids()
@@ -260,11 +359,28 @@ class Watchdog(threading.Thread):
             try:
                 reason = self.doomed()
             except Exception:
-                continue
+                reason = None
             if reason:
                 self.reason = reason
                 self.abort(reason)
                 return
+            # BROKEN is not the only reason to stop. Judge whether this unit can still inform goal
+            # one at all, and cut it loose the moment the answer is settled — waiting out a ~2h run
+            # whose row is already void is the single largest avoidable waste in this campaign.
+            try:
+                conf, why = abandon_decision(self.unit, self.arm, self.nodes,
+                                             time.time() - self.started_at)
+            except Exception:
+                continue
+            if conf >= self.ABANDON_AT:
+                self.abandoned = True
+                self.abandon_confidence = conf
+                self.abandon_reasons = why
+                self.abort(f"ABANDONED at confidence {conf:.2f} — " + "; ".join(why))
+                return
+            if why:
+                log(f"[watch] {self.label}: confidence {conf:.2f} this unit is pointless "
+                    f"(kill at {self.ABANDON_AT}) — {'; '.join(why)}")
 
     def done(self) -> None:
         self._stop.set()
@@ -285,7 +401,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
 
     entrant = f"swarm-{nodes}node"   # run_build reads the N and sets GOOSE_SWARM_MAX_NODES
     prev = dict(os.environ)
-    dog = Watchdog(unit_name(arm["name"], nodes, rep))
+    dog = Watchdog(unit_name(arm["name"], nodes, rep), OUT / f"{entrant}-r{rep}", arm, nodes)
     dog.start()
     try:
         for k, v in arm["env"].items():
@@ -349,6 +465,9 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "tiers": verdict.get("tiers"),
         "aborted": dog.reason is not None,
         "abort_reason": dog.reason,
+        "abandoned": dog.abandoned,
+        "abandon_confidence": dog.abandon_confidence,
+        "abandon_reasons": dog.abandon_reasons,
         "timed_out": (verdict.get("agent") or {}).get("timed_out"),
         "wall_secs": (verdict.get("agent") or {}).get("secs"),
         "actual_pool": verdict.get("actual_pool"),
@@ -417,8 +536,8 @@ def summarise() -> None:
         f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
     for (arm, nodes), g in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
         ok = [r for r in g if not r.get("timed_out") and not r.get("aborted")
-              and not r.get("void") and r.get("harness_ok") is not False
-              and r.get("score") is not None]
+              and not r.get("abandoned") and not r.get("void")
+              and r.get("harness_ok") is not False and r.get("score") is not None]
         sc = [r["score"] for r in ok]
         fb = [r["audit"].get("detail_fallback_count") for r in ok
               if isinstance(r.get("audit"), dict)
@@ -517,7 +636,10 @@ def main() -> int:
         result_path(arm["name"], nodes, rep).write_text(json.dumps(result, indent=2))
 
         a = result.get("audit") or {}
-        if result.get("aborted"):
+        if result.get("abandoned"):
+            log(f"[abandon] {now()} {label} killed at confidence "
+                f"{result.get('abandon_confidence'):.2f}: {'; '.join(result.get('abandon_reasons') or [])}")
+        elif result.get("aborted"):
             log(f"[abort] {now()} {label} CUT LOOSE — {result.get('abort_reason')}")
         log(f"[done] {now()} {label}  score="
             f"{result['score'] if result.get('score') is not None else 'FAILED'}  "

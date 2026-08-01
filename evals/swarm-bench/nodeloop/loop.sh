@@ -45,13 +45,13 @@ subprocess.Popen([sys.executable,'-u','nodeloop/sweep.py'],
     fi
     [ -f STOP ] && echo "STOP sentinel present — it will exit after the current unit"
     echo
-    grep -E '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn)' "$LOG" 2>/dev/null | tail -10
+    grep -E '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn|abandon|abort|HARNESS|watch)' "$LOG" 2>/dev/null | tail -10
     ;;
   watch)
     # Failure signatures too: a monitor grepping only the happy path stays silent through a
     # crashloop, and silence looks exactly like "still running".
     tail -f "$LOG" | grep -E --line-buffered \
-      '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn)|Traceback|Error|Killed'
+      '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn|abandon|abort|HARNESS|watch)|Traceback|Error|Killed'
     ;;
   results)
     python3 - <<'PY'
@@ -76,7 +76,8 @@ print(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
       f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
 for (arm, nodes), rs in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
     ok = [r for r in rs if not r.get('timed_out') and not r.get('aborted')
-          and not r.get('void') and r.get('score') is not None]
+          and not r.get('abandoned') and not r.get('void')
+          and r.get('harness_ok') is not False and r.get('score') is not None]
     sc = [r['score'] for r in ok]
     fb = [x for x in (r.get('audit', {}).get('detail_fallback_count') for r in ok) if x is not None]
     km = [x for x in (r.get('audit', {}).get('kind_mismatch_pct') for r in ok) if x is not None]
