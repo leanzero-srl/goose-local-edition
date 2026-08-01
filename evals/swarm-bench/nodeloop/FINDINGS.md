@@ -953,6 +953,38 @@ an empty slice reports no findings, which reads as a pass. Fixing it is a prereq
 anything, because widening a fan that does not partition multiplies a false green rather than the
 work.
 
+## F32 — The repair loop has been chasing an endpoint that is a regex artefact of a backtick
+
+The highest-harm finding of the session, and it was found by checking whether `spec_contract` was
+worth widening rather than by looking for it.
+
+`spec_get_endpoints` matched `\bGET\s+(/\S*)`. `\S*` runs straight THROUGH a closing backtick, so the
+real spec's prose — *"A single page, served by the backend at `GET /`."* — yielded the path `` /` ``.
+That is not discarded: it survives the trims, the check boots the app, curls it, gets a 404, and
+pushes a finding. **Confirmed verbatim in `baseline-n3-r0`'s own graded verdict, twice:**
+
+```
+- GET /` returned 404 — the spec advertises this endpoint but the app does not implement it
+```
+
+against an app that serves `/` correctly. And `spec_contract` findings go into `verdict.findings`,
+which **blocks the green claim and drives the fix loop** — so the repair phase, 44% of the run on one
+node, has been partly repairing a phantom.
+
+This is exactly the hazard the engine already documents a few hundred lines away, in the comment
+explaining why pillar checks were demoted to advisory: *"a distilled check ... would FALSE-FAIL a
+correct app, and the fix loop would then REGRESS it"*. The same class, in the one check that is
+supposed to be deterministic, live on the default path, in every run on disk.
+
+Fixed by cutting the captured path at the first markdown delimiter. Pinned by a test using the exact
+sentence from the real spec, plus controls that unambiguous endpoints and backticked endpoints both
+still parse.
+
+**How it was reached matters more than the patch.** I set out to widen the matcher to markdown
+tables, checked what it currently does first, and found it was not blind but *wrong* — producing a
+confident false finding rather than nothing. Had I widened it without looking, I would have added a
+second parser beside a broken one and never seen this.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

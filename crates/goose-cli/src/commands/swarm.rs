@@ -6832,6 +6832,33 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// The extractor must produce the SAME list every time from the operator spec, because that is
     /// the entire point: three shards partitioning one engine-enumerated list rather than three
     /// lists they each derived from the build's own README.
+    /// A path scraped THROUGH a markdown backtick is not an endpoint, and treating it as one
+    /// fabricated a 404 finding against a correct app — twice in one graded verdict — which then
+    /// blocked green and drove the fix loop.
+    #[test]
+    fn spec_get_endpoints_does_not_scrape_across_a_backtick() {
+        // The exact sentence from the real spec that produced "GET /`".
+        let spec =
+            "A single page, served by the backend at `GET /`. Plain HTML/CSS/JS, no build step.";
+        let got = spec_get_endpoints(spec);
+        assert!(
+            !got.iter().any(|p| p.contains('`')),
+            "a path must never contain a markdown delimiter: {got:?}"
+        );
+        // Real, unambiguous endpoints still parse.
+        let ok =
+            spec_get_endpoints("The API exposes GET /api/health and GET /api/summary for status.");
+        assert!(ok.contains(&"/api/health".to_string()), "{ok:?}");
+        assert!(ok.contains(&"/api/summary".to_string()), "{ok:?}");
+        // And one inside backticks, which is how specs usually write them, still yields the path
+        // itself rather than a fragment running past the closing delimiter.
+        let tick = spec_get_endpoints("Call `GET /api/summary` to read totals.");
+        assert!(
+            tick.iter().all(|p| !p.contains('`')),
+            "backticked endpoints must not carry the delimiter: {tick:?}"
+        );
+    }
+
     #[test]
     fn spec_advertised_surface_enumerates_the_real_endpoint_table() {
         // The real spec's shape, verbatim from evals/swarm-bench/spec-build.md.
@@ -14741,8 +14768,22 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for c in re.captures_iter(spec) {
+        // CUT AT THE FIRST MARKDOWN DELIMITER. `\S*` happily runs THROUGH a closing backtick, so
+        // "served by the backend at `GET /`." captured "/`." — a path that exists nowhere. It was not
+        // discarded: it survived the trims below, the check booted the app, curled it, got a 404, and
+        // pushed a finding. MEASURED in baseline-n3-r0's own verdict, twice: "GET /` returned 404 —
+        // the spec advertises this endpoint but the app does not implement it", against an app that
+        // serves / correctly. That finding blocks the green claim AND drives the fix loop, so the
+        // repair phase — 44% of the run, on one node — was partly chasing an endpoint that is a
+        // regex artefact of a backtick. This is precisely the hazard the pillar-check comment
+        // records: "a distilled check ... would FALSE-FAIL a correct app, and the fix loop would then
+        // REGRESS it".
+        let raw = c[1]
+            .split(['`', '*', '<', '>', '"', '\''])
+            .next()
+            .unwrap_or("");
         // Strip trailing prose punctuation the spec attaches (`;`, `,`, `)`, `.`, trailing `/`).
-        let path = c[1].trim_end_matches([';', ',', ')', '.', '/']).to_string();
+        let path = raw.trim_end_matches([';', ',', ')', '.', '/']).to_string();
         if path.is_empty() {
             continue;
         }
