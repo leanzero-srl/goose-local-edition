@@ -1160,6 +1160,42 @@ module under two names, so an id-keyed cache across a redraft would miss it. `pr
 survival by OWNED FILES as well as by id and reports the renames; the file-based number is the one a
 reuse path should be designed against.
 
+## F37 — the test that found the bugs was reported as the thing that was broken
+
+F35's link 7, taken as its own round. It did not need another run: the defect is readable off the
+source and one stat.
+
+`test-meridian` exhausted three attempts. The finding the engine then handed the fix loop, generated
+from the task id alone:
+
+> planned task `test-meridian` FAILED (its attempts were exhausted) — **its deliverable is missing or
+> broken.** Find what it was meant to produce and finish it.
+
+`tests/test_meridian.py` is on disk at **13,357 bytes — the largest test file in the tree.** Running
+it: **6 passed, 2 failed**, and both failures are real defects in the module it tests —
+`fetch_all_payments` returns one page of many, and the 429 retry with an HTTP-date `Retry-After` waits
+1.10 s where the header demands 1.5 s.
+
+So the test author did its job better than any other worker in the run. It produced a substantial
+suite and caught two genuine bugs. The engine classified that as the test task failing, re-dispatched
+it three times to rewrite the test, told the fix loop the file was missing, and never re-dispatched
+`meridian` at all. Both defects shipped.
+
+**Why it is a class, not a one-off.** The finding is built from the task id with no reference to the
+world: it cannot distinguish "the deliverable was never written" from "the deliverable is written and
+its checks fail", which are opposite instructions to a fix worker. The same shape produced the other
+failed unit on disk — `test-api` in the preboundary run, deps `['api']`, same treatment.
+
+**The fix, both halves deterministic.** `failed_task_finding` (pure, unit-tested) stats the task's
+owned files: if none are written, today's string stands byte-for-byte. If they ARE written, the
+finding says so, names them, names the files owned by the task's dependencies — the planner is
+instructed to give `test-<module>` a dependency on ONLY that module, so the code under test is read
+off the DAG rather than guessed from the id — and directs the fix there. It also carries an explicit
+prohibition on weakening, skipping or deleting a check, because a worker told its test is broken will
+make it pass by deleting the assertion that found the bug.
+
+No model judges any of this. It is a stat and a dependency edge.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

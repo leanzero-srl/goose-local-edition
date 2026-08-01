@@ -8104,6 +8104,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!resolve_gate(Some("maybe".to_string()), true, true));
     }
 
+    /// A failed task whose deliverable IS on disk must never be reported as missing. MEASURED:
+    /// `test-meridian` exhausted three attempts, `tests/test_meridian.py` was 13,357 bytes on disk,
+    /// and running it gave 6 passed / 2 failed on real defects in the module it tests — while the fix
+    /// loop was told to "find what it was meant to produce and finish it" and the module was never
+    /// revisited. The two branches are opposite instructions to a fix worker, so they are pinned.
+    #[test]
+    fn a_failed_task_that_wrote_its_deliverable_points_at_the_code_under_test() {
+        let written = vec!["tests/test_meridian.py".to_string()];
+        let under_test = vec!["vendorsync/meridian.py".to_string()];
+        let got = failed_task_finding("test-meridian", &written, &under_test);
+        assert!(!got.contains("missing"), "the file is on disk: {got}");
+        assert!(got.contains("tests/test_meridian.py"), "{got}");
+        assert!(
+            got.contains("vendorsync/meridian.py"),
+            "the finding must name the code under test, not just the test: {got}"
+        );
+        assert!(got.contains("DO NOT PASS"), "{got}");
+        // A fix worker told a test is broken will delete the failing check. Guard it explicitly.
+        assert!(got.contains("Do NOT weaken, skip or delete"), "{got}");
+
+        // The other direction still holds: nothing written means the deliverable really is missing.
+        let none = failed_task_finding("store", &[], &[]);
+        assert!(none.contains("missing or broken"), "{none}");
+        assert!(!none.contains("DO NOT PASS"), "{none}");
+
+        // A task with no dependencies names its own file and claims nothing about a culprit.
+        let solo = failed_task_finding("web", &["web.py".to_string()], &[]);
+        assert!(
+            solo.contains("`web.py`") && !solo.contains("It exercises"),
+            "{solo}"
+        );
+    }
+
     #[test]
     fn green_blocking_failed_excludes_bonus_and_owns_nothing() {
         let failed = vec![
@@ -17887,6 +17920,47 @@ fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
 
 /// The planned tasks whose failure BLOCKS the green claim (the deterministic-block set for the hard
 /// completion gate). A failed task is excluded when it is a bonus/replanner task (its failure must not fail
+/// The finding a FAILED planned task contributes to the fix loop. Pure (the caller does the stat) so
+/// the two opposite instructions are unit-testable.
+///
+/// MEASURED, baseline-n3-r0: `test-meridian` exhausted three attempts and the old blanket string told
+/// the fix loop its deliverable was "missing or broken". `tests/test_meridian.py` was on disk at
+/// 13,357 bytes — the largest test file in the tree — and running it gives 6 passed, 2 failed, both
+/// failures real defects in the module under test (pagination returns one page of many; the HTTP-date
+/// retry does not wait long enough). The swarm's most valuable output, a test that found genuine
+/// bugs, was reported as a failure of the thing that produced it. `meridian` was dispatched once and
+/// never revisited; both defects shipped.
+///
+/// `written` is the task's owned files that actually exist and are non-empty; `under_test` is the
+/// files owned by everything it depends on. The planner is instructed to give `test-<module>` a
+/// dependency on ONLY that module, so the code under test is named by the DAG, never guessed from the
+/// task id.
+fn failed_task_finding(task: &str, written: &[String], under_test: &[String]) -> String {
+    if written.is_empty() {
+        return format!(
+            "planned task `{task}` FAILED (its attempts were exhausted) — its deliverable is \
+             missing or broken. Find what it was meant to produce and finish it."
+        );
+    }
+    let points_at = if under_test.is_empty() {
+        String::new()
+    } else {
+        format!(" It exercises {}.", under_test.join(", "))
+    };
+    format!(
+        "planned task `{task}` FAILED, but its deliverable {} IS written. Its attempts were exhausted \
+         because the checks it runs DO NOT PASS, and that is evidence about the code it exercises, not \
+         about the file itself.{points_at} RUN it, read the failures, and fix what they point at. Do \
+         NOT weaken, skip or delete a check to make it pass — a check that fails is the only thing here \
+         that has found a real defect.",
+        written
+            .iter()
+            .map(|f| format!("`{f}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// the run) OR when it owns NO files (C1 — the injected `integrate-verify` model-judge sink; its failure is a
 /// model self-report, never a deterministic green-veto). Only a FILE-OWNING core task can block green. Pure
 /// (no I/O) so the exclusion is unit-testable.
@@ -22092,6 +22166,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .values()
         .flat_map(|n| n.spec.owned_files.clone())
         .collect();
+    // Per task: the files it owns, and the files owned by everything it depends on. Captured here for
+    // the same reason as `smoke_all_files` — the scheduler consumes `dag` — and used by the
+    // failed-task finding to tell "the deliverable was never written" apart from "the deliverable is
+    // written and its checks fail", which are opposite instructions to a fix worker.
+    let task_files: std::collections::HashMap<String, (Vec<String>, Vec<String>)> = dag
+        .tasks
+        .values()
+        .map(|n| {
+            let under_test: Vec<String> = n
+                .spec
+                .deps
+                .iter()
+                .filter_map(|d| dag.tasks.get(d))
+                .flat_map(|dep| dep.spec.owned_files.clone())
+                .collect();
+            (n.spec.id.clone(), (n.spec.owned_files.clone(), under_test))
+        })
+        .collect();
     let smoke_fix_dispatcher = dispatcher.clone();
     // GOOSE_SWARM_COMPLETE_PARALLEL: the fleet's model ids, captured before the scheduler consumes
     // `devices`, so the completion fix step can fan one fix per failing file across all models.
@@ -22283,10 +22375,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             failed_planned
                 .iter()
                 .map(|t| {
-                    format!(
-                        "planned task `{t}` FAILED (its attempts were exhausted) — its deliverable is \
-                         missing or broken. Find what it was meant to produce and finish it."
-                    )
+                    // A FAILED task says nothing on its own about WHOSE fault it is, and the
+                    // blanket "its deliverable is missing or broken" is measurably wrong for the
+                    // commonest case — see `failed_task_finding`. Both halves of the correction are
+                    // deterministic (a stat and the task's own deps), so no model judges this.
+                    let (owned, under_test) = task_files.get(t).cloned().unwrap_or_default();
+                    let written: Vec<String> = owned
+                        .iter()
+                        .filter(|f| cwd.join(f).metadata().map(|m| m.len() > 0).unwrap_or(false))
+                        .cloned()
+                        .collect();
+                    failed_task_finding(t, &written, &under_test)
                 })
                 .collect()
         } else {
