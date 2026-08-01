@@ -1550,6 +1550,36 @@ found zero names would pass everything, which is the failure mode this whole pro
 Harness-only; permitted under the freeze. It runs on every unit, so the next time the engine renames
 something the sweep fails loudly instead of quietly reporting a zero.
 
+## F47 (preliminary, n=1, mid-run) — most of what a redraft discards is free to regenerate
+
+First-ever `retarget_discarded` payload, observed live 17 minutes into the current unit. Round 1
+discarded **12 tasks carrying 13,305 characters of detail**. But the composition matters more than
+the total:
+
+| what | tasks | chars | cost to regenerate |
+|---|---|---|---|
+| ENGINE-generated specs — `verify::*`, `verify-e2e::*`, `integrate-verify` | 7 | ~8,127 | **nothing** — deterministic templates over the plan |
+| MODEL-authored detail — `api` (2044), `cli` (1870) | 2 | ~3,914 | a detail call each |
+| FAILED details — `meridian` (141), `store` (123), both `detail_fallback` | 2 | ~264 | worthless, already lost |
+
+So a redraft throws away **two model-authored specs**, not twelve tasks' worth. A detail-reuse cache
+would save two calls, not the fleet-minutes the raw count suggests — which is materially less
+valuable than "12 tasks discarded" reads.
+
+This is exactly why the event was built as a MEASUREMENT and the cache was refused until the rate
+was known. The first observation has already moved the design conclusion, before a line of cache
+existed.
+
+**Scope, honestly:** n=1, one redraft, one plan, and the unit has not finished — the survival rate
+(discarded ∩ shipped, keyed on owned files) cannot be computed until `plan_loaded` lands. The
+composition split is a property of the plan SHAPE rather than a sample statistic, so it is likely to
+hold, but "likely" is not measured. Confirm across the baseline set before acting on it.
+
+Also noted, not yet a finding: `meridian` — the module owning the vendor client — took a
+`detail_fallback` at 141 chars for the **third consecutive run**. In this one it happened in the
+DISCARDED round, so it may be repaired in round 2; that is precisely the ghost-versus-live
+distinction, and it is why the instruments separate them.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
