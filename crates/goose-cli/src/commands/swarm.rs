@@ -20359,6 +20359,35 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                 .unwrap_or_else(|| load_config().split.unwrap_or(true)),
             "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS").ok(),
+            // The splitter defaults ON and this lever defaults OFF, so a split child's ENTIRE task
+            // statement is "(split of <parent>) <child-id>" — 43 characters, after the run paid ~40%
+            // of its wall-clock producing the spec that is discarded at the moment of use. It lives
+            // in crates/goose-swarm (which cannot see SwarmConfig) so it is env-only, and it was
+            // ABSENT from this map — meaning a run could not say whether it was on, and a campaign
+            // screen reading only this map would score it INERT whether or not it fired. A lever
+            // nobody can see resolve is a lever nobody can keep. Read here the same way the engine
+            // reads it, so the echo cannot drift from the behaviour.
+            "split_inherit_spec": matches!(
+                std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_lowercase()
+                    .as_str(),
+                "1" | "on" | "true" | "yes"
+            ),
+            // Enumerated rather than fixed one at a time: these are every OTHER lever read from env
+            // inside crates/goose-swarm and therefore missing from this map for the same reason.
+            // salvage_spin turns a terminal finalize-spin failure into Done — it decides whether a
+            // WORKING app is reported as FAILED — and it defaults ON, so a run that never echoed it
+            // could not say whether a green owed itself to a salvage. Parsed exactly as the engine
+            // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
+            // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
+            "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
+                .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
+                .unwrap_or(true),
+            "salvage_require_critical": std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
+                .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                .unwrap_or(false),
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
