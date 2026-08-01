@@ -135,12 +135,27 @@ ARMS = [
                 "the app was already right; if the reports still cite the README, the injection is "
                 "not reaching them and the arm has failed regardless of the score.",
     },
+    # doc_prefetch was here and is PULLED, not deprioritised: it forwards only findings where
+    # `grounded == is_mcp && ok`, and research_tools reports available: [] on every run this machine
+    # has ever produced, because the research extensions are context7 and web-search and neither key
+    # exists. With no grounded finding the block is empty and the worker prompt is byte-identical to
+    # baseline, so the arm cannot fire. An arm that cannot fire is not evidence, and running it would
+    # spend hours of fleet time to produce an INERT result. doc_fetch replaces it with a fetch that
+    # needs no extension and no key.
     {
-        "name": "doc_prefetch",
-        "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
-        "gate": "doc_facts is the only un-paraphrased scout->worker channel. Tier C is graded on "
-                "vendor-doc compliance and collapsed to 14.3% in the run whose meridian module got "
-                "a 95-char brief.",
+        "name": "doc_fetch",
+        "env": {"GOOSE_SWARM_DOC_FETCH": "1"},
+        "gate": "THE measured coin flip. Three baseline units, identical config: the one whose "
+                "plan_loaded carried the vendor's /v1 prefix scored 88.7% and the two that did not "
+                "scored 50.0% and 42.7% with every vendor call returning 404. The prefix appears six "
+                "times in the document the spec points at and zero times in the spec, and no scout "
+                "has ever had a tool to open it. This arm has the ENGINE fetch that document and "
+                "splice it verbatim into the planner's channel and every worker's. "
+                "PREDICTION: doc_fetched{ok:true} fires, /v1 appears in plan_loaded, and crunch.py's "
+                "fetch_all_payments returns 247 rather than raising 404. The mechanism claim is "
+                "settled by the first two regardless of the score — if the paths are still wrong "
+                "with a 200-status fetch on record, the splice is not reaching the decomposition and "
+                "the arm has failed no matter what the number does.",
     },
 ]
 
