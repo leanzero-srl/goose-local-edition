@@ -559,6 +559,38 @@ empty-bundle guard runs before the drop, so the count and the `frozen: true` fla
 module lost its detailed spec *and* its frozen interface, and the run reported a full contract
 bundle either way.
 
+## F21 — 22% of a run is the repair phase, on ONE node, with two idle
+
+Measured live on `baseline-n3-r0` while it was still running:
+
+```
+run wall so far      : 88.2 min
+last task_completed  : 68.7 min in
+-> COMPLETE/repair    : 19.6 min          (22% of the run)
+complete_verify at   : [68.8, 88.2] min   (both rounds)
+fleet during it      : gabee generating, mihai idle, workhorse idle
+```
+
+Two independent calculations agree: `occupancy.py` puts solo-node time at **1,174.6 s (0.222 of
+wall)**, and the gap since the last `task_completed` is 19.6 min. `smoke_fix_target =
+devices.first()` (`swarm.rs:21260`), so the fix loop is single-node unless
+`GOOSE_SWARM_COMPLETE_PARALLEL` is on — and it defaults **off**.
+
+This is the sharpest goal-one instance found so far. It is not a subtle prompt defect: it is a fifth
+of the run in which adding nodes provably buys nothing, in the phase this project's own ledger names
+as *"REPAIR is what fails"*, with the lever to fix it already built and disabled.
+
+**Added as a campaign arm** (`complete_parallel`) rather than shipped, with the prediction written
+down first: wall falls by roughly the repair tail's idle share and **the build score is unchanged
+within the replicate spread** — this buys fleet utilisation, not correctness. *If the score moves,
+the parallel fix path is not equivalent to the serial one, and that is a defect worth more than the
+speedup.*
+
+Note also the execute-window occupancy fell from 0.99 to **0.71** once the repair tail entered the
+window. Earlier I reported ~1.0 and said the scheduler was not the problem; that remains true for the
+build phase, but the *run* is less well utilised than that number suggested, because the tail is not
+scheduler-owned work at all.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
