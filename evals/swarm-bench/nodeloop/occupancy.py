@@ -114,10 +114,26 @@ def analyse(path) -> dict:
     spans: list[tuple[float, float]] = []
     for task_id, ds in disp.items():
         cs = sorted(t for t in done.get(task_id, []) if t is not None)
+        starts = [s for s, _ in sorted(ds, key=lambda x: (x[0] or 0)) if s is not None]
         for i, (start, device) in enumerate(sorted(ds, key=lambda x: (x[0] or 0))):
             if start is None:
                 continue
-            end = cs[i] if i < len(cs) else t_end
+            # A RETRY re-dispatches a task before the first attempt ever completes, so pairing
+            # dispatch[i] with completion[i] leaves the extra dispatch unmatched — and crediting an
+            # unmatched dispatch to the END OF THE RUN invents time that was never spent. MEASURED:
+            # test-meridian was dispatched twice and completed once, and that single retry was
+            # credited 83 minutes of phantom busy time on a 122-minute run, inflating busy from 94 to
+            # 156 min, occupancy from 0.26 to 0.43, and the critical path from 31 to 89 min — which
+            # produced a published max_useful_nodes of 1.75 when the real figure is about 3.
+            #
+            # An attempt ends at whichever comes first: its own completion, or the NEXT dispatch of
+            # the same task (which is what supersedes it). Only a task still outstanding at the last
+            # event we can see is credited to t_end, and on a finished run that is genuinely a task
+            # that never completed.
+            nxt = starts[i + 1] if i + 1 < len(starts) else None
+            comp = next((c for c in cs if c >= start), None)
+            cands = [x for x in (comp, nxt) if x is not None]
+            end = min(cands) if cands else t_end
             if end is None or end < start:
                 continue
             per_device_spans.setdefault(device, []).append((start, end))
