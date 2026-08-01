@@ -1609,6 +1609,18 @@ eleven without, which is worse than either extreme.
 nothing to find — one look at the live event stream and one `lms ps` — and it was silently burning a
 quarter of every unit.
 
+## Correction — "GENERATING" is not the whole of "busy"
+
+I read fleet occupancy with `lms ps | grep -c GENERATING` and got 0 across four samples on a healthy
+run, and briefly took it for a stall. The full status shows **`PROCESSINGPROMPT`** as a separate busy
+state — two nodes were in it while the third generated. A node ingesting a long planning prompt is
+working, not idle.
+
+F48 is unaffected: its evidence is the engine's own 1800s block-poll and a `low_confidence_ask` with
+nothing on the machine able to answer it. The fleet reading was corroboration, and during that window
+the nodes were genuinely idle in both states. But the check itself was wrong, so any future
+fleet-busy sample must count **GENERATING and PROCESSINGPROMPT**, not just the first.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
