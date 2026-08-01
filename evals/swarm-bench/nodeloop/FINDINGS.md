@@ -914,6 +914,45 @@ OFF or when the table is empty.
 Not built tonight: it changes a worker prompt mid-campaign, and the whole point of the boundary
 discipline is that such a change waits.
 
+## F31 — The design rule, now precise: a fan must enumerate the ITEMS, not just the selector
+
+Checked rather than assumed whether `fan_verify` shares `fan_e2e`'s defect. It does not, and the
+contrast between the two gives the rule Mihai asked for in a form that can be checked mechanically:
+
+```rust
+per_module_verify_spec:  "Import/build-check every file this module delivers ({owned})"
+                          owned = files.join(", ")     <- the ENGINE enumerates the slice
+e2e_shard_spec:          "number them 1,2,3... in the order the spec gives them,
+                          verify ONLY the ones whose position mod {shards} == {m}"
+                                                       <- the engine supplies only the SELECTOR
+```
+
+**A computed index is not enough. The SET being indexed must be enumerated by the engine.** When it
+is, the slice is a fact (`fan_verify`, the detail fan, the contract fan, the scout fan — each item
+is named). When it is not, every node reconstructs the set from whatever spec-shaped artifact it can
+find, gets a different answer, and the partition silently stops being one.
+
+That refines what I wrote this morning. "Each node's instruction is COMPUTED from its item" was too
+weak — `e2e_shard_spec` satisfies it and is still broken. The testable form is: **can you point at
+the line where the engine writes the item into the prompt?** For `fan_verify` it is
+`owned = files.join(", ")`. For `fan_e2e` there is no such line, and that absence is the whole defect.
+
+Audit of every fan in the engine against that rule:
+
+| fan | items enumerated by the engine? | verdict |
+|---|---|---|
+| scouts (per lens) | yes — the lens brief is interpolated | sound |
+| contracts (per module) | yes — the module and its files | sound |
+| detail (per subtask) | yes — id, brief, owned files | sound |
+| `fan_verify` (`verify::<M>`) | yes — `files.join(", ")` | sound |
+| `fan_e2e` (`verify-e2e::<i>`) | **no — only the mod-selector** | **broken (F30)** |
+| judge-side split | n/a — never fires (F28) | inert |
+
+So exactly one fan is broken, and it is the one whose failure is invisible: a shard that enumerates
+an empty slice reports no findings, which reads as a pass. Fixing it is a prerequisite for widening
+anything, because widening a fan that does not partition multiplies a false green rather than the
+work.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
