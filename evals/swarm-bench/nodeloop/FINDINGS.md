@@ -752,6 +752,28 @@ on at n=1 in a way a score delta never is.
 Note I read `max_useful_nodes` at 3.58 mid-run and refused to draw a verdict from it. The finished
 value is 1.75 — the opposite conclusion. That restraint was correct.
 
+## F26 — The THIRD site of one defect class, and this time I enumerated the whole class
+
+`read_prereview_findings` is spliced by `owned_part` at `swarm.rs:18016` under
+`req.owned_files.is_empty() || req.task_id == "integrate-verify"`. The comment directly above states
+the intent — *"inject idle-node PRE-REVIEW findings into the integrate-verify sink"* — and the
+predicate over-matches it: every fanned `verify::<M>` and `verify-e2e::<i>` also owns nothing, so
+each was handed findings framed as **confirm and FIX** while its own task statement forbids writing.
+
+**Same over-broad owns-nothing predicate, third occurrence.** I fixed it at `18340` (`is_fix_round`)
+this morning, again in `layout_block`'s `owned_part` this afternoon after round 4 found it, and
+missed this one both times. All three now route through the single `read_only_shard` predicate under
+`kind_prompt`, so there is one classifier rather than three that can drift.
+
+This time I enumerated every site rather than stopping at the one I was handed. Of the eight
+`owned_files.is_empty()` uses: three were this class and are fixed; `17893` is the sink text the
+new branch precedes; `15471` builds a descriptive string for the judge (`"(works across the whole
+layout)"`) and issues no directive; and `18535` / `18640` / `18679` are **negated** — owned-file
+existence gates with different semantics. **No fourth instance.** That sentence is the deliverable;
+the fix is the easy part.
+
+432 of 432 tests pass, clippy clean, held for the next boundary.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
