@@ -345,10 +345,16 @@ than a hunch.
 
 ## F13 — Two instrument/process notes from this turn
 
-**A session limit truncated adversarial round 3** — 40 of 71 agents died mid-verification. My rule
-scored a missing vote as a refutation, so its `refuted_count: 27` is not trustworthy and the
-`contracts` and `research` lenses are effectively unverified. An agent that never ran is not a
-refutation; the round is re-runnable from cache once the limit resets. Its one confirmed survivor:
+**A session limit truncated adversarial round 3** — 40 of 71 agents died mid-verification, and my
+rule scored a missing vote as a refutation (`Boolean(null)` is false, so a dead agent was
+indistinguishable from a HIGH-confidence refutation). Its `refuted_count: 27` was therefore not a
+count of refutations at all, and the `contracts` and `research` lenses were effectively unverified.
+
+The vote rule now has THREE states — stands / refuted / **unknown** — and an unanswered question is
+re-run rather than silently resolved against the finding. Worth noting how this was caught: my own
+loop instructions had already *asserted* the rule treated a missing vote as unknown. It did not.
+Reading the code rather than trusting the note is the only reason the re-run is meaningful.
+The round is re-runnable from cache. Its one confirmed survivor:
 the whole confidence / ask / retarget apparatus is gated on `n > 1` where `n` is capped at the
 fleet's **distinct-model count** (`swarm.rs:11596`) — so a 1-node run structurally cannot gate on
 confidence at all (`plan_confidence: null` on every 1-node run, `88` at three nodes), and two
