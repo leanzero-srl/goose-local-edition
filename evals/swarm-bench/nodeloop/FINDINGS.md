@@ -1370,6 +1370,45 @@ unassigned and goes to the serial path, which is where it belongs.
 
 Pinned by a test built from the real strings, not from invented ones.
 
+## F42 — the mechanisms that would make the swarm smarter with more nodes are mostly unobservable
+
+Goal one is that the swarm gets better as nodes are added. The engine has a set of mechanisms whose
+entire purpose is to spend a spare node on quality or latency. Counting them across the three parked
+runs, and then checking whether each can even be counted:
+
+| mechanism | event | 3 parked runs |
+|---|---|---|
+| idle-model judge | `judge_verdict` | **54 / 161 / 94** — fires hard |
+| idle pre-reviewer | `pre_review` | **7 / 7 / 7** — fires |
+| dynamic replan | `replanned` | **0 / 0 / 0** — a REAL zero |
+| sink idle-fill review | `sink_review` | **0 / 0 / 0** — a REAL zero |
+| speculation (twin race) | *none existed* | **unknowable** |
+| judge-side split | *none existed* | **unknowable** |
+| sink prebuild | *none existed* | **unknowable** |
+
+I nearly published "seven mechanisms never fire". That would have been false. Four of those sevens
+were not zeros — they were **blind instruments**, and the difference is the whole rule. The check that
+caught it was extracting the engine's complete `"event"` name list and its `SwarmEvent` enum and
+asking, per mechanism, *could a run have shown me this at all*. For `replanned` and `sink_review` the
+answer is yes and they genuinely never fired. For speculation, split and sink prebuild there is no
+event and never was: `pick_speculation_target`, `resolve_speculation` and `apply_split` contain
+**zero** `sink.emit` calls between them.
+
+So on a project whose first rule is that only a deterministic engine event may confer a verdict, the
+three mechanisms most directly responsible for "better with more nodes" have been exempt from it. Not
+disputed — unmeasurable. That is why the node-scaling claim has never been settled by evidence.
+
+**Fixed:** two new `SwarmEvent` variants, emitted only where the thing actually happened.
+`task_split{task_id, children}` at `apply_split`'s success return — so it means "a split was applied",
+never "one was considered". `speculated{task_id, attempt, winner}` at every resolution of a twin, with
+`winner` one of `twin` / `primary` / `twin_failed`, because "the twin won", "the primary won" and "the
+twin errored and cost a device for nothing" are three different answers to whether an idle node bought
+anything, and all three were previously the same silence.
+
+`sink_prebuild` remains unobservable and is NOT being patched blind — it needs its own read first.
+
+439 + 44 tests, clippy clean.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

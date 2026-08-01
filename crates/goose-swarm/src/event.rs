@@ -50,6 +50,22 @@ pub enum SwarmEvent {
         added: Vec<String>,
         stopped: bool,
     },
+    /// A judge-side SPLIT was applied: one task became `children`. Emitted because it was previously
+    /// invisible — `apply_split` mutated the DAG and said nothing, so "does the swarm decompose work
+    /// further when it has spare nodes" could not be answered from a run at all. Measured across three
+    /// real runs before this existed: no way to tell a split that never happened from one that did.
+    TaskSplit {
+        task_id: String,
+        children: Vec<String>,
+    },
+    /// A SPECULATIVE twin resolved. `winner` is "twin" or "primary"; `aborted` is the side that lost.
+    /// Same reason as TaskSplit: speculation is the mechanism that spends an idle node on latency, and
+    /// it emitted nothing, so its contribution to node-scaling was unmeasurable by construction.
+    Speculated {
+        task_id: String,
+        attempt: u32,
+        winner: String,
+    },
     /// The idle-model judge inspected an in-flight worker. `action` is "observed" (logged only) or
     /// "re_dispatch" (the worker was killed and its task re-queued with `hint`).
     JudgeVerdict {
