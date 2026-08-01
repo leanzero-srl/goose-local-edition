@@ -1121,6 +1121,45 @@ worth fleet time rather than another prompt tweak.
 Both `research_findings` consumers are fed by ASSIGNMENT during research (`:20459`), which is why the
 fetch is spliced after that block and not before — anything written earlier is discarded.
 
+## F36 — it is not how many one-liners shipped, it is WHICH module got one
+
+`prefix.py` (new, `px-1`, controls both directions) breaks the pre-dispatch window into its parts.
+Three baseline units, and the shape is stable:
+
+| unit | prefix | research | planning | redrafts | score |
+|---|---|---|---|---|---|
+| preboundary-2 | 1836s | 379s | 1457s (79%) | 1 — 766s discarded, 691s replacement | 88.7% |
+| preboundary | 1312s | 420s | 892s (68%) | 0 | 50.0% |
+| current | 1556s | 264s | 1292s (83%) | 1 — 582s discarded, 710s replacement | 42.7% |
+
+**Planning is 68–83% of the prefix, and a redraft does it twice.** That is the target the earlier
+round was groping at without a number. It is also why `retarget_discarded` now exists: `plan_loaded`
+fires once, for the survivor, so the discarded round left no trace at all.
+
+**The correlation is at the TASK level, not the run level.** Both high and low scorers shipped
+one-liners; what separates them is which module got one:
+
+| unit | `meridian` (owns the vendor client) | shipped one-liners | score |
+|---|---|---|---|
+| preboundary-2 | **1497 chars, contains `/v1`** | 1 — `test-api` | 88.7% |
+| current | **122 chars, no `/v1`** | 2 — `meridian`, `test-web` | 42.7% |
+
+So "2 fallbacks vs 1" is not the signal. A thin brief on `test-api` costs a test some rigour; a thin
+brief on the one module that owns an external contract nobody can guess costs the entire build. The
+sweep's `fallbacks` column has been counting these as equivalent.
+
+**Ghosts.** `meridian-client` failed its detail call in the 88.7% run and appears in no shipped plan
+— it belonged to the draft the redraft threw away. Both instruments now separate ghost failures from
+live ones (`prefix.py` `ghost_fallbacks`, `dispatch_audit.py` `live_fallback_events`), because a
+fallback on a task no worker ever saw cost fleet time and harmed nothing, and counting the two
+together overstates the damage. This is the same mechanism-vs-quality split that already cost one
+wrong number.
+
+**It also settles how a reuse path must be keyed.** `meridian-client` and `meridian` are the same
+module under two names, so an id-keyed cache across a redraft would miss it. `prefix.py` measures
+survival by OWNED FILES as well as by id and reports the renames; the file-based number is the one a
+reuse path should be designed against.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

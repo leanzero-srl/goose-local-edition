@@ -209,6 +209,15 @@ def audit(path) -> dict:
     #   detail_fallback_events -> how unreliable the detail call is. The mechanism number.
     briefed = sorted({tid for tid, desc in plan.items() if is_skeleton_brief(desc)})
     fallback_events = [e for e in events if e.get("event") == "detail_fallback"]
+    # And a THIRD distinction inside the mechanism number, found by comparing the two runs whose
+    # scores differed most. A detail can fail for a task belonging to a draft that is later thrown
+    # away, so its id never reaches a worker at all: `meridian-client` failed its detail call in one
+    # run and the shipped plan contains `meridian` instead. That fallback cost fleet time and harmed
+    # nothing. Counting ghosts alongside live failures overstates the damage, and the live count is
+    # the one that predicts a bad build — in the same two runs, the client module got 1497 chars
+    # containing the vendor's /v1 prefix and scored 88.7%, or 122 chars without it and scored 42.7%.
+    ghost_fallbacks = sorted({e.get("task_id") for e in fallback_events
+                              if plan and e.get("task_id") not in plan})
 
     scored = [p["specificity_score"] for p in per_dispatch if p["specificity_score"] is not None]
     lens = sorted(p["specificity"]["chars"] for p in per_dispatch if p["specificity"])
@@ -241,6 +250,9 @@ def audit(path) -> dict:
         "detail_fallback_events": len(fallback_events),
         "detail_fallback_reasons": sorted({e.get("reason") for e in fallback_events}),
         "detail_fallback_event_tasks": sorted({e.get("task_id") for e in fallback_events}),
+        "ghost_fallback_tasks": ghost_fallbacks,
+        "live_fallback_events": len(fallback_events) - len(
+            [e for e in fallback_events if e.get("task_id") in ghost_fallbacks]),
         "planned_tasks": len(plan),
         "zero_context_slice_count": zero_ctx,
         "specificity_mean": round(sum(scored) / len(scored), 3) if scored else None,
@@ -273,6 +285,9 @@ def render(a: dict) -> str:
                f"{a['shipped_one_liners']} of {a['planned_tasks']} tasks {a['shipped_one_liner_tasks']}")
     out.append(f"  detail-call FAILURES (engine event, any round): {a['detail_fallback_events']} "
                f"{a['detail_fallback_event_tasks']} reasons={a['detail_fallback_reasons']}")
+    if a.get("ghost_fallback_tasks"):
+        out.append(f"    of which GHOSTS (task never shipped — a discarded draft's): "
+                   f"{a['ghost_fallback_tasks']}  -> live failures: {a['live_fallback_events']}")
     out.append(f"  instruction NOT in log (split/fix children): "
                f"{a['instruction_unmeasurable_count']} {a['instruction_unmeasurable_tasks']}")
     out.append(f"  zero dependency context : {a['zero_context_slice_count']} of {a['dispatches']}")
