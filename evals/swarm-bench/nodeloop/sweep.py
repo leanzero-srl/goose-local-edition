@@ -84,14 +84,15 @@ ARMS = [
                 "naive version and put score recovery in single digits, so the MECHANISM count is "
                 "the readout, not the build score.",
     },
-    {
-        "name": "scoped_contracts",
-        "env": {"GOOSE_SWARM_SCOPED_CONTRACTS": "1"},
-        "gate": "every worker receives the FULL frozen-contract bundle rather than its DAG "
-                "neighborhood, so irrelevant interface text grows with the plan's width — the one "
-                "instruction defect that gets WORSE as nodes are added. scope_contract_bundle "
-                "(coherence.rs:303) is written and unused.",
-    },
+    # scoped_contracts was queued here and REMOVED before it ran. Measured on three real plans:
+    # ZERO inter-module dependency edges among code modules, because the architect is explicitly told
+    # "Default to a FLAT FAN: make every module a root with no deps" (swarm.rs:11493). A worker's DAG
+    # neighborhood is therefore just itself, so scoping the frozen-contract bundle to it would delete
+    # every SIBLING interface and leave only the module's own stub — the one interface it does not
+    # need, since it is the thing writing it. Under a flat fan the FULL bundle is the correct bundle,
+    # so the lever is inert at best and destructive at worst, and its precondition is the very thing
+    # the planner prompt works to prevent. Measurement time is the scarce resource; a lever predicted
+    # broken on evidence does not earn three replicates.
     {
         "name": "detail_budget",
         "env": {"GOOSE_SWARM_DETAIL_BUDGET_SECS": "300"},
