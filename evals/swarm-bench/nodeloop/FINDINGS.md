@@ -307,6 +307,59 @@ ever carry real inter-module edges.
   carrying {task_id, device, model}, since `device_id` never reaches an event and no fix to a
   console label can be seen fire.
 
+## F12 — THE CHAIN, END TO END, ON A REAL 3-NODE RUN (`baseline-n3-r0`)
+
+The first unit finished: 3-node pool confirmed (`actual_pool` = gabee / mihai / workhorse), 126 min,
+not timed out, not aborted, not void. Headline **50.0%** — Tier A **100%**, B 36.1%, **C 14.3%**,
+D 53%.
+
+**The score is a claim, so I ran the app.** It is non-functional exactly where it matters:
+
+```
+total_count()          -> 0            (spec requires 247)
+fetch_all_payments()   -> 0 payments in 0.0s   (no successful request at all)
+create_payment(...)    -> uncaught HTTPError: 404 — crashes
+```
+
+Every link of the causal chain is now measured, not inferred:
+
+1. The detail call for `meridian` exceeded the 75 s budget and fell back.
+2. The worker was dispatched with **116 characters**: *"MeridianClient with cursor pagination,
+   rate-limit retry, cursor expiry restart, ETag support, UTC-normalized sorting"* — five behaviours
+   and **not one endpoint**.
+3. The worker invented paths: it calls `/payments` and `/payments/count`. The vendor serves
+   **`/v1/payments`**. Every request 404s.
+4. 0 of 247 payments; `create_payment` dies on an uncaught 404.
+5. Tier C = **14.3%** — the identical value `swarm-1node-r0` scored when the *same* module lost its
+   spec to the *same* fallback.
+
+And the run still reported Tier A at 100% and a 50% headline, because the app imports, serves a page
+and has the right health shape. This is precisely the failure class the four-tier split exists to
+make legible: a correctly-structured application whose vendor integration does nothing.
+
+The spec itself carries the base URL and the docs URL — but a worker never sees the spec (recovered
+round-1 finding: it reaches every planning and supervisory call and no worker), and the detailer,
+whose job is to turn the one-liner into exact signatures and endpoints, timed out. The
+`detail_budget` arm's prediction is now testing a mechanism with a fully traced failure path rather
+than a hunch.
+
+## F13 — Two instrument/process notes from this turn
+
+**A session limit truncated adversarial round 3** — 40 of 71 agents died mid-verification. My rule
+scored a missing vote as a refutation, so its `refuted_count: 27` is not trustworthy and the
+`contracts` and `research` lenses are effectively unverified. An agent that never ran is not a
+refutation; the round is re-runnable from cache once the limit resets. Its one confirmed survivor:
+the whole confidence / ask / retarget apparatus is gated on `n > 1` where `n` is capped at the
+fleet's **distinct-model count** (`swarm.rs:11596`) — so a 1-node run structurally cannot gate on
+confidence at all (`plan_confidence: null` on every 1-node run, `88` at three nodes), and two
+existing guards written expressly to force `best_of_n >= 2` are silently undone by that cap.
+
+**A pre-existing test failure, verified not mine** (`git stash` and it still fails):
+`omitted_config_keys_resolve_to_the_intended_default_not_the_type_default` — `sink_max_turns`
+resolves to `None` instead of `Some(120)`. That is the serde-default gotcha this project has already
+been bitten by once, and it means the running campaign has a sink turn cap of 40, not 120. Not fixed
+here: changing it mid-campaign would void comparability. It belongs in the pass-boundary rebuild.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
