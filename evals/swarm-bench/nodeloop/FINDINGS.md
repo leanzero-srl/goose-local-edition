@@ -628,6 +628,41 @@ actually made a write call — so the write-race harm is real in principle but *
 evidence**. What stands is the contradictory directive and ~12 inapplicable rules added to a budget
 where measured perfect compliance is 0.094.
 
+## F23 — The golden-value gate grades the build against a document the build wrote
+
+The most serious finding of the session, verified in the shards' own reports rather than argued:
+
+> `verify-e2e::1`: *"Now I'll number the advertised commands/usages **from the README** in order of
+> appearance"*
+> `verify-e2e::0`: *"**Spec expectation (README)**: 'Health check with payment count and last sync
+> time'"*
+
+`e2e_shard_spec` (`swarm.rs:3070`) orders each shard to confirm the actual output equals *"the
+SPECIFIC value the spec implies"* — and never gives it the spec. A model handed a spec-shaped task
+with no spec binds the word "spec" to whatever spec-shaped artifact is in the tree, and the only one
+there is the **README the same swarm just wrote**.
+
+So the golden-value gate — the one check that can catch a wrong constant, a wrong path or a wrong
+unit — closes a loop: the build is graded against the build's own documentation. That is a
+false-green machine, and it is the missing half of the explanation for `baseline-n3-r0` scoring 50%
+with tier A at 100% while `total_count()` returned 0 of 247. The vendor client invented `/payments`;
+the README documented `/payments`; the shard checked the app against the README and was satisfied.
+
+**Precision, because the finding over-claimed:** it said "verbatim in all three shard reports". I
+measure **two of three** in the pre-boundary run (`verify-e2e::2` does not mention it), and the
+current run has not produced shard reports yet. Two of three is enough for the conclusion; three is
+not what the evidence says.
+
+**Not fixed here, deliberately.** The remedy is to give the shards `spec_frozen`, which is a
+`DispatchRequest` change, and the refuter of a neighbouring finding was explicit that it belongs
+there rather than as a side effect of something else. Shipping a new instruction channel unlevered,
+two hours into a campaign, is the exact shape of mistake the last finding taught me to avoid. It goes
+to a design round with the F14 candidate.
+
+One part of the remedy IS already shipped: those same shards were receiving the sink's
+*"FIX the offending file"* / *"wire them all"* directive, and `4ba5d5200` now subtracts it under
+`kind_prompt`.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
