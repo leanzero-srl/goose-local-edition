@@ -875,6 +875,45 @@ event exists there is no way to tell whether widening it changed anything, and t
 ordering said the same. Observability first, then the behaviour it lets us judge — the shape that
 made the 46-point spread legible in the first place.
 
+## F30 — `fan_e2e` does not partition. Each shard divides a list it invented separately.
+
+Round 5 returned **0 sound proposals of 3**, and its refutation carried a finding larger than the
+problem it was reviewing. Verified independently from the shards' own reports, one run, three shards:
+
+| shard | what it says the spec advertises | what it checked |
+|---|---|---|
+| `verify-e2e::0` | "advertised usages in order" | command **1** only |
+| `verify-e2e::1` | "advertises only **one** command/usage mode for this program" | **nothing** — *"there is no command whose position satisfies `position mod 3 == 2`"* |
+| `verify-e2e::2` | "advertises **3** commands/usages" | command **3** only |
+
+`e2e_shard_spec` says *"number them 1,2,3... in the order the spec gives them, and verify ONLY the
+ones whose position mod {shards} == {m}"* — and the shard never receives the spec, so each one
+derives the list from the README the build wrote (F23) **and derives a different one**. One shard
+enumerated 1 item, another 3. `position mod shards` over lists of different lengths is not a
+partition: coverage is neither disjoint nor complete, and nothing in the run says so.
+
+**A shard that checked nothing returns no findings, which reads as a pass.** That is a false green
+manufactured by the fan itself.
+
+This is the sharpest instance of the constraint Mihai set — *fan out more without breaking it* — and
+it inverts what I believed this morning. I had `e2e_shard_spec` filed as the GOOD example of a
+computed, specific fan, against the judge-side split's 43-character children. It is not: the *index*
+is computed, but the *list being indexed* is not, so the specificity is an illusion and the guarantee
+in its own comment (*"a shard whose slice is reworded checks everything or nothing, which silently
+undoes the split"*) describes exactly what happens by default.
+
+**The fix, prescribed by the refuter and correct: build the oracle at PLAN time, not dispatch.**
+`parallel_plan` already holds `spec_frozen` and calls `fan_e2e_split`, so the numbered triples can be
+passed into `e2e_shard_spec(lang, i, shards, &oracle)` and *"number them in the order the spec gives
+them"* replaced with *"the numbered table below IS the list"*. One channel, one list, identical across
+shards — then the partition is real and the golden values stop coming from the build's own README. It
+inherits the existing guarantee that `verify-e2e::` descriptions are excluded from detailing, so a
+slice cannot be reworded. Needs a default-OFF lever, a `levers_resolved` entry, and byte-identity when
+OFF or when the table is empty.
+
+Not built tonight: it changes a worker prompt mid-campaign, and the whole point of the boundary
+discipline is that such a change waits.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
