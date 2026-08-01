@@ -18003,7 +18003,18 @@ impl TaskDispatcher for GooseAgentDispatcher {
             // M5: inject idle-node PRE-REVIEW findings into the integrate-verify sink — whether or not it
             // happens to own files (a model-authored sink can own files) — so it CONFIRMS + FIXES the
             // flagged defects, not merely greens the suite. read_prereview_findings returns "" if none.
-            let owned_part = if req.owned_files.is_empty() || req.task_id == "integrate-verify" {
+            //
+            // The comment above states the intent — THE SINK — and the predicate over-matched it. Every
+            // fanned `verify::<M>` and `verify-e2e::<i>` also owns nothing, so each was handed findings
+            // framed as "confirm and FIX" while its own task statement says it must write no files. This
+            // is the THIRD site with this exact shape: the same over-broad owns-nothing predicate was
+            // fixed at 18306 (fix_directive) and again in layout_block's owned_part, and I found the
+            // first two and missed this one. Same lever, same predicate, so there is one classifier and
+            // not three that can drift apart. The sink and genuine fix workers are unaffected —
+            // integrate-verify is not a read-only shard.
+            let owned_part = if !(read_only_shard && kind_prompt_on)
+                && (req.owned_files.is_empty() || req.task_id == "integrate-verify")
+            {
                 format!(
                     "{owned_part}{}",
                     read_prereview_findings(std::path::Path::new(&cwd))
