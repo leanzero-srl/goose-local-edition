@@ -2596,10 +2596,29 @@ const DETAIL_BUDGET_SECS_DEFAULT: u64 = 75;
 /// a `detail_budget` arm is attributable to this one constant; the number gets baked once a replicated
 /// arm says what it should be, not because the argument sounds right.
 fn detail_budget_secs() -> u64 {
+    // DERIVED, not a bare literal — the same source its SIBLING fan-out already uses. `contracts`
+    // clamps its straggler grace to `worker_timeout_secs.max(10)` (baked 900); `detail` had a
+    // hardcoded 75. Two fan-outs, same fleet, same model, both asking a worker to author a spec, and
+    // a 12x disparity in what they are allowed.
+    //
+    // MEASURED across the six runs on disk: 19 contract calls produced 1 empty/unparsed (5%), while
+    // detail produced **27 failures, 25 of them checked and ALL `timeout`** — zero filler, zero agent
+    // errors. So the detail failure mode is entirely this ceiling, and a retry at the same ceiling
+    // would fail identically; the ceiling is the fix, not a retry.
+    //
+    // It matters because the detail call produces the worker's ENTIRE spec, and losing it is the
+    // measured predictor of a bad build: `meridian` (the module owning the vendor contract) is the
+    // most frequent victim at 6 of 25, and the run where it shipped a 122-char brief scored 42.7%
+    // while the run where it got a 1497-char spec containing the vendor's `/v1` prefix scored 88.7%.
+    // The engine was willing to spend 10-19 MINUTES re-drafting a plan and 75 SECONDS writing the
+    // specs that plan depends on.
+    let ceiling = load_config()
+        .worker_timeout_secs
+        .max(DETAIL_BUDGET_SECS_DEFAULT);
     std::env::var("GOOSE_SWARM_DETAIL_BUDGET_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(DETAIL_BUDGET_SECS_DEFAULT)
+        .unwrap_or(ceiling)
         .clamp(30, 900)
 }
 
@@ -12955,7 +12974,11 @@ impl GooseAgentDispatcher {
         // `_ => brief` fallback), so stopping the lone lagger only costs one module a richer spec — never
         // corruption. Usually near-inert: #subtasks > #devices makes it fall back to await-all. grace 0 => OFF.
         let detail_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs.clamp(10, 75)
+            // Was clamp(10, 75) — a second hardcoded 75 that capped the straggler grace far below the
+            // sibling contracts fanout's `worker_timeout_secs.max(10)`. Same call kind, same fleet;
+            // the ceiling now comes from the same place.
+            self.straggler_grace_secs
+                .clamp(10, self.worker_timeout_secs.max(10))
         } else {
             0
         };
@@ -13035,6 +13058,20 @@ impl GooseAgentDispatcher {
                 // emitted no signal. Both sibling fanouts already report their failures (contracts prints
                 // the per-module reason, the scout fanout splices its budget overrun into the findings);
                 // detail was the only one that failed invisibly.
+                // A TIMEOUT SAYS ">budget" AND NOTHING ELSE, so the log could never say what the
+                // budget should BE — every value was a judgement call. Recording the SUCCESSFUL calls
+                // gives the distribution the ceiling has to clear, and pairs duration with the size of
+                // the spec produced, which is what actually drives the time.
+                if fallback_reason.is_empty() {
+                    me.events.write_value(serde_json::json!({
+                        "event": "detail_completed",
+                        "task_id": id,
+                        "secs": started.elapsed().as_secs_f64().round(),
+                        "spec_chars": desc.len(),
+                        "brief_chars": brief.len(),
+                        "budget_secs": detail_budget,
+                    }));
+                }
                 if !fallback_reason.is_empty() {
                     me.events.write_value(serde_json::json!({
                         "event": "detail_fallback",

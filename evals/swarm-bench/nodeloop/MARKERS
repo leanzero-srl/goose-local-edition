@@ -40,6 +40,10 @@ speculated
 # F44: the two halves of sink_review now read ONE resolver
 GOOSE_SWARM_SINK_REVIEW
 
+# F49: the detail budget is derived from worker_timeout_secs like its sibling, and successful
+# detail durations are now recorded so the ceiling can be sized from data instead of judgement.
+detail_completed
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
