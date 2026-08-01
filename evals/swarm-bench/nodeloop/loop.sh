@@ -59,33 +59,35 @@ import json, pathlib, collections
 rows = collections.defaultdict(list)
 for f in sorted(pathlib.Path('../runs/nodeloop').glob('*/nodeloop-result.json')):
     try:
-        rows[json.loads(f.read_text())['arm']].append(json.loads(f.read_text()))
+        r = json.loads(f.read_text())
     except Exception:
         continue
+    rows[(r.get('arm'), r.get('nodes'))].append(r)
 if not rows:
     print("no results yet"); raise SystemExit
 versions = {r.get('audit_version') for rs in rows.values() for r in rs}
 if len(versions) > 1:
     print(f"!! mixed audit versions {versions} — these rows are NOT comparable\n")
-print(f"{'arm':<18}{'n':>2}  {'score mean':>10} {'spread':>8}   "
-      f"{'fallbacks':>9} {'kind-mm%':>9}  pool  timed_out")
-for arm, rs in sorted(rows.items()):
+print(f"{'arm':<18}{'nodes':>5}{'n':>3}  {'score mean':>10} {'spread':>8}  "
+      f"{'fallbacks':>9} {'kind-mm%':>9} {'wall min':>9}  void")
+for (arm, nodes), rs in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
     ok = [r for r in rs if not r.get('timed_out') and not r.get('aborted')
-          and r.get('score') is not None]
+          and not r.get('void') and r.get('score') is not None]
     sc = [r['score'] for r in ok]
-    fb = [r.get('audit', {}).get('detail_fallback_count') for r in ok]
-    fb = [x for x in fb if x is not None]
-    km = [r.get('audit', {}).get('kind_mismatch_pct') for r in ok]
-    km = [x for x in km if x is not None]
+    fb = [x for x in (r.get('audit', {}).get('detail_fallback_count') for r in ok) if x is not None]
+    km = [x for x in (r.get('audit', {}).get('kind_mismatch_pct') for r in ok) if x is not None]
+    wl = [r['wall_secs'] for r in ok if r.get('wall_secs')]
     mean = f"{sum(sc)/len(sc):.1%}" if sc else "-"
     spread = f"{(max(sc)-min(sc))*100:.0f}pts" if len(sc) > 1 else "-"
-    print(f"{arm:<18}{len(rs):>2}  {mean:>10} {spread:>8}   "
+    print(f"{arm:<18}{nodes if nodes is not None else '?':>5}{len(rs):>3}  "
+          f"{mean:>10} {spread:>8}  "
           f"{(sum(fb)/len(fb) if fb else 0):>9.1f} "
-          f"{(sum(km)/len(km) if km else 0):>9.1f}  "
-          f"{sorted({r.get('actual_nodes') for r in rs})}  "
-          f"{sum(1 for r in rs if r.get('timed_out'))}")
+          f"{(sum(km)/len(km) if km else 0):>9.1f} "
+          f"{(sum(wl)/len(wl)/60 if wl else 0):>9.0f}  "
+          f"{sum(1 for r in rs if r.get('void'))}")
 print()
 print("fallbacks = tasks whose spec never got past the architect's one-liner (swarm.rs:12353).")
+print("void = the engine did not build the pool the unit asked for; those are excluded, never averaged.")
 print("A score delta below the replicate spread is not a result; read the mechanism columns.")
 PY
     ;;

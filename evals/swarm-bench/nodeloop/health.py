@@ -138,14 +138,18 @@ def main() -> int:
         rep.add("WARN", f"{len(tos)} unit(s) hit the cap — their scores measure the cap, not the "
                         f"swarm: {[r['arm'] + 'r' + str(r['rep']) for r in tos]}")
 
-    # 7. Comparability. The fleet changing under the loop voids cross-arm comparison, and it has
-    #    silently degraded before (three runs labelled 1/2/3-node all ran on one device).
-    pools = {r.get("actual_nodes") for r in rs if r.get("actual_nodes") is not None}
-    if len(pools) > 1:
-        rep.add("BAD", f"pool size CHANGED across units {sorted(pools)} — arms are no longer "
-                       f"comparable, the fleet moved under the loop")
-    elif pools:
-        rep.add("OK", f"pool size stable at {pools.pop()} device(s) across {len(rs)} unit(s)")
+    # 7. Comparability. Pool size now VARIES BY DESIGN — the sweep runs 1, 2 and 3-node cells — so
+    #    variety is expected and only a mismatch between what a unit asked for and what the engine
+    #    actually built is a defect. That mismatch is what made three runs labelled 1/2/3-node all
+    #    measure the same 1-device pool, so it is checked per unit, never in aggregate.
+    voids = [r for r in rs if r.get("void")]
+    if voids:
+        rep.add("BAD", "unit(s) did not get the pool they asked for: "
+                       + "; ".join(f"{r['arm']}-n{r.get('nodes')}-r{r.get('rep')} "
+                                   f"({r.get('void_reason')})" for r in voids))
+    elif rs:
+        got = sorted({(r.get("nodes"), r.get("actual_nodes")) for r in rs})
+        rep.add("OK", f"every unit got the pool it asked for {got}")
 
     # 8. A broken instrument reports zeros, and a zero from a blind probe is a fabricated result.
     audited = [r for r in rs if isinstance(r.get("audit"), dict) and r["audit"].get("dispatches")]
