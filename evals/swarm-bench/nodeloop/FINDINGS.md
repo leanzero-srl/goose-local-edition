@@ -1006,6 +1006,51 @@ Controls still hold in both directions: known-good 7/7 exit 0, known-bad 2/5 exi
 A false finding about a REAL requirement is the worst of both — it burns repair effort and leaves the
 requirement unchecked. So the requirement now has a genuine check, independent of the engine.
 
+## F34 — the "46-point replicate spread" is substantially ONE BIT, and the bit is `/v1`
+
+Three baseline units, identical config, identical fleet. The scores read like noise. They are not.
+
+| unit | `/v1` in `plan_loaded` | vendor calls | build score |
+|---|---|---|---|
+| preboundary-2 | 6 | `/v1/payments` | **88.7%** |
+| preboundary | 0 | `/payments` | 50.0% |
+| current (n3-r0) | 0 | `/payments` | **42.7%** |
+
+Perfect separation, and it is read off a **deterministic engine event** (the contents of
+`plan_loaded`), not off a score comparison — so it is valid at this n, where an outcome delta would
+not be.
+
+`crunch.py` on the current unit: 2/5. It imports and it serves `/` — and every single vendor call
+raises `HTTPError 404`, because the client builds `{base}/payments` while the vendor serves
+`/v1/payments`. The app is not "43% working". Its one job did not happen.
+
+**Why the bit flips.** The spec gives the docs URL `http://127.0.0.1:8930/v1/docs`, then says
+`Base URL http://127.0.0.1:8930`. The `/v1` prefix on the *data* routes is stated six times in the
+vendor's own document and **never in the prompt**. A planner that reasons "the docs are under /v1,
+so the API is" wins; one that concatenates the stated base URL loses. It is a coin flip on a fact
+that is derivable but never given.
+
+**Why nobody read the document.** Both runs, verbatim from `research_tools`:
+
+    {"available": [], "can_look_things_up": false}
+    research_completed {"findings": 1, "grounded": 0, "looked_nothing_up": 2}
+
+The scouts have **no tools at all**. The spec's instruction "Read it before you start" is
+unexecutable, and the engine records that it did not happen and proceeds anyway. Four to six minutes
+of three-node fleet time per run produce findings that are, by the engine's own event, entirely from
+the model's head.
+
+**This kills one of the sweep's six arms before it runs.** `doc_prefetch` routes research findings
+verbatim to workers — but only findings where `grounded == is_mcp && ok`. With no research tools
+attached, `grounded_n` is 0 on every run, `doc_facts` stays empty, and the worker prompt is
+byte-identical to baseline. The arm cannot fire on this bench. Running it would spend hours of fleet
+time to produce an INERT result, and INERT proves nothing. It is pulled from the queue.
+
+The lever was not wrong; its precondition has never existed here. The fix is to make the grounding
+real rather than to widen the gate: a URL named in the spec should be fetched **by the engine**,
+deterministically, and injected verbatim — a fetch the engine performs is grounded by construction,
+and verbatim documentation is the least generic instruction it is possible to hand a node.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
