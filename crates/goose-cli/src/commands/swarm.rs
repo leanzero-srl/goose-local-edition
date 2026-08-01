@@ -6707,6 +6707,23 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // Nothing bad => byte-identical, so a healthy run is untouched.
         let all_ok = serde_json::json!({"modules":[{"module":"store","parsed":true},{"module":"cli","parsed":true}]});
         assert_eq!(drop_unparseable_stubs(bundle.clone(), &all_ok), bundle);
+
+        // EVERY stub bad => the bundle is EMPTIED, and the caller must not then claim it froze
+        // anything. The empty-bundle guard in run_swarm runs BEFORE this drop, so a bundle emptied
+        // HERE used to sail past it, print the success line and emit frozen: true with the pre-drop
+        // module count. MEASURED live: `store` failed `expected ':'` and the event still read
+        // modules: 4, frozen: true. The caller now counts the `### module: ` sections that survive,
+        // so this asserts the fact that count is derived from.
+        let all_bad = serde_json::json!({"modules":[
+            {"module":"store","parsed":false,"error":"expected ':'"},
+            {"module":"cli","parsed":false,"error":"invalid syntax"}
+        ]});
+        let emptied = drop_unparseable_stubs(bundle, &all_bad);
+        assert_eq!(
+            emptied.split("### module: ").skip(1).count(),
+            0,
+            "a bundle whose every stub failed must carry NO module sections — frozen must be false"
+        );
     }
 
     /// A corrupt store must give a CLEAN error, never a traceback. The sink's spec already demanded this,
@@ -21312,14 +21329,42 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // timeout): it builds without one and integrate-verify reconciles. A module handed garbage
                 // is not handled at all — it writes against nothing while believing it has a contract.
                 let bundle = drop_unparseable_stubs(bundle, &contract_validation);
+                // Count what SURVIVED the drop, before set_contracts takes ownership. The
+                // empty-bundle guard above runs BEFORE the drop, so a bundle emptied BY the drop
+                // still reached here, printed the success line and emitted frozen: true with the
+                // PRE-drop module count. MEASURED on a live 3-node run: `store`'s stub failed
+                // `expected ':'` and was dropped, and the event still said modules: 4, frozen: true.
+                // "N modules frozen" was the strongest-sounding claim in the phase and could be
+                // wrong by every module in it.
+                let injected: Vec<String> = bundle
+                    .split("### module: ")
+                    .skip(1)
+                    .filter_map(|sec| sec.lines().next())
+                    .map(|id| id.trim().to_string())
+                    .collect();
+                let frozen_n = injected.len();
                 dispatcher.set_contracts(bundle);
-                eprintln!("  contracts: frozen interfaces injected into every worker");
+                if frozen_n == 0 {
+                    eprintln!(
+                        "  {} every stub failed validation and was dropped — NO frozen interface was injected; \
+                         workers build blind and integrate-verify reconciles",
+                        style("contracts:").yellow().bold(),
+                    );
+                } else {
+                    eprintln!(
+                        "  contracts: frozen interfaces injected into every worker ({frozen_n} of {n_modules} module(s))"
+                    );
+                }
                 // The one class-A CONTRACTS milestone for the phase TODO: interfaces were actually frozen
                 // across N modules (previously the phase emitted only a stderr banner — no stream evidence).
                 sink.write_value(serde_json::json!({
                     "event": "contracts",
+                    // REQUESTED vs actually INJECTED. These differ whenever a stub fails to parse,
+                    // and only the second one is a fact about what workers received.
                     "modules": n_modules,
-                    "frozen": true,
+                    "frozen": frozen_n > 0,
+                    "injected": frozen_n,
+                    "injected_modules": injected,
                     // WHAT was actually frozen, and whether it even parses. Until now this event said only
                     // "N modules, frozen: true" — the stub TEXT was never written anywhere, so the interface
                     // every worker is told to honour died with the process and could not be audited. It is
