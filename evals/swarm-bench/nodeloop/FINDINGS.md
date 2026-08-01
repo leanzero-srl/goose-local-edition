@@ -774,6 +774,35 @@ the fix is the easy part.
 
 432 of 432 tests pass, clippy clean, held for the next boundary.
 
+## F27 — My own fix removed the waste but not the defect, and round 4 caught it
+
+`9c16ec993` excluded `integrate-verify` from the detail fan-out when `fan_verify` applied. I recorded
+that as removing the self-contradicting join spec. **It did not.** Round 4 found the contradiction
+still live at `swarm.rs:12638`, against code that already had my fix.
+
+The reason is exactly the thing the fix changed. With the sink excluded from detailing, the
+description it carries is `thin_integrate_verify_spec` — engine-authored, 2,804 chars — and T2's
+"substantive detail" test is `detailed.trim().len() > 240`. The thin spec sails through it, so the
+join still received the canonical joined spec followed by *"Also run these concrete plan-enumerated
+checks:"* and a verbatim copy of the sweep it had just been told to skip.
+
+So my fix removed a wasted 75-second call and left the defect it was credited with fixing. The
+instance moved; the class did not.
+
+`detailed` is a MODEL-authored detail only when the sink actually went through the fan, and it is
+excluded from the fan precisely when `fan_verify` applied — so `model_detailed = !fan_verify_applied`
+is the honest test. The documented intent (*"keep a substantive spec-specific detail as EXTRA
+checks"*) survives on the non-fan path where the sink IS detailed; the contradiction cannot arise on
+the fan path. Byte-identical when `fan_verify` is off.
+
+Pinned by a test that asserts the two engine-authored specs genuinely contradict each other and that
+the thin spec clears the 240-char threshold — the three facts that together made the append a defect
+rather than a redundancy. 433 of 433 pass.
+
+**The lesson is not the patch.** I verified this only because I decided to re-check a fix I had
+already claimed, rather than trusting my own commit message. Two of today's engine fixes have now
+turned out to be partial on re-examination.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

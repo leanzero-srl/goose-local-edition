@@ -6726,6 +6726,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// The JOIN must never be handed the canonical spec AND a second copy of an engine-authored
+    /// sweep. When fan_verify applies, the sink is excluded from the detail fan, so the description
+    /// it carries is thin_integrate_verify_spec — which is >240 chars and used to pass the
+    /// "substantive detail" test, producing a prompt that said both "Do NOT re-run that whole sweep"
+    /// and "run EVERY command the SPEC advertises". Measured in 10 of 11 fan_e2e-shaped runs.
+    #[test]
+    fn the_join_is_not_handed_the_sweep_it_was_told_to_skip() {
+        // The two engine-authored specs really do contradict each other, which is why appending one
+        // under the other is a defect rather than a redundancy.
+        let joined = joined_integrate_verify_spec(TargetLang::Python);
+        let thin = thin_integrate_verify_spec(TargetLang::Python);
+        assert!(
+            joined.contains("Do NOT re-run that whole sweep"),
+            "the joined spec's whole point is that the shards already ran the sweep"
+        );
+        assert!(
+            thin.contains("EVERY command"),
+            "the thin spec's whole point is to run every advertised command"
+        );
+        assert!(
+            thin.trim().len() > 240,
+            "the thin spec passes the substantive-detail threshold, which is how it got appended"
+        );
+    }
+
     #[test]
     fn a_stub_that_does_not_parse_is_dropped_from_the_frozen_bundle() {
         let bundle = "### module: store\nclass Store: ...\n\n### module: cli\ndef main() \u{2014}> None: ...\n\n"
@@ -12648,8 +12673,23 @@ impl GooseAgentDispatcher {
                     } else {
                         integrate_verify_spec(lang)
                     };
+                    // `detailed` is a MODEL-authored detail only when the sink actually went
+                    // through the detail fan — and it is EXCLUDED from that fan whenever fan_verify
+                    // applied (see the filter above). So in that branch `detailed` is the engine's
+                    // own thin spec, and appending it under the canonical produces one prompt that
+                    // says both "Do NOT re-run that whole sweep; it has happened" and, ~1,200 chars
+                    // later, "run EVERY command/usage the SPEC advertises ... GOLDEN-VALUE CHECK".
+                    // MEASURED across 43 runs: in 10 of 11 fan_e2e-shaped runs the appended text was
+                    // thin_integrate_verify_spec VERBATIM, byte-identical across five different app
+                    // specs. Excluding the sink from detailing removed the wasted 75s call but NOT
+                    // this, because the description it left behind still passes the >240 test — the
+                    // instance was fixed and the defect was not.
+                    let model_detailed = !fan_verify_applied;
                     s["description"] = serde_json::Value::String(
-                        if detailed.trim().len() > 240 && !is_agent_loop_filler(&detailed) {
+                        if model_detailed
+                            && detailed.trim().len() > 240
+                            && !is_agent_loop_filler(&detailed)
+                        {
                             format!(
                                 "{canonical}\n\nAlso run these concrete plan-enumerated checks:\n{detailed}"
                             )
