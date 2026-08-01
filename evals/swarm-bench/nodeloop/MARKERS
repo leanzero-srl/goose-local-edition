@@ -32,6 +32,11 @@ GOOSE_SWARM_PLANNER_ALSO_WORKS
 # complete_verify now carries the finding TEXTS, not just a count (F40)
 finding_texts
 
+# F41/F42: the repair-tail fan can now see engine-authored findings, and the two idle-node
+# mechanisms that emitted nothing are observable.
+task_split
+speculated
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

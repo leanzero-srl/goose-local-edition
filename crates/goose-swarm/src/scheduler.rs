@@ -1240,13 +1240,33 @@ impl State {
             .map(|n| n.state == TaskState::Claimed && n.attempts == attempt)
             .unwrap_or(false);
         if !still_live {
+            // The twin lost. Recorded rather than dropped: "speculation ran and the primary won" and
+            // "speculation never ran" are opposite facts about whether an idle node bought anything,
+            // and until now a run could not distinguish them.
+            self.sink.emit(&SwarmEvent::Speculated {
+                task_id: tid.to_string(),
+                attempt,
+                winner: "primary".to_string(),
+            });
             return; // primary already won, OR the judge re-dispatched (attempt advanced) — the twin lost
         }
         if res.is_ok() {
             if let Some(h) = self.abort_handles.get(tid) {
                 h.abort();
             }
+            self.sink.emit(&SwarmEvent::Speculated {
+                task_id: tid.to_string(),
+                attempt,
+                winner: "twin".to_string(),
+            });
             self.complete(tid, attempt, res);
+        } else {
+            // A twin that ERRORED bought nothing and cost a device; that is the case worth seeing.
+            self.sink.emit(&SwarmEvent::Speculated {
+                task_id: tid.to_string(),
+                attempt,
+                winner: "twin_failed".to_string(),
+            });
         }
         // On a twin Err: the primary keeps running; the twin's own device was already released above.
     }
@@ -1648,6 +1668,15 @@ impl State {
             let fan_out = self.dag.tasks[&id].fan_out;
             self.ready.push(Ranked { fan_out, id });
         }
+        // A split is the mechanism by which spare nodes get more work to do, and until now it changed
+        // the DAG silently. Three real runs could not be asked whether a split ever happened, because
+        // the only trace was child task ids appearing in later dispatches — indistinguishable from a
+        // plan that named them. Emitted at the success return ONLY, so the event means "a split was
+        // applied", never "one was considered".
+        self.sink.emit(&SwarmEvent::TaskSplit {
+            task_id: tid.to_string(),
+            children: children.iter().map(|c| c.id.clone()).collect(),
+        });
         true
     }
 
