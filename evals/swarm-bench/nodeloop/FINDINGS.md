@@ -1481,6 +1481,44 @@ needed (`complete_verify`), and a pool event emitted before the pool was final (
 In each case the run was not lying about the outcome — it was lying about itself, and every downstream
 verdict inherited that.
 
+## F45 — the line that measures goal one was reading four event names the engine never emits
+
+Found by applying F40's lesson rather than waiting for another adversarial round: when a defect is
+fixed, go and look for the same shape everywhere else. `prefix.py` had been reading `owned_files`
+where `plan_loaded` emits `files`. I had not checked whether the other instruments had the same
+disease. They did.
+
+`occupancy.py`'s `IDLE_NODE_EVENTS` — the map behind the line rendered as **"idle-node jobs (the
+'smarter with more nodes' half)"**, which is the single line in the whole harness that measures goal
+one — had four of eight keys naming events that do not exist:
+
+| map key | what the engine actually emits |
+|---|---|
+| `prereview`, `prereview_finding` | **`pre_review`** |
+| `speculation`, `speculative_promoted` | **`speculated`** |
+| `replan`, `dynamic_replan` | **`replanned`** |
+
+So it reported `{'judge': 161}` on a run that fired `pre_review` **seven times**, every run, and the
+omission was invisible because a missing key looks exactly like a mechanism that did not fire. After
+the fix: `{'judge': 161, 'pre_review': 7}`, `{'judge': 54, 'pre_review': 7}`, `{'judge': 94,
+'pre_review': 7}`.
+
+F42's published census is unaffected — it was computed from raw event counts, not from this map. But
+anyone reading the instrument's own output would have got a different and wrong answer, which is the
+worse failure.
+
+**The control that would have caught it now exists**, and writing it produced a second finding. Its
+first version picked the newest `run.jsonl`, which was the unit five minutes into its research phase,
+and it failed on a `pre_review` that had legitimately not happened yet — newest-file-wins, the exact
+trap the campaign notes warn about. It now selects the most recent run containing `run_finished`. An
+in-flight run's absent events are a clock, not a defect.
+
+Mechanisms that legitimately never fire (`replanned`, `sink_review`) are excluded from the positive
+assertion on purpose: a control that demands they appear would be a control demanding a defect stay
+present.
+
+Verified both directions — restoring the broken key fails the self-test with the exact diagnosis.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
