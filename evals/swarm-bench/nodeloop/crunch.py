@@ -137,6 +137,43 @@ def crunch(unit: pathlib.Path) -> dict:
             except Exception as exc:  # noqa: BLE001
                 checks.append(_result("resync_idempotent", "a second sync inserts 0 new rows",
                                       False, f"{type(exc).__name__}: {exc}", "second=0"))
+        # 7. The spec says "A single page, served by the backend at GET /". Nothing checked it — and
+        #    that is the exact requirement the engine's spec_contract was FALSELY reporting on: its
+        #    regex scraped "/`" out of that sentence and pushed "GET /` returned 404 — the app does
+        #    not implement it" against apps that serve / correctly. A false finding about a real
+        #    requirement is the worst of both, so the requirement gets a real check here.
+        try:
+            import subprocess as _sp
+            import urllib.request as _u
+            port = 8996
+            proc = _sp.Popen([sys.executable, "-m", "vendorsync", "--db",
+                              str(unit / "crunch-serve.db"), "--port", str(port)],
+                             cwd=str(unit), stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            try:
+                body, code = "", None
+                for _ in range(40):
+                    time.sleep(0.25)
+                    try:
+                        with _u.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
+                            code, body = r.status, r.read(400).decode(errors="replace")
+                        break
+                    except Exception:
+                        continue
+                served = code == 200 and "<" in body
+                checks.append(_result("serves_root", "GET / returns the single page",
+                                      served,
+                                      f"HTTP {code}" + (f", {len(body)}+ bytes of markup" if served
+                                                        else " or unreachable"),
+                                      "200 with HTML"))
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    proc.kill()
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_result("serves_root", "GET / returns the single page",
+                                  False, f"{type(exc).__name__}: {exc}", "200 with HTML"))
     finally:
         srv.shutdown()
 
