@@ -148,6 +148,51 @@ too, but it is the run's sole repair point.
 Neither is rebuilt into the binary the campaign is running — swapping the engine under live arms
 voids comparability. The rebuild waits for a pass boundary and a re-baseline.
 
+## F7 — The fleet's idle time is PLANNING, not scheduling. And it may grow with node count.
+
+`nodeloop/occupancy.py` measures busy node-seconds ÷ (wall × pool). First numbers, and they killed
+two of my own hypotheses in a row.
+
+| run | pool | whole-run occupancy | EXECUTE occupancy | before first dispatch |
+|---|---|---|---|---|
+| `swarm-1node-r0` | 1 | 0.873 | **1.000** | 964 s |
+| `swarm-3node-r0` (archived, 1 device) | 1 | 0.863 | **1.000** | 913 s |
+| live `baseline-n3-r0` | 3 | 0.604 | **0.990** | **1,312 s** |
+
+**The scheduler is not the problem.** Across the execute window it owns, it keeps essentially every
+node busy essentially all the time — 1.00, 1.00, 0.99.
+
+**Plan width is not the ceiling either.** I claimed it might be, from the whole-run number, and that
+was wrong. With measured task durations the live plan's critical path is 1,648 s out of 6,092 s of
+total work, so `max_useful_nodes = 3.58` — the plan has enough independent work for more than three
+nodes, and a perfect scheduler could reach 1.0 at this pool.
+
+**All of the gap is before the first task is dispatched:** research, scouts, planning drafts,
+detailing and contract stubs. 22 minutes on the live run, 39% of its wall so far. Those are real
+model calls on real nodes, but none of them emits `task_dispatched`, so the time lands in the
+denominator as wall and never in the numerator as busy.
+
+Two consequences:
+
+1. **An instrumentation gap.** The one phase where the fleet's idle time actually lives is the phase
+   the instrument cannot see. Occupancy during planning is currently unmeasurable, so "does planning
+   use three nodes well" has no answer. Closing that needs planner-side call events (round 1's
+   synthesis proposed a `plan_phase` event; it was not among the two findings that survived).
+2. **A hypothesis worth testing, not a result.** Pre-execute went 913–964 s at one node to 1,312 s at
+   three — 43% longer. `best_of_n` is sized to the fleet (`devices.len().clamp(1,5)`), so three nodes
+   means three skeleton drafts where one node means one. If that holds up, adding nodes buys
+   parallelism in EXECUTE and pays for it in PLAN. It is n=1 against a 46-point-spread fleet and
+   three different plans, so it is a question for the n=1 and n=2 cells, not an answer.
+
+### Instrument bugs found and fixed on the way (three of mine, all caught by data not by my controls)
+
+Occupancy of **1.28 and 1.93 on a one-device pool** — impossible, since a weight-1 device runs one
+task at a time. Summing spans double-counted retries and in-flight tasks; a device's busy time is
+the **union** of its spans. Same class gave a "biggest task share" of **1.118**, a share above 1.0.
+And three *finished* runs were reported as having tasks "in flight" when those tasks had simply
+never completed — failures, not work in progress. The self-test now carries the controls that would
+have caught all three, plus the invariant that occupancy can never exceed 1.0.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
