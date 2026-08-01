@@ -70,7 +70,8 @@ if len(versions) > 1:
 print(f"{'arm':<18}{'n':>2}  {'score mean':>10} {'spread':>8}   "
       f"{'fallbacks':>9} {'kind-mm%':>9}  pool  timed_out")
 for arm, rs in sorted(rows.items()):
-    ok = [r for r in rs if not r.get('timed_out') and r.get('score') is not None]
+    ok = [r for r in rs if not r.get('timed_out') and not r.get('aborted')
+          and r.get('score') is not None]
     sc = [r['score'] for r in ok]
     fb = [r.get('audit', {}).get('detail_fallback_count') for r in ok]
     fb = [x for x in fb if x is not None]
@@ -88,10 +89,23 @@ print("fallbacks = tasks whose spec never got past the architect's one-liner (sw
 print("A score delta below the replicate spread is not a result; read the mechanism columns.")
 PY
     ;;
+  check)
+    python3 "$PWD/health.py"
+    ;;
+  abort)
+    # Cut the CURRENT swarm run loose. The loop itself keeps going and moves to the next unit;
+    # this only kills the doomed episode so it stops holding the single addressable worker.
+    N=0
+    for P in $(pgrep -f 'goose swarm run'); do
+      kill -9 -- "-$(ps -o pgid= -p "$P" | tr -d ' ')" 2>/dev/null || kill -9 "$P" 2>/dev/null
+      N=$((N+1))
+    done
+    echo "aborted $N engine process group(s); the loop continues with the next unit"
+    ;;
   stop)
     touch STOP
     echo "STOP written — the loop exits after the current unit (results are kept)."
     ;;
   *)
-    echo "usage: $0 {start|status|watch|results|stop|resume}"; exit 2 ;;
+    echo "usage: $0 {start|status|check|watch|results|abort|stop|resume}"; exit 2 ;;
 esac
