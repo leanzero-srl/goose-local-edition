@@ -1409,6 +1409,43 @@ anything, and all three were previously the same silence.
 
 439 + 44 tests, clippy clean.
 
+## F43 — `replanned` never fires because its window IS the sink, and that suppression is correct
+
+Following F42's two real zeros. `dynamic_replan` needs, simultaneously: something in flight, nothing
+ready, `idle_capacity() >= 2`, replans left, and **not the sink in flight** — the last deliberately,
+because a bonus task completing after the sink's PASS would land unverified code.
+
+`occupancy.py` now attributes the serial tail per task, and the answer is unambiguous:
+
+| unit | solo time | who holds it |
+|---|---|---|
+| preboundary | 1045.3s | **100% `integrate-verify`** — the sink |
+| preboundary-2 | 543.0s | **100% `integrate-verify`** — the sink |
+| preboundary-3 | 55.9s | `test-web` |
+
+So in two of three runs the ENTIRE window where two nodes sit idle is the one window replan is
+designed to skip, and in the third it is 56 seconds. `replanned` not firing is not a defect and needs
+no fix: the scheduler keeps the fleet busy right up to the sink, and the sink is excluded on purpose.
+Recorded as a settled negative so it is not re-investigated.
+
+**Getting here cost a corrected number, and the correction is the point.** I first computed the
+per-task tail in a throwaway script and got 1484.0s where the instrument said 55.9s — a 26x
+disagreement. The instrument was right. My script paired each dispatch with the task's single
+completion, so for a RETRIED task only the last attempt got a span and the earlier attempts' busy time
+vanished, inflating "solo". That is precisely the bug `occupancy.py` carries a sixteen-line comment
+about, having once turned one retry into 83 minutes of phantom busy time and published
+`max_useful_nodes = 1.75` for a real figure near 3.
+
+Re-implementing an instrument in a throwaway script re-earns every bug it was fixed for. The
+attribution therefore lives in `occupancy.py` now, built from the spans it already pairs correctly, so
+the next person asking "which task owns the tail" reads it instead of rebuilding it.
+
+**What this leaves for goal one.** Three places more nodes cannot help, all now measured:
+the pre-dispatch prefix (1312-1836s, planning 68-83% of it, doubled whenever a redraft fires);
+the sink (543-1045s, one node, by construction);
+and the repair tail (1668-3180s, 2-3 sequential fix calls — the largest of the three, and the one
+whose fan could not see its own findings until F41).
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

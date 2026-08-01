@@ -192,15 +192,25 @@ def analyse(path) -> dict:
 
     # Wall-clock during which at most one node was busy — the serial tail, which more nodes cannot
     # shorten. Computed by sweeping the span endpoints rather than sampling.
+    # WHICH TASK owns the serial tail, not just how long it is. Added because the question "is the
+    # dynamic-replan precondition ever met" needs to know whether the lone runner is the SINK (replan
+    # is deliberately suppressed there) or an ordinary task (it is not) — and because answering it in
+    # a throwaway script re-implemented the span pairing and got it wrong in exactly the way the
+    # comment above warns about: naive dispatch->completion pairing drops a retried attempt's busy
+    # time and inflated solo from 55.9s to 1484.0s. The derived number lives here so nobody has to
+    # rebuild the spans to get it.
     solo_secs = None
+    solo_by_task: dict[str, float] = {}
     if spans and wall:
         marks = sorted({t for s in spans for t in s})
         solo = 0.0
         for a, b in zip(marks, marks[1:]):
             mid = (a + b) / 2
-            live = sum(1 for s, e in spans if s <= mid < e)
-            if live == 1:
+            live = [tid for tid, ss in per_task_spans.items()
+                    if any(s <= mid < e for s, e in ss)]
+            if len(live) == 1:
                 solo += b - a
+                solo_by_task[live[0]] = solo_by_task.get(live[0], 0.0) + (b - a)
         solo_secs = solo
 
     biggest = max(per_task.items(), key=lambda kv: kv[1]) if per_task else None
@@ -262,6 +272,8 @@ def analyse(path) -> dict:
         "biggest_task": biggest[0] if biggest else None,
         "biggest_task_share_of_busy": round(biggest[1] / busy, 3) if biggest and busy else None,
         "solo_node_secs": round(solo_secs, 1) if solo_secs is not None else None,
+        "solo_by_task": {k: round(v, 1) for k, v in
+                         sorted(solo_by_task.items(), key=lambda kv: -kv[1])},
         "solo_share_of_wall": round(solo_secs / wall, 3) if (solo_secs is not None and wall) else None,
         "execute_wall_secs": round(exec_wall, 1) if exec_wall else None,
         "execute_occupancy": round(exec_occupancy, 4) if exec_occupancy is not None else None,
@@ -310,6 +322,10 @@ def render(a: dict) -> str:
     else:
         out.append(f"  only ONE node working for {a['solo_node_secs']}s "
                    f"({a['solo_share_of_wall']} of wall) — more nodes cannot shorten that")
+        for tid, secs in list((a.get("solo_by_task") or {}).items())[:4]:
+            note = "  <- the SINK; dynamic replan is deliberately suppressed here" \
+                if tid == "integrate-verify" else ""
+            out.append(f"      {secs:>8.1f}s  {tid}{note}")
     mu, ceil = a.get("max_useful_nodes"), a.get("ceiling_occupancy_at_pool")
     if mu and not a.get("finished"):
         # The critical path only GROWS as a run proceeds, so this ratio falls monotonically and a
