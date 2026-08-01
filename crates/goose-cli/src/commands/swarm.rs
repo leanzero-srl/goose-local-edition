@@ -8247,17 +8247,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                  spendlog/cli.py:3: in <module>\n    import missing\nE   ModuleNotFoundError"
             .to_string();
         assert_eq!(
-            extract_file_from_finding(&f).as_deref(),
+            extract_file_from_finding(&f, &[]).as_deref(),
             Some("spendlog/cli.py"),
             "a non-test source frame is the fix target"
         );
         assert_eq!(
-            extract_file_from_finding("no python3 -m app entry point found"),
+            extract_file_from_finding("no python3 -m app entry point found", &[]),
             None
         );
         // `File "path", line N` shape (pytest full traceback / rust).
         assert_eq!(
-            extract_file_from_finding("File \"app/core.py\", line 7, in run").as_deref(),
+            extract_file_from_finding("File \"app/core.py\", line 7, in run", &[]).as_deref(),
             Some("app/core.py")
         );
     }
@@ -8273,7 +8273,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 .to_string(), // dup
             "no python3 -m spendlog entry point found".to_string(),               // unassigned
         ];
-        let (groups, unassigned) = group_findings_by_file(&findings);
+        let (groups, unassigned) = group_findings_by_file(&findings, &[]);
         let cli = groups
             .iter()
             .find(|g| g.file == "spendlog/cli.py")
@@ -8285,6 +8285,55 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                                          // Partition invariant: every group names a distinct file.
         let files: std::collections::HashSet<_> = groups.iter().map(|g| &g.file).collect();
         assert_eq!(files.len(), groups.len());
+    }
+
+    /// THE FAN'S PRECONDITION. `complete_parallel` groups findings by file and fans one shard per
+    /// group; anything with no file falls to the single serial fix worker that owns 22-44% of the
+    /// run. MEASURED by porting this extractor and running it on the finding strings three real runs
+    /// actually produced: FIVE of six shapes returned None, including the only two that appeared in
+    /// every run. The fan was well built and had almost nothing to fan — the same shape as the
+    /// judge-side splitter that never fires and the e2e fan that did not partition.
+    #[test]
+    fn every_real_finding_shape_resolves_to_a_file_group() {
+        let files = vec![
+            "vendorsync/api.py".to_string(),
+            "vendorsync/store.py".to_string(),
+            "vendorsync/meridian.py".to_string(),
+            "tests/test_meridian.py".to_string(),
+        ];
+        let cases: [(&str, &str); 5] = [
+            // AST review — names a MODULE, never a path. Present in 3 of 3 runs.
+            ("function 'log_message' in module 'vendorsync.api' is a STUB/UNIMPLEMENTED — implement it",
+             "vendorsync/api.py"),
+            // cross-module drift — names two modules; the READER is the one to fix.
+            ("module 'vendorsync.api' reads field 'total' that 'vendorsync.store' does not define",
+             "vendorsync/api.py"),
+            // engine-authored, path in backticks mid-sentence.
+            ("planned deliverable `vendorsync/store.py` is MISSING or EMPTY — create it",
+             "vendorsync/store.py"),
+            ("planned task `test-meridian` FAILED, but its deliverable `tests/test_meridian.py` IS \
+              written. Its attempts were exhausted because the checks it runs DO NOT PASS.",
+             "tests/test_meridian.py"),
+            // the pytest traceback the extractor was originally written for must still work.
+            ("`pytest -q` failed:\ntests/test_meridian.py:89: in test_x\nE   AssertionError",
+             "tests/test_meridian.py"),
+        ];
+        for (finding, want) in cases {
+            assert_eq!(
+                extract_file_from_finding(finding, &files).as_deref(),
+                Some(want),
+                "finding did not resolve to its file: {finding:?}"
+            );
+        }
+        // A finding that genuinely names no file must STILL be unassigned — the serial path is the
+        // correct home for it, and inventing a file would aim a fix shard at nothing.
+        assert_eq!(
+            extract_file_from_finding(
+                "GET /api/health returned 404 — the app does not implement it",
+                &files
+            ),
+            None
+        );
     }
 
     #[test]
@@ -8299,7 +8348,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "./pkg/cli.py:1: in a\nE   Err".to_string(),
             "pkg//cli.py:2: in b\nE   Err".to_string(),
         ];
-        let (groups, _) = group_findings_by_file(&findings);
+        let (groups, _) = group_findings_by_file(&findings, &[]);
         assert_eq!(groups.len(), 1, "both spellings collapse to one group");
         assert_eq!(groups[0].file, "pkg/cli.py");
     }
@@ -17792,7 +17841,7 @@ fn normalize_rel_path(p: &str) -> String {
         .join("/")
 }
 
-fn extract_file_from_finding(finding: &str) -> Option<String> {
+fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<String> {
     let is_code = |p: &str| {
         (p.ends_with(".py") || p.ends_with(".rs") || p.ends_with(".ts"))
             && !p.is_empty()
@@ -17800,6 +17849,14 @@ fn extract_file_from_finding(finding: &str) -> Option<String> {
     };
     let mut last: Option<String> = None;
     let mut src: Option<String> = None;
+    let mut take = |p: &str| {
+        // Normalize so two spellings of one file become ONE group (partition invariant).
+        let norm = normalize_rel_path(p);
+        last = Some(norm.clone());
+        if !p.contains("test") && !p.contains("conftest") {
+            src = Some(norm);
+        }
+    };
     for raw in finding.lines() {
         let line = raw.trim();
         let cand: Option<&str> = if let Some((_, rest)) = line.split_once("File \"") {
@@ -17809,22 +17866,62 @@ fn extract_file_from_finding(finding: &str) -> Option<String> {
         };
         if let Some(p) = cand.map(|p| p.trim()) {
             if is_code(p) {
-                // Normalize so two spellings of one file become ONE group (partition invariant).
-                let norm = normalize_rel_path(p);
-                last = Some(norm.clone());
-                if !p.contains("test") && !p.contains("conftest") {
-                    src = Some(norm);
-                }
+                take(p);
+            }
+        }
+        // A PATH IN BACKTICKS, anywhere in the sentence. The line-leading forms above only match a
+        // pytest traceback, which is the shape this was written for and the only one it ever saw.
+        // Engine-authored findings put the path mid-sentence in backticks —
+        // "planned deliverable `vendorsync/store.py` is MISSING", "its deliverable
+        // `tests/test_meridian.py` IS written" — and every one of them fell through to `unassigned`.
+        for chunk in line.split('`').skip(1).step_by(2) {
+            let c = chunk.trim();
+            if is_code(c) {
+                take(c);
             }
         }
     }
-    src.or(last)
+    if let Some(f) = src.clone().or_else(|| last.clone()) {
+        return Some(f);
+    }
+    // A DOTTED MODULE resolved against the files this run actually planned. The AST review names a
+    // module, never a path — "function 'log_message' in module 'vendorsync.api' is a STUB" — and it
+    // produced a finding in 3 of 3 measured runs, as did cross-module drift, which names two. Both
+    // went to the serial path, so the fan they should have driven had almost nothing to fan.
+    //
+    // Resolved against `all_files` rather than by string-munging, so a module can only ever map to a
+    // file this run really owns — an invented path would send a fix shard at nothing.
+    let words: Vec<&str> = finding
+        .split(|c: char| !(c.is_alphanumeric() || c == '.' || c == '_'))
+        .filter(|w| w.contains('.') && !w.is_empty())
+        .collect();
+    // FIRST match wins. These findings are written subject-first — "function X in module `A` is a
+    // STUB", "module `A` reads a field `B` does not define" — so the first module named is the one to
+    // repair. Taking the last aimed the drift fix at the module that was CORRECT.
+    for w in words {
+        let as_path = w.replace('.', "/");
+        for f in all_files {
+            let norm = normalize_rel_path(f);
+            let stem = norm
+                .strip_suffix(".py")
+                .or_else(|| norm.strip_suffix(".rs"))
+                .or_else(|| norm.strip_suffix(".ts"))
+                .unwrap_or(&norm);
+            if stem == as_path {
+                return Some(norm);
+            }
+        }
+    }
+    None
 }
 
 /// Dedup + group findings by the file they name so each file becomes ONE fix agent (writes partitioned,
 /// same-file findings serialized). Returns (groups in first-seen order, unassigned findings that name no
 /// file) — the unassigned bucket gets a single serial fallback fix so a file-less finding is not dropped.
-fn group_findings_by_file(findings: &[String]) -> (Vec<FileGroup>, Vec<String>) {
+fn group_findings_by_file(
+    findings: &[String],
+    all_files: &[String],
+) -> (Vec<FileGroup>, Vec<String>) {
     let mut order: Vec<String> = Vec::new();
     let mut by_file: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -17834,7 +17931,7 @@ fn group_findings_by_file(findings: &[String]) -> (Vec<FileGroup>, Vec<String>) 
         if !seen.insert(f.clone()) {
             continue;
         }
-        match extract_file_from_finding(f) {
+        match extract_file_from_finding(f, all_files) {
             Some(file) => {
                 if !by_file.contains_key(&file) {
                     order.push(file.clone());
@@ -22753,7 +22850,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 break;
             };
             if complete_parallel() && !fleet_models.is_empty() {
-                let (groups, unassigned) = group_findings_by_file(&verdict.findings);
+                let (groups, unassigned) =
+                    group_findings_by_file(&verdict.findings, &smoke_all_files);
                 eprintln!(
                     "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
                     groups.len(),

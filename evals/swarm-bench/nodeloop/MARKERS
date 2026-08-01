@@ -29,6 +29,9 @@ weaken, skip or delete a check
 pool_resolved
 GOOSE_SWARM_PLANNER_ALSO_WORKS
 
+# complete_verify now carries the finding TEXTS, not just a count (F40)
+finding_texts
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
