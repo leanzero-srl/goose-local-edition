@@ -3262,7 +3262,7 @@ fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[Strin
     format!(
         "END-TO-END SHARD {n} OF {shards}. You own NOTHING and must WRITE NO files — this is a read-only \
          gate that runs in PARALLEL with its sibling shards on the assembled app. BUILD + ACTUALLY RUN the \
-         program's advertised entry point ({entry}).{numbered}{selector} \
+         program's advertised entry point ({entry}). {numbered}{selector} \
          position mod {shards} == {m} — that is, command {n}, then {n} plus {shards}, and so on. Your \
          siblings own the others; checking theirs wastes the fleet and checking none of yours leaves a hole. \
          For EACH command you own do a GOLDEN-VALUE CHECK: feed a concrete input the spec gives or implies \
@@ -6933,6 +6933,24 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             !got.iter().any(|p| p.contains('`')),
             "a path must never contain a markdown delimiter: {got:?}"
         );
+        // A PARAM'D ROUTE MUST BE EXCLUDED, NOT TRUNCATED TO ITS BASE. Splitting the path token at
+        // `<` produced `/api/payments` from `GET /api/payments/<id>`, which no longer contains `<`,
+        // so the exclusion three lines later could not see it and a concrete endpoint the spec never
+        // advertised was curled — a false 404 that blocks green and sends the fix loop after nothing.
+        // All three param forms are pinned, because only one of them was broken and that is exactly
+        // why it survived review.
+        for spec in [
+            "The API exposes GET /api/payments/<id> for one payment.",
+            "The API exposes GET /api/payments/{id} for one payment.",
+            "The API exposes GET /api/payments/:id for one payment.",
+        ] {
+            let got = spec_get_endpoints(spec);
+            assert!(
+                !got.iter().any(|p| p.starts_with("/api/payments")),
+                "a param'd route must be excluded, not truncated to its base: {got:?} from {spec:?}"
+            );
+        }
+
         // Real, unambiguous endpoints still parse.
         let ok =
             spec_get_endpoints("The API exposes GET /api/health and GET /api/summary for status.");
@@ -7008,6 +7026,20 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "an empty oracle must emit today's sentence verbatim"
         );
         assert!(!off_0.contains("THE ADVERTISED SURFACE"));
+        // The lever documents the OFF path as byte-identical, and the assertion above cannot see a
+        // lost separator: `contains` on a fragment is true with or without it. An empty `numbered`
+        // used to render `entry point (python3 -m pkg).The spec advertises` — one character adrift
+        // from the pre-lever engine, on the DEFAULT path, in a campaign whose whole difficulty is a
+        // 46-point replicate spread. Pin the sentence boundary itself.
+        assert!(
+            off_0.contains("--help). The spec advertises"),
+            "OFF must keep the sentence break after the entry point: {}",
+            off_0.chars().take(400).collect::<String>()
+        );
+        assert!(
+            !off_0.contains(").The"),
+            "no sentence may run into the next: {off_0}"
+        );
 
         let oracle = vec![
             "GET /api/health -> EXPECT {\"status\": \"ok\"}".to_string(),
@@ -14899,10 +14931,14 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
         // regex artefact of a backtick. This is precisely the hazard the pillar-check comment
         // records: "a distilled check ... would FALSE-FAIL a correct app, and the fix loop would then
         // REGRESS it".
-        let raw = c[1]
-            .split(['`', '*', '<', '>', '"', '\''])
-            .next()
-            .unwrap_or("");
+        // `<` and `>` are DELIBERATELY NOT in this set. The regex above captures the whole path token
+        // precisely so a param'd route keeps its delimiter and can be excluded three lines below;
+        // splitting at `<` turns `GET /api/payments/<id>` into the concrete path `/api/payments`,
+        // which then passes the exclusion and is curled as a real endpoint — re-arming the exact
+        // false-404-then-regress class this cut was written to remove, for one of the three param
+        // forms the exclusion names. `{id}` and `:id` were unaffected only because `{` and `:` were
+        // never in the set, which is what made it look correct.
+        let raw = c[1].split(['`', '*', '"', '\'']).next().unwrap_or("");
         // Strip trailing prose punctuation the spec attaches (`;`, `,`, `)`, `.`, trailing `/`).
         let path = raw.trim_end_matches([';', ',', ')', '.', '/']).to_string();
         if path.is_empty() {
@@ -22600,6 +22636,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "ran": verdict.ran,
                 "passed": verdict.findings.is_empty(),
                 "findings": verdict.findings.len(),
+                // WHAT the findings ARE, not just how many. This event decides green, and a bare count
+                // makes the one verdict that matters the only one in the run that cannot be checked
+                // against evidence afterwards. MEASURED: a run reported findings: 2 twice; the log did
+                // not say which two, so reconstructing why an app was held red meant inferring from
+                // other events — and the first inference was wrong. Truncated per finding and capped,
+                // because the fix-loop text can be long and this rides every round.
+                "finding_texts": verdict.findings.iter().take(12)
+                    .map(|f| f.chars().take(400).collect::<String>())
+                    .collect::<Vec<_>>(),
             }));
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
             // smoke-skipped tree is still green — there is genuinely nothing to fix.

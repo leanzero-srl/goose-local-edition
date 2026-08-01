@@ -542,6 +542,13 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
         "prefix": pre,
+        # summarise() excludes rows where this is False. It was computed above — up to 600s of
+        # selftest.py per unit — and then never written, so the filter read `None is not False` on
+        # every row and was vacuously true: a unit whose own instruments FAILED their controls was
+        # averaged in exactly like a clean one. The guard existed, ran, and was thrown away at the
+        # return statement.
+        "harness_ok": harness["ok"],
+        "harness_detail": harness["detail"],
     }
 
 
