@@ -17918,8 +17918,6 @@ fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
     }
 }
 
-/// The planned tasks whose failure BLOCKS the green claim (the deterministic-block set for the hard
-/// completion gate). A failed task is excluded when it is a bonus/replanner task (its failure must not fail
 /// The finding a FAILED planned task contributes to the fix loop. Pure (the caller does the stat) so
 /// the two opposite instructions are unit-testable.
 ///
@@ -17961,6 +17959,8 @@ fn failed_task_finding(task: &str, written: &[String], under_test: &[String]) ->
     )
 }
 
+/// The planned tasks whose failure BLOCKS the green claim (the deterministic-block set for the hard
+/// completion gate). A failed task is excluded when it is a bonus/replanner task (its failure must not fail
 /// the run) OR when it owns NO files (C1 — the injected `integrate-verify` model-judge sink; its failure is a
 /// model self-report, never a deterministic green-veto). Only a FILE-OWNING core task can block green. Pure
 /// (no I/O) so the exclusion is unit-testable.
@@ -20315,7 +20315,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .collect();
     // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
     // (and hard subtasks can route to it). Skip if it's already a worker device.
-    if cfg.planner_also_works && !devices.iter().any(|d| d.model_id == cfg.planner_model) {
+    //
+    // ENV-OVERRIDABLE because this silently changes the WORKER COUNT, and a benchmark that varies node
+    // count cannot vary it while an unrelated rule adds a device back. MEASURED: with
+    // GOOSE_SWARM_MAX_NODES=1 the pool was one device (`mac-gabee-…`), the planner model was not in it,
+    // so the planner was pushed and the run dispatched 5 tasks to each with a peak of TWO devices
+    // working concurrently. At MAX_NODES=3 the pool already contained the planner model, nothing was
+    // pushed, and the run had three. So the node curve was about to read 2 → 2-or-3 → 3 while being
+    // labelled 1 → 2 → 3 — nearly flat by construction, which is the precise false conclusion this
+    // project exists to correct.
+    if swarm_gate_cfg("GOOSE_SWARM_PLANNER_ALSO_WORKS", cfg.planner_also_works)
+        && !devices.iter().any(|d| d.model_id == cfg.planner_model)
+    {
         let w = cfg.planner_weight.max(1);
         devices.push(DeviceCfg {
             id: "planner".to_string(),
@@ -20330,6 +20341,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             w
         );
     }
+
+    // THE DEVICES THAT CAN ACTUALLY RECEIVE WORK. `run_started.pool` is emitted upstream from
+    // `enabled`, BEFORE the planner may be pushed, so it under-reports the worker count on exactly the
+    // runs where the planner is not already in the pool — and it is the field every harness reads as
+    // ground truth for "how many nodes did this run have". A run asked for one node, reported a pool
+    // of one, and dispatched half its tasks to a second device.
+    //
+    // Emitted as its own event rather than by correcting `run_started`, so nothing that already parses
+    // that event changes meaning underneath it. `pool` stays what it always was; this is what the run
+    // actually has.
+    sink.write_value(serde_json::json!({
+        "event": "pool_resolved",
+        "devices": devices.iter().map(|d| serde_json::json!({
+            "id": d.id,
+            "model_id": d.model_id,
+            "weight": d.weight,
+        })).collect::<Vec<_>>(),
+        "worker_count": devices.len(),
+        "planner_pushed": devices.iter().any(|d| d.id == "planner"),
+    }));
 
     let mut ext_names = cfg.worker_extensions.clone();
     ext_names.extend(opts.mcp.iter().cloned());
