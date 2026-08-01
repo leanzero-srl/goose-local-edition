@@ -152,6 +152,18 @@ def analyse(path) -> dict:
     busy = sum(per_device.values())
     occupancy = (busy / (wall * n)) if (wall and n) else None
 
+    # Whole-run occupancy UNDERSTATES the scheduler, and the gap is not small. Research, scouts,
+    # planning drafts, detailing and contract stubs are real model calls on real nodes, but none of
+    # them emits task_dispatched — so that time lands in the denominator as wall and never in the
+    # numerator as busy. Judging the scheduler on that number would send someone to fix a scheduler
+    # that is behaving correctly during a phase it does not control. EXECUTE occupancy measures the
+    # window the scheduler actually owns: first dispatch to last completion.
+    exec_start = min((s for s, _ in spans), default=None)
+    exec_end = max((e for _, e in spans), default=None)
+    exec_wall = (exec_end - exec_start) if (exec_start is not None and exec_end is not None) else None
+    exec_occupancy = (busy / (exec_wall * n)) if (exec_wall and n) else None
+    pre_exec_secs = (exec_start - t0) if (exec_start is not None and t0 is not None) else None
+
     # Wall-clock during which at most one node was busy — the serial tail, which more nodes cannot
     # shorten. Computed by sweeping the span endpoints rather than sampling.
     solo_secs = None
@@ -167,6 +179,50 @@ def analyse(path) -> dict:
 
     biggest = max(per_task.items(), key=lambda kv: kv[1]) if per_task else None
 
+    # THE PLAN CEILING. Low occupancy has two completely different causes and they call for opposite
+    # fixes: either the scheduler is leaving nodes idle it could have used, or the PLAN has no more
+    # independent work to give it. Only the DAG can tell them apart.
+    #
+    # With measured per-task durations, the shortest wall-clock any scheduler could achieve on N
+    # workers is bounded below by max(critical path, total work / N) — the first term is the longest
+    # chain of dependent tasks, which no amount of hardware shortens. So:
+    #
+    #     max_useful_nodes = total_work / critical_path
+    #
+    # is the node count beyond which this plan CANNOT go faster, whatever the fleet. If that number
+    # is below the pool size, the answer to "does the swarm get better with more nodes" is decided by
+    # the planner, not the scheduler, and the work belongs in the architect prompt.
+    plan_deps: dict[str, list[str]] = {}
+    for e in events:
+        if e.get("event") == "plan_loaded":
+            for t in e.get("tasks") or []:
+                plan_deps[t.get("id")] = list(t.get("depends_on") or t.get("deps") or [])
+    for tid, ds in disp.items():
+        plan_deps.setdefault(tid, [])
+
+    def longest_path() -> float:
+        memo: dict[str, float] = {}
+        visiting: set[str] = set()
+
+        def walk(t: str) -> float:
+            if t in memo:
+                return memo[t]
+            if t in visiting:      # a cycle cannot happen in a validated DAG, but never hang on one
+                return 0.0
+            visiting.add(t)
+            best = max((walk(d) for d in plan_deps.get(t, []) if d in plan_deps), default=0.0)
+            visiting.discard(t)
+            memo[t] = best + per_task.get(t, 0.0)
+            return memo[t]
+
+        return max((walk(t) for t in plan_deps), default=0.0)
+
+    total_work = sum(per_task.values())
+    critical = longest_path()
+    max_useful = (total_work / critical) if critical > 0 else None
+    ceiling_wall = max(critical, total_work / n) if (n and critical > 0) else None
+    ceiling_occ = (total_work / (ceiling_wall * n)) if (ceiling_wall and n) else None
+
     return {
         "occupancy_version": OCCUPANCY_VERSION,
         "path": str(path),
@@ -181,6 +237,13 @@ def analyse(path) -> dict:
         "biggest_task_share_of_busy": round(biggest[1] / busy, 3) if biggest and busy else None,
         "solo_node_secs": round(solo_secs, 1) if solo_secs is not None else None,
         "solo_share_of_wall": round(solo_secs / wall, 3) if (solo_secs is not None and wall) else None,
+        "execute_wall_secs": round(exec_wall, 1) if exec_wall else None,
+        "execute_occupancy": round(exec_occupancy, 4) if exec_occupancy is not None else None,
+        "pre_execute_secs": round(pre_exec_secs, 1) if pre_exec_secs is not None else None,
+        "total_task_secs": round(total_work, 1),
+        "critical_path_secs": round(critical, 1),
+        "max_useful_nodes": round(max_useful, 2) if max_useful else None,
+        "ceiling_occupancy_at_pool": round(ceiling_occ, 4) if ceiling_occ is not None else None,
         "idle_node_jobs": idle_jobs,
         # A dispatch with no completion means "still running" only while the run is still going. On
         # a FINISHED run the same shape means the task never completed at all — a failure, not work
@@ -199,6 +262,10 @@ def render(a: dict) -> str:
                f"OCCUPANCY {a['occupancy']}"
                + (f"  (perfect = 1.0, one-node-only = {round(1 / a['pool_size'], 3)})"
                   if a["pool_size"] else ""))
+    out.append(f"  EXECUTE window {a['execute_wall_secs']}s (scheduler-owned)   "
+               f"EXECUTE OCCUPANCY {a['execute_occupancy']}   "
+               f"— {a['pre_execute_secs']}s before the first dispatch is research/plan/contracts, "
+               f"real node work that emits no task event")
     for d, s in a["per_device_secs"].items():
         out.append(f"    {d:<46} {s:>8.0f}s  {a['device_share'].get(d, 0):.1%}")
     out.append(f"  biggest task: {a['biggest_task']} = {a['biggest_task_share_of_busy']} of node-busy")
@@ -207,6 +274,16 @@ def render(a: dict) -> str:
     else:
         out.append(f"  only ONE node working for {a['solo_node_secs']}s "
                    f"({a['solo_share_of_wall']} of wall) — more nodes cannot shorten that")
+    mu, ceil = a.get("max_useful_nodes"), a.get("ceiling_occupancy_at_pool")
+    if mu:
+        verdict = ("the PLAN is the ceiling — more nodes cannot help this run"
+                   if mu < (a["pool_size"] or 1)
+                   else "the plan could use more nodes than the fleet has")
+        out.append(f"  plan ceiling: critical path {a['critical_path_secs']}s of "
+                   f"{a['total_task_secs']}s total work")
+        out.append(f"    MAX USEFUL NODES = {mu}   (pool is {a['pool_size']}) — {verdict}")
+        out.append(f"    best occupancy any scheduler could reach on this plan at this pool: {ceil}"
+                   f"   (actual {a['occupancy']})")
     out.append(f"  idle-node jobs (the 'smarter with more nodes' half): {a['idle_node_jobs'] or 'none'}")
     if a["unfinished_tasks"]:
         if a["finished"]:
@@ -326,6 +403,32 @@ def self_test() -> int:
     a = analyse(write(ev))
     check("finds the hog", a["biggest_task"], "sink")
     check("hog share", a["biggest_task_share_of_busy"], 0.9)
+
+    # PLAN CEILING controls, both directions. These decide whether low occupancy is the scheduler's
+    # fault or the planner's, so getting them backwards would send the work to the wrong place.
+    # Fully PARALLEL: 3 equal independent tasks -> critical path = one task -> 3 nodes are all useful.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "plan_loaded", "tasks": [{"id": f"t{i}", "depends_on": []} for i in range(3)],
+           "ts": ts(0)}]
+    for i in range(3):
+        ev.append({"event": "task_dispatched", "task_id": f"t{i}", "device": f"d{i}", "ts": ts(0)})
+        ev.append({"event": "task_completed", "task_id": f"t{i}", "device": f"d{i}", "ts": ts(30)})
+    a = analyse(write(ev))
+    check("parallel plan: 3 nodes useful", a["max_useful_nodes"], 3.0)
+    check("parallel plan: ceiling is perfect", a["ceiling_occupancy_at_pool"], 1.0)
+
+    # Fully SERIAL: a->b->c, each 30s. Critical path IS the total work, so only ONE node is ever
+    # useful and the best any scheduler can do on a 3-pool is 1/3.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "plan_loaded", "tasks": [{"id": "a", "depends_on": []},
+                                             {"id": "b", "depends_on": ["a"]},
+                                             {"id": "c", "depends_on": ["b"]}], "ts": ts(0)}]
+    for i, t in enumerate(["a", "b", "c"]):
+        ev.append({"event": "task_dispatched", "task_id": t, "device": "d0", "ts": ts(i * 30)})
+        ev.append({"event": "task_completed", "task_id": t, "device": "d0", "ts": ts(i * 30 + 30)})
+    a = analyse(write(ev))
+    check("serial plan: only 1 node useful", a["max_useful_nodes"], 1.0)
+    check("serial plan: ceiling is 1/3 on a 3-pool", a["ceiling_occupancy_at_pool"], 1 / 3)
 
     if fails:
         print("SELF-TEST FAILED:")
