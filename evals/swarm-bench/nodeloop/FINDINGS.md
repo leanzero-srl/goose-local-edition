@@ -1030,7 +1030,14 @@ vendor's own document and **never in the prompt**. A planner that reasons "the d
 so the API is" wins; one that concatenates the stated base URL loses. It is a coin flip on a fact
 that is derivable but never given.
 
-**Why nobody read the document.** Both runs, verbatim from `research_tools`:
+**Correction to the above (the vendor trace disproves it).** A node DID read the document — `curl`
+fetched `/v1/docs` four times in the failing run and then exercised `/v1/payments` thoroughly enough
+to trip the 429 throttle and the 409 idempotency replay. The fact was discovered. It died with the
+node that discovered it: `plan_loaded` carries `/v1` zero times, and the implementer that needed it
+wrote `/payments`. The problem is not that the fleet cannot read; it is that what one node learns
+reaches nothing else. See F35 for the full chain.
+
+**Why the SCOUTS could not read it.** Both runs, verbatim from `research_tools`:
 
     {"available": [], "can_look_things_up": false}
     research_completed {"findings": 1, "grounded": 0, "looked_nothing_up": 2}
@@ -1050,6 +1057,50 @@ The lever was not wrong; its precondition has never existed here. The fix is to 
 real rather than to widen the gate: a URL named in the spec should be fetched **by the engine**,
 deterministically, and injected verbatim — a fetch the engine performs is grounded by construction,
 and verbatim documentation is the least generic instruction it is possible to hand a node.
+
+## F35 — the whole 42.7% build, explained end to end, every link a deterministic engine event
+
+Not an inference. Eight events and one HTTP trace, in order:
+
+1. `research_tools {"available": [], "can_look_things_up": false}` — the scouts cannot open the
+   document the spec points at.
+2. Vendor trace, 17:17–17:20: `curl` GETs `/v1/docs` **four times**, then exercises `/v1/payments`
+   until it trips the 429 throttle and the 409 idempotency replay. **A node discovered the fact.**
+3. `plan_loaded` carries `/v1` **zero times**. The fact did not reach the decomposition.
+4. `detail_fallback {"task_id": "meridian", "reason": "timeout", "brief_chars": 122}` — the client's
+   implementer got the architect's one-liner. The one channel that could still have carried a full
+   spec to the one module that needed it **failed open at the 75 s budget**, and it did so for
+   `store`, `api` and `test-web` too.
+5. The implementer writes `{base}/payments`.
+6. Vendor trace: **seven 404s on `/payments`**, three of them while `test-api`, `integrate-verify`
+   and `test-web` are in flight. The fleet ran its own client against the real vendor and watched it
+   fail.
+7. `test-meridian` is dispatched **three times** — attempts 0, 1, 2 — accumulates 41 judge verdicts,
+   and fails all three. `meridian` is dispatched **once** and never revisited. A failing
+   `test-<module>` is treated as the test author's failure to write a passing test, never as evidence
+   that the module under test is wrong.
+8. `complete_failed_tasks` blocks green correctly. `complete_verify` rounds 0 and 1 both fail with
+   the same 2 findings: a stub `log_message`, and the phantom ``GET /` `` (F32). `review_after_fix`
+   then reports `findings: []` — the repair fixed the stub.
+
+**The repair loop never saw the defect.** Its finding sources are an AST review and a regex over the
+spec. Neither runs the code. The run's own HTTP traffic was 404ing seven times and no mechanism
+looks at it, so the fix rounds spent themselves on a stub and on an endpoint that does not exist
+while the app's only job stayed broken.
+
+`complete_result {"passed": false, "verified": false}` — the engine was honest. It knew it had not
+finished. It just could not tell which thing was broken.
+
+**Two consequences for the queue.**
+
+`doc_fetch` (committed, held for the boundary) attacks links 1–5, and specifically survives link 4:
+`doc_facts_block` is its own block in the worker prompt template, spliced independently of the task
+description, so a worker whose detail call timed out into a 122-character brief still receives the
+document verbatim. That is the property that makes it worth fleet time.
+
+Link 7 is a separate defect and is NOT being patched off one run. What the evidence supports so far:
+three dispatches of the test, zero re-dispatches of the module, on a failure whose cause was in the
+module. That wants its own finding round, not a guess.
 
 ## Open, in flight
 
