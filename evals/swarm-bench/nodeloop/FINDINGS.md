@@ -663,6 +663,51 @@ One part of the remedy IS already shipped: those same shards were receiving the 
 *"FIX the offending file"* / *"wire them all"* directive, and `4ba5d5200` now subtracts it under
 `kind_prompt`.
 
+## F25 — RETRACTION of F24's headline, and the real answer to "why can't it use 3 nodes"
+
+**F24 said "the PLAN caps this run at 1.75 nodes". That was wrong, and the cause was a bug in my own
+occupancy instrument.**
+
+`test-meridian` was dispatched TWICE and completed ONCE — a retry. I paired dispatch[i] with
+completion[i], which left the second dispatch unmatched, and an unmatched dispatch was credited to
+the END OF THE RUN. That one retry invented **83 minutes of phantom busy time** on a 122-minute run.
+
+| | published (buggy) | corrected |
+|---|---|---|
+| busy node-secs | 156 min | **94 min** |
+| occupancy | 0.43 | **0.258** |
+| critical path | 89 min | **31 min** |
+| MAX USEFUL NODES | 1.75 — "the plan is the ceiling" | **3.02 — the plan could use MORE nodes than the fleet has** |
+| best achievable occupancy | 0.58 | **1.0** |
+| only-one-node wall | 43.5% | **7.4%** |
+
+An attempt now ends at whichever comes first, its own completion or the NEXT dispatch of the same
+task, since that is what supersedes it. Only a task still outstanding at the last observed event is
+credited to the end. Corroborated by an independent hand calculation that reached 3.02 before the fix
+and now matches exactly.
+
+### The actual answer: only 31% of the run is parallelisable at all
+
+```
+planning / pre-dispatch    30.6 min   25.2%   fans across nodes, but nothing dispatches until it ends
+EXECUTE (parallel)         38.1 min   31.3%   occupancy 0.82 — three nodes DO work here
+COMPLETE / repair          53.0 min   43.5%   single node by default
+```
+
+So the swarm **can** use three nodes — the DAG supports 3.02 and a perfect scheduler could reach 1.0
+occupancy — but it only gets the chance for **31% of the wall clock**. The other 69% is a serial
+planning prefix and a single-node repair tail. Amdahl does the rest: parallelising a third of the run
+across three nodes cannot move the total much, which is why the third node "buys nothing" without the
+plan being at fault.
+
+This vindicates the `complete_parallel` arm already queued (repair is the single biggest block, and
+the lever to fan it exists and defaults OFF) and re-points the planning work at the serial prefix
+rather than at plan width.
+
+**Sixth instrument failure today, and the second I published before catching.** The pattern holds
+exactly: an inference drawn from a signal never designed to answer my question — here, treating "no
+completion event" as "still running" when it also means "superseded by a retry".
+
 ## F24 — First finished unit on the new engine, fully crunched: the PLAN caps this run at 1.75 nodes
 
 `baseline-n3-r0`, 122 min, 3-node pool confirmed, not void/timed-out/aborted, engine_build matching.
