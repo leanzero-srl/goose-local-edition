@@ -150,11 +150,32 @@ print('   busy:',busy or 'none')
 sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run when idle."; exit 1; }
     echo "== 3. rebuilding (nice, so a resident node keeps its CPU)"
     ( cd "$HOME/Projects/goose" && . bin/activate-hermit >/dev/null 2>&1;       nice -n 5 cargo build --release -p goose-cli 2>&1 | tail -2 )
+    # cargo prints "Finished" and then places the artifact, so a marker check fired immediately
+    # afterwards can read a partially-written Mach-O and report EVERY marker absent. MEASURED: the
+    # first boundary run refused with all four markers ABSENT while `strings` on the same path a
+    # moment later found all four. A false REFUSAL is the safe direction, but it is still a broken
+    # check, and trusting it would have sent me to fix a defect that did not exist. Wait for the
+    # binary to stop changing before reading it.
+    echo "== 3b. waiting for the artifact to settle before reading it"
+    LAST=""; STABLE=0
+    for _ in $(seq 1 30); do
+      CUR=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
+      if [ "$CUR" = "$LAST" ]; then STABLE=$((STABLE+1)); else STABLE=0; fi
+      [ "$STABLE" -ge 2 ] && break
+      LAST="$CUR"; sleep 1
+    done
+    echo "   settled at $CUR"
     echo "== 4. VERIFYING the markers actually shipped — compiling is not shipping"
     MISSING=0
     for M in "$@"; do
       printf "   %-38s " "$M"
-      if strings "$GOOSE_BIN" 2>/dev/null | grep -qF -- "$M"; then echo present; else echo ABSENT; MISSING=1; fi
+      # NO PIPE. `grep -q` exits the moment it matches, which SIGPIPEs `strings`, and `set -o
+      # pipefail` at the top of this script then reports the whole pipeline as failed — so a marker
+      # that IS present reads ABSENT. MEASURED: this refused a boundary with all four markers
+      # "missing" while `strings | grep` on the same path in an interactive shell found all four.
+      # It would have refused every boundary forever, and the false direction was only safe by luck.
+      # Process substitution keeps grep's exit status the only one that matters.
+      if grep -qF -- "$M" <(strings "$GOOSE_BIN" 2>/dev/null); then echo present; else echo ABSENT; MISSING=1; fi
     done
     AFTER=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
     echo "== engine_build $BEFORE -> $AFTER"
@@ -162,9 +183,12 @@ sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run 
       echo "REFUSING to restart: a marker is missing from the binary. Fix it before crossing."
       exit 1
     fi
+    # The MARKERS are the evidence; "the binary changed" is only a proxy for them, and it goes wrong
+    # on a repeated invocation — the second attempt sees the binary the FIRST one already rebuilt and
+    # calls it unchanged, refusing a boundary that is in fact ready. An unchanged binary now WARNS.
+    # A missing marker still refuses, because that is the failure this exists to prevent.
     if [ "$BEFORE" = "$AFTER" ]; then
-      echo "REFUSING to restart: the binary did not change. Nothing was rebuilt."
-      exit 1
+      echo "   note: binary unchanged this invocation (already rebuilt); the markers verify it is current"
     fi
     echo "== 5. boundary is safe to cross. Old results are now stale by engine_build and will NOT"
     echo "      be counted; park them (mv ../runs/nodeloop ../runs/nodeloop-preboundary-<n>) if you"
