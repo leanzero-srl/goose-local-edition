@@ -1102,6 +1102,25 @@ Link 7 is a separate defect and is NOT being patched off one run. What the evide
 three dispatches of the test, zero re-dispatches of the module, on a failure whose cause was in the
 module. That wants its own finding round, not a guess.
 
+## doc_fetch — verified by reading every consumer, not by assuming two
+
+"I fixed that" is a hypothesis, so the splice was traced to each site that renders it:
+
+| consumer | channel | interpolation site |
+|---|---|---|
+| architect / skeleton drafts | `research_block` | `swarm.rs:11870` -> `:11995` |
+| detailer (per-task spec) | `research_block` | `:13075` -> `:13085` |
+| pillars | `research_block` | `:11653` -> `:11659` |
+| every worker | `doc_facts_block` | `:18234` -> the prompt template |
+
+The fourth is the one that matters against F35 link 4: `doc_facts_block` is its own slot in the
+worker prompt, spliced independently of the task description. A worker whose detail call timed out
+into a 122-character brief still receives the full document. That is the property that makes this
+worth fleet time rather than another prompt tweak.
+
+Both `research_findings` consumers are fed by ASSIGNMENT during research (`:20459`), which is why the
+fetch is spliced after that block and not before — anything written earlier is discarded.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
