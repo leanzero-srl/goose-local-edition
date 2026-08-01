@@ -1,0 +1,34 @@
+# Strings that MUST appear in the rebuilt binary at the next boundary — one per line, `#` ignored.
+#
+# This file exists because the list used to live only in a prompt. A marker dropped from a prompt is
+# a fix that silently never shipped, and the whole point of the boundary check is that compiling is
+# not shipping.
+#
+# A MARKER MUST BE A STRING LITERAL, NOT A FUNCTION NAME. `strings` reads the binary's data, so a
+# Rust fn name is not there to find. MEASURED: `failed_task_finding` appears 0 times as a literal in
+# swarm.rs and would have reported ABSENT after a perfectly correct rebuild, refusing the boundary
+# and sending me to fix a defect that did not exist. Verify a candidate first:
+#     grep -c '"MARKER"' crates/goose-cli/src/commands/swarm.rs
+# and for a marker inside a format! string, remember the fragment SPLITS at each {interpolation} —
+# pick text that lies wholly between two of them.
+
+# --- held for this boundary ---
+
+# doc_fetch: the engine fetches the document the spec names (F34/F35)
+GOOSE_SWARM_DOC_FETCH
+doc_fetched
+
+# retarget_discarded: record what a confidence redraft throws away (F36)
+retarget_discarded
+
+# failed_task_finding: a failed task whose deliverable is on disk points at the code under test (F37).
+# The fn name is not in the binary; this literal is, and it sits after the {points_at} interpolation.
+weaken, skip or delete a check
+
+# --- carried from the previous boundary, still required ---
+split_inherit_spec
+salvage_spin
+salvage_require_critical
+spec_contract
+e2e_oracle
+GOOSE_SWARM_E2E_ORACLE
