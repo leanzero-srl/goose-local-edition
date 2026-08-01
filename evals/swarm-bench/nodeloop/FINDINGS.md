@@ -123,6 +123,31 @@ Round 1 now dedupes by site before verifying, because three lenses independently
 detail budget and three raised the missing event. Independent rediscovery is recorded as
 corroboration rather than spent as three separate verifications.
 
+## F6 — Adversarial round 1: 2 of 34 survived, both shipped (commit `1a6849ec2`)
+
+Four independent lenses raised **38 findings**, deduped to 34 sites, and **32 were refuted** by
+agents attacking both the defect and its proposed fix. The two that survived:
+
+**The detail fallback fired silently and printed a green check** (`swarm.rs:12410`). The `_ => brief`
+arm collapsed timeout / agent error / filler / empty into one untyped fallback, then the same
+unconditional green ✓ printed — so a detailer that died was indistinguishable from an architect who
+wrote a short line. Both sibling fanouts already report their failures; detail was the only one that
+failed invisibly. Now emits `detail_fallback` {task_id, reason, brief_chars, budget_secs} and prints
+⚠. The verifier added evidence I did not have: the fallback fired **3 of 8 times** in
+`swarm-1node-r0` — `meridian`, `test-api` and `integrate-verify` — the third masked downstream by
+the canonical sink override, which is why only two were visible in `plan_loaded`.
+
+**Every read-only verify task was classified as a fix round** (`swarm.rs:18097`). `is_fix_round` was
+`owned_files.is_empty() && !all_files.is_empty()`, which is also true of every fanned `verify::<M>`
+and `verify-e2e::<i>`. With `read_on_fix` on — and swarm-bench sets it on by default — those
+read-only gates were told the read prohibitions were **SUSPENDED**, granted edits across the
+manifest, and handed the fabricated premise *"the failure below was already reproduced by running
+the app"* when no failure exists. `integrate-verify` is deliberately still included: it owns nothing
+too, but it is the run's sole repair point.
+
+Neither is rebuilt into the binary the campaign is running — swapping the engine under live arms
+voids comparability. The rebuild waits for a pass boundary and a re-baseline.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
