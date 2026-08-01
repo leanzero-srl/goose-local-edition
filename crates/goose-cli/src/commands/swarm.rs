@@ -726,12 +726,24 @@ pub struct SwarmConfig {
     /// MEASURED: swarm-3node died on `Store.__init__() got an unexpected keyword argument 'path'`,
     /// complete_verify caught it three rounds running, and the fix worker could not repair it. OFF by
     /// default => the fix prompt is byte-identical to today.
+    // No serde default made this a REQUIRED key, so any config.yaml omitting it failed to
+    // deserialize SwarmConfig. load_config merges over Default so runtime was safe, but its
+    // fallback at the `unwrap_or_else` is a DIRECT typed read that would fail the same way and
+    // silently discard the user's whole `swarm:` block. bool::default() is false, which is this
+    // lever's documented default, so this is byte-identical.
+    #[serde(default)]
     pub read_on_fix: bool,
     /// Emit only the rules that apply to the task's KIND. The generic worker prompt is the
     /// implementer's; measured over 1,282 dispatches, ~60% of tasks receive instructions written for
     /// a different job, and a test-author is told "NEVER read the project's TEST files" while owning
     /// one. This SUBTRACTS rules per kind — it never adds a persona, which is measured null on this
     /// model class. OFF by default => byte-identical prompts.
+    // No serde default made this a REQUIRED key, so any config.yaml omitting it failed to
+    // deserialize SwarmConfig. load_config merges over Default so runtime was safe, but its
+    // fallback at the `unwrap_or_else` is a DIRECT typed read that would fail the same way and
+    // silently discard the user's whole `swarm:` block. bool::default() is false, which is this
+    // lever's documented default, so this is byte-identical.
+    #[serde(default)]
     pub kind_prompt: bool,
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
     /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
