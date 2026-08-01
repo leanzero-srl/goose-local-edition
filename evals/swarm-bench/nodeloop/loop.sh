@@ -98,6 +98,12 @@ PY
   check)
     python3 "$PWD/health.py"
     ;;
+  selftest)
+    # Adversarially audit the HARNESS itself. With a unit dir it also checks the invariants that
+    # aggregate numbers cannot see; without one it runs each instrument's own controls.
+    shift || true
+    python3 "$PWD/selftest.py" "$@"
+    ;;
   abort)
     # Cut the CURRENT swarm run loose. The loop itself keeps going and moves to the next unit;
     # this only kills the doomed episode so it stops holding the single addressable worker.
@@ -169,5 +175,5 @@ sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run 
     echo "STOP written — the loop exits after the current unit (results are kept)."
     ;;
   *)
-    echo "usage: $0 {start|status|check|watch|results|abort|boundary|stop|resume}"; exit 2 ;;
+    echo "usage: $0 {start|status|check|selftest|watch|results|abort|boundary|stop|resume}"; exit 2 ;;
 esac
