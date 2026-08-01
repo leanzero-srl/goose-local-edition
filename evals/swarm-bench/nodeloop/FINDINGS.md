@@ -663,6 +663,50 @@ One part of the remedy IS already shipped: those same shards were receiving the 
 *"FIX the offending file"* / *"wire them all"* directive, and `4ba5d5200` now subtracts it under
 `kind_prompt`.
 
+## F24 — First finished unit on the new engine, fully crunched: the PLAN caps this run at 1.75 nodes
+
+`baseline-n3-r0`, 122 min, 3-node pool confirmed, not void/timed-out/aborted, engine_build matching.
+
+**Score 88.7%** (A 100 / B 91 / **C 85.7** / D 75) against the pre-boundary unit's 50.0% with tier C
+at 14.3%. **That comparison is n=1 against n=1 on a fleet with a measured 46-point replicate spread,
+so it attributes nothing to the fixes.** It is recorded as one observation, not as evidence.
+
+**The crunch — 5 of 6, and this time the vendor integration actually works:**
+```
+[PASS] fetch_all_payments   247 in 3.9s          (pre-boundary: 0)
+[PASS] chronological        mixed offsets normalised
+[PASS] total_count          247                  (pre-boundary: 0)
+[PASS] resync_idempotent    first=247 second=0
+[FAIL] idempotent_create    KeyError: 'payment_id'
+```
+`crunch.py` and `score_build` broadly AGREE here (5/6 and 88.7%), where on the pre-boundary unit they
+diverged violently (1/4 against 50%). Agreement between two independent instruments is worth more
+than either number.
+
+**And the node answer, from a FINISHED run so the plan ceiling is meaningful:**
+
+| | |
+|---|---|
+| MAX USEFUL NODES | **1.75** (pool is 3) |
+| best occupancy any scheduler could reach here | 0.58 |
+| actual occupancy | 0.43 |
+| wall with only ONE node working | **3,177 s — 43.5%** |
+| biggest single task | `test-meridian` = **53.3% of all node-busy time** |
+| before the first dispatch | 1,836 s — 25% of wall |
+
+**On this spec, the swarm cannot use three nodes, and the limit is the PLAN, not the scheduler.** One
+task holds 53% of node-busy time, so the DAG's critical path dominates and no scheduler could exceed
+0.58 occupancy at this pool. Adding the third node was, for this run, worth nothing.
+
+That is the honest answer to goal one so far: the machinery to *use* nodes works (planning fans 6/7/6,
+execute occupancy is near 1.0 while it lasts, idle-node judging fired 54 times), but a quarter of the
+run precedes any dispatch, 43% of it runs on one node, and a single task is over half the work. Those
+are structural properties of the decomposition, not score noise — which is why they are worth acting
+on at n=1 in a way a score delta never is.
+
+Note I read `max_useful_nodes` at 3.58 mid-run and refused to draw a verdict from it. The finished
+value is 1.75 — the opposite conclusion. That restraint was correct.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
