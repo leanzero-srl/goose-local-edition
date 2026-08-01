@@ -79,8 +79,21 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         # node-count sweep was about to compare 2 against 3 while labelling it 1 against 3.
         # Off here, so N nodes means N workers. The 3-node cell is unaffected (nothing was ever pushed
         # there), which is what makes this a correction rather than a change of subject.
+        # GOOSE_SWARM_ASK_WAIT_SECS: when plan confidence lands under the ask floor the engine writes
+        # .swarm/clarify-questions.json and BLOCK-POLLS for answers for 1800s — THIRTY MINUTES — then
+        # proceeds and decides the questions itself. Nothing in this harness answers, so the wait is
+        # always paid in full and always ends the same way. MEASURED on the first post-freeze unit:
+        # confidence 68 against a floor of 85, low_confidence_ask at +26.6m, and all three nodes
+        # GENERATING = 0 for the whole window.
+        #
+        # The outcome is IDENTICAL either way — the plan that ships after 1800s is the plan that would
+        # have shipped after 5s — so the wait buys nothing and costs ~25% of a unit in node-independent
+        # idle, injected straight into the wall-clock and occupancy figures the node curve compares.
+        # Not answering (rather than authoring canonical answers) keeps the treatment constant across
+        # cells without putting my judgement into the build.
         env = {**env, "GOOSE_SWARM_MAX_NODES": str(nodes),
                "GOOSE_SWARM_PLANNER_ALSO_WORKS": "0",
+               "GOOSE_SWARM_ASK_WAIT_SECS": "5",
                "GOOSE_SWARM_READ_ON_FIX": os.environ.get("GOOSE_SWARM_READ_ON_FIX", "1")}
         cmd = [str(GOOSE), "swarm", "run", prompt, "--output-format", "json",
                "--log-file", str(workdir / "run.jsonl")]

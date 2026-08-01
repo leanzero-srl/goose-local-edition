@@ -1580,6 +1580,35 @@ Also noted, not yet a finding: `meridian` — the module owning the vendor clien
 DISCARDED round, so it may be repaired in round 2; that is precisely the ghost-versus-live
 distinction, and it is why the instruments separate them.
 
+## F48 — the fleet sat idle for 30 minutes waiting for an answer that changes nothing
+
+Caught live on the first post-freeze unit by watching the event stream instead of the clock.
+
+At +26.6m `low_confidence_ask` fired: plan confidence **68** against a floor of **85**. The engine
+writes `.swarm/clarify-questions.json` and BLOCK-POLLS for `.swarm/clarify-answers.json` for
+`ask_wait_secs` — **1800 seconds, thirty minutes** — then proceeds and decides the questions itself.
+Nothing in this harness answers, so the wait is always paid in full and always ends the same way.
+Confirmed by the fleet itself: `lms ps` showed **GENERATING = 0** across all three nodes.
+
+**The plan that ships after 1800s is the plan that would have shipped after 5s.** The wait buys
+nothing. It costs ~25% of a unit in idle fleet — and it is *node-independent*, so it lands directly in
+the wall-clock and occupancy figures the node curve compares, as pure noise. Across a 12-unit baseline
+set that is six hours of fleet time and a variance term that could swamp the effect being measured.
+
+Fixed harness-side, `GOOSE_SWARM_ASK_WAIT_SECS=5` — the engine is frozen and did not need to move.
+Deliberately NOT answering the questions from an authored canonical set: not answering keeps the
+treatment identical across cells without putting my judgement into the build, and it is what an
+unattended run does anyway once the timer expires.
+
+The unit was killed and discarded rather than allowed to finish. It was 35 minutes in and had
+dispatched **zero tasks** — the whole 35 minutes was planning and idle — so nothing of value was lost,
+and letting it complete would have put one unit with a 30-minute stall into the same replicate set as
+eleven without, which is worse than either extreme.
+
+**The lesson for the freeze:** "prefer observing over building" is not "stop looking". This cost
+nothing to find — one look at the live event stream and one `lms ps` — and it was silently burning a
+quarter of every unit.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
