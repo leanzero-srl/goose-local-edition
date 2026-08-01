@@ -1519,6 +1519,37 @@ present.
 
 Verified both directions — restoring the broken key fails the self-test with the exact diagnosis.
 
+## F46 — a contract between the harness and the engine, so the name class cannot recur
+
+Three instruments shipped a name the engine does not emit (F40's `owned_files` vs `files`, F45's four
+bad idle-node keys). Fixing the third one is not the job; removing the mechanism that produced all
+three is. `selftest.py` now asserts the harness's reads against the engine itself, and the two halves
+deliberately use **different ground truth**:
+
+- **FIELD names** come from a real **FINISHED** run — only a run proves what an event carries — and are
+  asserted conditionally: if the event appears, the field must too. An event that has never fired is
+  not a failure, it is a clock.
+- **EVENT names** come from the **engine source** (`"event": "x"` literals plus snake_cased
+  `SwarmEvent` variants, 53 found). They cannot come from a run, because a mechanism that legitimately
+  never fires would make a run-based check unable to tell a wrong name from a quiet mechanism — which
+  is precisely the confusion that hid F45 for months.
+
+Both directions verified, and each reproduces a defect that actually shipped:
+
+    harness reads `prereview`         -> FAILS: "event name(s) the engine never emits: ['prereview']"
+    harness reads `owned_files` on
+      plan_loaded.tasks[]             -> FAILS: "missing field(s) the harness reads: ['owned_files']
+                                                 (it carries ['deps','description','difficulty',
+                                                 'files','id','model'])"
+    both restored                     -> passes
+
+And the discovery itself is proven non-blind — 53 engine event names found, with `pre_review`,
+`speculated`, `task_split`, `replanned` and `pool_resolved` all confirmed present. A contract that
+found zero names would pass everything, which is the failure mode this whole project keeps meeting.
+
+Harness-only; permitted under the freeze. It runs on every unit, so the next time the engine renames
+something the sweep fails loudly instead of quietly reporting a zero.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

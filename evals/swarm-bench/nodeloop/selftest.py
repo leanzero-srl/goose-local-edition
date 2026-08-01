@@ -25,11 +25,114 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 SELFTEST_VERSION = "st-1"
+
+
+
+# WHAT THE HARNESS READS OUT OF THE ENGINE. Three instruments have now shipped a name the engine does
+# not emit, each invisible because a missing key is indistinguishable from a mechanism that did not
+# fire: prefix.py read `owned_files` off plan_loaded where the engine emits `files`, and occupancy.py's
+# idle-node map named `prereview`, `speculation`, `replan` and `dynamic_replan` — four of eight keys —
+# so the single line that measures goal one silently dropped pre_review's 7 firings per run.
+#
+# Both halves are asserted below, and they need different ground truth:
+#   FIELDS come from a real FINISHED run (only a run proves what an event carries), and are asserted
+#          conditionally — if the event appears, the field must too. A new event that has never fired
+#          is not a failure.
+#   EVENT NAMES come from the ENGINE SOURCE, because a mechanism that legitimately never fires would
+#          make a run-based check unable to tell a wrong name from a quiet mechanism — which is
+#          exactly the confusion that hid the last one.
+EVENT_FIELDS: dict[str, list[str]] = {
+    "run_started": ["pool"],
+    "plan_loaded": ["tasks"],
+    "plan_loaded.tasks[]": ["id", "deps", "description", "files"],
+    "task_dispatched": ["task_id", "device", "owned_files", "attempt"],
+    "detail_fallback": ["task_id", "reason", "brief_chars"],
+    "complete_verify": ["round", "ran", "findings"],
+    "pool_resolved": ["worker_count", "planner_pushed"],
+    "retarget_discarded": ["round", "tasks"],
+}
+
+# Every event name the harness filters on or counts. Each must be a name the engine can actually emit.
+HARNESS_EVENT_NAMES = [
+    "run_started", "plan_loaded", "task_dispatched", "task_completed", "detail_fallback",
+    "contracts", "research_completed", "confidence_retarget", "run_finished", "complete_verify",
+    "pool_resolved", "retarget_discarded", "judge_verdict", "pre_review", "sink_review",
+    "replanned", "speculated", "task_split",
+]
+
+ENGINE_SRC = pathlib.Path.home() / "Projects/goose/crates"
+
+
+def engine_event_names() -> set[str]:
+    """Names the engine can emit: literal `"event": "x"` plus snake_cased SwarmEvent variants."""
+    names: set[str] = set()
+    swarm_rs = ENGINE_SRC / "goose-cli/src/commands/swarm.rs"
+    if swarm_rs.is_file():
+        names |= set(re.findall(r'"event"\s*:\s*"([a-z_]+)"', swarm_rs.read_text(errors="replace")))
+    ev_rs = ENGINE_SRC / "goose-swarm/src/event.rs"
+    if ev_rs.is_file():
+        body = ev_rs.read_text(errors="replace")
+        m = re.search(r"pub enum SwarmEvent\s*\{(.*?)\n\}", body, re.S)
+        if m:
+            for variant in re.findall(r"^\s{4}([A-Z][A-Za-z0-9]*)", m.group(1), re.M):
+                names.add(re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower())
+    return names
+
+
+def field_contract() -> list[str]:
+    """Assert the harness's field and event names against the engine, not against its own habits."""
+    fails: list[str] = []
+
+    # 1. EVENT NAMES vs the engine source.
+    engine = engine_event_names()
+    if not engine:
+        fails.append("could not read the engine's event names — the name check did not run, which is "
+                     "not the same as passing")
+    else:
+        unknown = sorted(n for n in HARNESS_EVENT_NAMES if n not in engine)
+        if unknown:
+            fails.append(f"the harness references event name(s) the engine never emits: {unknown} "
+                         f"— a missing key reads exactly like a mechanism that did not fire")
+
+    # 2. FIELDS vs a real FINISHED run. Never the newest file: an in-flight run has not reached the
+    #    phases these events live in, so its absent events are a clock, not a defect.
+    chosen = None
+    events: list[dict] = []
+    for path in sorted((HERE.parent / "runs").glob("nodeloop*/*/run.jsonl"), reverse=True):
+        rows = []
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if any(r.get("event") == "run_finished" for r in rows):
+            chosen, events = path, rows
+            break
+    if chosen is None:
+        return fails
+
+    seen: dict[str, set] = {}
+    for e in events:
+        ev = e.get("event")
+        seen.setdefault(ev, set()).update(e.keys())
+        if ev == "plan_loaded":
+            for t in (e.get("tasks") or []):
+                if isinstance(t, dict):
+                    seen.setdefault("plan_loaded.tasks[]", set()).update(t.keys())
+    for ev, wanted in EVENT_FIELDS.items():
+        if ev not in seen:
+            continue  # the event never fired in this run — that is a clock, not a defect
+        missing = [f for f in wanted if f not in seen[ev]]
+        if missing:
+            fails.append(f"{chosen.parent.name}: `{ev}` is missing field(s) the harness reads: "
+                         f"{missing} (it carries {sorted(seen[ev])})")
+    return fails
 
 
 def run_controls() -> list[str]:
@@ -130,7 +233,7 @@ def run_invariants(unit: pathlib.Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     args = [a for a in argv[1:] if not a.startswith("--")]
-    fails = run_controls()
+    fails = run_controls() + field_contract()
     scope = "controls"
     if args:
         unit = pathlib.Path(args[0]).resolve()
