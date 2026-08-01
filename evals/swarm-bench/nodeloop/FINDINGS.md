@@ -1270,6 +1270,59 @@ Two lessons, and the second is the general one:
   fleet idle, exactly as intended — and it still produced a corrupt row. "It worked" and "it left the
   world in the state I wanted" are different claims.
 
+## F40 — the adversarial round found six, and two of them were mine from today
+
+63 agents, five lenses, three refuters per finding with distinct jobs (is it a misreading, is the
+path reachable, does it cause the stated harm). **19 raised, 13 killed, 6 survived.** Every survivor
+was checked by hand before acting on it; the refutations were read too.
+
+**The one that mattered most, found independently by two lenses at 3/3.** `prefix.py` read
+`owned_files` off `plan_loaded`, and the engine emits that field as **`files`**
+(`retarget_discarded` is the one that says `owned_files`). So the file-based survival number — the
+number I had just written into FINDINGS as "the one a reuse path should be designed against" — was
+structurally **zero on every real run**, and it passed its own controls, because those controls were
+driven by a synthetic stream I wrote using my own assumed key.
+
+**A control built from the instrument's assumption tests the assumption against itself.** That is the
+general lesson and it is now enforced: `prefix.py` has a real-shape control that reads an actual
+`run.jsonl` off disk and fails if `plan_loaded` yields no files. Reintroducing the bug makes it fail
+with the exact diagnosis; removing it passes. Both directions verified.
+
+**It also corrects F37.** I reported there that `test-meridian` and `test-api` had `owned_files: []`
+— that was the same key miss, not an empty list. They own `tests/test_meridian.py` and
+`tests/test_api.py`, with deps `['meridian']` and `['api']`. F37's conclusion is unaffected (it rests
+on the file being on disk at 13,357 bytes and its failures being real module defects) and the fix is
+actually *better* than I could show: the deps traversal names `vendorsync/meridian.py`.
+
+**`spec_get_endpoints` — my backtick fix re-armed the bug it was written to remove.** I put `<` and
+`>` in the delimiter split set, three lines above an exclusion that drops any path containing `<`.
+`GET /api/payments/<id>` became the concrete path `/api/payments`, which the exclusion could no
+longer see. `{id}` and `:id` still worked, which is exactly why it looked correct. The regex's own
+comment, four lines up, says the char class must not stop before `<`. I did not read it.
+
+**`sweep.py` computed the harness verdict and threw it away.** Up to 600s of `selftest.py` per unit,
+then `harness_ok` was never written into the row — while `summarise()` filters on
+`r.get("harness_ok") is not False`, which is vacuously true when the key does not exist. A unit whose
+own instruments failed their controls was averaged in exactly like a clean one.
+
+**The e2e shard prompt lost a space** on the DEFAULT path (`).The` for `). The`), against a lever
+documented byte-identical, with a guard test that asserted on a fragment and could not see it. The
+refuters argued convincingly that one space cannot move an outcome. They are probably right — and a
+documented byte-identity claim that is false is still false, and it cost one character to fix.
+
+**And one finding that was inert but pointed at something real.** The claim was that the new
+failed-task finding never reaches the fix loop on a Python run, because its only consumer is guarded
+by `if !verdict.ran` and the Python smoke gate always runs. That is correct as written, and the guard
+is deliberate (a stale failed-task finding once pinned a repairable app red for three rounds). But
+checking it exposed a worse gap: **`complete_verify` emitted only a COUNT.** The event that decides
+green was the one verdict in the entire run that could not be checked against evidence afterwards — I
+had to infer which two findings held a build red, and my first inference was wrong. It now carries
+the finding texts, truncated and capped.
+
+Measured while checking: the produced app's own suite runs in **6.4s** against a 120s cap and reports
+2 failed / 46 passed, so the runtime oracle is not being timed out — whatever held that build red,
+it was not a silent gate.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

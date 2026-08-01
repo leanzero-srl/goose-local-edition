@@ -31,6 +31,7 @@ import json
 import pathlib
 import sys
 
+HERE = pathlib.Path(__file__).resolve().parent
 PREFIX_VERSION = "px-1"
 
 
@@ -39,6 +40,16 @@ def _ts(v):
         return dt.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
     except (ValueError, TypeError):
         return None
+
+
+def plan_task_files(task: dict) -> list[str]:
+    """A task's owned files, under whichever key the emitting event used.
+
+    `plan_loaded` says `files`; `retarget_discarded` says `owned_files`. Both are engine events and
+    both are authoritative — this reconciles them in ONE place so no caller has to know which stream
+    it is holding.
+    """
+    return list(task.get("files") or task.get("owned_files") or [])
 
 
 def read_events(unit: pathlib.Path) -> list[dict]:
@@ -110,13 +121,21 @@ def analyse_events(events: list[dict]) -> dict:
     reuse = None
     if discarded and plan_tasks:
         shipped_ids = {t.get("id") for t in plan_tasks}
-        shipped_files = {f for t in plan_tasks for f in (t.get("owned_files") or [])}
+        # THE TWO EVENTS DISAGREE ON THE KEY. `plan_loaded` emits a task's files as `files`
+        # (swarm.rs, "files": n.spec.owned_files) while `retarget_discarded` emits `owned_files`.
+        # Reading `owned_files` off plan_loaded returns nothing on every real run, which made the
+        # file-based survival number — the one this instrument exists to produce — structurally zero
+        # while still passing its own controls, because those controls were driven by a synthetic
+        # stream I wrote using my own assumed key. A control built from the assumption tests the
+        # assumption against itself. `plan_task_files` below reads both names, and `real_run_shapes`
+        # asserts against an actual run so the next key drift cannot hide.
+        shipped_files = {f for t in plan_tasks for f in plan_task_files(t)}
         rows = []
         for d in discarded:
             tasks = [t_ for t_ in d["tasks"] if isinstance(t_, dict)]
             by_id = [t_ for t_ in tasks if t_.get("id") in shipped_ids]
             by_file = [t_ for t_ in tasks
-                       if set(t_.get("owned_files") or []) & shipped_files]
+                       if set(plan_task_files(t_)) & shipped_files]
             rows.append({
                 "round": d["round"],
                 "discarded": len(tasks),
@@ -251,6 +270,30 @@ def self_test() -> int:
     no_ev = analyse_events([e for e in stream if e["event"] != "retarget_discarded"])
     if no_ev["reuse"] is not None or no_ev["reuse_available"]:
         fails.append("a build that never emitted retarget_discarded reported a reuse figure")
+
+    # REAL-SHAPE CONTROL. Every check above is driven by a stream this file wrote, so all of them
+    # passed while the file-survival path read a key the engine never emits. A control that shares the
+    # instrument's assumption cannot test it. This one reads an ACTUAL run off disk and asserts the
+    # path is non-vacuous — if plan_loaded's key changes again, this fails instead of silently
+    # returning zero.
+    real = sorted(HERE.parent.glob("runs/nodeloop*/*/run.jsonl"))
+    if real:
+        ev = []
+        for line in real[-1].read_text(errors="replace").splitlines():
+            try:
+                ev.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        plan = next((e for e in ev if e.get("event") == "plan_loaded"), None)
+        if plan:
+            tasks = [t for t in (plan.get("tasks") or []) if isinstance(t, dict)]
+            files = {f for t in tasks for f in plan_task_files(t)}
+            if tasks and not files:
+                fails.append(f"{real[-1].parent.name}: plan_loaded has {len(tasks)} tasks and "
+                             f"plan_task_files() found NO files — the key changed again "
+                             f"(saw: {sorted(tasks[0].keys())})")
+    else:
+        print("  note: no real run on disk, the real-shape control did not run")
 
     if fails:
         print(f"prefix.py SELF-TEST FAILED ({PREFIX_VERSION}):")
