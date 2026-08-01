@@ -985,6 +985,27 @@ tables, checked what it currently does first, and found it was not blind but *wr
 confident false finding rather than nothing. Had I widened it without looking, I would have added a
 second parser beside a broken one and never seen this.
 
+## F33 — Independent confirmation the phantom finding was false
+
+`crunch.py` gains `serves_root`: the spec says *"A single page, served by the backend at `GET /`"*,
+and nothing was checking it — the exact requirement `spec_contract` was falsely reporting on.
+
+Run against the two control trees, it confirms F32 from the other side:
+
+| tree | `spec_contract` said | `crunch.py serves_root` observes |
+|---|---|---|
+| `baseline-n3-r0` (the 50% run) | *"GET /` returned 404 — the app does not implement it"* | **HTTP 200, 400 bytes of markup** |
+| `opus-5-r0` (known good) | — | HTTP 200, 398 bytes |
+
+The app the engine accused of not implementing its root page **serves it correctly**. That is no
+longer an inference from reading a regex; it is two instruments disagreeing, with the run's own
+graded verdict on one side and a live HTTP request on the other.
+
+Controls still hold in both directions: known-good 7/7 exit 0, known-bad 2/5 exit 1.
+
+A false finding about a REAL requirement is the worst of both — it burns repair effort and leaves the
+requirement unchecked. So the requirement now has a genuine check, independent of the engine.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
