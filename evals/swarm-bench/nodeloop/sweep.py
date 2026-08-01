@@ -107,6 +107,20 @@ ARMS = [
                 "drop, the cause is not the ceiling and this whole line of reasoning is wrong.",
     },
     {
+        "name": "complete_parallel",
+        "env": {"GOOSE_SWARM_COMPLETE_PARALLEL": "1"},
+        "gate": "MEASURED live on baseline-n3-r0: the COMPLETE/repair phase ran 20 of 88 minutes — "
+                "22% of the run — on ONE node, with two of three idle for all of it "
+                "(smoke_fix_target = devices.first(), swarm.rs:21260). Two independent calculations "
+                "agree: occupancy.py put solo-node time at 1174.6s and the gap from the last "
+                "task_completed was 19.6 min. This is the phase the project's own ledger fingers as "
+                "'REPAIR is what fails', and the lever to fan it across the fleet already exists and "
+                "defaults OFF. PREDICTION: wall time falls by roughly the repair tail's idle share "
+                "and the build score is UNCHANGED within the replicate spread — this buys fleet "
+                "utilisation, not correctness. If the score MOVES, the parallel fix path is not "
+                "equivalent to the serial one and that is a defect worth more than the speedup.",
+    },
+    {
         "name": "doc_prefetch",
         "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
         "gate": "doc_facts is the only un-paraphrased scout->worker channel. Tier C is graded on "
