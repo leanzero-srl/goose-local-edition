@@ -7942,20 +7942,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     #[test]
     fn scout_lenses_select_correctly() {
         // greenfield drops the amendment-only `codebase` lens.
+        // ORDER IS PRIORITY: straggler-stop sacrifices whichever lens finishes LAST, and measured on
+        // 4 of 4 runs that was `edge-cases` every single time — the lens carrying the failure modes
+        // the vendor-contract tier grades. It now runs FIRST so the sacrifice falls on `libraries`,
+        // which is near-inert on a spec that forbids dependencies.
         let g: Vec<&str> = select_lenses(false, 4).iter().map(|l| l.id).collect();
-        assert_eq!(g, vec!["libraries", "architecture", "edge-cases"]);
+        assert_eq!(g, vec!["edge-cases", "architecture", "libraries"]);
+        assert_eq!(
+            g.last(),
+            Some(&"libraries"),
+            "the LAST lens is the one straggler-stop drops; it must be the cheapest to lose"
+        );
         // amendments include codebase, and it is first so a low clamp keeps it.
         let a: Vec<&str> = select_lenses(true, 4).iter().map(|l| l.id).collect();
         assert_eq!(
             a,
-            vec!["codebase", "libraries", "architecture", "edge-cases"]
+            vec!["codebase", "edge-cases", "architecture", "libraries"]
         );
+        // A low clamp now keeps the two lenses worth keeping rather than codebase + libraries.
         assert_eq!(
             select_lenses(true, 2)
                 .iter()
                 .map(|l| l.id)
                 .collect::<Vec<_>>(),
-            vec!["codebase", "libraries"]
+            vec!["codebase", "edge-cases"]
         );
         // max clamps up to at least 1 even if 0 is passed.
         assert_eq!(select_lenses(false, 0).len(), 1);
@@ -8663,6 +8673,24 @@ fn pitfall_items() -> Vec<String> {
 
 /// A fixed research angle a SCOUT investigates in parallel (no serial scoping call needed). The
 /// `codebase` lens is amendment-only; it is listed first so it survives a low `max` clamp.
+///
+/// ORDER IS PRIORITY, and for two reasons now, not one. Beyond the `max` clamp above, straggler-stop
+/// sacrifices the LAST lens to finish: `select_lenses` preserves this order, the fan dispatches in it,
+/// and `should_arm_straggler_grace` then gives whichever lens is still outstanding only
+/// `straggler_grace_secs` more. MEASURED on 4 of 4 runs — 1-node and 3-node alike — the dropped scout
+/// was `edge-cases` EVERY time (`scouts_planned` lists three lenses, `research_completed` reports two
+/// findings, and `.swarm/activity/scout-edge-cases.json` never reaches `phase: done`).
+///
+/// That made the sacrifice systematic rather than incidental, and it fell on the worst possible lens:
+/// `edge-cases` is the one asked for "failure modes and the concrete tests that would prove the task
+/// is done correctly", which is exactly what the vendor-contract and robustness checks grade — the
+/// tier that collapsed to 14.3% on the weakest run. The straggler-stop comment at the scout call site
+/// reasons that "dropping the last scout only loses one lens of context"; that is true of a random
+/// lens and false of the same lens every run.
+///
+/// So `edge-cases` now precedes the two lenses whose loss is cheaper: `architecture` largely restates
+/// work the architect does itself from the spec, and `libraries` is near-inert on a spec that forbids
+/// dependencies. Behaviourally inert when straggler-stop is off — with grace 0 the fan awaits all.
 struct ScoutLens {
     id: &'static str,
     title: &'static str,
@@ -8680,10 +8708,10 @@ const SCOUT_LENSES: &[ScoutLens] = &[
         amendment_only: true,
     },
     ScoutLens {
-        id: "libraries",
-        title: "Libraries & APIs",
-        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
-        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
+        id: "edge-cases",
+        title: "Edge cases & testing",
+        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
+        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
         amendment_only: false,
     },
     ScoutLens {
@@ -8694,10 +8722,10 @@ const SCOUT_LENSES: &[ScoutLens] = &[
         amendment_only: false,
     },
     ScoutLens {
-        id: "edge-cases",
-        title: "Edge cases & testing",
-        brief: "Enumerate the tricky edge cases, failure modes, and the concrete tests that would prove the task is done correctly.",
-        tool_hint: "Reason from the task; use web-search for domain specifics if needed.",
+        id: "libraries",
+        title: "Libraries & APIs",
+        brief: "Identify the key libraries/frameworks this task needs and look up their REAL current API: function/class names, signatures, minimal usage snippets, and gotchas.",
+        tool_hint: "Use the context7 tools (resolve-library-id then get-library-docs) and web-search.",
         amendment_only: false,
     },
 ];
