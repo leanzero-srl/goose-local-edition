@@ -38,6 +38,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -135,11 +136,14 @@ def run_unit(arm: dict, rep: int, port: int) -> dict:
     import run_build  # imported late so a syntax error there cannot stop the loop from starting
 
     prev = dict(os.environ)
+    dog = Watchdog(f"{arm['name']} rep{rep}")
+    dog.start()
     try:
         for k, v in arm["env"].items():
             os.environ[k] = v
         verdict = run_build.run(ENTRANT, rep, OUT, TIMEOUT, port)
     finally:
+        dog.done()
         os.environ.clear()
         os.environ.update(prev)
 
@@ -173,6 +177,10 @@ def run_unit(arm: dict, rep: int, port: int) -> dict:
         "finished_at": datetime.now().isoformat(timespec="seconds"),
         "score": verdict.get("score"),
         "tiers": verdict.get("tiers"),
+        # An aborted unit's score is not a measurement of anything, exactly like a timed-out one.
+        # Both are excluded from every mean rather than averaged in as a bad result.
+        "aborted": dog.reason is not None,
+        "abort_reason": dog.reason,
         "timed_out": (verdict.get("agent") or {}).get("timed_out"),
         "wall_secs": (verdict.get("agent") or {}).get("secs"),
         "actual_pool": verdict.get("actual_pool"),
@@ -181,6 +189,79 @@ def run_unit(arm: dict, rep: int, port: int) -> dict:
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
     }
+
+
+WATCHDOG_POLL_SECS = 60
+HEARTBEAT_STALE_SECS = 600   # the engine writes it every 5s; 10 min dead is wedged, not busy
+MIN_FREE_GB = 15
+
+
+def engine_pids() -> list[int]:
+    try:
+        r = subprocess.run(["pgrep", "-f", "goose swarm run"],
+                           capture_output=True, text=True, timeout=15)
+        return [int(p) for p in r.stdout.split() if p.strip().isdigit()]
+    except Exception:
+        return []
+
+
+class Watchdog(threading.Thread):
+    """Cut a DOOMED unit loose instead of waiting out its 4.5h cap.
+
+    A wedged run does not fail — it sits there holding the single addressable worker until the
+    timeout, and a cap that truncates work measures the cap rather than the swarm. So the moment a
+    unit is provably not going to produce a usable result, kill its engine and let the loop move to
+    the next arm. The LOOP is never stopped by this; only the unit is.
+
+    Every trip condition below is a fact about the process or the filesystem, never an inference
+    from how long something is taking. A slow unit is not a doomed one.
+    """
+
+    def __init__(self, label: str) -> None:
+        super().__init__(daemon=True)
+        self._stop = threading.Event()
+        self.label = label
+        self.reason: str | None = None
+
+    def doomed(self) -> str | None:
+        pids = engine_pids()
+        if len(pids) > 1:
+            return (f"{len(pids)} engines running at once {pids} — an orphan is contending for the "
+                    f"single addressable worker and will skew this unit and every later one")
+        if pids:
+            beats = sorted(OUT.glob("*/heartbeat"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if beats:
+                age = time.time() - beats[0].stat().st_mtime
+                if age > HEARTBEAT_STALE_SECS:
+                    return (f"heartbeat {int(age)}s stale under a live engine — the run is wedged "
+                            f"and will hold the fleet until its cap")
+        free_gb = shutil.disk_usage(os.path.expanduser("~")).free / 1e9
+        if free_gb < MIN_FREE_GB:
+            return f"only {free_gb:.0f} GB free — a run that fills the disk corrupts its own tree"
+        return None
+
+    def abort(self, reason: str) -> None:
+        log(f"[abort] {now()} {self.label}: {reason}")
+        for pid in engine_pids():
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                log(f"[abort] killed engine pgroup for pid {pid}")
+            except (ProcessLookupError, PermissionError) as exc:
+                log(f"[abort] could not kill {pid}: {exc}")
+
+    def run(self) -> None:
+        while not self._stop.wait(WATCHDOG_POLL_SECS):
+            try:
+                reason = self.doomed()
+            except Exception:
+                continue
+            if reason:
+                self.reason = reason
+                self.abort(reason)
+                return
+
+    def done(self) -> None:
+        self._stop.set()
 
 
 def kill_strays() -> None:
@@ -245,7 +326,7 @@ def summarise() -> None:
     log(f"{'arm':<18}{'n':>2}  {'score mean':>10} {'spread':>7}   "
         f"{'fallbacks':>9} {'kind-mismatch%':>15}  pool")
     for arm, rs in sorted(rows.items()):
-        ok = [r for r in rs if not r.get("timed_out")]
+        ok = [r for r in rs if not r.get("timed_out") and not r.get("aborted")]
         sc = [r["score"] for r in ok if r.get("score") is not None]
         fb = [r["audit"].get("detail_fallback_count") for r in ok
               if isinstance(r.get("audit"), dict)
@@ -339,8 +420,11 @@ def main() -> int:
         result_path(arm["name"], rep).write_text(json.dumps(result, indent=2))
 
         a = result.get("audit") or {}
+        if result.get("aborted"):
+            log(f"[abort] {now()} {arm['name']} rep{rep} CUT LOOSE — {result.get('abort_reason')}")
         log(f"[done] {now()} {arm['name']} rep{rep}  score="
             f"{result['score'] if result.get('score') is not None else 'FAILED'}  "
+            f"aborted={result.get('aborted')}  "
             f"timed_out={result.get('timed_out')}  pool={result.get('actual_nodes')}  "
             f"fallbacks={a.get('detail_fallback_count')}  "
             f"kind_mismatch={a.get('kind_mismatch_pct')}%  "
