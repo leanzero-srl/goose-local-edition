@@ -184,10 +184,16 @@ PREFLIGHT
     BEFORE=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
     echo "== 1. stopping the loop and the in-flight unit"
     touch STOP
+    # SUPERVISOR FIRST, THEN THE ENGINE. Killing the engine first leaves the sweep alive for the
+    # moment it takes to notice, and it does exactly what it is built to do: score the half-finished
+    # tree and write a result. MEASURED — a unit killed at 57 minutes was recorded score=0.2999,
+    # void=false, aborted=false, indistinguishable from a completed run, and it went straight into the
+    # results table as a clean 1-node row. A truncated run that looks finished is worse than no row.
+    kill -9 "$(pgrep -f 'nodeloop/sweep.py' | head -1)" 2>/dev/null
+    sleep 1
     for P in $(pgrep -f 'goose swarm run'); do
       kill -9 -- "-$(ps -o pgid= -p "$P" | tr -d ' ')" 2>/dev/null || kill -9 "$P" 2>/dev/null
     done
-    kill -9 "$(pgrep -f 'nodeloop/sweep.py' | head -1)" 2>/dev/null
     sleep 2
     echo "== 2. fleet must be IDLE before a rebuild (it shares this machine's CPU)"
     ~/.lmstudio/bin/lms ps --json 2>/dev/null | python3 -c "
