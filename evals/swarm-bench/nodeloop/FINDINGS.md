@@ -431,6 +431,51 @@ an inference I made from a signal that was never designed to answer my question.
 two-verifier conflation, the dead-agent-as-refutation, and now a heartbeat field read as a completion
 marker.
 
+## F16 — The mechanism is now a RECORDED FACT, and it says "timeout"
+
+First run on the rebuilt engine, and `detail_fallback` fires for real:
+
+```
+task=store             reason=timeout   brief_chars=66   budget=75s
+task=meridian-client   reason=timeout   brief_chars=86   budget=75s
+```
+
+Both **timeouts** — not filler, not agent error. The 75 s ceiling is the cause, which is what three
+independently-raised round-1 findings converged on and what the `detail_budget` arm exists to test.
+Until this build the only trace of any of it was a short string inside `plan_loaded`; the reason was
+unrecoverable and the whole thing was written off as noise.
+
+`meridian` loses its spec for the **third consecutive run**. That module is the vendor client, and on
+the two runs already crunched its loss took tier C to 14.3% both times.
+
+Note `lenses_returned: None` — the field committed in `9bb8d413d` is correctly absent from this
+binary, since it was held for the next boundary. The instrument reporting `None` rather than silently
+omitting it is the behaviour I want.
+
+## F17 — ⚠ COMPARABILITY: the n=1 and n=3 cells differ by MORE than node count
+
+The same run emitted:
+
+```
+confidence_retarget  round 1  binding_signal=agreement  action=redraft
+                     conf_before=81  detail="best_of_n 3→4"
+```
+
+Round 3's one confirmed survivor said the entire confidence / ask / retarget apparatus is gated on
+`n > 1`, where `n` is capped at the fleet's **distinct-model count** — so a 1-node run structurally
+*cannot* run it, and a 3-node run does. Here it is firing live: at three nodes the run scored its
+plan, found agreement 81, and spent an extra redraft round growing `best_of_n` from 3 to 4.
+
+**A 1-node run would have done none of that.** So the node-count cells in this campaign are not
+"same engine, fewer workers" — they are *different planning algorithms*. Any wall-clock or score
+delta between n=1 and n=3 confounds node count with the presence of an entire retarget ladder, and
+it is also a concrete mechanism for the measured pre-dispatch growth (913-964 s at one node versus
+1,312 s at three).
+
+This does not invalidate the campaign — the dispatch-quality arms all run at 3 nodes and are
+unaffected — but the **node curve specifically must be read with it stated**, and it should be
+reported alongside any n=1-vs-n=3 number rather than discovered afterwards.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
