@@ -33,16 +33,27 @@ from datetime import datetime
 
 OCCUPANCY_VERSION = "occ-1"
 
+# THE ENGINE'S OWN EVENT NAMES. Four of the eight keys here used to be names the engine has never
+# emitted — `prereview` for `pre_review`, `speculation`/`speculative_promoted` for `speculated`,
+# `replan`/`dynamic_replan` for `replanned`. So the line rendered as "the 'smarter with more nodes'
+# half", the one that measures goal one, reported {'judge': 161} on a run that fired `pre_review`
+# SEVEN times, every run, and nobody could see it because a missing key looks exactly like a
+# mechanism that did not fire.
+#
+# Same disease as prefix.py reading `owned_files` where plan_loaded emits `files`. That one was
+# caught by an adversarial round; this one was found by applying its lesson — when a defect is fixed,
+# go and look for the same shape everywhere else. `real_shape_control()` below now asserts against an
+# actual run so a renamed event fails the instrument instead of quietly zeroing it.
+HERE = pathlib.Path(__file__).resolve().parent
+
 IDLE_NODE_EVENTS = {
     # Each of these only ever runs on a node that would otherwise sit idle, so their counts are the
     # measurable form of "the swarm got smarter because it had spare capacity".
     "judge_verdict": "judge",
-    "prereview": "pre_review",
-    "prereview_finding": "pre_review",
-    "speculation": "speculation",
-    "speculative_promoted": "speculation",
-    "replan": "replan",
-    "dynamic_replan": "replan",
+    "pre_review": "pre_review",
+    "speculated": "speculation",
+    "replanned": "replan",
+    "task_split": "split",
     "sink_review": "sink_review",
 }
 
@@ -353,10 +364,56 @@ def render(a: dict) -> str:
     return "\n".join(out)
 
 
+def real_shape_control() -> list[str]:
+    """Assert IDLE_NODE_EVENTS uses names the ENGINE actually emits, against a run on disk.
+
+    Every other control in this file is driven by a stream this file writes, so all of them passed
+    while four of the eight keys named events that do not exist. A control that shares the
+    instrument's assumption cannot test it.
+
+    `pre_review` is the anchor: it fired 7 times in every measured unit, so if the census cannot see
+    it, the map is wrong. The mechanisms that legitimately never fire (`replanned`, `sink_review`)
+    cannot be asserted positively and are deliberately not — that would be a control demanding a
+    defect stay present.
+    """
+    import collections
+
+    fails: list[str] = []
+    # A FINISHED run, never merely the newest file. An in-flight run has not reached the phases these
+    # mechanisms live in, so its absent events are a clock, not a defect — and picking newest-wins is
+    # the same trap that once made a panel re-render a four-hour-old run. Measured: this control fired
+    # against a unit five minutes old, which had legitimately not pre-reviewed anything yet.
+    counts: collections.Counter = collections.Counter()
+    chosen = None
+    for path in sorted(HERE.parent.glob("runs/nodeloop*/*/run.jsonl"), reverse=True):
+        c: collections.Counter = collections.Counter()
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                c[json.loads(line).get("event")] += 1
+            except json.JSONDecodeError:
+                continue
+        if c.get("run_finished"):
+            counts, chosen = c, path
+            break
+    if chosen is None:
+        return fails
+    if counts.get("pre_review", 0) and "pre_review" not in IDLE_NODE_EVENTS:
+        fails.append(f"{chosen.parent.name}: the run emits pre_review {counts['pre_review']}x but "
+                     f"IDLE_NODE_EVENTS has no such key — the census is silently zeroing a mechanism")
+    unknown = [k for k in IDLE_NODE_EVENTS
+               if k not in counts and k not in ("replanned", "sink_review", "speculated",
+                                                "task_split")]
+    if unknown:
+        fails.append(f"IDLE_NODE_EVENTS keys never seen in {chosen.parent.name} and not on the "
+                     f"known-never-fires list: {unknown} — check them against the engine's emitted "
+                     f"event names before trusting a zero")
+    return fails
+
+
 def self_test() -> int:
     """Controls in BOTH directions, plus the vacuous-truth case an empty log would otherwise pass."""
     import tempfile
-    fails = []
+    fails = real_shape_control()
 
     def check(name, got, want, tol=0.02):
         ok = (got == want) if not isinstance(want, float) else (
