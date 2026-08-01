@@ -2537,6 +2537,12 @@ fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &st
 /// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
+/// Wall-clock budget for ONE subtask's detail expansion. Named rather than inline because the number is
+/// load-bearing: exceeding it does not fail the task, it silently hands the worker the architect's
+/// one-line brief as its entire spec, and the `detail_fallback` event now records the budget it lost to
+/// so a run's own log says whether the ceiling was the cause.
+const DETAIL_BUDGET_SECS: u64 = 75;
+
 /// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
 /// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
 /// free drafts share the structure the lock would pin, so the ~250s round can only be discarded (0/11 adopted
@@ -12388,8 +12394,8 @@ impl GooseAgentDispatcher {
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
                 // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
                 let detail_key = format!("detail-{id}");
-                let desc = match tokio::time::timeout(
-                    std::time::Duration::from_secs(75),
+                let (desc, fallback_reason) = match tokio::time::timeout(
+                    std::time::Duration::from_secs(DETAIL_BUDGET_SECS),
                     me.run_agent(
                         &model,
                         system,
@@ -12406,15 +12412,45 @@ impl GooseAgentDispatcher {
                     // Accept the detailed spec only if it is a real detail — NOT the agent-loop max-turns
                     // filler (which a weak worker returns when it exhausts its 6 turns); fall back to the
                     // proven-good skeleton brief otherwise, so filler never becomes a worker's whole spec.
-                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => o.text,
-                    _ => brief,
+                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => (o.text, ""),
+                    Ok(Ok(_)) => (brief.clone(), "filler"),
+                    Ok(Err(_)) => (brief.clone(), "agent_error"),
+                    Err(_) => (brief.clone(), "timeout"),
                 };
-                eprintln!(
-                    "  {} detail {} ({:.0}s)",
-                    style("✓").green().bold(),
-                    style(&id).bold(),
-                    started.elapsed().as_secs_f64()
-                );
+                // The fallback keeps the architect's ONE-LINE brief as the worker's entire spec. That is
+                // the thinnest instruction the engine can produce, and until now it was indistinguishable
+                // from an architect who simply wrote a short line: no event, and the same green ✓ printed
+                // on the failure path. MEASURED on three runs of an identical config — 2, 1 and 0 tasks
+                // kept the brief, and the builds scored 44.2%, 86.7% and 90.0%. In the 44.2% run the
+                // vendor-client module was dispatched with 95 characters and its tier of the grade
+                // collapsed to 14.3%. That spread was written off as noise precisely because this path
+                // emitted no signal. Both sibling fanouts already report their failures (contracts prints
+                // the per-module reason, the scout fanout splices its budget overrun into the findings);
+                // detail was the only one that failed invisibly.
+                if !fallback_reason.is_empty() {
+                    me.events.write_value(serde_json::json!({
+                        "event": "detail_fallback",
+                        "task_id": id,
+                        "reason": fallback_reason,
+                        "brief_chars": brief.len(),
+                        "budget_secs": DETAIL_BUDGET_SECS,
+                    }));
+                    eprintln!(
+                        "  {} detail {} ({:.0}s) — {} at {}s; the worker gets the skeleton line, not a spec",
+                        style("⚠").yellow().bold(),
+                        style(&id).bold(),
+                        started.elapsed().as_secs_f64(),
+                        fallback_reason,
+                        DETAIL_BUDGET_SECS,
+                    );
+                } else {
+                    eprintln!(
+                        "  {} detail {} ({:.0}s)",
+                        style("✓").green().bold(),
+                        style(&id).bold(),
+                        started.elapsed().as_secs_f64()
+                    );
+                }
                 (idx, desc)
             }
         })
@@ -18094,7 +18130,19 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // density: Qwen-27B perfect-compliance is 0.588 at N=10 rules, 0.350 at N=20, 0.094 at N=40,
         // and small models fail by wholesale OMISSION, so every rule silently evicts another. Every
         // kind here sees FEWER rules than today and none sees more.
-        let is_fix_round = req.owned_files.is_empty() && !req.all_files.is_empty();
+        // A fix round owns no files and carries the whole manifest — but so does every fanned
+        // `verify::<M>` and `verify-e2e::<i>`, which are READ-ONLY gates that must write nothing. They were
+        // therefore handed the fix directive below: the read prohibitions "SUSPENDED", permission to edit
+        // any file in the manifest, and the fabricated premise that "the failure below was already
+        // reproduced by running the app" when no failure exists. That is a system-prompt directive and a
+        // user-message directive in exact contradiction, with the permissive one first — and the race-free
+        // design of the parallel verify shards depends entirely on those prohibitions holding.
+        // `integrate-verify` owns nothing too and is deliberately NOT excluded: it IS the run's sole repair
+        // point, so the fix directive is correct for it.
+        let is_fix_round = req.owned_files.is_empty()
+            && !req.all_files.is_empty()
+            && !req.task_id.starts_with("verify::")
+            && !req.task_id.starts_with("verify-e2e::");
         let read_on_fix =
             is_fix_round && swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix);
         let fix_directive = if read_on_fix {
