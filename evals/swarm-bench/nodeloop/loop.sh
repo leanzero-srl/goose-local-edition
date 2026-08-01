@@ -165,8 +165,18 @@ PREFLIGHT
     # event name of a fix being shipped. With no markers it refuses, because a boundary crossed
     # without verification is the exact failure this exists to prevent.
     shift || true
+    # With no arguments the canonical list in ./MARKERS is used. That file exists because this list
+    # used to live only in a prompt, and a marker dropped from a prompt is a fix that silently never
+    # shipped — the exact failure this check exists to prevent. Arguments still override it.
+    if [ "$#" -eq 0 ] && [ -f MARKERS ]; then
+      OLDIFS=$IFS; IFS=$'\n'
+      set -- $(grep -vE '^\s*(#|$)' MARKERS)
+      IFS=$OLDIFS
+      echo "== using $# marker(s) from ./MARKERS"
+    fi
     if [ "$#" -eq 0 ]; then
-      echo "refusing: name at least one MARKER that must be present in the rebuilt binary."
+      echo "refusing: name at least one MARKER that must be present in the rebuilt binary,"
+      echo "  or list them in ./MARKERS (one per line)."
       echo "  e.g. ./loop.sh boundary GOOSE_SWARM_DETAIL_BUDGET_SECS detail_fallback"
       exit 2
     fi
