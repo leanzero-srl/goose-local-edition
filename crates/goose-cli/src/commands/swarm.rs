@@ -14499,9 +14499,8 @@ struct SpecContractResult {
     /// Lets a consumer (the #119 sink early-exit) require verified>=1, so a run where findings.is_empty() &&
     /// inconclusive.is_empty() because it CHECKED NOTHING (non-python, no advertised entry/endpoint) is never
     /// mistaken for a real pass — the exact #120 false-green class.
-    // Written now (the affirmative signal is populated deterministically); the reader is the #119 sink
-    // early-exit, landing next. allow(dead_code) is the explicit bridge until that consumer is wired.
-    #[allow(dead_code)]
+    // The reader is the `spec_contract` event emitted from the COMPLETE gate: without it a zero from
+    // this check could not be told apart from the check having bound nothing at all.
     verified: usize,
 }
 
@@ -21967,6 +21966,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // byte-identical (spec_contract_enabled() short-circuits and the block never runs).
             if delivery_on || spec_contract_enabled() {
                 let sc = run_spec_contract(&cwd, &opts.prompt, complete_lang).await;
+                // EMIT, like every sibling check. cross_module_drift reports {checked, findings,
+                // detail} and complete_missing_deliverables reports too; spec_contract — the run's
+                // ONLY deterministic, no-model spec-to-oracle path — reported nothing at all, and its
+                // findings vanished into complete_verify's bare count. So a zero from it was
+                // indistinguishable from blindness, which is the failure this project has a standing
+                // law about, sitting inside the one check that is supposed to be immune to it.
+                //
+                // `verified` is what makes the zero readable, and it already exists for exactly this:
+                // its own doc says it lets a consumer require verified>=1 so that "findings.is_empty()
+                // && inconclusive.is_empty() because it CHECKED NOTHING is never mistaken for a real
+                // pass". It was written and never read — this is that reader.
+                let (sc_found, sc_incon, sc_verified) =
+                    (sc.findings.len(), sc.inconclusive.len(), sc.verified);
+                sink.write_value(serde_json::json!({
+                    "event": "spec_contract",
+                    "round": round,
+                    "verified": sc_verified,
+                    "findings": sc_found,
+                    "inconclusive": sc_incon,
+                    "detail": if sc_verified == 0 && sc_found == 0 && sc_incon == 0 {
+                        "CHECKED NOTHING — no advertised endpoint or entry point bound, so a clean \
+                         result here is silence, not evidence"
+                    } else if sc_found == 0 {
+                        "every advertised check that bound was satisfied"
+                    } else {
+                        "an advertised check failed against the built app — blocking the green claim"
+                    },
+                }));
                 verdict.findings.extend(sc.findings);
                 verdict.inconclusive.extend(sc.inconclusive);
             }

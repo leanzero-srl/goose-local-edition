@@ -847,6 +847,34 @@ So fanning a single-file task means finding a **computable partition that is not
 task, the behaviours it must cover; for the sink, the commands it must check (which `fan_e2e` already
 does). That is a planner change, and it goes to a design round rather than into the engine tonight.
 
+## F29 — The engine's only deterministic oracle reported nothing at all
+
+Round 4's last untriaged defect was that `spec_contract` cannot parse a markdown endpoint table.
+Before designing that fix I checked whether the check is even observable — the discipline that had
+just saved three units on the splitter — and found something prior:
+
+`spec_contract` is **ON** in every run and **emits no event**. Its findings are folded into
+`complete_verify`'s bare count. Its siblings all report: `cross_module_drift` emits
+`{checked: 8, findings: 0, detail: "no module reads a field its sibling does not define"}`, and
+`complete_missing_deliverables` emits too. So a zero from the run's **only deterministic, no-model
+spec-to-oracle path** was indistinguishable from that path being blind — the failure this project has
+a standing law about, sitting inside the one check that is meant to be immune to it.
+
+And the field that makes the zero readable already existed, unread. `SpecContractResult.verified` is
+documented as existing so a consumer can require `verified >= 1`, so that *"findings.is_empty() &&
+inconclusive.is_empty() because it CHECKED NOTHING is never mistaken for a real pass"* — the exact
+false-green class. It was marked `#[allow(dead_code)]` because the reader was never wired. This is
+that reader.
+
+It now emits `{round, verified, findings, inconclusive, detail}`, where the detail distinguishes
+**"CHECKED NOTHING — a clean result here is silence, not evidence"** from "every advertised check
+that bound was satisfied".
+
+**The table-parsing fix is deliberately NOT included.** Widening the matcher is behaviour; until the
+event exists there is no way to tell whether widening it changed anything, and the refuter's own
+ordering said the same. Observability first, then the behaviour it lets us judge — the shape that
+made the 46-point spread legible in the first place.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
