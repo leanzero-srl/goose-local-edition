@@ -1621,6 +1621,57 @@ nothing on the machine able to answer it. The fleet reading was corroboration, a
 the nodes were genuinely idle in both states. But the check itself was wrong, so any future
 fleet-busy sample must count **GENERATING and PROCESSINGPROMPT**, not just the first.
 
+## F49 — the engine spends 10-19 MINUTES redrafting a plan and 75 SECONDS writing the specs it depends on
+
+Mihai's framing forced the right question: the redraft was built to make the build **functional
+always and predictable**. So judge every mechanism on THAT, not on its own metric.
+
+**What the redraft actually optimises.** `plan_confidence` breaks down as agreement + spec_clarity.
+`spec_clarity` scores **100 in every run on disk** — it never binds. `agreement` is literally whether
+the plan drafts emitted task counts within 1 of each other: "count spread 1, file-overlap 100%" gives
+**88**, spread 0 gives **100**. It is a two-valued function of draft-count parity.
+
+Four of five shipped plans scored exactly **88**, including one that never redrafted. The three units
+with build scores all shipped at 88 and scored **88.7% / 50.0% / 42.7%** — a 46-point spread at
+identical confidence, and the run whose redraft climbed 46→88 scored the *worst*. Cost: **10-19
+minutes per round**, 8-15% of a run. And growing `best_of_n` (3→4→5) to raise agreement can LOWER it,
+because more drafts means more chances one disagrees on count — observed directly as 75→68, caught by
+the stall guard, whose existence suggests the authors met this too.
+
+**What actually predicts a functional build**, measured: whether the module owning the external
+contract got a real spec. `meridian` with 1497 chars containing the vendor's `/v1` prefix → 88.7%;
+`meridian` with 122 chars → 42.7%, every vendor call 404ing.
+
+**And the engine never protects that.** A failed detail call is **never retried** — `filler`,
+`agent_error` and `timeout` all fall straight through to the architect's one-liner. Across six runs:
+**27 detail failures, and all 25 checked are `timeout`.** Zero filler, zero agent errors. So the
+failure mode is entirely the ceiling, and a retry at the same ceiling would fail identically.
+
+**The disparity, which is the finding.** Two sibling fan-outs, same fleet, same model, both asking a
+worker to author a spec:
+
+| fan-out | ceiling | failures on disk |
+|---|---|---|
+| `contracts` | `worker_timeout_secs.max(10)` — baked **900s** | **1 of 19** (5%) |
+| `detail` | hardcoded **75s**, twice (per-call timeout AND straggler grace) | **27** |
+
+`meridian` is the most frequent victim at 6 of 25. The 75 is a bare literal with no derivation; its
+sibling derives from the fleet's own worker timeout.
+
+**Fixed:** `detail_budget_secs()` now derives from `worker_timeout_secs` like its sibling, and the
+straggler grace uses the same ceiling instead of a second hardcoded 75.
+
+**And the log can now size its own budget.** A timeout says ">budget" and nothing more, so every value
+was a judgement call — including mine. `detail_completed{task_id, secs, spec_chars, brief_chars,
+budget_secs}` now records the SUCCESSFUL calls, giving the duration distribution the ceiling must
+clear and pairing it with the spec size that drives it. The next runs measure what the budget should
+be instead of me guessing.
+
+**The redraft itself is NOT removed.** Its intent is right and its cost is real; what is wrong is the
+signal it fires on. Re-aiming it needs the `retarget` off/on arm to establish whether it buys anything
+at all — written down now: build score unchanged within the replicate spread, wall-clock down 10-20%.
+If the score DROPS, the redraft is buying something real and this reading was wrong.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
