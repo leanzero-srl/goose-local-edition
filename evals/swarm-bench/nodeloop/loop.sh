@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Control surface for the dispatch-quality loop. No pids, no nohup incantations to remember.
+#
+#   ./loop.sh start     launch it, truly detached (survives this shell and this chat session)
+#   ./loop.sh status    running or not, and the last few NOW/NEXT lines
+#   ./loop.sh watch     follow the headline lines only
+#   ./loop.sh results   the arm table so far, mechanism counts first
+#   ./loop.sh stop      stop it after the current unit; results on disk are kept
+#   ./loop.sh resume    same as start — finished units are skipped
+set -uo pipefail
+cd "$(dirname "$0")"
+
+LOG="${NODELOOP_LOG:-$PWD/../runs/nodeloop/loop.log}"
+mkdir -p "$(dirname "$LOG")"
+
+pid() { pgrep -f 'nodeloop/sweep.py' | head -1; }
+
+case "${1:-status}" in
+  start|resume)
+    if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
+    rm -f STOP
+    # start_new_session detaches from the process GROUP, not just the parent. Measured on this
+    # machine: nohup+disown left ppid pointing at the launching shell and the job died with it
+    # (repair.py, 2026-08-01 08:58, 90 seconds in). -u or every monitor is blind for hours.
+    python3 -c "
+import subprocess, sys
+subprocess.Popen([sys.executable,'-u','nodeloop/sweep.py'],
+                 cwd='$PWD/..',
+                 stdout=open('$LOG','a'), stderr=subprocess.STDOUT,
+                 start_new_session=True)"
+    sleep 3
+    P=$(pid)
+    if [ -z "$P" ]; then
+      echo "FAILED to start — last log lines:"; tail -20 "$LOG"; exit 1
+    fi
+    echo "started pid=$P ppid=$(ps -o ppid= -p "$P" | tr -d ' ') (1 = detached and safe)"
+    echo "log: $LOG"
+    ;;
+  status)
+    P=$(pid)
+    if [ -n "$P" ]; then
+      echo "RUNNING  pid=$P  elapsed=$(ps -o etime= -p "$P" | tr -d ' ')"
+    else
+      echo "NOT RUNNING"
+    fi
+    [ -f STOP ] && echo "STOP sentinel present — it will exit after the current unit"
+    echo
+    grep -E '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn)' "$LOG" 2>/dev/null | tail -10
+    ;;
+  watch)
+    # Failure signatures too: a monitor grepping only the happy path stays silent through a
+    # crashloop, and silence looks exactly like "still running".
+    tail -f "$LOG" | grep -E --line-buffered \
+      '^>>> |^    NEXT:|^\[(done|fail|retry|stop|grow|warn)|Traceback|Error|Killed'
+    ;;
+  results)
+    python3 - <<'PY'
+import json, pathlib, collections
+rows = collections.defaultdict(list)
+for f in sorted(pathlib.Path('../runs/nodeloop').glob('*/nodeloop-result.json')):
+    try:
+        rows[json.loads(f.read_text())['arm']].append(json.loads(f.read_text()))
+    except Exception:
+        continue
+if not rows:
+    print("no results yet"); raise SystemExit
+versions = {r.get('audit_version') for rs in rows.values() for r in rs}
+if len(versions) > 1:
+    print(f"!! mixed audit versions {versions} — these rows are NOT comparable\n")
+print(f"{'arm':<18}{'n':>2}  {'score mean':>10} {'spread':>8}   "
+      f"{'fallbacks':>9} {'kind-mm%':>9}  pool  timed_out")
+for arm, rs in sorted(rows.items()):
+    ok = [r for r in rs if not r.get('timed_out') and r.get('score') is not None]
+    sc = [r['score'] for r in ok]
+    fb = [r.get('audit', {}).get('detail_fallback_count') for r in ok]
+    fb = [x for x in fb if x is not None]
+    km = [r.get('audit', {}).get('kind_mismatch_pct') for r in ok]
+    km = [x for x in km if x is not None]
+    mean = f"{sum(sc)/len(sc):.1%}" if sc else "-"
+    spread = f"{(max(sc)-min(sc))*100:.0f}pts" if len(sc) > 1 else "-"
+    print(f"{arm:<18}{len(rs):>2}  {mean:>10} {spread:>8}   "
+          f"{(sum(fb)/len(fb) if fb else 0):>9.1f} "
+          f"{(sum(km)/len(km) if km else 0):>9.1f}  "
+          f"{sorted({r.get('actual_nodes') for r in rs})}  "
+          f"{sum(1 for r in rs if r.get('timed_out'))}")
+print()
+print("fallbacks = tasks whose spec never got past the architect's one-liner (swarm.rs:12353).")
+print("A score delta below the replicate spread is not a result; read the mechanism columns.")
+PY
+    ;;
+  stop)
+    touch STOP
+    echo "STOP written — the loop exits after the current unit (results are kept)."
+    ;;
+  *)
+    echo "usage: $0 {start|status|watch|results|stop|resume}"; exit 2 ;;
+esac
