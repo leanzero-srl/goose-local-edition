@@ -37,6 +37,14 @@ REPO = ROOT.parents[1]
 # Ranked by evidence strength, not by size. Each entry is one lever and one falsifiable claim.
 CANDIDATES: List[Dict] = [
     {
+        # MEASURED 2026-08-01 and it changes everything: three runs of the SAME 1-node config scored
+        # 44.2%, 86.7% and 90.0% — a 46-POINT SPREAD. Two of the three beat the 84.1% single-agent
+        # reference. Every earlier conclusion in this project compared n=1 against n=1 and is
+        # therefore unsound, including "the swarm loses to a single agent".
+        #
+        # So the FIRST thing to establish is not whether a lever helps — it is how big the noise is.
+        # An arm that moves the score 10 points means nothing against a 46-point spread. Until the
+        # replicate spread is known, no comparison is interpretable.
         "name": "baseline",
         "levers": {},
         "hypothesis": "Current engine, no new levers. Re-measured rather than assumed, because a "
@@ -144,6 +152,9 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=16200)
     ap.add_argument("--port-base", type=int, default=8960)
     ap.add_argument("--only", help="run a single candidate by name")
+    ap.add_argument("--reps", type=int, default=3,
+                    help="replicates per arm. n=1 is uninterpretable here: the measured spread on "
+                         "an IDENTICAL config is 46 points.")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -164,8 +175,22 @@ def main() -> int:
               f"\n    NEXT: {todo[i]['name'] if i < len(todo) else 'loop complete'}"
               f"\n    LOOP ETA: ~{eta(args.timeout * 0.7 + remaining)}", flush=True)
         try:
-            results[cand["name"]] = run_arm(
-                cand["name"], cand["levers"], args.entrant, args.out, args.timeout, port)
+            reps = []
+            for rep in range(args.reps):
+                v = run_arm(f"{cand['name']}-r{rep}", cand["levers"], args.entrant,
+                            args.out, args.timeout, port + rep)
+                if v:
+                    reps.append(v)
+            if reps:
+                scores = sorted(r["score"] for r in reps)
+                spread = scores[-1] - scores[0]
+                mean = sum(scores) / len(scores)
+                print(f"  {cand['name']}: n={len(scores)} mean={100*mean:.1f}% "
+                      f"spread={100*spread:.1f}pts  {[round(100*s,1) for s in scores]}", flush=True)
+                results[cand["name"]] = {"score": mean, "spread": spread, "n": len(scores),
+                                         "scores": scores}
+            else:
+                results[cand["name"]] = None
         except (Exception, SystemExit):
             print(f"[fail] arm {cand['name']}\n{traceback.format_exc()[-600:]}", flush=True)
             results[cand["name"]] = None
