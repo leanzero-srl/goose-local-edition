@@ -144,6 +144,23 @@ ARMS = [
     # spend hours of fleet time to produce an INERT result. doc_fetch replaces it with a fetch that
     # needs no extension and no key.
     {
+        "name": "sink_review",
+        "env": {"GOOSE_SWARM_SINK_REVIEW": "1"},
+        "gate": "the SINK owns 100% of the solo window in 2 of 3 measured runs — 543-1045s with two "
+                "nodes idle while integrate-verify runs alone — and this is the only mechanism built "
+                "to fill it. It has never run once: the scheduler's producer defaulted OFF while the "
+                "drain and levers_resolved both defaulted ON, so every run REPORTED it enabled and its "
+                "queue was never filled. Both halves now read one resolver, default OFF, so this arm "
+                "is the first time the mechanism executes at all. "
+                "PREDICTION: `sink_review` fires with prewarmed > 0, and solo_by_task['integrate-"
+                "verify'] falls because the idle nodes are doing read-only dimension reviews instead "
+                "of nothing. The findings are ADVISORY and re-verified fail-closed against the final "
+                "tree, so the build score should NOT move outside the replicate spread — if it moves "
+                "DOWN, the re-verification is not fail-closed and that is worth more than the "
+                "utilisation. If prewarmed is 0 with the lever on, the producer still cannot see its "
+                "precondition and the fix is incomplete.",
+    },
+    {
         "name": "doc_fetch",
         "env": {"GOOSE_SWARM_DOC_FETCH": "1"},
         "gate": "THE measured coin flip. Three baseline units, identical config: the one whose "
