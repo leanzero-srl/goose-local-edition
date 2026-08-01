@@ -591,6 +591,43 @@ window. Earlier I reported ~1.0 and said the scheduler was not the problem; that
 build phase, but the *run* is less well utilised than that number suggested, because the tail is not
 scheduler-owned work at all.
 
+## F22 — Round 4: I fixed one of two sites with the identical defect, and missed the class
+
+0 survivors intact, 6 real-defects-with-refuted-fixes, 24 refuted, 0 unverified (65/65 agents).
+The top finding lands on this morning's work.
+
+`layout_block`'s owns-nothing branch (`swarm.rs:17870`) is gated on `owned_files.is_empty()` **alone**,
+so every read-only `verify::<M>` and `verify-e2e::<i>` shard receives the SINK's write-and-fix
+directive in its system prompt — *"You MUST actually RUN the program end-to-end"*, *"If the entry
+point crashes, FIX the offending file"*, *"wire them all"* — while its own user message says *"You own
+NOTHING and must WRITE NO files"* and *"Run NO test command at all"*.
+
+`is_fix_round` at `18306` already carries exactly that exclusion **because I shipped it this morning**
+(`1a6849ec2`). Two sites, one predicate, one shape of defect — and I fixed the one in front of me.
+That is the class-versus-instance failure, committed by the person who has the rule written down.
+
+Owns-nothing dispatches are **7–11 of 15–21** per run, so this is not a corner. Direct evidence the
+models burn reasoning resolving the contradiction, from `verify::cli`'s own activity file:
+*"I should NOT run tests, NOT run the whole program end-to-end, NOT fix anything — just verify imports
+and report."*
+
+**The refutation of the obvious fix was better than the finding.** Patching `17870` directly would
+have been unlevered across ~40% of dispatches mid-campaign, un-A/B-able, and would have installed a
+**second kind classifier** disagreeing with `GOOSE_SWARM_KIND_PROMPT` — whose own design comment
+already enumerates *"owns-nothing 12.1%"* as one of the four kinds it exists to cover. Two versions of
+one rule that drift apart is how this defect arose in the first place.
+
+So the fix extends `kind_prompt` to gate `layout_block` too, from a **single** resolution shared by
+both sites. The lever now does what its comment always claimed. It also means the queued `kind_prompt`
+arm tests its full intent rather than a third of it.
+
+**Two over-claims the verifier would not sustain**, recorded because they narrow the finding: the
+port-collision harm was misattributed (the shards used distinct ports; the `Errno 48` came from that
+shard's own leftover server after `bash: timeout: command not found`), and no verify shard in that run
+actually made a write call — so the write-race harm is real in principle but **unrealised in the
+evidence**. What stands is the contradictory directive and ~12 inapplicable rules added to a budget
+where measured perfect compliance is 0.094.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
