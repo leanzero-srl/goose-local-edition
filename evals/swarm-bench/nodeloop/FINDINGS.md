@@ -1700,6 +1700,35 @@ failure predicts the build failing.
 **5 seconds**, against the 1800s default it had this morning. The clarify block-poll no longer idles
 the fleet for half an hour.
 
+## F51 — PREDICTION REGISTERED BEFORE THE OUTCOME (unit swarm-3node-r0, plan loaded 23:00, build not yet graded)
+
+Written at 2026-08-01 23:12, while the unit is still executing, so this
+cannot be fitted to the answer. F36 said the predictor of a functional build is whether the module
+owning the external contract got a real spec. This is the first chance to use it PROSPECTIVELY.
+
+The plan that shipped at +50.2m, after 48 minutes and three discarded redrafts:
+
+    task_count 17, plan_confidence 84 — BELOW its own floor of 85
+    api        2184 chars
+    web        1773 chars
+    meridian    105 chars   <- owns the vendor client
+    store        80 chars
+    /v1 appears in ZERO task descriptions
+
+**PREDICTION.** The vendor client will use the wrong base path, every vendor call will 404, and
+`crunch.py` will fail `fetch_all_payments` / `total_count` / `idempotent_create`. Expected crunch
+**≤ 3 of 7**; expected build score in the **40-55%** band, alongside the 42.7% and 50.0% runs whose
+plans also carried no `/v1` — not the 88.7% run, whose `meridian` got 1497 chars containing it.
+
+**FALSIFIABLE.** If this unit scores above 80%, or if `crunch.py` passes `fetch_all_payments`, then a
+105-character brief on the contract-owning module does NOT determine the build and F36 is wrong as a
+predictor. That would be the more valuable result and it must be reported as plainly as a confirmation.
+
+Note what the engine did with its 48 minutes: three full re-plans chasing draft-count parity, which it
+never achieved (84 < 85, shipped anyway), while the two modules that matter most went out with 105 and
+80 characters and `detail_fallback` fired 13 times. The machinery optimised the proxy to exhaustion
+and left the predictor unprotected — F49 and F50 in one run.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
