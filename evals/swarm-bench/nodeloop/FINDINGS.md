@@ -193,6 +193,41 @@ And three *finished* runs were reported as having tasks "in flight" when those t
 never completed — failures, not work in progress. The self-test now carries the controls that would
 have caught all three, plus the invariant that occupancy can never exceed 1.0.
 
+## F8 — Planning fans out correctly across 3 nodes, but the DETAIL failures went UP
+
+The planner-side calls each leave a `.swarm/activity/<kind>-<id>.json` naming the node that ran
+them, so the planning phase is measurable today without any engine change.
+
+| run | pool | planner-side calls, by node | plandrafts | detail fallbacks |
+|---|---|---|---|---|
+| `swarm-1node-r0` | 1 | 16 all on one node | 1 | 2 |
+| `swarm-3node-r0` (archived, 1 device) | 1 | 16 all on one node | 1 | 0 |
+| live `baseline-n3-r0` | 3 | **6 / 7 / 6** — gabee / workhorse / mihai | **3** | **4** |
+
+**The fan-out itself is healthy.** 19 planner-side calls spread 6/7/6 across the fleet is near-perfect
+balance, and `best_of_n` correctly scaled to three skeleton drafts where a 1-node run gets one.
+
+**But four detail calls fell back to the architect's one-liner**, confirmed by two independent
+instruments: `dispatch_audit.py` reading `plan_loaded` descriptions, and the raw description lengths
+— `meridian` 116, `store` 124, `test-meridian` 124, `test-api` 146 characters, against a median of
+1,055 for the tasks that got a real spec.
+
+`meridian` is the vendor client. It is the module Tier C exists to grade, and it is the *same* module
+that got 95 characters in the 44.2% run whose Tier C collapsed to 14.3%.
+
+**The hypothesis this raises is the sharpest node-scaling question yet, and it is NOT yet answered:**
+does adding nodes make detail calls *more* likely to fail? Per-node load goes DOWN with three nodes
+(6-7 calls each instead of 16), so the naive expectation is fewer timeouts, not more. Candidate
+causes worth separating: LM Link adds network latency per call, `gabee` is a lower quant with a
+smaller context, and a 3-node fleet makes the architect emit more subtasks (17 vs 14) and therefore
+more detail calls under the same fixed 75 s per-call budget.
+
+This is n=1 per node level on a fleet with a measured 46-point spread — exactly what the running
+campaign's `fallbacks` column exists to settle, at n≥3 across 3, 1 and 2 nodes. **Nothing here
+justifies a fix yet.** Note also that round 1's adversarial pass REFUTED both "raise the 75 s budget"
+and "add a retry" on code-reading grounds; if the campaign shows fallbacks rising with node count,
+those refutations deserve re-examination against evidence they did not have.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
