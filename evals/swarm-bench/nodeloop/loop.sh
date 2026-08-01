@@ -18,6 +18,11 @@ pid() { pgrep -f 'nodeloop/sweep.py' | head -1; }
 case "${1:-status}" in
   start|resume)
     if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
+    # A check nobody runs is not a check. Refuse to launch a campaign whose arms cannot fire on this
+    # binary — an absent lever produces a confident "no effect" that looks exactly like data.
+    if ! "$0" preflight >/dev/null 2>&1; then
+      echo "REFUSING to start — preflight failed:"; "$0" preflight; exit 1
+    fi
     rm -f STOP
     # start_new_session detaches from the process GROUP, not just the parent. Measured on this
     # machine: nohup+disown left ppid pointing at the launching shell and the job died with it
@@ -98,6 +103,38 @@ PY
     ;;
   check)
     python3 "$PWD/health.py"
+    ;;
+  preflight)
+    # Can every QUEUED arm actually fire on the binary the loop will run? An arm whose env lever is
+    # absent from the engine is byte-identical to baseline and records a confident "no effect" —
+    # a fabricated null, and the most expensive kind of wrong answer because it looks like data.
+    # This already happened: 34 hours were queued against a binary with no
+    # GOOSE_SWARM_DETAIL_BUDGET_SECS. The watchdog now catches it at minute one; this catches it
+    # before a single unit starts.
+    python3 - <<'PREFLIGHT'
+import importlib.util, sys, pathlib, subprocess
+sys.path.insert(0, str(pathlib.Path('.').resolve()))
+sys.path.insert(0, str(pathlib.Path('../bench').resolve()))
+spec = importlib.util.spec_from_file_location("sweep", "sweep.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+import run_build
+out = subprocess.run(["strings", str(run_build.GOOSE)], capture_output=True, text=True).stdout
+print(f"engine_build {m.engine_build()}")
+bad = []
+for a in m.arms_now():
+    if not a["env"]:
+        print(f"  {a['name']:<20} (no lever — baseline)")
+        continue
+    for var in a["env"]:
+        ok = var in out
+        print(f"  {a['name']:<20} {var:<36} {'present' if ok else 'ABSENT — arm cannot fire'}")
+        if not ok:
+            bad.append((a["name"], var))
+if bad:
+    print(f"\nFAIL: {len(bad)} arm(s) would record a fabricated 'no effect': {bad}")
+    raise SystemExit(1)
+print("\nevery queued arm can fire on this binary")
+PREFLIGHT
     ;;
   selftest)
     # Adversarially audit the HARNESS itself. With a unit dir it also checks the invariants that
@@ -200,5 +237,5 @@ sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run 
     echo "STOP written — the loop exits after the current unit (results are kept)."
     ;;
   *)
-    echo "usage: $0 {start|status|check|selftest|watch|results|abort|boundary|stop|resume}"; exit 2 ;;
+    echo "usage: $0 {start|status|check|selftest|preflight|watch|results|abort|boundary|stop|resume}"; exit 2 ;;
 esac
