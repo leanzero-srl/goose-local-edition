@@ -7045,3 +7045,35 @@ count against F152's baseline of 16 median / 21.8 min. Both are settleable only 
 NOT RUN, deliberately: the app's own test suite. The sink is editing files and binding ports in that
 tree right now, and a concurrent pytest would contend for both — corrupting the sink's run and my
 measurement together. The crunch waits for r0 to finish.
+
+## F167 — nine more upstream commits closed on deployment facts, one kept open
+
+Continuing F155's ratchet. Every close below is a one-command check about THIS deployment, not a
+reading of the diff (Lesson 44).
+
+    36cb569e3  providers: rewrite oneOf -> anyOf in tool schemas for OpenAI-compatible backends
+               The most plausible candidate of the batch — LM Studio IS our OpenAI-compatible
+               backend. Closed on TWO independent facts: the four schemas we actually send
+               (`edit`, `shell`, `tree`, `write`, 2,064 bytes total) contain NO `oneOf` at all, and
+               there are 0 malformed tool calls across 2,014 campaign-wide. Nothing to rewrite, and
+               the symptom never occurs. (The 122 tool ERRORS are failed edits, a different thing.)
+    7b879b407  acp: simplify ACP tool-call handling      — `acp`/`ACP` appear 0 times in swarm.rs
+    7f9bd274d  code-mode: recursive schema types         — `code_mode` appears 0 times
+    b0f4e2a0f  permissions: manual approval in code mode — same, plus headless has no approval flow
+    65e1e3d50  apps: confine app file operations         — the `apps` surface is not the swarm path
+    e43ed3a6f  enhance the uniffi API layer              — `uniffi` appears 0 times
+    cdea92003  configurable GOOSE_DOCS_ROOT              — appears 0 times; doc_fetch/doc_prefetch
+                                                           are separate levers and default OFF
+    40380ce6d  upgrade to rmcp 3.0                       — 0 MCP tool calls out of 1,247 across
+    7b7b8aa58  upgrade to rmcp 2.0                          EVERY run this campaign has recorded
+
+⚠ The two rmcp ones are closed as BEHAVIOURALLY inert for our measured path, not as irrelevant: they
+are dependency upgrades that would be inherited on any merge and could move compilation or unrelated
+surfaces. "Cannot affect a run that never makes an MCP call" is the honest scope of that close.
+
+STILL OPEN, and each needs a real read rather than a fact-check:
+    ee61c7c49  CLI streaming render O(n^2) -> incremental      (the swarm streams progress to stderr)
+    8b73e1a1b  stable agent event message identity             (bears on the activity digests EVERY
+                                                                instrument reads, and on F163's fix)
+    ad87dd4c3  compaction: structured summary output           (`compact` appears 13 times in
+                                                                swarm.rs — compaction IS our path)
