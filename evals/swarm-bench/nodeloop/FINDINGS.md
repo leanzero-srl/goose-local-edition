@@ -4628,3 +4628,55 @@ All three questions answered: what the turns were (F114), whether capped and fin
 distinguishable (F115, they were not, now they are), and whether the sink was slow (F116, no — it was
 long). The remaining work is the compliance question, which needs a post-boundary run rather than more
 analysis.
+
+---
+
+## F117 — `retarget_off` is INERT (redraft rounds 0 on BOTH arms), and the sink is capped 2 for 2
+
+Two clean units now exist on engine_build 1785657605. **They are NOT replicates** — one is `baseline`,
+one is `retarget_off` — and I nearly reported their 4.7-point difference as "the replicate spread on
+this build", which would have been the same category error this file has caught six times today. The
+replicate spread on this build is still UNMEASURED; both arms are n=1.
+
+### The retarget_off arm measures nothing, and the reason is its precondition
+
+| | prefix | planning | redraft rounds | score |
+|---|---|---|---|---|
+| baseline@3n | 796s | 587s (74%) | **0** | 0.7186 |
+| retarget_off@3n | 1220s | 986s (81%) | **0** | 0.6720 |
+
+The registered prediction was *"score unchanged within the replicate spread, prefix roughly HALVED,
+occupancy up"*. The prefix went **UP 53%**.
+
+But the decisive column is `redraft rounds: 0` **on BOTH**. The redraft never fired on the baseline
+either — so `retarget_off` switched off a mechanism that was not running, and the 424s prefix
+difference has some other cause. **The arm is INERT: it cannot answer the question it was bought for.**
+
+That is PATTERN 2's fifth instance, and the second time today that asking "can this actually fire?"
+would have saved a two-hour unit — the first being F111's circular kind_prompt readout. The rule earns
+its place at the top of the arm queue: **before running an arm, confirm its mechanism FIRES on the
+baseline.** A lever that switches off something already absent is a null experiment dressed as a
+comparison.
+
+(Whether the redraft firing 0 times is itself right is a separate question. Earlier corpus runs showed
+up to FOUR redraft rounds; this build shows none. Plan confidence 100 on the baseline would explain it,
+since the ladder only runs below the ask floor — but that is a hypothesis, not a measurement.)
+
+### The sink is capped EVERY time
+
+| | sink secs | sink turns | s/turn |
+|---|---|---|---|
+| baseline | **1800** | 25 | 72.0 |
+| retarget_off | **1800** | 16 | 112.5 |
+
+**Both hit 1800 exactly — the cap, to the second.** So the sink does not finish; it is stopped, on
+every run measured. F115 makes that visible from now on (`sink_capped`), and F116's framing says the
+turn budget is what matters: at ~83s/turn a 1800s cap buys roughly 21 turns.
+
+That reframes `sink_cap_secs` from "a safety net for a pathological join" — what its own doc claims,
+citing healthy joins at 311-1591s — into **the routine terminator of the longest task in the run**.
+
+### Turn totals, for the F116 ledger
+
+baseline 81 turns total (sink 25 = 31%); retarget_off 71 total (sink 16 = 23%). At ~83s/turn the whole
+run is roughly 100 turns of model time across 3 nodes — the number any future speedup has to move.
