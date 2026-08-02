@@ -3003,3 +3003,49 @@ next occurrence readable; the fix, if one is warranted, follows the evidence rat
 
 **Registered prediction:** the next run's `complete_verify.finding_texts` for a pytest failure will
 end in a traceback or an error banner, not in a list of collected tests.
+
+---
+
+## F84 — P3 CONFIRMED, and it un-blocks a lever that has never been able to do anything
+
+First run on engine_build 1785652162:
+
+```
+research_completed: grounded = 2   looked_nothing_up = 0   lenses = [architecture, libraries]
+```
+
+Every previous run on this bench: `grounded = 0`, `looked_nothing_up = 2`. **P3 confirmed.** A scout
+that reads the vendor docs with `curl` is now recorded as having looked something up.
+
+### The consequence nobody had noticed
+
+`doc_prefetch` — the ONLY channel that routes research to workers VERBATIM, under the banner "these
+were LOOKED UP with a real tool, use them EXACTLY, do NOT paraphrase" — builds its payload from
+`findings.iter().filter(|f| f.grounded)`.
+
+`grounded` was `is_mcp && ok`. This bench has no MCP tools. So the filter matched NOTHING, on every
+run, ever. **`doc_prefetch` was not merely off; it was INERT BY CONSTRUCTION.** Turning it on before
+tonight would have produced an empty `doc_facts` and measured pure silence — and the sweep queue
+carried it as a real arm with a real gate, so that measurement would have been made and believed.
+
+This is the fourth mechanism found with a precondition that never held, after `doc_prefetch`'s
+siblings `task_split`, `sink_review` and `complete_parallel`. The pattern is now the single most
+productive thing to check about any lever: **before measuring a lever, prove its precondition can
+occur at all on this bench.** A lever whose precondition never fires is not a negative result, it is
+a non-measurement, and it looks identical to "the lever does nothing".
+
+### Second-order effect, worth watching rather than acting on
+
+`grounded_research_only = true` (baked default) and `grounded` was always false, so every research
+finding was previously classed INVENTED and never counted as "settled / do not re-ask". With
+`grounded = 2` those findings now count as settled. That changes what the ask/clarify floor sees.
+Direction is right — a genuinely looked-up fact SHOULD settle a question — but it is a behaviour change
+that arrives as a side effect of F78 rather than by design, so it is recorded here and watched, not
+assumed benign.
+
+### Action
+
+`doc_prefetch` is promoted in the sweep queue with its gate rewritten: it is no longer "does the
+verbatim channel help", it is "does the verbatim channel CARRY ANYTHING", which is a question that
+could not previously be asked. Mechanism readout: `doc_facts` non-empty, and `/v1` present verbatim in
+worker dispatches.

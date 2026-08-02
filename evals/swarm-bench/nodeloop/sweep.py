@@ -86,6 +86,13 @@ ARMS = [
                 "the readout, not the build score.",
     },
     {
+        "name": "doc_prefetch",
+        "env": {"GOOSE_SWARM_DOC_PREFETCH": "1"},
+        "gate": "the ONLY verbatim research->worker channel. Inert by construction until F78 - its "
+                "grounded filter could never match on a bench with no MCP tools. Readout: doc_facts "
+                "non-empty, and the external literals research reported reaching a worker unchanged.",
+    },
+    {
         "name": "spec_repair",
         "env": {"GOOSE_SWARM_SPEC_REPAIR": "1"},
         "gate": "the ONE mechanism found that puts three nodes on a one-finding round. The tail is "
@@ -251,6 +258,18 @@ QUESTIONS: list[dict] = [
              "always). It also produces the tail's FIRST occupancy number via "
              "complete_fix_dispatched, which is why it outranks the remaining n=1 readouts: they "
              "measure mechanisms, this one measures a region of the run nobody has ever measured."},
+    {"arm": "doc_prefetch", "nodes": 3, "reps": 1,
+     "asks": "UNBLOCKED BY F78, and it could not have been asked before. doc_prefetch builds its "
+             "payload from findings.filter(|f| f.grounded), and `grounded` was `is_mcp && ok` on a "
+             "bench with NO MCP tools attached - so the filter matched nothing on every run ever and "
+             "the lever was INERT BY CONSTRUCTION, not merely off. Measuring it before tonight would "
+             "have recorded silence as a negative result. First run on the new engine reports "
+             "grounded=2, so the precondition is now reachable. The question is therefore not 'does "
+             "the verbatim channel help' but 'does it CARRY ANYTHING': MECHANISM readout is doc_facts "
+             "non-empty and /v1 present verbatim in a worker dispatch. This is the fourth mechanism "
+             "found with a precondition that never held (after task_split, sink_review, "
+             "complete_parallel), which makes 'prove the precondition can occur' the first question "
+             "to ask of any lever."},
     {"arm": "doc_fetch", "nodes": 3, "reps": 1,
      "asks": "DEMOTED by F53. It was cell 2 on the argument that losing `/v1` breaks the build; the "
              "83.4% unit lost it entirely and crunch still passed 7/7, because workers have shell and "
