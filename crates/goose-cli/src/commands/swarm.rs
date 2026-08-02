@@ -23887,6 +23887,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
             } else {
                 eprintln!("complete: fix round {round} against the distilled failure ...");
+                let fix_model_id = model_id.clone();
                 let fix_req = DispatchRequest {
                     task_id: "complete-fix".to_string(),
                     description: smoke_fix_description(&verdict.findings, complete_lang),
@@ -23905,11 +23906,49 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
                 };
-                let _ = tokio::time::timeout(
+                // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
+                //
+                // F76/F77 added complete_fix_dispatched/complete_fix_completed so the repair tail
+                // would stop being a measurement black hole (F74: 13-26% of every run with no
+                // occupancy number, because the tail emits no task_dispatched). But they were placed
+                // inside the `spec_repair()` branch — a lever that is DEFAULT-OFF — so on an ordinary
+                // run the tail still emitted nothing and the black hole was exactly as dark as
+                // before. MEASURED: complete_fix_dispatched = 0 on the first full run after shipping
+                // it (F105).
+                //
+                // That is a mechanism whose precondition never holds, inside the fix for mechanisms
+                // whose preconditions never hold. The events now ride the SERIAL path, which is the
+                // one that actually runs.
+                sink.write_value(serde_json::json!({
+                    "event": "complete_fix_dispatched",
+                    "round": round,
+                    "twin": 0,
+                    "model": fix_model_id,
+                    "task_id": "complete-fix",
+                    "baseline_findings": verdict.findings.len(),
+                    "path": "serial",
+                }));
+                let fix_started = std::time::Instant::now();
+                let fix_out = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs()),
                     smoke_fix_dispatcher.run(fix_req),
                 )
                 .await;
+                sink.write_value(serde_json::json!({
+                    "event": "complete_fix_completed",
+                    "round": round,
+                    "twin": 0,
+                    "secs": fix_started.elapsed().as_secs(),
+                    // The serial path writes straight into the real tree and nothing re-verifies the
+                    // edit before it lands (F75: `passed` false in 13 of 13 archived rounds, findings
+                    // ROSE in 3). So there is no verified_findings to report here — the next round's
+                    // complete_verify is the only check, and saying `null` states that plainly rather
+                    // than implying a grade that was never computed.
+                    "verified_findings": serde_json::Value::Null,
+                    "agent_ok": matches!(fix_out, Ok(Ok(_))),
+                    "baseline_findings": verdict.findings.len(),
+                    "path": "serial",
+                }));
             }
         }
         complete_failed = !final_passed;

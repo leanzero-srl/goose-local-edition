@@ -4114,3 +4114,36 @@ the second time today an instrument of mine failed for a reason its own docstrin
 
 The correct shape: the tail must emit dispatch events on the DEFAULT serial path too, not only when
 racing is armed. Queued as the first item of the next engine pass; not done mid-run.
+
+---
+
+## F106 — F105 fixed: the tail's dispatch events now ride the path that actually runs
+
+F105 recorded the defect; this closes it.
+
+`complete_fix_dispatched` / `complete_fix_completed` were added by F76/F77 so the repair tail would
+stop being a measurement black hole — F74 measured 13-26% of every run with NO occupancy number
+because the tail emits no `task_dispatched`. They were placed inside the `spec_repair()` branch, a
+lever that is **default-OFF**, so on an ordinary run the tail emitted nothing and the hole was exactly
+as dark as before. Measured on the first full run after shipping: **`complete_fix_dispatched` = 0.**
+
+Both events now also ride the **serial** path — the one that actually executes — tagged
+`"path": "serial"` vs the raced path so the two are never conflated in analysis.
+
+**`verified_findings` is deliberately `null` on the serial path**, not zero. The serial fix writes
+straight into the real tree and nothing re-verifies the edit before it lands (F75: `passed` false in
+13 of 13 archived rounds, findings ROSE in 3). There is no grade to report, and `null` says that
+plainly where `0` would imply a clean re-verify that was never computed — the PATTERN 4 trap, in the
+very field added to escape it.
+
+### Why this one stings
+
+This is a mechanism whose precondition never held, **inside the fix for mechanisms whose preconditions
+never hold**, written by the person who had catalogued that pattern four times the same day. The
+lesson is not "be careful" — it is structural: **an event added to make something observable must be
+emitted on the DEFAULT path, or it observes only the configuration nobody runs.** That belongs next to
+the marker rule, because it is the same class of error: shipping a check that cannot fire.
+
+**Registered prediction:** the next default run emits `complete_fix_dispatched` with `path: "serial"`
+at least once per repair round, and `phases.py` reports a real occupancy number for the tail for the
+first time.
