@@ -33,4 +33,7 @@ F100|-|Replanned{added} lists the spliced ids
 F124|-|with kind_prompt ON, hard-test retry falls from 60% toward the 12% hard non-test already reaches
 F159|-|test-authors take 100% of judge interventions and 5/5 are caught not-yet-writing vs 2/5 implementers; falsifier is an implementer-heavy intervention set on the next run
 F160|-|with scoped_contracts ON, a test-author receives 1 `## API of` block (its dep) not 5, and its system prompt falls materially below 22,511 chars
-F161|-|a FLAT-delta stall trip fires on a worker whose thinking_chars AND tool_calls are unchanged across >=2 consecutive judge_observed rows; falsifier is a flat worker that later produces without being re-dispatched
+# F161 REFUTED 2026-08-02 by its own registered falsifier (F163). test-meridian attempt 1 sat
+# flat at 1,209 chars / 0 calls across three observations and then WROTE on its own. A >=2-flat
+# kill would have false-killed a productive worker. Predicate withdrawn; see F163 for why the
+# counters cannot see a worker streaming a tool payload, and what observable the fix needs.
