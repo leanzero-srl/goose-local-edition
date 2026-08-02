@@ -2824,3 +2824,66 @@ On the current bed it holds exactly: 22 red rounds, `{1:15, 2:7}`, max 2. So the
 today's bench and was too absolute as a general statement. Time-weighted fan width across the whole
 tail: **1.19 nodes.** That number is the honest ceiling for any decompose-the-finding scheme and is
 the strongest argument yet that the ATTEMPT, not the finding, is the only axis available.
+
+---
+
+## F81 — two nodes idle through the execute tail, and the mechanism built to fill them was switched off at +50 min
+
+Caught LIVE, mid-run, which is why it is worth more than the usual post-hoc reading. At +68 min the
+fleet showed one node GENERATING and two IDLE. The DAG said why:
+
+```
+dispatched tasks: 18   completed: 17   IN FLIGHT: 1  (test-cli)
+READY-but-undispatched: 0     blocked by deps: 0
+```
+
+Not a scheduler failure — the plan was simply exhausted. `dynamic_replan` exists for exactly this
+("workers idle while a task is still in flight — ask the planner for more parallel work"). It was off.
+
+### Why it was off
+
+```
+REPLANNED {round: 0, added: [], stopped: True}       @ +50.1 min, 9 of 18 tasks done
+max_replans = 1
+```
+
+The replanner was asked at the halfway point, with half the DAG still queued, and correctly answered
+"nothing to add". The engine's response to an empty answer was `s.replans_done = self.max_replans` —
+it burned the ENTIRE budget. One honest decline, made about a DAG that no longer exists, disabled the
+mechanism for the remaining 18 minutes of single-task tail.
+
+The replanner's answer is a function of the DAG state when it was asked. Treating it as permanent is
+the defect.
+
+**Fix:** an empty answer now REFUNDS its round and records `replan_declined_at_incomplete`. The gate
+may ask again only once STRICTLY FEWER tasks remain — the one change that could honestly produce a
+different answer — so the tail gets its ask while the planner is never pestered at an unchanged state.
+Bounded by construction: each further ask costs at least one task completion.
+
+### The second defect, found while testing the first
+
+The regression test still failed after the fix, and the reason is its own finding. The scheduler's
+wake-up is `timeout(tick, notify.notified())`, where `tick` is 15s if a judge, pre-reviewer or
+speculation is attached and **86,400s otherwise**. The comment says the tick exists so an idle-node
+mechanism can act BETWEEN completions.
+
+**The replanner is not in that list.** Its trigger — nodes idle while a task is still in flight —
+produces no completion to wake on, by construction. So on any run with a replanner and no judge, the
+one window it exists for is never re-examined. It has only ever worked because a judge happened to be
+attached and was lending it a heartbeat.
+
+`self.replanner.is_some()` is now in the tick condition.
+
+### Control
+
+The test (`an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag`) was run with the
+fix REVERTED and FAILS, then restored and PASSES. It reproduces the live shape: an early decline while
+a dependent task is still blocked (incomplete 3), then a completion edge that opens a second window
+with one task left (incomplete 1). Under the old behaviour `late` never runs.
+
+### Standing note
+
+This is a THIRD serial tail, distinct from the two already recorded. Execute ends with a lone task
+while the fleet idles, BEFORE the repair tail starts. `test-cli` — the task holding it — had been
+dispatched four times and was the subject of two judge hints. Whether the replanner would have had
+anything useful to add is unmeasured and is exactly what the next run answers.

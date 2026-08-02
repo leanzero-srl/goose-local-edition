@@ -420,6 +420,63 @@ async fn empty_replan_stops_cleanly() {
     );
 }
 
+/// An empty replan answer must not disable the replanner for the rest of the run.
+///
+/// MEASURED on a live 3-node run: the replan was asked at +50min with 9 of 18 tasks done, correctly
+/// declined because half the DAG was still queued, and the engine then set `replans_done =
+/// max_replans`. At +68min ONE task was in flight, two nodes sat idle with idle_capacity()==5, and the
+/// only mechanism built to fill them had been switched off by that early "no thanks".
+///
+/// The shape here reproduces it exactly: the first idle window occurs while a dependent task is still
+/// blocked (incomplete == 2) and gets an empty answer; the second occurs after the blocker clears
+/// (incomplete == 1), which is strictly fewer and so earns a fresh ask. Under the old behaviour the
+/// second ask never happened and `late` never ran — with max_replans = 1, one decline was the whole
+/// budget.
+#[tokio::test]
+async fn an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag() {
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    // `x` frees a node early -> the FIRST idle window, while `dep`/`y` are still blocked behind `slow`
+    // (incomplete == 3) -> the honest decline. When `slow` lands, `dep` (long) and `y` (short) both
+    // dispatch; `y` finishing is the completion edge that produces the SECOND window, now with only
+    // `dep` outstanding (incomplete == 1) -> strictly fewer, so the replanner is asked again.
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &[]),
+        spec("dep", &["slow"], &[]),
+        spec("y", &["slow"], &[]),
+        spec("x", &[], &[]),
+    ])
+    .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let replanner = Arc::new(MockReplanner {
+        // First answer EMPTY (the honest decline), then real work once the DAG has shrunk.
+        rounds: Mutex::new(VecDeque::from(vec![vec![], vec![spec("late", &[], &[])]])),
+        calls: calls.clone(),
+    });
+    let sched = Scheduler::new(
+        vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
+        3,
+    )
+    // Budget of ONE: an empty answer must not consume it, or the second ask is unreachable.
+    .with_replanner(replanner, 1);
+    let report = sched
+        // BOTH are slow: the second idle window only exists while `dep` is still running, and a
+        // fast `dep` finishes inside one loop iteration so the window is never observed.
+        .run(dag, slow_dispatcher(&rec, 30, &["slow", "dep"]), "g".into())
+        .await
+        .unwrap();
+    let done: std::collections::HashSet<_> = report.done.iter().cloned().collect();
+    assert!(
+        done.contains("late"),
+        "an early decline burned the whole replan budget, so the tail never got its ask: done={:?}",
+        report.done
+    );
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "the replanner must be re-asked once strictly fewer tasks remain, got {} call(s)",
+        calls.load(Ordering::SeqCst)
+    );
+}
+
 #[tokio::test]
 async fn replan_respects_max_replans() {
     // The replanner keeps offering NEW slow tasks; the budget must cap the rounds.
