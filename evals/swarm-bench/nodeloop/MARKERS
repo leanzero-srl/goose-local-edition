@@ -207,3 +207,16 @@ FIX EXACTLY THAT and nothing else
 # instead of building" — while holding worker_thinking_chars, which F131 measured at median 1,229
 # (max 4,519) for this exact population. Now STATES the counts and names the owed paths.
 characters of reasoning instead
+
+# F144 has NO MARKER, and that is correct — the FOURTH time this rule has been relearned (F62, F71,
+# is_code_deliverable, now here). The change adds a struct FIELD (`prev_thinking_chars`), a predicate
+# fn (`is_still_producing`) and doc comments. `JudgeInput` derives only Clone, so the field name is
+# never serialized and NONE of those reach the binary's data section. `strings` would report ABSENT
+# on a perfectly correct build.
+#
+# Worse, preflight.py CALLED IT A LITERAL — it only checked "is this line a comment", and a bare Rust
+# identifier on a code line passed. That hole is now closed (a marker must appear INSIDE QUOTES).
+#
+# F144 is verified by its unit test instead — `a_worker_whose_reasoning_is_climbing_is_not_stuck`,
+# which asserts the kill is suppressed on GROWTH, still fires on a FLAT count, and still fires on a
+# first look. That asserts behaviour, which is stronger than asserting presence.

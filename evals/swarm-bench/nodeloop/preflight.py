@@ -52,21 +52,42 @@ HERE = pathlib.Path(__file__).resolve().parent
 CRATES = HERE.parents[2] / "crates"
 MARKERS = HERE / "MARKERS"
 
-# A line contributes a LITERAL hit only if the marker sits outside `//`. Rust has no marker-bearing
-# block comments in this tree, and treating `/*` as a comment start would misread a `*/` inside a
-# string. Narrow on purpose: a false COMMENT verdict costs a real marker, so when in doubt this
-# leans toward LITERAL and lets the binary check (which is authoritative) have the last word.
-def classify_line(line: str, marker: str) -> str | None:
-    if marker not in line:
-        return None
-    stripped = line.lstrip()
-    if stripped.startswith("//"):
-        return "comment"
-    # `code(); // marker` — the marker is after the comment opener on a code line.
-    idx, cidx = line.index(marker), line.find("//")
-    if cidx != -1 and cidx < idx:
-        return "comment"
-    return "literal"
+# Classification, and it took THREE attempts because each fix broke the other direction.
+#
+#   v1  asked only "does the line start with //". A bare Rust IDENTIFIER on a code line passed as a
+#       literal — `prev_thinking_chars` (F144) was called LITERAL while `JudgeInput` derives only
+#       Clone, so the name is never serialized and `strings` could never find it.
+#   v2  required quotes ON THE SAME LINE. That rejected a GOOD marker immediately: F139's
+#       `YOU ARE TESTING to get its real signatures` sits on a CONTINUATION line of a multi-line
+#       string and carries no quote of its own.
+#   v3  tracked quote state across the whole file. It DRIFTED — the escape test compared against a
+#       two-character sequence instead of one backslash, so every escaped quote flipped the state,
+#       and by line 15554 of a 24k-line file it believed a plain comment was inside a string. That is
+#       the ORIGINAL F71 failure, re-created by the check written to catch it.
+#
+# So: a LOCAL rule, which cannot drift. Rust continues a multi-line string with a trailing backslash,
+# and that is the only continuation shape in this tree.
+def classify_file(text: str, marker: str) -> list[tuple[int, str]]:
+    lines = text.splitlines()
+    out: list[tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        if marker not in line:
+            continue
+        stripped = line.lstrip()
+        cut = line.find("//")
+        idx = line.index(marker)
+        if stripped.startswith("//") or (cut != -1 and cut < idx):
+            out.append((i + 1, "comment"))
+            continue
+        if line[:idx].count('"') % 2 == 1:
+            out.append((i + 1, "literal"))
+            continue
+        prev = next((lines[j].rstrip() for j in range(i - 1, -1, -1) if lines[j].strip()), "")
+        if prev.endswith(chr(92)):
+            out.append((i + 1, "literal"))
+            continue
+        out.append((i + 1, "identifier"))
+    return out
 
 
 def camel(marker: str) -> str:
@@ -133,14 +154,12 @@ def main() -> int:
 
     bad = []
     for m in markers:
-        hits = {"literal": [], "comment": []}
+        hits = {"literal": [], "comment": [], "identifier": []}
         for p, t in texts.items():
             if m not in t:
                 continue
-            for i, line in enumerate(t.splitlines(), 1):
-                k = classify_line(line, m)
-                if k:
-                    hits[k].append(f"{p.relative_to(CRATES)}:{i}")
+            for i, k in classify_file(t, m):
+                hits[k].append(f"{p.relative_to(CRATES)}:{i}")
         if hits["literal"]:
             where = hits["literal"][0]
             extra = f" (+{len(hits['literal']) - 1} more)" if len(hits["literal"]) > 1 else ""
@@ -156,6 +175,9 @@ def main() -> int:
             # findable — which is all a marker has to be. Reporting this as a failure would be an
             # instrument overruling the artefact it is a proxy for.
             print(f"  LITERAL  {m[:44]:<46} (no source form; present in the built binary)")
+        elif hits["identifier"]:
+            bad.append((m, "IDENTIFIER", hits["identifier"][0]))
+            print(f"  IDENT    {m[:44]:<46} {hits['identifier'][0]}  <-- a NAME, not a string")
         elif hits["comment"]:
             bad.append((m, "COMMENT", hits["comment"][0]))
             print(f"  COMMENT  {m[:44]:<46} {hits['comment'][0]}  <-- WILL REPORT ABSENT")
@@ -171,6 +193,10 @@ def main() -> int:
                 print(f"  · {m!r} is only a comment ({where}). Either point it at the real literal the "
                       f"fix introduced, or drop it and verify that fix with a unit test instead — "
                       f"asserting behaviour beats asserting presence (F62, F71).")
+            elif why == "IDENTIFIER":
+                print(f"  · {m!r} is a Rust NAME ({where}), not a string literal. `strings` reads the "
+                      f"binary's DATA — a field or fn name is not there unless something serializes "
+                      f"it. Drop the marker and verify that fix with a unit test.")
             else:
                 print(f"  · {m!r} is nowhere in crates/. The fix is missing, reverted, or the marker "
                       f"is a typo. Do NOT rebuild until you know which.")

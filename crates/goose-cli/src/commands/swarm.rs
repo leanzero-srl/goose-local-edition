@@ -10855,6 +10855,16 @@ pub struct GooseAgentDispatcher {
     /// on-disk bytes drifted from its owner's snapshot is restored (owner wins) and flagged. Empty unless the
     /// flag is on -> no snapshot taken, no restore, byte-identical.
     owner_snapshots: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    /// `worker_thinking_chars` as of the LAST judge observation of each task, so the judge can see a
+    /// DELTA rather than a level. F143: `test-meridian` was killed for "stuck re-reading" while its
+    /// tool_calls sat at 3 and its reasoning climbed 5,818 -> 8,784 — a single snapshot cannot tell a
+    /// worker mid-generation from a stopped one, and only the pair can.
+    ///
+    /// Keyed by task_id and simply overwritten each observation: a re-dispatch starts a new attempt
+    /// whose first look then has a stale predecessor. That is deliberate and SAFE in one direction
+    /// only — a stale HIGHER value makes `now > prev` false and leaves the trip ARMED, so the failure
+    /// mode is "kill as before", never "suppress a kill we should have made".
+    judge_prev_thinking: Mutex<HashMap<String, u64>>,
     /// #121: when set, a task whose accumulated output carries the deterministic mid-stream body-drop
     /// signature (`is_stream_decode_interrupt`) is re-dispatched as Transient instead of being accepted as
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
@@ -10942,6 +10952,7 @@ impl GooseAgentDispatcher {
             clarity_fail: Mutex::new(None),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
+            judge_prev_thinking: Mutex::new(HashMap::new()),
             stream_decode_retry,
             straggler_stop,
             straggler_grace_secs,
@@ -16502,6 +16513,15 @@ impl Judge for GooseAgentDispatcher {
             secs_since_last_write,
             worker_tool_calls,
             worker_thinking_chars,
+            // Read the PREVIOUS observation, then record this one — so the judge sees the delta.
+            prev_thinking_chars: {
+                let mut g = self.judge_prev_thinking.lock().unwrap();
+                let was = g.get(&req.task_id).copied();
+                if let Some(now) = worker_thinking_chars {
+                    g.insert(req.task_id.clone(), now);
+                }
+                was
+            },
             // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
