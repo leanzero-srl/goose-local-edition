@@ -6863,3 +6863,53 @@ QUEUED behind the freeze (F154). Registered as F161 in PREDICTIONS since it intr
 the trip fires on a worker flat across >=2 consecutive `judge_observed` rows; the falsifier is a flat
 worker that later produces on its own without being re-dispatched — which would mean flatness is an
 artefact of the observation cadence rather than a stall, and the fix must be abandoned.
+
+## F162 — the idle node exists when there is nothing to assess, and nothing is idle when there is
+
+`judge_skipped` fired **60 times on r0, every one `no_idle_device`** — against F151's measurement
+that 42% of execute sits at <=2 tasks with SIX slots free. Those look contradictory. They are not,
+and resolving it names the real obstacle to Prime Directive 3.
+
+Occupancy at the exact moment of each skip (counting a task from its LATEST dispatch to its
+completion — the first version of this counter let re-dispatch ADD instead of REPLACE and reported 9
+in flight against 6 slots, which is impossible and was thrown away):
+
+    in-flight when SKIPPED   (n=60): median 6   {5:10, 6:43, 7:7}
+    skips with the fleet full (>=6): 50/60 = 83%
+    skips with >=2 slots free (<=4): 0/60 = 0%
+
+Not one skip happened while capacity was available. And the time profile shows why F151 does not
+disagree — the two measurements describe different windows of the same run:
+
+    min  0-15   0 in flight (PLAN)      judge looks   0
+    min 20-35   5-7 in flight (FULL)    judge looks 108   <- 81% of all looks
+    min 40-50   3-4 in flight (tail)    judge looks   7
+
+The judge's work is concentrated exactly where the fleet is saturated. F151's low-concurrency 42% is
+the TAIL — and 69% of it is `integrate-verify`, by which point there is almost nothing left to
+assess. So:
+
+  **The free node appears in the tail, when there is nothing worth judging. During the fan-out, when
+  there is, every node is busy and the assessor is unreachable.**
+
+High utilisation and semantic judging are in direct tension — good scheduling actively starves the
+mechanism meant to supervise it. That is a structural property, not a tuning miss, and no threshold
+fixes it.
+
+Two ways out, and they are not equivalent:
+
+  (a) RESERVE capacity for assessment — pay real throughput for it, on a fleet whose whole problem is
+      that it under-fills. Directly opposed to Prime Directive 1.
+  (b) Make the assessment need NO device. Every check that is arithmetic on counters the engine
+      already emits runs fine at 6/6 occupancy.
+
+(b) is the answer for everything that does not require judgement, and F160 is exactly that case: a
+worker flat on thinking-chars AND tool-calls across consecutive observations is provably producing
+nothing, decidable from two integers, no model involved. It is not a cheaper approximation of the
+semantic review — it is the part of the review that never needed a model, currently queued behind one.
+
+This does NOT retire the semantic judge. It says the split is wrong: the deterministic half must run
+always, and the model half should run in the tail where a node IS free — which is also where the
+sink, the run's single longest task, currently runs unwatched (F115, still open).
+
+Corrects nothing in F151, which stands exactly as measured; it supplies the window F151 did not state.
