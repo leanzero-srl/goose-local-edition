@@ -136,6 +136,40 @@ if n >= 8:
     print("         CROSS THE BOUNDARY — at this size the batch costs more than the unit it kills.")
     print("         ./loop.sh boundary  (pre-flights first and refuses without killing anything)")
 HELD
+    # STALE SUPERVISOR. A running python process holds sweep.py as it was at launch, so editing
+    # QUESTIONS/ARMS changes nothing until it restarts — an edit that is invisible to the thing it
+    # was written for. MEASURED twice in twenty minutes: an arm set was queued and reordered while
+    # the live sweep kept the old list, and the second time only caught it because the NEXT line in
+    # the log still named the old arm. Same treatment as held commits: counted, not remembered.
+    python3 - <<'STALE'
+import subprocess, pathlib, time
+HERE = pathlib.Path(__file__).resolve().parent if "__file__" in dir() else pathlib.Path(".")
+src = pathlib.Path("sweep.py").resolve()
+if not src.is_file():
+    raise SystemExit(0)
+pid = subprocess.run(["pgrep", "-f", "nodeloop/sweep.py"], capture_output=True, text=True).stdout.split()
+if not pid:
+    raise SystemExit(0)
+# macOS `ps` has NO `etimes` — it errors with "keyword not found" and the check then silently did
+# NOTHING, which is worse than not having it: a gate that prints neither verdict reads as a pass.
+# Only `etime` exists, formatted [[dd-]hh:]mm:ss, so parse that.
+et = subprocess.run(["ps", "-o", "etime=", "-p", pid[0]], capture_output=True, text=True).stdout.strip()
+if not et:
+    raise SystemExit(0)
+days, _, clock = et.rpartition("-")
+parts = [int(x) for x in clock.split(":")]
+while len(parts) < 3:
+    parts.insert(0, 0)
+secs = parts[0] * 3600 + parts[1] * 60 + parts[2] + (int(days) * 86400 if days else 0)
+started = time.time() - secs
+if src.stat().st_mtime > started:
+    print(f"  [ACT]  sweep.py was EDITED {int((src.stat().st_mtime - started)/60)} min AFTER the "
+          f"running supervisor started (pid {pid[0]}).")
+    print("         The live queue is the OLD one — your edit is invisible until it restarts.")
+    print("         Restart it (supervisor BEFORE engine) or the arm you just added will never run.")
+else:
+    print("  [OK] the running supervisor is newer than sweep.py — the live queue is current")
+STALE
     ;;
   preflight)
     # Can every QUEUED arm actually fire on the binary the loop will run? An arm whose env lever is
