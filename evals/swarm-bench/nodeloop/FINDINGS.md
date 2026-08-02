@@ -5070,3 +5070,54 @@ reservations" on the live plan instead of "NO — fix the planner", which is the
 **No corrector was written.** The measurement that would have justified it says it is worth three
 points, and I checked before building rather than after. That is lesson 11 applied in the one
 direction that actually saves work.
+
+---
+
+## F125 — the boundary check runs at the wrong MOMENT, and my fix for that was wrong about 2 of 41
+
+`./loop.sh boundary` verifies MARKERS against the rebuilt BINARY. Right check, wrong moment: by the
+time it runs the supervisor is dead, the engine is dead, and the rebuild is spent. Three times a
+marker turned out to be a comment or a fn name (`failed_task_finding`, `is_code_deliverable`,
+`THE SPEC STATES ITS ENDPOINTS`) and refused a perfectly correct binary, sending me to hunt a defect
+that did not exist. **Every one of those was decidable from source, with the fleet up and nothing at
+stake.** `preflight.py` does that, and it is about to matter: 33 commits are held for this boundary.
+
+Two things it caught immediately, both of which would have cost real work.
+
+**MARKERS' own instructions were wrong.** The file that exists to stop this mistake said to prove a
+candidate with `grep -c '"MARKER"' crates/goose-cli/src/commands/swarm.rs`. The binary links EVERY
+crate, and `WHAT THE SUPERVISOR ALREADY FOUND` lives in `goose-swarm/src/scheduler.rs`. Grepping one
+file returns 0 for it — indistinguishable from the comment case — and the "fix" would have been to
+delete a good marker. Same blindness, one file wide.
+
+### And then the new instrument was wrong in exactly that direction
+
+First run: `task_split` **ABSENT from crates/ entirely**, `speculated` **only a comment**. Both
+verdicts said delete or repoint. Both were false — `strings target/release/goose` finds them (1 and
+2 occurrences). `event.rs` carries `#[serde(tag = "event", rename_all = "snake_case")]`, so variants
+`TaskSplit` and `Speculated` become those literals **at compile time**. The text exists in no .rs
+file. **A source grep cannot see a derive macro**, and I had just finished writing a docstring about
+how a source grep cannot see the whole crate tree.
+
+Fixed with a fourth verdict, `DERIVED`, narrow by construction: the marker must be snake_case, the
+file must carry the rename attribute, and the CamelCase form must appear as a **variant head**
+(`^\s*Speculated\s*[{(,]`) — not merely somewhere in the text, which is how `Speculated` appears in
+a doc comment at scheduler.rs:1212 and would have re-introduced the blindness as a false pass.
+
+Two further notes on the fix itself:
+
+- The first `DERIVED` regex required an underscore, so it **missed `speculated`** — one of the two
+  markers it was written for. It passed anyway, via the binary cross-check, on a stale binary that
+  happened to carry it. A verdict that depends on that is not a verdict. Now `[a-z0-9]+(_[a-z0-9]+)*`.
+- The binary is consulted as a **POSITIVE signal only**. It predates every held commit, so absence
+  there proves nothing; presence proves the marker is findable, which is the only claim made.
+
+CONTROLS, both directions: `THE SPEC STATES ITS ENDPOINTS` (the real historical comment-marker that
+refused a correct binary) -> COMMENT, exit 1. A fabricated marker -> ABSENT, exit 1. Restored -> exit 0.
+
+**Result: 41/41 markers will survive the rebuild — 39 LITERAL, 2 DERIVED.** The boundary can be
+crossed the moment the 1-node unit finishes, without discovering a phantom afterwards.
+
+The lesson is P6 again and it landed on the FIRST run of a new instrument: an instrument built to
+catch a blindness reproduced that blindness one layer down. The reason it cost nothing is that
+`strings` on the existing binary was one command away and I ran it before acting on the verdict.
