@@ -7395,6 +7395,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(advertised_subcommands("usage: app [-h] [--flag F]").is_empty());
         // A brace group that is prose, not a command list, is ignored.
         assert!(advertised_subcommands("see {the docs, really} for more").is_empty());
+
+        // THE FALSE ZERO. argparse prints a ONE-subcommand app as `{serve}` — no comma. A comma
+        // requirement sat next to the prose guard and made every such app advertise NOTHING, so the
+        // probe had nothing to invoke and reported a clean result it had not earned.
+        assert_eq!(
+            advertised_subcommands("usage: srv [-h] {serve} ..."),
+            vec!["serve"]
+        );
+
+        // Folded in from parse_subcommands, the SECOND parser of this same input, now deleted. It read
+        // the identical argparse block with no prose guard, so the smoke gate and spec_contract could
+        // disagree about what an app advertises while both were "reading the help".
+        let multi = "usage: unitconv [-h] {convert,units} ...\n\npositional arguments:\n  {convert,units}\n    convert  convert a value\n    units    list units\n";
+        assert_eq!(advertised_subcommands(multi), vec!["convert", "units"]);
+        assert!(advertised_subcommands("usage: tool [-h] FILE\n").is_empty());
+        assert_eq!(
+            advertised_subcommands("usage: x [-h] {a,b-c,d_e} ..."),
+            vec!["a", "b-c", "d_e"]
+        );
     }
 
     /// OMNI-JUDGE is now ON by default — it is the ONLY supervisor that can watch a `verify::` task, because
@@ -8587,20 +8606,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(ex.contains("DISPATCH_TAIL_MARKER"));
         assert!(ex.contains("middle elided"));
         assert!(ex.chars().count() < big.chars().count());
-    }
-
-    #[test]
-    fn parse_subcommands_extracts_argparse_choices() {
-        // The argparse subparser choices block on the usage line.
-        let help = "usage: unitconv [-h] {convert,units} ...\n\npositional arguments:\n  {convert,units}\n    convert  convert a value\n    units    list units\n";
-        assert_eq!(parse_subcommands(help), vec!["convert", "units"]);
-        // No subcommands (a flat CLI) -> empty.
-        assert!(parse_subcommands("usage: tool [-h] FILE\n").is_empty());
-        // Junk tokens filtered (only identifier-ish kept).
-        assert_eq!(
-            parse_subcommands("usage: x [-h] {a,b-c,d_e} ..."),
-            vec!["a", "b-c", "d_e"]
-        );
     }
 
     #[test]
@@ -13755,7 +13760,10 @@ fn advertised_subcommands(help: &str) -> Vec<String> {
     let Some((inner, _)) = rest.split_once('}') else {
         return Vec::new();
     };
-    if inner.is_empty() || inner.contains(' ') || !inner.contains(',') {
+    // The SPACE guard is prose protection and stays: "see {the docs, really} for more" is not a command
+    // list. There used to be a COMMA requirement next to it, and it was a false zero — argparse prints a
+    // single-subcommand app as `{serve}`, with no comma, so every such app advertised NOTHING to probe.
+    if inner.is_empty() || inner.contains(' ') {
         return Vec::new();
     }
     inner
@@ -14832,24 +14840,6 @@ fn review_file_excerpt(content: &str) -> String {
 /// subcommand's REQUIRED args (top-level --help lists the subcommands but NOT their arguments). Returns empty
 /// for a non-subcommand CLI. Tolerant: only clean identifier-ish tokens; a false `{text,json}` choices block
 /// just yields tokens whose sub-help run argparse-errors and is filtered by the caller.
-fn parse_subcommands(help: &str) -> Vec<String> {
-    let Some(inner) = help
-        .split_once('{')
-        .and_then(|(_, rest)| rest.split_once('}').map(|(inner, _)| inner))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        })
-        .collect()
-}
-
 /// Deterministic layout-normalizer (T4): rewrite a subtask's BARE module path (e.g. `stats.py`) to the existing
 /// package layout (`<pkg>/stats.py`) ONLY when a file of that basename already EXISTS in the package
 /// (`existing_pkg_files`) — so a weak planner that switches an existing package to flat paths cannot create a
@@ -15223,7 +15213,7 @@ async fn entry_help(root: &Path, lang: TargetLang) -> String {
     // Fetch `<pkg> <sub> --help` for each parsed subcommand (capped); drop any that argparse-errors (a false
     // {choices} block yields an "error: invalid choice", filtered here) so only real subcommand help is added.
     let mut out = top.clone();
-    for sub in parse_subcommands(&top).into_iter().take(8) {
+    for sub in advertised_subcommands(&top).into_iter().take(8) {
         let sub_argv = [
             "python3".to_string(),
             "-m".to_string(),
