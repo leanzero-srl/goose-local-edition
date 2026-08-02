@@ -15853,6 +15853,17 @@ fn ambiguity_schema() -> serde_json::Value {
     })
 }
 
+/// Record WHY the judge passed without a semantic review. Without this every pass looks identical in
+/// the log and the one number that matters — how often the supervisor actually formed a judgement —
+/// cannot be attributed to a cause.
+fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
+    events.write_value(serde_json::json!({
+        "event": "judge_skipped",
+        "task_id": task_id,
+        "reason": reason,
+    }));
+}
+
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
@@ -15950,6 +15961,19 @@ impl Judge for GooseAgentDispatcher {
         // The cheap deterministic checks above already ran without a model; skip the LLM review rather than
         // queue it behind a busy worker. This is what lets the judge still catch a stuck worker mid-fan-out.
         if req.judge_model_id.trim().is_empty() {
+            // WHY the judge passed, as an engine fact. Four distinct paths return `JudgeOutcome::ok()`
+            // and every one of them lands in the log as `confidence 1.0, hint ""` — indistinguishable.
+            // That made the headline "the semantic review runs 4.3% of the time" UNATTRIBUTABLE: it
+            // could be this branch, the nothing-produced gate below, or a failed model call, and those
+            // have completely different fixes.
+            //
+            // THIS branch is the load-bearing one and it is UPSTREAM of everything else. The scheduler
+            // hands the judge a model ONLY when a device is idle (scheduler.rs — `claimed_device` is
+            // the first device with `in_flight < weight`, and `judge_model_id` is empty otherwise). With
+            // execute occupancy measured at 0.72-0.93, nodes are busy nearly all the time, so the
+            // semantic review is not being declined — it is UNREACHABLE. High utilisation and semantic
+            // judging are in direct tension, and nothing in the log said so.
+            me_events_skip(&self.events, &req.task_id, "no_idle_device");
             return JudgeOutcome::ok();
         }
         // M3 (gated by split_enabled): a too-big PRODUCING task — ask this idle node to PARTITION its files
@@ -15986,6 +16010,7 @@ impl Judge for GooseAgentDispatcher {
         // just-launched worker from being reviewed. A worker that is 90s old and has emitted
         // reasoning while writing nothing and calling nothing is exactly what a supervisor is for.
         if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
+            me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
             return JudgeOutcome::ok(); // genuinely nothing produced yet
         }
         let files_block = if input.file_contents.is_empty() {
