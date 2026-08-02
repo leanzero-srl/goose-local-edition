@@ -8259,6 +8259,42 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
     }
 
+    /// G7's SECOND seam, same shape as the first. `overview_run_command` handled Python, Rust and
+    /// TypeScript and then `_ => None` — so a Go app resolved to NO run command at all, and nothing
+    /// could probe its entry point, on a stack the engine otherwise supports with its own smoke gate.
+    #[test]
+    fn go_gets_a_run_command_and_no_language_falls_through_to_none() {
+        use std::fs;
+        let d = tempfile::tempdir().unwrap();
+        let rel = vec!["main.go".to_string()];
+
+        // Without go.mod there is nothing runnable — keyed on the manifest, like Rust on Cargo.toml,
+        // because guessing produces a command that fails for reasons unrelated to the app.
+        assert_eq!(overview_run_command(TargetLang::Go, d.path(), &rel), None);
+
+        fs::write(
+            d.path().join("go.mod"),
+            "module x
+",
+        )
+        .unwrap();
+        let got = overview_run_command(TargetLang::Go, d.path(), &rel);
+        assert_eq!(
+            got.as_deref(),
+            Some("go run . --help"),
+            "Go still falls through: {got:?}"
+        );
+        // The regression that mattered: Go must not be handed Python's tooling here either.
+        let g = got.unwrap();
+        assert!(!g.contains("python3") && !g.contains("pytest"), "{g}");
+
+        // Other is EXPLICIT None, not a wildcard — so a language added later must state its answer.
+        assert_eq!(
+            overview_run_command(TargetLang::Other, d.path(), &rel),
+            None
+        );
+    }
+
     /// G7's first enforced seam. The regression is specific: this match used to be
     /// `TypeScript | Rust | _`, so Go — which has its OWN smoke gate running `go build ./...` and
     /// `go test ./...` — was told by the fix prompt to verify with `python3 -m pytest`.
@@ -14934,7 +14970,22 @@ fn overview_run_command(lang: TargetLang, root: &Path, rel: &[String]) -> Option
             .iter()
             .find(|p| p.ends_with("cli.js") || p.ends_with("index.js") || p.ends_with("main.js"))
             .map(|entry| format!("node {entry} --help")),
-        _ => None,
+        // G7, second seam. This was `_ => None`, so a GO app resolved to NO run command at all —
+        // nothing could probe its entry point, and `run_overview.run_command` came back empty for a
+        // stack the engine otherwise supports with its own smoke gate (`go build ./...`,
+        // `go test ./...`). Sibling to F102, where the same wildcard told a Go app to run pytest.
+        //
+        // Keyed on go.mod for the same reason Rust is keyed on Cargo.toml: the manifest is what makes
+        // the command runnable, and guessing without it produces a command that fails for a reason
+        // that has nothing to do with the app.
+        TargetLang::Go => root
+            .join("go.mod")
+            .exists()
+            .then(|| "go run . --help".to_string()),
+        // EXPLICIT, not a fallback. An unrecognised stack genuinely has no derivable entry command —
+        // but saying so in its own arm means the next language added has to state its answer instead
+        // of silently inheriting this one.
+        TargetLang::Other => None,
     }
 }
 

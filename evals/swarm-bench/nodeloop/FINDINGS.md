@@ -3999,3 +3999,42 @@ sharper job than auditing 366 literals, and it is where the defects actually liv
 
 128 sites match `TargetLang::` in this file. The next passes take them one gate at a time, each with
 its own controls, never mid-run — starting with the ones that still carry a `_`.
+
+---
+
+## F103 — G7 second seam: Go had no run command at all, because of the same wildcard
+
+Auditing wildcard arms rather than literals (F102's lesson) found the sibling defect immediately.
+
+`overview_run_command` resolved Python, Rust and TypeScript, then `_ => None`:
+
+```rust
+TargetLang::TypeScript => rel.iter().find(...).map(|e| format!("node {e} --help")),
+_ => None,
+```
+
+So a **Go app resolved to NO run command at all.** Nothing could probe its entry point, and
+`run_overview.run_command` came back empty — on a stack the engine otherwise supports with its own
+smoke gate (`go build ./...`, `go test ./...`). Exactly the sibling of F102, where the same wildcard
+told a Go app to verify with pytest: one wildcard gave Go the wrong tooling, the other gave it none.
+
+**Fixed:** `TargetLang::Go => root.join("go.mod").exists().then(|| "go run . --help")`, keyed on the
+manifest for the same reason Rust is keyed on `Cargo.toml` — the manifest is what makes the command
+runnable, and guessing without it produces a failure that has nothing to do with the app.
+`TargetLang::Other => None` is now EXPLICIT rather than a fallback, so a language added later has to
+state its answer instead of silently inheriting this one.
+
+Guarded by a test that asserts the manifest gate in both directions (no `go.mod` -> None; with it ->
+`go run . --help`), that Go's answer contains neither `python3` nor `pytest`, and that `Other` is a
+deliberate None.
+
+### The audit method is working, and it is cheap
+
+A scan for language matches that either carry a `_` arm or omit a `TargetLang` variant returned **two
+sites** across the whole file — against 366 `.py` literals and 128 `TargetLang::` references. Both
+sites were real defects. That ratio is the argument for the method: **the literals are where the
+Python-ness is spelled; the wildcards are where another language silently inherits it.**
+
+Remaining from that scan: `swarm.rs:14169`, the contract-stub prompt, which has a Python arm and no
+other variants visible in the scanned window. Next pass — read it fully first, because F101 is the
+standing lesson that an instrument's reason can be wrong even when its verdict is right.
