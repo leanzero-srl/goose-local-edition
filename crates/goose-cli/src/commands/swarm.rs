@@ -16751,7 +16751,31 @@ impl PreReviewer for GooseAgentDispatcher {
                 if c.trim().is_empty() {
                     continue;
                 }
-                let body: String = c.chars().take(2400).collect();
+                // HEAD-TRUNCATION HERE MANUFACTURED A PHANTOM AND SHIPPED IT AS AN ORDER.
+                //
+                // `chars().take(2400)` with NO marker told the reviewer nothing had been cut, so the
+                // model reported what it saw. MEASURED on retarget_off-n3-r0 (the run that scored
+                // 0.6720, the worst of three): the reviewer said of `api.py` "the file is truncated
+                // mid-function ... none of the handler methods (`_handle_health`, `_handle_payments`,
+                // `_handle_summary`, `_handle_sync`, `_handle_index`) nor the `serve()` function are
+                // defined — so the API is never actually wired up and would crash on any request."
+                //
+                // `api.py` is 5731 chars and every one of those is defined: _handle_health at char
+                // 2561, _handle_payments 2787, _handle_summary 3736, _handle_sync 4689, _handle_index
+                // 5177, serve 5407 — ALL of them past the 2400-char cut. The finding is an artefact of
+                // this line. It was then persisted to `.swarm/prereview/` and injected into the sink's
+                // prompt under "CONFIRM each against the spec and FIX it before you finish": a
+                // mandatory repair order, against working code, at the head of the run's longest and
+                // most expensive task.
+                //
+                // `review_file_excerpt` already solves this and its two sibling reviewers both call it
+                // (`:20138`, `:20220`). It shows any file under 6000 chars WHOLE — so `api.py` would
+                // have arrived complete and the phantom could not have formed — and for larger files
+                // keeps head AND tail with an explicit `[middle elided]` marker, so the model is told
+                // what it is missing instead of inferring absence. This site was the only one still
+                // head-truncating: the same one-rule-two-implementations defect this codebase keeps
+                // producing, and the more expensive half was the copy nobody updated.
+                let body = review_file_excerpt(&c);
                 files_block.push_str(&format!("### {f}\n```\n{body}\n```\n\n"));
             }
         }
