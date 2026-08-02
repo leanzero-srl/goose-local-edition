@@ -1994,6 +1994,30 @@ absent instruction — a worker handed a 105-character brief, e2e shards told to
 spec they were never given, a fan whose extractor could not read four of six finding shapes, and now
 a supervisor asked for its judgement on one call in twenty-three.
 
+## Correction — my ad-hoc marker check contradicted loop.sh twice, and loop.sh was right both times
+
+After crossing the boundary for F57, `loop.sh boundary` reported the marker **present**; a hand-rolled
+`grep -qF -- "$M" <(strings "$B")` a moment later reported **ABSENT**. Re-running it reported ABSENT
+for four markers, two of which had been verified present an hour earlier — an impossible result, and
+therefore an instrument fault rather than a build fault.
+
+Positive control settled it in one command: `strings` finds `run_started`, `reasoning emitted` and
+`detail_completed` exactly once each. Everything shipped.
+
+The cause was mine. I invoked `./loop.sh boundary` a **second** time to re-read the markers, and that
+verb REBUILDS — so my check was reading a binary being rewritten underneath it (mtime moved from
+…635466 to …635667 between the two). `loop.sh` has a settle-wait for precisely this, added after the
+same failure mode once refused a boundary with all four markers "missing"; the ad-hoc check bypassed
+the guard that exists to prevent it.
+
+Two rules, both already in the ledger and both re-earned tonight:
+
+- **Never re-implement an instrument ad hoc.** This is the second time in one night a throwaway check
+  disagreed with a real instrument and the instrument was right (the other gave 1484s where
+  `occupancy.py` correctly said 55.9s).
+- **`./loop.sh boundary` is not idempotent-cheap — it rebuilds.** To re-read markers, read them; do
+  not re-run the verb.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
