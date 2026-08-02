@@ -4730,3 +4730,56 @@ for the backlog, not a lever-tuning one.
 
 **Registered:** any future `retarget` arm must first assert `plan_confidence < ask_floor` on its
 baseline. Otherwise it is F117 again.
+
+---
+
+## F119 — armcheck.py: THREE of nine queued arms cannot answer their own question
+
+Two arms were bought today with fleet time they could not repay — `kind_prompt` (circular readout,
+F111) and `retarget_off` (mechanism never fires, F117/F118). Rather than discover a third the same way,
+`armcheck.py` now asks both questions of every queued arm against a real baseline:
+
+1. does the arm's **MECHANISM** fire on the baseline at all? (else there is nothing to change)
+2. can the **INSTRUMENT** see the change? (else the readout is unearned)
+
+Run against `baseline-n3-r0`:
+
+```
+BLOCKED  kind_prompt      no `rules_delivered` events — the delivered rule-set is unprovable with the
+                          lever ON, so the readout is circular (F111). Needs the post-F111 engine.
+BLOCKED  detail_budget    slowest detail 161s vs budget 420s — nothing is near the ceiling
+BLOCKED  retarget_off     plan_confidence 100 >= ask_floor 85 — the ladder never runs
+OK       doc_prefetch     grounded=2: the verbatim channel has content to carry
+OK       spec_repair      2 repair rounds: the race has work
+OK       complete_parallel a round had 3 findings: the fan has >1 item
+OK       e2e_oracle       3 e2e shards ran
+UNKNOWN  sink_review      needs occupancy's solo window, not decidable from events alone
+UNKNOWN  doc_fetch        needs the spec checked against spec_doc_urls
+```
+
+**Three of nine.** At ~2 hours per unit that is six hours of fleet time that would have produced
+nothing — and two of the three I would not have caught without asking.
+
+### `detail_budget` is worse than inert — it is STALE AND BACKWARDS
+
+The arm sets `GOOSE_SWARM_DETAIL_BUDGET_SECS=300`. But **F49 already made the budget derive from
+`worker_timeout_secs`**, which resolves to **420s** here, and the baseline's slowest detail call is
+**161s — 38% of the ceiling**.
+
+So the arm would **LOWER a ceiling nothing is near**: it can only make things worse, and its gate text
+still argues against a 75s literal that F49 removed. **A fix elsewhere silently invalidated an arm, and
+nothing connected the two.** That is P5 (a fix that leaves its mechanism) inverted — here the fix
+landed and the *experiment* rotted.
+
+Set to `reps: 0` with the reasoning kept inline, rather than deleted, so requeuing it requires reading
+why it was parked.
+
+### The rule this makes routine
+
+`armcheck.py` runs against the newest baseline and exits 1 if any queued arm is blocked. It is
+deliberately CONSERVATIVE — an arm whose precondition cannot be decided from the baseline's own events
+is UNKNOWN, never OK — because a green here proves only that the arm is *not already doomed*, which is
+the cheap half of the question.
+
+**This belongs in the tick routine alongside review.py**: before any arm is queued, the baseline must
+show its mechanism firing and its instrument watching.
