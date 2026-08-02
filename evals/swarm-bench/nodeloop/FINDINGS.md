@@ -2887,3 +2887,62 @@ This is a THIRD serial tail, distinct from the two already recorded. Execute end
 while the fleet idles, BEFORE the repair tail starts. `test-cli` — the task holding it — had been
 dispatched four times and was the subject of two judge hints. Whether the replanner would have had
 anything useful to add is unmeasured and is exactly what the next run answers.
+
+---
+
+## F82 — F69 CONFIRMED against the real phantom source, with controls, without waiting for the tail
+
+The `log_message` phantom accounted for **8 of the 9 recorded phantom findings** (the ninth was the
+port collision). It was being waited on as a live readout from the running unit. It did not need to
+be: the phantom's source is in the ARCHIVE, and the fix can be run against it directly.
+
+### Where the phantom actually comes from
+
+Sampling a shipped test file (`preboundary-3 .../tests/test_meridian.py`) to check an unrelated
+question — whether test-authors test the real module or a replica — turned it up:
+
+```python
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self): ...
+```
+
+Every stub HTTP server in every generated test suite silences its logging this way. It is the textbook
+deliberate override, it appears once per test class, and the AST review called each one an
+unimplemented stub.
+
+Note the shape: the class is **nested inside a test method**. F69 exempts `pass`-bodied methods in
+classes WITH bases, and whether its walker sees a nested class's bases is not something to assume —
+`ast.walk` recurses, so it does, but that is a reading, not a measurement.
+
+### The measurement
+
+The real `AST_REVIEW_SCRIPT` was extracted verbatim from swarm.rs (not reimplemented) and run:
+
+- against the full archived app tree of `preboundary-3`: **0 findings, 0 of them `log_message`**
+- against a two-case control file:
+  - `log_message` in a class WITH a base -> **not flagged** (negative control PASS)
+  - `do_the_work` in a class with NO bases -> **flagged** (positive control PASS)
+
+The control is what makes the zero admissible. Without it, "0 findings" on the archive is
+indistinguishable from a script that cannot find anything, which is the standing law here and has
+caught three false zeros already tonight (F74's tail occupancy, F78's `grounded`, F79's `{serve}`).
+
+### Consequence
+
+With F69 live, the phantom rate on the recorded corpus drops from **9 of 20 findings (45%) to 1 of
+20 (5%)** — the surviving one being the port collision, which is F67's case and is also already in the
+binary. The repair loop should, for the first time, be spending its rounds on real defects.
+
+That is now a REGISTERED PREDICTION for the next full run, and it is falsifiable in the obvious way:
+if `complete_verify.finding_texts` still carries `log_message`, F69 does not cover the live path and
+this confirmation was scoped too narrowly.
+
+### Also settled, and it was the question that led here
+
+Every shipped test file across all six archived runs DOES import the real application package. The
+judge's in-flight catch ("you're testing your own `make_parser()` replica instead of the actual CLI")
+was a real defect caught and corrected mid-run, not a systemic one. The high non-test definition
+counts in those files (14-33) are fixtures and stub servers — the `test_meridian.py` above spins real
+`HTTPServer` instances to exercise pagination, UTC sorting, and 429 retry against BOTH `Retry-After`
+seconds and HTTP-date. That is genuinely thorough work, and a cruder metric would have libelled it.
