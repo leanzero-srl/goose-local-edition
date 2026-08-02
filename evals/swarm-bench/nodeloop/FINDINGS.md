@@ -4478,3 +4478,63 @@ will say).
 
 **Registered:** on the next run, count `judge_verdict` events whose `task_id` is `integrate-verify`. If
 zero, the longest solo task in the run is also unwatched, and G5 has its first concrete target.
+
+---
+
+## F114 — the judge found the bug. The hint was consumed. The sink then spent 20 minutes finding it again.
+
+G8 asked what the sink's 1800 capped seconds went on. The session trace (76 messages,
+`session_id 20260802_705`) answers it exactly. All 23 shell commands, in order:
+
+```
+ 1-2   ls the tree                                        (orientation)
+ 3     python3 -m vendorsync --help                        (its actual job: assemble + run once)
+ 4-6   missing-db / corrupt-db probes                      (its step 3)
+ 7     python3 -m pytest -q                                <- RE-RUNS THE WHOLE SUITE
+ 8-10  pytest test_store / test_main / test_meridian       <- again, three more times
+11-21  grep + SIX overlapping `sed -n` slices of test_meridian.py
+22-23  python one-liners recomputing a timezone sort
+```
+
+Two things are wrong here and only one of them is the prompt's fault.
+
+### 1. It re-runs the sweep its instruction forbids
+
+The spec says, verbatim: *"every module was import/build-checked in isolation upstream, and the app's
+advertised commands were just verified IN PARALLEL by the end-to-end shards ... **Do NOT re-run that
+whole sweep; it has happened.**"* It ran the full suite four times anyway. That is a compliance
+failure, and it is worth re-measuring after F87 — until this morning that instruction was competing
+with 22,152 chars of inherited hints.
+
+### 2. It rediscovered what the judge already knew — and THAT is a structural defect
+
+Commands 11-23 are the sink debugging one failing test by reading `test_meridian.py` in six
+overlapping slices and then hand-computing a timezone ordering.
+
+**The judge had already found that exact bug, hours earlier** (F98):
+
+> `EXPECTED_SORTED_IDS has wrong order — pay_005 at +01:00 converts to 07:00Z (earliest), not pay_002`
+
+Why the sink could not know: `prior_hints` is a `HashMap<TaskId, String>` and the dispatch path does
+`self.prior_hints.remove(&tid)`. **A judge finding is keyed to ONE task and CONSUMED on that task's
+next dispatch.** It survives exactly one re-dispatch and then no longer exists. Correct for guiding a
+retry; wrong for everything else — and most wrong for the sink, which is told *"you are the ONLY task
+permitted to edit files here"* and whose whole job is fixing what upstream found.
+
+So the run contained the answer, in a deterministic engine event, and spent ~20 minutes of its longest
+serial task re-deriving it.
+
+### Fix
+
+`judge_notes: Vec<(TaskId, String)>` accumulates every judge hint and is never consumed. A task that
+owns no files and joins the graph — the sink — inherits all of them, appended to its `prior_hint`
+under a heading that says what they are and that it need not rediscover them. Ordinary workers keep
+the existing one-shot behaviour, so nothing else changes.
+
+This is Mihai's through-line in its purest form: not a missing capability, but **information the run
+already had, never delivered to the one task that could use it.**
+
+**Registered prediction:** on the next run the sink's `prior_hint` contains the supervisor block, and
+its shell-command count for re-deriving a known finding falls. The honest failure mode is that it
+re-runs the suite anyway — which would say the compliance problem is separate from the information
+problem, and both need work.

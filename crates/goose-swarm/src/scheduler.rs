@@ -420,6 +420,20 @@ struct State {
     /// single shared slot that let the judge starve pre-review and left a second idle node asleep.
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
     prior_hints: HashMap<TaskId, String>,
+    /// Every corrective note the judge has produced this run, in order, and NEVER consumed.
+    ///
+    /// `prior_hints` is keyed by task and REMOVED on the next dispatch of that task, so a judge
+    /// finding survives exactly one re-dispatch and then vanishes. That is right for guiding a retry
+    /// and wrong for everything else — most of all for the SINK, which is told "you are the ONLY task
+    /// permitted to edit files here" and whose entire job is fixing what upstream found.
+    ///
+    /// MEASURED: the judge caught a real defect mid-run — "EXPECTED_SORTED_IDS has wrong order,
+    /// pay_005 at +01:00 converts to 07:00Z (earliest), not pay_002" — handed it to `test-meridian`,
+    /// and it was consumed. The sink then spent roughly 20 of its 30 minutes REDISCOVERING that same
+    /// bug: six overlapping `sed` reads of test_meridian.py and a hand-written python one-liner
+    /// recomputing the very sort the judge had already worked out. The information existed; nothing
+    /// carried it to the one task that could act on it.
+    judge_notes: Vec<(TaskId, String)>,
     interventions: HashMap<TaskId, u32>,
     /// Omni-judge aborts per task. Counted SEPARATELY from `interventions` on purpose: that map also caps
     /// how many times the deterministic judge may act on a task (max_interventions_per_task), and spending
@@ -668,7 +682,27 @@ impl State {
         all_files.sort();
         all_files.dedup();
         self.held_by.insert(tid.clone(), files);
-        let prior_hint = self.prior_hints.remove(&tid);
+        let mut prior_hint = self.prior_hints.remove(&tid);
+        // THE SINK INHERITS EVERY JUDGE FINDING, because it is the only task that can act on them and
+        // the judge is a source of findings it otherwise cannot see. A task that owns no files and
+        // joins the graph is the sink; ordinary workers keep the existing one-shot behaviour.
+        if owned_files.is_empty() && !self.judge_notes.is_empty() {
+            let notes = self
+                .judge_notes
+                .iter()
+                .map(|(t, h)| format!("- [{t}] {h}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let block = format!(
+                "WHAT THE SUPERVISOR ALREADY FOUND while these tasks ran — each was reported to the \
+                 worker at the time, but you are the only task that can still act on it. Treat these \
+                 as leads you do NOT need to rediscover:\n{notes}"
+            );
+            prior_hint = Some(match prior_hint {
+                Some(existing) => format!("{existing}\n\n{block}"),
+                None => block,
+            });
+        }
         out.push(Assignment {
             task_id: tid.clone(),
             request: DispatchRequest {
@@ -936,6 +970,7 @@ impl State {
                     // on a "model unloaded" retry would mislead the worker.
                     if is_content {
                         self.prior_hints.insert(tid.to_string(), msg.clone());
+                        self.judge_notes.push((tid.to_string(), msg.clone()));
                     }
                     self.sink.emit(&SwarmEvent::TaskRetry {
                         task_id: tid.to_string(),
@@ -1511,6 +1546,8 @@ impl State {
         }
         self.attempt_started_at.remove(tid);
         *self.interventions.entry(tid.to_string()).or_default() += 1;
+        self.judge_notes
+            .push((tid.to_string(), outcome.hint.clone()));
         self.prior_hints.insert(tid.to_string(), outcome.hint);
         self.attempt_log
             .entry(tid.to_string())
@@ -2012,6 +2049,7 @@ impl Scheduler {
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
             prior_hints: HashMap::new(),
+            judge_notes: Vec::new(),
             interventions: HashMap::new(),
             omni_aborts: HashMap::new(),
             split_generation: HashMap::new(),
