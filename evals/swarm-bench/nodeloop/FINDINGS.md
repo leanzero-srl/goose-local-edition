@@ -2597,3 +2597,65 @@ exactly what this ledger already has three examples of.
 - Only a deterministic engine event may confer or retract a verdict.
 - An arm that moves the build score by less than the replicate spread has said nothing.
 - Run the built app before believing any score.
+
+---
+
+## F75 — the repair tail has never once succeeded: `passed` is false in 13 of 13 rounds
+
+**Measured** across all six archived runs (`complete_verify.passed`):
+
+| run | rounds | findings per round | ever passed |
+|---|---|---|---|
+| preboundary/baseline-n3 | 2 | 1, 2 | no |
+| preboundary-2/baseline-n3 | 3 | 1, 2, 1 | no |
+| preboundary-3/baseline-n3 | 2 | 2, 2 | no |
+| preboundary-5/baseline-n1 | 2 | 1, 1 | no |
+| preboundary-5/baseline-n3 | 2 | 1, 1 | no |
+| preboundary-7/baseline-n3 | 2 | 1, 1 | no |
+
+**13 of 13 rounds ended with findings outstanding.** Every run leaves the repair loop by exhausting
+`complete_rounds`, never by going green. The finding count went DOWN in exactly one round out of
+thirteen, stayed flat in nine, and went UP in three.
+
+This reframes the whole tail question. The loop asked for the last two days was "how do I run the
+22-44% tail in parallel". The prior question, never asked, is why a mechanism that costs 13-26% of
+every run and has a measured 0% success rate is being optimised for speed at all.
+
+### What the finding TEXTS show (F40's finding_texts, first data)
+
+preboundary-7 is the one run whose two rounds are legible, and the two rounds are DIFFERENT:
+
+- **round 0** — `OSError: [Errno 48] Address already in use`. This is the port collision between the
+  swarm's own app-running tasks. It is a PHANTOM: nothing in the built app is wrong. A fix worker
+  cannot repair it, and the round is spent.
+- **round 1** — a real failure on `POST /v1/payments`. Then `round == rounds` and the loop breaks.
+
+So on that run the repair loop found the genuine defect in its LAST round and had no budget left to
+act on it. The phantom did not merely waste a round; it consumed the only round that mattered.
+
+preboundary-5 is the opposite shape and no better: byte-identical finding text in both rounds, so the
+fix worker changed nothing the verifier could see.
+
+### Consequence for the parallelisation directive
+
+F73 established that findings cannot be fanned (0 of 31 rounds have work for 3 nodes). F75 says the
+axis is not the finding at all — it is the ROUND. The tail is serial in rounds and runs out of them.
+Three idle nodes racing independent attempts at the SAME finding, with the winner chosen by
+re-verifying each shadow tree, raises the per-round success probability and therefore lowers the
+round count. That is a real use of three nodes on a one-finding round, and it is the only one found
+so far that does not require the finding to decompose.
+
+It pays ONLY on a real finding. Racing three nodes at a phantom burns three nodes. So the build order
+is forced, and it is not the order this loop was about to build in:
+
+1. **instrument the tail** — it emits no `task_dispatched` at all (F74), so no change to it can be
+   measured, including this one
+2. **kill the phantoms** — F67 (port collision -> Inconclusive) is already live and preboundary-7
+   round 0 is exactly the case it targets; this is a registered prediction the current unit tests
+3. **then** race attempts, with a deterministic per-shadow verifier picking the winner
+
+### Standing caution
+
+`passed` is `verdict.findings.is_empty()`, so this measures "the verifier still had something to
+say", not "the app is broken". Two of the six runs crunched 3/5 and better with findings outstanding.
+The 0/13 is a fact about the LOOP, not a verdict on the apps.
