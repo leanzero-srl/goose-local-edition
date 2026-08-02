@@ -20849,6 +20849,29 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // conflates "aborted" with "timed out but reported", over-counts drops, and cannot identify
             // the casualty. Diff this against `scouts_planned.lenses` and the answer is deterministic.
             "lenses_returned": findings.iter().map(|f| f.kind.as_str()).collect::<Vec<_>>(),
+            // WHAT RESEARCH ACTUALLY PRODUCED. Until now this event carried counts only, and
+            // `research_findings` was passed to the planner and the detailer and then vanished — it is
+            // never written to the log, never persisted, and the scout activity digest keeps
+            // `last_text` EMPTY. So across every run ever recorded there is no way to answer the one
+            // question that matters about a phase costing 224-420s of three-node time: did it produce
+            // anything the build could use?
+            //
+            // This is load-bearing right now. The scouts DO read the vendor documentation — the digests
+            // show `curl -s .../v1/docs` returning real content — and yet `/v1` reaches ZERO task
+            // descriptions in most runs. Whether the fact died in the scout's report or in the
+            // planner's use of it is unanswerable from disk, and those two have completely different
+            // fixes.
+            //
+            // Truncated per lens and capped, because a finding can be long and this rides every run.
+            "finding_texts": findings.iter().take(6)
+                .map(|f| serde_json::json!({
+                    "kind": f.kind,
+                    "question": f.question,
+                    "grounded": f.grounded,
+                    "chars": f.findings.len(),
+                    "text": f.findings.chars().take(700).collect::<String>(),
+                }))
+                .collect::<Vec<_>>(),
         }));
         if grounded_n == 0 && !findings.is_empty() {
             eprintln!(
