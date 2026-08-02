@@ -156,6 +156,11 @@ was ALREADY BOUND before
 # deterministic engine event that proves which rule-set each dispatch actually received.
 rules_delivered
 
+# F114: the judge caught a real timezone bug, handed it to one worker, and prior_hints CONSUMED it —
+# then the sink burned ~20 of its 30 minutes rediscovering the same bug. Judge findings are now durable
+# and inherited by the sink, the only task permitted to edit files.
+WHAT THE SUPERVISOR ALREADY FOUND
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
