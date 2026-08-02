@@ -3717,3 +3717,70 @@ The policy in GOAL.md said "delete `target/debug`, it is safe any time". That re
 INCOMPLETE: with a stale local snapshot present, deleting build cache does not free anything — it
 moves the bytes into the snapshot. **Check for local snapshots BEFORE concluding that a cleanup
 failed.** `df` and `du` disagreeing by tens of gigabytes with nothing growing is the signature.
+
+---
+
+## F98 — `task_split` FIRED for the first time, and the judge is earning its slots at 8%
+
+Live on `swarm-3node-r0`, engine_build 1785657605, at 38 minutes.
+
+### The split mechanism is not dark after all
+
+```
+task_split { task_id: "api-web", children: ["http-backend-api", "static-frontend-html"] }
+judge_verdict { task_id: "api-web", verdict: "split", action: "split" }
+```
+
+`task_split` is one of the four mechanisms recorded under PATTERN 2 as "a lever whose precondition
+never held" — it had emitted nothing across every archived run, and the last adversarial sweep listed
+it among mechanisms that "have fired zero times in 90 logs". **It just fired.** The judge found a
+too-big producing task and partitioned it into a backend and a frontend child, and the scheduler
+re-validated and applied the partition.
+
+That is a genuine correction to PATTERN 2's roster: `task_split`'s precondition CAN occur, it simply
+requires a plan containing a task fat enough to be worth splitting. Whether the split IMPROVES the
+outcome is a separate question this run will answer — `http-backend-api` is one of the two children and
+already drew a `looping` intervention.
+
+### The judge: 8% intervention rate, and the catches are real
+
+| | count |
+|---|---|
+| `judge_verdict` | 37 |
+| `judge_skipped` | 25 — **100% `no_idle_device`** |
+| verdicts: ok / split / over_reading / broken_code / looping | 33 / 1 / 1 / 1 / 1 |
+| actions: observed / split / re_dispatch | 33 / 1 / 3 |
+| **real interventions (non-empty hint)** | **3 of 37 = 8%** |
+
+The three:
+
+1. `test-meridian` **over_reading** — "you have produced no file yet and have taken no action at all —
+   you are deliberating instead of building"
+2. `test-meridian` **broken_code** — *"EXPECTED_SORTED_IDS has wrong order — pay_005 at +01:00 converts
+   to 07:00Z (earliest), not pay_002"*
+3. `http-backend-api` **looping** — "owned file(s) are written but unchanged for minutes while you keep
+   running — you are stuck re-reading or re-verifying"
+
+**#2 is the one worth pausing on.** A 27B judge, reading a peer's test fixture, caught a TIMEZONE
+CONVERSION error in a hard-coded expected ordering — it worked out that a `+01:00` timestamp maps to an
+earlier UTC instant than a bare one and named the corrected sequence. That is not pattern-matching on a
+stub; it is arithmetic about the domain. The judge is not a rubber stamp.
+
+### F61/F76 strengthened: idle-starvation is now 100% of skips
+
+Three successive readings of the `judge_skipped` reason split, on growing samples:
+
+| sample | `no_idle_device` | `nothing_produced_yet` |
+|---|---|---|
+| 5 skips | 80% | 20% |
+| 16 skips | 94% | 6% |
+| **25 skips** | **100%** | **0%** |
+
+Every skip is now the scheduler having no free device to hand the judge. `nothing_produced_yet` has
+vanished entirely. The judge ran 37 times and was denied 25 — so **40% of judge opportunities are lost
+purely to fleet saturation**, and at an 8% intervention rate that is roughly two real catches forgone
+per run.
+
+This sharpens G5 into a number: the mechanism works, its catches are substantive, and the only thing
+rationing it is idle capacity. That is also the one place the architecture already scales the right way
+— more nodes means more idle slots means more judging.
