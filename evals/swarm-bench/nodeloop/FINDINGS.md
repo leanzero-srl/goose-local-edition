@@ -7535,3 +7535,41 @@ work is FREE, and the first evidence says it may not be.
 REGISTERED: on the next baseline sink, `sink_capped` must fire if it exceeds 1800s. If a baseline
 sink also overruns without the event, the cap is broken generally and the arm is exonerated; if the
 baseline caps correctly, the overrun is specific to a saturated fleet and belongs to this lever.
+
+## F179 — the sink is 4.8x slower PER CALL while the idle-fill saturates its node
+
+F178 observed the sink overrunning and suspected contention. Per-call timing separates that from task
+size, because a call is one model turn regardless of how much work remains:
+
+    baseline r0 sink (lever OFF)    24 calls / 25.1 min =  63 s/call
+    sink_review r0 sink (lever ON)  11 calls / 55.2 min = 301 s/call   -> 4.8x slower PER CALL
+    fleet median (F116/F152)                               83 s/call
+
+**301 s/call against a fleet median of 83.** The sink is not doing more work per turn — it is waiting.
+`PARALLEL` is 2 per node, so the `idle_dimension_review` jobs the lever spawns land on the same device
+serving the sink, and the sink is the LAST task: nothing else can start until it ends, so every second
+it loses is a second on the critical path.
+
+This is Lesson 36 with a number attached. The mechanism optimises fleet occupancy and F175 proves it
+does that honestly — three nodes generating, sustained ~40 minutes. The bill arrives somewhere else.
+
+**And the cap that exists to bound exactly this is not firing:** 55.2 min against 1800s, `sink_capped`
+0, run not finished. The engine is healthy and the sink is genuinely progressing (7 -> 11 calls this
+tick, digest written 12 s before I looked, `recent` showing `write ok` / `shell ok`, and
+`last_thinking` reasoning about a verify-e2e finding). So this is a slow sink, not a wedged one — and
+a cap that does not bound a slow sink is a cap that does not work.
+
+DECISION, taken rather than deferred: **let it run one more tick.** It is producing real work and the
+`sink_review{prewarmed, survivors, refuted}` drain readout only exists if the sink COMPLETES — killing
+now guarantees zero from a 2h20m unit. **Kill threshold registered: if the sink passes 90 min the
+queue cost stops being justifiable** — `baseline n3 r1/r2` is what lifts the freeze, and the sweep
+skips completed units on resume so a kill costs only this unit.
+
+⚠ STILL n=1 PER ARM. The per-call figure is much harder to confound than duration, but F176 killed a
+cleaner-looking comparison than this one tonight. The settling measurement is baseline r1/r2's sink,
+inside the retention window.
+
+LESSON 59: **A MECHANISM THAT FILLS IDLE CAPACITY IS NOT FREE IF IT SHARES A DEVICE WITH THE CRITICAL
+PATH.** With PARALLEL>1, "idle" work lands on the same node as the task everything is waiting for.
+Measure the critical task's SECONDS PER CALL, not the fleet's occupancy — occupancy will look
+excellent precisely when this is happening.
