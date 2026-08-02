@@ -279,3 +279,17 @@ an ORPHANED APP SERVER a swarm worker had left running held the port a test need
 collision, F67's class. Holding out for evidence was correct: the tempting fix (add `Inconclusive` to
 `interpret_pytest_collect`) is now justified, but it treats the symptom — the defect is the leak, and
 that is G6.
+
+## PENDING SUPERVISOR RESTART — do it at the r0/r1 boundary, not before (2026-08-02 22:5x)
+
+`loop.sh check` will report sweep.py as newer than the running supervisor (pid 78290). That is TRUE
+and the gate is right to say so: `scoped_contracts` (F159, reps=3) is in the file and NOT in the live
+queue.
+
+DO NOT restart mid-unit. Baseline r0 has been running since 22:11 and is the unit the F154 freeze
+exists to obtain; restarting the supervisor now throws it away and the freeze gets no closer to
+lifting. Restart in the gap AFTER r0 writes its result.json and BEFORE r1 launches — units already
+complete are skipped on resume, so nothing is lost at that boundary.
+
+Until then the [ACT] line is EXPECTED, not a new problem. Do not suppress the gate to quiet it: a
+warning that is true and deliberately deferred is the gate working.
