@@ -4538,3 +4538,37 @@ already had, never delivered to the one task that could use it.**
 its shell-command count for re-deriving a known finding falls. The honest failure mode is that it
 re-runs the suite anyway — which would say the compliance problem is separate from the information
 problem, and both need work.
+
+---
+
+## F115 — a sink CUT OFF at its cap looked exactly like one that finished
+
+The third of G8's open questions, closed. F113 measured `integrate-verify` at **1800s — its cap to the
+second** — with 23 shell calls, 2 edits, and `status=done`.
+
+`status=done` is the correct SCHEDULER behaviour: the app files exist, the sink owns no deliverables,
+and finalizing lets the run terminate rather than hang. But the **only** record that it had been
+truncated was an `eprintln!` on stderr — the progress log, not the structured event stream. So
+`run.jsonl` showed `task_completed status=done` and nothing else, and every instrument reading a run
+treated a sink cut off mid-work as one that had done its job.
+
+That is PATTERN 4 in the single place it costs most: **the result row this project reads every verdict
+from.** F113's own conclusion ("it was cut off, not slow") was only reachable because I happened to
+notice 1800 equalled the configured cap. Nothing would have surfaced it on a run with a different cap,
+and nothing would surface it to anyone else.
+
+**Fixed:** `sink_capped{task_id, cap_secs, detail}` is emitted at BOTH cap sites — the top-of-loop
+check that catches a continuously-active sink, and the event-gap arm. Instrumenting only one would be
+worse than neither: the truncation would be visible on some runs and invisible on others, and the
+invisible ones would read as clean completions.
+
+### G8's three questions, answered
+
+1. **What were the 23 shell calls?** Answered (F114): `--help` and three robustness probes were its
+   real job; four pytest runs re-ran a sweep its spec forbids; eleven commands rediscovered a bug the
+   judge had already found and whose hint had been consumed.
+2. **Why 72s per tool call?** Still open, and it now matters more than the work itself — if that is
+   simply the fleet's turn latency, the sink's cost is TURN COUNT, and every turn removed is ~72s off
+   the longest serial region in the run. F114 removes turns by not re-deriving; the pytest re-runs are
+   the next candidate and are a compliance question, newly testable on a clean prompt after F87.
+3. **Capped vs finished, indistinguishable?** Closed by this finding.

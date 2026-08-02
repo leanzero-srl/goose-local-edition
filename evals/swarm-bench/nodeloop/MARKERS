@@ -161,6 +161,10 @@ rules_delivered
 # and inherited by the sink, the only task permitted to edit files.
 WHAT THE SUPERVISOR ALREADY FOUND
 
+# F115: a sink CUT OFF at its wall-clock cap was recorded `status=done`, identical to one that
+# finished. The only trace was an eprintln on stderr. Both cap sites now emit it.
+sink_capped
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
