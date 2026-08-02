@@ -60,9 +60,13 @@ grounded
 judge_skipped
 no_idle_device
 
-# F62: the over-read gate armed on integrate-verify whenever the planner gave it README.md, and
-# killed the sink for doing its job. It now arms only on a CODE deliverable.
-is_code_deliverable
+# F62 (the over-read gate arms only on a CODE deliverable) has NO marker, deliberately. Its change
+# adds a Rust fn and a set of file extensions — no distinctive string literal — and `strings` reads
+# the binary's DATA, not its symbols, so `is_code_deliverable` reported ABSENT on a build that
+# carried it. I had already written that rule at the top of this file and then broke it.
+# NOT EVERY FIX HAS A LITERAL. Forcing one into the code to satisfy this check would be the tail
+# wagging the dog; F62 is verified by its unit test (over_read_does_not_arm_on_a_doc_only_task)
+# instead, which is the stronger check anyway because it asserts behaviour rather than presence.
 
 # F63: a test-author was told NEVER to read test files while owning one. Its OWN test file is now
 # explicitly exempt — correct for every kind, no lever needed.
