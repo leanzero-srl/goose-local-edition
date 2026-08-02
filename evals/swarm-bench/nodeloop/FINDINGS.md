@@ -1949,6 +1949,51 @@ could already replace a clock, it does not:
 Both become arms rather than silent default flips: the readout is a mechanism event, so n=1 settles
 each.
 
+## F57 — the judge's semantic review ran 4.3% of the time. It was not deciding "ok"; it was never asked.
+
+Mihai's hypothesis was that the judge might be watching rather than acting because it is not given
+proper direction. The measurement says something sharper: **it mostly is not given anything at all.**
+
+851 judge verdicts across 9 runs, split by SHAPE rather than by verdict:
+
+    early return / deterministic ok  (confidence 1.0, empty hint)   814   95.7%
+    semantic review — looping                                        23    2.7%
+    semantic review — over_reading                                   10    1.2%
+    semantic review — broken_code                                     4    0.5%
+
+The confidence distribution seals it: **817 verdicts at exactly 1.0**, 33 at 0.9, one at 0.85. A
+model-authored verdict never lands on exactly 1.0; those 817 are code returning `JudgeOutcome::ok()`.
+The SUPERVISOR prompt — the goal, the run state, the subtask spec, the files so far, the activity log,
+the whole apparatus this mechanism exists for — is reached **4.3% of the time**.
+
+**The cause is one gate:**
+
+    if input.file_contents.is_empty() && acts < 4 { return JudgeOutcome::ok(); }
+
+`worker_tool_calls` comes from the activity digest, and **a reasoning model that streams thinking
+makes no tool calls**, so `acts` stays 0. A worker with no file and no actions was read as "hasn't got
+going yet" — but that is equally the signature of a worker thinking itself in circles. The one worker
+most in need of a supervisor was the one guaranteed not to get one. `worker_thinking_chars` was
+already collected and already in `JudgeInput`; the gate simply never consulted it, and the only thing
+that did — the spiral trip — is off by default.
+
+**Fixed, and deliberately without a new threshold.** The gate now also requires `thinking == 0`:
+"nothing to assess" means nothing produced, not "produced only thinking". No char limit, because
+another tuned literal is exactly what is being removed here, and `min_age_secs: 90` plus
+`rejudge_cooldown_secs: 60` already prevent reviewing a just-launched worker. A worker 90 seconds old
+that has emitted reasoning while writing nothing and calling nothing is precisely what a supervisor
+is for.
+
+The judge also could not SEE the distinguishing signal: its trace block reported actions, errors,
+recent calls and last reasoning, but never **how much** reasoning. It now reads
+`reasoning emitted: N chars`, which is the difference between "slow" and "spiralling" on a model whose
+only output while working is thinking.
+
+**This is the through-line Mihai named:** across every phase the failures have been imprecise or
+absent instruction — a worker handed a 105-character brief, e2e shards told to number commands from a
+spec they were never given, a fan whose extractor could not read four of six finding shapes, and now
+a supervisor asked for its judgement on one call in twenty-three.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

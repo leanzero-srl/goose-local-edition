@@ -44,6 +44,10 @@ GOOSE_SWARM_SINK_REVIEW
 # detail durations are now recorded so the ceiling can be sized from data instead of judgement.
 detail_completed
 
+# F57: the judge's semantic review ran 4.3% of the time; the early return skipped exactly the
+# worker that needed it. It now sees reasoning volume and is asked about a thinking-only worker.
+reasoning emitted
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
