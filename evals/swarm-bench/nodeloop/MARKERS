@@ -52,6 +52,9 @@ reasoning emitted
 # it failed 27 of 27 times on timeout.
 STAND ALONE
 
+# F60: research_completed now carries what research PRODUCED, not just how many lenses returned.
+grounded
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

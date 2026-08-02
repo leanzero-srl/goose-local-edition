@@ -2083,6 +2083,38 @@ justify one, which is the whole reason the event exists rather than another gues
 This is the loop Mihai asked for, closed once: the log could not answer the question, so the log was
 changed to answer it, and the answer arrived on the next run.
 
+## F60 — the research phase's entire output has never been recorded, in any run, ever
+
+Chasing the through-line into the one phase whose product nobody has seen. The chain looked
+sound: scouts read the docs (F54), findings go to the planner AND to the detailer (`fb` = "Research
+findings:"), the detailer is told to write "exact function/class names and signatures". Yet `/v1`
+reaches ZERO task descriptions in most runs.
+
+So which link fails? **Unanswerable from disk.** `research_completed` emits counts only — `findings:
+2, grounded: 0, looked_nothing_up: 2` — and `research_findings` is passed to the planner and the
+detailer and then vanishes. It is never written to the event log, never persisted. Checking the scout
+activity digest instead: `last_text` is **EMPTY**, `reasoning` **EMPTY**, `full_reasoning` **EMPTY**.
+The only trace of a scout's work is `calls` (it did `curl -s .../v1/docs`, ok, real content back) and
+`thinking_chars: 11977`.
+
+A phase costing **224-420 seconds of three-node time** on every run, and across every run ever
+recorded there is no way to answer the one question that matters about it: **did it produce anything
+the build could use?**
+
+I nearly published the wrong answer twice getting here. First I read `last_text` as the finding and
+got 0-5 characters for every scout — which reads as "the scouts report nothing" and is really "that
+field is not the finding". A zero is usually a broken instrument, and this one was.
+
+**Fixed:** `research_completed` now carries `finding_texts` — per lens, the kind, the question,
+whether it was grounded, the full length, and the first 700 characters. Truncated and capped at six,
+because a finding can be long and this rides every run.
+
+**Why it matters beyond curiosity.** The two candidate failures have opposite fixes and the log
+currently cannot tell them apart: if the scout's report never contains `/v1`, the defect is what the
+scout is ASKED to report — the same imprecise-instruction class as everything else this week. If it
+does contain `/v1` and the plan still does not, the defect is in the planner's use of it. Guessing
+between those would have been the exact mistake F53 punished.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
