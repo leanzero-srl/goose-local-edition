@@ -48,6 +48,10 @@ detail_completed
 # worker that needed it. It now sees reasoning volume and is asked about a thinking-only worker.
 reasoning emitted
 
+# F58: the architect's brief must STAND ALONE, because the detail fan that was supposed to replace
+# it failed 27 of 27 times on timeout.
+STAND ALONE
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
