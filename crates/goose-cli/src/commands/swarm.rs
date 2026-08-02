@@ -19217,6 +19217,17 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // second, independent kind test at this block would let the two disagree the moment either
         // drifts — which is precisely the failure this is fixing.
         let kind_prompt_on = swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt);
+        // HOISTED for the same reason kind_prompt_on was, and stated in its comment: ONE classifier,
+        // resolved once, used by every site. It was defined ~400 lines below and therefore invisible to
+        // `layout_block`, which is where the contradiction this fixes actually lives.
+        let is_test_author = req.owned_files.iter().any(|f| {
+            lang.is_test_file(
+                std::path::Path::new(f)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(""),
+            )
+        });
         // A fanned READ-ONLY gate: owns nothing AND belongs to a verify family. `integrate-verify`
         // owns nothing too and is deliberately excluded — it IS the run's sole repair point, so the
         // write-and-fix directive is correct for it. Same predicate as `is_fix_round` below, and that
@@ -19338,11 +19349,35 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     cli_contract_enabled(),
                 );
                 let multifile_note = multifile_stub_note(&req.owned_files, skeleton_first);
-                format!(
-                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
-                     parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}\n\
-                     WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
+                // A TEST AUTHOR OWNS A FILE, SO IT LANDS HERE — AND EVERY THIRD SENTENCE IS FALSE FOR IT.
+                //
+                // The generic text below tells this worker "tests are a SEPARATE subtask" when it IS the
+                // test subtask, and "NEVER `cat` the module" when the module under test is the one thing
+                // it must read to get real signatures. Meanwhile `reading_rules` ~400 lines down, with
+                // kind_prompt ON, tells the same worker "DO read what you are testing: the SOURCE module
+                // under test". Both land in ONE system prompt, contradicting each other.
+                //
+                // MEASURED, and this is the kind that carries the cost: hard+test tasks retry 60% (n=30)
+                // against 12.1% for hard non-test work, and ALL FOUR terminal failures in the archive are
+                // test-authoring tasks. The failure signature is a SyntaxError in a test file — which is
+                // exactly what a worker forbidden to read the module it is testing produces.
+                //
+                // A SUBTRACTION, gated. With the lever OFF this branch is not taken and the prompt is
+                // byte-identical, so the kind_prompt arm still measures a real difference rather than a
+                // rewrite. The test author sees FEWER rules than today, never more.
+                let owner_body = if kind_prompt_on && is_test_author {
+                    "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must \
+                     be to `write` your owned test file(s) IN FULL from it. You MAY read the SOURCE MODULE \
+                     YOU ARE TESTING to get its real signatures, and YOUR OWN test file after you write \
+                     it — those two and nothing else. Do NOT `ls`/`find`/`tree` the project or read the \
+                     rest of the suite: the PROJECT FILE LAYOUT above IS the complete structure, and the \
+                     API of every dependency is ALREADY injected below under 'API of …'. Then run \
+                     `python3 -m pytest` ONCE to prove your file COLLECTS and RUNS. A test file with a \
+                     SyntaxError or a bad import is worse than none. A turn that ends without your owned \
+                     file written and non-empty FAILS and is retried.\n\n"
+                        .to_string()
+                } else {
+                    "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
                      `write` your owned file(s) IN FULL from it. Do NOT `ls`/`find`/`tree`/`cat` to 'understand \
                      the API', hunt for tests, or 'see the current state of the project': the PROJECT FILE \
                      LAYOUT above IS the complete structure (there is nothing on disk to discover), tests are a \
@@ -19353,6 +19388,13 @@ impl TaskDispatcher for GooseAgentDispatcher {
                      APIs, THEN run `python3 -m pytest` to check. A turn that ends without every owned file \
                      written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
                      #1 way workers burn their whole budget and produce nothing.\n\n"
+                        .to_string()
+                };
+                format!(
+                    "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
+                     parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}\n\
+                     {owner_body}"
                 )
             };
             // M5: inject idle-node PRE-REVIEW findings into the integrate-verify sink — whether or not it
@@ -19610,15 +19652,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
         } else {
             String::new()
         };
-        let is_test_author = req.owned_files.iter().any(|f| {
-            lang.is_test_file(
-                std::path::Path::new(f)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(""),
-            )
-        });
-        // (resolved above layout_block so both sites share one value)
+        // (is_test_author is resolved ABOVE layout_block — see the hoist next to kind_prompt_on)
         // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
         // to is the contradiction that produced SyntaxErrors in shipped test files.
         let reading_rules = if kind_prompt_on && is_test_author {

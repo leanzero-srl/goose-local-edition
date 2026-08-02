@@ -5754,3 +5754,53 @@ it is where B1 (the test-author reading-rule contradiction) lives.
 newest timestamp, and prints n on every cell — and it says outright that a pre-fix timestamp means
 history rather than regression, because I raised exactly that false alarm. Three hand-rolled queries
 produced three wrong headlines. This is the fourth query, written once, so there is no fifth.
+
+---
+
+## F139 — a test author is told "tests are a SEPARATE subtask" by the block that dispatches it
+
+B1 from the research synthesis, verified in source and fixed.
+
+`layout_block`'s owner branch (swarm.rs:19341) is reached by any task that OWNS files and is not the
+entry point — **which includes every `test-<module>` task**. It tells that worker, verbatim:
+
+> *"Do NOT `ls`/`find`/`tree`/`cat` … **tests are a SEPARATE subtask**, and the API of EVERY
+> dependency you import is ALREADY injected below under 'API of …' — read it THERE, **NEVER `cat` the
+> module**."*
+
+For a test author both clauses are false. It **is** the test subtask, and the module under test is
+the one file it must open to get real signatures. Meanwhile `reading_rules`, ~400 lines further down
+and with `kind_prompt` ON, tells the same worker *"DO read what you are testing: the SOURCE module
+under test (to get its real signatures)"*. **Both land in one system prompt.**
+
+That contradiction sits exactly where the cost is: hard+test tasks retry **60% (n=30)** against 12.1%
+for hard non-test work (F124), **all four terminal failures in the archive are test-authoring tasks**
+(F130), and the recorded failure signature is a **SyntaxError in a test file** — which is what a
+worker forbidden to read the module it is testing produces.
+
+### Fixed as a SUBTRACTION, gated
+
+With `kind_prompt` OFF the branch is not taken and the prompt is **byte-identical**, so the arm still
+measures a real difference rather than a rewrite. With it ON, a test author is told it may read the
+SOURCE MODULE UNDER TEST and its own file after writing — "those two and nothing else" — and to run
+pytest ONCE to prove the file collects and runs, because *a test file with a SyntaxError or a bad
+import is worse than none*. The kind sees **fewer** rules than today, never more, which is the whole
+premise of instruction-density work on a model whose compliance falls 0.588@10 rules to 0.094@40.
+
+### One structural fix underneath it
+
+`is_test_author` was defined ~400 lines BELOW `layout_block` and so was invisible at the site where
+the contradiction lives. The comment beside `kind_prompt_on` — hoisted earlier for exactly this
+reason — says it outright: *"ONE classifier, resolved once, used by BOTH sites. Installing a second,
+independent kind test at this block would let the two disagree the moment either drifts."* So I
+hoisted the existing one rather than writing a second, and confirmed there is still exactly one
+definition in the file.
+
+Marker `YOU ARE TESTING to get its real signatures` added; preflight passes. This ships at the next
+boundary — not now, because a 12-unit replicate campaign is running and a mid-campaign engine change
+rots it (lesson 9).
+
+**Readout is already registered and un-gameable:** hard-test retry rate from
+`task_dispatched.attempt`, baseline 60%, target ~12%. This fix and the `reading_rules` change now
+push the same number from two different sites, which is why `kind_prompt` gets two independent
+chances to move it (F127).
