@@ -3409,3 +3409,58 @@ So F87 is predicted to help on BOTH axes and they are independent:
 The latency prediction is testable in one run. **The compliance prediction is NOT** — the replicate
 spread on this bench is 46 points and a single run cannot resolve it. Stated separately on purpose so
 a latency win is never quietly reported as a quality win.
+
+---
+
+## F92 — the disk problem was regenerating itself every hour, and a Time Machine snapshot was hiding it
+
+Free space fell 51 -> 35 GB in twenty minutes with no build run in that window, which made no sense
+until two separate things were measured.
+
+**1. `target/debug` regrew to 39 GB in about an hour.** It had been deleted at 64 GB (F90); ordinary
+`cargo check` / `cargo test` cycles rebuilt it to 39 GB. So F90 was not a fix, it was a chore with an
+hourly cadence — and `MIN_FREE_GB = 15` is a hard abort in the sweep's watchdog, so this was a
+scheduled mass-abort that would have looked like a 3am mystery.
+
+**2. A Time Machine LOCAL SNAPSHOT was holding deleted space.**
+
+```
+com.apple.TimeMachine.2026-07-28-094959.local
+Container Free Space: 33.5 GB
+```
+
+A snapshot from five days ago references the blocks of files since deleted, so `df` and the actual
+reclaim disagree and the number appears to fluctuate on its own. That is why the first cleanup looked
+like it partly failed. Flagged for Mihai rather than acted on — a local snapshot is a restore point on
+HIS machine, and `tmutil thinlocalsnapshots` / `deletelocalsnapshots` is his call, not a project change.
+
+### The fix that removes the mechanism instead of the symptom
+
+`Cargo.toml` already dropped DWARF for dependencies (`[profile.dev.package."*"] debug = false`). What
+remained was the workspace's own crates, and on this fork that is where the tens of gigabytes live.
+
+```toml
+[profile.dev]
+debug = "line-tables-only"
+```
+
+**Measured after a full `cargo check` + `cargo test` rebuild: 7.6 GB, down from 39 GB — about 80%.**
+
+**Control, both directions.** The point of debug info is diagnostics, so the reduction is only
+acceptable if diagnostics survive. Compiled a deliberate panic at `-C debuginfo=line-tables-only`:
+
+```
+thread 'main' panicked at lt_probe.rs:1:54
+             at ./lt_probe.rs:1:54
+```
+
+File, line, column, and the backtrace frame all present. What is dropped is full DWARF type/variable
+info — step-debugging with variable inspection in a debugger, which nothing in this workflow does.
+Release builds are untouched; they already `strip = "symbols"`.
+
+### The rule this is an instance of
+
+Mihai's standing rule: *"ask what makes it impossible to recur. If I fix a defect without removing the
+mechanism that produced it, I have scheduled its return."* Deleting `target/debug` reclaims the space.
+Capping first-party debug info stops it being re-earned every hour. The boundary's automatic prune
+(committed earlier) is now a backstop rather than the plan.

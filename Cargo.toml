@@ -124,6 +124,23 @@ cudaforge = { git = "https://github.com/jbg/cudaforge", rev = "e7c1967340e40673d
 [profile.dev.package."*"]
 debug = false
 
+# FIRST-PARTY debug info, capped at line tables. The block above already dropped DWARF for
+# dependencies; what remained was the workspace's own crates, and on this fork that is not small —
+# MEASURED 2026-08-02, `target/debug` reached 64 GB, was deleted, and REGREW TO 39 GB IN ABOUT AN HOUR
+# of ordinary `cargo check`/`cargo test` cycles. The unattended swarm sweep aborts below 15 GB free
+# (MIN_FREE_GB in evals/swarm-bench/nodeloop/sweep.py), so this was not an annoyance, it was a
+# scheduled mass-abort that would have looked like a mystery.
+#
+# `line-tables-only` keeps exactly what is actually used here: file and line in panics, backtraces,
+# and `cargo test` failures. What it drops is full DWARF type/variable info, i.e. step-debugging with
+# variable inspection in a debugger — which nothing in this workflow does. Release builds are
+# untouched (they already `strip = "symbols"`).
+#
+# Deleting target/debug reclaims the space; this stops it being re-earned every hour, which is the
+# difference between fixing a defect and scheduling its return.
+[profile.dev]
+debug = "line-tables-only"
+
 # Release build. `strip = "symbols"` drops the symbol table from the shipped binary — a smaller binary and
 # DMG at zero runtime cost (release builds don't step-debug). `lto = "thin"` does cross-crate inlining for a
 # modest CPU win on the Rust side with only a small build-time cost (kept "thin", not "fat", so iterative DMG
