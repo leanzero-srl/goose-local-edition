@@ -6965,3 +6965,62 @@ different and larger blast radius than F160 implied, which is worth knowing befo
 LESSON: the falsifier earned its keep within one tick. Registering it cost one line and it stopped a
 plausible, well-argued, measured fix that would have killed healthy workers under load — exactly when
 the fleet can least afford it.
+
+## F165 — the failures are not "produced nothing"; 12 of 14 left a substantive file, and at least 2 were COMPLETE
+
+`test-meridian` failed on r0 — its 7th failure in 11 appearances, as F164 predicted. Then I ran it:
+
+    tests/test_meridian.py   4,216 bytes   8 test functions, 12 assertions   8 passed in 0.53s
+
+**A terminal FAILED verdict on a task whose deliverable is on disk and entirely green.** The engine's
+own final hint says so before killing it:
+
+    failed / looping (conf 0.90)
+    "You wrote `tests/test_meridian.py` (4216 bytes) and have not touched it for 7.5 minutes ...
+     Nothing is reported failing, so `tests/test_meridian.py` is most likely already done and you
+     are polishing or re-verifying."
+
+The judge diagnosed the task as COMPLETE and the action attached to that verdict is `failed`. The
+chain: attempt 0 killed `over_reading` (correct — nothing written); attempt 1 killed `spec_drift` for
+a real but optional critique (`setUpClass` shares one server; use `setUp` per test); attempt 2
+polished a working file until `max_attempts` was exhausted. **There is no "accept it, it is done"
+outcome available to the judge — its only lever is kill, and the third kill is terminal.**
+
+**Then I checked whether the whole campaign looks like this, and it does NOT. Correcting my own
+first reading.** Across all 14 recorded failures:
+
+    owned file EXISTS on disk: 12 of 14   (6-35 test functions, 9-96 assertions, 2.7k-17.7k bytes)
+    owned file MISSING:         2 of 14   (one test_api.py, and integrate-verify's README.md)
+
+So "the swarm produced nothing" is true of 2 failures out of 14. But existence is not correctness, so
+I re-ran the suites of the failed tasks:
+
+    preboundary-1785683891  test-meridian   11 passed                 GREEN — work was COMPLETE
+    preboundary             test-api        21 passed                 GREEN — work was COMPLETE
+    nodeloop r0             test-meridian    8 passed                 GREEN — work was COMPLETE
+    build                   test-meridian    1 failed,  5 passed      partial
+    preboundary-3           test-meridian    2 failed,  6 passed      partial
+    preboundary-7           test-meridian    4 failed,  9 passed      partial
+    preboundary-7           test-api         3 failed, 25 passed      partial
+    preboundary-5           test-api        14 failed, 21 passed      partial
+
+**Three of the eight re-run failures were fully green — the task was finished and recorded FAILED
+anyway. The other five left a partially-broken suite, which is a REAL failure.** My first reaction on
+seeing r0 was that F164's 31% might be "mostly accounting"; that is wrong and I am striking it. The
+honest split is roughly a third accounting, two thirds real.
+
+⚠ AND THE 'REAL' TWO THIRDS ARE NOT CLEANLY ATTRIBUTABLE. A failing `test_meridian.py` means the test
+disagrees with `meridian.py` — it does NOT say which one is wrong. The run's own record cannot
+separate "the test author wrote a bad test" from "the test author wrote a correct test that caught a
+broken module". Since implementers are never marked failed (F164), a correct test catching a bad
+implementation is recorded ENTIRELY against the test author. That is a real possibility this data
+cannot exclude, and it would mean the test-author cell is absorbing blame for the implementer cell.
+
+WHAT THIS CHANGES:
+  · F164's 31% stands as a count. Its INTERPRETATION narrows: the failure mode is almost never "no
+    output" — it is "output the engine would not accept" or "output that disagrees with a sibling".
+  · F147 ("a failed task is NOT a proxy for build quality") now has its mechanism, and it is worse
+    than F147 stated: a task can be green, diagnosed green by the engine, and still recorded FAILED.
+  · A judge that can only kill needs an ACCEPT. Queued behind the freeze, and it is the cheapest of
+    the queued fixes to state: on a `looping` verdict where the owned files exist and nothing is
+    reported failing, the correct action is to finish the task, not to spend its last attempt.
