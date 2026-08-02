@@ -6072,3 +6072,62 @@ fabricated marker -> ABSENT, exit 1.
 
 F144 carries NO marker and is verified by its unit test instead — asserting behaviour, which is
 stronger than asserting presence.
+
+---
+
+## F145 — I decomposed the SINK and called it a worker; the engine's gating was correct all along
+
+Auditing the worker system prompt, I pulled the largest clean post-F87 one (23,104 chars) and split
+it. The result looked like the biggest find of the session: **the first five bullets of its preamble
+are FIX-ROUND rules**, including
+
+> *"You own no files by default: **you may edit ANY file the fix requires**."*
+
+sitting in a prompt that also carries `PROJECT FILE LAYOUT` and injected dependency APIs. Against a
+worker's own *"write EXACTLY these ABSOLUTE paths, and write NOTHING outside them"*, that is a flat
+contradiction — the F139 shape again, and bigger.
+
+**It is not there.** Checked before writing it up, across every clean fleet prompt in the window:
+
+| chars | owns files | has fix rules | verdict |
+|---|---|---|---|
+| 19,908 / 20,412 / 10,247 / 30,348 | **yes** | no | worker, correct |
+| 23,104 x4 | no | yes | sink/fix, correct |
+
+**0 of 8 prompts carry both.** The 23,104-char prompt I had decomposed is `integrate-verify` — which
+owns nothing and IS the run's repair point, so "you may edit ANY file the fix requires" is exactly
+right for it. The engine gates this properly. I had picked one prompt, seen fix rules in it, and
+started generalising to "every worker".
+
+### The real defect this exposed is in MY instrument
+
+`prompts.py` classified that call as a **worker**, because its `WORKER` markers were
+`PROJECT FILE LAYOUT` / `a dependency you import` — **and the sink carries both**, needing the map and
+the contracts more than anyone. So the "worker" cell has been pooling 20k-char workers with 23k-char
+sinks: the exact error F138 built this instrument to prevent, one level finer, in the instrument
+itself.
+
+**Fixed with the discriminator that actually matters — OWNERSHIP**, because that is what changes the
+rules a call receives. A file-owning worker is told *"write NOTHING outside them"*; the sink is told
+*"you own no files, you may edit ANY file"*. Two opposite instructions, so they must never share a
+cell.
+
+| kind | n | sys median | sys max |
+|---|---|---|---|
+| **worker** | 16 | 31,535 | 45,700 |
+| **sink/fix** | 7 | 23,104 | 47,206 |
+| planner/detail | 26 | 22,169 | 34,321 |
+| scout/small | 17 | 1,292 | 2,706 |
+| judge/spiral | 10 | 341 | 341 |
+
+**Corrected lever: a clean worker system prompt is 21,736 chars (n=8), 31% of what that worker
+reads.** F138's 20,412 (n=7) was close but pooled; this supersedes it.
+
+### What the audit actually found, which still stands
+
+Of a clean 23,104-char prompt, roughly **68% is per-task content** — injected dependency APIs (7,997
+chars), the file layout (1,593), pre-review findings — which is precisely the shape the prime
+directive asks for. The generic block is the **7,461-char preamble, 21 static bullets delivered
+identically to every kind**. That is the real target, and it is a third of the prompt rather than the
+whole of it. F87 already removed the genuinely foreign material; what remains is engine rules, and
+the question for each is which KIND it applies to.
