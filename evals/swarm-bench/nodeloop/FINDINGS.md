@@ -6561,3 +6561,48 @@ will make any breach visible on the very next tick.
 every arm becomes readable against it, and the first job — stated before any of this began — finally
 has its answer. If that spread comes back near 46 points, the next work is variance reduction and NOT
 more levers, however good they look.
+
+---
+
+## F155 — upstream triage under the freeze: eight commits closed, and one of them is a near-miss worth naming
+
+Engine-frozen work (F154 permits triage, forbids adoption). Eight of the 57 in-scope upstream commits
+closed against verified facts about THIS deployment rather than by reading their diffs and guessing:
+
+| commit | why it cannot apply here |
+|---|---|
+| `2b507b8eb` fix(hints): contain subdirectory hint discovery | **the near-miss — see below** |
+| `9fec4152a` fix(summon): reuse parent provider for delegates | `summon` appears **0 times** in swarm.rs; the swarm has its own dispatcher |
+| `83ee4efcf` fix(security): denied tool request precedence | headless, no approval flow |
+| `49e3ff46e` fix: sanitize shell call in linux.rs | platform is **Darwin** |
+| `d98286022` fix: honor timeout_seconds on the Anthropic provider | provider is LM Studio OpenAI-compatible on :1234 |
+| `a6420ea34` Add Azure AI Foundry provider | same |
+| `a074d8eb3` fix(telegram) gateway approval | no gateway |
+| `971d21784` keep CLI provider prompts out of process args | not our invocation path |
+
+### The near-miss, and why it is worth a line
+
+`2b507b8eb` canonicalises paths before the `dir.starts_with(working_dir)` containment test, so hint
+discovery cannot escape the working directory via a symlink or an un-normalised path. That is
+**exactly the class of defect F87 fixed here** — goose's global/project hints reaching a 27B writing a
+Python app, measured at **42,561 → 20,412 chars, a 52% cut** (F138/F145).
+
+It is inert for us for a stronger reason than "different code path": **we load no hints at all.**
+`suppress_inherited_hints()` sets `CONTEXT_FILE_NAMES="[]"` as a **process-wide** env var at the top of
+`run_swarm`, so every phase — scouts, planner, detail, workers, sink — is covered, not just workers.
+A containment fix on a discovery walk that never runs changes nothing.
+
+**Checked rather than assumed**, because "our suppression is only for workers" would have made this
+directly applicable. It is not: one env var, set once, before any phase starts. Note the deliberate
+escape hatch — it returns early if `CONTEXT_FILE_NAMES` is already set, so an environment that
+pre-sets it keeps its own behaviour.
+
+### The ratchet state
+
+**13 of 252 triaged, 49 in scope remaining.** Every one closed here is closed permanently — that is
+the whole point of `upstream.py` keeping a seen-list rather than re-reading 252 commits each tick.
+
+Two remain flagged as worth an actual read when the freeze lifts: `ee61c7c49` (CLI streaming render,
+O(n²) → incremental) and `8b73e1a1b` (stable agent event message identity, which may bear on the
+activity digests every instrument here depends on). Neither is adoptable now; both are recorded so
+they are not re-discovered.
