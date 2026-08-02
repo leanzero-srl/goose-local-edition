@@ -6913,3 +6913,55 @@ always, and the model half should run in the tail where a node IS free — which
 sink, the run's single longest task, currently runs unwatched (F115, still open).
 
 Corrects nothing in F151, which stands exactly as measured; it supplies the window F151 did not state.
+
+## F163 — F160's predicate is REFUTED by its own falsifier, one tick after I proposed it
+
+F161 registered the falsifier as: *a flat worker that later produces on its own without being
+re-dispatched*. It fired on the very next observation window.
+
+    test-meridian attempt 1
+        obs 105s  calls=0  think=1,209  written=False
+        obs 174s  calls=0  think=1,209  written=False   << FLAT
+        obs 234s  calls=0  think=1,209  written=False   << FLAT
+        obs 294s  calls=0  think=1,216  written=TRUE
+
+Flat on both counters for 129 seconds, then it wrote. A ">=2 consecutive flat observations = kill"
+trip would have killed a worker that was in the middle of succeeding. **F160's predicate is withdrawn.**
+
+**Why flat does not mean frozen.** The engine's own comment at swarm.rs:16539 states the mechanism:
+
+    // On a reasoning model this is the ONLY non-zero signal a still-working worker produces: it
+    // streams Thinking, which is neither a tool call nor text, so tool_calls/errors/last_text all
+    // read 0 while it is in fact generating.
+
+`thinking_chars` counts the THINKING stream only, and `tool_calls` increments when a call COMPLETES.
+So when a worker stops thinking and starts emitting the tool-call payload — the file content itself —
+thinking_chars freezes and tool_calls has not moved yet. **Both counters are flat during the single
+most productive thing a worker can do.** Confirmed against the digest's full field list
+(`tool_calls, errors, malformed, recent, last_text, calls, reasoning, full_reasoning, thinking_chars,
+last_thinking, model, phase`): there is NO timestamp and NO in-flight byte counter. Nothing in the
+digest advances while a tool payload streams.
+
+**The data offers a >=4-flat refinement and I am refusing it.** The three genuine stalls were flat
+across FOUR-plus observations (244s, 276s, 252s) and this false positive across two. So ">=4" fits
+perfectly — on the four cases that produced it. Tuning the threshold to the same runs that revealed
+it is fitting the instrument to the answer, and it would still be a hard-coded literal guarding a
+signal that is measuring the wrong thing.
+
+**What F160 got RIGHT, and what survives.** The 772 seconds of dead wall-clock is real: those three
+attempts never recovered and were correctly killed. `over_read_tool_calls = 16` really is blind to a
+silent worker, `spiral_thinking_chars` really is 0, and the LLM review really is skipped 60/69 on
+`no_idle_device` (F162). **The problem stands; my detector was wrong.**
+
+**The corrected design needs a new OBSERVABLE, not a new threshold.** A `last_delta_at` timestamp in
+the digest, updated on ANY stream event — thinking, text, or tool-argument bytes — makes "frozen"
+physically well-defined: no bytes of any kind, as opposed to today's "no thinking and no completed
+call", which conflates freezing with writing. That also keeps Prime Directive 4 honest, because the
+silence window can be derived from the fleet's own observed inter-token cadence rather than picked.
+
+Queued behind the freeze, and it is now a digest-writer change rather than a judge change — a
+different and larger blast radius than F160 implied, which is worth knowing before it ships.
+
+LESSON: the falsifier earned its keep within one tick. Registering it cost one line and it stopped a
+plausible, well-argued, measured fix that would have killed healthy workers under load — exactly when
+the fleet can least afford it.
