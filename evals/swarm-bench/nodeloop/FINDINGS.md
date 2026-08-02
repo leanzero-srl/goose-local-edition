@@ -4680,3 +4680,53 @@ citing healthy joins at 311-1591s — into **the routine terminator of the longe
 
 baseline 81 turns total (sink 25 = 31%); retarget_off 71 total (sink 16 = 23%). At ~83s/turn the whole
 run is roughly 100 turns of model time across 3 nodes — the number any future speedup has to move.
+
+---
+
+## F118 — why the redraft never fires: `plan_confidence` is 88 in 8 of 13 runs, and the floor is 85
+
+F117 left open why this build shows 0 redraft rounds when earlier corpus runs showed four. The answer
+is deterministic and it closes the question.
+
+Across every archived run with a `plan_loaded`:
+
+| plan_confidence | ask_floor | retarget events | redrafts |
+|---|---|---|---|
+| 100 | 85 | 0 | 0 |
+| **88** | 85 | 0-1 | **0-1** |
+| **84** | 85 | 3 | **3** |
+| **54** | 85 | 2 | **1** |
+
+**The ladder runs only when `plan_confidence < ask_floor`.** Both units on this build came in at
+**88 > 85**, so the redraft had no reason to run — and `retarget_off` therefore had nothing to switch
+off. F117(a) is fully explained: the arm was inert because its precondition is a property of the PLAN,
+not of the lever.
+
+### The sharper observation underneath it
+
+**`plan_confidence` is 88 in 8 of 13 runs.** That is not a measurement varying with plan quality; it
+is very nearly a constant. An earlier note in this project records why: confidence is the cross-draft
+AGREEMENT score, and *"spread 1 = 88, spread 0 = 100"* — literally whether the parallel skeleton drafts
+emitted task counts within one of each other.
+
+So the signal is effectively three-valued: **100** (drafts agreed exactly), **88** (off by one), and
+below-80 (off by more). With the floor at 85, **only a task-count disagreement of 2 or more can ever
+trigger a redraft.**
+
+That makes `retarget` a lever whose precondition fires on roughly 3 of 13 observed runs, and makes
+`ask_floor: 85` a threshold sitting in the GAP between two adjacent discrete values (88 and 84) rather
+than on a continuum. Moving it a point either way changes nothing; moving it to 90 would fire the
+redraft on nearly every run.
+
+### What to do with it
+
+**Nothing yet, deliberately.** The measured facts are: the ladder is precondition-gated, the gate is a
+near-constant, and the arm built to test it cannot fire on a typical plan. Whether the redraft is
+*worth* firing is a separate question this bench has never answered — the one run with 3 redrafts is
+not comparable to anything.
+
+Testing `retarget` needs a spec ambiguous enough to split the drafters. That is a bench-design problem
+for the backlog, not a lever-tuning one.
+
+**Registered:** any future `retarget` arm must first assert `plan_confidence < ask_floor` on its
+baseline. Otherwise it is F117 again.
