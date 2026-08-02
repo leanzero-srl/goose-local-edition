@@ -103,6 +103,39 @@ PY
     ;;
   check)
     python3 "$PWD/health.py"
+    # HELD-COMMIT PRESSURE, made visible every tick instead of left to my judgement.
+    #
+    # "Do not cross a boundary per fix — batch them" is a real rule and it rotted into an excuse:
+    # 51 engine commits sat unshipped for most of a day while TWO arms and SEVEN registered
+    # predictions were all blocked on that one crossing, because "let the running unit finish" got
+    # treated as absolute when it was always a trade-off. The trade-off flips once the batch is
+    # large — a killed unit costs ~2h of fleet time, an unshipped batch costs every experiment that
+    # depends on it, plus every hour the engine runs without fixes that are already written.
+    #
+    # Judgement is exactly what failed here, so this does not ask for judgement. It counts.
+    python3 - <<'HELD'
+import subprocess, pathlib
+ROOT = pathlib.Path.home() / "Projects/goose"
+BIN = ROOT / "target/release/goose"
+if not BIN.is_file():
+    raise SystemExit(0)
+built = int(BIN.stat().st_mtime)
+r = subprocess.run(["git", "log", "--oneline", f"--since=@{built}", "--", "crates/"],
+                   capture_output=True, text=True, cwd=str(ROOT))
+held = [l for l in r.stdout.splitlines() if l.strip()]
+if not held:
+    print("  [OK] no engine commits held — the running binary is current")
+    raise SystemExit(0)
+n = len(held)
+print(f"  {'[WARN]' if n < 8 else '[ACT] '} {n} engine commit(s) HELD — NOT in the running binary:")
+for l in held[:4]:
+    print(f"         {l}")
+if n > 4:
+    print(f"         ... and {n - 4} more")
+if n >= 8:
+    print("         CROSS THE BOUNDARY — at this size the batch costs more than the unit it kills.")
+    print("         ./loop.sh boundary  (pre-flights first and refuses without killing anything)")
+HELD
     ;;
   preflight)
     # Can every QUEUED arm actually fire on the binary the loop will run? An arm whose env lever is
