@@ -38,13 +38,44 @@ occupancy.py credited it to `t_end` — 9.1x its real 651s. Corrected: occupancy
 **integrate-verify at 29%**, solo time **1590s ALL of it the sink**, **MAX USEFUL NODES = 3.28** against
 a pool of 3. **The plan is NOT the bottleneck. The SINK is.**
 
-## CURRENT GOAL — G8: SHORTEN THE SINK. It is 29% of node-busy and 100% of the solo time.
+## G8 — CLOSED. The sink is not SLOW, it takes 25 TURNS, and wall-clock = turns x 83s (F116).
 
-`integrate-verify` held one node for **1590s — 23.6% of the whole run** — while the other two idled.
-That is now the single largest serial region, and the plan around it is fine (`MAX USEFUL NODES` 3.28
-> pool 3). `fan_verify` already shards per-module verification into `verify::<M>`, and those ran; what
-remains is the single JOIN. Read what integrate-verify is actually INSTRUCTED to do before proposing
-anything — F101's lesson is that a verdict can be right while its reason is wrong.
+`integrate-verify` held one node for 1590s — 23.6% of the run — but at **72.0 s/call it is FASTER per
+call than the run median of 82.9**. It is simply long: 25 calls against a median of 2-4. So sink work
+is TURN-REDUCTION work, never latency work. Predictions on the next sink (fewer than 25 calls,
+`sink_capped` on a cut sink, the supervisor's prior findings actually reaching it) settle at the
+boundary.
+
+## CURRENT GOAL — G4: THE NODE CURVE. This is Mihai's goal one, stated directly.
+
+**`swarm-1node-r0` is in flight and is the first 1-node datapoint on this build.** What it is already
+showing, and the reason it must be allowed to finish:
+
+**The prefix is 53.8 minutes before the first dispatch** — 62% of the run's elapsed time at the point
+it was measured, against 13.3 min (baseline@3n) and 20.3 min (retarget_off@3n). Every fleet-parallel
+phase — scouts, best-of-N drafting, the detail fan — collapses to serial on one node, and that is the
+mechanism by which more nodes win. If this holds to completion it is the first direct evidence for
+the overarching goal, so this unit is answering a named question and stays.
+
+Also true of this unit and worth reading together: plan_confidence 81 < ask_floor 85, so the redraft
+ladder DID run here — this is the low-confidence baseline `retarget_off` has been waiting for (~29%
+of runs, F121). Pair the arm against THIS unit, not against baseline-n3-r0.
+
+Still owed under G4: the replicate spread on this build. Two units exist but they are DIFFERENT ARMS
+(baseline@3n 0.7186, retarget_off@3n 0.6720) and their difference is not a spread (lesson 7).
+
+## CLOSED QUESTION — do NOT re-derive (F124)
+
+**Mixed-kind tasks are not worth fixing.** 22 of 262 archived tasks mix kinds; they retry 18.2% vs
+15.2% pure = **+3.0pp**, while the rule fired on 88% of plans. A deterministic mixed-kind splitter was
+designed and NOT built because the measurement killed its premise. The shape recurs perfectly
+(`code+docs` 10, `asset+code` 9, `asset+code+docs` 3, always on `cli`/`main`/`entry` or `api`) —
+reproducible is not costly.
+
+**What carries the retry burden is an interaction:** hard AND test-authoring, **60.0% (n=30)**,
+against hard-not-test 12.1%, test-not-hard 12.5%, neither 5.9%. Brief length compounds it ONLY inside
+test tasks (33/35/64% by bucket; producing tasks show no ladder). This is `kind_prompt`'s real,
+un-gameable readout — see G3 below.
 
 ## NEXT — G2: arm `spec_repair` and measure the repair tail (blocked until the boundary ships F106)
 
@@ -96,7 +127,11 @@ one-finding round. Two independent readouts: MECHANISM (`spec_repair_wave.twins 
 readout — it is not a failure.
 
 **G3 — arm `kind_prompt`.** 69.7% of dispatches get rules written for another job. The lever is built
-and OFF. Readout: `kind_mismatch_pct` from `dispatch_audit.py` falls toward zero.
+and OFF. ⚠ The old readout (`kind_mismatch_pct` -> zero) is DEAD — F111 proved it circular, hardcoded
+to zero with the lever ON, success by construction. **Use F124's instead: hard-test retry rate, from
+`task_dispatched.attempt`, baseline 60% (n=30) against 12.1% for hard non-test work.** Nothing in the
+lever's accounting touches it. REGISTERED: it falls 60% -> ~12%. FALSIFIER: it stays near 60%, and
+the whole instruction-density story is wrong for this kind.
 
 **G4 — the node curve at 1 / 2 / 3.** This is goal one stated directly and it needs n>=3 per cell,
 because an identical config has been measured with a 46-point spread.
