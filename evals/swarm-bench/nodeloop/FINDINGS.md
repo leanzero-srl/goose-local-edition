@@ -2356,6 +2356,46 @@ serialising the tasks that run it, changes what the swarm produces or how it sch
 real changes needing their own measurement. Reclassifying a false finding costs nothing and stops the
 repair loop chasing it, which is the immediate harm.
 
+## F68 — correction: the fix round is NOT chasing the phantom, and F37 is working live
+
+I assumed the in-flight fix worker was burning 13 minutes on the port collision from F67, and said so
+before checking. The activity digest says otherwise:
+
+    cat vendorsync/api.py        cat tests/test_api.py
+    cat vendorsync/meridian.py   cat tests/test_meridian.py
+    write vendorsync/api.py
+
+    last_thinking: "code calls `resp.headers.get("ETag")`, it raises an AttributeError. The solution
+    is to ensure all mock responses include a headers dict... I should also verify that
+    `_request_with_retry` properly handles non-OK status codes like 410 before parsing the body."
+
+That is a **real defect**, reasoned about precisely, and it wrote a fix. The fix loop had more than
+the collision to work from — `complete_failed_tasks` also named `test-api` and `test-meridian` — and
+it went after those.
+
+**So F67's harm is smaller than I implied.** The collision is still a false finding that must not be
+believed, and 8 of 13 runs carry one, but "the fix round is wasted" was my inference, not a
+measurement. The honest claim is narrower: a collision adds a phantom to the finding set and can
+consume budget, not that it necessarily does.
+
+**And F37 is confirmed working, live.** That fix made a failed task's finding name the CODE UNDER TEST
+rather than telling the worker its deliverable was missing. `test-api` and `test-meridian` failed, and
+the fix worker went straight to `api.py` and `meridian.py` — the modules under test — instead of only
+the test files. The marker is present in the running binary, so this is the shipped behaviour, not a
+coincidence.
+
+**And a third false negative from the same idiom.** Verifying the claim above, my
+`grep -qF -- "$M" <(strings "$B")` reported the F37 marker ABSENT. A positive control — `strings "$B"
+| grep -cF` — found it, and every other marker, exactly once. That idiom has now produced a false
+ABSENT three times tonight (once mid-rebuild, once on four markers at once, once here) while the
+direct pipe has never been wrong. **Stop using the process-substitution form; use
+`strings BIN | grep -cF -- MARKER` and read the count.** `loop.sh` wraps it differently and is
+unaffected.
+
+Second time tonight I have asserted something about a live run before reading the evidence, and the
+second time the evidence was one command away. Both times the correction was more informative than the
+claim would have been.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
