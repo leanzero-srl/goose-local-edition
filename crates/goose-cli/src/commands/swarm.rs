@@ -12111,8 +12111,10 @@ impl GooseAgentDispatcher {
             module that already exists (e.g. `models.py`). Create NEW files ONLY for genuinely-new functionality the existing \
             modules do not already provide (plus a test for it).\n\
             {entry_clause}\n\
-            For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is written separately, keep \
-            it terse here), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
+            For each subtask provide: id (kebab-case), description (2-4 lines that STAND ALONE: what to build, in which \
+            file(s), and the ONE check that proves it works — a richer spec is written separately and will REPLACE this, but \
+            write it as if nothing else will arrive, because sometimes nothing does; do NOT write an essay and do NOT restate \
+            the whole goal), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
             difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \

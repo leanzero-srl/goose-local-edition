@@ -2018,6 +2018,37 @@ Two rules, both already in the ledger and both re-earned tonight:
 - **`./loop.sh boundary` is not idempotent-cheap — it rebuilds.** To re-read markers, read them; do
   not re-run the verb.
 
+## F58 — the thin brief was not an accident. The architect is told to write one.
+
+Following Mihai's through-line into the planning phase and finding its clearest instance yet. The
+architect's instruction, verbatim:
+
+    For each subtask provide: id (kebab-case), description (ONE short line — a fuller spec is
+    written separately, keep it terse here), ...
+
+So the 105-character brief that shipped to `meridian` was not a degradation — **it is what the
+architect was asked for.** The design is: deliberately-thin primary instruction, plus a separate
+enrichment pass that replaces it. That is sound only while the enrichment succeeds.
+
+It failed **27 out of 27 times**, every one a timeout, and the shipped fallbacks ran 59-226 characters
+(median 97). The promise "a fuller spec is written separately" is the detail fan, and the detail fan
+is the single least reliable call in the engine. **The fallback is bad by construction, because the
+construction assumed the fallback would never be used.**
+
+**Fixed at the instruction, not the fallback.** The architect now writes 2-4 lines that STAND ALONE —
+what to build, in which files, and the one check that proves it — explicitly told that a richer spec
+will replace it *but to write as if nothing else will arrive, because sometimes nothing does*. Still
+bounded ("do NOT write an essay, do NOT restate the whole goal") so the skeleton call does not bloat.
+
+**The cost, stated honestly:** the architect writes more per subtask, and `best_of_n` multiplies that
+across drafts. If the pre-dispatch prefix grows materially, this trades planning time for failure
+safety and the trade needs to be judged, not assumed — `prefix.py` reports the number every unit.
+
+**Why this is worth doing even though F53 showed a thin brief is survivable:** the 83.4% build proved
+a worker can recover from a 105-char brief, because workers have shell and re-derive what they need
+(F54). But recovery is a coin flip that costs worker time, and the other five runs whose client module
+got a thin brief scored 0.30-0.50. Making the fallback safe is cheap; relying on recovery is not.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
