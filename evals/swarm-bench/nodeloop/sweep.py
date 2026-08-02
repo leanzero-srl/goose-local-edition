@@ -119,6 +119,31 @@ ARMS = [
                 "after the F134 truncation fix.",
     },
     {
+        # THE RESEARCH SYNTHESIS ASKED FOR THIS ON *EVERY* ARM AS A "FREE INSTRUMENT". IT IS NOT ONE.
+        #
+        # Read the enforcement site (swarm.rs:19137-19165): just before the sink reads the tree, the
+        # fence RESTORES every owned file a non-owner clobbered back to the owner's bytes, via
+        # `write_frozen_bytes`. That is a TREATMENT — it changes the tree the sink verifies.
+        #
+        # Its own comment says "OFF (or no snapshots) => byte-identical", and that is exactly what
+        # makes the "free instrument" argument circular: it is free ONLY IF violations are zero, which
+        # is the very thing the probe is meant to measure. Same shape as F111's circular readout.
+        # Putting it on all four score arms would confound every one of them in precisely the case
+        # where it had something to say.
+        #
+        # So it runs as its OWN n=1 mechanism cell, like every other mechanism readout here. A
+        # contaminated tree is fine in a cell whose output is an event count, not a score.
+        "name": "owned_file_fence",
+        "env": {"GOOSE_SWARM_OWNED_FILE_FENCE": "1"},
+        "gate": "does cross-worker clobbering happen AT ALL? 76 archived runs contain ZERO "
+                "owned_file_violation events — because the detector has never been switched on, so "
+                "that zero is uncontrolled and means nothing. The scheduler already prevents the "
+                "common case (held_files/files_conflict make two tasks owning one file "
+                "un-coschedulable), leaving only out-of-scope writes. Readout: the violation count. "
+                "ZERO across a 3-node run CLOSES 'more nodes -> more interference' as a hypothesis; "
+                "non-zero makes it the first thing to fix.",
+    },
+    {
         "name": "kind_prompt",
         "env": {"GOOSE_SWARM_KIND_PROMPT": "1"},
         "gate": "72-80% of dispatches receive rules written for another job, and 3-5 per run own a "
@@ -320,6 +345,14 @@ QUESTIONS: list[dict] = [
     # THE THREE ARMS THE FRESH-EYES SWEEP PUT AHEAD OF EVERYTHING (F134), each at reps 3 because a
     # SCORE comparison is what they need and a score has to clear the 46-point replicate spread.
     # They run right after baseline so the spread and the arms come from one binary and one session.
+    {"arm": "owned_file_fence", "nodes": 3, "reps": 1,
+     "asks": "the ONLY defect class that MECHANICALLY must scale with concurrency — does a non-owner "
+             "ever clobber an owned file? 76 archived runs show zero owned_file_violation events, but "
+             "the detector has never been on, so that zero is uncontrolled and proves nothing (the "
+             "standing rule). Runs as its own cell rather than on every arm because the fence "
+             "RESTORES the clobbered bytes before the sink reads the tree — a treatment, not a probe, "
+             "and 'free' only in the case where it has nothing to report. ZERO violations here CLOSES "
+             "more-nodes-more-interference; non-zero promotes it to first place."},
     {"arm": "spec_repair", "nodes": 3, "reps": 1,
      "asks": "the tail is 13-26% of every run, has an occupancy number of NONE (it emits no dispatch "
              "at all), and has never once gone green — 13 of 13 archived rounds ended with findings "
