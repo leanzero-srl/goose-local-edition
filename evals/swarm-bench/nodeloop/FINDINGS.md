@@ -6606,3 +6606,70 @@ Two remain flagged as worth an actual read when the freeze lifts: `ee61c7c49` (C
 O(n²) → incremental) and `8b73e1a1b` (stable agent event message identity, which may bear on the
 activity digests every instrument here depends on). Neither is adoptable now; both are recorded so
 they are not re-discovered.
+
+## F156 — F146 VERIFIED on a live run; and "21,736 chars" was never a worker-prompt number
+
+**F146's registered run-based check (Lesson 34) PASSES.** F146 introduced no new string literal, so a
+marker could not verify it; the registered predicate was "the Click paragraph appears in test-author
+prompts and NOT in implementer prompts on the SAME run." On the 22:11 build, 13 file-owning worker
+prompts:
+
+    Click paragraph in NON-test worker prompts:  0 of 8   (want 0)
+    Click paragraph in TEST-author prompts:      5 of 5
+
+That is the whole check, and it is green. The gate is `TargetLang::Python && is_test_author`.
+
+**The retraction it dragged out.** Measuring that, the two kinds turned out to be different sizes:
+
+    worker/impl    9,860 chars (n=8, median 9,900)
+    worker/test   22,511 chars (n=6)
+
+A 2.3x gap. **`prompts.py` had ONE `worker` cell pooling them**, so its headline — 21,736 chars,
+quoted for a dozen ticks as "a clean worker system prompt" — is a median over a mixture: within 5% of
+the test-author cell, 2.2x above the implementer cell, and a fact about neither. Implementers are
+40.1% of all dispatches, so the number I was using to reason about instruction density was wrong for
+the largest population it was supposed to describe.
+
+This is the FIFTH instance of the pooling error and the second inside `prompts.py`, which exists to
+prevent it — F138 split the eras and the kinds, the docstring warns at length about the sink being
+pooled with workers, and the same file then pooled two worker kinds twice as far apart as the sink
+ever was. Fixed: `worker/impl` and `worker/test` are separate cells, discriminated on the paths in
+the OWNS block (not on `tests/` appearing anywhere in the prompt — every worker on a Python run sees
+that in the file layout), and the tail **refuses to print a combined figure** at all.
+
+**The gap itself is NOT a defect and must not be reported as one.** Paragraph diff: ~12k of the
+difference is real signatures and code excerpts (`class Store`, `_get_with_429`, the 429/Retry-After
+handling, the per-file deliverable list) that a test author needs and an implementer does not. That
+is the engine differentiating correctly — Prime Directive 2 working, not failing.
+
+RETRACTED: F133 10,587 / F137 22,803 / F138 20,412 / F145 21,736 are ALL superseded. Quote a cell
+with its KIND and its n, or quote nothing.
+
+## F157 — 45% of an implementer's prompt is the TOOLS block, and it is written for a test author
+
+Once the cells were separated, the implementer prompt is small enough to account for completely:
+**`TOOLS & ENVIRONMENT` is 4,450 chars of a 9,860-char implementer system prompt — 45%.** Sixteen
+bullets, before any task-specific content. Compliance on this model class falls 0.588 at 10 rules to
+0.094 at 40, so this one generic block spends most of the budget on tool mechanics.
+
+Two of its bullets are addressed to a node this one is not (the F149 shape — an instruction about a
+thing that is not there), verified against the tools actually attached: `edit`, `shell`, `tree`,
+`write`.
+
+1. *"NEVER read the project's OTHER TEST files … any test file YOU OWN is your deliverable and is
+   yours to read and write freely"* — the implementer owns no test file. The exemption clause
+   describes a case that cannot occur for it, and it is the longest bullet in the block.
+2. *"STOP WHEN GREEN. The MOMENT your file's tests pass … do NOT re-run pytest more than ~2 times"* —
+   an implementer's tests are a SIBLING task's deliverable and on a fanned plan frequently do not
+   exist yet. The stop condition it is handed is one it cannot evaluate.
+
+Both are true and useful for a test author. Delivered to an implementer they are inapplicable rules
+that evict applicable ones, on the class that is 40% of dispatches. The engine already holds
+`is_test_author` — F139 and F146 both gate on it — so this is the same one-line fix, twice.
+
+Also noted: one bullet carries 13 characters of stray leading indentation (`             - NEVER run
+\`cd\``), a multi-line-string artifact.
+
+QUEUED, NOT SHIPPED — the engine freeze (F154) holds until baseline n=3. Registered check for when it
+lifts, since neither fix introduces a new literal: on one run, the two bullets above must appear in
+test-author prompts and NOT in implementer prompts.
