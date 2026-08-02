@@ -88,6 +88,18 @@ THE SPEC STATES ITS ENDPOINTS
 # filenames but not external literals like API paths.
 CARRY THROUGH EVERY EXTERNAL LITERAL
 
+# F76: the repair tail emitted NO task_dispatched at all, so 13-26% of every run had no occupancy
+# number and no change to it could ever be judged. These are the tail's first dispatch events.
+complete_fix_dispatched
+complete_fix_completed
+
+# F77: race the same finding set across every node in its own shadow, re-verify each shadow with the
+# deterministic gate, promote only a twin that STRICTLY beats the round's baseline. The selection rule
+# is additionally covered by a unit test (a_raced_twin_lands_only_when_it_strictly_beats_the_baseline),
+# which is the stronger check because it asserts behaviour rather than presence.
+GOOSE_SWARM_SPEC_REPAIR
+spec_repair_wave
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
