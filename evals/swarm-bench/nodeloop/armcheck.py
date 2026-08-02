@@ -180,6 +180,39 @@ def arm_e2e_oracle(ev):
     return "OK", f"{shards} e2e shard(s) ran"
 
 
+def arm_spiral_thinking(ev):
+    """#134's early spiral trip: BUILT (judge.rs:359), default-OFF (`spiral_thinking_chars: 0`).
+
+    It fires at `min_age_secs` (90s) instead of the 420s floor when a worker owns files, has written
+    none, has made ZERO tool calls, and has emitted more than a cap of THINKING. That last term is
+    the reason this arm could never be checked: `worker_thinking_chars` appeared on no event, so the
+    precondition was unobservable and the lever sat off and unmeasured (F128).
+
+    `judge_observed` is that fix. It emits the RAW inputs on every judge invocation, so the question
+    "would this lever ever have fired, and at what cap?" is answerable from an archived run — before
+    a unit is spent, which is the whole point of this file.
+    """
+    obs = [e for e in ev if e.get("event") == "judge_observed"]
+    if not obs:
+        return "BLOCKED", ("no `judge_observed` events — worker_thinking_chars is emitted nowhere, so "
+                           "the trip's precondition cannot be checked and the arm is F111 all over "
+                           "again (F128). Needs the post-F128 engine.")
+    # PRECONDITION, exactly the trip's own terms minus the cap, so no threshold is hardcoded here.
+    cands = [e for e in obs if e.get("owns_files") and not e.get("any_owned_written")
+             and e.get("tool_calls") == 0]
+    if not cands:
+        return "UNSUITABLE", (f"{len(obs)} judge observations, but none has owns_files AND nothing "
+                              f"written AND tool_calls == 0 — the shape the trip exists for never "
+                              f"occurred on this baseline, so switching it on changes nothing here")
+    thinking = [e.get("thinking_chars") for e in cands if isinstance(e.get("thinking_chars"), int)]
+    if not thinking:
+        return "BLOCKED", (f"{len(cands)} zero-action observations but thinking_chars is null on all "
+                           f"of them — the digest predates the key, so the cap term is undecidable")
+    thinking.sort()
+    return "OK", (f"{len(cands)} zero-action observation(s); thinking_chars median {thinking[len(thinking)//2]}, "
+                  f"max {thinking[-1]} — pick the cap BELOW the max or the trip cannot fire")
+
+
 def arm_doc_fetch(ev):
     """The engine's own rule (spec_doc_urls): an http(s) URL with a PATH — a bare origin is the app's
     base URL, not a document. Mirrored here deliberately and narrowly; if the two ever disagree the
@@ -206,6 +239,7 @@ ARMS = {
     "retarget_off": arm_retarget_off,
     "sink_review": arm_sink_review,
     "doc_fetch": arm_doc_fetch,
+    "spiral_thinking": arm_spiral_thinking,
 }
 
 
