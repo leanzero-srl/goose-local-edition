@@ -7327,3 +7327,45 @@ LESSON 55: **WHEN TWO INSTRUMENTS CONSUME THE SAME EVENT STREAM, A LESSON LEARNE
 LEARNED BY THE OTHER.** occupancy.py had the split-parent correction, with a measured 9.1x error in
 its comment, while review.py computed in-flight from the same log and got it wrong. After fixing any
 event-derived defect, grep for every other consumer of that event.
+
+## F174 — split-born test-authors finish 5x faster; and the obvious explanation for it is REFUTED
+
+`sink_review-n3-r0` planned `api` and `store` as COMBINED tasks owning both a module and its test
+(`api.py, test_api.py`), and the judge split each into impl + tests. That produced two test-authors of
+a kind the campaign has not measured before — split-born rather than planned:
+
+    api-tests          SPLIT     done   1.8 min   1 attempt
+    store-tests        SPLIT     done   1.4 min   1 attempt
+    store-edge-tests   planned   done   7.4 min   1 attempt
+    main-cli-tests     planned   done  10.5 min   1 attempt
+    meridian           planned   done  14.0 min   1 attempt   (owns meridian.py AND test_meridian.py)
+
+**1.4-1.8 min against 7.4-14.0 — roughly 5x.** And all seven test-authors on this run completed;
+zero failures against the campaign's 31%.
+
+**The obvious explanation is that a split child arrives AFTER its parent wrote the module, while a
+planned test races it. I measured that across every finished 3-node run and it is REFUTED:**
+
+    deps complete at dispatch?     n   failed   rate
+    YES - module existed          34        9    26%
+    NO  - dispatched early         2        1    50%
+
+Thirty-four test-authors were dispatched with every dependency already complete and **26% of them
+still failed**. The DAG is enforcing ordering correctly; only two dispatches in the entire campaign
+raced their dependency. "The module did not exist yet" is not the cause of F164 and is now closed.
+
+**What that leaves.** A split child differs from a planned test in what it CARRIES, not in when it
+runs — it inherits the parent's spec and the parent's own working context, where a planned test-author
+gets `## API of` blocks for all five modules and 22,511 chars of prompt (F156/F159). That is the same
+variable `scoped_contracts` is queued to test and the same one `split_inherit_spec` exists for, which
+makes this an unplanned second line of evidence pointing at the same place.
+
+⚠ **HELD LOOSELY, AND DELIBERATELY NOT PROMOTED.** n=2 split children on ONE run against n=5 planned
+on the same run. That is an observation, not a result (Lesson 35), and the 5x could be task size — a
+split child is by construction a fraction of its parent's work. What makes it worth recording is not
+the ratio but that it is a THIRD independent arrow at the test-author cell, arriving from a direction
+I was not looking in.
+
+REGISTERED for `split_inherit_spec` when it runs: split-born test-authors should stay fast with the
+lever ON; if they SLOW toward the planned 7-14 min, the speed came from the thin inherited statement
+rather than from good context, which would invert the arm's whole premise.
