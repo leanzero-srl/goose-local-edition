@@ -151,6 +151,11 @@ SAME KIND
 # INCONCLUSIVE rather than a set of 404 findings.
 was ALREADY BOUND before
 
+# F111: the kind-mismatch metric was CIRCULAR — hardcoded to zero whenever kind_prompt was ON, so the
+# arm bought to test that lever would have "succeeded" by construction. rules_delivered is the
+# deterministic engine event that proves which rule-set each dispatch actually received.
+rules_delivered
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
