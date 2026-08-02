@@ -5302,3 +5302,54 @@ prediction gate — an instrument that lets you compare two things that are not 
 **Corrected claim for G4:** on this pair, one node costs ~2.6x on research and an unresolved ~1.3x on
 first-round planning; the headline 3.2x prefix gap is about half redraft, which is node-independent.
 The node curve is NOT yet demonstrated by the prefix, and I should stop leading with it.
+
+---
+
+## F130 — my tick review called a FAILED task a completion, in every run, at two sites
+
+`swarm-1node-r0` finished its DAG and the review reported *"dispatched 13 / completed 13 / in flight
+0"* and **"IS THE PLAN BEING FOLLOWED? YES"**. Both were false. `test-api` carries
+`{"status": "failed", "elapsed_ms": 0, "tool_calls": 0}` — the exhausted-attempts signature from
+F126 — and the run delivered **12 of 13 planned tasks**.
+
+The cause is one line, written twice:
+
+```python
+done = {e["task_id"] for e in ev if e.get("event") == "task_completed"}
+```
+
+at `review.py:81` (level 1) and `:376` (Q2). **`task_completed` is emitted for a terminal FAILURE as
+well as a success**, and neither site read `status`. P4 in the supervisor itself — a measure that
+cannot separate two opposite situations — and P1 alongside it, because the same wrong predicate
+existed at two sites and both had to be found. I have been logging that exact pattern in the engine
+all session while shipping it in my own instrument.
+
+### How much it hid: every run, and every failure is a TEST task
+
+| run | planned | counted done (old) | actually done | FAILED | failed ids |
+|---|---|---|---|---|---|
+| baseline-n3-r0 | 16 | 19 | 17 | **2** | test-api-edge-cases, test-meridian |
+| retarget_off-n3-r0 | 15 | 17 | 16 | **1** | test-api |
+| swarm-1node-r0 | 13 | 13 | 12 | **1** | test-api |
+
+**4 terminal failures across 3 of 3 runs, and all four are test-authoring tasks. All four are
+zero-work** (`elapsed_ms 0`, `tool_calls 0`). That converges hard with F124 (hard+test = 60% retry)
+and F126 (a retry is the judge killing a spinning worker): the entire terminal-failure population in
+this archive is the same kind of task the judge chain has been circling all session. It is not new
+evidence for that thread — it is the same tasks seen from the other end — but it does say the cost is
+not merely wasted minutes. **Those runs shipped without the test coverage they planned for.**
+
+It also corrects something I have repeated: the two 3-node units I keep calling "clean" — baseline@3n
+0.7186 and retarget_off@3n 0.6720 — **each lost tasks**. The scores may still stand (the scorer runs
+the built app), but "clean unit" was never true of the DAG.
+
+### Fixed, and the regression the fix introduced
+
+Both sites now exclude `status == "failed"`, level 1 names the failed ids outright, and Q2 counts a
+lost task as DRIFT — the plan committed to it and it was not delivered.
+
+The first version of that fix then reported `test-api` as **both terminally failed AND still in
+flight**, because "in flight" was keyed off `done` alone and a failed task is not in `done`. Two
+mutually exclusive states asserted at once, from the wrong set — the same defect one layer down,
+caught only because I read the output instead of trusting the edit. "Settled" now means done OR
+failed. Self-test passes; the live run reads `dispatched 13 / done 12 / FAILED 1`.
