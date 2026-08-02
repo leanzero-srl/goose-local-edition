@@ -2115,6 +2115,45 @@ scout is ASKED to report — the same imprecise-instruction class as everything 
 does contain `/v1` and the plan still does not, the defect is in the planner's use of it. Guessing
 between those would have been the exact mistake F53 punished.
 
+## F61 — F57 was UNMEASURABLE, and the real constraint is that a busy fleet has no node to judge with
+
+The live unit reports **23 judge verdicts, 100% early-return** — worse than the 95.7% baseline F57 was
+meant to improve. Before calling F57 a failure, I checked whether the metric can attribute the cause.
+It cannot.
+
+**Four distinct paths return `JudgeOutcome::ok()`**, and every one lands in the log as
+`confidence 1.0, hint ""`:
+
+    :15508  a spec-drift path that decided OK
+    :15953  no idle device -> the model review is SKIPPED ENTIRELY
+    :15989  the "nothing produced yet" gate  <- the only one F57 touched
+    :16123  the model call itself failed
+
+So "the semantic review runs 4.3% of the time" was never attributable, and neither is the 100%. My
+prediction was untestable when I registered it, which is a fault in the prediction, not the fix.
+
+**And the decisive path is UPSTREAM of the one I fixed.** The scheduler hands the judge a model only
+when a device is idle — `claimed_device` is the first device with `in_flight < weight`, and
+`judge_model_id` is empty otherwise. Execute occupancy is measured at **0.72-0.93**, so nodes are busy
+nearly all the time and the semantic review is not being *declined*, it is **unreachable**. Whatever
+the downstream gate says is moot when there is no model to review with.
+
+**That is a genuine architectural tension and nothing in the log said so:** high utilisation is the
+goal, and high utilisation is exactly the condition under which the supervisor cannot supervise. It is
+also precisely Mihai's premise — "whenever a node is empty it should take the judge role" — working as
+designed, with a consequence nobody had measured: on a well-packed 3-node fleet, nodes are rarely
+empty.
+
+**Fixed the instrument, not the mechanism.** `judge_skipped{task_id, reason}` now fires at both
+reachable early returns with `no_idle_device` or `nothing_produced_yet`. The next run says which
+constraint is binding, and only then is there a basis for choosing between the available responses —
+reserve a node for judging, judge less often but always, or accept that a saturated fleet judges
+deterministically only.
+
+**F57 is NOT retracted and NOT confirmed.** Its reasoning stands on its own (a thinking-only worker
+was being read as "hasn't started"), it is harmless, and it becomes measurable now. Deciding either
+way on an unattributable metric is the mistake F53 already punished.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

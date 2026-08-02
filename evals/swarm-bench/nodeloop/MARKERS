@@ -55,6 +55,11 @@ STAND ALONE
 # F60: research_completed now carries what research PRODUCED, not just how many lenses returned.
 grounded
 
+# F61: WHY the judge passed. Four ok() paths were indistinguishable in the log; the decisive one
+# (no idle device) is UPSTREAM of the F57 gate, so F57 was unmeasurable without this.
+judge_skipped
+no_idle_device
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
