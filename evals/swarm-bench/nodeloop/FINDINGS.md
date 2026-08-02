@@ -5648,3 +5648,58 @@ mid-campaign is lesson 9 (a fix can rot an experiment). Registered for the next 
 own expectation written down: **prefix-break rate on worker transitions falls from ~31% toward 0;
 wall-clock moves 1-3% or not at all.** If wall-clock moves MORE than that, something else was riding
 on the same cause and the model of where time goes is wrong.
+
+---
+
+## F137 — the prompt log is SHARED across all goose sessions, and my "real budget" number was 2x wrong
+
+Chasing whether upstream's compaction work applies here, I looked at the message-count distribution
+across recent LLM calls and found a **single user message of 1,301,532 characters**. On a 27B that is
+absurd, and for a moment it looked like the biggest defect of the session.
+
+It is not ours. The model on that call is `us.anthropic.claude-haiku-4-5` and the payload is a
+base64 Playwright screenshot from `.playwright-mcp/`. **`~/.local/state/goose/logs/llm_request.*.jsonl`
+is written by EVERY goose session on this machine**, not just the swarm — browser automation,
+other agents, anything. Every prompt measurement I have taken from that directory has been mixing
+swarm worker calls with unrelated sessions.
+
+So I re-ran both findings that depend on it, filtered to the fleet models (`qwen3.6-27b`, i.e. the
+`mihai-` / `gabee-` / `workhorse-` identifiers). Of ~199 recent calls, 189 are fleet and 10 are not.
+
+### F136 SURVIVES, essentially unchanged
+
+| | transitions | broke | median re-prefill |
+|---|---|---|---|
+| unfiltered (as published) | 16 | 5 (31%) | 14,569 |
+| **fleet only** | **16** | **5 (31%)** | **12,291** |
+
+Same transitions, same break rate, median moves 14.6k -> 12.3k. The conclusion and its honest
+1-3% magnitude stand.
+
+### F133's NUMBER WAS WRONG, and the correction strengthens its conclusion
+
+F133 reported the worker system message at **10,587 chars median, ~39% of the payload**, from a
+sample of **5 requests**, unfiltered. On **57 fleet calls**:
+
+| | F133 (published) | corrected (fleet, n=57) |
+|---|---|---|
+| system message, median | 10,587 | **22,803** |
+| system message, max | 13,719 | **49,117** |
+| tool schemas, median | 2,064 | 2,064 (unchanged) |
+| **system as share of payload** | **39%** | **81.0%** |
+
+More than double, and the share nearly doubles. **The system prompt is 81% of what the fleet reads,
+not 39%** — and tool schemas are 7.3%, which is what F133 concluded and remains true. So F133's
+ACTION (instruction-density work belongs in the worker system prompt, not in schemas; the two
+upstream schema commits are inert here) is not merely intact, it is much better supported than the
+evidence I published it on.
+
+The error was n=5 and no model filter. A five-request sample of a shared log is not a measurement of
+anything, and I quoted it as "the real budget" for two ticks.
+
+### The instrument rule this leaves behind
+
+**Any prompt-size analysis from `llm_request.*.jsonl` MUST filter on
+`model_config.model_name contains "qwen3.6-27b"`**, and must state its n. The directory is shared,
+the intruders are large (one is 1.3 MB), and they are silent — nothing in the file says which session
+it belongs to except the model name.
