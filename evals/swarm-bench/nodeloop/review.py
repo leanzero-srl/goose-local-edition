@@ -33,6 +33,12 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# The duration-weighted node ceiling is occupancy.py's, NOT re-derived here. A local re-derivation
+# weighting by task_completed.elapsed_ms gave a different (wrong) answer, because a task superseded by
+# a split never completes and vanished from the sum.
+import occupancy  # noqa: E402
+
 REVIEW_VERSION = "rev-1"
 HERE = pathlib.Path(__file__).resolve().parent
 RUNS = HERE.parent / "runs" / "nodeloop"
@@ -154,7 +160,7 @@ def level3_goal(ev: list[dict]) -> list[str]:
     return L
 
 
-def level4_overarching(ev: list[dict], plan: dict) -> list[str]:
+def level4_overarching(ev: list[dict], plan: dict, run_dir: pathlib.Path) -> list[str]:
     """The only question that outranks everything: can this run use more than one node?"""
     pool = next((e for e in ev if e.get("event") == "pool_resolved"), None)
     n = (pool or {}).get("worker_count")
@@ -163,13 +169,44 @@ def level4_overarching(ev: list[dict], plan: dict) -> list[str]:
         L.append("  no plan yet, so the plan's node ceiling is unknown — NOT zero, unknown")
         return L
     w, n = plan["width"], n or 0
-    L.append(f"  pool {n} nodes; the PLAN's widest parallel level is {w}")
-    if n and w < n:
-        L.append(f"  ** the PLAN is the ceiling, not the fleet: {w} < {n}. More nodes cannot help "
-                 f"this run, and the work belongs in the architect prompt, not the scheduler.")
+    L.append(f"  pool {n} nodes; the PLAN's widest parallel level is {w} tasks")
+
+    # WIDTH IS ONLY AN UPPER BOUND, and reading it as the answer was wrong. This function once
+    # reported "the plan can saturate 3 nodes (width 8 >= 3)" for a run whose real ceiling was 1.92
+    # nodes, because ONE task was 49.5% of all node-busy time and the critical path dominated however
+    # many tasks were nominally parallel. Eight tasks that can start together are not eight tasks'
+    # worth of work.
+    #
+    # THE CEILING IS COMPUTED BY occupancy.py AND IS NOT RE-DERIVED HERE. The first attempt at this
+    # weighted by `task_completed.elapsed_ms` and got a DIFFERENT answer — `integrate-verify` at 31%
+    # instead of `api-web` at 49.5% — because a task SUPERSEDED BY A SPLIT never completes, carries no
+    # elapsed_ms, and vanished from the sum. occupancy.py pairs dispatch->completion spans and unions
+    # them per task, which is exactly the case a naive completion-sum gets wrong. Re-implementing an
+    # instrument is a standing prohibition in this project and this is why.
+    try:
+        occ = occupancy.analyse(run_dir)
+    except Exception as exc:
+        L.append(f"  occupancy unavailable ({exc}) — width {w} is an UPPER BOUND only")
+        return L
+    mun = occ.get("max_useful_nodes")
+    big, share = occ.get("biggest_task"), occ.get("biggest_task_share_of_busy")
+    if mun is None:
+        L.append(f"  too little has run to weight by duration; width {w} is an UPPER BOUND only — "
+                 f"eight tasks that can start together are not eight tasks' worth of work")
+        if n and w < n:
+            L.append(f"  ** structurally the PLAN is already the ceiling: width {w} < pool {n}.")
+        return L
+    L.append(f"  duration-weighted MAX USEFUL NODES = {mun} (pool {n}); "
+             f"biggest task `{big}` = {100*(share or 0):.0f}% of all node-busy")
+    if n and mun < n:
+        L.append(f"  ** THE PLAN IS THE CEILING, NOT THE FLEET: {mun} < {n}. More nodes CANNOT help "
+                 f"this run. The work belongs in the architect prompt, not the scheduler.")
+        if share and share > 0.30:
+            L.append(f"  ** and the reason is one task: `{big}` at {100*share:.0f}% of the work. "
+                     f"No fan-out helps that — SPLIT IT IN THE PLAN.")
     elif n:
-        L.append(f"  the plan can saturate {n} nodes ({w} >= {n}) — so occupancy below 1.0 is a "
-                 f"SCHEDULER or a duration-skew question, not a planning one")
+        L.append(f"  the plan can genuinely use {n} nodes — occupancy below 1.0 here is a SCHEDULER "
+                 f"question, not a planning one")
     return L
 
 
@@ -281,7 +318,7 @@ def render(run_dir: pathlib.Path) -> str:
     out += ["\n2. PLAN — what the run committed to"] + [f"   {x}" for x in plan_lines]
     out += ["\n3. GOAL — the current mini-goal and its open predictions"] + \
            [f"   {x}" for x in level3_goal(ev)]
-    out += ["\n4. ABOVE — the overarching goal"] + [f"   {x}" for x in level4_overarching(ev, plan)]
+    out += ["\n4. ABOVE — the overarching goal"] + [f"   {x}" for x in level4_overarching(ev, plan, run_dir)]
 
     # THE TWO QUESTIONS, in Mihai's order, answered with a verdict. Everything above is EVIDENCE for
     # these; these are the tick's actual output. Order matters: a faithfully-executed bad plan is
@@ -331,8 +368,28 @@ def self_test() -> int:
                  "tasks": [{"id": "a", "depends_on": [], "files": ["a.py"], "description": "x" * 900},
                            {"id": "b", "depends_on": ["a"], "files": ["b.py"], "description": "y" * 900}]}]
     txt2 = render(write(ev2))
-    if "the PLAN is the ceiling" not in txt2:
-        fails.append("a plan narrower than the pool must be named as the ceiling")
+    # With no completions the DURATION-weighted ceiling cannot exist, so the honest output is the
+    # STRUCTURAL bound plus an explicit statement that width is only an upper bound. Asserting the
+    # duration wording here would demand a number nothing could have computed — the vacuous-truth
+    # trap, pointed at my own control.
+    if "UPPER BOUND only" not in txt2:
+        fails.append("with no completions the review must say width is only an upper bound")
+    if "PLAN is already the ceiling" not in txt2:
+        fails.append("a plan structurally narrower than the pool must still be named as the ceiling")
+
+    # And the duration-weighted branch must fire once completions exist, naming occupancy's figure
+    # rather than a locally-computed one.
+    ev2b = ev2 + [{"event": "task_dispatched", "task_id": "a", "device": "d0",
+                   "ts": "2026-08-02T10:05:01+00:00"},
+                  {"event": "task_completed", "task_id": "a", "device": "d0", "elapsed_ms": 60000,
+                   "ts": "2026-08-02T10:06:01+00:00"},
+                  {"event": "task_dispatched", "task_id": "b", "device": "d1",
+                   "ts": "2026-08-02T10:06:01+00:00"},
+                  {"event": "task_completed", "task_id": "b", "device": "d1", "elapsed_ms": 60000,
+                   "ts": "2026-08-02T10:07:01+00:00"}]
+    txt2c = render(write(ev2b))
+    if "MAX USEFUL NODES" not in txt2c:
+        fails.append("with completions the review must report the duration-weighted ceiling")
 
     # A multi-file producing task is the chokepoint shape that a task COUNT cannot see.
     ev3 = ev + [{"event": "plan_loaded", "ts": "2026-08-02T10:05:00+00:00", "plan_confidence": 90,
