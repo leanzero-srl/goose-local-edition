@@ -3144,3 +3144,88 @@ exactly Mihai's through-line about instruction density).
 `fleetsample.sh` now records fleet state every 30s to `runs/nodeloop/fleet-samples.tsv`, read-only and
 detached, so the PROCESSINGPROMPT-vs-GENERATING split across a whole run becomes measurable instead of
 spot-checked. No conclusion is drawn from three samples.
+
+---
+
+## F87 — HALF of every prompt sent to the fleet was instructions about something else entirely
+
+Chasing why the fleet sat in `PROCESSINGPROMPT` for thirteen minutes (F86), I measured the actual
+prompts from goose's own `llm_request` logs. The prefill question turned out to be the small half of
+the answer.
+
+**Measured, last 3 hours, this machine:**
+
+```
+substantive requests            17
+carrying the global hints       17   (100%)
+prompt chars   median 45,264    max 47,040
+hint block     22,389 chars     -> 49% of the median prompt
+```
+
+**What those 22,389 chars are.** The system prompt's `# Additional Instructions:` section, headings
+verbatim:
+
+```
+### Global Hints
+<!-- goose:import claude-code hash=2ec7165db11dc541 -->
+## Wolfaenpak Atlassian is a TEST environment (GLOBAL — set by the user 2026-07-13)
+## Autonomy — MANDATORY rules (ALL projects, no exceptions)
+## Production config on a CLIENT system — MANDATORY rules
+## Verifying test results — MANDATORY rules
+## Workhorse — Mac Studio sync (IMPORTANT)
+## UI / design — MANDATORY rules (ALL projects, no exceptions)
+## Flagging & framing work — MANDATORY rules
+## Writing as the user — MANDATORY rules
+## AI models — MANDATORY rules
+### Project Hints
+# AGENTS Instructions   (the goose repo's own — cargo build, cargo clippy, Ink/terminal UI rules)
+```
+
+A local 27B whose entire job is to write `vendorsync/meridian.py` — a Python payments-sync tool in a
+temp directory — is being told about Jira test tenants, rsync to a Mac Studio, never using a left
+accent rail in a UI, how to write prose in Mihai's voice, and how to run `cargo clippy` on the goose
+repo. The repo's AGENTS.md arrives only because the bench happens to run inside the goose checkout, so
+the hint walk finds it on the way up.
+
+### Why this is the instruction-density defect at its largest scale
+
+Mihai's through-line is "the crux across all phases is EXACT AND PRECISE INSTRUCTIONS." Everything
+this loop has fixed so far — the detailer's verbatim rule (F72), kind-mismatched worker rules, the
+architect brief (F58) — operates on the ~1,370-token worker prompt. **This is ~6,200 tokens of
+almost entirely irrelevant instruction, on every call, and nobody chose it.**
+
+Three published results converge on why it hurts, and all three preconditions hold here:
+- perfect-compliance for this model class falls from ~0.59 at 10 rules to ~0.09 at 40
+- a distinct compliance drop past ~15 constraints, measured across models regardless of size
+- **Qwen-family models show a PRIMACY bias — earlier constraints stick harder.** The hints sit in
+  `# Additional Instructions` and the irrelevant material is weighted accordingly.
+
+And the AGENTS.md-quality studies found the high-impact content is exact paths, commands and API
+refs, while general "rules and prohibitions" are low-impact and excess verbosity actively *reduces*
+success. This block is almost entirely rules and prohibitions about other projects.
+
+### The fix, and why it is in scope
+
+`prompt_manager.rs` appends hints as `system_prompt_extras` AFTER `override_system_prompt` sets the
+swarm's carefully-built task prompt — so the swarm's own prompt engineering was being followed by 22k
+chars it never asked for.
+
+`get_context_filenames()` reads the `CONTEXT_FILE_NAMES` param, and `Config::get_param` checks the
+UPPERCASE ENV VAR before the config file. `suppress_inherited_hints()` sets it to `[]` at the top of
+`run_swarm`, which scopes the suppression to THIS PROCESS — `goose swarm run` and its in-process
+workers. An interactive goose session is a different process and keeps its hints. **Nothing in goose
+core is touched**, which matters because the standing rule is never to change upstream core to fix a
+swarm issue.
+
+`GOOSE_SWARM_INHERIT_HINTS=1` restores the old behaviour so this is measurable as an arm, and an
+explicit `CONTEXT_FILE_NAMES` already in the environment always wins.
+
+### Registered prediction
+
+Next run: prompt chars drop by roughly 22k (~49%), and `skeleton_drafts.secs` falls — a shorter prompt
+is less prefill on all three nodes at once. The QUALITY prediction is deliberately separate and
+weaker: compliance should improve, but the replicate spread on this bench is 46 points, so a single
+run cannot show it and I will not claim it from one.
+
+**This does not replace the other instruction work.** It removes the noise floor those fixes were
+competing against.
