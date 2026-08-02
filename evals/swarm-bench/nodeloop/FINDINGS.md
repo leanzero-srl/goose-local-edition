@@ -2544,6 +2544,45 @@ stop competing.
 Mihai's through-line, sixth instance, and the most consequential: **the instruction protected the
 literal the model could have re-derived and left unprotected the one it could not.**
 
+## F73 — the repair tail cannot be fanned by finding: 0 of 31 rounds have enough work for 3 nodes
+
+Mihai: *"that 44% needs to be done in parallel too, you need to find a way to split work, there's no
+way around it."* Before designing anything, the decisive number — how much work a repair round
+actually contains. Across **31 rounds** on disk:
+
+    findings per round        min 0, median 1, max 2
+    rounds with >= 3 findings   0 of 31   (never enough to occupy the fleet)
+    rounds with <= 1 finding   24 of 31   (77% — nothing to fan at all)
+
+`complete_parallel` groups findings by owned file and fans one shadow-isolated shard per group. On
+this evidence it **can never exceed 2 nodes, and in 77% of rounds it has exactly one item.** F41 fixed
+its extractor so the fan could see its work at all; this says that even working perfectly, the fan is
+capped at ~1.2 nodes.
+
+**So the tail is not sequential for want of a fan. It is sequential because there is only ever ONE
+UNIT OF WORK.** Any scheme that decomposes "the findings" is refuted before it is built — which is the
+same precondition failure that killed `doc_prefetch`, kept `task_split` dark, and made `sink_review`
+inert. Three mechanisms already died that way; a fourth is not worth building.
+
+The parallelism must come from a different axis. The candidates, all reusing machinery that already
+exists:
+
+- **Pipeline the verify with the fix** — the gates are independent and read-only, and today they run
+  strictly after the fix rather than alongside it.
+- **Speculative repair** — race N attempts at the SAME fix in shadow trees, promote the first whose
+  tree verifies. `pick_speculation_target`/`resolve_speculation` implement exactly this shape for
+  scheduler tasks and are OFF; the shadow-tree isolation in `complete_parallel` is already proven.
+- **Fan the verification, not the fix** — pytest, the entry probe, spec_contract, the AST review and
+  cross-module drift are independent checks running serially inside one call.
+- **Shift left** — the most parallel repair is the one that never happens. `verify::<M>` already runs
+  per-module during execute, on the scheduler, in parallel, and the app still arrives broken; what the
+  tail catches that those miss is a measurable question.
+
+A design round is running these four against each other with adversarial refutation. **The honest
+possible outcome is that the tail is irreducibly ~1.5 nodes wide**, and if that is what the evidence
+says it will be reported as such rather than dressed up — a scheme that looks parallel and is not is
+exactly what this ledger already has three examples of.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
