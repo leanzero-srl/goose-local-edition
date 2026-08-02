@@ -5910,3 +5910,56 @@ Held for the next boundary with F139 — not shipped mid-campaign (lesson 9).
 **This is one of three canned strings.** The two "produced no file yet" variants (18 firings) are the
 same defect and are next; the split child's `(split of <parent>) <child-id>` is the third and is
 already covered by `split_inherit_spec`, queued.
+
+---
+
+## F142 — the second and third canned strings: stop ASSERTING a motive the engine can simply STATE
+
+Continuing the generic-prompt audit. The two "produced no file yet" variants (`judge.rs:415/423`,
+**18 firings**) were the remaining pair. The first one said:
+
+> *"You have produced no file yet and have taken no action at all — **you are deliberating instead of
+> building**."*
+
+Three branches above it, the engine's own comment warns against exactly this shape: *"the hint no
+longer ASSERTS over-reading … telling it to 'stop exploring/re-reading' is a false diagnosis injected
+as a supervisor note."* The same objection applies to asserting deliberation — and **F131 measured
+the population it is aimed at**: workers killed here carry a MEDIAN of 1,229 thinking chars, max
+4,519, and one had **285 chars over 420 seconds**. Some had been reasoning hard; one had done almost
+nothing. **One sentence cannot be true of both.**
+
+`no_file_hint()` now STATES what the engine observed and lets the worker draw the conclusion:
+
+- *"After 15.0 minutes, none of the files you own exists on disk yet, and you have run no command —
+  you have emitted 4519 characters of reasoning instead."* — a fact it can check, not a motive
+  imputed to it.
+- **It names the owed paths.** The canned versions said "your owned file(s)" to a worker whose entire
+  problem is not having started, while the engine held the paths.
+- One next action, on the first owed file, small enough to do immediately.
+
+**Context kept deliberately short** — observed counts, owed paths, one action. Mihai's third
+directive is that the idle node must not itself bog down; a supervisory nudge delivered as a wall of
+text is another way to cause the failure it is trying to fix.
+
+### A test I had to rewrite, and why that is legitimate
+
+`blind_deadline_kills_a_zero_tool_call_worker_at_420s_by_default` FAILED — it asserted the substring
+`"taken no action at all"`, i.e. it pinned the **canned wording** rather than the rule. Its own
+comment states the actual intent: *"the hint must NOT accuse a worker that has read nothing of
+re-reading."* That intent is preserved and now asserted properly: the hint must state the no-command
+fact, and must NOT contain "re-reading", "exploring" or "stuck re-reading". A test that pins wording
+blocks exactly the kind of change this audit exists to make; a test that pins the rule does not.
+
+47 goose-swarm tests pass. The new test asserts a heavy thinker (4,519 chars), an idle worker (0), and
+one that ran 12 commands all receive **different** text.
+
+### Where the audit stands
+
+| canned string | firings | status |
+|---|---|---|
+| finalize-spin "written but unchanged" | 40 | **composed (F141)** |
+| "produced no file yet" x2 | 18 | **composed (F142)** |
+| split child `(split of <parent>) <child-id>` | every split | lever exists, **queued as an arm** |
+
+That is 58 of 73 interventions no longer canned. What remains generic and unaudited is the **worker
+system prompt itself** — 20,412 chars of largely static rules (F138), which is the next target.

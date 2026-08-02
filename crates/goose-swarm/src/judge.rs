@@ -412,21 +412,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
             confidence: 0.9,
-            hint: if read_nothing {
-                "You have produced no file yet and have taken no action at all — you are deliberating \
-                 instead of building. You already have the spec, the file layout, and the injected \
-                 dependency APIs; there is nothing left to work out. WRITE your owned file(s) NOW: the \
-                 SIMPLEST version that satisfies the spec FIRST (a small working file), then refine it. \
-                 A minimal working file beats a perfect plan you never wrote down."
-                    .to_string()
-            } else {
-                "You have produced no file yet. STOP reading/deliberating — you already have the \
-                 spec, the file layout, and the injected dependency APIs. WRITE your owned file(s) now. \
-                 If the task feels large or hard, write the SIMPLEST version that satisfies the spec \
-                 FIRST (a small working file), then refine it — a minimal working file beats endless \
-                 planning, and you can always improve it once it exists."
-                    .to_string()
-            },
+            hint: no_file_hint(input, read_nothing),
             proposed_split: None,
             deterministic: true,
         });
@@ -450,6 +436,62 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         });
     }
     None
+}
+
+/// The nothing-written correction, COMPOSED — and in particular, it STATES what it observes instead
+/// of DIAGNOSING it.
+///
+/// The two canned variants it replaces fired 18 times between them, and the first one asserted
+/// *"you have taken no action at all — you are deliberating instead of building"*. The comment three
+/// branches above already warns about exactly this: *"the hint no longer ASSERTS over-reading … that
+/// is a false diagnosis injected as a supervisor note."* The same objection applies to asserting
+/// deliberation, and F131 measured the population it is aimed at: workers killed here carry a MEDIAN
+/// of 1,229 thinking chars (max 4,519). Some really have been reasoning hard; some produced almost
+/// nothing (one had 285 chars over 420 s). One sentence cannot be true of both, so it states the
+/// counts and lets the worker draw the conclusion.
+///
+/// It also names THE FILES THIS WORKER OWES. The canned versions said "your owned file(s)" to a
+/// worker whose entire problem is not having started — and the engine has the paths right there.
+///
+/// Context is kept deliberately SHORT: the observed counts, the owed paths, and one next action. A
+/// supervisory nudge that arrives as a wall of text is another way to bog a worker down.
+fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
+    let owed: Vec<String> = input
+        .owned_files
+        .iter()
+        .filter(|f| is_code_deliverable(f))
+        .map(|f| format!("`{f}`"))
+        .collect();
+    let first = owed.first().cloned().unwrap_or_else(|| "your file".into());
+    let mins = format!("{:.1}", input.elapsed_secs as f64 / 60.0);
+
+    // THE OBSERVATION — counts, not character judgements.
+    let mut h = format!("After {mins} minutes, none of the files you own exists on disk yet");
+    match (read_nothing, input.worker_thinking_chars) {
+        (true, Some(t)) if t > 0 => h.push_str(&format!(
+            ", and you have run no command — you have emitted {t} characters of reasoning instead"
+        )),
+        (true, _) => h.push_str(", and you have run no command at all"),
+        (false, _) => h.push_str(&format!(
+            ", though you have run {} command(s)",
+            input.worker_tool_calls.unwrap_or(0)
+        )),
+    }
+    h.push('.');
+
+    // THE OWED DELIVERABLE, by name.
+    if !owed.is_empty() {
+        h.push_str(&format!("\n\nYou owe: {}.", owed.join(", ")));
+    }
+
+    // ONE next action, concrete and small enough to be done immediately.
+    h.push_str(&format!(
+        "\n\nWrite {first} NOW, in one `write`, using the spec and the dependency APIs already in \
+         your prompt — there is nothing further to look up. If the task feels too large, write the \
+         SIMPLEST version that satisfies the spec and refine it after; a small working file beats a \
+         plan you never wrote down. Do not read anything before that first write."
+    ));
+    h
 }
 
 /// The finalize-spin correction, COMPOSED FROM WHAT THIS WORKER ACTUALLY DID.
@@ -533,6 +575,45 @@ fn spin_hint(input: &JudgeInput) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two "produced no file yet" variants asserted a MOTIVE ("you are deliberating") that F131
+    /// measured to be true of only part of the population — median 1,229 thinking chars, but one
+    /// worker at 285 over 420s. A hint must STATE the counts and name the owed paths, and a heavy
+    /// thinker must not read the same as a worker that did nothing at all.
+    #[test]
+    fn a_no_file_hint_states_counts_and_names_the_owed_files() {
+        let mut heavy = mk_no_write(2, 900, 0);
+        heavy.worker_thinking_chars = Some(4519);
+        let hh = no_file_hint(&heavy, true);
+        assert!(
+            hh.contains("4519 characters of reasoning"),
+            "state the real volume: {hh}"
+        );
+        assert!(hh.contains("f0.py"), "name the owed file: {hh}");
+        assert!(
+            !hh.contains("deliberating instead of building"),
+            "do not assert a motive: {hh}"
+        );
+
+        let mut idle = mk_no_write(2, 900, 0);
+        idle.worker_thinking_chars = Some(0);
+        let hi = no_file_hint(&idle, true);
+        assert_ne!(
+            hh, hi,
+            "a heavy thinker and an idle worker must not get the same text"
+        );
+
+        let busy = mk_no_write(2, 900, 12);
+        let hb = no_file_hint(&busy, false);
+        assert!(
+            hb.contains("12 command(s)"),
+            "state the real command count: {hb}"
+        );
+        assert_ne!(
+            hb, hh,
+            "acted-but-wrote-nothing differs from thought-but-acted-nothing"
+        );
+    }
 
     /// The 40x canned sentence is gone: a spin hint must name THIS worker's files and, when the
     /// engine already knows why the file is unacceptable, must lead with that error instead of a
@@ -630,11 +711,22 @@ mod tests {
             deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).expect("killed, as measured");
         assert_eq!(out.verdict, Verdict::OverReading);
         // ...and the hint must NOT accuse a worker that has read nothing of re-reading.
+        //
+        // This assertion used to pin the exact canned sentence ("taken no action at all"), which made
+        // it a test of the WORDING rather than of the rule. The wording is now composed per worker
+        // (F141/F142), so it asserts the INTENT the comment above always stated: state the zero-command
+        // fact, and never accuse this worker of exploring or re-reading — it has done neither.
+        let h = &out.hint;
         assert!(
-            out.hint.contains("taken no action at all"),
-            "a 0-tool-call worker must not be told it is exploring/re-reading: {}",
-            out.hint
+            h.contains("no command"),
+            "a 0-tool-call worker must be told what it actually did (nothing): {h}"
         );
+        for accusation in ["re-reading", "exploring", "stuck re-reading"] {
+            assert!(
+                !h.contains(accusation),
+                "a 0-tool-call worker must not be accused of {accusation}: {h}"
+            );
+        }
     }
 
     /// The behavioural branch owns the case where the worker HAS acted — its hint is the over-read one.

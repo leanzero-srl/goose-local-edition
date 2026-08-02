@@ -202,3 +202,8 @@ YOU ARE TESTING to get its real signatures
 # repeated string the engine produces, sent to 40 workers doing 40 different jobs. Now COMPOSED from
 # this worker's own files, sizes, idle minutes and (decisively) its actual compile error.
 FIX EXACTLY THAT and nothing else
+
+# F142: the two "produced no file yet" hints (18 firings) asserted a MOTIVE — "you are deliberating
+# instead of building" — while holding worker_thinking_chars, which F131 measured at median 1,229
+# (max 4,519) for this exact population. Now STATES the counts and names the owed paths.
+characters of reasoning instead
