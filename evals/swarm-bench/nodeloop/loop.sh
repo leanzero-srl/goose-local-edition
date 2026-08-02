@@ -233,6 +233,50 @@ sys.exit(1 if busy else 0)" || { echo "   fleet BUSY — not rebuilding. Re-run 
     done
     AFTER=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
     echo "== engine_build $BEFORE -> $AFTER"
+    # == 4b. RECLAIM DISK, at the only genuinely idle moment there is.
+    #
+    # MIN_FREE_GB=15 is a hard abort in the sweep's watchdog, so disk is an unattended failure mode:
+    # MEASURED, free fell 56 -> 40 GB in forty minutes of build/test cycles, which was a scheduled
+    # mass-abort a couple of hours out that would have looked like a mystery at 3am.
+    #
+    # The consumer is target/debug — cargo check/test grow it without bound (measured 64 GB) and the
+    # sweep NEVER reads it; the engine runs target/release/goose. So debug is pure reclaim.
+    #
+    # DELIBERATELY NOT `goose-clean --go`, which removes EVERY target/ including the release binary
+    # this boundary just built and verified. That skill's own guard refuses while a swarm is live, and
+    # here it would be worse than useless: it would force a COLD release rebuild (tens of minutes of
+    # fleet time) to reclaim space that was not scarce. This runs AFTER the rebuild and the marker
+    # check precisely so the binary in flight is never a candidate.
+    echo "== 4b. reclaiming regenerable build cache (debug only — release is the live binary)"
+    FREE_BEFORE=$(df -g / | tail -1 | awk '{print $4}')
+    rm -rf "$HOME/Projects/goose/target/debug" 2>/dev/null
+    for T in "$HOME/Projects/goose/evals/swarm-gym/apps/polish-4-minimal/target" \
+             "$HOME/Projects/goose/evals/swarm-gym/apps/lang-proof/target" \
+             "$HOME/Projects/goose/evals/swarm-gym/overnight/vcs/target"; do
+      rm -rf "$T" 2>/dev/null
+    done
+    sleep 2
+    FREE_AFTER=$(df -g / | tail -1 | awk '{print $4}')
+    # NOTHING HERE MAY EVER DELETE EVIDENCE. Asserted, not merely intended, because the deletion list
+    # above is the kind of thing a future edit widens casually. Every one of these is a primary source
+    # this project has already drawn a published conclusion from:
+    #   runs/**                     run.jsonl, verdicts, vendor traces — every occupancy and score number
+    #   ~/.local/state/goose/logs   llm_request.*.jsonl — how F87/F91 measured that 51% of every prompt
+    #                               was inherited hints, and the ONLY way to test that prediction
+    #   ~/.local/share/goose/sessions  per-worker tool traces
+    #   nodeloop/FINDINGS.md        the findings themselves
+    # Build output regenerates. None of this does.
+    for KEEP in "$HOME/Projects/goose/evals/swarm-bench/runs" \
+                "$HOME/.local/state/goose/logs" \
+                "$HOME/.local/share/goose/sessions" \
+                "$HOME/Projects/goose/evals/swarm-bench/nodeloop/FINDINGS.md"; do
+      [ -e "$KEEP" ] || { echo "   !! EVIDENCE MISSING AFTER CLEANUP: $KEEP — refusing"; exit 3; }
+    done
+    if [ -x "$GOOSE_BIN" ]; then
+      echo "   free ${FREE_BEFORE}G -> ${FREE_AFTER}G; live binary + all evidence intact"
+    else
+      echo "   !! LIVE BINARY MISSING AFTER CLEANUP — refusing to continue"; exit 3
+    fi
     if [ "$MISSING" -ne 0 ]; then
       echo "REFUSING to restart: a marker is missing from the binary. Fix it before crossing."
       exit 1
