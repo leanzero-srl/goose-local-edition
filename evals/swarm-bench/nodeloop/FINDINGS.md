@@ -2727,3 +2727,42 @@ This is the same shape as F71 and F72 — a channel built for exactness, defeate
 could not see the form the input actually takes. Three instances now, which is a pattern rather than a
 coincidence: **every verbatim/grounding path in this engine should be audited against what the bench
 actually produces, not against what it was imagined to produce.**
+
+---
+
+## F79 — two parsers for one `--help`, disagreeing, and one of them cannot see a single-subcommand app
+
+The F71/F72/F78 audit ("a channel built for exactness, defeated by a predicate blind to the form its
+input takes") turned up a fourth instance with a second defect on top.
+
+`advertised_subcommands` (swarm.rs:13749) and `parse_subcommands` (swarm.rs:14835) read the SAME
+thing — argparse's `{a,b,c}` choices block on a `--help` usage line — and were used by different
+gates:
+
+- `advertised_subcommands` → the smoke gate's command probe (two call sites)
+- `parse_subcommands` → `run_spec_contract`, the deterministic check that gates green
+
+They differed by one guard, so the same app could advertise different command sets depending on which
+gate was asking:
+
+```rust
+// advertised_subcommands had, parse_subcommands did not:
+if inner.is_empty() || inner.contains(' ') || !inner.contains(',') { return Vec::new(); }
+```
+
+**The space half is correct** and `parse_subcommands` was missing it: `see {the docs, really} for
+more` is prose, not a command list.
+
+**The comma half is a false zero.** argparse prints a ONE-subcommand app as `{serve}` — no comma — so
+`advertised_subcommands` returned empty for it. The probe then had nothing to invoke and reported a
+clean result it had not earned, which is the vacuous-pass shape this project has a standing law about.
+`parse_subcommands`, lacking the guard, saw `serve` fine. Two gates, one app, opposite answers.
+
+**Fix, in the shape Mihai's rule demands** — not "patch the one that was wrong", but remove the
+mechanism that let them diverge. The comma requirement is deleted, the prose guard is kept,
+`parse_subcommands` is deleted outright, and `run_spec_contract` now calls the surviving function —
+which also hands spec_contract the prose protection it never had. Both tests are merged into one, so
+a future divergence has to break a test rather than pass silently.
+
+Note the direction of each half: dropping the comma guard makes the smoke probe see MORE apps, and
+adopting the prose guard makes spec_contract see FEWER false ones. Both move toward the same place.
