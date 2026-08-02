@@ -16506,6 +16506,40 @@ impl Judge for GooseAgentDispatcher {
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
         };
+        // WHAT THE JUDGE ACTUALLY SAW, as a deterministic engine event.
+        //
+        // `judge_verdict` carries only {task_id, device, verdict, confidence, hint, action}. Across
+        // 1,339 judge events in the archive, NEITHER `worker_tool_calls` NOR `worker_thinking_chars`
+        // appears anywhere — and those two are the entire discriminator between the only two stories
+        // that explain a worker killed at the 420s floor with nothing written:
+        //
+        //   * it is SPIRALLING and should have died sooner  (#134 spiral trip, judge.rs:359 —
+        //     BUILT and default-OFF at `spiral_thinking_chars: 0`)
+        //   * it is THINKING PRODUCTIVELY and 420s is too short (the "grace lever" the regression
+        //     test at judge.rs:496 pins a baseline for — never actually built)
+        //
+        // The outcomes are identical either way, so the archive cannot choose: pre-write paralysis
+        // is 25% of interventions, fires at a 7.5-min median (i.e. AT the floor), and recovers only
+        // 35.7% against 60.0% for post-write spin. A lever built for this has sat off and unmeasured
+        // precisely because its precondition was structurally unobservable. Same shape as F111.
+        //
+        // RAW INPUTS ONLY — deliberately not a re-derived "would_trip" flag. The trip predicate lives
+        // in judge.rs and duplicating it here would be the two-disagreeing-versions defect this loop
+        // keeps finding; with the raw fields any threshold can be tested offline against the archive.
+        //
+        // Emitted BEFORE `deterministic_verdict`'s early return and before the `no_idle_device`
+        // return, so it lands on EVERY judge invocation whichever path is taken. An event added to
+        // make something observable that is emitted on a branch is the defect it was meant to fix.
+        self.events.write_value(serde_json::json!({
+            "event": "judge_observed",
+            "task_id": req.task_id,
+            "elapsed_secs": req.elapsed_secs,
+            "tool_calls": worker_tool_calls,
+            "thinking_chars": worker_thinking_chars,
+            "any_owned_written": any_owned_written,
+            "owns_files": !req.owned_files.is_empty(),
+            "secs_since_last_write": secs_since_last_write,
+        }));
         // Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
         if let Some(out) = deterministic_verdict(&input, &cfg) {
             return out;

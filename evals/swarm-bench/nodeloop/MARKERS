@@ -183,3 +183,11 @@ salvage_require_critical
 spec_contract
 e2e_oracle
 GOOSE_SWARM_E2E_ORACLE
+
+# F128: judge_verdict carried only {task_id, device, verdict, confidence, hint, action}, so neither
+# worker_tool_calls nor worker_thinking_chars appeared on ANY event across 1,339 judge events. Those
+# two are the whole discriminator between "spiralling, should have died sooner" (#134 spiral trip,
+# built and default-OFF) and "thinking productively, 420s is too short" (a grace lever that was never
+# built) — which is why a built lever sat off and unmeasured. Raw inputs, emitted before every early
+# return so it lands on EVERY judge invocation.
+judge_observed
