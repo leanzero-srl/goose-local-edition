@@ -6329,3 +6329,51 @@ now found on the research phase rather than the worker.
 My first marker spanned a Rust line-continuation, so it was not contiguous in source and preflight
 reported ABSENT — correctly. Narrowed to a fragment lying wholly on one line. That is the check doing
 precisely its job, before a rebuild rather than after.
+
+---
+
+## F150 — CORRECTION to F148: the ceiling is not the problem. The SUSTAINED level is.
+
+F148 asserted that with a median of 4 modules "the plan can occupy ~4 of 6 slots BY CONSTRUCTION".
+That is an assertion, not a measurement, so I measured it — using `occupancy.py`'s own span pairing
+rather than re-deriving it (lesson 2).
+
+**3-node runs, n=11, six slots available (3 nodes x PARALLEL 2):**
+
+| | value |
+|---|---|
+| peak concurrency, min | **3** |
+| peak concurrency, median | **5** |
+| peak concurrency, max | **6** |
+| **time-weighted MEDIAN concurrency** | **2** |
+
+**The ceiling claim is WRONG.** Peak reaches 6 in four of eleven runs and 5 at the median — the plan
+demonstrably CAN fill the fleet. Module count is not capping it.
+
+**What is actually wrong is the DURATION.** For half of every run the fleet is running **two** tasks
+against six slots. The swarm briefly fills, then drains, and spends most of its life at 2.
+
+That re-points the whole diagnosis. A deficit in SUSTAINED concurrency is a DAG-SHAPE problem — the
+funnels `review.py` keeps flagging (`verify-e2e::*` and `integrate-verify` with >=3 deps each), and
+the sink, which F112 already measured at 29% of node-busy and **100% of the solo time**. It is not a
+module-count problem, and adding modules mostly raises a ceiling that is not binding.
+
+### What this does to `converge_off`
+
+**It stays queued, but it must NOT be sold on the ceiling argument any more.** Its honest case is
+narrower: more independent modules may keep the fleet busy LONGER (more work available before the
+funnels bite), which is a sustained-concurrency claim and is exactly what the readout should measure.
+
+**Readout corrected:** the primary number is now **time-weighted median concurrency**, not peak and
+not module count. Peak is already 5-6 and cannot improve much; if converge_off raises module count
+but leaves the median at 2, the arm has confirmed that width was never the constraint — which is a
+real and useful answer.
+
+### And a defect in how I measured it
+
+My first pass reported **peak = 0 on all 15 runs**. I had guessed `_spans` was a tuple and indexed
+`s[1]`/`s[2]`; it is a dict of `{task, device, start, end}`. Worse, I had wrapped the loop in
+`try/except`, so the TypeError was swallowed and the blindness surfaced as a clean, plausible column
+of zeros. **A bare `except` around a parse turns an instrument failure into a finding.** Inspecting
+the shape took one command, which is what I should have done first — and is the same
+uncontrolled-zero rule that has now caught me four times.
