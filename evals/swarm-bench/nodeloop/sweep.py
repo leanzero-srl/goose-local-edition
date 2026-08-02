@@ -77,6 +77,48 @@ ARMS = [
                 "Re-measured rather than assumed: a stale baseline turns fleet drift into a false win.",
     },
     {
+        # Both LOSING 3-node units split their single most-detailed task; the 0.8708 winner never
+        # split at all. On a split, `child_description()` (scheduler.rs:70-99) returns the literal
+        # `"(split of <parent>) <child-id>"` — about 35 characters replacing a ~3833-char detailed
+        # spec — unless this lever is on. It is env-ONLY: there is no config field, so the desktop
+        # path can never correct it, while `split` itself IS config-reachable and defaults to on.
+        #
+        # ⚠ THE ARM IS INVALID IF NOTHING SPLITS. The mechanism is stochastic (the judge only splits
+        # when a device is free and the task crosses a 300s threshold), and an arm that measures a
+        # mechanism which never fired has already been recorded once as "ARM INVALID — splits=0".
+        # ASSERT `task_split > 0` in the treatment runs before reading any score from this cell.
+        "name": "split_inherit_spec",
+        "env": {"GOOSE_SWARM_SPLIT_INHERIT_SPEC": "1"},
+        "gate": "a split child's whole task statement is ~35 chars — the parent's detailed spec is "
+                "discarded at the moment of use. Both 3-node losers split their most-detailed task; "
+                "the 1-node winner never split. Readout: task_split > 0 (else the arm is VOID) and "
+                "the score against the baseline's own replicate spread.",
+    },
+    {
+        # The SEPARATE hypothesis. "Splitting is harmful" and "splitting with an amputated spec is
+        # harmful" are different claims and only the second is fixed by split_inherit_spec. Running
+        # just the lever would leave the first untested and let a null be read as "splitting is fine".
+        "name": "split_off",
+        "env": {"GOOSE_SWARM_SPLIT": "0"},
+        "gate": "the control for split_inherit_spec. If disabling splitting entirely beats both the "
+                "baseline AND the inherit-spec arm, the defect is the split decision itself and not "
+                "the spec it throws away.",
+    },
+    {
+        # A phantom generator until F134: the reviewer was handed chars().take(2400) with no marker,
+        # and reported api.py's handlers "not defined" when every one of them sits past char 2561 of
+        # a 5731-char file. That finding was persisted and injected into the SINK as a fix ORDER.
+        # Fixed by routing through review_file_excerpt. This arm now asks the REMAINING question:
+        # with the phantom gone, is pre-review worth its slot at all? 2 of 4 archived findings were
+        # genuine catches, so a null here means KEEP it, not delete it.
+        "name": "prereview_off",
+        "env": {"GOOSE_SWARM_PREREVIEW": "0"},
+        "gate": "prereview findings rank-ordered PERFECTLY with score across the three archived "
+                "units (0 findings -> 0.8708, 1 -> 0.7186, 3 -> 0.6720) and the path is gated on "
+                "spare capacity, so it fires MORE with more nodes. Measures the damage that remains "
+                "after the F134 truncation fix.",
+    },
+    {
         "name": "kind_prompt",
         "env": {"GOOSE_SWARM_KIND_PROMPT": "1"},
         "gate": "72-80% of dispatches receive rules written for another job, and 3-5 per run own a "
@@ -256,6 +298,28 @@ QUESTIONS: list[dict] = [
              "ANYWAY. PREDICTION: score unchanged within the replicate spread, prefix roughly halved, "
              "occupancy up. If the score DROPS below the spread the redraft buys something real and "
              "it stays — that is the outcome that would make this arm worth more than a speedup."},
+    # THE THREE ARMS THE FRESH-EYES SWEEP PUT AHEAD OF EVERYTHING (F134), each at reps 3 because a
+    # SCORE comparison is what they need and a score has to clear the 46-point replicate spread.
+    # They run right after baseline so the spread and the arms come from one binary and one session.
+    {"arm": "split_inherit_spec", "nodes": 3, "reps": 3,
+     "asks": "the ONLY mechanism whose firing pattern matches the scoreline on all three archived "
+             "units: both 3-node losers split their single most-detailed task and the 1-node winner "
+             "(0.8708) never split. On a split the child's ENTIRE task statement becomes "
+             "'(split of <parent>) <child-id>' — ~35 chars replacing a ~3833-char spec the run paid "
+             "40% of its wall-clock to produce. GUARD: if task_split == 0 in the treatment units the "
+             "arm measured NOTHING and must be voided, not read as a null."},
+    {"arm": "split_off", "nodes": 3, "reps": 3,
+     "asks": "the control that keeps split_inherit_spec honest. 'Splitting is harmful' and 'splitting "
+             "with an amputated spec is harmful' are DIFFERENT hypotheses; only the second is fixed "
+             "by the lever. If this beats both baseline and the lever, the split DECISION is the "
+             "defect and the spec inheritance is a distraction."},
+    {"arm": "prereview_off", "nodes": 3, "reps": 3,
+     "asks": "prereview findings rank-ordered perfectly with score across the three archived units "
+             "(0 -> 0.8708, 1 -> 0.7186, 3 -> 0.6720), and the path is gated on spare capacity so it "
+             "fires MORE with more nodes. F134 fixed the phantom generator (a 2400-char head-truncate "
+             "with no marker, which made the reviewer declare working handlers 'not defined' and sent "
+             "that to the sink as a fix order). This asks what damage REMAINS. A null means KEEP "
+             "pre-review — 2 of 4 archived findings were genuine catches."},
     {"arm": "spec_repair", "nodes": 3, "reps": 1,
      "asks": "the tail is 13-26% of every run, has an occupancy number of NONE (it emits no dispatch "
              "at all), and has never once gone green — 13 of 13 archived rounds ended with findings "
