@@ -5566,3 +5566,37 @@ arm**, or it is invalid by construction.
 **Every arm from here runs 3 replicates.** A single-replicate arm on this bench measures nothing, and
 the first job of the next analysis is the within-config spread. If that is still ~46 points, no arm
 can be read and the next build's job is variance reduction, not levers.
+
+---
+
+## F135 — the "free instrument" the synthesis asked for on every arm is a TREATMENT, and free only when it has nothing to say
+
+The research synthesis's arm plan ended with: *"plus `OWNED_FILE_FENCE=1` on every arm as a free
+instrument."* The reasoning is attractive — cross-worker clobbering is the one defect class that
+MECHANICALLY must scale with concurrency, and 76 archived runs contain zero `owned_file_violation`
+events, so switching the detector on costs nothing.
+
+**It is not a detector.** `swarm.rs:19137-19165`: just before `integrate-verify` reads the final
+tree, the fence RESTORES every owned file a non-owner clobbered back to the owner's authoritative
+bytes, through `write_frozen_bytes`. It changes the tree the sink verifies. That is a treatment.
+
+Its own comment is what gives the game away: *"OFF (or no snapshots) => this whole block is skipped
+and the tree is byte-identical."* So it is byte-identical **only when there are no violations** —
+which is the exact quantity the probe exists to measure. **Free if the answer is zero, confounding if
+it is not, and you cannot know which in advance.** That is F111's circularity in a different costume:
+a readout whose validity depends on its own result.
+
+And the confound would land precisely where it hurts. Enabled across all four score arms, it does
+nothing in the boring case and silently repairs the tree in the interesting one — so the arm that
+would have revealed interference is the arm whose score it corrupts.
+
+**Queued as its own n=1 mechanism cell instead**, alongside the other mechanism readouts. A
+contaminated tree is fine in a cell whose output is an event count rather than a score.
+
+Note the zero it is chasing is itself uncontrolled: zero violations across 76 runs, with the detector
+never switched on, is exactly the shape of evidence this loop has learned to distrust. The scheduler
+already makes the common case impossible — `held_files` / `files_conflict` prevent two tasks owning
+one file from ever being in flight together — so what remains is out-of-scope writes only.
+
+**Readout:** violation count on a 3-node run. **ZERO closes "more nodes -> more interference" as a
+hypothesis. Non-zero promotes it to first place.**
