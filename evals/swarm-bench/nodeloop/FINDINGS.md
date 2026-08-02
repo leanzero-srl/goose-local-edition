@@ -2766,3 +2766,61 @@ a future divergence has to break a test rather than pass silently.
 
 Note the direction of each half: dropping the comma guard makes the smoke probe see MORE apps, and
 adopting the prose guard makes spec_contract see FEWER false ones. Both move toward the same place.
+
+---
+
+## F80 — an adversarial corpus sweep (90 logs) against F77, and what survived it
+
+A design round over 90 run logs (51 with a complete `run_started -> run_finished` timeline, 353,171s
+of wall-clock — five times the corpus behind F73/F75) argued that speculative repair should not be
+built. Three of its claims were checked against source and corpus. **Two hold and one is wrong**, and
+the one that holds found a real regression I had introduced.
+
+### CHECKED, TRUE, and it caught a defect in F77
+
+> Shadow isolation destroys 3 of the 12 historical greens. The serial fix is `speculative: false`
+> wrapped in `let _ = timeout(...)`, so a killed agent's writes survive on the real tree. `nf-unit`,
+> `h1-treat-1`, `nf-ts-cadence` each went 1 finding -> 0 on a round that hit the 1200s cap.
+
+The mechanism is exactly as described (swarm.rs, the `else` branch of the fix step). And F77 as first
+written matched on `(Ok(Ok(_)), Some(root))` — a timed-out twin scored `None` and was discarded. That
+would have deleted three historical greens: a regression wearing the costume of a safety fix.
+
+**Fixed:** the gate now grades the TREE, not the agent's exit. A shadow holds whatever its agent wrote
+before it was stopped, so a timed-out twin is verified like any other and promoted if it strictly
+beats the baseline. This is strictly better than both predecessors — the serial path keeps partial
+writes but never checks them; F77-as-written checked but threw partial work away. `agent_ok` is still
+recorded so "how often does a killed agent's tree beat a finished one" stays answerable.
+
+### CHECKED, TRUE, and it is a property of the design rather than a defect
+
+> `fanout_over_fleet` collects with `for h in handles { if let Ok(r) = h.await }` — awaits all, no
+> cancellation. Any race built on it is max-of-3, not min-of-3.
+
+Verified at swarm.rs:15575. But F77 never claimed first-to-finish: it verifies EVERY shadow and picks
+the best, so max-of-3 is intended, not accidental. The cost is bounded — three twins run concurrently
+on three nodes under the same `fix_cap_secs`, so a round's worst case is unchanged at the cap — and it
+buys a round that can improve at all, against a mechanism measured at 0 for 13. `fanout_over_fleet_straggler`
+(swarm.rs:15629) has JoinSet abort and is the primitive if first-to-green is ever wanted.
+
+### CHECKED, FALSE
+
+> `pub fan_verify: bool` defaults false — make sharded sink verification the default.
+
+`fan_verify: true` at swarm.rs:1092, in the `Default for SwarmConfig` impl. The claim read the struct
+FIELD DECLARATION (swarm.rs:877) and missed the baked default. Its headline proposal is to switch on
+something that has been on since the golden-formula bake. The sink measurements around it may still be
+worth having, but the recommendation as stated is a no-op.
+
+Also overstated: "every parallel mechanism has fired zero times in 90 logs" lists `spec_repair_wave`
+and `complete_fix_dispatched` among them. Those events were added tonight; no historical log could
+contain them. `complete_fix_wave` 0 and `sink_review` 0 are real, and both are default-OFF levers.
+
+### What the bigger corpus genuinely corrects
+
+F73 said "0 of 31 rounds have >=3 findings". Over 49 red rounds the distribution is
+`{1:28, 2:14, 3:2, 4:2, 7:3}` — **7 of 49 (14%) DID have >=3**, all inside three runs on older beds.
+On the current bed it holds exactly: 22 red rounds, `{1:15, 2:7}`, max 2. So the claim stands for
+today's bench and was too absolute as a general statement. Time-weighted fan width across the whole
+tail: **1.19 nodes.** That number is the honest ceiling for any decompose-the-finding scheme and is
+the strongest argument yet that the ATTEMPT, not the finding, is the only axis available.
