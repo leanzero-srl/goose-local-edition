@@ -6673,3 +6673,65 @@ Also noted: one bullet carries 13 characters of stray leading indentation (`    
 QUEUED, NOT SHIPPED — the engine freeze (F154) holds until baseline n=3. Registered check for when it
 lifts, since neither fix introduces a new literal: on one run, the two bullets above must appear in
 test-author prompts and NOT in implementer prompts.
+
+## F158 — the HTML task is lectured about banker's rounding, and the comment above the code says that cannot happen
+
+The implementer prompt is 9,860 chars and now accounts completely: **81% of it is generic** (preamble
+746 + TOOLS 4,450 + CONVENTIONS 2,807 = 8,003) and 19% is the frozen interfaces. The worker I
+audited owns exactly ONE file:
+
+    /Users/…/swarm-3node-r0/vendorsync/web/index.html
+
+For that static HTML file it receives, as "EXTERNAL GROUND TRUTH, not suggestions":
+
+    4. Range inclusivity: range(a,b) and Python slices are END-EXCLUSIVE; cron 'a-b', SQL BETWEEN …
+    5. Money/currency MUST NOT be a binary float … round() in Python 3 is banker's rounding …
+    6. Off-by-one at boundaries … pagination page N offset = (N-1)*size.
+    9. Integer vs true division: Python '/' is float, '//' floors toward -inf (-7//2 == -4);
+       C/Go/Rust int '/' truncates toward zero; modulo sign follows the dividend in C …
+
+plus 1,857 chars of frozen **Python** signatures (`class Store`, `def upsert_many`, `SCHEMA`,
+`MeridianClient`) and the instruction to *"THEN run `python3 -m pytest` to check"*. Roughly 4,700
+chars — **48% of the prompt** — is about a language this node is not writing.
+
+**The mechanism, read from source, not inferred.** `relevant_pitfalls` (swarm.rs:9507) lowercases
+`req.description` + `req.owned_files` and keeps every library item any of whose trigger words appears
+anywhere in that haystack. Measured across all 17 tasks of the live plan:
+
+    web    index.html      desc 1,641    4 items fired   <-- the only non-Python deliverable
+    store  store.py        desc 2,028    4 items fired
+    api    api.py          desc 2,204    4 items fired
+
+The HTML task fires as many conventions as the SQLite store does. It cannot do otherwise: the
+description is 1,641 chars about a payments dashboard, so `payment`, `amount`, `currency`, `count`,
+`date` are all present, and **the filename can only ever ADD to the match, never subtract from it.**
+`index.html` contributes no trigger and suppresses nothing. Retrieval is additive-only.
+
+**The comment twelve lines above the call site states the exact invariant being violated:**
+
+    // Retrieval is deterministic and scoped to what the task is ABOUT — never the whole library, or
+    // a CSS task would be lectured about cron.
+    // Retrieval reads the subtask's own spec PLUS its owned file names: a task named `cron.py` /
+    // `money.rs` announces its domain even when the prose does not.
+
+The worked example in the comment is the bug. Adding the filenames was meant to be the guard, and it
+is only a second way to widen. A CSS task IS lectured about cron, because the guard is a keyword
+match on prose that describes the APPLICATION while the deliverable is one file.
+
+**SIXTH instance of the family, and it sharpens the family's statement.** F141 held the compile
+error, F142 the thinking count, F149 `can_look_things_up:false`, F153 the file list, F157
+`is_test_author`. Here the engine holds `owned_files = ["…/index.html"]` — and the defect is not that
+it fails to look, it is that **it looks at the right field and uses it only to broaden, never to
+narrow.** A fact that can only ever add rules is not a scoping fact.
+
+FIX (queued — engine freeze F154): derive the deliverable's language from the owned file extensions,
+which the engine already does for `TargetLang` (F146 gates on it), and skip a convention whose
+language no owned file is written in. Same one-line shape as F146 and F157.
+
+REGISTERED CHECK for when the freeze lifts, since this introduces no new literal: on one run with a
+web deliverable, the `KNOWN-CORRECT CONVENTIONS` block must be ABSENT from the prompt of a worker
+whose owned files are all non-`.py`, and still PRESENT for `store`/`api`.
+
+Population note, stated honestly: this is 1 task of 17 on n=1 run. It is published as a MECHANISM
+finding, which is valid at n=1 — the trigger match is deterministic and re-derivable from source —
+and NOT as a claim about how often plans contain a web deliverable.
