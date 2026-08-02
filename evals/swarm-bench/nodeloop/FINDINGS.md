@@ -2435,6 +2435,42 @@ finding and cleared it with a fix round, so the cost is paid even when nothing i
 Third phantom-finding class found tonight, after the ``GET /` `` 404 (F32) and the port collision
 (F67) — and the most reproducible of the three at 8 of 8.
 
+## F70 — VERDICT, baseline@3n on the F57 engine: F49 confirmed outright, and `replanned` fired for the first time
+
+Score **70.1%**, crunch **3/5**, wall 149 min.
+
+**F49 IS CONFIRMED, decisively.** The prediction was that deriving the detail ceiling from
+`worker_timeout_secs` would drive the fallback rate to zero. Measured on this unit:
+
+    detail_fallback events        0
+    shipped one-liners            0 of 20 tasks
+    detail durations (n=18)       min 42s, median 65s, max 111s
+    would have TIMED OUT at 75s   5 of 18  (28%)
+
+Five of eighteen detail calls exceed the old ceiling. Against a corpus history of 27 fallbacks — every
+one a timeout — and a run where `meridian` lost its spec four times, this unit shipped **not one**
+worker with the architect's one-liner. The `detail_completed` event that made the ceiling sizeable
+from data has now also proved the fix that preceded it.
+
+**`replanned` fired — the first time in the project's history.** F43 recorded it as a real zero and
+explained it: the dynamic-replan precondition excludes the sink, and the sink owned ~100% of the solo
+window. This run's solo window was **2780s (31% of wall)** and NOT all sink, so the precondition was
+finally met and replan ran once. **F43's explanation stands; its "never fires" does not** — it fires
+when the fleet goes idle on something other than the sink.
+
+Other numbers: prefix 1752s with 1 redraft (planning 88% of it), 16 tasks discarded with 9 returning
+by owned files and **15,408 chars of model-authored spec re-derived** — consistent with F55.
+Occupancy 0.39 overall, 0.62 execute, `MAX USEFUL NODES 2.91`. Kind mismatch 69.7%, unchanged as
+expected with `kind_prompt` off.
+
+**The two crunch failures are real defects, not phantoms:** `fetch_all_payments` raises
+`JSONDecodeError`, and `idempotent_create` raises on the vendor's 409 instead of treating it as the
+documented "already exists" success. Both are exactly what the run's own round-1 `complete_verify`
+finding pointed at (`_request_with_retry`), so the repair loop had the right target and did not finish
+the job — which is a quality question for the arms, not an instrument fault.
+
+Harness self-test passes with the full invariant set on this unit.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
