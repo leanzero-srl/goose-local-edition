@@ -96,6 +96,7 @@ def analyse(path) -> dict:
     pool, t0, t_end = [], None, None
     disp: dict[str, list] = {}
     done: dict[str, list] = {}
+    split_at: dict[str, float] = {}
     idle_jobs: dict[str, int] = {}
 
     for e in events:
@@ -108,6 +109,21 @@ def analyse(path) -> dict:
             t0 = ts if ts is not None else t0
         elif ev == "task_dispatched":
             disp.setdefault(e.get("task_id"), []).append((ts, e.get("device")))
+        elif ev == "task_split":
+            # A SPLIT PARENT IS ABORTED, NOT STILL RUNNING. It never completes under its own id — the
+            # scheduler replaces it with its children — so the "no completion => credit to t_end" rule
+            # below invents everything between the split and the end of the run.
+            #
+            # MEASURED, and it invalidated a published headline: `api-web` was dispatched at +13.3m
+            # and split at +24.1m, a REAL span of 651s. It was credited 5940s — 9.1x too much — which
+            # made it 49.5% of all node-busy when the truth is 9.7%, and that inflated figure was the
+            # sole basis for "MAX USEFUL NODES = 1.92, the plan is the ceiling".
+            #
+            # The phantom_tail detector could not catch it: that guard fires on a task which HAS a
+            # completion and still owns a span to t_end. A split parent has NO completion, so it slips
+            # through the exact check written to stop this.
+            if ts is not None:
+                split_at[e.get("task_id")] = ts
         elif ev == "task_completed":
             done.setdefault(e.get("task_id"), []).append(ts)
         if ev in IDLE_NODE_EVENTS:
@@ -144,7 +160,11 @@ def analyse(path) -> dict:
             # that never completed.
             nxt = starts[i + 1] if i + 1 < len(starts) else None
             comp = next((c for c in cs if c >= start), None)
-            cands = [x for x in (comp, nxt) if x is not None]
+            # A SPLIT ends this attempt as surely as a completion does.
+            spl = split_at.get(task_id)
+            if spl is not None and spl < start:
+                spl = None
+            cands = [x for x in (comp, nxt, spl) if x is not None]
             end = min(cands) if cands else t_end
             if end is None or end < start:
                 continue
@@ -301,6 +321,10 @@ def analyse(path) -> dict:
         "max_useful_nodes": round(max_useful, 2) if max_useful else None,
         "ceiling_occupancy_at_pool": round(ceiling_occ, 4) if ceiling_occ is not None else None,
         "phantom_tail_tasks": phantom_tail,
+        # Parents whose span was correctly ENDED AT THEIR SPLIT rather than run to t_end. Reported so
+        # a reader can see the correction was applied — a silent fix to a number this project has
+        # already published would be worse than the bug.
+        "split_superseded_tasks": sorted(split_at),
         "idle_node_jobs": idle_jobs,
         "_spans": attempt_spans,
         "_t0": t0,

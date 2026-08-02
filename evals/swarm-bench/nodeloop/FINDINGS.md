@@ -4369,3 +4369,63 @@ been invisible before.
 
 Registered as the arm's real hypothesis, with the mechanism readout being `rules_delivered.tailored`
 rather than a self-fulfilling zero.
+
+---
+
+## F112 — RETRACTION of F107's headline. The plan is NOT the ceiling; the SINK is.
+
+**F107 published: "MAX USEFUL NODES = 1.92 (pool 3) — THE PLAN IS THE CEILING, more nodes cannot help
+this run." That is WRONG and I am withdrawing it.** It rested on a phantom span in occupancy.py.
+
+### The phantom
+
+`api-web` was dispatched at +13.3m and SPLIT at +24.1m — a real span of **651s**. It never completed
+under its own id, because the scheduler replaced it with its children. occupancy.py's pairing credits a
+dispatch with no completion all the way to `t_end`, so it charged **5940s — 9.1x too much**, making one
+task 49.5% of all node-busy when the truth is 9.7%.
+
+Its own `phantom_tail` guard could not catch it: that detector fires on a task which HAS a completion
+and still owns a span to `t_end`. **A split parent has no completion at all, so it slipped through the
+exact check written to stop this.** PATTERN 4 — a measure that cannot distinguish "never finished
+(hung/failed)" from "aborted because it was superseded".
+
+### The corrected numbers, and they say the opposite
+
+| | published (phantom) | corrected |
+|---|---|---|
+| occupancy | 0.5936 | **0.4289** |
+| execute occupancy | 0.6731 | **0.6111** |
+| biggest task | `api-web` 49.5% | **`integrate-verify` 29%** |
+| solo-node time | 1212.7s, api-web | **1590.0s (23.6% of wall), ALL of it `integrate-verify`** |
+| critical path | 8877.3s | **3587.6s** |
+| **MAX USEFUL NODES** | **1.92 — plan is the ceiling** | **3.28 — the plan could use MORE nodes than the fleet has** |
+
+**The plan was never the problem.** It can absorb 3.28 nodes against a pool of 3. The bottleneck is the
+**SINK**: `integrate-verify` is 29% of all node-busy and 100% of the single-node time.
+
+Note the direction of the error: the phantom INFLATED occupancy (0.59 vs the true 0.43), so the swarm
+looked healthier than it is, while simultaneously making the plan look like the culprit.
+
+### What survives, and what does not
+
+**Retracted:** "the plan is the ceiling", "more nodes cannot help this run", "api-web is half the
+work", and the claim that F101 is aimed at what caps the run.
+
+**Survives, on independent evidence:** F101 itself. The architect DOES bundle a server with a static
+asset, twice over (F108), and the judge DOES split at that seam, twice over (F109). That is a real
+planning defect worth fixing on its own merits — it just is not the node-count ceiling.
+
+**Reinstated:** the SINK as the serial bottleneck. An earlier 90-log sweep put `integrate-verify` at
+13.7% of all wall-clock with node width 1.0, and I let the phantom talk me out of it. It was right.
+
+### The lesson, and it is the same one three times today
+
+occupancy.py carries two long comments about exactly this class of bug — a retry credited 83 phantom
+minutes, and a naive re-derivation reporting a 1484s solo window that was really 55.9s. **I added a
+third variant of the same defect by trusting the instrument on a case its own documentation did not
+cover**, and published a headline from it.
+
+The rule that would have caught it, and is now written into the code: **a span that ends at `t_end`
+must be justified by the task still being outstanding — and "no completion" is not that justification
+when the engine also emits `task_split` naming it.** `split_superseded_tasks` is now reported so the
+correction is visible rather than silent.
