@@ -209,6 +209,30 @@ ARMS = {
 }
 
 
+def queued_reps() -> dict:
+    """How many units the sweep will actually SPEND on each arm.
+
+    Without this the summary line claimed every BLOCKED arm "would spend a fleet unit and answer
+    nothing" — and `detail_budget` is parked at `reps: 0` in sweep.py, so it will spend nothing at
+    all. Charging a parked arm is the same defect this script exists to catch, one level up: a
+    verdict that cannot separate "blocked and queued" from "blocked and already parked", which are
+    different actions (fix it now vs leave it alone).
+
+    Parsed rather than imported: sweep.py is the LIVE supervisor's module and importing it here
+    would run its top level while it is mid-run.
+    """
+    src = HERE / "sweep.py"
+    if not src.is_file():
+        return {}
+    text = src.read_text(errors="replace")
+    out: dict[str, int] = {}
+    for m in re.finditer(r'"arm"\s*:\s*"([a-z_]+)"\s*,\s*"nodes"\s*:\s*\d+\s*,\s*"reps"\s*:\s*(\d+)', text):
+        out[m.group(1)] = max(out.get(m.group(1), 0), int(m.group(2)))
+    for m in re.finditer(r'"name"\s*:\s*"([a-z_]+)"\s*,\s*\n\s*"reps"\s*:\s*(\d+)', text):
+        out.setdefault(m.group(1), int(m.group(2)))
+    return out
+
+
 def newest_baseline() -> pathlib.Path | None:
     cands = [p.parent for p in RUNS.glob("baseline*/run.jsonl")]
     if not cands:
@@ -233,9 +257,10 @@ def main(argv: list[str]) -> int:
     if not ev:
         print(f"{run.name}: no events")
         return 0
+    reps = queued_reps()
     print(f"=== ARM CHECK against {run.name} ===")
     print("can each queued arm change anything, and could we tell?\n")
-    blocked = 0
+    blocked, parked = [], []
     for name, probe in ARMS.items():
         try:
             verdict, why = probe(ev, run) if name == "sink_review" else probe(ev)
@@ -243,13 +268,18 @@ def main(argv: list[str]) -> int:
             verdict, why = "UNKNOWN", f"probe raised: {exc}"
         # UNSUITABLE means "not against THIS baseline" — a pairing problem, not a dead arm. Counting
         # it as BLOCKED is what turned a 29%-likely precondition into "never runs".
+        n = reps.get(name)
         if verdict == "BLOCKED":
-            blocked += 1
-        print(f"  {verdict:<8} {name:<20} {why}")
+            (parked if n == 0 else blocked).append(name)
+        tag = "  [PARKED reps 0]" if n == 0 else ""
+        print(f"  {verdict:<8} {name:<20} {why}{tag}")
     print()
+    if parked:
+        print(f"parked and harmless: {', '.join(parked)} — BLOCKED but reps 0, so the sweep will never "
+              f"spend a unit on them. Nothing to do.")
     if blocked:
-        print(f"{blocked} arm(s) BLOCKED — each would spend a fleet unit and answer nothing. Fix the "
-              f"precondition or the instrument first; do NOT queue them.")
+        print(f"{len(blocked)} arm(s) BLOCKED AND QUEUED ({', '.join(blocked)}) — each would spend a "
+              f"fleet unit and answer nothing. Fix the precondition or the instrument first.")
         return 1
     print("no arm is provably doomed. That is the cheap half — it does not promise a result.")
     return 0

@@ -1,0 +1,33 @@
+# OPEN predictions, and the STRING LITERAL whose presence in the running binary is what makes each
+# one settleable. Format:  F###|marker[,marker...]|the prediction in one line
+#
+# WHY THIS FILE EXISTS
+#
+# A prediction can only be tested by a binary that CONTAINS the fix it is about. The 1-node unit
+# running on engine_build 1785657605 (built 11:00) carries NONE of sink_capped, rules_delivered,
+# "WHAT THE SUPERVISOR ALREADY FOUND", "was ALREADY BOUND before", straggler_aborted or "SAME KIND"
+# — every one of those was committed after 11:00 and is still held for the next boundary.
+#
+# So when that run's sink emits no `sink_capped`, THAT IS NOT A FALSIFICATION OF F115. It is an
+# UNCONTROLLED ZERO — the standing rule, applied to my own predictions instead of to an arm. The
+# trap is live and specific: F116 predicts the next sink takes materially fewer than 25 calls, turn
+# count is measurable from any session trace, and it would be entirely natural to read this sink's
+# turn count as the test. It is not. The mechanism F116 expects to do the shortening (judge findings
+# inherited by the sink) is not in this binary, so ~25 calls here means nothing at all.
+#
+# `review.py` reads this file and reports, per run, which predictions that run's binary could
+# possibly settle. A prediction listed NOT-ON-THIS-BUILD must be left OPEN, never marked failed.
+#
+# A prediction with NO marker (an outcome measured from events that already exist, e.g. a retry rate
+# from task_dispatched.attempt) is written with `-` and is settleable on any build.
+
+F113|sink_capped|judge_verdict count on integrate-verify; ZERO means the longest solo task is unwatched (G5's first target)
+F114|WHAT THE SUPERVISOR ALREADY FOUND|the sink's prior_hint carries the supervisor's findings; failure mode is it re-runs the suite anyway
+F115|sink_capped|a capped sink emits sink_capped and a finished one does not
+F116|WHAT THE SUPERVISOR ALREADY FOUND|the next sink takes materially FEWER than 25 calls; falsifier ~25 holds => the cost is intrinsic
+F106|complete_fix_dispatched|complete_fix_dispatched carries path "serial" once per repair round
+F104|was ALREADY BOUND before|spec_contract never again reports a 404 when the port was already bound
+F101|SAME KIND|the next plan has no task mixing KINDS
+F111|rules_delivered|rules_delivered fires once per dispatch, `tailored` false with the lever off
+F100|-|Replanned{added} lists the spliced ids
+F124|-|with kind_prompt ON, hard-test retry falls from 60% toward the 12% hard non-test already reaches

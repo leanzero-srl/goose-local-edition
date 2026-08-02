@@ -43,6 +43,8 @@ REVIEW_VERSION = "rev-1"
 HERE = pathlib.Path(__file__).resolve().parent
 RUNS = HERE.parent / "runs" / "nodeloop"
 GOAL = HERE / "GOAL.md"
+PREDICTIONS = HERE / "PREDICTIONS"
+ROOT = HERE.parents[2]
 
 
 def newest_run() -> pathlib.Path | None:
@@ -157,7 +159,67 @@ def level3_goal(ev: list[dict]) -> list[str]:
     L.append(f"predictions: {len(done_p)} settled, {len(open_p)} OPEN")
     for pid, claim in open_p:
         L.append(f"  OPEN {pid}: {claim}")
+    L += settleable_on_this_build(ev)
     return L
+
+
+def settleable_on_this_build(ev: list[dict]) -> list[str]:
+    """Which registered predictions can this run's BINARY possibly settle?
+
+    A prediction is only testable by a binary that contains the fix it is about. The 1-node unit
+    running while this was written carries none of `sink_capped`, `rules_delivered`, "WHAT THE
+    SUPERVISOR ALREADY FOUND", "was ALREADY BOUND before", `straggler_aborted` or "SAME KIND" — all
+    committed after that binary was built and all still held for the boundary. Its sink emitting no
+    `sink_capped` would therefore be an UNCONTROLLED ZERO, not a falsification of F115, and the same
+    standing rule I apply to arms applies here.
+
+    The live trap is F116: it predicts the next sink takes materially fewer than 25 calls, turn
+    count is readable from any session trace, and reading THIS sink's count as the test would be the
+    natural mistake. The mechanism expected to do the shortening is not in this binary.
+
+    Attribution rule: the run used the release binary only if that binary was built BEFORE the run
+    started. A binary newer than the run has been rebuilt since, so it says nothing about what the
+    run executed and this reports UNKNOWN rather than guessing.
+    """
+    preds = PREDICTIONS
+    if not preds.is_file():
+        return []
+    rs = next((e for e in ev if e.get("event") == "run_started"), None)
+    started = _ts((rs or {}).get("ts"))
+    started = started.timestamp() if started else None
+    binary = ROOT / "target" / "release" / "goose"
+    if started is None or not binary.is_file():
+        return ["  (cannot attribute a binary to this run — prediction gate skipped)"]
+    if binary.stat().st_mtime > started:
+        return [f"  (the release binary is NEWER than this run — it was rebuilt since, so which "
+                f"fixes this run carried cannot be read off it)"]
+    try:
+        import subprocess
+        blob = subprocess.run(["strings", str(binary)], capture_output=True, text=True,
+                              timeout=180).stdout
+    except Exception as exc:
+        return [f"  (prediction gate unavailable: {exc})"]
+
+    can, cannot = [], []
+    for line in preds.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|", 2)
+        if len(parts) != 3:
+            continue
+        pid, markers, _claim = parts
+        need = [m for m in markers.split(",") if m.strip() and m.strip() != "-"]
+        missing = [m for m in need if m not in blob]
+        (cannot if missing else can).append((pid, missing))
+    out = []
+    if cannot:
+        out.append(f"  ⚠ NOT SETTLEABLE on this build ({len(cannot)}): "
+                   f"{', '.join(p for p, _ in cannot)} — their fix is not in the running binary, so "
+                   f"a zero here is UNCONTROLLED and must leave the prediction OPEN, never failed")
+    if can:
+        out.append(f"  settleable on this build: {', '.join(p for p, _ in can)}")
+    return out
 
 
 def level4_overarching(ev: list[dict], plan: dict, run_dir: pathlib.Path) -> list[str]:
