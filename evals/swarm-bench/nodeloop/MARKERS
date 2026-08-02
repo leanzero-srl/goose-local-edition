@@ -64,6 +64,10 @@ no_idle_device
 # killed the sink for doing its job. It now arms only on a CODE deliverable.
 is_code_deliverable
 
+# F63: a test-author was told NEVER to read test files while owning one. Its OWN test file is now
+# explicitly exempt — correct for every kind, no lever needed.
+OTHER TEST files
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

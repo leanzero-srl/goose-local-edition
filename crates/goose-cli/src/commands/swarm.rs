@@ -19003,8 +19003,10 @@ impl TaskDispatcher for GooseAgentDispatcher {
              above — that is enough to start. Read AT MOST the ONE file you will edit (for an amendment), \
              then ACT. Do NOT re-read the whole project to 'understand it first'; if you catch yourself \
              reading many files or thinking 'let me first read everything / understand the codebase', STOP \
-             and write/edit now. NEVER read the project's TEST files (`test_*.py`/`*_test.py`) — they are \
-             not your dependencies and tell you nothing you need; reading the test suite is wasted turns \
+             and write/edit now. NEVER read the project's OTHER TEST files (`test_*.py`/`*_test.py`) — any \
+             test file YOU OWN is your deliverable and is yours to read and write freely; it is the OTHERS \
+             that are not your dependencies and tell you nothing you need; reading the rest of the test \
+             suite is wasted turns \
              (a worker just burned 13 reads on 6 test files and wrote nothing). Read ONE specific SOURCE \
              file only if you must call its exact API. Trust the manifest + dependency context; verify by \
              RUNNING (pytest), not by re-reading.\n"

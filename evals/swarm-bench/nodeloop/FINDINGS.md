@@ -2191,6 +2191,41 @@ This is Mihai's through-line again, and it is the third instance of exactly one 
 written for one kind of task applied to another** — implementer rules to test-authors (72-83% of
 dispatches), the over-read rule to the sink, and "write your files" to a task that owns none.
 
+## F63 — a test-author is told NEVER to read test files, while owning one. Caught firing live.
+
+The live unit produced two `over_reading` kills, and both are **test tasks**:
+
+    test-api       owns tests/test_api.py       2 re-dispatches
+    test-meridian  owns tests/test_meridian.py  1 re-dispatch
+
+(The sink owns `[]` this run, so F62 is not the cause here — that fix is correctly scoped: a test file
+IS a code deliverable, so the trip stays armed for test tasks.)
+
+The shipped worker prompt, verbatim:
+
+> Read AT MOST the ONE file you will edit … **NEVER read the project's TEST files**
+> (`test_*.py`/`*_test.py`) — they are not your dependencies and tell you nothing you need …
+
+For an implementer that is right. For a **test-author it forbids reading the exact file it must
+write**, and the same paragraph tells it to "Read AT MOST the ONE file you will edit" — the two
+clauses contradict each other in four lines. `kind_prompt`, whose entire purpose is subtracting rules
+that do not apply to a task's kind, is **OFF by default** and its own doc comment names this exact
+case.
+
+The plausible chain — forbidden from its own file, the test-author reads source instead, trips the
+16-call over-read gate, gets killed and re-dispatched — is consistent with the live evidence but is
+NOT established; two kills in one run does not make a mechanism. What IS established is the
+contradiction itself, read straight from the shipped prompt.
+
+**Fixed unconditionally, without waiting for the lever.** The clause now reads "NEVER read the
+project's OTHER TEST files — any test file YOU OWN is your deliverable and is yours to read and write
+freely". That is correct for every kind: an implementer owns no test file so nothing changes for it,
+and a test-author stops being told not to read what it is building. `kind_prompt` remains a queued arm
+for the broader subtraction; this removes one self-contradiction that needed no lever.
+
+Fourth instance of the same shape this session: **a rule written for one kind of task applied to
+another.**
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
