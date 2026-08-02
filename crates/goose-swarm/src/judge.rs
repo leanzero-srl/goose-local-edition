@@ -444,11 +444,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         return Some(JudgeOutcome {
             verdict: Verdict::Looping,
             confidence: 0.9,
-            hint: "Your owned file(s) are written but unchanged for minutes while you keep running — \
-                   you are stuck re-reading or re-verifying, not making progress. If a test or check is \
-                   failing, make the SIMPLEST change that works (a stub, a narrower implementation) rather \
-                   than perfecting it, then finish. If the file already satisfies the spec, report done NOW."
-                .to_string(),
+            hint: spin_hint(input),
             proposed_split: None,
             deterministic: true,
         });
@@ -456,9 +452,126 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     None
 }
 
+/// The finalize-spin correction, COMPOSED FROM WHAT THIS WORKER ACTUALLY DID.
+///
+/// This branch fired **40 times across the archive with one identical sentence** — the single most
+/// repeated string the engine produces, sent to forty workers doing forty different jobs. It is the
+/// clearest instance of the standing rule that a generic instruction to a node IS the failure, not a
+/// rough edge: a supervisor that has read the worker's files, knows their sizes, holds its compile
+/// errors and can see how long each has sat untouched, and then says only "your owned file(s) are
+/// written but unchanged for minutes".
+///
+/// Everything below is already in `JudgeInput` at the moment of the kill and was being discarded.
+/// The order is deliberate — OBSERVATION first (so the worker can check the claim against reality
+/// rather than take it on authority), then the DECISIVE EVIDENCE if any exists, then the principle.
+/// A compile error is the most actionable thing a stuck worker can be handed, and the canned text
+/// threw it away in favour of "make the SIMPLEST change that works".
+///
+/// No model call: this is composition from observed state, so it costs nothing and cannot hallucinate.
+fn spin_hint(input: &JudgeInput) -> String {
+    let mins = |s: u64| format!("{:.1}", s as f64 / 60.0);
+    let mut h = String::new();
+
+    // 1. THE OBSERVATION, naming the actual files and the actual sizes on disk.
+    let files: Vec<String> = input
+        .file_contents
+        .iter()
+        .map(|(f, c)| format!("`{f}` ({} bytes)", c.len()))
+        .collect();
+    let idle = input.secs_since_last_write.unwrap_or(0);
+    if files.is_empty() {
+        h.push_str(&format!(
+            "You have been running {} minutes and your owned file(s) have not changed for {} of them.",
+            mins(input.elapsed_secs),
+            mins(idle)
+        ));
+    } else {
+        h.push_str(&format!(
+            "You wrote {} and have not touched {} for {} minutes, while continuing to run for {} \
+             minutes in total.",
+            files.join(" and "),
+            if files.len() > 1 { "them" } else { "it" },
+            mins(idle),
+            mins(input.elapsed_secs)
+        ));
+    }
+
+    // 2. THE DECISIVE EVIDENCE. If the engine already knows why the file is not acceptable, that is
+    //    the one thing worth saying — and it is specific by construction.
+    if let Some((file, err)) = input.compile_errors.first() {
+        let e = err.trim();
+        let e = if e.chars().count() > 400 {
+            format!("{}…", e.chars().take(400).collect::<String>())
+        } else {
+            e.to_string()
+        };
+        h.push_str(&format!(
+            "\n\nIt does not compile. `{file}` reports:\n{e}\n\nFIX EXACTLY THAT and nothing else, \
+             then report done. Do not re-read the project looking for other problems — this is the \
+             problem."
+        ));
+        return h;
+    }
+
+    // 3. NO ERROR KNOWN: then the file is plausibly finished and the worker is polishing. Say what
+    //    would settle it, in terms of this task's own deliverable, rather than a general exhortation.
+    let owned = input
+        .owned_files
+        .first()
+        .map(|f| format!("`{f}`"))
+        .unwrap_or_else(|| "your file".to_string());
+    h.push_str(&format!(
+        "\n\nNothing is reported failing, so {owned} is most likely already done and you are polishing \
+         or re-verifying. Re-read your own task statement above: if every deliverable it names is \
+         present in the file you already wrote, REPORT DONE NOW — that is the correct end of this \
+         task. If one deliverable is genuinely missing, add ONLY that one, in a single edit, then \
+         report done."
+    ));
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The 40x canned sentence is gone: a spin hint must name THIS worker's files and, when the
+    /// engine already knows why the file is unacceptable, must lead with that error instead of a
+    /// general exhortation. Two workers in different states must not receive the same text.
+    #[test]
+    fn a_spin_hint_is_composed_from_what_this_worker_actually_did() {
+        let mut a = mk("store", true, Some(500), 900);
+        a.file_contents = vec![("store.py".into(), "x = 1\n".repeat(20))];
+        let ha = spin_hint(&a);
+        assert!(ha.contains("store.py"), "must name the file: {ha}");
+        assert!(ha.contains("8.3"), "must state the real idle minutes: {ha}");
+        assert!(
+            ha.contains("REPORT DONE NOW"),
+            "no error known => settle it: {ha}"
+        );
+
+        // Same shape, but the engine HOLDS a compile error — that must lead, and must be quoted.
+        let mut b = mk("api", true, Some(600), 1000);
+        b.file_contents = vec![("api.py".into(), "def f(:\n".into())];
+        b.compile_errors = vec![(
+            "api.py".into(),
+            "SyntaxError: invalid syntax (line 1)".into(),
+        )];
+        let hb = spin_hint(&b);
+        assert!(
+            hb.contains("SyntaxError: invalid syntax"),
+            "must quote the real error: {hb}"
+        );
+        assert!(hb.contains("FIX EXACTLY THAT"), "must point at it: {hb}");
+        assert!(
+            !hb.contains("REPORT DONE NOW"),
+            "an uncompilable file is not done: {hb}"
+        );
+
+        assert_ne!(
+            ha, hb,
+            "two workers in different states must not get the same text"
+        );
+    }
 
     fn mk(task_id: &str, written: bool, last_write: Option<u64>, elapsed: u64) -> JudgeInput {
         JudgeInput {

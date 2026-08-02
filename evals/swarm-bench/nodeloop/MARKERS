@@ -197,3 +197,8 @@ judge_observed
 # file it must read for real signatures) — while reading_rules ~400 lines later, with kind_prompt ON,
 # told the SAME worker to read exactly that module. Both in one system prompt.
 YOU ARE TESTING to get its real signatures
+
+# F141: the finalize-spin hint fired 40x across the archive with ONE identical sentence — the most
+# repeated string the engine produces, sent to 40 workers doing 40 different jobs. Now COMPOSED from
+# this worker's own files, sizes, idle minutes and (decisively) its actual compile error.
+FIX EXACTLY THAT and nothing else

@@ -5858,3 +5858,55 @@ splits, and splitting is what discards the spec. The mixed-kind shape is cheap i
 expensive in SPLITS, and only the first was measured. That does not re-open F124 — the corrector is
 still not worth building — but it does mean `split_inherit_spec`, not a planner change, is the fix
 that reaches this cost.
+
+---
+
+## F141 — the engine's most-repeated sentence, replaced by one composed from what the worker actually did
+
+Mihai, 19:40: *"NOTHING GENERIC, NEVER. If the swarm produces generic prompts for its nodes then it's
+a fail."* The sharpest instance was already sitting in my own data, unacted on: **58 of 73 judge
+interventions are three canned strings, and one of them fired 40 times.**
+
+`judge.rs:444` — the finalize-spin correction — sent every one of those forty workers, verbatim:
+
+> *"Your owned file(s) are written but unchanged for minutes while you keep running — you are stuck
+> re-reading or re-verifying, not making progress. If a test or check is failing, make the SIMPLEST
+> change that works…"*
+
+At the moment it says that, `JudgeInput` holds: the worker's **owned file paths**, their **contents**,
+its **compile errors**, `elapsed_secs`, `secs_since_last_write`, its tool-call and thinking counts,
+and **the task's own spec**. A supervisor that has read all of it, and then says "unchanged for
+minutes".
+
+Worst of all: **it holds the compile error and throws it away.** A worker stuck on a SyntaxError was
+told to "make the SIMPLEST change that works" instead of being shown the error — and a SyntaxError in
+a test file is the recorded failure signature of the kind that produces ALL FOUR terminal failures in
+the archive (F130).
+
+### Composed, not canned — and it costs nothing
+
+`spin_hint(&JudgeInput)` builds the correction in three parts, ordered deliberately:
+
+1. **THE OBSERVATION, with this worker's real numbers** — *"You wrote `store.py` (1,240 bytes) and
+   have not touched it for 8.3 minutes, while continuing to run for 15.0 minutes in total."* The
+   worker can check that against reality instead of taking a verdict on authority.
+2. **THE DECISIVE EVIDENCE, when the engine has it** — the actual compile error, quoted, capped at
+   400 chars, followed by *"FIX EXACTLY THAT and nothing else… Do not re-read the project looking for
+   other problems — this is the problem."*
+3. **Otherwise, the settling question in terms of THIS task's deliverable** — re-read your own task
+   statement; if every deliverable it names is present, report done, that is the correct end.
+
+**No model call.** It is composition from state the engine already gathered, so it cannot hallucinate
+and costs nothing — which matters because this fires on a saturated fleet where the semantic judge is
+unreachable (`no_idle_device` is 100% of skips).
+
+Regression test asserts what "not generic" means operationally: the hint must name the file, must
+state the real idle minutes, must LEAD with the compile error when one exists, must not say "report
+done" about a file that does not compile, and **two workers in different states must not receive the
+same text**. 46 goose-swarm tests pass, cargo check clean, marker added, preflight green.
+
+Held for the next boundary with F139 — not shipped mid-campaign (lesson 9).
+
+**This is one of three canned strings.** The two "produced no file yet" variants (18 firings) are the
+same defect and are next; the split child's `(split of <parent>) <child-id>` is the third and is
+already covered by `split_inherit_spec`, queued.
