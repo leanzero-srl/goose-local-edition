@@ -3946,3 +3946,56 @@ explanation is checked, which is PATTERN 6 pointed at my own tooling for the thi
 **Registered prediction:** the next run's plan has NO task mixing kinds, and correspondingly needs no
 `task_split` for a multi-concern root. If a split still fires on a same-kind task, the split criterion
 is about SIZE rather than concern-mixing and this fix is aimed at the wrong thing.
+
+---
+
+## F102 — G7's first seam: a wildcard arm was telling Go apps to run pytest
+
+Mihai filed G7 — *"detect hard coded logic in the swarm and make it generic ... this agent will be used
+to produce script, software, apps etc"* — and it outranks tuning, because single-stack logic is a
+ceiling on what the swarm can ever be.
+
+Rather than start a 366-site sweep, I looked for where the hard-coding is ENFORCED. It is not the
+literals; it is the **wildcard arm**.
+
+### The bug
+
+```rust
+let verify = match lang {
+    TargetLang::TypeScript => "`npm run build` ...",
+    TargetLang::Rust       => "`cargo build` ...",
+    _ => "`python3 -m pytest --collect-only -q` ... `python3 -m <package> --help`",
+};
+```
+
+`_` covers Python, **Go**, and **Other**. So a Go app is smoke-tested by `smoke_go` with
+`go build ./...` and `go test ./...` — and then, when that gate finds something, **its fix worker is
+told the way to verify is `python3 -m pytest`.** Two versions of one rule, disagreeing, with a wildcard
+hiding the disagreement. PATTERN 1, enforced by a language construct.
+
+`Other` was worse: an unrecognised stack got an invented pytest command for a toolchain that may not
+exist at all.
+
+### The fix, and why it is the right shape for G7
+
+`verify_recipe(lang)` is **exhaustive on purpose — there is no `_` arm.** Adding a language to
+`TargetLang` now fails to compile until someone states how to verify it. That converts a silent
+default into a compile error, which is the only version of this fix that cannot rot.
+
+Go gets `go build ./...` + `go test ./...` — matching what its own gate actually runs. `Other` gets an
+honest instruction ("the project's own documented build and test commands") rather than a fabricated
+one.
+
+Guarded by a test that asserts what the wildcard destroyed: Go contains neither `pytest` nor
+`python3`, `Other` contains neither, and **no two languages share a recipe** — the shape a wildcard arm
+silently produces.
+
+### The generalisable lesson for the rest of G7
+
+The 366 `.py` literals are the SYMPTOM. The mechanism is every `_ =>` and every `TargetLang::Python =>
+{}` fall-through over a language enum: that is how a fifth stack inherits the first one's tooling
+without anyone deciding it should. **Auditing wildcard arms over `TargetLang` is a far smaller, far
+sharper job than auditing 366 literals, and it is where the defects actually live.**
+
+128 sites match `TargetLang::` in this file. The next passes take them one gate at a time, each with
+its own controls, never mid-run — starting with the ones that still carry a `_`.
