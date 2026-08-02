@@ -6524,3 +6524,40 @@ vague, it is the engine declining to use what it knows.
 
 Marker `FILE CHECK, ALREADY DONE FOR YOU`; preflight green; cargo check clean. Held for the next
 boundary alongside F149 and the `sink_review` queue promotion.
+
+---
+
+## F154 — ENGINE FREEZE until the baseline spread exists
+
+Crossed again: `engine_build 1785693892 → 1785697869`, shipping F149 (the scout's phantom tools) and
+F153 (the sink's file-existence check), with `sink_review` now second in the live queue —
+`NEXT: sink_review-n3-r0`.
+
+**The arithmetic that decided it (lesson 37), and it is different from last time.** r0 was 63 minutes
+in and two-thirds done, so "wait for it" looks cheap. It is not: **any unit finished before the next
+crossing is stale the moment I cross.** Keeping r0 has value only if I never cross again — and F153
+changes the sink's very first instruction, which is precisely what a baseline measures. So the choice
+was never "lose 63 minutes or keep them", it was "measure the spread on the final build, or measure it
+twice".
+
+### And that is exactly why this is the last edit for now
+
+**This is the third crossing today, and each one restarted the campaign.** The pattern is a real risk:
+every engine fix is individually justified, the campaign is always young enough that crossing looks
+cheap, and the spread never gets measured. Continued indefinitely, the loop produces a perfect engine
+and zero evidence.
+
+**So: NO further engine edits until the baseline cell completes 3 replicates.** The generic-prompt
+audit is done — the judge's three canned strings, the worker preamble, the scout lenses, the detail
+fan and the sink's opening order have all been through it, and the remaining items are either queued
+as arms or recorded as clean negatives. What is left is analysis, and analysis does not require a
+rebuild.
+
+Findings may still be written. Instruments may still be fixed — they do not touch `crates/`, so they
+cannot invalidate a unit. **Only `crates/**` is frozen**, and `loop.sh check`'s held-commit counter
+will make any breach visible on the very next tick.
+
+**Lifting the freeze:** the baseline cell reaching n=3. At that point there is a spread on this build,
+every arm becomes readable against it, and the first job — stated before any of this began — finally
+has its answer. If that spread comes back near 46 points, the next work is variance reduction and NOT
+more levers, however good they look.
