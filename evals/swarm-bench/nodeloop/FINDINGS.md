@@ -7204,3 +7204,40 @@ LESSON 52: **A GUARD THAT PROTECTS ONE DIRECTION OF A MAPPING IS EVIDENCE THE OT
 UNGUARDED.** Both mine had comments explaining the asymmetry they handled; neither mentioned the
 mirror. When you find a defensive check, ask what its inverse would catch — and control the new one
 in both directions before trusting it.
+
+## F171 — the sink_review arm IS armed, proven twice; and the lever flag is NOT where I looked
+
+`sink_review-n3-r0` is the first execution ever of the sink idle-fill mechanism, so before trusting
+its readout I checked it was actually armed. It is, two independent ways:
+
+    ps eww -p 66283  ->  GOOSE_SWARM_SINK_REVIEW=1   (the LIVE engine's own environment)
+    run_started.gates.sink_review = True   (treatment)
+    run_started.gates.sink_review = False  (baseline-n3-r0, same field, NEGATIVE control)
+
+A positive with a negative control on the same field of the same event — which is the standard this
+campaign holds itself to and the reason a later zero will be interpretable.
+
+**Where the flag actually lives, because I hunted through three wrong places.** `levers_resolved`
+carries **102 lever keys and `sink_review` is not among them** — the sink-ish keys there are
+`sink_prebuild`, `review`, `sink_lean_prefill`, `sink_cap_secs`, `sink_max_turns`, none of which is
+this lever. swarm.rs:21478 does say `"sink_review": goose_swarm::sink_review_enabled()`, but that
+line sits inside the **`run_started`** block, and not at its top level either — `run_started`'s top
+level is `prompt, planner_model, endpoint, working_dir, max_turns, max_attempts, pool, assured,
+gates, ts, run_id, seq`, and the flag is in **`gates`** (7 keys). It is not in `pool[]` either, whose
+entries are `id, model_id, weight, instances`.
+
+    ARM-ARMED CHECK, for every future env-driven arm:  run_started.gates.<lever>
+
+**Why this was worth the hunt rather than assuming.** A lever set by env and absent from
+`levers_resolved` has two indistinguishable failure modes: the env never reached the engine (arm
+VOID, the unit measures nothing) versus the mechanism is armed but its precondition never occurs
+(INERT) versus armed, precondition met, event missing (DEAD — a real bug). Those demand completely
+different responses, and a silent readout looks identical in all three. Now that the arm is proven
+armed, a missing `sink_review` event during the sink phase means **DEAD**, which is exactly the
+finding the arm's gate predicted might happen: *"if prewarmed is 0 with the lever on, the producer
+still cannot see its precondition and the fix is incomplete."*
+
+Mid-run state at 32 min: 11 dispatched / 9 done / 0 FAILED, `task_split` fired once (`store` ->
+`store-impl` + `store-tests`, so F140's `task_split > 0` guard is satisfiable on this build) and
+`pre_review` fired 3x with `had_findings: False`. `sink_review` has fired 0x — correct so far, the
+sink phase has not started.
