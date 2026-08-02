@@ -3357,3 +3357,55 @@ directory (17 MB total) but `target/debug` at **64 GB**, grown by repeated `carg
 out — the kind that would have looked like a mysterious mass abort at 3am. Removed `target/debug`
 only; `target/release/goose` is the LIVE binary the engine is executing and was untouched (verified by
 size and by the running process's command path). Free space 40 -> 53 GB and still settling.
+
+---
+
+## F91 — the swarm's own system prompt is 3% of what the model reads. The inherited hints are 51%.
+
+The pre-F87 baseline, measured from goose's own `llm_request` logs on the live engine
+(engine_build 1785652162), n=16 substantive requests:
+
+| component | median chars | share of median total |
+|---|---|---|
+| goose global + project hints | **22,152** | **51%** |
+| **the swarm's OWN system prompt** | **1,389** | **3%** |
+| tool schemas | 2,064 | 5% |
+| user message (spec + research findings) | 11,132 | 26% |
+| TOTAL | 43,050 | ~12,000 tokens |
+
+(Component medians are computed independently and so do not sum exactly to the median total; the two
+load-bearing figures are the 51% and the 3%.)
+
+### What this means for everything this loop has done
+
+**The swarm's own prompt engineering is 3% of the model's input, and the context nobody chose is 51% —
+sixteen times larger.**
+
+Every instruction fix shipped tonight operates inside that 1,389 chars: F58 (the architect brief must
+STAND ALONE), F63 (a test-author's own file is exempt), F72 (carry through every external literal),
+the 69.7% kind-mismatch work, the whole 30-to-50-rules analysis. All of it is real, all of it is
+correct, and all of it was competing against sixteen times its own volume of instructions about Jira
+tenants, Mac Studio rsync, UI accent rails and how to write prose in Mihai's voice.
+
+Mihai's through-line is "the crux across all phases is EXACT AND PRECISE INSTRUCTIONS." The precision
+work was being done on 3% of the surface.
+
+This does not retract any earlier finding. It reprioritises them: F87 removes the noise floor those
+fixes were competing against, and it should ship before any further tuning of the 1,389 chars, because
+until it does, no instruction change can be cleanly attributed.
+
+### Why the tokens matter on this specific fleet
+
+~12,000 tokens per request, of which ~6,150 are the hints. Three nodes prefill that independently on
+every draft. F86 measured thirteen minutes of `PROCESSINGPROMPT` across all three nodes during the
+skeleton draft — prefill, not generation — and this is the input being prefilled.
+
+So F87 is predicted to help on BOTH axes and they are independent:
+- **latency**: roughly half the prefill, paid three times in parallel
+- **compliance**: published work puts a distinct drop past ~15 constraints regardless of model size,
+  measured compliance for this class falls 0.59 -> 0.09 between 10 and 40 rules, and Qwen-family
+  models show a PRIMACY bias, so material sitting early is weighted hardest
+
+The latency prediction is testable in one run. **The compliance prediction is NOT** — the replicate
+spread on this bench is 46 points and a single run cannot resolve it. Stated separately on purpose so
+a latency win is never quietly reported as a quality win.
