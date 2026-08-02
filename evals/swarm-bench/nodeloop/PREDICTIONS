@@ -31,3 +31,5 @@ F101|SAME KIND|the next plan has no task mixing KINDS
 F111|rules_delivered|rules_delivered fires once per dispatch, `tailored` false with the lever off
 F100|-|Replanned{added} lists the spliced ids
 F124|-|with kind_prompt ON, hard-test retry falls from 60% toward the 12% hard non-test already reaches
+F159|-|test-authors take 100% of judge interventions and 5/5 are caught not-yet-writing vs 2/5 implementers; falsifier is an implementer-heavy intervention set on the next run
+F160|-|with scoped_contracts ON, a test-author receives 1 `## API of` block (its dep) not 5, and its system prompt falls materially below 22,511 chars

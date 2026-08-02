@@ -6735,3 +6735,75 @@ whose owned files are all non-`.py`, and still PRESENT for `store`/`api`.
 Population note, stated honestly: this is 1 task of 17 on n=1 run. It is published as a MECHANISM
 finding, which is valid at n=1 — the trigger match is deterministic and re-derivable from source —
 and NOT as a claim about how often plans contain a web deliverable.
+
+## F159 — every judge intervention on this run went to a test-author, and I had already parked the lever that targets them
+
+**F142 is verified live.** Three real interventions fired on baseline r0, and every hint is built
+from that node's own facts — no canned sentence, including the variant clause:
+
+    After 7.9 minutes, none of the files you own exists on disk yet, and you have run no command —
+    you have emitted 24032 characters of reasoning instead.   You owe: `tests/test_api.py`.
+
+    After 7.0 minutes, none of the files you own exists on disk yet, though you have run 1 command(s).
+    You owe: `tests/test_meridian.py`.
+
+Registered check passes: real minutes, real filenames, real reasoning counts, and the no-command /
+one-command branch both exercised.
+
+**What the interventions point at is more interesting than the interventions.** All three landed on
+test-authors; none on an implementer. Per kind, on this run:
+
+    implementer   5/5 completed, 0 interventions, median 6.0 min; only 2/5 ever seen dry
+    test-author   2/5 completed, 3 interventions;              5/5 seen dry, 2 never wrote at all
+
+Measured in `thinking_chars` rather than wall-clock, deliberately — a character count is immune to
+the contention confound (all 6 slots are busy, so later tasks inflate on elapsed time):
+
+    dry reasoning before the first owned write — implementer median 1,022 (max 1,448)
+                                                 test-author median 3,402 (max 24,032)   3.3x
+
+Test-authors are the kind F156 measured at **22,511 chars, 2.3x the implementer's 9,860**. The kind
+with more prompt is the kind that reasons instead of writing.
+
+**What that extra content actually is.** The `tests/test_meridian.py` author receives `## API of`
+blocks for **all five modules of the application** — `__init__.py`, `__main__.py`, `api.py`,
+`meridian.py`, `store.py` — totalling **265 lines of indented implementation body against 35
+signature lines**, and exposing six private methods: `_do_request_with_429_retry`, `_existing_ids`,
+`_get_with_429`, `_handle_429`, `_headers`, `_send_json`. Its declared dependency is `meridian`
+alone. Shipping a private body to a test author does not just cost context — it invites a test
+written against internals, and against the implementation's own reading of the spec, which is the
+failure `DOMAIN_PITFALLS` opens by warning about ("the code and the tests then encode the SAME
+mistake").
+
+**And I had already parked the fix.** `scoped_contracts` (swarm.rs:19028, `scope_contract_bundle` at
+coherence.rs:303 — written, tested, never enabled) was removed from the sweep queue with this
+reasoning: the architect is told *"Default to a FLAT FAN: make every module a root with no deps"*, so
+a worker's neighborhood is just itself, so scoping the bundle would delete every sibling interface
+and leave only its own stub. The measurement behind that was correct. The generalisation was not:
+
+    implementer   5/5 EMPTY neighborhood  -> `!req.neighborhood.is_empty()` fails, lever INERT
+    test-author   0/3 empty (each deps on the ONE module it tests)          -> LIVE
+    verify/sink   0/9 empty                                                 -> LIVE
+
+Inert for 5 of 17 tasks, **live for 12** — including every test-author. The flat fan gives tests and
+verifiers a neighborhood BY CONSTRUCTION: a test must depend on the thing it tests. I measured the
+implementer case, wrote "a worker's neighborhood", and parked a lever that never applied to the
+population it was parked for.
+
+**Third instance today of one error.** F156 pooled two worker kinds in an instrument; F158 found the
+engine scoping on a fact that can only broaden; this is the same shape in a QUEUE decision — a
+conclusion drawn on one kind and spent on all of them. Lesson 33 said "before generalising from one
+prompt, check which kind it is"; it applies to levers and to my own notes, not only to prompts.
+
+ACTION: `scoped_contracts` re-queued at reps=3 with the readout defined on **test-author dispatches
+only** — pooling the kinds would dilute a real effect to nothing, which is F156's error a fourth
+time. Takes effect at the next supervisor restart (Lesson 23); NOT restarting now, because that would
+abort the baseline r0 the freeze exists to obtain.
+
+CONFOUNDS, stated rather than buried: n=1 run, 5 implementers and 5 test-authors. Test-authors
+dispatch later and under heavier contention — which is why the headline is the character count and
+not the minutes. Writing tests may also be intrinsically more deliberative than writing an
+implementation; this finding does not separate that from prompt volume, and the arm's gate names the
+refutation explicitly — a cut in prompt size with NO improvement in dry reasoning kills the
+mechanism hypothesis and moves the suspicion to the "DON'T OVER-READ / nothing further to look up"
+instruction sitting directly beside 12k of readable code.
