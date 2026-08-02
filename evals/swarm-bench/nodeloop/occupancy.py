@@ -122,6 +122,7 @@ def analyse(path) -> dict:
     # still running (or died) and is credited only up to the last event we can see — never beyond.
     per_device_spans: dict[str, list[tuple[float, float]]] = {}
     per_task_spans: dict[str, list[tuple[float, float]]] = {}
+    attempt_spans: list[dict] = []
     spans: list[tuple[float, float]] = []
     for task_id, ds in disp.items():
         cs = sorted(t for t in done.get(task_id, []) if t is not None)
@@ -149,6 +150,12 @@ def analyse(path) -> dict:
                 continue
             per_device_spans.setdefault(device, []).append((start, end))
             per_task_spans.setdefault(task_id, []).append((start, end))
+            # Exported verbatim as `_spans` so a caller asking a NEW question about the same
+            # timeline (per-phase occupancy, for instance) reuses this pairing instead of rebuilding
+            # it. Rebuilding it is not hypothetical: an ad-hoc re-derivation of exactly these spans
+            # reported a 1484s solo window where the real figure was 55.9s, because it paired
+            # dispatch[i] with completion[i] across a retry.
+            attempt_spans.append({"task": task_id, "device": device, "start": start, "end": end})
             spans.append((start, end))
 
     # A device's busy time is the UNION of its spans, not their sum. Summing was wrong and the first
@@ -295,6 +302,9 @@ def analyse(path) -> dict:
         "ceiling_occupancy_at_pool": round(ceiling_occ, 4) if ceiling_occ is not None else None,
         "phantom_tail_tasks": phantom_tail,
         "idle_node_jobs": idle_jobs,
+        "_spans": attempt_spans,
+        "_t0": t0,
+        "_t_end": t_end,
         # A dispatch with no completion means "still running" only while the run is still going. On
         # a FINISHED run the same shape means the task never completed at all — a failure, not work
         # in progress — and calling it in-flight made three archived, finished runs look live.
