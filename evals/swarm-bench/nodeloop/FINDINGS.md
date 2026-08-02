@@ -3229,3 +3229,67 @@ run cannot show it and I will not claim it from one.
 
 **This does not replace the other instruction work.** It removes the noise floor those fixes were
 competing against.
+
+---
+
+## F88 — the swarm leaves its own app servers running, and they poison every later unit
+
+Two units died in the four minutes after the restart. The sweep's own guards caught both, which is the
+only reason this is a finding rather than a corrupted results table:
+
+```
+[abort] 09:54:15 baseline-n3-r0: 3 engines running at once [14772, 41165, 41234]
+                 — an orphan is contending for the fleet and will skew this unit and every later one
+[abort] killed engine pgroup for pid 14772 / 41165 / 41234
+[done]  baseline-n3-r0  score=0.2126  aborted=True   (24 min)
+[fail]  retarget_off-n3-r0 attempt 0: OSError: [Errno 48] Address already in use
+[done]  retarget_off-n3-r0  score=FAILED  (0 min)
+```
+
+`aborted=True` is recorded, so the 0.2126 row can never be read as a real result. That guard was
+written after a unit killed at 57 minutes went into the table as a clean 1-node row.
+
+### The orphan, identified
+
+```
+pid 69684  ppid 1  elapsed 1:22:03
+  bash -c  rm -f vendorsync.db && python3 -m vendorsync --db vendorsync.db --port 8931 &
+pid 69687  (its child)  LISTEN 127.0.0.1:8931
+```
+
+**A swarm WORKER started the built app to exercise it and never stopped it.** Eighty-two minutes
+later it still held port 8931 — long after its own run had been killed and parked.
+
+### This CLOSES the open item, and the answer was not the one I was leaning toward
+
+The standing open question was: a tree that failed `pytest --collect-only` at 08:58 passed with exit 0
+at 09:20, with neither source file modified in between. Same files, opposite verdict, unexplained. I
+recorded two candidate causes and refused to fix either without evidence, noting that
+`interpret_pytest_collect` has no `Inconclusive` variant while its sibling `interpret_pytest_run` was
+given one by F67.
+
+**The cause is this orphan.** A test that imports the app while another process holds its port gets an
+error at COLLECT time; once the port frees, the identical tree collects cleanly. That is exactly the
+observed behaviour, and it is an ENVIRONMENT collision — F67's class — not an app defect.
+
+So the instinct was right and the discipline was also right: the fix I was tempted by (adding
+`Inconclusive` to `interpret_pytest_collect`) is now justified by evidence rather than by a hunch, and
+it is a DIFFERENT fix from the one that actually matters.
+
+### What actually matters
+
+Adding `Inconclusive` treats the symptom. The defect is that **the swarm leaks server processes.** Each
+leak is a permanently-held port, and a long sweep accumulates them: unit N+1 fails to bind, unit N+2
+fails to bind, and every failure looks like a build defect. This is the same root cause as the F67
+phantom, generalised from "two tasks inside one run collide" to "a dead run poisons every later run".
+
+Recorded as **G6** in GOAL.md. The worker prompt already tells a task to run the app; nothing tells it
+to stop it, and nothing reaps it afterwards.
+
+### Also fixed, immediately
+
+`health.py` crashed with `TypeError: '<' not supported between instances of 'NoneType' and 'int'` when
+it sorted `(nodes, actual_nodes)` across results — a FAILED unit has neither, so the first failure took
+down the whole health check. **The one instrument that tells an unattended operator the sweep is sick
+must never be the thing that dies when something goes wrong.** It now sorts None-safely, and it
+immediately reported the real state: `[BAD] no unit produced a dispatch audit`.

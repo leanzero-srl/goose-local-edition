@@ -148,7 +148,14 @@ def main() -> int:
                        + "; ".join(f"{r['arm']}-n{r.get('nodes')}-r{r.get('rep')} "
                                    f"({r.get('void_reason')})" for r in voids))
     elif rs:
-        got = sorted({(r.get("nodes"), r.get("actual_nodes")) for r in rs})
+        # A FAILED unit has no pool at all, so `nodes`/`actual_nodes` are None — and sorting a set
+        # containing None against an int raises TypeError, which crashed the whole health check on the
+        # first failed unit. The health check is what tells an unattended operator the sweep is sick;
+        # it must never be the thing that dies when something goes wrong.
+        got = sorted(
+            {(r.get("nodes"), r.get("actual_nodes")) for r in rs},
+            key=lambda t: tuple(-1 if v is None else v for v in t),
+        )
         rep.add("OK", f"every unit got the pool it asked for {got}")
 
     # 8. A broken instrument reports zeros, and a zero from a blind probe is a fabricated result.
