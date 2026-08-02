@@ -293,3 +293,18 @@ complete are skipped on resume, so nothing is lost at that boundary.
 
 Until then the [ACT] line is EXPECTED, not a new problem. Do not suppress the gate to quiet it: a
 warning that is true and deliberately deferred is the gate working.
+
+## The restart is PREFERRED, not required — and why (2026-08-02 23:1x)
+
+`arms_now()` (sweep.py:1016) re-reads a `QUEUE` file every pass, precisely so an arm can be added to
+a loop that is already up — a running interpreter never sees a source edit (Lesson 23), and this is
+the designed way around it. So `loop.sh check`'s advice ("restart it or the arm you just added will
+never run") is INCOMPLETE: there is a no-restart path.
+
+It is still the wrong path HERE. `arms_now()` does `arms.append(...)`, so a QUEUE-added arm lands at
+the END of the order — behind baseline r3, sink_review, split_inherit_spec, split_off, prereview_off,
+converge_off and retarget_off. After F164 that is exactly backwards: `scoped_contracts` is the only
+queued arm aimed at the population that actually fails, and every arm ahead of it tunes one that does
+not. It now sits at index 1, immediately after baseline, which only a restart delivers.
+
+USE THE QUEUE FALLBACK IF the restart cannot happen for any reason — a late arm still beats no arm.
