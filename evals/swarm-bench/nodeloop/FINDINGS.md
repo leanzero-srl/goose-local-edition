@@ -6479,3 +6479,48 @@ prompt already carries the manifest and the APIs — the same subtraction F139/F
 workers), or **give the idle nodes something to do while it runs** (`sink_review`, now promoted to
 run second). The first reduces the sink's own 21.8 minutes; the second reduces what the other four
 slots lose to it. They are independent and both are worth having.
+
+---
+
+## F153 — the sink's FIRST instruction ordered it to go and find out what the engine already knew
+
+F152 located the sink's turn cost: ~30% of its calls are `cat`/`ls`/`find`/`grep` over a tree whose
+full manifest is already in its prompt. This is where that order comes from — the **opening sentence**
+of the sink's own instruction block (swarm.rs:19320):
+
+> *"You own no single file — you work ACROSS this whole layout. **Confirm EVERY file listed above
+> actually exists on disk** and the tests cover each module."*
+
+On a 13-20 file manifest that is an explicit instruction to spend turns stat-ing files, and the
+manifest it refers to is pasted **immediately above that sentence**. The engine wrote the tree; it
+can stat it in microseconds; it asked a 27B to do it at ~80 seconds a turn instead.
+
+The cost lands on the worst possible task. F151: `integrate-verify` holds the fleet at ≤2 for **158 of
+229 low-concurrency minutes across 11 runs — 69% of all of it**. F152: its cost is **entirely turn
+count** (79 s/call against a fleet median of 83, so making calls faster buys nothing).
+
+### Fixed by computing it and handing over the result
+
+The engine now stats every manifest entry and injects the answer:
+
+- all present → *"FILE CHECK, ALREADY DONE FOR YOU: all N files in the layout above exist on disk.
+  **Do NOT `ls` or `cat` to re-confirm that — it is settled.**"*
+- some missing → the exact missing paths, plus *"Do NOT go looking for the others — they are
+  present."*
+
+**One filesystem stat per file, no model call, and it cannot hallucinate an "it exists".** It is also
+strictly better information than the sink could gather: a deterministic list beats a weak model's
+recollection of what it saw two turns ago.
+
+**The rest of that paragraph is untouched** — running the program end to end, checking the entry point
+imports and registers every advertised command, fixing what crashes. That is the sink's actual job and
+the part nothing else can do. This subtracts only the part the engine had already answered.
+
+Same shape as F141 (the judge held the compile error and said "make the simplest change"), F142 (held
+the thinking count and asserted a motive) and F149 (held `can_look_things_up: false` and said "look
+it up"). **Four instances now of one defect: the engine possesses the answer and sends the node to
+look for it.** That is the sharpest form of the standing directive — a generic instruction is not just
+vague, it is the engine declining to use what it knows.
+
+Marker `FILE CHECK, ALREADY DONE FOR YOU`; preflight green; cargo check clean. Held for the next
+boundary alongside F149 and the `sink_review` queue promotion.
