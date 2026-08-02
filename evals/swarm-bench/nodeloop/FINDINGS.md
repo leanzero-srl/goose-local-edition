@@ -4930,3 +4930,59 @@ withdraw the claim — not enough to publish the inverse as a law.
 
 **Registered:** if G4's node curve produces a completed 1-node and 3-node pair on the same build, the
 judge/dispatch ratio is a free readout from it, and this retraction is what it tests.
+
+---
+
+## F123 — correcting the correction: judge rate does NOT vary with node count either way
+
+F122 retracted "more nodes means more judging" and replaced it with the inverse — *"the judge runs
+roughly TWICE as often per dispatch on ONE node as on three"*. **That replacement is also wrong**, and
+for the same class of reason: `judge/dispatch` is confounded by dispatch count. A 1-node run completes
+far fewer tasks in the same wall-clock, so identical judging spreads over less work and the ratio rises
+without anything about the judge changing.
+
+The capacity-normalised measure — judge invocations per WALL-CLOCK MINUTE:
+
+| nodes | judge/min | skip% | runs |
+|---|---|---|---|
+| 1 | **0.60** | 25% | 2 |
+| 2 | 0.29 | 0% | 1 |
+| 3 | **0.62** | 14% | 7 |
+
+**1 node and 3 nodes are indistinguishable (0.60 vs 0.62).** And the spread WITHIN the 3-node group is
+0.36 to 1.24 — more than three-fold, and far larger than any difference between groups. Skip-rate
+weakly favours the ORIGINAL direction (3 nodes skip 14%, 1 node 25%), which is the opposite of what
+F122 concluded, and is equally unsupported at this n.
+
+### The final, honest position
+
+**The data cannot resolve whether judging scales with node count.** Not "it goes up", not "it goes
+down" — the between-group signal is smaller than the within-group noise, on 2 runs versus 7.
+
+That is the answer, and it is worth stating as one rather than picking whichever direction the last
+metric happened to favour. Three passes at this question produced three different claims:
+
+1. F76/F98 — "more nodes, more judging" (mechanism reasoning, never measured)
+2. F122 — "fewer nodes, more judging" (measured, but on a confounded ratio)
+3. F123 — no resolvable relationship (measured on a normalised rate, with the variance stated)
+
+### What is actually established, and survives all three
+
+- the judge does **real work**: 8, 11, 7, 6, 5 genuine interventions across the larger runs, including
+  a timezone-conversion bug in a peer's test fixture
+- it is **starved when the fleet is saturated**: `no_idle_device` is 100% of all skips, every run
+- its **skip rate varies 0-49%** across runs, and that variance is unexplained
+
+None of that depends on the node-count question, which is why those findings stand while three
+successive claims about scaling did not.
+
+### The lesson, stated against myself
+
+Lesson 10 said "check whether the instrument sampled one instance or the distribution". F122 obeyed it
+and still got the answer wrong, because **a normalised ratio can be confounded even when the sample is
+adequate**. The addition: *when a ratio changes, ask what else moved in its denominator.* Dispatch
+count is not a constant across node counts — it is the very thing node count changes.
+
+**Stop here.** A fourth pass at the same question with the same data would be motivated reasoning, not
+analysis. If G4 ever produces completed 1-node and 3-node runs on one build with replicates, this
+becomes answerable; until then it is recorded as unresolved.
