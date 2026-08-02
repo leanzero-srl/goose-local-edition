@@ -7369,3 +7369,47 @@ I was not looking in.
 REGISTERED for `split_inherit_spec` when it runs: split-born test-authors should stay fast with the
 lever ON; if they SLOW toward the planned 7-14 min, the speed came from the thin inherited statement
 rather than from good context, which would invert the arm's whole premise.
+
+## F175 — the sink idle-fill mechanism IS RUNNING, first time ever; and its event cannot tell DEAD from INERT
+
+`integrate-verify` dispatched and ran SOLO for 7.4 minutes with 5 of 6 slots free — the exact window
+F151 measured as 42% of execute at <=2 tasks, 69% of it this task. `sink_review` events: **0**. I was
+one step from calling that DEAD. Two checks stopped it.
+
+**1. The event fires AFTER the sink, not during, and only if findings survived.** swarm.rs:24448 is
+the *consume* site: it drains `drain_sink_review()` once the sink is finished, re-verifies each
+finding against the final tree, and emits the event **inside `if !prewarmed.is_empty()`**. So a zero
+during the sink means nothing at all, and a zero AFTER the sink is ambiguous in the worst way:
+
+    mechanism never ran          -> no event
+    mechanism ran, found nothing -> no event
+
+**Those are DEAD and INERT and the emission site cannot distinguish them** — the exact confusion F171
+was written to avoid, baked into the engine rather than into my reading. Lesson 24's shape (a gate
+that prints neither verdict reads as a pass) and Lesson 16's (emit raw inputs, not a re-derived
+verdict): `prewarmed: 0` should be emitted, not suppressed.
+
+**2. The fleet answers the question the event cannot.** While the sink ran solo:
+
+    lms ps  ->  gabee GENERATING | mihai GENERATING | workhorse GENERATING
+    tasks in flight: 1 (integrate-verify)
+
+**One task, three nodes generating.** At most one node can be serving the sink, so at least two are
+doing work no task asked for — which is precisely what `idle_dimension_review` is. 14 fleet calls
+started in that 8-minute window, one carrying the sink's own 28,106-char prompt and the rest much
+smaller (668-3,500 chars). I am NOT claiming to have classified each of those prompts; the
+unambiguous part is the occupancy: **three nodes busy against one in-flight task.**
+
+**So the mechanism whose gate said "It has never run once" is running, and it is filling exactly the
+window Prime Directive 3 is about.** The preconditions all check out in source too:
+`pick_sink_review` needs `sink_review_enabled()` (proven ON, F171) and `sink_in_flight()` (a task
+literally named `integrate-verify` in `Claimed` state — true now), then claims any device with
+`in_flight < weight`, of which there were five.
+
+WHAT REMAINS FOR THE READOUT when the sink finishes: `sink_review{prewarmed, survivors, refuted}`.
+`prewarmed > 0` confirms the queue was filled; `survivors` vs `refuted` measures whether overlapping
+the review with the sink costs quality — the arm's gate warns that if the build score moves DOWN the
+re-verification is not fail-closed, and that is worth more than the utilisation.
+
+QUEUED ENGINE FIX (new, cheap): emit `sink_review` unconditionally with `prewarmed: 0` rather than
+suppressing it, so DEAD and INERT stop looking identical. Same one-line shape as the rest.
