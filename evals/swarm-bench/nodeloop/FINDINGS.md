@@ -7451,3 +7451,43 @@ LESSON 58: **A LOG-DERIVED ZERO FROM THE PAST IS A CLAIM ABOUT RETENTION UNTIL P
 The campaign's standing rule is "an uncontrolled zero is not evidence"; this is its time-shifted form.
 Before comparing a historical window to a live one, count what the query can see in the historical
 window OVERALL — not in the sub-window being measured, which is exactly where a blind result hides.
+
+## F177 — F115's positive half, running live: the sink is PAST its cap and `sink_capped` has not fired
+
+F115 was left half-settled: baseline r0's sink finished naturally at 25.1 min, so the absence of
+`sink_capped` was a CONTROLLED zero but only proved the negative half. `sink_review-n3-r0` supplied
+the other case — its sink crossed 30.0 min.
+
+    sink elapsed        31.3 min
+    sink_cap_secs       1800 (30.0 min), resolved from levers_resolved
+    PAST THE CAP        True
+    sink_capped fired   0
+
+**Three wrong turns I did NOT take, each checked instead of assumed:**
+
+1. *"The event must be named something else."* It is not — swarm.rs has **two** emission sites (11506
+   and 11538) and both write `"event": "sink_capped"`. The marker F115 registered was right. One
+   fires on the deadline during streaming, the other on an event gap.
+2. *"`GOOSE_SWARM_SINK_CAP_SECS` isn't in the process environment, so the cap is inert."* `ps eww`
+   showed only five GOOSE_SWARM vars and not this one — but swarm.rs:21303 bridges config to env at
+   runtime with `set_var`, and `ps eww` reports the environment the process was LAUNCHED with, not
+   what `setenv` added later. The observation was real and the inference would have been wrong.
+3. *"1.3 minutes overdue is a defect."* Not yet. That is a 4% overrun and the deadline is checked
+   inside the stream loop, so its granularity is plausibly on that order. **Recording the observation,
+   not a verdict.**
+
+The site's own comment records why this matters more than a timing curiosity:
+
+    MEASURED: integrate-verify ran exactly 1800s — its cap to the second — made 23 shell calls and
+    2 edits, and was recorded `status=done`. That row is where this project reads every verdict from.
+
+So a capped sink is recorded as DONE, and `sink_capped` is the ONLY thing distinguishing "finished
+its job" from "cut off mid-work". F152 measured 3 of 8 prior sinks landing on exactly 30.0 min — if
+the event does not fire for them either, every one of those was read as a clean finish.
+
+SETTLES NEXT TICK, and both outcomes are informative:
+  · `sink_capped` fires → F115 fully settled, the instrument works, and the 3-of-8 at exactly 30.0
+    min become identifiable as truncations.
+  · the sink completes with NO `sink_capped` while past its cap → the cap is not enforcing, or the
+    event is not reaching the log, and a truncated sink is indistinguishable from a finished one in
+    the row this project reads every verdict from.
