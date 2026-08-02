@@ -2049,6 +2049,40 @@ a worker can recover from a 105-char brief, because workers have shell and re-de
 (F54). But recovery is a coin flip that costs worker time, and the other five runs whose client module
 got a thin brief scored 0.30-0.50. Making the fallback safe is cheap; relying on recovery is not.
 
+## F59 — the detail-budget fix is CONFIRMED by the first duration data the engine has ever recorded
+
+`detail_completed` was added because a timeout says ">budget" and nothing more, so every ceiling was
+a judgement call — including mine. The first four measurements, live:
+
+    cli        42s  ->  1493 chars
+    store      65s  ->  1818 chars
+    api        74s  ->  2805 chars
+    meridian  111s  ->  1467 chars
+
+**The old ceiling was 75 seconds.** `meridian` — the module owning the vendor contract, the one that
+lost its spec **six times** across the corpus — takes **111 seconds**. Under the old budget it could
+not have finished, and it did not: every one of those six failures was a timeout. `api` at 74s cleared
+the old ceiling by one second.
+
+So the ceiling sat at roughly the 75th percentile of its own distribution, which is exactly what the
+code comment warned about — *"a bare literal pinned at the OBSERVED MAXIMUM of the call it bounds,
+which is the wrong place for a ceiling: normal variance then lands on the far side of it."* Two of
+four calls were at or past it.
+
+**And `detail_fallback` has not fired once this run.** The prediction registered with F49 — that the
+derived ceiling drives the fallback rate toward zero — is holding on the first unit that could test
+it.
+
+**What the data does NOT yet settle: where the ceiling belongs.** 420s is generous, and generosity is
+cheap while the ceiling only binds on failure — but a genuinely hung call now costs 420s instead of
+75s, and I raised the straggler grace to match. Observed max is 111s at n=4. A ceiling near 250s would
+be >2x the slowest call and far tighter than 420. **n=4 is too thin to move on**, so the value stays
+where it is and the distribution keeps accumulating; the decision is deferred until the numbers
+justify one, which is the whole reason the event exists rather than another guess.
+
+This is the loop Mihai asked for, closed once: the log could not answer the question, so the log was
+changed to answer it, and the answer arrived on the next run.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
