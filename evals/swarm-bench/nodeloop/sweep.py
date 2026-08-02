@@ -376,6 +376,17 @@ QUESTIONS: list[dict] = [
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
              "is a mechanism readout and is answered by the FIRST unit, not the third."},
+    {"arm": "scoped_contracts", "nodes": 3, "reps": 3,
+     "asks": "F164: test-authors are 31% of completions failed against ZERO for implementers, and "
+             "93% of every failure this campaign has recorded. This is the ONLY queued arm aimed at "
+             "that population. A `test_meridian.py` author currently receives `## API of` blocks for "
+             "ALL FIVE modules — 265 lines of implementation BODY against 35 of signature, six "
+             "private methods — when its declared dependency is `meridian` alone. READOUT ON "
+             "TEST-AUTHORS ONLY (pooling the kinds is F156 a fourth time): system-prompt chars vs "
+             "22,511; `## API of` blocks vs 5; max dry reasoning before first write vs a 3,402 "
+             "median / 24,032 max; judge interventions vs 3. A cut in size with NO improvement in "
+             "dry reasoning REFUTES the mechanism hypothesis and is the most valuable outcome. VOID "
+             "if any test-author reports an empty neighborhood."},
     {"arm": "sink_review", "nodes": 3, "reps": 1,
      "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
              "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
@@ -502,6 +513,24 @@ def cells() -> list[dict]:
         if arm is None:
             continue  # an arm named here but not defined yet is skipped, never silently substituted
         out.append({"nodes": q["nodes"], "arm": arm, "reps": q["reps"], "asks": q["asks"]})
+
+    # THE MIRROR OF THE GUARD ABOVE, AND ITS ABSENCE ALREADY COST ME AN ARM (F170).
+    #
+    # The line above protects QUESTIONS -> ARMS: a question naming an undefined arm is skipped
+    # loudly rather than substituted. Nothing protected ARMS -> QUESTIONS, and that direction is
+    # WORSE, because it fails completely silently: `scoped_contracts` was defined in ARMS with
+    # reps=3, was deliberately moved to index 1 as the campaign's top priority after F164, and would
+    # NEVER HAVE RUN — cells() builds from QUESTIONS, so an arm absent there is simply invisible.
+    # Nothing in the log would have said so; the arm would just never appear, forever.
+    #
+    # An arm with reps=0 is deliberately parked (detail_budget) and is not a defect.
+    scheduled = {q["arm"] for q in ordered}
+    orphans = [a["name"] for a in by_name.values()
+               if a["name"] not in scheduled and a.get("reps", 1) > 0]
+    if orphans:
+        log(f"[SWEEP] ⚠ {len(orphans)} arm(s) defined in ARMS with reps>0 but named in NO question, "
+            f"so they can never be scheduled: {', '.join(sorted(orphans))}. Add them to QUESTIONS "
+            f"or set reps=0 to park them deliberately.")
     return out
 
 
@@ -1058,6 +1087,32 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
                 continue
             if not complete(c["arm"]["name"], c["nodes"], rep):
                 units.append((c["arm"], c["nodes"], rep))
+
+    # BASELINE REPLICATES ARE HOISTED TO THE FRONT until the baseline cell reaches MIN_REPS.
+    #
+    # The loop above is rep-MAJOR, so `baseline-n3-r1` sits behind the ENTIRE rep-0 pass — 31 units,
+    # ETA Wednesday. That is fine for throughput and fatal for the thing the campaign is currently
+    # blocked on: the F154 engine freeze lifts when the baseline has n=3, because a 46-point
+    # replicate spread makes every treatment score uninterpretable until the spread itself is
+    # measured. Under rep-major ordering the freeze would hold for ~26 hours while five diagnosed
+    # engine fixes sat unshipped — honouring the gate's WORDING and defeating its PURPOSE.
+    #
+    # The baseline is not just another arm: it is the DENOMINATOR of every other cell. A treatment
+    # score without it is a number with nothing to be compared against, so running treatments first
+    # is strictly out of order. Hoisting costs nothing — the same units run, in a better sequence.
+    #
+    # Self-limiting by construction: once the baseline reaches MIN_REPS this partition is empty and
+    # the ordering is exactly what it was before.
+    # NODE_LEVELS[0] is the full fleet; a baseline measured at fewer nodes is a different question
+    # (the node curve) and is NOT what the treatments are compared against.
+    full = NODE_LEVELS[0]
+
+    def is_base(u: tuple) -> bool:
+        return u[0]["name"] == "baseline" and u[1] == full
+
+    base = [u for u in units if is_base(u)]
+    if base:
+        units = base + [u for u in units if not is_base(u)]
     return units
 
 

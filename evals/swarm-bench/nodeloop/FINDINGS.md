@@ -7155,3 +7155,52 @@ F152's observed 10-25 range, at the top. n=1, so this is not a refutation, but i
 the improvement F153 was shipped to produce. The file-check text is verified gone (F166); the turns
 it was supposed to save did not materialise. The honest position: **F153 is verified as a prompt
 change and UNPROVEN as a speed change**, and the next sinks decide it.
+
+## F170 — the campaign's top-priority arm would never have run, and nothing would have said so
+
+Acting on F164 last tick I moved `scoped_contracts` to ARMS index 1, "so it runs first after
+baseline". **It would never have run at all.** `cells()` builds the schedule from `QUESTIONS`, not
+from `ARMS`:
+
+    in ARMS but NOT in QUESTIONS (never scheduled): ['scoped_contracts', 'detail_budget']
+
+`detail_budget` is deliberately parked at reps=0. `scoped_contracts` was the arm aimed at the
+population that produces 93% of all failures, sitting at reps=3, invisible. Reordering ARMS was
+completely inert and I had already reported it as done.
+
+The asymmetry is the defect. `cells()` guards ONE direction and says so in a comment — *"an arm named
+here but not defined yet is skipped, never silently substituted"* — protecting QUESTIONS → ARMS.
+Nothing protected ARMS → QUESTIONS, and that direction fails **silently and permanently**: no log
+line, no empty cell, no error. The arm simply never appears, forever.
+
+FIXED, three things:
+  1. `scoped_contracts` added to QUESTIONS at reps=3, positioned immediately after `baseline`, with
+     the F164 readout written into its `asks` (test-authors ONLY; a size cut with no dry-reasoning
+     improvement REFUTES the hypothesis and is the most valuable outcome).
+  2. An orphan guard: any arm in ARMS with reps>0 and named in no question is reported loudly.
+     Controlled BOTH ways — a reps=3 orphan fires it, the same arm at reps=0 is silent — because a
+     guard that has never fired is indistinguishable from a broken one.
+  3. Baseline replicates HOISTED to the front of `backlog()`.
+
+**The hoist, and why it is not a violation of the freeze.** `backlog()` is rep-major, so
+`baseline-n3-r1` sat behind the entire rep-0 pass: 31 units, ETA Wednesday. The F154 freeze lifts at
+baseline n=3, so under that ordering it would have held ~26 hours with five diagnosed engine fixes
+unshipped — honouring the gate's WORDING while defeating its PURPOSE, which is to obtain the
+replicate spread before any treatment score is read. The baseline is not just another arm: it is the
+DENOMINATOR of every other cell, so running treatments ahead of it is out of order regardless. The
+hoist is self-limiting (once the baseline is complete the partition is empty) and changes only the
+sequence, never which units run. Resulting order:
+
+    0. baseline n=3 r=1        <- freeze lifts when these two land
+    1. baseline n=3 r=2
+    2. scoped_contracts n=3 r=0   <- F164's arm, first treatment
+    3. baseline n=1 r=0 / 4. baseline n=2 r=0 / 5. sink_review n=3 r=0 / ...
+
+34 units, no duplicates, `baseline-n3-r0` correctly absent (complete).
+
+LESSON 51: **A GATE'S PURPOSE OUTRANKS ITS LETTER.** If the queue cannot deliver what the gate is
+waiting for, change the queue — do not sit frozen honouring the wording.
+LESSON 52: **A GUARD THAT PROTECTS ONE DIRECTION OF A MAPPING IS EVIDENCE THE OTHER DIRECTION IS
+UNGUARDED.** Both mine had comments explaining the asymmetry they handled; neither mentioned the
+mirror. When you find a defensive check, ask what its inverse would catch — and control the new one
+in both directions before trusting it.
