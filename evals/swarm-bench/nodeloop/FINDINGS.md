@@ -3049,3 +3049,41 @@ assumed benign.
 verbatim channel help", it is "does the verbatim channel CARRY ANYTHING", which is a question that
 could not previously be asked. Mechanism readout: `doc_facts` non-empty, and `/v1` present verbatim in
 worker dispatches.
+
+---
+
+## F85 — the longest silent window in a run is the one where planning answers goal one
+
+The phase timeline of a 3-node baseline, from the engine's own markers:
+
+```
++3.4m   research_completed, levers_resolved
+                                              <-- 12 MINUTES, ZERO EVENTS
++15.4m  confidence_retarget, retarget_discarded
++29.2m  contracts, plan_loaded
+```
+
+That 12-minute gap is the **best-of-N skeleton draft**. It emitted nothing at all, inside a planning
+prefix that `phases.py` already reports as having no occupancy number (F74). So the single longest
+unobserved stretch of a run sat inside the single largest unmeasured region of a run.
+
+It is not a minor phase. `best_of_n` is sized to the fleet at the call site —
+`base.max(devices.len().clamp(1,5))` — so **this fan IS the planning phase's answer to goal one.**
+Until now the only way to know whether it drafted one skeleton or three was to infer it from
+wall-clock.
+
+(Correcting an earlier note of mine: I had recorded best-of-N as "capped at distinct-model count, so
+N=1 on an identical fleet". That was true in the single-identifier era and is not true now — with
+three identifiers `n` is 3. The cap was never the defect; the invisibility was.)
+
+**`skeleton_drafts{requested, returned, dead, secs, chars[], worker_count}`** now closes it.
+
+`dead` is the load-bearing field. A dead slot is a node that spent minutes drafting and produced
+nothing usable — the engine's own comment at that site says the confidence metric "only ever saw
+ANSWERS" and "nothing anywhere revealed the gap". Now `requested - returned` is readable directly, and
+`chars[]` gives the per-draft size distribution that decides whether a draft was a real skeleton or a
+stub.
+
+**Registered prediction for the next run:** `skeleton_drafts.requested == 3` and `dead == 0`. If
+`dead > 0`, some fraction of the 12-minute window is nodes producing nothing, and the planning prefix
+has a defect worth more than any tuning downstream of it.

@@ -12580,7 +12580,26 @@ impl GooseAgentDispatcher {
         // `dead` = slots that produced no draft at all. Carried out of the round because the confidence
         // metric is only as trustworthy as the pool it scored, and that count is the only thing that says
         // how big the pool really was.
+        // THE SKELETON DRAFT IS THE LONGEST SILENT WINDOW IN A RUN. MEASURED on a 3-node baseline:
+        // 12 minutes between `levers_resolved` and `confidence_retarget` with NOT ONE event emitted,
+        // inside a planning prefix that phases.py already reports as having no occupancy number at all.
+        // It is also where "does planning use the whole fleet" is decided — `best_of_n` is sized to the
+        // fleet just above, so this fan is the planning phase's answer to goal one, and until now the
+        // only way to know whether it drafted 1 or 3 was to infer it from wall-clock.
+        //
+        // `dead` is the load-bearing half: a slot that returned nothing is a node that did the work and
+        // produced no usable draft, and the confidence metric only ever scores the ANSWERS.
+        let drafts_started = std::time::Instant::now();
         let (candidates, dead_drafts) = draft_round(system.clone(), draft_temp).await;
+        self.events.write_value(serde_json::json!({
+            "event": "skeleton_drafts",
+            "requested": n,
+            "returned": candidates.len(),
+            "dead": dead_drafts,
+            "secs": drafts_started.elapsed().as_secs(),
+            "chars": candidates.iter().map(|c| c.chars().count()).collect::<Vec<_>>(),
+            "worker_count": worker_count,
+        }));
         // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
         // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
         // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().

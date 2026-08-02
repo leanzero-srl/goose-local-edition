@@ -127,6 +127,11 @@ fetched_external
 # it and review_file_excerpt, so the two cannot drift apart the way the --help parsers did (F79).
 middle elided
 
+# F85: the skeleton draft fan is the longest SILENT window in a run — 12 minutes with no event, inside
+# a planning prefix phases.py already reports as having no occupancy number. It is also where planning
+# answers goal one, since best_of_n is sized to the fleet.
+skeleton_drafts
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
