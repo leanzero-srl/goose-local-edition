@@ -7024,3 +7024,24 @@ WHAT THIS CHANGES:
   · A judge that can only kill needs an ACCEPT. Queued behind the freeze, and it is the cheapest of
     the queued fixes to state: on a `looping` verdict where the owned files exist and nothing is
     reported failing, the correct action is to finish the task, not to spend its last attempt.
+
+## F166 — F153 verified live on r0's sink
+
+The sink dispatched at 23:33 and its prompt carries the engine-computed check:
+
+    FILE CHECK, ALREADY DONE FOR YOU: all 11 files in the layout above exist on disk. Do NOT `ls`
+    or `cat` to re-confirm that — it is settled. Confirm the tests cover each module. CRITICAL: a
+    green pytest suite does NOT prove the program works — unit tests usually call functions
+    directly and NEVER invoke the CLI/entry point…
+
+`Confirm EVERY file` — the old opening order that sent the sink to re-discover a tree already in its
+own 23k-char prompt — is ABSENT. Registered check passed; the engine now states the file count it
+computed (11) rather than asking the node to go and count.
+
+Its real job is untouched: run the program end to end, check entry wiring, fix crashes. Still open on
+this sink: `sink_capped` (F115 — every prior zero was pre-boundary and uncontrolled) and the call
+count against F152's baseline of 16 median / 21.8 min. Both are settleable only when it finishes.
+
+NOT RUN, deliberately: the app's own test suite. The sink is editing files and binding ports in that
+tree right now, and a concurrent pytest would contend for both — corrupting the sink's run and my
+measurement together. The crunch waits for r0 to finish.
