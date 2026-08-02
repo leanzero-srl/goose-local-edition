@@ -91,6 +91,24 @@ its sibling `interpret_pytest_run` already has — now justified by evidence rat
 
 ---
 
+## DISK POLICY — decided 2026-08-02, do not re-derive
+
+`MIN_FREE_GB = 15` is a hard abort in the sweep's watchdog, so disk is a real unattended risk. The
+consumer is `target/debug`, which repeated `cargo check`/`test` grows without bound (measured 64 GB).
+
+**Delete `target/debug` only, and it is safe at any time** — the sweep executes
+`target/release/goose`, and debug is regenerable.
+
+**NEVER run `goose-clean --go` while a run is live.** It removes every `target/`, which INCLUDES the
+release binary the engine is currently executing. The skill's own guard already refuses while
+`goose swarm` is running; do not override it with FORCE.
+
+**Do not run the full clean at a boundary either**, tempting as the idle window is. The boundary
+rebuild is incremental (~3.5 min); after a full clean it is a cold release build, and that is fleet
+time spent reclaiming space that was not scarce.
+
+---
+
 ## CLOSED — the pytest-collect mystery had a cause, and it was not the one I was leaning toward
 
 RESOLVED by F88. A tree failed `pytest --collect-only` at 08:58 and passed at 09:20 unmodified because
