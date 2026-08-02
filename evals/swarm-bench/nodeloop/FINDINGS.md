@@ -2154,6 +2154,43 @@ deterministically only.
 was being read as "hasn't started"), it is harmless, and it becomes measurable now. Deciding either
 way on an unattributable metric is the mistake F53 already punished.
 
+## F62 — the sink was killed for doing its job, whenever the planner handed it a README
+
+The most expensive task in the run is `integrate-verify`: median **17.6 minutes**, owner of ~100% of
+the solo window. Auditing what it is INSTRUCTED to do led straight to a defect with perfect
+separation across 13 runs.
+
+`integrate-verify` runs the assembled app, reads what it finds, and fixes failures. It writes no
+source. The deterministic over-read trip fires on *"owns files, has written none, and is old"* — which
+is a defect for an implementer and is the **job description** of a verifier.
+
+The gate was guarded by `!owned_files.is_empty()`, and the sink normally owns nothing, so it stayed
+disarmed. **In 3 of 13 runs the planner gave it `README.md`:**
+
+| sink owns | runs | attempts | over-read kills |
+|---|---|---|---|
+| `[]` | 7 completed | **1** every time | **0** every time |
+| `['README.md']` | 3 | 1, **3**, **3** | 0, **2**, **3** |
+
+Every over-read kill of the sink in the entire corpus happened in a run where it owned a README, and
+the 3-kill run is the **only sink failure on record**. Each kill re-dispatched it with the canned hint
+*"You have produced no file yet. STOP reading/deliberating … WRITE your file(s) NOW"* — telling a
+verification task to stop verifying and write a document.
+
+The third README run survived because it wrote the README early, which set `any_owned_written` and
+disarmed the gate. That is the mechanism confirmed from the other direction.
+
+**And the sink's total contribution that run was nothing — the build still scored 83.4% with crunch
+7/7.** Worth holding next to the sink's median 17.6 minutes when its value comes up for judgement.
+
+**Fixed:** the trip now arms only when the task owns at least one CODE deliverable
+(`is_code_deliverable`: source extensions only — a doc, manifest or lockfile is legitimate for a task
+to own and legitimate not to have written yet). Pinned by a test built from the real case.
+
+This is Mihai's through-line again, and it is the third instance of exactly one shape: **a rule
+written for one kind of task applied to another** — implementer rules to test-authors (72-83% of
+dispatches), the over-read rule to the sink, and "write your files" to a task that owns none.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
