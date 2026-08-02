@@ -16535,15 +16535,46 @@ for mod, path in mods.items():
                 return True
         return False
 
+    # AN EMPTY OVERRIDE IS A DELIBERATE SUPPRESSION, NOT AN UNIMPLEMENTED STUB.
+    #
+    # MEASURED: `vendorsync.api.log_message` was flagged in 8 of 8 runs that produced any review
+    # finding, and it was the ONLY function ever flagged. It is
+    # `BaseHTTPRequestHandler.log_message` overridden with `pass` to silence default HTTP request
+    # logging — a standard, correct idiom, sitting under a comment that says "silence default
+    # logging". The spec never mentions logging at all.
+    #
+    # Each time, a fix worker spent a round RE-IMPLEMENTING stderr logging the app had deliberately
+    # suppressed. One worker's own reasoning records the contradiction and defers to the finding
+    # anyway: "the comment says 'silence default logging', but the defect says it's a STUB that needs
+    # real implementation". The finding out-ranked the code's stated intent because it claimed to
+    # speak for the spec.
+    #
+    # `pass` inside a class WITH BASES is the suppression idiom; `raise NotImplementedError` in the
+    # same position is a genuine "implement me" and still flags. A class with no bases keeps today's
+    # behaviour entirely.
+    suppressing_overrides = set()
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef) and cls.bases:
+            for m in cls.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    body = [s for s in m.body if not (isinstance(s, ast.Expr)
+                                                      and isinstance(s.value, ast.Constant)
+                                                      and isinstance(s.value.value, str))]
+                    if len(body) == 1 and isinstance(body[0], ast.Pass):
+                        suppressing_overrides.add(id(m))
+
     for node in ast.walk(tree):
         if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and id(node) not in protocol_methods
+            and id(node) not in suppressing_overrides
             and not _is_abstract(node)
             and _is_stub(node)
         ):
             findings.append(
-                "function '%s' in module '%s' is a STUB/UNIMPLEMENTED (body is only pass / ... / raise NotImplementedError / a docstring) — implement it FULLY per the spec"
+                # NOT "per the spec". The reviewer does not read the spec and cannot know it requires
+                # this function — asserting it did is what made a worker override an explicit comment.
+                "function '%s' in module '%s' has an EMPTY BODY (only pass / ... / raise NotImplementedError / a docstring). If the spec requires this behaviour, implement it FULLY; if the emptiness is deliberate, say so in a comment and leave it."
                 % (node.name, mod)
             )
 

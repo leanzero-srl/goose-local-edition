@@ -72,6 +72,10 @@ OTHER TEST files
 # Now INCONCLUSIVE - never a finding, never a pass.
 COLLISION IN THE HARNESS
 
+# F69: an empty override is deliberate suppression, not an unimplemented stub. The finding also
+# stops asserting a spec requirement it cannot know about.
+has an EMPTY BODY
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

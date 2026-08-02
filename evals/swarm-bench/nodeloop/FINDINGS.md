@@ -2396,6 +2396,45 @@ Second time tonight I have asserted something about a live run before reading th
 second time the evidence was one command away. Both times the correction was more informative than the
 claim would have been.
 
+## F69 — the ONLY function the AST review ever flagged is a correct idiom, and it cost a fix round every run
+
+`vendorsync.api.log_message` is flagged in **8 of the 8 runs** that produced any review finding, and
+it is the **only** function ever flagged. It is not a defect.
+
+It is `BaseHTTPRequestHandler.log_message`, overridden with `pass` to silence default HTTP request
+logging — a standard, correct Python idiom — sitting under a comment that says *"silence default
+logging"*. **The spec never mentions logging at all.**
+
+The finding says: *"is a STUB/UNIMPLEMENTED … implement it FULLY per the spec"*. So every run a
+`wire-fix` worker spends a round re-implementing stderr logging the app deliberately suppressed. One
+worker's own reasoning records the contradiction and defers to the finding anyway:
+
+> "the comment says 'silence default logging', but the defect says it's a STUB that needs real
+> implementation"
+
+**The finding out-ranked the code's stated intent because it claimed to speak for the spec.** That is
+Mihai's through-line in its purest form: an instruction asserting a requirement that does not exist,
+and a worker correctly obeying it.
+
+It also survived the best build in the corpus — the 83.4% / crunch-7/7 run carried the identical
+finding and cleared it with a fix round, so the cost is paid even when nothing is wrong.
+
+**Two fixes, both narrow.**
+
+1. **An empty override is a deliberate suppression.** `pass` inside a class WITH BASES is now exempt.
+   Validated against the real cases and the counter-cases: `log_message` (pass, subclass) is exempt;
+   `do_GET` raising `NotImplementedError` in a subclass still flags; `compute_total` with `pass` in a
+   class with NO bases still flags, so today's behaviour is preserved wherever the idiom does not
+   apply.
+2. **The finding no longer asserts the spec.** The reviewer does not read the spec and cannot know it
+   requires the function. It now states what it actually knows — *"has an EMPTY BODY … If the spec
+   requires this behaviour, implement it FULLY; if the emptiness is deliberate, say so in a comment
+   and leave it"* — which lets the worker weigh the code's own comment instead of being overruled by
+   a claim about a document it cannot see.
+
+Third phantom-finding class found tonight, after the ``GET /` `` 404 (F32) and the port collision
+(F67) — and the most reproducible of the three at 8 of 8.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
