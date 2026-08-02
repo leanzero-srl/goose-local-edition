@@ -227,3 +227,9 @@ characters of reasoning instead
 # from memory — and those signatures become frozen contracts. Now it is told the truth and asked to
 # CALIBRATE instead.
 UNVERIFIED rather than guessing a plausible-looking name
+
+# F153: the sink's FIRST instruction was "Confirm EVERY file listed above actually exists on disk" —
+# an explicit order to spend turns on ls/cat over a 13-20 file manifest already pasted above it. F152
+# measured ~30% of the sink's turns going to exactly that, on the task holding 69% of all
+# low-concurrency time. The engine now stats the files itself and hands over the RESULT.
+FILE CHECK, ALREADY DONE FOR YOU

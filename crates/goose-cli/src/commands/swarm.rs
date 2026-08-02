@@ -19317,8 +19317,54 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  what you actually ran and what it printed, and never a check you did not run.\n\n"
                     .to_string()
             } else if req.owned_files.is_empty() {
-                "You own no single file — you work ACROSS this whole layout. Confirm EVERY file listed \
-                 above actually exists on disk and the tests cover each module. CRITICAL: a green pytest \
+                // THE ENGINE CAN STAT THE FILES. IT WAS ORDERING THE SINK TO GO AND DO IT INSTEAD.
+                //
+                // "Confirm EVERY file listed above actually exists on disk" is the FIRST instruction the
+                // sink receives, and on a 13-20 file manifest it is an explicit order to spend turns on
+                // `ls` and `cat`. MEASURED (F152) across 12 sink digests / 162 calls: `cat` 20% and
+                // `ls`/`find`/`tree`/`grep` 12% — ~30% of the sink's turns re-discovering a tree whose
+                // full manifest is already pasted above this very sentence.
+                //
+                // That is expensive precisely here. F151: `integrate-verify` holds the fleet at <=2 tasks
+                // for 158 of the 229 low-concurrency minutes across 11 runs — 69% of ALL of it — and
+                // F152: its cost is entirely TURN COUNT (79 s/call against a fleet median of 83, so
+                // nothing is gained by making calls faster).
+                //
+                // So the engine computes the answer — one stat per manifest entry, no model call, no
+                // possibility of a hallucinated "it exists" — and hands over the RESULT. The sink is left
+                // to do the part only it can do: RUN the program end to end. That half of the paragraph
+                // is untouched, because it is the sink's actual job.
+                let existence = {
+                    let missing: Vec<&String> = req
+                        .all_files
+                        .iter()
+                        .filter(|f| !root.join(f).exists())
+                        .collect();
+                    if req.all_files.is_empty() {
+                        String::new()
+                    } else if missing.is_empty() {
+                        format!(
+                            "FILE CHECK, ALREADY DONE FOR YOU: all {} files in the layout above exist on \
+                             disk. Do NOT `ls` or `cat` to re-confirm that — it is settled. ",
+                            req.all_files.len()
+                        )
+                    } else {
+                        format!(
+                            "FILE CHECK, ALREADY DONE FOR YOU: {} of {} files exist; these are MISSING: \
+                             {}. Do NOT go looking for the others — they are present. ",
+                            req.all_files.len() - missing.len(),
+                            req.all_files.len(),
+                            missing
+                                .iter()
+                                .map(|f| f.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                };
+                format!(
+                "You own no single file — you work ACROSS this whole layout. {existence}Confirm the tests \
+                 cover each module. CRITICAL: a green pytest \
                  suite does NOT prove the program works — unit tests usually call functions directly and \
                  NEVER invoke the CLI/entry point, so a broken argparse, a bad import, or a crashing \
                  `main()` passes every test yet fails on every real invocation. You MUST actually RUN the \
@@ -19331,7 +19377,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                  listed and actually invokable; a command group/parser that defines no commands, or omits \
                  some, means the modules exist but the program is UNUSABLE — wire them all. Report any \
                  missing file, unregistered command, or runtime crash.\n\n"
-                    .to_string()
+                )
             } else {
                 // Pre-create each owned file's parent directory so the worker NEVER needs mkdir — workers
                 // have spammed `mkdir` 27x on a nested path and paralysed the task (0 writes). Deterministic
