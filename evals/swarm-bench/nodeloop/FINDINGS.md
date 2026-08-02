@@ -7077,3 +7077,36 @@ STILL OPEN, and each needs a real read rather than a fact-check:
                                                                 instrument reads, and on F163's fix)
     ad87dd4c3  compaction: structured summary output           (`compact` appears 13 times in
                                                                 swarm.rs — compaction IS our path)
+
+## F168 — review.py's clock froze during the sink, and a frozen clock reads exactly like a wedged engine
+
+Two consecutive ticks both printed `elapsed 73.8 min` with the same `last = judge_verdict`. I read
+that as a possible wedge and went to check liveness. Everything was fine:
+
+    loop alive pid=78290 | engine running pid=78293 | heartbeat 0s old
+    sink digest integrate-verify.json written 2 minutes ago
+    lms ps: workhorse PROCESSINGPROMPT, the other two IDLE
+    run.jsonl last written 20 minutes ago
+
+The run was at **94 minutes**, not 73.8. `level1_logs` derived elapsed as `last_event - first_event`,
+and `integrate-verify` emits NOTHING between its dispatch and its completion — so during the sink,
+which is the longest phase and 69% of the low-concurrency time (F151), the clock STOPS. The one phase
+where I most need to know how long the run has been going is the exact phase the instrument goes
+blind in.
+
+Fixed to print all three, because the gap between them is the information:
+
+    elapsed 94.8 min WALL (73.8 min of log, 21.0 min quiet), 323 events, last = judge_verdict
+
+"21.0 min quiet" is now a first-class readout, and it immediately says something F152 predicted: this
+sink is at 21 minutes against a measured median of 21.8, so it is a typical sink, and it is
+approaching the 30.0-min `sink_cap_secs` that 3 of 8 prior sinks hit exactly.
+
+LESSON (50): AN INSTRUMENT THAT DERIVES TIME FROM ITS OWN DATA STREAM STOPS WHEN THE STREAM STOPS.
+Wall-clock must come from the clock. A metric computed from event timestamps silently measures event
+ACTIVITY, not elapsed time, and the two diverge precisely when a phase goes quiet — which is when
+something is either very wrong or very slow, and you cannot tell which from a frozen number.
+
+Live, alongside it: 1 task in flight against 6 slots, two whole nodes IDLE for 21 minutes. That is
+F151/F162 happening in real time — the free capacity exists exactly when there is nothing left to
+assess with it.
