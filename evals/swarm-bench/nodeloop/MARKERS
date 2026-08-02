@@ -100,6 +100,12 @@ complete_fix_completed
 GOOSE_SWARM_SPEC_REPAIR
 spec_repair_wave
 
+# F78: grounding was `is_mcp && ok`, so a scout reading the vendor's live docs the only way available
+# to it (curl) was recorded as having looked NOTHING up — and doc_facts, the verbatim worker channel,
+# filters on exactly that flag, so it was structurally dead on this bench. Now a shell that carries BOTH
+# a URL and a fetching program grounds; `echo <url>` still does not.
+fetched_external
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

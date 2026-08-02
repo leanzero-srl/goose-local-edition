@@ -2659,3 +2659,71 @@ is forced, and it is not the order this loop was about to build in:
 `passed` is `verdict.findings.is_empty()`, so this measures "the verifier still had something to
 say", not "the app is broken". Two of the six runs crunched 3/5 and better with findings outstanding.
 The 0/13 is a fact about the LOOP, not a verdict on the apps.
+
+---
+
+## F76 — F61 ANSWERED: the judge is starved of idle slots, 80% of the time
+
+First run on the F61 engine, harvested live:
+
+| judge_skipped reason | count | share |
+|---|---|---|
+| `no_idle_device` | 4 | 80% |
+| `nothing_produced_yet` | 1 | 20% |
+| (judge_verdict — actually ran) | 7 | — |
+
+The decisive path is UPSTREAM of the F57 semantic gate, exactly as predicted: the scheduler hands the
+judge a model ONLY when a device is idle, so on a busy fleet the judge simply never gets one. The old
+4.3%/95.7% split was unattributable because four `JudgeOutcome::ok()` paths all logged
+`confidence 1.0, hint ""`; `judge_skipped{reason}` separates them and the answer is not the semantic
+gate at all.
+
+This settles Mihai's design question ("whenever a node is empty it should take the judge role — that
+should eliminate the hard-coded timings"). The mechanism is built and correctly gated on idle. The
+constraint is supply. Note the direction, because it is one of the few places the architecture is
+already on the right side of goal one: **more nodes means more idle slots means more judging.** The
+judge gets better with fleet size rather than worse.
+
+## F77 — F60 ANSWERED, and it exonerates research: the scout DOES report `/v1`
+
+`research_completed.finding_texts`, live run, architecture lens:
+
+> `| List endpoint | GET /v1/payments?cursor=&limit= — cursor-paginated, ends when next...`
+
+The literal is present, verbatim, in a markdown table, with the base URL and the bearer token. So the
+`/v1` loss is NOT what the scout is asked to report. It is downstream — which is what F72 (the
+detailer's verbatim rule covering filenames but not external literals) was written for. F72 is HELD
+in git and not in the live binary; this readout is the evidence that it targets the right place.
+
+## F78 — grounding cannot fire on this bench, so the verbatim channel is structurally dead
+
+Chasing F77 downstream turned up the bigger defect. The same event reported `grounded: 0` and
+`looked_nothing_up: 2` for the run above.
+
+**That zero is a broken instrument, and the vendor trace proves it:** 11 `curl/8.7.1` requests reached
+`/v1/payments` and `/v1/docs` during the run. The scout read the live docs and quoted them.
+
+The cause is one predicate. `research_lookups` counted `t.ok == Some(true) && t.is_mcp` — MCP calls
+only. And `levers_resolved` for this run says `research_tools: {"available": [], "can_look_things_up":
+false}`: **there are no MCP tools attached at all on this bench.** So `grounded` could never be true,
+on any run, ever. The engine's own comment admits the shape without drawing the conclusion — "which is
+always the case when the research tools are not attached".
+
+The consequence is not cosmetic. `doc_facts` — the ONE channel that routes research to workers
+VERBATIM, under the banner "these were LOOKED UP with a real tool, use them EXACTLY, do NOT paraphrase"
+— is filtered on `f.grounded`. On this bench it is always empty. The single mechanism designed to stop
+API literals being paraphrased away has never carried a byte here.
+
+**Fix:** `ToolCallRecord` gains `fetched_external`, set when a shell-ish call's arguments carry BOTH an
+http(s) URL AND a fetching program (curl/wget/urllib/httpx/...). `research_lookups` now counts
+`is_mcp || fetched_external`.
+
+Both halves of that predicate are load-bearing and the original rule's concern is preserved: it exists
+to stop a trivial `echo` laundering a guess into a "verified fact", so `echo https://x` still grounds
+nothing, and neither does `curl --help`. The pre-existing test asserting a bare shell does not ground
+still passes unchanged.
+
+This is the same shape as F71 and F72 — a channel built for exactness, defeated by a predicate that
+could not see the form the input actually takes. Three instances now, which is a pattern rather than a
+coincidence: **every verbatim/grounding path in this engine should be audited against what the bench
+actually produces, not against what it was imagined to produce.**
