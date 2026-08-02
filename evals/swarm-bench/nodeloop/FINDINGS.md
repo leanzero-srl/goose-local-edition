@@ -7413,3 +7413,41 @@ re-verification is not fail-closed, and that is worth more than the utilisation.
 
 QUEUED ENGINE FIX (new, cheap): emit `sink_review` unconditionally with `prewarmed: 0` rather than
 suppressing it, so DEAD and INERT stop looking identical. Same one-line shape as the rest.
+
+## F176 — a 16-vs-0 result died to its own positive control, ten seconds after I computed it
+
+Measuring what the `sink_review` arm exists for — fleet work performed DURING the sink window —
+against baseline r0 as the control:
+
+    baseline r0 (lever OFF)   sink 25.1 min (finished)   fleet calls in window:  0   = 0.00/min
+    sink_review r0 (ON)       sink 19.4 min (RUNNING)    fleet calls in window: 16   = 0.83/min
+
+Sixteen against zero, in the exact direction the arm predicts, with a clean unit. It is **invalid**
+and I am striking it before it goes anywhere.
+
+**The control:** can that query see baseline r0's calls AT ALL?
+
+    fleet log files on disk: 527   (oldest 06-25 20:40, newest 08-03 01:21)
+    baseline r0 ran 22:11:29 -> 23:48:48
+    log files with mtime inside baseline r0's WHOLE 97-minute run: 0
+
+**Zero across the entire run, not just the sink.** I personally read worker prompts from that run
+earlier tonight (F146's check quoted files at 22:29-22:32), so those files existed and have since
+been evicted by log retention. The zero measures the retention policy, not the engine — the classic
+blind instrument, and it happened to point exactly the way I wanted.
+
+**What SURVIVES, and why.** F175's conclusion does not depend on this at all: it rests on `lms ps`
+showing **three nodes GENERATING against one in-flight task**, a direct observation of the fleet at
+that instant, not a log-derived count. The 16 calls in the treatment window are also real — they are
+present on disk. The only thing that died is the COMPARISON, because its control arm cannot be seen.
+
+**How to measure it properly**, since the question is still the right one: take the sink-window call
+count from the NEXT baseline (r1 or r2, which the F170 reorder puts first) while its logs are still
+fresh, and compare against `sink_review`'s number captured tonight. Same instrument, both arms within
+retention. Log-derived comparisons across hours are only valid inside the retention window, and that
+window is now known to be shorter than three hours under this fleet's call volume.
+
+LESSON 58: **A LOG-DERIVED ZERO FROM THE PAST IS A CLAIM ABOUT RETENTION UNTIL PROVEN OTHERWISE.**
+The campaign's standing rule is "an uncontrolled zero is not evidence"; this is its time-shifted form.
+Before comparing a historical window to a live one, count what the query can see in the historical
+window OVERALL — not in the sub-window being measured, which is exactly where a blind result hides.
