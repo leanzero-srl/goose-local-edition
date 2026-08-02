@@ -1822,6 +1822,80 @@ stands, which is the unit-test path — every real call site passes the run's pl
 Both cases pinned by tests built from the real traceback, and the guard is verified to BITE: removing
 the restriction fails the suite.
 
+## F53 — MY PREDICTION WAS WRONG. The build scored 83.4% and crunch passed 7/7.
+
+F51 was registered before the outcome precisely so it could fail, and it failed comprehensively.
+
+    PREDICTED   crunch <= 3 of 7,  score 40-55%
+    ACTUAL      crunch  7 of 7,    score 83.4%
+
+Every check passed. `fetch_all_payments` returned all **247** payments in 2.0s. The vendor trace shows
+**52 successful GETs to `/v1/payments` from the built app** (`Python-urllib`) and **zero 404s**. The
+client source contains `/v1/payments` three times.
+
+And it did that with `meridian` shipping a **105-character brief**, `/v1` in **zero** task
+descriptions, and a plan confidence of 84 that never cleared its own floor of 85.
+
+**So F36 is refuted as a deterministic predictor.** A thin brief on the module owning the external
+contract does NOT determine the build. The worker recovered the path itself — which is exactly what
+the audit's retraction below makes possible.
+
+The correlation across all 9 scored runs still separates, but barely, and the story has changed:
+
+| `/v1` in the client's brief | n | scores |
+|---|---|---|
+| yes | 3 | 0.8998, 0.8872, 0.8673 |
+| no | 6 | **0.8336**, 0.5000, 0.4424, 0.4424, 0.4270, 0.2999 |
+
+The gap between the groups collapsed from 37 points to **3.4**, and the "no" group now spans 0.30 to
+0.83. A predictor whose negative class covers half the scale is not a predictor. What it looks like
+now is a *risk factor* — losing the brief makes a bad build more likely and does not cause one.
+
+## F54 — RETRACTION: the scouts DO have tools. F34 was wrong, and it was propagating.
+
+The audit checked what I asserted. **32 of 33 scout activity digests contain a successful shell call
+carrying an http URL** — the scouts curl `/v1/docs`, trip the 429, exercise the 409 replay. Every
+agent gets the `developer` builtin with `shell` attached unconditionally.
+
+What they lack is an *MCP research extension*. `research_tools.available` lists only MCP extensions,
+and `grounded = is_mcp && ok` excludes shell by construction — so a run that made 17 vendor HTTP calls
+reports `available: [], can_look_things_up: false`. The event is not conservative, it is **wrong**,
+and I built F34 on it and then repeated "scouts have NO tools" as settled fact in every subsequent
+working note.
+
+This also explains F53: a worker handed a 105-character brief can still read the vendor documentation
+itself. The information channel that matters is not the plan — it is the worker's own shell.
+
+**The proposed fix is NOT being applied.** An adversarial pass refuted it convincingly: a `retrieved`
+flag defined as "a successful shell call whose command contains an http URL" is *more* launderable
+than the claim it replaces — the corpus already contains
+`MeridianClient('https://api.meridian.com/v1', ...)` printed by an import smoke test, against a host
+that does not exist. Every URL in the entire corpus is loopback to the bench's own fixture, and the
+flag would read true on 9 of 9 runs including the 42.7% one, so it has zero diagnostic power. Recording
+the diagnosis and rejecting the cure.
+
+## F55 — first measured retarget-discard survival, and the prefix reached 50 minutes
+
+The finished unit's prefix: **3014s, 90% of it planning, four redraft rounds** (735 / 620 / 719 /
+630s). Occupancy 0.3047 overall, 0.7174 in execute, `MAX USEFUL NODES 2.39`. Thirteen detail
+failures, all `timeout`, `meridian` losing its spec four times and still shipping a working client.
+
+Survival across the discarded rounds, keyed on OWNED FILES as the design requires:
+
+    round 1: 17 discarded, 9 came back by owned files (17 by id), 11,291 chars re-derived
+    round 2: 15 discarded, 4 came back by owned files (15 by id),  4,531 chars re-derived
+
+The by-id number is inflated exactly as predicted — it counts the engine-generated `verify::*` tasks,
+which own no files and regenerate for free. The honest reuse opportunity is **~15,800 characters of
+model-authored spec across two rounds**, on tasks whose file ownership was unchanged. That is real,
+and it is now measured rather than assumed.
+
+**What this does to the queue.** `doc_fetch` was cell 2 on the argument that a lost `/v1` breaks the
+build. F53 says it does not, reliably. It stays queued — a verbatim document is still the densest
+instruction available and removes a coin flip — but it is no longer the highest-value question.
+`retarget_off` is, by a wide margin: 50 minutes of prefix, 90% planning, four rounds, ~15,800 chars
+re-derived, and the build came out fine anyway.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
