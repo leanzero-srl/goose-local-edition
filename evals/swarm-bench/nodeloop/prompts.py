@@ -38,9 +38,19 @@ LOGS = os.path.expanduser("~/.local/state/goose/logs/llm_request.*.jsonl")
 # pooled into a swarm measurement.
 FLEET = "qwen3.6-27b"
 
-# Markers that identify what the call IS. A swarm worker is the only kind that carries the agreed
-# file layout or a frozen dependency API, so those two are what make the classification deterministic
-# rather than a size heuristic.
+# Markers that identify what the call IS.
+#
+# ⚠ THE FIRST VERSION OF THIS WAS WRONG AND POOLED THE SINK IN WITH THE WORKERS. It keyed on
+# "PROJECT FILE LAYOUT" / "a dependency you import" — but `integrate-verify` carries BOTH, because it
+# needs the map and the contracts more than anyone. So the "worker" cell mixed 20k-char workers with
+# 23k-char sinks, which is the same pooling error F138 was written to stop, one level finer.
+#
+# The DISCRIMINATOR is ownership, because that is what actually changes the rules a call receives: a
+# file-owning worker is told "write NOTHING outside them"; the sink is told "you own no files, you may
+# edit ANY file the fix requires". Two opposite instructions, so they must never share a cell.
+OWNS = "YOU OWN — write EXACTLY these ABSOLUTE paths"
+SINK = ("You own no single file", "You own no file and must WRITE NO file",
+        "you may edit ANY file the fix requires")
 WORKER = ("PROJECT FILE LAYOUT", "a dependency you import")
 # F87's defect signature: Mihai's global CLAUDE.md reaching a 27B that is writing a Python app.
 HINTS = ("MANDATORY rules (ALL projects", "Workhorse — Mac Studio sync", "Project Hints")
@@ -54,8 +64,12 @@ def sys_text(msg) -> str:
 
 
 def classify(t: str, n: int) -> str:
-    if any(m in t for m in WORKER):
+    if OWNS in t:
         return "worker"
+    if any(m in t for m in SINK):
+        return "sink/fix"
+    if any(m in t for m in WORKER):
+        return "planner/detail"
     if n < 600:
         return "judge/spiral"
     if n < 3000:
@@ -105,7 +119,7 @@ def main(argv: list[str]) -> int:
         print(f"    window: after {datetime.datetime.fromtimestamp(since)}")
     print()
     print(f"{'kind':<16}{'n':>4}{'sys median':>12}{'sys max':>10}{'tools':>8}{'msgs median':>13}  inherited-hint calls")
-    for kind in ("worker", "planner/detail", "scout/small", "judge/spiral"):
+    for kind in ("worker", "sink/fix", "planner/detail", "scout/small", "judge/spiral"):
         g = [r for r in rows if r["kind"] == kind]
         if not g:
             continue
