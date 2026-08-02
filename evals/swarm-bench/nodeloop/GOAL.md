@@ -30,9 +30,23 @@ INSTRUCTIONS. Every fix should be checkable against that.
 
 ---
 
-## G1 — CLOSED 2026-08-02. Verdict in FINDINGS.md F107. 8 of 9 predictions settled.
+## G1 — CLOSED 2026-08-02. Verdict F107, **headline RETRACTED by F112**. 8 of 9 predictions settled.
 
-## CURRENT GOAL — G2: arm `spec_repair` and measure the repair tail, which is now finally observable
+⚠ **DO NOT REPEAT F107's HEADLINE.** "MAX USEFUL NODES = 1.92, the plan is the ceiling, api-web = 49.5%
+of node-busy" was built on a phantom span: a task SUPERSEDED BY A SPLIT never completes, and
+occupancy.py credited it to `t_end` — 9.1x its real 651s. Corrected: occupancy **0.4289**, biggest task
+**integrate-verify at 29%**, solo time **1590s ALL of it the sink**, **MAX USEFUL NODES = 3.28** against
+a pool of 3. **The plan is NOT the bottleneck. The SINK is.**
+
+## CURRENT GOAL — G8: SHORTEN THE SINK. It is 29% of node-busy and 100% of the solo time.
+
+`integrate-verify` held one node for **1590s — 23.6% of the whole run** — while the other two idled.
+That is now the single largest serial region, and the plan around it is fine (`MAX USEFUL NODES` 3.28
+> pool 3). `fan_verify` already shards per-module verification into `verify::<M>`, and those ran; what
+remains is the single JOIN. Read what integrate-verify is actually INSTRUCTED to do before proposing
+anything — F101's lesson is that a verdict can be right while its reason is wrong.
+
+## NEXT — G2: arm `spec_repair` and measure the repair tail (blocked until the boundary ships F106)
 
 **Opened 2026-08-02 09:35 local. engine_build 1785652162-235742240.**
 
