@@ -6211,3 +6211,64 @@ anything against, including this.
 Registered so it cannot be quoted loosely later: **the baseline cell's headline is its SPREAD, not
 its first value.** If the spread comes back near 46 points again, no arm in the queue is readable and
 the next build's work is variance reduction rather than levers.
+
+---
+
+## F148 — the engine instructs its own architect to make the plan NARROW, and 19 of 19 plans obeyed
+
+Auditing the planner prompts — the last un-decomposed block — turned up the most direct engine-side
+limit on whether more nodes can help at all, and it is **ON by default**.
+
+`converge` defaults to **true** (swarm.rs:1033, part of the golden bake). With it on, the architect
+receives both of these:
+
+> `homo_hint` — *"Commit to the SIMPLEST CANONICAL decomposition: **the FEWEST cohesive modules** that
+> fully cover the spec … **Do NOT over-split; do NOT invent extra modules.**"*
+>
+> `count_clause` — *"decompose into the **FEWEST** cohesive module subtasks … target is usually
+> **{worker_count} to 2x {worker_count}**"*
+
+With it OFF, the very next branch says the **opposite**: *"Split **AGGRESSIVELY** into many fine
+independent subtasks — do NOT fear interface divergence"*, and the target becomes 2x-3x worker_count.
+
+### It is obeyed exactly
+
+Module counts across **19 archived plans** (producing tasks that are not tests, verifies or the sink):
+
+```
+3 3 3 4 4 4 4 4 4 4 5 5 5 5 5 5 5 6      median 4
+```
+
+**Every single one falls inside [worker_count, 2x worker_count]** for a 3-node fleet. This is not an
+aspiration the weak model ignores — it lands in the band 19 times out of 19.
+
+**Median 4 modules against SIX concurrent slots** (3 nodes x PARALLEL 2). And modules are the level-0
+roots: they are the only tasks runnable at t=0, because tests and `verify::<M>` depend on them. So at
+the start of execute the plan can occupy about four of six slots by construction.
+
+### Why it is there, and why that is the problem
+
+Its own comment says it plainly: the old hint *"literally told the weak model to split AGGRESSIVELY …
+self-inflicting the subtask-count variance that `plan_agreement` penalizes"*, so converge steers
+toward the simplest canonical decomposition *"so independently drafted plans CONVERGE"*.
+
+**That is an INTERNAL metric.** The engine narrows the plan so its own cross-draft agreement score
+rises. F53 already observed that the redraft ladder optimises agreement rather than build quality;
+this is the same trade one level earlier, and it is the default.
+
+This is Mihai's first directive in its most concrete form. If more nodes appear not to help, look for
+the mechanism that prevents them from helping — and here is one, installed deliberately, to make a
+measurement look better.
+
+### Queued as `converge_off`, reps 3, with its risk registered FIRST
+
+**Readouts, all four read together:** module count per plan, max antichain width, execute occupancy,
+and **the prefix**.
+
+**REGISTERED RISK, before the run:** converge is described in-tree as *"the proven agreement raiser"*,
+and low agreement is exactly what drives the redraft ladder — which cost this build's own baseline
+**2 redraft rounds and a 2,569 s prefix**. So `converge_off` can plausibly win on width and LOSE on
+wall-clock. A score alone will not settle it; if width rises and the prefix rises further, the answer
+is that convergence should be cheaper, not absent.
+
+preflight: `GOOSE_SWARM_CONVERGE` present in this binary, every queued arm can fire.
