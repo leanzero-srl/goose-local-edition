@@ -3516,3 +3516,51 @@ made a collect fail then pass, so the variant is now evidence-backed — but it 
 with the leak reaped the symptom should stop occurring. If a collect failure appears on a run with a
 clean port range, THAT is the evidence that the variant is needed, and it will be added then rather
 than pre-emptively suppressing a finding class.
+
+---
+
+## F94 — I killed the live sweep with the control test for the reaper I had just written
+
+The sweep (pid 14769) vanished mid-unit: no STOP sentinel, no `[abort]` line, no error — the loop log
+simply ends at `>>> 10:13:17 NOW: baseline-n2-r0` and nothing follows. `swarm-2node-r0` was 33 minutes
+in and about to reach `plan_loaded`, the first unit on this engine with a clean shot at dispatch.
+
+**I killed it.** F93's control test called `reap_stray_listeners()` from a throwaway test process. The
+reaper kills every LISTENER in the bench port range except `os.getpid()` — and `os.getpid()` was the
+TEST's pid, not the sweep's. The sweep holds the vendor service in-process on a port inside that very
+range (`lsof` had shown `14769 127.0.0.1:8933` twice in this session). Relative to my test, the live
+sweep was a stray. It was killed by exactly the tool written to protect it.
+
+### The design lesson, which is bigger than the mistake
+
+The guard `if pid == me: continue` is correct AND its surrounding assumption was wrong. **A guard
+written as "not me" silently means "everything except whoever happens to be calling."** It is only
+safe while the caller is the sweep, and nothing enforced that — least of all a test, whose whole
+purpose is to call it from somewhere else.
+
+The fix is to make the rule POSITIVE instead of negative: kill only what is recognisably a leaked APP
+SERVER. A leaked server looks like `python -m <pkg>`; the sweep looks like `python .../sweep.py` and
+the engine like `.../goose swarm run`, and all of those are now explicitly spared. The asymmetry is
+deliberate and stated in the code: a false kill costs a dead sweep and an hour of fleet time; a false
+spare costs one held port that the next unit's port allocation steps over.
+
+### Controls, three directions — and #2 exists only because of this incident
+
+1. **POSITIVE** — a real leaked app server (`python -m http.server`) is killed, asserted alive first
+   so the test cannot pass vacuously. PASS.
+2. **THE ONE THAT MATTERS** — a process that LOOKS like a sweep, holding a listener in range, and
+   genuinely foreign to the caller, is SPARED. PASS. This is the exact case that killed the run, and
+   before the hardening it would have failed.
+3. **NEGATIVE** — the caller's own pid never appears in the kill list. PASS.
+
+### Cost and honest accounting
+
+Four units lost this session: three to intruder engines (F89) and this one to me. Every one was lost
+during PLANNING, before dispatch, so **G1 still has six predictions unanswered** and the engine has
+never yet been observed past `plan_loaded`.
+
+This is PATTERN 6 again, one level up. F93 recorded "my own controls can false-pass". F94 is worse:
+the control did not merely fail to prove something — **it caused the damage it was written to prevent**.
+A test that exercises a destructive function against the live environment is not a test, it is the
+incident. Any future destructive helper gets its controls run against a SANDBOX of fake processes,
+never against the range the real system is using.
