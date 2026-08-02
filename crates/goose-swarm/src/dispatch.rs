@@ -13,6 +13,20 @@ pub struct ToolCallRecord {
     pub is_mcp: bool,
     /// Whether the tool response was ok; `None` if no response arrived (e.g. a max-turns cutoff).
     pub ok: Option<bool>,
+    /// True if this call demonstrably FETCHED AN EXTERNAL RESOURCE — a shell that ran curl/wget or a
+    /// urllib/requests one-liner against an http(s) URL.
+    ///
+    /// Grounding used to mean `is_mcp && ok`, so a scout that read the vendor's live docs the only way
+    /// available to it — `curl http://.../v1/docs` — was recorded as having looked nothing up. MEASURED on
+    /// a bench run with `research_tools: {available: [], can_look_things_up: false}`: 11 curl requests
+    /// reached the vendor, the scout quoted `GET /v1/payments?cursor=&limit=` verbatim in its report, and
+    /// the engine still logged `grounded: 0`. Because the verbatim worker channel (`doc_facts`) is filtered
+    /// on `grounded`, that channel was structurally dead on every run of this bench.
+    ///
+    /// This is deliberately NOT "any successful shell". The original rule exists to stop a trivial `echo`
+    /// laundering a guess into a settled fact, and that concern is real; the predicate therefore requires a
+    /// URL *and* a fetching program, so `echo https://x` still grounds nothing.
+    pub fetched_external: bool,
 }
 
 /// A successful dispatch's result: the task output plus observability (session id + tool calls).

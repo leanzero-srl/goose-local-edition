@@ -4666,6 +4666,7 @@ mod tests {
             name: name.to_string(),
             is_mcp,
             ok,
+            fetched_external: false,
         };
         // A successful web-search / context7 call grounds it.
         let grounded = vec![
@@ -4705,6 +4706,7 @@ mod tests {
             name: name.to_string(),
             is_mcp,
             ok,
+            fetched_external: false,
         };
         // NeverCalled: no tool call at all — pure model reasoning.
         assert_eq!(classify_research_attempt(&[]), ResearchAttempt::NeverCalled);
@@ -8133,6 +8135,72 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// A scout that reads the vendor's live docs with `curl` has looked something up. One that echoes a URL
+    /// has not. MEASURED on a bench run whose `research_tools` was `{available: [], can_look_things_up:
+    /// false}`: 11 curl requests reached the vendor and the scout quoted `GET /v1/payments?cursor=&limit=`
+    /// verbatim, while the engine logged `grounded: 0` — so the verbatim worker channel, which filters on
+    /// `grounded`, could never carry anything on this bench.
+    #[test]
+    fn a_shell_that_actually_fetches_a_url_grounds_a_finding_but_an_echo_does_not() {
+        let args = |s: &str| serde_json::json!({ "command": s });
+
+        // The real case this fixes: the only channel available for reading the vendor's docs.
+        assert!(args_fetch_external_url(
+            "developer__shell",
+            &args("curl -s http://127.0.0.1:8930/v1/docs")
+        ));
+        assert!(args_fetch_external_url(
+            "developer__shell",
+            &args("wget -qO- https://example.com/openapi.json")
+        ));
+        assert!(args_fetch_external_url(
+            "developer__shell",
+            &args("python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8930/v1/payments').read())\"")
+        ));
+
+        // THE LAUNDERING CASE the MCP-only rule existed to stop, and which must STILL be stopped: a shell
+        // that merely mentions a URL grounds nothing, or a trivial command in front of an invented answer
+        // would buy the guess a "verified fact" stamp and get routed to every worker verbatim.
+        assert!(!args_fetch_external_url(
+            "developer__shell",
+            &args("echo http://127.0.0.1:8930/v1/docs")
+        ));
+        assert!(!args_fetch_external_url(
+            "developer__shell",
+            &args("echo hello")
+        ));
+        assert!(!args_fetch_external_url(
+            "developer__shell",
+            &args("ls -la")
+        ));
+        // A fetcher named without a URL is not a fetch either.
+        assert!(!args_fetch_external_url(
+            "developer__shell",
+            &args("curl --help")
+        ));
+        // Not a shell at all: writing a file that happens to contain a URL is not a lookup.
+        assert!(!args_fetch_external_url(
+            "developer__text_editor",
+            &serde_json::json!({"path": "a.py", "content": "URL = 'https://api.example.com'; requests.get(URL)"})
+        ));
+
+        // And the whole point: a grounded shell fetch now counts as a research lookup, exactly as an MCP
+        // call does, while the echo still does not.
+        let rec = |name: &str, is_mcp: bool, ok: Option<bool>, fetched: bool| ToolCallRecord {
+            name: name.to_string(),
+            is_mcp,
+            ok,
+            fetched_external: fetched,
+        };
+        assert_eq!(
+            research_lookups(&[rec("developer__shell", false, Some(true), true)]).len(),
+            1
+        );
+        assert!(research_lookups(&[rec("developer__shell", false, Some(true), false)]).is_empty());
+        // A fetch that FAILED grounds nothing — the docs were not read.
+        assert!(research_lookups(&[rec("developer__shell", false, Some(false), true)]).is_empty());
+    }
+
     /// The rule that makes racing N fix agents safe instead of merely triple the cost. Every case here is
     /// a shape the corpus actually produced: 13 of 13 archived repair rounds ended with findings
     /// outstanding, and the count ROSE in 3 of them under the current promote-on-agent-Ok behaviour.
@@ -8908,7 +8976,7 @@ fn build_reasoning(texts: &[String]) -> String {
 fn build_worker_digest(
     tool_calls: &[ToolCallRecord],
     call_records: &[(String, String, Option<bool>, String)],
-    pending: &std::collections::HashMap<String, (String, bool, String)>,
+    pending: &std::collections::HashMap<String, (String, bool, bool, String)>,
     texts: &[String],
     malformed: usize,
     thinking_chars: usize,
@@ -8947,7 +9015,7 @@ fn build_worker_digest(
         .collect();
     // In-flight calls (not yet resolved) as provisional records: ok:null → the desktop's classifyCall renders
     // them as "running…" so a node mid-call reads as CALLING, not idle.
-    for (name, is_mcp, summary) in pending.values() {
+    for (name, is_mcp, _fetched, summary) in pending.values() {
         calls.push(serde_json::json!({
             "name": name, "summary": summary, "ok": serde_json::Value::Null, "result": "", "is_mcp": is_mcp
         }));
@@ -9106,10 +9174,40 @@ struct ResearchFinding {
 /// counting a trivial successful `echo`/`ls` as grounding would let an invented guess launder straight
 /// through the very gate this exists to close. It is also the right definition for the learning consumer
 /// (#90): an external fact is reusable stack knowledge; a local `grep` of this project is not.
+/// Did this tool call actually FETCH something from outside the process? True only for a shell-ish call
+/// whose text carries BOTH an http(s) URL and a program that retrieves one.
+///
+/// Both halves are load-bearing. Dropping the URL requirement would count `curl --help`; dropping the
+/// fetcher requirement would count `echo https://api.example.com/v1`, which is exactly the laundering the
+/// MCP-only rule was written to prevent — a trivial shell in front of an invented answer, dressed as
+/// grounding. A local URL counts: on this bench the vendor API *is* 127.0.0.1, and "grounded" means the
+/// scout read a real response rather than recalling one, not that the bytes crossed the internet.
+fn args_fetch_external_url(name: &str, args: &serde_json::Value) -> bool {
+    if !(name.contains("shell") || name.contains("process") || name.contains("bash")) {
+        return false;
+    }
+    let text = args.to_string().to_lowercase();
+    let has_url = text.contains("http://") || text.contains("https://");
+    let has_fetcher = [
+        "curl",
+        "wget",
+        "urllib",
+        "requests.get",
+        "httpx",
+        "http.client",
+        "fetch(",
+    ]
+    .iter()
+    .any(|p| text.contains(p));
+    has_url && has_fetcher
+}
+
+/// The tool calls that GROUND a research finding. A finding backed by none of these is the model's own
+/// recall, which may be good planning context but must never be routed to workers as a verified fact.
 fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
     tool_calls
         .iter()
-        .filter(|t| t.ok == Some(true) && t.is_mcp)
+        .filter(|t| t.ok == Some(true) && (t.is_mcp || t.fetched_external))
         .map(|t| t.name.clone())
         .collect()
 }
@@ -10990,7 +11088,7 @@ impl GooseAgentDispatcher {
         let mut thinking_chars: usize = 0;
         let mut last_thinking: String = String::new();
         let mut final_output: Option<String> = None;
-        let mut pending: HashMap<String, (String, bool, String)> = HashMap::new();
+        let mut pending: HashMap<String, (String, bool, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         // Parallel history to tool_calls that keeps, per call: a short summary of its arguments (the shell
         // line, edited path, query…) AND a snippet of its output, so the desktop run panel shows both what
@@ -11327,7 +11425,8 @@ impl GooseAgentDispatcher {
                                     let args_val = serde_json::to_value(&tc.arguments)
                                         .unwrap_or(serde_json::Value::Null);
                                     let summary = summarize_tool_call(&name, &args_val);
-                                    pending.insert(req.id.clone(), (name, mcp, summary));
+                                    let fetched = args_fetch_external_url(&name, &args_val);
+                                    pending.insert(req.id.clone(), (name, mcp, fetched, summary));
                                 }
                                 // MALFORMED CALL. The provider could not parse what the model emitted, so it
                                 // built the request as an Err — response_to_message does this for an invalid
@@ -11351,11 +11450,14 @@ impl GooseAgentDispatcher {
                                         name,
                                         is_mcp: false,
                                         ok: Some(false),
+                                        fetched_external: false,
                                     });
                                 }
                             },
                             MessageContent::ToolResponse(resp) => {
-                                if let Some((name, is_mcp, summary)) = pending.remove(&resp.id) {
+                                if let Some((name, is_mcp, fetched, summary)) =
+                                    pending.remove(&resp.id)
+                                {
                                     let ok = resp
                                         .tool_result
                                         .as_ref()
@@ -11388,6 +11490,7 @@ impl GooseAgentDispatcher {
                                         name,
                                         is_mcp,
                                         ok: Some(ok),
+                                        fetched_external: fetched,
                                     });
                                 }
                             }
@@ -11427,12 +11530,13 @@ impl GooseAgentDispatcher {
             }
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
-        for (_id, (name, is_mcp, summary)) in pending {
+        for (_id, (name, is_mcp, fetched, summary)) in pending {
             call_records.push((name.clone(), summary, None, String::new()));
             tool_calls.push(ToolCallRecord {
                 name,
                 is_mcp,
                 ok: None,
+                fetched_external: fetched,
             });
         }
         // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
