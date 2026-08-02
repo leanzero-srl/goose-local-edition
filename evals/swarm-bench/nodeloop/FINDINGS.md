@@ -5804,3 +5804,57 @@ rots it (lesson 9).
 `task_dispatched.attempt`, baseline 60%, target ~12%. This fix and the `reading_rules` change now
 push the same number from two different sites, which is why `kind_prompt` gets two independent
 chances to move it (F127).
+
+---
+
+## F140 — the split defect fired LIVE on the current baseline: a 2,929-char spec replaced by 30 characters, three times
+
+`split_inherit_spec` was queued on archived evidence (both 3-node losers split their most-detailed
+task; the 0.8708 winner never split). The precondition has now been confirmed on the RUNNING baseline
+rather than inferred from history — which is lesson 8, satisfied before the arm is bought instead of
+after.
+
+`baseline-n3-r0`, live:
+
+```
+plan task api-cli   files = api.py, web/index.html, __main__.py, __init__.py, README.md
+                    desc  = 2,929 chars      <- the largest producing brief in the plan
+SPLIT: api-cli  ->  ['backend-api', 'frontend-ui', 'entrypoint-docs']
+```
+
+With the lever OFF — today's default — `child_description()` (scheduler.rs:76-82) returns, for each
+of the three children, exactly:
+
+```
+(split of api-cli) backend-api
+```
+
+**~30 characters, in place of a 2,929-character spec that the run had already paid its whole planning
+prefix to produce.** Three times. The judge decided the task was too big for one worker and was
+right; the engine then handed each of the three workers essentially nothing to build from.
+
+With the lever ON the same function emits a file-scope header naming the child's own files, an
+explicit statement that the siblings are being written in parallel by other workers and must not be
+touched or waited for, and then the parent's FULL spec as shared context. **Pure string work — no
+model call, no new judgement, no dependency-semantics change** — which is why this is the cheapest
+real lever in the queue: it needs an experiment, not an implementation.
+
+### What this settles and what it does not
+
+**SETTLED:** the arm's GUARD condition. `task_split > 0` holds on this baseline, so the arm cannot be
+void by construction the way "ARM INVALID — splits=0" was. Two separate runs on two different builds
+have now split their single most-detailed task.
+
+**NOT SETTLED, and I will not claim it:** that this explains the 3-node deficit. The gap is ~15-20
+points against a measured 46-point same-config spread at n=1 (F134). The arm runs 3 replicates and
+the first job of the analysis is still the within-config spread.
+
+### One thing worth noting about the plan that produced it
+
+Q1 flagged `api-cli` as mixing three kinds across five files, and F124 measured that shape at a
++3.0pp non-effect — correctly noted, not charged. But this run shows the shape has a SECOND cost
+that F124's retry metric could never see: a five-file, three-kind task is exactly what the judge
+splits, and splitting is what discards the spec. The mixed-kind shape is cheap in retries and
+expensive in SPLITS, and only the first was measured. That does not re-open F124 — the corrector is
+still not worth building — but it does mean `split_inherit_spec`, not a planner change, is the fix
+that reaches this cost.
