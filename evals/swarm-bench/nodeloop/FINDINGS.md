@@ -5416,3 +5416,38 @@ Also corrected: `judge.rs:493`'s test comment says the worker made zero tool cal
 reasoning model streams thinking, **which the digest could not see**". The digest CAN see it now —
 `thinking_chars` was added later (swarm.rs:16491 notes it is `None` on digests predating the key).
 That comment describes a world that no longer exists.
+
+---
+
+## F132 — armcheck manufactured BLOCKED verdicts from a six-minute-old run
+
+The moment the post-boundary sweep restarted, `armcheck.py` reported:
+
+```
+BLOCKED  spec_repair        no repair round ran on the baseline — nothing to race
+BLOCKED  complete_parallel  max findings in any round = 0
+BLOCKED  spiral_thinking    no judge_observed events
+UNKNOWN  kind_prompt        no dispatches in the baseline
+```
+
+**None of that had happened YET.** Parking the pre-boundary results left the runs directory holding
+exactly one unit, six minutes old, still in research. `newest_baseline()` fell back to "any run with
+a run.jsonl", handed over an in-flight run, and every probe read absence as a verdict.
+
+This is the standing rule — **an UNCONTROLLED ZERO IS NOT EVIDENCE** — broken inside the very script
+written to stop arms being bought on bad evidence. And it is the P2 pattern the file's own docstring
+opens with: a precondition that never holds, reported as a property of the arm rather than of the
+observation.
+
+The damage it would have done is specific: `spiral_thinking` reports BLOCKED with "needs the
+post-F128 engine", and the post-F128 engine **is what is running now**. Acting on that line would
+have re-fixed a fix that shipped forty minutes earlier.
+
+**Fixed:** `is_complete()` requires a `run_finished` event; `newest_baseline()` returns the newest
+COMPLETE run, preferring a `baseline*` one; an explicitly-named partial run is refused with its
+reason. All three paths **exit 0** — "undecidable" must not be read as a green light and must not be
+read as a blocked arm either, because those call for opposite actions.
+
+Controls both ways: with no complete run on this build it refuses and names the parked pre-boundary
+directory while warning not to judge a new build's arms against it (that is what a boundary
+invalidates); pointed at a complete parked run it judges normally.

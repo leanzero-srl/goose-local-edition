@@ -267,17 +267,48 @@ def queued_reps() -> dict:
     return out
 
 
+def is_complete(run: pathlib.Path) -> bool:
+    """A baseline is only usable once it has FINISHED. An in-flight run's event stream is empty of
+    everything that has not happened YET, and every probe here reads absence as a verdict."""
+    for f in run.glob("*.jsonl"):
+        for line in f.read_text(errors="replace").splitlines():
+            if '"run_finished"' in line:
+                return True
+    return False
+
+
 def newest_baseline() -> pathlib.Path | None:
-    cands = [p.parent for p in RUNS.glob("baseline*/run.jsonl")]
-    if not cands:
-        cands = [p.parent for p in RUNS.glob("*/run.jsonl")]
-    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
+    """Newest COMPLETE run, preferring a `baseline*` one.
+
+    MEASURED the moment the post-boundary sweep restarted: the runs dir held exactly one unit, six
+    minutes old, with no dispatches. This function handed it over and every probe then reported a
+    confident verdict from an empty stream — `spec_repair` BLOCKED ("no repair round ran"),
+    `complete_parallel` BLOCKED ("max findings = 0"), `spiral_thinking` BLOCKED. None of those had
+    happened YET. That is the standing rule — an UNCONTROLLED ZERO IS NOT EVIDENCE — broken inside
+    the very script written to stop arms being bought on bad evidence.
+    """
+    named = [p.parent for p in RUNS.glob("baseline*/run.jsonl")]
+    for pool in (named, [p.parent for p in RUNS.glob("*/run.jsonl")]):
+        done = [p for p in pool if is_complete(p)]
+        if done:
+            return max(done, key=lambda p: p.stat().st_mtime)
+    return None
 
 
 def main(argv: list[str]) -> int:
     run = pathlib.Path(argv[0]) if argv else newest_baseline()
     if not run or not run.is_dir():
-        print("no baseline run to check against")
+        parked = sorted(RUNS.parent.glob("nodeloop-preboundary-*"))
+        print("NO COMPLETE BASELINE on this engine build — arm preconditions are UNDECIDABLE, not clear.")
+        print("  Nothing is BLOCKED and nothing is OK; there is simply no evidence yet. Exit 0 so this")
+        print("  cannot be read as a green light: wait for the first unit to reach run_finished.")
+        if parked:
+            print(f"  (pre-boundary runs are parked at {parked[-1].name}; do NOT judge a new build's")
+            print("   arms against them — that is what a boundary invalidates.)")
+        return 0
+    if not is_complete(run):
+        print(f"{run.name} has not FINISHED — refusing to judge arms against a partial event stream.")
+        print("  Every probe here reads absence as a verdict, so an in-flight run manufactures BLOCKED.")
         return 0
     ev = []
     for f in sorted(run.glob("*.jsonl")):
