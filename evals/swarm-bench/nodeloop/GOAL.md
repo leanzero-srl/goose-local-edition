@@ -194,6 +194,16 @@ disagreeing by tens of gigabytes while nothing is growing. Reclaim with
 **Delete `target/debug` only, and it is safe at any time** — the sweep executes
 `target/release/goose`, and debug is regenerable.
 
+**MEASURED 2026-08-02 17:05, so no future tick re-derives it or panics:** a full `cargo check -p
+goose-cli` (which rebuilds goose, goose-providers and goose-cli) took free space 204 -> 190 GB, and
+`target/debug` then measured **11 GB**. That is a ONE-TIME cost to a steady state, not a per-check
+tax — debug grows with distinct build configurations, not linearly per invocation (the historical
+64 GB was many checks AND tests across many configs). Against a 15 GB abort threshold there is 175 GB
+of headroom, so **no action; deleting it now would only buy a cold rebuild on the next check.**
+Also checked, because F97 cost hours: the one local snapshot is
+`com.apple.TimeMachine.2025-09-15-150504.local (dataless)` — **dataless**, so it holds no deleted
+blocks and the "delete frees nothing" pathology does NOT currently apply.
+
 **NEVER run `goose-clean --go` while a run is live.** It removes every `target/`, which INCLUDES the
 release binary the engine is currently executing. The skill's own guard already refuses while
 `goose swarm` is running; do not override it with FORCE.
