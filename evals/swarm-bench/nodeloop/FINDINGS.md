@@ -3831,3 +3831,66 @@ worker is fine" while the scheduler correctly concluded "this task is too big fo
 Those are different questions and it is right that they are separately decided. It also means the
 `ok`-heavy verdict distribution (33 of 37) is not evidence the judge is idle — six of those `ok`s were
 the observation window that preceded a structural intervention.
+
+---
+
+## F100 — the tick review, and the two defects it found on its first live run
+
+Mihai: *"before finalizing a tick you start a review of what was created last in logs versus the plan
+and versus your goal and then finally versus the overarching goal ... you own the supervision which I
+am not convinced you do."* And then, sharper: *"DOES THE PLAN MAKE SENSE? THEN: IS THE PLAN BEING
+FOLLOWED?"*
+
+He was right. Ticks had become event-driven — react to whatever broke — and the plan was being
+QUERIED (count the `/v1`s, count the tasks) rather than STUDIED. `review.py` now walks four levels
+(logs / plan / mini-goal / overarching goal) and ends on those two questions with a CONTINUE or
+INTERVENE verdict. The order is load-bearing: a faithfully-executed bad plan is still a bad run.
+
+**Its first live run found two defects that nothing in the old routine would ever have surfaced.**
+
+### 1. The planner builds the chokepoints the judge then has to split
+
+```
+Q1  DOES THE PLAN MAKE SENSE?   NO — fix the planner
+  BAD  main    owns 3 files (__init__.py, __main__.py, README.md)      [1416-char brief]
+  BAD  api-web owns 2 files (api.py, web/index.html)                   [3811-char brief]
+  warn 4 funnels with >=3 deps — they serialise the tail
+```
+
+`api-web` is exactly the task that stalled 11 minutes and had to be split into a backend and a
+frontend child (F99). **The split was repairing a planning error**, not solving a hard problem. The
+architect is told "default to a FLAT FAN", and it obeyed — but nothing stops one root owning two
+unrelated concerns, so the flat fan was four tasks wide when it should have been six.
+
+That is a planner fix, and it is upstream of every scheduler improvement: width 8 vs a 3-node pool
+means the plan is NOT the ceiling here, but two of its four roots were double-width chokepoints.
+
+### 2. `replanned` reported ZERO tasks added while adding two — and it made the review cry drift
+
+```
+Q2  IS THE PLAN BEING FOLLOWED? NO — drifting
+  DRIFT DISPATCHED BUT NEVER PLANNED: ['test-api-edge-cases', 'test-store-integrity']
+```
+
+Checked before believing, per the standing law — and the drift was FALSE. Both tasks were legitimately
+spliced by the replanner. The engine emitted:
+
+```
+Replanned { round: 0, added: [], stopped: false }
+```
+
+`added: []` with `stopped: false` is a contradiction: the empty case takes the other branch. The cause
+is at scheduler.rs — `let added = new_ready.clone()`. **`new_ready` is what became READY, not what was
+ADDED.** A spliced task whose deps are not yet satisfied is in the DAG and will run, but is absent from
+`new_ready`, so a successful replan can report zero additions. `spliced_ids` — the correct list — is
+computed two lines above and used only for `bonus_ids`.
+
+Fixed to emit `spliced_ids`. Note the shape: an event that cannot be reconciled against the dispatch
+log turns a CORRECT mechanism into a false alarm, and I would have chased phantom drift for an hour.
+PATTERN 4 again, and the review is now the thing that catches it.
+
+### Why this changes the loop rather than just adding a script
+
+The tick rules in GOAL.md now require `review.py` before finalising, and state the end condition
+Mihai gave: **rinse and repeat, and the repeat ENDS when the mini-goal is achieved and a piece of the
+overarching goal is fulfilled** — not when a run finishes and not when a number looks good.

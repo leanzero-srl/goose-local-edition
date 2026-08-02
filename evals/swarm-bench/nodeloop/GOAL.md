@@ -18,6 +18,14 @@ INSTRUCTIONS. Every fix should be checkable against that.
    kill it (supervisor BEFORE engine — `./loop.sh boundary`), batch the held fixes, cross, restart.
    Keeping a fleet warm for its own sake is waste and Mihai has said so repeatedly.
 4. **Never end a turn without doing work.** Reporting is not the work.
+6. **RUN `python3 review.py` BEFORE FINALISING ANY TICK.** It asks Mihai's two questions in his order
+   — **DOES THE PLAN MAKE SENSE?** then **IS THE PLAN BEING FOLLOWED?** — against four levels: the
+   logs, the plan, the current mini-goal, and the overarching goal. The order is load-bearing: a
+   faithfully-executed bad plan is still a bad run, so checking execution first would flatter it.
+   It ends in CONTINUE or INTERVENE. **A tick that ends without acting on that verdict is the idling
+   Mihai called out.**
+7. **Rinse and repeat, and the repeat ENDS when the mini-goal is achieved and a piece of the
+   overarching goal is fulfilled.** Not when the run finishes, not when a number looks good.
 5. Every finding lands in `FINDINGS.md` with a number, and every change is committed as it is made.
 
 ---
@@ -90,6 +98,34 @@ stops it; an orphan held port 8931 for 82 minutes after its run was killed, fail
 not alternatives: REAP the process (the worker that starts a server owns stopping it, and the harness
 should sweep survivors between units), and give `interpret_pytest_collect` the `Inconclusive` variant
 its sibling `interpret_pytest_run` already has — now justified by evidence rather than by a hunch.
+
+**G7 — DE-HARDCODE THE SWARM. Filed by Mihai 2026-08-02, and it outranks tuning.**
+
+*"this agent will be used to produce script, software, apps etc"* — so logic that only works for one
+stack is a ceiling on what the swarm can ever be, not a rough edge.
+
+MEASURED in swarm.rs, literal occurrences:
+
+| token | count | | token | count |
+|---|---|---|---|---|
+| `.py` | **366** | | `npm` | 25 |
+| `pytest` | **103** | | `argparse` | 25 |
+| `python3` | **74** | | `cargo` | 18 |
+| `__main__.py` | **40** | | `go build` | 9 |
+
+The engine is roughly **5-10x more Python-aware than anything else**, and `TargetLang` carries an
+`Other` variant that in practice means "no gate knows how to verify this". Every deterministic check
+this loop has been fixing — the smoke gate, the entry probe, the AST review, the collect/run
+interpreters, the subcommand parser — is Python-shaped.
+
+THE FIX IS ARCHITECTURAL, NOT A SED. One capability table per language, answering: how to BUILD, how
+to TEST, how to find the ENTRY POINT, how to PROBE it, how to review it STATICALLY. Every gate then
+reads the table instead of embedding `pytest`. Fragments already exist (`TargetLang`, `smoke_go`,
+`verify_commands`) — the defect is that they are scattered, so adding a language means finding every
+site rather than filling in a row.
+
+Do NOT attempt 366 call sites in one pass. Take it a gate at a time, each with its own controls, and
+never mid-run.
 
 ---
 
