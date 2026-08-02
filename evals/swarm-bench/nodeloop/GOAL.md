@@ -17,6 +17,28 @@ INSTRUCTIONS. Every fix should be checkable against that.
 3. **A fleet unit must be answering a named question written in CURRENT GOAL below.** If it is not,
    kill it (supervisor BEFORE engine — `./loop.sh boundary`), batch the held fixes, cross, restart.
    Keeping a fleet warm for its own sake is waste and Mihai has said so repeatedly.
+
+3b. **NEVER LET FIXES SIMMER.** Filed by Mihai 2026-08-02 after 51 engine commits sat unshipped for
+   most of a day. Batching is a rule against crossing for ONE fix; it is NOT a licence to accumulate.
+   **`./loop.sh check` now COUNTS held commits every tick** — at 8+ it says CROSS THE BOUNDARY, and
+   that is not advisory. A killed unit costs ~2h of fleet time; an unshipped batch costs every
+   experiment blocked on it AND every hour the engine runs without fixes that are already written.
+   Crossing is cheap and pre-flighted (`preflight.py` decides from source and refuses without killing
+   anything). **If a blocked arm or a registered prediction is waiting on the crossing, cross NOW.**
+
+3c. **RUN CONTINUOUS OUTSIDE RESEARCH — do not only introspect.** Also filed by Mihai 2026-08-02:
+   *"implement a continuous investigation and research from other agents how they're doing this
+   better, like opencode, this fork's upper parent and see if they implemented something new since we
+   forked ... investigate using agents giving them limited context and let them find out with fresh
+   eyes what may be wrong."* Standing, every tick that has idle capacity:
+     - **upstream** — `git fetch upstream && git log <merge-base>..upstream/main -- crates/`; adopt
+       what improves the agent loop on weak local models.
+     - **opencode / other agents** — how do they fan work out, keep instructions specific, handle a
+       stalled worker?
+     - **FRESH-EYES AGENTS** — hand a subagent the code and the MEASURED defects but NOT our findings
+       history, and let it form its own view. Our own history is exactly what blinds us.
+   Verify every lead adversarially before acting, and check FIRST whether it already exists in-tree —
+   that has caught three "new" proposals already (lesson 15).
 4. **Never end a turn without doing work.** Reporting is not the work.
 6. **RUN `python3 review.py` BEFORE FINALISING ANY TICK.** It asks Mihai's two questions in his order
    — **DOES THE PLAN MAKE SENSE?** then **IS THE PLAN BEING FOLLOWED?** — against four levels: the
