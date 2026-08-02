@@ -60,6 +60,10 @@ grounded
 judge_skipped
 no_idle_device
 
+# F62: the over-read gate armed on integrate-verify whenever the planner gave it README.md, and
+# killed the sink for doing its job. It now arms only on a CODE deliverable.
+is_code_deliverable
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

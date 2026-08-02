@@ -209,6 +209,17 @@ impl Default for JudgeConfig {
     }
 }
 
+/// Is this owned file a CODE deliverable — the kind whose absence makes "wrote nothing" a defect?
+/// Docs, manifests and lockfiles are legitimate for a task to own and legitimate not to have written
+/// yet, so they must never arm the over-read trip.
+fn is_code_deliverable(path: &str) -> bool {
+    let p = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    const CODE: [&str; 10] = [
+        ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rb", ".c",
+    ];
+    CODE.iter().any(|e| p.ends_with(e))
+}
+
 /// Deterministic SPLIT detection: a task is a split candidate when it has been PRODUCING (an owned file is
 /// written and the worker is NOT over-reading) for at least `split_threshold_secs`, owns >= 2 files (so it
 /// can actually be partitioned), and has not been split before. This is deliberately distinct from the
@@ -381,10 +392,22 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // it: a 4-file task wrote its first file at ~140s and was SPLIT, while the task that died at 457s had
     // made ZERO tool calls. tool_calls is the discriminator, not file count. Widening the clock would only
     // buy a spiralling worker more silence.
-    if !input.owned_files.is_empty()
-        && !input.any_owned_written
-        && input.elapsed_secs >= cfg.min_age_secs.max(420)
-    {
+    // ARM ONLY ON A CODE DELIVERABLE. "You have read a lot and written nothing" is a defect for a
+    // worker whose job is to produce source. It is the JOB DESCRIPTION of `integrate-verify`, which
+    // runs the assembled app, reads what it finds, and fixes failures.
+    //
+    // MEASURED across 13 runs, perfect separation. The sink normally owns nothing and the gate stays
+    // disarmed — 7 runs, 1 attempt each, ZERO over-read kills. In 3 runs the planner happened to give
+    // it `README.md`, and in two of those the gate armed and killed it repeatedly with the canned
+    // hint "You have produced no file yet. STOP reading/deliberating ... WRITE your file(s) NOW" —
+    // 2 kills and 3 kills, attempts exhausted, and the 3-kill run is the ONLY sink failure in the
+    // corpus. A verification task was told to stop verifying and write a README.
+    //
+    // A doc or manifest is not the deliverable that makes "wrote nothing" diagnostic, so it must not
+    // arm the trip. This is the same class as the worker prompt handing implementer rules to a
+    // test-author: a rule written for one kind of task applied to another.
+    let owns_code = input.owned_files.iter().any(|f| is_code_deliverable(f));
+    if owns_code && !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
         let read_nothing = input.worker_tool_calls == Some(0);
         return Some(JudgeOutcome {
             verdict: Verdict::OverReading,
@@ -471,6 +494,22 @@ mod tests {
     /// reasoning model streams thinking, which the digest could not see), and was killed at 457s / 450s /
     /// 430s across all three attempts. At the default config the flat 420s deadline still fires, exactly
     /// as it did — this pins today's behaviour so the grace lever's effect is visible as a DIFF.
+    /// THE SINK WAS KILLED FOR DOING ITS JOB. `integrate-verify` runs the assembled app and fixes
+    /// failures; it writes no source. MEASURED across 13 runs: when it owned nothing the over-read
+    /// gate stayed disarmed (7 runs, 1 attempt, zero kills), and in the 3 runs where the planner gave
+    /// it `README.md` the gate armed — 2 and 3 kills, attempts exhausted, and the 3-kill run is the
+    /// only sink failure in the corpus. A doc is not the deliverable that makes "wrote nothing"
+    /// diagnostic.
+    #[test]
+    fn over_read_does_not_arm_on_a_doc_only_task() {
+        assert!(!is_code_deliverable("README.md"));
+        assert!(!is_code_deliverable("pyproject.toml"));
+        assert!(!is_code_deliverable("go.mod"));
+        assert!(is_code_deliverable("vendorsync/meridian.py"));
+        assert!(is_code_deliverable("cmd/app/main.go"));
+        assert!(is_code_deliverable("src/lib.rs"));
+    }
+
     #[test]
     fn blind_deadline_kills_a_zero_tool_call_worker_at_420s_by_default() {
         let cfg = JudgeConfig::default();
