@@ -218,18 +218,20 @@ QUESTIONS: list[dict] = [
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
              "is a mechanism readout and is answered by the FIRST unit, not the third."},
-    {"arm": "doc_fetch", "nodes": 3, "reps": 1,
-     "asks": "does the engine fetching the vendor document put `/v1` into plan_loaded? This is the "
-             "measured cause of every bad build on this bench (F34/F36), so it is the highest-value "
-             "question here. MECHANISM readout: count `/v1` in the plan and `doc_fetched{ok:true}`. "
-             "n=1 is sufficient — if the fetch lands and the paths are still wrong, the splice is not "
-             "reaching the decomposition and the score is irrelevant."},
     {"arm": "retarget_off", "nodes": 3, "reps": 3,
-     "asks": "does the confidence redraft buy anything? MEASURED: 3 rounds, 48.4 minutes before any "
-             "dispatch, 27,806 chars of model-authored spec discarded, and it never reached its own "
-             "floor. PREDICTION registered in F49: build score unchanged within the replicate spread, "
-             "wall-clock down 10-20%. This one needs n=3 because the readout IS the score — if it "
-             "DROPS, the redraft buys something real and the reading was wrong."},
+     "asks": "THE highest-value question, after F53. The redraft is the most expensive mechanism in "
+             "the engine and it optimises draft-count parity. MEASURED on the last unit: prefix 3014s "
+             "with 90% of it planning across FOUR redraft rounds, ~15,800 chars of model-authored "
+             "spec re-derived, occupancy 0.30 — and the build came out at 83.4% with crunch 7/7 "
+             "ANYWAY. PREDICTION: score unchanged within the replicate spread, prefix roughly halved, "
+             "occupancy up. If the score DROPS below the spread the redraft buys something real and "
+             "it stays — that is the outcome that would make this arm worth more than a speedup."},
+    {"arm": "doc_fetch", "nodes": 3, "reps": 1,
+     "asks": "DEMOTED by F53. It was cell 2 on the argument that losing `/v1` breaks the build; the "
+             "83.4% unit lost it entirely and crunch still passed 7/7, because workers have shell and "
+             "re-derive the path themselves (F54). Still worth one unit — a verbatim document is the "
+             "densest instruction available and removes a coin flip — but it is no longer urgent. "
+             "MECHANISM readout: `doc_fetched{ok:true}` and `/v1` count in plan_loaded."},
     {"arm": "complete_parallel", "nodes": 3, "reps": 1,
      "asks": "now that F41 taught the finding-extractor to read backticked paths and dotted modules, "
              "does the repair fan actually fire? MECHANISM: count `complete_fix_wave` / per-file fix "
