@@ -7713,3 +7713,40 @@ trade is only bad because the findings go nowhere.**
 QUEUED (new): **F182b — feed the surviving findings into the repair tail** rather than dropping them,
 and **deduplicate before counting**; **F182c — never count a "None found" report as a finding**, which
 also makes `survivors` a usable readout instead of an inflated one.
+
+## F183 — F156/F157/F158 all REPLICATE on baseline r1, an independent run
+
+Before shipping three queued prompt fixes measured on ONE run, I re-measured them on `baseline-n3-r1`
+while it was mid-execute. All three hold.
+
+**F156 — the implementer prompt size is structural, not a one-run artifact:**
+
+    r0   worker/impl   9,860 chars (n=8)
+    r1   worker/impl   9,988 chars (n=13)     1.3% apart
+
+**F157 — the TOOLS block is BYTE-IDENTICAL on every dispatch:**
+
+    4,450 chars on ALL 11 file-owning prompts, 35-48% of each
+    median 4,450 of a 9,988-char prompt = 45%, matching r0 exactly
+
+That it is the same 4,450 every time is stronger than the percentage: this block does not vary with
+the task at all, so its two test-author bullets are delivered verbatim to every implementer on every
+run. It is not "mostly generic" — it is *entirely* generic.
+
+**F158 — every non-Python owner still receives the Python conventions:**
+
+    non-Python owners this run: 4      of those, CONVENTIONS block present: 4
+    incl. the pure `index.html` owner: 9,680 chars, TOOLS 4,450 (46%), CONVENTIONS present
+
+The `index.html` case from r0 reproduced exactly. (Precision: 3 of the 4 are MIXED owners
+`__init__.py, __main__.py, README.md`, so "not all .py" rather than "no Python at all"; only
+`index.html` is a pure non-Python deliverable. The finding's claim was about that case and it holds.)
+
+**Why this mattered enough to spend a tick on.** Every one of these three was measured on r0 alone,
+and this campaign has retracted five single-run conclusions tonight (F160, F176, F178, plus F152's
+and F145's headlines). Two runs is not a lot, but a byte-identical 4,450 across 24 dispatches on two
+independent runs is not a sampling accident. The fixes ship on the confirmed version.
+
+Also captured: baseline r1 at 23 min had **6 dispatched / 1 done / 0 FAILED**, with `api`, `meridian`,
+`store`, `verify::cli`, `web` in flight — and NO idle-node mechanism fired, which is the correct
+control against `sink_review-n3-r0` (F175's three-nodes-generating happened only with the lever on).
