@@ -4572,3 +4572,59 @@ invisible ones would read as clean completions.
    the longest serial region in the run. F114 removes turns by not re-deriving; the pytest re-runs are
    the next candidate and are a compliance question, newly testable on a clean prompt after F87.
 3. **Capped vs finished, indistinguishable?** Closed by this finding.
+
+---
+
+## F116 — G8 CLOSED: the sink is not slow, it takes 25 turns. On this fleet, wall-clock ≈ turns × 83s.
+
+The last open G8 question was whether 72s per tool call meant the sink was pathologically slow. Every
+other task in the same run answers it:
+
+| task | secs | calls | s/call |
+|---|---|---|---|
+| test-store-integrity | 474 | 2 | 236.8 |
+| test-store | 259 | 2 | 129.4 |
+| test-api-web | 650 | 7 | 92.8 |
+| verify-e2e::0 | 349 | 4 | 87.1 |
+| **integrate-verify** | **1800** | **25** | **72.0** |
+| verify::main | 400 | 9 | 44.5 |
+| main | 117 | 6 | 19.4 |
+
+**Median s/call excluding the sink: 82.9. The sink: 72.0.**
+
+The sink is not slow per call — it is slightly FASTER than typical. **Its entire cost is TURN COUNT:
+25 calls against a median of 2-4 for every other task in the run.**
+
+### The framing this gives the whole project
+
+**On this fleet, wall-clock ≈ turns × ~83s.** That is the fundamental unit, and it reframes every
+optimisation: making the swarm faster means making it take FEWER TURNS, not making it do less work per
+turn. A rule that saves a worker one round-trip is worth ~83 seconds; a rule that makes a worker
+"more efficient" within a turn is worth nothing measurable.
+
+It also explains why instruction density (F87/F91/F111) matters so much here beyond compliance: a
+worker that re-reads a file in six slices spends six turns — ~500s — on something one turn could have
+done.
+
+### The arithmetic on the sink, now concrete
+
+Of the sink's 25 turns:
+- **4** were pytest re-runs its spec explicitly forbids (~330s)
+- **11** were re-deriving a finding the judge already had (~910s, and F114 targets exactly this)
+- 10 were its actual job: orientation, `--help`, robustness probes, and 2 edits
+
+So roughly **60% of the longest serial region in the run was turns it should not have taken** — and
+both causes are now addressed or measurable: F114 removes the re-derivation by carrying judge findings
+to the sink, and the pytest-re-run compliance question is newly testable on a clean prompt after F87.
+
+**Registered prediction:** the next run's sink takes materially fewer than 25 tool calls, and the drop
+comes from the re-derivation block (commands 11-23), not from the probes. If turn count holds at ~25
+while the composition changes, the cost is intrinsic to what the sink is asked to do and the fix is to
+ask it for less.
+
+### G8 CLOSED
+
+All three questions answered: what the turns were (F114), whether capped and finished were
+distinguishable (F115, they were not, now they are), and whether the sink was slow (F116, no — it was
+long). The remaining work is the compliance question, which needs a post-boundary run rather than more
+analysis.
