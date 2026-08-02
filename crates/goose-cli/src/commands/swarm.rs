@@ -8259,6 +8259,48 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
     }
 
+    /// G7's first enforced seam. The regression is specific: this match used to be
+    /// `TypeScript | Rust | _`, so Go — which has its OWN smoke gate running `go build ./...` and
+    /// `go test ./...` — was told by the fix prompt to verify with `python3 -m pytest`.
+    #[test]
+    fn every_language_has_its_own_verify_recipe_and_none_inherits_pythons() {
+        let py = verify_recipe(TargetLang::Python);
+        assert!(py.contains("pytest"));
+
+        // THE BUG: Go must never be handed Python's tooling. Its own smoke gate is go build/go test.
+        let go = verify_recipe(TargetLang::Go);
+        assert!(go.contains("go build") && go.contains("go test"), "{go}");
+        assert!(
+            !go.contains("pytest") && !go.contains("python3"),
+            "Go inherited Python: {go}"
+        );
+
+        let rs = verify_recipe(TargetLang::Rust);
+        assert!(rs.contains("cargo") && !rs.contains("pytest"), "{rs}");
+        let ts = verify_recipe(TargetLang::TypeScript);
+        assert!(ts.contains("npm") && !ts.contains("pytest"), "{ts}");
+
+        // An unrecognised stack gets an HONEST instruction, not an invented pytest command for a
+        // toolchain that may not exist.
+        let other = verify_recipe(TargetLang::Other);
+        assert!(
+            !other.contains("pytest") && !other.contains("python3"),
+            "{other}"
+        );
+        assert!(other.contains("own documented"), "{other}");
+
+        // No two stacks share a recipe — the shape a wildcard arm silently produces.
+        let all = [py, ts, rs, go, other];
+        for (i, a) in all.iter().enumerate() {
+            for b in all.iter().skip(i + 1) {
+                assert_ne!(
+                    a, b,
+                    "two languages share one recipe — a wildcard arm is back"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_raced_twin_lands_only_when_it_strictly_beats_the_baseline() {
         let t = |s: &str, v: Option<usize>| (s.to_string(), v);
@@ -13658,6 +13700,44 @@ enum CollectVerdict {
 /// Interpret a `python3 -m pytest --collect-only -q` run from its exit code + combined output. Pure
 /// (no I/O) so it is unit-tested without spawning Python. Exit 5 ("no tests collected") is NOT an
 /// error; a missing pytest module makes the check inconclusive, never a failure.
+/// HOW THIS STACK IS VERIFIED, in the words handed to a fix worker. EXHAUSTIVE ON PURPOSE — there is
+/// no `_` arm, so adding a language to `TargetLang` will not compile until someone says how to check it.
+///
+/// G7 (Mihai, 2026-08-02): *"detect hard coded logic in the swarm and make it generic ... this agent
+/// will be used to produce script, software, apps etc."* Single-stack logic is a ceiling on what the
+/// swarm can be, not a rough edge — measured in this file, `.py` appears 366 times, `pytest` 103 and
+/// `python3` 74, against `go build` 9 and `cargo` 18.
+///
+/// THE BUG THIS FIXES, and it is the reason `_` is the mechanism rather than the symptom: the arm here
+/// used to be `TypeScript | Rust | _`, so **Go and Other silently inherited Python's recipe**. A Go app
+/// is smoke-tested by `smoke_go` with `go build ./...` and `go test ./...` — and then, when that gate
+/// found something, its fix worker was told the way to verify was `python3 -m pytest`. Two versions of
+/// one rule, disagreeing, with a wildcard hiding the disagreement.
+///
+/// A wildcard arm over a language enum is exactly how a fifth stack inherits the first one's tooling.
+/// Exhaustiveness turns that from a silent default into a compile error.
+fn verify_recipe(lang: TargetLang) -> &'static str {
+    match lang {
+        TargetLang::Python => {
+            "`python3 -m pytest --collect-only -q` (no collection/import errors) AND \
+             `python3 -m <package> --help` (exit 0)"
+        }
+        TargetLang::TypeScript => {
+            "`npm run build` (no build errors) AND running the built entry point (e.g. \
+             `node <entry-from-package.json> --help`) WITHOUT a runtime crash/uncaught exception"
+        }
+        TargetLang::Rust => "`cargo build` (no errors) AND `cargo run -- --help` WITHOUT a panic",
+        TargetLang::Go => "`go build ./...` (no errors) AND `go test ./...` (all tests pass)",
+        // NOT a Python fallback. An unrecognised stack has no deterministic gate here, and saying so
+        // is the honest instruction — inventing a pytest command for it would send the worker to run
+        // something that cannot exist.
+        TargetLang::Other => {
+            "the project's own documented build and test commands, run from the project root, \
+             both completing without error"
+        }
+    }
+}
+
 fn interpret_pytest_collect(code: Option<i32>, output: &str) -> CollectVerdict {
     let low = output.to_lowercase();
     if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
@@ -18476,17 +18556,7 @@ fn group_findings_by_file(
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
-    let verify = match lang {
-        TargetLang::TypeScript => {
-            "`npm run build` (no build errors) AND running the built entry point (e.g. \
-             `node <entry-from-package.json> --help`) WITHOUT a runtime crash/uncaught exception"
-        }
-        TargetLang::Rust => "`cargo build` (no errors) AND `cargo run -- --help` WITHOUT a panic",
-        _ => {
-            "`python3 -m pytest --collect-only -q` (no collection/import errors) AND \
-             `python3 -m <package> --help` (exit 0)"
-        }
-    };
+    let verify = verify_recipe(lang);
     format!(
         "The integrated app FAILS a deterministic end-to-end smoke check the harness just ran. Findings:\n{}\n\n\
          FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that {verify} succeed. \
