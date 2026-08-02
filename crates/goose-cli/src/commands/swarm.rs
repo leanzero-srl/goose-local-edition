@@ -15965,8 +15965,26 @@ impl Judge for GooseAgentDispatcher {
         // looping on an error / drifting / re-doing finished work? It reads the worker's files-so-far,
         // its live activity log, AND the high-level run state, then passes or returns a correction.
         let acts = input.worker_tool_calls.unwrap_or(0);
-        if input.file_contents.is_empty() && acts < 4 {
-            return JudgeOutcome::ok(); // nothing meaningful to assess yet
+        let thinking = input.worker_thinking_chars.unwrap_or(0);
+        // "NOTHING TO ASSESS" MUST MEAN NOTHING PRODUCED — not "produced only thinking".
+        //
+        // MEASURED across 851 judge verdicts on 9 runs: 814 of them (95.7%) came back
+        // `confidence 1.0` with an empty hint, which is this early return. The semantic review — the
+        // whole SUPERVISOR prompt below, the thing the judge exists for — ran **4.3% of the time**.
+        // The judge was not mostly deciding "ok"; it was mostly never asked.
+        //
+        // The cause is the gate itself. `worker_tool_calls` comes from the activity digest, and on a
+        // reasoning model a worker that streams thinking makes NO tool calls — so `acts` stays 0. A
+        // worker with no file and no actions was read as "hasn't got going yet" and skipped, when it
+        // is equally the signature of a worker thinking itself in circles. The one worker most in
+        // need of a supervisor was the one guaranteed not to get one.
+        //
+        // `thinking == 0` rather than a char threshold, deliberately: another tuned literal is the
+        // thing being removed, and `min_age_secs`/`rejudge_cooldown_secs` already stop a
+        // just-launched worker from being reviewed. A worker that is 90s old and has emitted
+        // reasoning while writing nothing and calling nothing is exactly what a supervisor is for.
+        if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
+            return JudgeOutcome::ok(); // genuinely nothing produced yet
         }
         let files_block = if input.file_contents.is_empty() {
             "(no file written yet)".to_string()
@@ -15997,7 +16015,8 @@ impl Judge for GooseAgentDispatcher {
                     .unwrap_or_default();
                 let last = d.get("last_text").and_then(|t| t.as_str()).unwrap_or("");
                 format!(
-                    "actions taken: {acts} ({errors} errored)\nrecent actions: {}\nworker's last reasoning: {}",
+                    "actions taken: {acts} ({errors} errored)\nreasoning emitted: {thinking} chars\
+                     \nrecent actions: {}\nworker's last reasoning: {}",
                     if recent.is_empty() {
                         "(none)".to_string()
                     } else {
