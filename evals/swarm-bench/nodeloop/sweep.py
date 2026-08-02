@@ -116,8 +116,16 @@ ARMS = [
     # so the lever is inert at best and destructive at worst, and its precondition is the very thing
     # the planner prompt works to prevent. Measurement time is the scarce resource; a lever predicted
     # broken on evidence does not earn three replicates.
+    # detail_budget is BLOCKED and STALE — armcheck.py flags it, and reading it shows why it is worse
+    # than merely inert. It sets the budget to 300s. F49 already made the budget DERIVE from
+    # worker_timeout_secs, which resolves to 420s on this fleet, and the baseline's slowest detail call
+    # is 161s — 38% of the ceiling. So the arm would LOWER a ceiling nothing is near, i.e. it could only
+    # ever make things worse, and its gate text still argues against a 75s literal that no longer
+    # exists. Left in the list with reps 0 so the reasoning survives; requeue only if a detail call is
+    # measured near its budget.
     {
         "name": "detail_budget",
+        "reps": 0,
         "env": {"GOOSE_SWARM_DETAIL_BUDGET_SECS": "300"},
         "gate": "the 75s detail budget is a bare literal pinned at the OBSERVED MAXIMUM of the call "
                 "it bounds, so normal variance lands on the far side of it: the SAME meridian brief "
