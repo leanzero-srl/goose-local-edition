@@ -3784,3 +3784,50 @@ per run.
 This sharpens G5 into a number: the mechanism works, its catches are substantive, and the only thing
 rationing it is idle capacity. That is also the one place the architecture already scales the right way
 — more nodes means more idle slots means more judging.
+
+---
+
+## F99 — what `task_split` actually did, on its first firing ever
+
+F98 recorded that `task_split` fired and left "does it HELP?" open. The full trace answers the
+mechanical half:
+
+```
++13.3m  task_dispatched  api-web
++16.8m .. +22.3m         judge_verdict  api-web  ok/observed   (SIX times)
++24.1m  task_split       api-web -> [http-backend-api, static-frontend-html]
++24.1m  judge_verdict    api-web  split/split
++24.1m  task_dispatched  http-backend-api
++24.1m  task_dispatched  static-frontend-html
++25.9m  task_completed   static-frontend-html   status=done      (1.8 min)
++37.9m  judge_verdict    http-backend-api  looping/re_dispatch
++37.9m  task_dispatched  http-backend-api                        (re-dispatched)
++43.1m  task_completed   http-backend-api       status=done
+```
+
+**The mechanism is clean.** `api-web` ran for 10.8 minutes without completing, was partitioned, and
+**never completed under its own id** — no `task_completed`, no timeout, no retry. It was superseded,
+not duplicated, which is the thing worth checking about any split: the parent did not keep burning a
+node alongside its children. (Corroborating: `worker_timeout_secs` is 420s and the parent had already
+been running 648s at split time, so a still-live parent would have produced a timeout event. None
+appears.)
+
+Both children completed. The frontend took **1.8 minutes** — a task that had been trapped inside an
+11-minute chokepoint finished almost immediately once separated from it.
+
+**What is NOT provable, and I am not claiming it:** that splitting was FASTER than leaving `api-web`
+alone. There is no counterfactual — it might have completed at minute 25 unaided. What the trace shows
+is that the decomposition was structurally sound and that a small independent piece was liberated from
+a large one. A real verdict needs the same spec run with `GOOSE_SWARM_SPLIT_ENABLED` off, which is a
+sweep arm, not an inference.
+
+### The detail that changes how I read the judge
+
+The judge returned **`ok/observed` six consecutive times** on `api-web` and then split it. So the split
+criterion is INDEPENDENT of the semantic verdict — `is_split_candidate` fires on the shape of the task
+(size, duration, files owned), not on the judge finding a fault. The judge was correctly reporting "this
+worker is fine" while the scheduler correctly concluded "this task is too big for one worker".
+
+Those are different questions and it is right that they are separately decided. It also means the
+`ok`-heavy verdict distribution (33 of 37) is not evidence the judge is idle — six of those `ok`s were
+the observation window that preceded a structural intervention.
