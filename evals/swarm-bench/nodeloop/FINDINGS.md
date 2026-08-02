@@ -2504,6 +2504,46 @@ behaves exactly as before, and the param-route exclusion still drops
 `crunch.py` before believing it — this mechanism's history is two-for-two on phantoms, and a check
 that has never worked is not owed the benefit of the doubt on its first real verdict.
 
+## F72 — F60 ANSWERED: research reports `/v1` in full. The loss is the detailer's missing verbatim rule.
+
+The first `research_completed.finding_texts` ever emitted settles a question that has been open all
+night. The architecture scout's report, 3,885 characters, contains:
+
+    | List endpoint   | `GET /v1/payments?cursor=&limit=` — cursor-paginated, ends when `next_cursor` |
+    | Create endpoint | `POST /v1/payments` with `Idempotency-Key` header |
+
+Exact paths, the pagination contract, the idempotency header. **The research phase does its job
+perfectly.** F60's decision rule was stated before the data: *if the report DOES contain `/v1`, the
+defect is the planner's use of it.* It does, so it is.
+
+That redirects the whole line of investigation. The scouts are not the problem — F54 already retracted
+"they have no tools", and now their OUTPUT is confirmed correct and complete. The fact is handed to
+the architect (`research_block`) and to the detailer (`fb`), and still reaches **zero task
+descriptions** in most runs.
+
+**And the detailer's instruction shows exactly where it goes.** It carries a verbatim-preservation
+rule — for ONE class of literal:
+
+> Use the EXACT file paths the subtask owns verbatim — NEVER invent, rename, or pluralize a filename.
+
+Filenames are protected. **API paths, version prefixes, header names, query parameters, status codes
+and field names are not** — and they are the literals a worker cannot re-derive. The same instruction
+then says "BRIEF — about 150 words", so when a 3,885-character research report is compressed, the
+unprotected literals are exactly what gets cut.
+
+The transmission is lossy rather than blocked, which fits the evidence: the 88.7% run's `meridian`
+carried 1,497 chars WITH `/v1`, and most runs carry none. Roughly one in three survives.
+
+**Fixed at the instruction:** the verbatim rule now covers external literals explicitly — *"CARRY
+THROUGH EVERY EXTERNAL LITERAL from the research findings EXACTLY as written… these cannot be
+re-derived by the worker and a near-miss is a total failure: an endpoint off by a `/v1` returns 404 on
+every call. If the findings give an endpoint, WRITE THE ENDPOINT."* The word budget is now explicitly
+"about 150 words EXCLUDING those literals, which are never the thing to cut", so the two instructions
+stop competing.
+
+Mihai's through-line, sixth instance, and the most consequential: **the instruction protected the
+literal the model could have re-derived and left unprotected the one it could not.**
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

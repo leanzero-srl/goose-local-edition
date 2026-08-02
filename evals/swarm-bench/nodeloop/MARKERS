@@ -84,6 +84,10 @@ has an EMPTY BODY
 # green had never seen a real endpoint on this bench. Now merged with the table-aware surface.
 THE SPEC STATES ITS ENDPOINTS
 
+# F72: research DOES report /v1 in full; the loss is the detailer, whose verbatim rule covered
+# filenames but not external literals like API paths.
+CARRY THROUGH EVERY EXTERNAL LITERAL
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
