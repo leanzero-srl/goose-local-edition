@@ -98,6 +98,12 @@ its sibling `interpret_pytest_run` already has — now justified by evidence rat
 `MIN_FREE_GB = 15` is a hard abort in the sweep's watchdog, so disk is a real unattended risk. The
 consumer is `target/debug`, which repeated `cargo check`/`test` grows without bound (measured 64 GB).
 
+**FIRST check for a stale local snapshot.** `tmutil listlocalsnapshots /`. With one present, deleting
+build cache FREES NOTHING — the blocks move into the snapshot and free space FALLS. Measured: one
+snapshot held ~138 GB and reclaiming it took free space 27 -> 165 GB. The signature is `df` and `du`
+disagreeing by tens of gigabytes while nothing is growing. Reclaim with
+`tmutil thinlocalsnapshots / <bytes> 1` — the sanctioned API, gentlest urgency, not a named delete.
+
 **Delete `target/debug` only, and it is safe at any time** — the sweep executes
 `target/release/goose`, and debug is regenerable.
 
