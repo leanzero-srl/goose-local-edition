@@ -348,6 +348,11 @@ QUESTIONS: list[dict] = [
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
              "is a mechanism readout and is answered by the FIRST unit, not the third."},
+    {"arm": "sink_review", "nodes": 3, "reps": 1,
+     "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
+             "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
+             "`sink_review{prewarmed>0}`. If prewarmed is 0 with the lever on, the producer still "
+             "cannot see its precondition and the fix is incomplete."},
     {"arm": "split_inherit_spec", "nodes": 3, "reps": 3,
      "asks": "the ONLY mechanism whose firing pattern matches the scoreline on all three archived "
              "units: both 3-node losers split their single most-detailed task and the 1-node winner "
@@ -430,11 +435,6 @@ QUESTIONS: list[dict] = [
              "does the repair fan actually fire? MECHANISM: count `complete_fix_wave` / per-file fix "
              "shards. Before F41 five of six real finding shapes resolved to nothing, so the fan had "
              "nothing to fan and this arm would have measured silence."},
-    {"arm": "sink_review", "nodes": 3, "reps": 1,
-     "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
-             "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
-             "`sink_review{prewarmed>0}`. If prewarmed is 0 with the lever on, the producer still "
-             "cannot see its precondition and the fix is incomplete."},
     {"arm": "kind_prompt", "nodes": 3, "reps": 1,
      "asks": "does gating worker rules by task kind drive kind_mismatch_pct toward zero? 72-83% of "
              "dispatches currently get rules written for another job. MECHANISM readout."},
