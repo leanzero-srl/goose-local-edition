@@ -6377,3 +6377,54 @@ My first pass reported **peak = 0 on all 15 runs**. I had guessed `_spans` was a
 of zeros. **A bare `except` around a parse turns an instrument failure into a finding.** Inspecting
 the shape took one command, which is what I should have done first — and is the same
 uncontrolled-zero rule that has now caught me four times.
+
+---
+
+## F151 — 42% of execute is spent 2-wide, and `integrate-verify` is 69% of it
+
+F150 said the defect is DURATION at low concurrency, not the ceiling. This is where that duration
+goes. Across 11 three-node runs, using `occupancy.py`'s own spans:
+
+**229 of 552 execute-minutes — 42% — are spent with ≤2 tasks running against SIX slots.**
+
+Which task is on the fleet during those low stretches:
+
+| task | minutes at ≤2 | share of the low time |
+|---|---|---|
+| **integrate-verify** | **158** | **69%** |
+| verify-e2e::1 | 31 | 14% |
+| test-cli | 28 | 12% |
+| test-meridian | 17 | 7% |
+| test-api | 16 | 7% |
+| (long tail of test-* / harden-*) | ~55 | — |
+
+**The sink alone holds the fleet at ≤2 for 14.4 minutes per run and accounts for more than two thirds
+of all low-concurrency time.** Everything else is a tail.
+
+### This is F112's answer, and I went the wrong way from it
+
+F112 concluded *"THE PLAN IS NOT THE BOTTLENECK; THE SINK IS"* — measured at 29% of node-busy and
+100% of solo time. I then spent several ticks on plan width (F148), asserted a ceiling that F150
+disproved, and have now arrived back at the sink from the other direction. The original reading was
+right and I should have trusted the measurement over the newer story.
+
+**The sink cannot be fixed by widening the plan.** It is ONE task with every other task as its
+dependency. More modules do not help it; nothing can run alongside it unless something is
+deliberately scheduled there. That leaves exactly two levers:
+
+1. **make it shorter** — F116: wall-clock is turns x 83 s, and the sink is 25 calls against a median
+   of 2-4. Fewer turns, not faster ones.
+2. **put work beside it** — `sink_review`, the idle-fill that exists precisely for this window.
+
+### Acted on: `sink_review` promoted to run right after baseline
+
+It was an n=1 mechanism cell sitting BEHIND 18 score-arm units — roughly 36 hours of fleet time —
+while targeting **69% of the low-concurrency time**. It now runs second.
+
+The sequencing is the point: `sink_review` asks *"does the idle-fill mechanism fire at all"*, which
+is an n=1 question answerable in one unit. Spending ~2 hours to learn whether the single largest
+lever's mechanism even works, BEFORE spending 36 hours on score arms that cannot touch the sink, is
+the same discipline `armcheck.py` exists to enforce — applied to ordering rather than to preconditions.
+
+armcheck already verified its precondition on a real baseline: *"the sink held a node alone for 1590s
+with the other nodes idle — that is the window idle-fill exists for."*
