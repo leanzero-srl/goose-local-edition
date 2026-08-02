@@ -6184,3 +6184,30 @@ than the byte, which is the standing preference (F62, F71, F144).
 | the rest (tools, paths, cwd, artifacts) | genuinely universal — they apply to every kind and every language |
 
 So the preamble is now largely honest: what remains static is the part that really is universal.
+
+---
+
+## F147 — first result on the post-boundary build: 0.819, and it is ONE datapoint
+
+`baseline-n3-r0` finished: **score 0.819, 124 min, pool 3/3, void=false, aborted=false**, prefix
+2,569 s with **2 redraft rounds**, kind_mismatch 75.0%. It also LOST `test-meridian` (F143) and
+scored 0.819 anyway — the app works without that test file, which is worth remembering when reading
+any "failed task" as a proxy for build quality.
+
+**What this is NOT:**
+
+- **NOT comparable to 0.7186 / 0.6720.** Those are pre-boundary, on engine_build 1785657605. This is
+  1785683891, carrying F87's hint suppression, F134's pre-review fix and `judge_observed`. Comparing
+  across a boundary is precisely what a boundary invalidates, and `results` prints a loud warning for
+  exactly this.
+- **NOT evidence of improvement.** n=1. The within-config spread on this bench was measured at **46
+  points** (44.2 / 86.7 / 90.0 on an identical config), so a single number carries almost no
+  information about the engine that produced it.
+
+**What it is:** replicate 1 of 3 in the baseline cell. The cell's job — stated before any arm was
+queued — is to measure the spread on THIS build. Until r1 and r2 land there is nothing to compare
+anything against, including this.
+
+Registered so it cannot be quoted loosely later: **the baseline cell's headline is its SPREAD, not
+its first value.** If the spread comes back near 46 points again, no arm in the queue is readable and
+the next build's work is variance reduction rather than levers.
