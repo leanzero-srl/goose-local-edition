@@ -5191,3 +5191,59 @@ from nothing. Same two-versions-of-one-rule shape as the 1200 in G5.
 `test-api` in `swarm-1node-r0` re-dispatched 3x and is the current drift, but its difficulty is
 **`easy`**. It is NOT an instance of F124's hard-AND-test interaction and must not be cited as
 confirming it. F124 measured easy-test tasks at 12.5%; one of them retrying is unremarkable at n=1.
+
+---
+
+## F128 — two OPPOSITE fixes are proposed for the same defect, and the data cannot choose between them
+
+F127 registered a proposal: give the zero-tool-calls case a shorter deadline than 420 s. Before
+building it I went looking for whether anyone had already tried, and found **both directions already
+written into the codebase, pointing opposite ways**:
+
+- **KILL EARLIER** — `judge.rs:359`, the #134 reasoning-spiral trip. Fires at `min_age_secs` (90 s)
+  instead of 420 when `worker_tool_calls == Some(0)` and thinking exceeds a char cap. Its own comment:
+  *"Catch it EARLY — at the char cap (~60-120s) — instead of burning the whole idle window."* **BUILT,
+  and default-OFF** (`spiral_thinking_chars: 0`). Not to be confused with `spiral_break_chars` (baked
+  12000), which is a different mechanism on the non-judge path — adjacent names, deliberately distinct.
+- **GRANT MORE TIME** — a "grace lever" referenced by the regression test at `judge.rs:496`
+  (*"this pins today's behaviour so the grace lever's effect is visible as a DIFF"*). **It does not
+  exist.** The only `grace` in the tree is `straggler_grace_secs`, an unrelated plan-draft window. A
+  test was written to pin a baseline for a lever nobody built.
+
+The two disagree because they read the same observation differently. That test also records the
+measurement, and it matches mine exactly: `api-app` *"owned 4 files, had made 0 tool calls (a
+reasoning model streams thinking, which the digest could not see), and was killed at 457s / 450s /
+430s across all three attempts."* If the worker is thinking productively, 420 s is too SHORT. If it
+is spiralling, 420 s is far too LONG.
+
+### What the outcomes say, and what they do not
+
+Did a task that received each hint kind ever finish?
+
+| hint kind | n | eventually done |
+|---|---|---|
+| PRE-write paralysis | 14 | **35.7%** (5) |
+| POST-write spin | 25 | 60.0% (15) |
+| specific code defect | 11 | 54.5% (6) |
+
+**Pre-write paralysis is the least recoverable of the three**, and it is also the one that costs a
+full 420 s per attempt before the kill is even permitted — up to 21 minutes across three attempts to
+rescue about a third of cases. That is a real reason to change something.
+
+It is NOT a reason to pick a direction. n=14 against n=25 with 3 still in flight is a thin margin,
+and nothing here distinguishes "killed too early while thinking" from "spiralling and should have
+died sooner" — the outcome is the same either way. Choosing from the armchair is what F122 did twice.
+
+### The instrument gap that has to close first
+
+**`judge_verdict` carries only `{task_id, device, verdict, confidence, hint, action}`.** Neither
+`worker_tool_calls` nor `worker_thinking_chars` is emitted anywhere, on any event, in 1,339 judge
+events across the archive. So the discriminator that separates the two hypotheses — was this worker
+thinking hard or sitting still — is **structurally unobservable**, which is why a lever built for it
+has sat OFF and unmeasured.
+
+This is F111's shape exactly: a lever whose readout does not exist. The fix is the same one that
+worked there — emit the deterministic fields the judge already computes — and it must come BEFORE
+either direction is implemented, or whichever gets built will be judged on a metric that cannot see
+it. Registered as the next engine change; NOT built this tick, because it belongs with the batch at
+the boundary rather than as a fourth mid-run edit.
