@@ -3464,3 +3464,55 @@ Mihai's standing rule: *"ask what makes it impossible to recur. If I fix a defec
 mechanism that produced it, I have scheduled its return."* Deleting `target/debug` reclaims the space.
 Capping first-party debug info stops it being re-earned every hour. The boundary's automatic prune
 (committed earlier) is now a backstop rather than the plan.
+
+---
+
+## F93 — G6 closed: the harness now reaps the app servers the swarm leaks
+
+F88 identified the leak and left the fix open. Closing it.
+
+**The leak is MODEL-AUTHORED**, which decides where the fix belongs. The engine never instructs a
+worker to start a server — a worker decides on its own to exercise the app it just built, and does it
+like this (recovered verbatim from the real orphan):
+
+```
+bash -c  rm -f vendorsync.db && python3 -m vendorsync --db vendorsync.db --port 8931 &
+         SERVER_PID=$! ...
+```
+
+The model even captures `SERVER_PID`, intending to clean up. When the run is killed — or simply ends
+before the model gets back to its own teardown — the server survives with ppid 1 and holds the port
+indefinitely. So a prompt rule cannot be the primary defence: the behaviour is reasonable, the model
+is trying to test its work, and the failure is that nothing outlives it to clean up.
+
+**The harness owns the environment, so the harness reaps.** `reap_stray_listeners(lo, hi)` runs in
+`run_unit`'s `finally`, BETWEEN units, and kills anything still LISTENING in the bench port range that
+is not this process. Between units is the only correct moment: during a unit the listener may be the
+app under test.
+
+The log line names the cause rather than the symptom, because the next reader will be me at 3am:
+`killed N leaked app server(s) still holding a bench port — a worker started them and nothing stopped
+them`.
+
+### Controls — and the first attempt was a FALSE PASS
+
+- **Negative:** this process's own listener in range must be spared. PASS.
+- **Positive, first attempt:** FALSE PASS. The foreign listener I spawned crashed on bad `setsockopt`
+  constants, so `p.poll() is not None` was true because the process had died **on its own**, not
+  because the reaper killed it — and `killed: []` proved the reaper had done nothing at all. A control
+  that passes for the wrong reason is worse than no control, and this one would have shipped an
+  unverified reaper.
+- **Positive, redone:** assert the target is *actually alive before the reap* (or the test is
+  vacuous), then that the reaper killed it and that its pid appears in the returned list. `alive_before
+  True`, `killed [38559]`, `target pid 38559`. PASS.
+
+The redone version encodes the fix: it asserts the precondition it depends on. Same lesson as
+PATTERN 2 — a mechanism whose precondition never held reports identically to one that does nothing.
+
+### What is deliberately NOT done
+
+No `Inconclusive` added to `interpret_pytest_collect`. F88 established that the port collision is what
+made a collect fail then pass, so the variant is now evidence-backed — but it treats the symptom, and
+with the leak reaped the symptom should stop occurring. If a collect failure appears on a run with a
+clean port range, THAT is the evidence that the variant is needed, and it will be added then rather
+than pre-emptively suppressing a finding class.

@@ -654,6 +654,53 @@ def kill_strays() -> None:
             pass
 
 
+def reap_stray_listeners(port_lo: int, port_hi: int) -> list[int]:
+    """Kill processes still LISTENING in the bench port range that this sweep did not spawn.
+
+    THE LEAK IS MODEL-AUTHORED, so no engine prompt can be the primary defence. A worker decides on
+    its own to exercise the app it just built, and does it like this (recovered verbatim from a real
+    orphan):
+
+        bash -c  rm -f vendorsync.db && python3 -m vendorsync --db vendorsync.db --port 8931 &
+                 SERVER_PID=$! ...
+
+    When that worker's run is killed — or simply ends without the model getting back to its own
+    cleanup — the server survives with ppid 1 and holds the port forever. MEASURED: one such orphan
+    held 8931 for EIGHTY-TWO MINUTES after its run was parked, failed the next unit outright with
+    `OSError: [Errno 48] Address already in use`, and was the confirmed cause of a `pytest
+    --collect-only` that failed at 08:58 and passed unmodified at 09:20 (F88) — a test importing the
+    app while another process holds its port errors at COLLECT time.
+
+    So a dead run poisons every later run, and a long sweep accumulates one dead port per leak. The
+    harness owns the environment, so the harness reaps. Runs BETWEEN units, never during one.
+    """
+    me = os.getpid()
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port_lo}-{port_hi}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return []
+    killed = []
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        pid = int(parts[1])
+        # NEVER our own process: the sweep runs the vendor service in-process and would kill itself.
+        if pid == me:
+            continue
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except Exception:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                continue
+        killed.append(pid)
+    return killed
+
+
 def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     """One episode: build, grade the artifact, then grade the INSTRUCTIONS it was given."""
     import run_build  # imported late so a syntax error there cannot stop the loop from starting
@@ -670,6 +717,12 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         dog.done()
         os.environ.clear()
         os.environ.update(prev)
+        # Reap BEFORE the next unit binds its port. A leaked app server is not this unit's problem —
+        # it is the NEXT one's, and it presents as a build defect rather than as an environment fault.
+        strays = reap_stray_listeners(PORT_BASE, PORT_BASE + 40)
+        if strays:
+            log(f"[reap] {now()} killed {len(strays)} leaked app server(s) still holding a bench "
+                f"port: {strays} — a worker started them and nothing stopped them")
 
     # run_build names its outputs after the ENTRANT, so two arms at the same node count and rep
     # would overwrite each other's tree AND vendor trace. Re-home both under the unit.
