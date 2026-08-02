@@ -7,9 +7,20 @@
 # A MARKER MUST BE A STRING LITERAL, NOT A FUNCTION NAME. `strings` reads the binary's data, so a
 # Rust fn name is not there to find. MEASURED: `failed_task_finding` appears 0 times as a literal in
 # swarm.rs and would have reported ABSENT after a perfectly correct rebuild, refusing the boundary
-# and sending me to fix a defect that did not exist. Verify a candidate first:
-#     grep -c '"MARKER"' crates/goose-cli/src/commands/swarm.rs
-# and for a marker inside a format! string, remember the fragment SPLITS at each {interpolation} —
+# and sending me to fix a defect that did not exist.
+#
+# DO NOT VERIFY AGAINST swarm.rs ALONE. That instruction used to live here and it is wrong: the
+# binary links EVERY crate, and `WHAT THE SUPERVISOR ALREADY FOUND` is in
+# crates/goose-swarm/src/scheduler.rs. Grepping only swarm.rs returns 0 for it — indistinguishable
+# from the comment/fn-name case this file exists to catch, and the fix would have been to delete a
+# perfectly good marker. Search the whole crate tree:
+#     grep -rn 'MARKER' crates/ | grep -v '^\s*//'
+#
+# Better: run `python3 preflight.py`, which checks every entry below against all of crates/ and
+# separates "in a literal" from "only in a comment". It needs no rebuild and no fleet downtime, so
+# the boundary is known to pass BEFORE the run is killed to pay for it.
+#
+# For a marker inside a format! string, remember the fragment SPLITS at each {interpolation} —
 # pick text that lies wholly between two of them.
 
 # --- held for this boundary ---
