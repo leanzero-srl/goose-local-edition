@@ -4429,3 +4429,52 @@ The rule that would have caught it, and is now written into the code: **a span t
 must be justified by the task still being outstanding — and "no completion" is not that justification
 when the engine also emits `task_split` naming it.** `split_superseded_tasks` is now reported so the
 correction is visible rather than silent.
+
+---
+
+## F113 — the sink did not take 30 minutes. It was CUT OFF at 30 minutes, having made 2 edits.
+
+Now that F112 has corrected the occupancy phantom, `integrate-verify` is the largest serial region:
+29% of node-busy and **100% of the solo-node time (1590s, 23.6% of the whole run)**. Before proposing
+any decomposition, I measured what it actually did.
+
+```
+integrate-verify   1800s   attempts=2   status=done   calls=25  {shell: 23, edit: 2}
+                                                      4 of those calls FAILED
+```
+
+**1800s is exactly `sink_cap_secs`.** The default is a bare `1800` and its own doc says healthy joins
+"cluster well under it (311-1591s measured)". This one did not cluster under it — it ran to the wall
+and was stopped. `status=done` is what the engine records when the cap fires, so a capped sink is
+indistinguishable from a finished one in the result row.
+
+**And it produced two edits.** Twenty-three shell invocations, four of them failing, and 2 file edits,
+in half an hour on a dedicated node while the other two idled.
+
+### What this reframes
+
+The question is NOT "how do I parallelise the sink's fixing". It barely fixed anything. The questions
+the data actually raises, in order:
+
+1. **What are the 23 shell calls?** The instruction explicitly says *"Do NOT re-run that whole sweep;
+   it has happened"* — the shards already ran the commands with golden-value checks. If the sink is
+   re-running them anyway, that is duplicated work on the critical path, and the prompt already tried
+   to prevent it. The tool_call records carry only names, so the commands themselves need the session
+   trace to answer — filed, not guessed.
+2. **Why 72s per tool call?** 25 calls in 1800s. Each call is a model turn on a 27B, so this may simply
+   be the fleet's speed — in which case the sink's cost is turn COUNT, and cutting turns matters more
+   than cutting work.
+3. **Is a capped sink being silently treated as a successful one?** `status=done` with the cap fired is
+   PATTERN 4 again: two opposite situations (finished / truncated) recorded identically.
+
+### The hard-coded timing Mihai has been asking about
+
+`sink_cap_secs` is a bare `1800`, and this run hit it exactly. His standing objection — *"instead of
+using hard coded values, whenever a node is empty it should take the judge role"* — lands precisely
+here: the sink is the one task that runs alone, for a wall-clock-bounded period, with two idle nodes
+watching and no judge able to see it (the judge inspects Claimed DAG tasks, and the sink IS one, so
+this is checkable rather than assumed — the next unit's `judge_verdict` events on `integrate-verify`
+will say).
+
+**Registered:** on the next run, count `judge_verdict` events whose `task_id` is `integrate-verify`. If
+zero, the longest solo task in the run is also unwatched, and G5 has its first concrete target.
