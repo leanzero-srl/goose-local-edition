@@ -5963,3 +5963,61 @@ one that ran 12 commands all receive **different** text.
 
 That is 58 of 73 interventions no longer canned. What remains generic and unaudited is the **worker
 system prompt itself** — 20,412 chars of largely static rules (F138), which is the next target.
+
+---
+
+## F143 — a worker was killed three times for "re-reading" while its tool count never moved
+
+`judge_observed` (shipped at the 17:40 boundary) has produced its first complete trace, and it is the
+clearest single piece of evidence in this whole investigation. `test-meridian` on the live baseline —
+a test-authoring task, the fifth terminal failure in the archive and the **fifth that is a test
+task** (F130):
+
+| t | tools | thinking | written | what happened |
+|---|---|---|---|---|
+| 47.1m | 2 | 4,757 | no | |
+| 50.7m | 3 | 5,154 | no | **KILLED** — *"STOP reading/deliberating"* |
+| 52.7m | 0 | 1,992 | no | attempt 1 |
+| 64.5m | 3 | 5,818 | **yes** | file written |
+| 65.5m | 3 | 6,799 | yes | |
+| 66.5m | 3 | 8,389 | yes | |
+| 67.6m | 3 | 8,784 | yes | **KILLED** — *"stuck re-reading or re-verifying"* |
+| 71.1m | 2 | 1,998 | yes | attempt 2 |
+| 78.1m | 6 | 4,630 | yes | **KILLED** — same line. Attempts exhausted -> **FAILED** |
+
+**Read the middle block.** Between 64.5m and 67.6m the worker's `tool_calls` sat at **3, unchanged**,
+while its reasoning climbed **5,818 -> 8,784 characters**. It was not re-reading. It could not have
+been: it ran no commands. It was generating — and the engine was holding the numbers that prove it
+while telling the worker *"you are stuck re-reading or re-verifying, not making progress."*
+
+The first kill is the same defect in the other direction: 3 tool calls and **5,154 characters of
+reasoning**, told to *"STOP reading/deliberating"*. It had barely read.
+
+So the canned hints were not merely generic — **on this task they were factually false, twice, about
+a worker the engine could see was producing.** F141 and F142 (both held for the next boundary) fix
+the wording: the spin hint now names the file, its size and the real idle minutes, and leads with the
+compile error when one exists; the no-file hint states *"you have emitted 5154 characters of
+reasoning"* instead of asserting a motive. On this trace they would have told the truth.
+
+### But the wording is not the whole defect, and this trace shows the rest
+
+**The finalize-spin trip fired on a worker whose thinking was actively climbing.** Its predicate is
+`secs_since_last_write >= 420` — a wall-clock fact about the FILE, which says nothing about whether
+the WORKER is working. The field that does say so is right there in the same struct, and its own
+doc-comment states it outright: *"A NON-ZERO value here is positive proof the worker is producing."*
+
+That is Mihai's fourth directive exactly — the rule should be *"is this worker producing?"*, not
+*"has the file changed in 420 seconds?"*. A hard-coded 420 against a wall-clock is a place the engine
+stopped thinking.
+
+**REGISTERED, not yet built:** the trip must consult the CHANGE in `worker_thinking_chars` between
+judge observations, not just the file mtime. A single snapshot cannot express "climbing", so this
+needs the previous value threaded to the judge — a real change, and I am not making it in the same
+tick I found the evidence. Falsifier written down first: **if thinking is flat across two
+observations while the file is unchanged, the worker really is idle and the kill is correct** — so
+the guard must key on the DELTA, and a guard that suppresses kills on a flat-thinking worker is
+wrong and must fail its test.
+
+Expected effect if it holds: this task took **35 minutes and three attempts and still failed**, and
+at least the second kill looks unjustified. That is one task in one run — magnitude unknown until the
+arm runs, and I will not claim more than that.
