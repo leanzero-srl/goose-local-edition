@@ -80,9 +80,19 @@ COLLISION IN THE HARNESS
 # stops asserting a spec requirement it cannot know about.
 has an EMPTY BODY
 
-# F71: spec_contract's endpoint extractor could not read a markdown table, so the check that gates
-# green had never seen a real endpoint on this bench. Now merged with the table-aware surface.
-THE SPEC STATES ITS ENDPOINTS
+# F71 has NO marker, and this is the THIRD time the rule at the top of this file has been broken by
+# the person who wrote it. `THE SPEC STATES ITS ENDPOINTS` was listed here and reported ABSENT on a
+# correct binary — because it is a COMMENT in swarm.rs, not a string literal, and the compiler strips
+# comments before anything reaches the binary's data. A comment is even less present than the fn name
+# that broke this rule the first time (F62) and the second (is_code_deliverable).
+#
+# BEFORE ADDING A MARKER, PROVE IT IS A LITERAL:
+#     grep -c '"MARKER"' crates/goose-cli/src/commands/swarm.rs     # quoted => real
+#     grep -c '// .*MARKER' crates/goose-cli/src/commands/swarm.rs  # commented => USELESS
+#
+# F71 is verified by its unit test instead — spec_get_endpoints_does_not_scrape_across_a_backtick,
+# which asserts /api/health and /api/summary are extracted FROM A MARKDOWN TABLE and that no backtick
+# or `sync` fragment leaks. That asserts the behaviour, which is stronger than asserting presence.
 
 # F72: research DOES report /v1 in full; the loss is the detailer, whose verbatim rule covered
 # filenames but not external literals like API paths.
