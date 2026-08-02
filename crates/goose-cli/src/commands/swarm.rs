@@ -20650,6 +20650,48 @@ fn resolve_app_root(cwd: PathBuf, run_id: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// A SWARM WORKER IS NOT AN INTERACTIVE GOOSE SESSION, and it must not inherit that session's hints.
+///
+/// goose appends its global + project hints to EVERY agent's system prompt as `# Additional
+/// Instructions`, AFTER `override_system_prompt` has set the carefully-built task prompt
+/// (prompt_manager.rs — hints go into `system_prompt_extras`, which are joined on after the base).
+/// Global hints include whatever `goose:import claude-code` pulled in.
+///
+/// MEASURED on this machine, from goose's own llm_request logs: 17 of 17 substantive swarm requests
+/// carried the block, median prompt 45,264 chars of which 22,389 were hints — HALF of every prompt
+/// sent to a local 27B. Their headings included "Wolfaenpak Atlassian is a TEST environment",
+/// "Production config on a CLIENT system", "Workhorse — Mac Studio sync", "UI / design — MANDATORY
+/// rules", "Writing as the user", and the goose repo's own AGENTS.md build/test/clippy instructions —
+/// delivered to a worker whose entire job was to write a Python payments-sync tool in a temp
+/// directory. The repo AGENTS.md arrives merely because the bench runs inside the goose checkout, so
+/// the hint walk finds it on the way up.
+///
+/// This is the instruction-density defect at its largest scale. Measured compliance for this model
+/// class falls from ~0.59 at 10 rules to ~0.09 at 40, published work puts a distinct drop past ~15
+/// constraints regardless of model size, and Qwen-family models show a PRIMACY bias — so the
+/// irrelevant material, sitting first, is weighted hardest.
+///
+/// `get_context_filenames()` reads the `CONTEXT_FILE_NAMES` param, and `Config::get_param` checks the
+/// uppercase ENV VAR before the config file. Setting it to an empty list here scopes the suppression
+/// to THIS PROCESS: `goose swarm run` and its in-process workers. An interactive goose session is a
+/// different process and keeps its hints. Nothing in goose core is touched.
+///
+/// GOOSE_SWARM_INHERIT_HINTS=1 restores the old behaviour so the change can be measured as an arm,
+/// and an explicit CONTEXT_FILE_NAMES already in the environment always wins.
+fn suppress_inherited_hints() {
+    let inherit = std::env::var("GOOSE_SWARM_INHERIT_HINTS")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if inherit || std::env::var("CONTEXT_FILE_NAMES").is_ok() {
+        return;
+    }
+    std::env::set_var("CONTEXT_FILE_NAMES", "[]");
+    eprintln!(
+        "  swarm: worker prompts carry the TASK only — goose global/project hints suppressed \
+         (GOOSE_SWARM_INHERIT_HINTS=1 to restore)"
+    );
+}
+
 pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // The goal is the spec the user wrote — not the desktop's per-turn scaffolding in front of it. Strip it
     // ONCE, at the entry, so every downstream consumer (the research question's short_goal, spec_clarity's
@@ -20662,6 +20704,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Set the LM Studio host up front so the fleet probe's HTTP fallback (used when the `lms` CLI is not
     // on PATH — e.g. a Finder-launched desktop app) targets the CONFIGURED endpoint, not just the default.
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
+    suppress_inherited_hints();
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
