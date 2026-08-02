@@ -3293,3 +3293,67 @@ it sorted `(nodes, actual_nodes)` across results — a FAILED unit has neither, 
 down the whole health check. **The one instrument that tells an unattended operator the sweep is sick
 must never be the thing that dies when something goes wrong.** It now sorts None-safely, and it
 immediately reported the real state: `[BAD] no unit produced a dispatch audit`.
+
+---
+
+## F89 — an intruder cost three units, because the guard killed the innocent one too
+
+Three consecutive units died in forty minutes, all to the same guard firing correctly on a real
+problem and then over-reacting:
+
+```
+[abort] 09:54:15 baseline-n3-r0: 3 engines running at once [14772, 41165, 41234]
+[abort] 10:13:17 baseline-n1-r0: 2 engines running at once [41980, 85322]
+        retarget_off-n3-r0: OSError: [Errno 48] Address already in use   (0 min)
+```
+
+`baseline-n3-r0` lost at 24 minutes, `baseline-n1-r0` at 19, and `retarget_off` never started because
+a dying process still held its port. An hour of fleet time, and three rows that can only be discarded.
+
+### Two separate defects, and only one of them was the intruder
+
+**The intruder.** Engines appeared that this sweep did not spawn. The only process with repo access and
+the ability to run commands was a background analysis workflow whose agents were told they could run
+read-only checks. Correlation is strong — three occurrences while it ran, and a clean single engine
+immediately after stopping it — but I did not capture the parent of pids 41165/41234/85322 before they
+were killed, so this is a STRONG INFERENCE and not proof. Recorded as such.
+
+**The guard, which is the part I can fix.** `doomed()` saw `len(engine_pids()) > 1` and `abort()` then
+killed EVERY engine pgroup — its own included — and cut the unit loose. So an intruder did not merely
+contend for the fleet; it destroyed whatever was running. The guard was written to stop an orphan
+skewing a measurement, and it did that by throwing the measurement away.
+
+**A sweep knows which engine is its own — it is the one it spawned.** `intruder_engine_pids()` now
+compares each engine's ppid against `os.getpid()`, `evict_intruders()` kills only the foreign ones, and
+`doomed()` evicts FIRST and only then asks whether the unit is beyond saving. An intruder is a reason
+to remove the intruder, not a reason to lose the unit.
+
+Contention is recorded rather than hidden: `contended` on the result row counts evictions, because the
+unit's WALL-CLOCK is tainted for some unknown slice even though its build is not. A timing number
+nobody flagged is worse than one nobody has.
+
+**Control, both directions:** run from a shell (pid 88157) the live engine 85520 is correctly reported
+as an intruder; measured against the real sweep (pid 14769) its ppid IS 14769, so it would be SPARED.
+
+### The operational rule this earns
+
+**Nothing that can spawn an engine may run while a sweep is live.** Before launching any background
+work that touches this repo: `pgrep -f 'goose swarm run' | wc -l` must be 1, and it must still be 1
+afterwards. The audit's value never exceeded the cost of destroying every measurement on the machine.
+
+### Deliberately NOT restarting the sweep to pick this up
+
+A running interpreter does not see a source edit, so the live sweep (pid 14769) still has the old
+all-or-nothing guard. Restarting now would cost the unit currently in flight to install protection
+against an intruder that is already stopped. The fix lands at the next boundary, which is due anyway
+with seven commits held. Stated here so the gap is deliberate and visible rather than forgotten.
+
+## F90 — disk: `target/debug` was 64 GB and the sweep halts at 15 GB free
+
+Free space fell 56 -> 40 GB in forty minutes of build/test cycles. The consumer was not the runs
+directory (17 MB total) but `target/debug` at **64 GB**, grown by repeated `cargo check`/`test`.
+
+`MIN_FREE_GB = 15` is a hard abort in `doomed()`, so this was a scheduled failure a couple of hours
+out — the kind that would have looked like a mysterious mass abort at 3am. Removed `target/debug`
+only; `target/release/goose` is the LIVE binary the engine is executing and was untouched (verified by
+size and by the running process's command path). Free space 40 -> 53 GB and still settling.
