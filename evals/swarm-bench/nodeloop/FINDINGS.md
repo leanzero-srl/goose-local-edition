@@ -5703,3 +5703,54 @@ anything, and I quoted it as "the real budget" for two ticks.
 `model_config.model_name contains "qwen3.6-27b"`**, and must state its n. The directory is shared,
 the intruders are large (one is 1.3 MB), and they are silent — nothing in the file says which session
 it belongs to except the model name.
+
+---
+
+## F138 — the same number, wrong three times, three different ways. Instrument written; stop hand-rolling it.
+
+I nearly filed "F87 has REGRESSED — Mihai's personal CLAUDE.md is back in every worker prompt". The
+prompt I was staring at is real and it is 47,206 chars, 9.0% of it *"Production config on a CLIENT
+system — MANDATORY rules"*, plus Mac Studio rsync, UI design rules, and how to write in his voice —
+delivered to a 27B writing a Python app.
+
+**It is history, not a regression.** The newest contaminated worker call is **2026-08-02 04:47:52**;
+F87's suppression shipped at the 17:40 boundary. I had sampled the LARGEST prompt in the window
+instead of the most RECENT, and the largest was necessarily a pre-fix one. Lesson 10, on myself: an
+extremum is not a representative.
+
+### The correction chain, in full, because it is the point
+
+| | claim | why it was wrong |
+|---|---|---|
+| F133 | system 10,587 chars, 39% of payload | **n=5**, no model filter |
+| F137 | system 22,803 chars, 81% of payload | fixed the model filter, but **pooled four call kinds and both F87 eras** |
+| **F138** | **worker system 20,412 chars (n=7), 34% of what the worker reads** | split by kind, post-fix only |
+
+Three ticks, three headline numbers, one metric. Each correction was real and each left a new way to
+be wrong.
+
+### What the properly-split measurement actually says
+
+78 fleet calls — **and 431 foreign calls excluded**, i.e. the shared log directory is ~85% other
+sessions:
+
+| kind | n | sys median | sys max | tools | inherited hints |
+|---|---|---|---|---|---|
+| **worker** | 18 | 36,165 | **47,206** | 2,064 | 11/18 (all pre-fix) |
+| planner/detail | 32 | 21,992 | 34,321 | 4,700 | 21/32 (all pre-fix) |
+| scout/small | 16 | 1,314 | 2,706 | 3,191 | none |
+| judge/spiral | 12 | 341 | 341 | 2,064 | none |
+
+**F87 cut the worker system prompt from a median of 42,561 to 20,412 — a 52% reduction, measured
+here for the first time on clean data.** That is a real, large, shipped win.
+
+**The lever that remains: 20,412 chars of worker system prompt.** On a model whose perfect-rule
+compliance falls from 0.588 at 10 rules to 0.094 at 40, that is the instruction-density budget, and
+it is where B1 (the test-author reading-rule contradiction) lives.
+
+### The durable part
+
+`prompts.py`. It filters to the fleet, **splits by call kind**, flags F87 contamination with its
+newest timestamp, and prints n on every cell — and it says outright that a pre-fix timestamp means
+history rather than regression, because I raised exactly that false alarm. Three hand-rolled queries
+produced three wrong headlines. This is the fourth query, written once, so there is no fifth.
