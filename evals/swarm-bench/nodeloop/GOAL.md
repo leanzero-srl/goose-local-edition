@@ -48,14 +48,22 @@ boundary.
 
 ## CURRENT GOAL — G4: THE NODE CURVE. This is Mihai's goal one, stated directly.
 
-**`swarm-1node-r0` is in flight and is the first 1-node datapoint on this build.** What it is already
-showing, and the reason it must be allowed to finish:
+**`swarm-1node-r0` is in flight and is the first 1-node datapoint on this build.**
 
-**The prefix is 53.8 minutes before the first dispatch** — 62% of the run's elapsed time at the point
-it was measured, against 13.3 min (baseline@3n) and 20.3 min (retarget_off@3n). Every fleet-parallel
-phase — scouts, best-of-N drafting, the detail fan — collapses to serial on one node, and that is the
-mechanism by which more nodes win. If this holds to completion it is the first direct evidence for
-the overarching goal, so this unit is answering a named question and stays.
+⚠ **F129 RETRACTED THE HEADLINE I CARRIED HERE FOR SEVERAL TICKS.** It said the 53.8-min prefix
+against 13.3 and 20.3 showed "every fleet-parallel phase collapses to serial on one node". **The
+1-node run ran a redraft round and neither 3-node run did** — that one round cost 1584 s, **49% of
+its whole prefix**, and removing it takes the ratio from 3.20x to 1.63x. The redraft trigger is
+`plan_confidence < ask_floor`, measured by F121 at ~29% of runs with confidence 36-100 at EVERY node
+count. This unit drew a low card, not a small fleet.
+
+What survives, and it is the honest node signal: **research 2.65x (588 s vs 209 / 235 s)** — scouts
+are independent lenses dispatched across devices and serialise on one node by construction.
+Like-for-like **planning round 1 is 1054 s vs 587 s and 986 s = 1.34x on n=1 against n=2**, which is
+not resolvable. **The node curve is NOT yet demonstrated by the prefix; do not lead with it.**
+
+The unit still stays — it is the only 1-node datapoint on this build, and its low confidence makes
+it the pairing baseline `retarget_off` has been waiting for since F121.
 
 Also true of this unit and worth reading together: plan_confidence 81 < ask_floor 85, so the redraft
 ladder DID run here — this is the low-confidence baseline `retarget_off` has been waiting for (~29%
