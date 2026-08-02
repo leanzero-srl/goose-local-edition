@@ -19744,6 +19744,40 @@ impl TaskDispatcher for GooseAgentDispatcher {
              one.\n"
         };
         let worker_directive = lang.directive();
+        // LANGUAGE- AND FRAMEWORK-SPECIFIC RULES, GATED — they used to be unconditional.
+        //
+        // Two bullets sat in the universal TOOLS & ENVIRONMENT block with no `lang` test at all, while
+        // `lang` was in scope one line above (it builds `worker_directive`):
+        //
+        //   * "Run Python with `python3`, never bare `python`."            (49 chars)
+        //   * the Click/`CliRunner`/`mix_stderr` paragraph                 (380 chars)
+        //
+        // `TargetLang` carries Python, TypeScript, Rust, Go and Other, so a Go worker was being told
+        // how to invoke Python, and EVERY worker of EVERY kind was told how to construct a `CliRunner`
+        // — a detail about ONE Python CLI *testing* library, useless to an implementer writing a data
+        // model and meaningless to a Rust build. That is instruction budget spent on a rule that cannot
+        // apply, on a model whose perfect-rule compliance falls 0.588 at 10 rules to 0.094 at 40: every
+        // inapplicable rule silently evicts an applicable one.
+        //
+        // Gated on the two facts the engine already holds — the target language, and whether this
+        // dispatch authors tests. A Python worker's prompt is UNCHANGED except that the Click paragraph
+        // now reaches only the kind that could ever use it.
+        let lang_rules = {
+            let mut r = String::new();
+            if matches!(lang, TargetLang::Python) {
+                r.push_str("- Run Python with `python3`, never bare `python`.\n");
+                if is_test_author {
+                    r.push_str(
+                        "- Testing a Click CLI: construct `CliRunner()` with NO arguments — the \
+                         `mix_stderr` kwarg was REMOVED in Click 8.2+, so `CliRunner(mix_stderr=False)` \
+                         raises `TypeError` and breaks the whole test file. stdout+stderr are already \
+                         combined in `result.output`. (Your Click knowledge may be out of date — when an \
+                         import/TypeError says an argument was removed, drop it, do not fight it.)\n",
+                    );
+                }
+            }
+            r
+        };
         // GOOSE_SWARM_READ_ON_FIX: a FIX worker owns no files and is repairing a defect the per-task
         // gates already proved is real. The implementer prohibitions below ("read AT MOST the ONE file
         // you will edit", "STOP WHEN GREEN") are correct for a first pass and actively harmful here:
@@ -19835,12 +19869,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
              do NOT `cat` that temp file — reading it just re-truncates into ANOTHER temp file and you will \
              loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
              only the part you need.\n\
-             - Run Python with `python3`, never bare `python`.\n\
-             - Testing a Click CLI: construct `CliRunner()` with NO arguments — the `mix_stderr` kwarg was \
-             REMOVED in Click 8.2+, so `CliRunner(mix_stderr=False)` raises `TypeError` and breaks the whole \
-             test file. stdout+stderr are already combined in `result.output`. (Your Click knowledge may be \
-             out of date — when an import/TypeError says an argument was removed, drop it, do not fight it.)\n\
-             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
+             {lang_rules}             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
              (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
              - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \

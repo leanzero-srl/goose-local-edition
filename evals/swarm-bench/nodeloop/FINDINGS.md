@@ -6131,3 +6131,56 @@ directive asks for. The generic block is the **7,461-char preamble, 21 static bu
 identically to every kind**. That is the real target, and it is a third of the prompt rather than the
 whole of it. F87 already removed the genuinely foreign material; what remains is engine rules, and
 the question for each is which KIND it applies to.
+
+---
+
+## F146 — a Go worker was told how to run Python, and every worker was taught a Click testing detail
+
+First result of the preamble audit. Two of the 21 static bullets in the universal
+`TOOLS & ENVIRONMENT` block had **no language or kind gate at all**, while `lang` was in scope one
+line above them (it builds `worker_directive`):
+
+- *"Run Python with `python3`, never bare `python`."* — 49 chars
+- the **Click / `CliRunner` / `mix_stderr`** paragraph — 380 chars
+
+`TargetLang` carries `Python, TypeScript, Rust, Go, Other`. So on any non-Python build the engine
+instructs a worker how to invoke Python; and on **every** build, **every kind** of worker — an
+implementer writing a data model, a verifier that writes nothing, the sink — is taught how to
+construct a `CliRunner`, a detail about ONE Python CLI *testing* library it will never touch.
+
+That is ~429 chars of instruction that **cannot apply**, on a model whose perfect-rule compliance
+falls from 0.588 at 10 rules to 0.094 at 40. Every inapplicable rule silently evicts an applicable
+one — which is the whole reason the density work is a subtraction, never an addition.
+
+It is also G7 (de-hardcode) in miniature: the engine holds `lang` and used it two lines earlier, then
+hard-coded a Python fact anyway.
+
+### Gated on the two facts the engine already has
+
+`lang == Python` for the interpreter rule; `lang == Python && is_test_author` for the Click
+paragraph. **A Python worker's prompt is unchanged except that the Click detail now reaches only the
+kind that could ever use it.** A Go or Rust worker loses both.
+
+This compounds with F139: `is_test_author` was defined ~400 lines BELOW this site until that fix
+hoisted it. Had it still been where it was, this gate could not have been written without a second
+classifier — the defect the `kind_prompt_on` comment explicitly forbids.
+
+### No marker, and the verification is better than one
+
+The Click text is unchanged — only its condition moved — so there is no NEW string literal, and
+`strings` would find the old one either way. Presence would prove nothing about gating. **Registered
+instead as a run-based check**: after the boundary, `prompts.py` must show the Click paragraph in
+test-author prompts and NOT in implementer prompts on the same run. That asserts the behaviour rather
+than the byte, which is the standing preference (F62, F71, F144).
+
+### Audit status: 21 bullets
+
+| bullets | verdict |
+|---|---|
+| 1-5 (fix-round rules) | correctly gated to the sink already — F145 |
+| **9, 10 (python3, Click)** | **GATED — this finding** |
+| 20 "DON'T OVER-READ" (891 chars, the largest) | kind-gated by `reading_rules`; F139 fixed its `layout_block` contradiction |
+| 21 "STOP WHEN GREEN" (468 chars) | kind-gated; unreachable for a test author (F126) |
+| the rest (tools, paths, cwd, artifacts) | genuinely universal — they apply to every kind and every language |
+
+So the preamble is now largely honest: what remains static is the part that really is universal.
