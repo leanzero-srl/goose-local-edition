@@ -4879,3 +4879,54 @@ the instrument doubting itself.
 The generalisable rule: **before an instrument reports a property of a MECHANISM, check whether it
 sampled one instance or the distribution.** F119's other two verdicts survive precisely because they
 are properties of the code (a circular metric; a budget default), not of a run.
+
+---
+
+## F122 — RETRACTION: the judge does NOT scale with node count. It scales with SPARE CAPACITY.
+
+I claimed this twice today and it is wrong.
+
+> F76: *"more nodes means more idle slots means more judging. The judge gets better with fleet size."*
+> F98: *"that is also the one place the architecture already scales the right way."*
+
+Measured across every archived run with dispatches, judge invocations per dispatch:
+
+| nodes | judge/dispatch | runs |
+|---|---|---|
+| **1** | **4.86** | 2 |
+| 2 | 2.67 | 1 |
+| **3** | **2.57** | 7 |
+
+**The judge runs roughly TWICE as often per dispatch on ONE node as on three.** Absolute counts agree:
+a 1-node baseline logged **171** judge runs over 24 dispatches; 3-node runs logged 36-109 over 17-33.
+
+### Why my reasoning was wrong
+
+The mechanism is right — the judge only runs on a device with spare capacity — but I drew the wrong
+consequence. More nodes do not mean more idle slots; **more nodes mean more work in flight**, because
+the scheduler's whole job is to keep them busy. Spare capacity is highest when the fleet is
+UNDER-utilised, which happens on FEWER nodes (a narrow plan cannot fill three) or during a serial
+stretch.
+
+So the judge is a **spare-capacity** mechanism, not a **fleet-size** mechanism, and those two are
+anti-correlated by design. I had a plausible causal story and never checked its direction.
+
+### What survives
+
+F98's substance stands and is unaffected: the judge does real work (**8, 11, 7, 6, 5 real
+interventions** across the larger runs, including the timezone catch), and it is starved when the fleet
+is saturated (`no_idle_device` is 100% of skips). Both remain true.
+
+What does not survive is the inference that adding nodes buys more of it. **If anything, adding nodes
+buys LESS judging per unit of work** — which makes the judge a mechanism that a well-utilised fleet
+suppresses, and that is a genuine tension worth naming rather than a happy accident worth citing.
+
+### Caveats stated plainly
+
+n=2 for 1 node against n=7 for 3, and one of the two 1-node runs is still IN FLIGHT (partial counts,
+included because excluding it would flatter the retraction rather than test it). The direction is
+consistent in both absolute and per-dispatch terms and is opposite to my claim, which is enough to
+withdraw the claim — not enough to publish the inverse as a law.
+
+**Registered:** if G4's node curve produces a completed 1-node and 3-node pair on the same build, the
+judge/dispatch ratio is a free readout from it, and this retraction is what it tests.
