@@ -182,6 +182,21 @@ PREFLIGHT
     fi
     GOOSE_BIN="$HOME/Projects/goose/target/release/goose"
     BEFORE=$(stat -f '%m-%z' "$GOOSE_BIN" 2>/dev/null || echo none)
+    # PRE-FLIGHT BEFORE ANYTHING IS KILLED. The marker check below is authoritative but runs after
+    # the supervisor, the engine and the rebuild have all been spent — so a marker that is a comment,
+    # a fn name, or a typo refuses a perfectly correct binary and there is nothing left to salvage.
+    # THREE times that happened. preflight.py decides the same question from source, in seconds, with
+    # the fleet still running, so the only reason to reach step 1 is that the answer was yes.
+    # Running it here rather than trusting myself to remember is what stops the fourth occurrence.
+    if [ -f preflight.py ]; then
+      echo "== 0. boundary pre-flight (source-level; nothing killed yet)"
+      if ! python3 preflight.py; then
+        echo
+        echo "refusing to cross: a marker above would report ABSENT on a CORRECT rebuild."
+        echo "  nothing has been stopped — the run and the fleet are untouched. Fix MARKERS, re-run."
+        exit 3
+      fi
+    fi
     echo "== 1. stopping the loop and the in-flight unit"
     touch STOP
     # SUPERVISOR FIRST, THEN THE ENGINE. Killing the engine first leaves the sweep alive for the
