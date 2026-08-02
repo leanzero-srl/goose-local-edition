@@ -5353,3 +5353,66 @@ flight**, because "in flight" was keyed off `done` alone and a failed task is no
 mutually exclusive states asserted at once, from the wrong set — the same defect one layer down,
 caught only because I read the output instead of trusting the edit. "Settled" now means done OR
 failed. Self-test passes; the live run reads `dispatched 13 / done 12 / FAILED 1`.
+
+---
+
+## F131 — the discriminator was on disk the whole time, and it points at a THIRD story
+
+F128 said the tool_calls/thinking_chars discriminator was **"structurally unobservable"**. That was
+too strong, and I found out by looking at what the live tail was writing while its event stream sat
+silent for 11 minutes: `.swarm/activity/complete-fix.json`, updating in real time.
+
+**Every task writes `.swarm/activity/<key>.json`**, and those digests carry
+`{tool_calls, errors, malformed, thinking_chars, reasoning, full_reasoning, last_thinking, last_text,
+calls, recent, model}`. `thinking_chars` — the exact term F128 called unobservable — is right there,
+and the archive keeps run directories, so it is available for every past run. What is missing is its
+presence in the EVENT STREAM, which is a different and much smaller claim. `judge_observed` is still
+the right fix (an event is durable per-invocation; a digest is overwritten), but I did not have to
+wait for it to learn something.
+
+### What it says, joined to the judge hints across 3 runs / 108 digests
+
+FINAL-STATE `thinking_chars` by the hint class that task received:
+
+| hint class | n | median | min | max |
+|---|---|---|---|---|
+| **PRE-write paralysis** | 4 | **1229** | 285 | 4519 |
+| POST-write spin | 6 | 3846 | 866 | 13013 |
+| specific code defect | 1 | 6354 | — | — |
+| no hint | 95 | 1530 | 375 | 46576 |
+
+**Tasks killed for "produced no file yet" are NOT high-thinking spirallers.** Their thinking is at or
+*below* the corpus median. `swarm-1node-r0`'s `test-api` — killed twice, terminally failed — shows
+**1 tool call and 285 thinking chars**. Over 420+ seconds that is not a reasoning spiral and it is
+not productive deliberation. It is a worker producing almost nothing at all.
+
+**That is a THIRD story, and neither in-tree fix addresses it.** "Grace" grants more time to thinking
+that is not happening. The #134 spiral trip requires `thinking >= cap` and would never fire on this
+population. F128 framed the choice as kill-earlier vs grant-more-time; the data says the premise both
+share — that the worker is busy in some invisible way — may simply be false for these tasks.
+
+### Two immediate consequences
+
+**1. A cap chosen by analogy would be inert.** `spiral_break_chars` is baked at **12000**, and the
+adjacent `spiral_thinking_chars` defaults to 0. Setting the latter to 12000 by analogy — the obvious
+move — **could never fire on the observed pre-write population, whose maximum is 4519.** armcheck's
+`spiral_thinking` probe already says "pick the cap BELOW the observed max"; this is that number.
+
+**2. The terminal event UNDERSTATES what happened.** `test-api`'s `task_completed` carries
+`tool_calls 0, elapsed_ms 0` while its digest shows 1 call and 285 thinking chars. The zeros are the
+SYNTHESIZED exhausted-attempts record (F126), not a measurement. Anything reasoning from those zeros
+is reasoning from a placeholder.
+
+### The caveat, which is severe and bounds all of the above
+
+**The digest is overwritten as the worker streams and across attempts**, so every number here is the
+FINAL attempt's end state, not the state at the moment of the kill. A worker could have thought hard
+on attempt 1 and idled on attempt 3, and this would only show the idling. So this is **suggestive,
+not decisive** — it rules a cap of 12000 out, and it makes the "productive thinking" story less
+likely, but it cannot settle F128. `judge_observed` records the value AT each judge invocation, which
+is what actually settles it; that remains the boundary's job.
+
+Also corrected: `judge.rs:493`'s test comment says the worker made zero tool calls because "a
+reasoning model streams thinking, **which the digest could not see**". The digest CAN see it now —
+`thinking_chars` was added later (swarm.rs:16491 notes it is `None` on digests predating the key).
+That comment describes a world that no longer exists.
