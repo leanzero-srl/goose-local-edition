@@ -191,14 +191,37 @@ def q1_does_the_plan_make_sense(ev, plan) -> tuple[str, list[str]]:
     n = (pool or {}).get("worker_count") or 0
 
     bad, warn = [], []
-    # A PRODUCING task owning several files is a chokepoint the PLANNER made. MEASURED: `api-web`
-    # owned api.py AND web/index.html, stalled 11 minutes with the judge saying "ok" six times, and
-    # had to be split into a backend and a frontend child. The split worked — it was repairing a
-    # planning error that should never have reached the fleet.
-    for t, f in sorted(((t, f) for t, f in files.items() if len(f) > 1), key=lambda kv: -len(kv[1])):
-        line = (f"{t} owns {len(f)} files ({', '.join(f)}) with a {desc.get(t, 0)}-char brief — "
-                f"one task, several concerns; this is the shape that gets split mid-run")
-        (bad if len(f) > 2 or desc.get(t, 0) > 3000 else warn).append(line)
+    # MIXED KINDS, not "multi-file". The first version of this rule flagged any producing task owning
+    # more than one file — and that was WRONG, because the architect prompt deliberately asks for it:
+    # "A subtask may (and for any non-trivial module SHOULD) own SEVERAL small files, ONE concern
+    # each", with examples lexer.py+parser.py+ast.py and user.py+account.py. Acting on the crude rule
+    # would have "fixed" a prompt that already says the right thing.
+    #
+    # What both real offenders actually did was mix KINDS. `api-web` owned api.py + web/index.html —
+    # server code and a static asset — stalled 11 minutes, and had to be split into a backend and a
+    # frontend child. `main` owned __main__.py + README.md — an entry point and documentation. Every
+    # example in the prompt groups files of the SAME kind; neither of these does.
+    def kind(path: str) -> str:
+        p = path.lower()
+        for suf, k in ((".md", "docs"), (".rst", "docs"), (".txt", "docs"),
+                       (".html", "asset"), (".css", "asset"), (".js", "asset"),
+                       (".json", "config"), (".yaml", "config"), (".yml", "config"),
+                       (".toml", "config"), (".cfg", "config"), (".ini", "config")):
+            if p.endswith(suf):
+                return k
+        return "code"
+
+    for t, f in sorted(files.items(), key=lambda kv: -len(kv[1])):
+        if len(f) < 2:
+            continue
+        kinds = {kind(x) for x in f}
+        if len(kinds) > 1:
+            bad.append(f"{t} MIXES KINDS {sorted(kinds)} across {len(f)} files ({', '.join(f)}) with a "
+                       f"{desc.get(t, 0)}-char brief — the prompt asks for several files of ONE concern, "
+                       f"not several concerns; this is the shape that gets split mid-run")
+        elif desc.get(t, 0) > 3000:
+            warn.append(f"{t} owns {len(f)} same-kind files but carries a {desc.get(t,0)}-char brief — "
+                        f"large even for a legitimate multi-file task")
     thin = [t for t, k in desc.items() if k < 300]
     if thin:
         bad.append(f"THIN instructions (<300 chars) on {thin} — the degraded-brief signature")

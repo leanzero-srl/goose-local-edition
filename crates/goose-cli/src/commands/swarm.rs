@@ -12339,7 +12339,10 @@ impl GooseAgentDispatcher {
             MODULAR ARCHITECTURE (hard rule) — keep FILES small and single-responsibility. A subtask may (and for any non-trivial \
             module SHOULD) own SEVERAL small files, ONE concern each (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a \
             models subtask owns `user.py`+`account.py`), NOT one big catch-all file. NEVER assign a single monolithic file that does \
-            many unrelated things — split by responsibility. This keeps subtask COUNT low (good for the slow fleet) while the \
+            many unrelated things — split by responsibility. Those files must be the SAME KIND: all executable module code, or all \
+            static assets, or all docs — NEVER mixed. Do NOT put a server module and an HTML/CSS/JS asset in one subtask, and do NOT \
+            attach README/docs to a code subtask; they are different concerns however related they feel, they need different skills, \
+            and one worker doing both is the chokepoint another node could have taken. This keeps subtask COUNT low (good for the slow fleet) while the \
             architecture stays modular and readable. Put any logic used by more than one subtask in the ONE early shared subtask and \
             have the others IMPORT it — NEVER let two subtasks each implement the same thing; duplicate implementations of one \
             algorithm are a real defect (two copies drift apart and one silently goes wrong).\n\

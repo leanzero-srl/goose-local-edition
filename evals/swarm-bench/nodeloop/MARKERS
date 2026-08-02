@@ -141,6 +141,11 @@ straggler_aborted
 GOOSE_SWARM_INHERIT_HINTS
 CONTEXT_FILE_NAMES
 
+# F101: the architect grouped a server module with an HTML asset, and an entry point with a README —
+# the chokepoints the judge then had to split. The prompt asked for several files of ONE concern; it
+# did not say they must be the same KIND.
+SAME KIND
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

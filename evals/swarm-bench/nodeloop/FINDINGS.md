@@ -3894,3 +3894,55 @@ PATTERN 4 again, and the review is now the thing that catches it.
 The tick rules in GOAL.md now require `review.py` before finalising, and state the end condition
 Mihai gave: **rinse and repeat, and the repeat ENDS when the mini-goal is achieved and a piece of the
 overarching goal is fulfilled** — not when a run finishes and not when a number looks good.
+
+---
+
+## F101 — the planner mixes KINDS, and my first rule for catching it was wrong
+
+Acting on the review's `INTERVENE — fix the planner` verdict. Reading the architect prompt first
+stopped me from "fixing" something that already says the right thing:
+
+> *"A subtask may (and for any non-trivial module SHOULD) own SEVERAL small files, **ONE concern
+> each** (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a models subtask owns
+> `user.py`+`account.py`), NOT one big catch-all file."*
+
+**Multi-file is not the defect — the engine deliberately wants it.** My review's rule (flag any
+producing task owning >1 file) was too crude and would have sent me to rewrite a correct instruction.
+
+### What the two real offenders actually did
+
+| task | files | kinds |
+|---|---|---|
+| `api-web` | `vendorsync/api.py`, `vendorsync/web/index.html` | **code + asset** |
+| `main` | `__init__.py`, `__main__.py`, `README.md` | **code + docs** |
+
+Every example in the prompt groups files of the SAME kind. Neither offender does. `api-web` is the
+task that stalled 11 minutes and had to be split into a backend and a frontend child (F99) — a server
+module and a static asset are different work needing different skills, and one worker doing both is a
+chokepoint another node could have taken.
+
+### Both fixes
+
+**The instrument** now flags MIXED KINDS rather than multi-file, classifying by extension
+(code / asset / docs / config). It correctly clears `lexer.py+parser.py+ast.py` and correctly
+condemns both real cases.
+
+**The prompt** gains one sentence, not a rewrite — the existing rule was right, it just never said the
+files had to be alike:
+
+> *Those files must be the SAME KIND: all executable module code, or all static assets, or all docs —
+> NEVER mixed. Do NOT put a server module and an HTML/CSS/JS asset in one subtask, and do NOT attach
+> README/docs to a code subtask; they are different concerns however related they feel, they need
+> different skills, and one worker doing both is the chokepoint another node could have taken.*
+
+### The methodological point
+
+This is the review working as intended AND being corrected by the thing it reviewed. The verdict was
+right (the plan does not make sense); the REASON it gave was wrong; and reading the source before
+acting produced a narrower, truer fix than the one the instrument proposed. An instrument that
+directs attention is worth having even when its explanation needs replacing — but only if its
+explanation is checked, which is PATTERN 6 pointed at my own tooling for the third time today.
+
+**Registered prediction:** the next run's plan has NO task mixing kinds, and correspondingly needs no
+`task_split` for a multi-concern root. If a split still fires on a same-kind task, the split criterion
+is about SIZE rather than concern-mixing and this fix is aimed at the wrong thing.
