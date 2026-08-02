@@ -3,6 +3,34 @@
 **Overarching:** make the swarm actually WORTH IT — beat one node on time and on the quality of what
 ships. Everything below is a sub-goal of that and nothing else belongs here.
 
+## ⭐ THE PRIME DIRECTIVES — filed by Mihai 2026-08-02 19:40. These OUTRANK every finding below.
+
+**1. "IF IT APPEARS LIKE IT'S NOT WORTH IT THEN YOU ARE NOT DOING IT RIGHT."** More nodes CANNOT be
+worse than one — that is redundancy in brain power. Harder to make work, yes; worse, never. A result
+that says otherwise is a statement about MY implementation, not about the swarm. There is no
+"the data says it doesn't help" ending. Keep researching until it works.
+
+**2. NOTHING GENERIC. EVER. A generic prompt to a node IS the failure.** Not a rough edge — the
+failure itself. Every instruction a node receives must be CONSTRUCTED ON THE FLY for that node, that
+task, that moment, from principle and goal — never a canned string, never a static block, never a
+rule written for a different job.
+*Measured today, and this is the indictment: **58 of 73 judge interventions are THREE canned
+strings.** The same sentence, forty times, to forty workers doing forty different jobs. And a split
+child receives `(split of <parent>) <child-id>` — 30 characters, identical in shape every time.*
+
+**3. THE IDLE NODE IS THE POINT.** When two workers are busy and a third finishes, that third node
+should ASSESS the work in flight. That is where the redundancy pays. It needs a DYNAMIC prompt built
+for what it is looking at, and ONLY the right amount of context — enough to judge, not so much that
+the judge itself bogs down.
+
+**4. THE SWARM'S OWN LOGIC MUST BE PRINCIPLE, NOT HARD-CODE.** Fan out, spread, divide and conquer —
+expressed as goals the engine pursues, not as constants and canned text. Every hard-coded second,
+threshold and fixed sentence is a place the engine stopped thinking.
+
+**5. DON'T WAIT — ASSESS AND BUILD, EVERY TICK.** Between ticks: watch the fleet, form conclusions,
+construct and implement. Waiting for a run to finish is not work. If there is nothing to measure,
+there is always something to construct.
+
 **The through-line Mihai keeps returning to:** the crux across all phases is EXACT AND PRECISE
 INSTRUCTIONS. Every fix should be checkable against that.
 
