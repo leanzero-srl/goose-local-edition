@@ -228,16 +228,24 @@ def q1_does_the_plan_make_sense(ev, plan) -> tuple[str, list[str]]:
     n = (pool or {}).get("worker_count") or 0
 
     bad, warn = [], []
-    # MIXED KINDS, not "multi-file". The first version of this rule flagged any producing task owning
-    # more than one file — and that was WRONG, because the architect prompt deliberately asks for it:
-    # "A subtask may (and for any non-trivial module SHOULD) own SEVERAL small files, ONE concern
-    # each", with examples lexer.py+parser.py+ast.py and user.py+account.py. Acting on the crude rule
-    # would have "fixed" a prompt that already says the right thing.
+    # MIXED KINDS — DEMOTED from BAD to a note by F124, and the demotion is the point.
     #
-    # What both real offenders actually did was mix KINDS. `api-web` owned api.py + web/index.html —
-    # server code and a static asset — stalled 11 minutes, and had to be split into a backend and a
-    # frontend child. `main` owned __main__.py + README.md — an entry point and documentation. Every
-    # example in the prompt groups files of the SAME kind; neither of these does.
+    # This rule went through two wrong versions before the measurement. v1 flagged any multi-file
+    # producing task, which contradicted the architect prompt's own instruction ("a subtask may and
+    # SHOULD own SEVERAL small files, ONE concern each"). v2 narrowed it to tasks mixing KINDS —
+    # api.py + web/index.html, __main__.py + README.md — on the story that one brief covering two
+    # concerns must produce a worse dispatch.
+    #
+    # MEASURED across all 17 archived plans (262 producing tasks) before acting on it:
+    #     mixed-kind tasks retry 18.2% (n=22)   pure-kind tasks retry 15.2% (n=217)   delta +3.0pp
+    # Three findings-worth of consequence, and it fires on 88% of plans (15/17). A verdict that says
+    # "NO — fix the planner" on 88% of runs over a 3-point non-effect carries no information; it is
+    # the P4 pattern (a measure that cannot separate two opposite situations) in my own supervisor.
+    #
+    # It stays visible because the SHAPE is real and perfectly reproducible — only three collisions
+    # ever occur (code+docs 10, asset+code 9, asset+code+docs 3), always on `cli`/`main`/`entry` or
+    # `api`/`api-web`. If a future change gives it a measurable cost, the counter is already here.
+    # What it must NOT do is drive the verdict. See F124 for what does.
     def kind(path: str) -> str:
         p = path.lower()
         for suf, k in ((".md", "docs"), (".rst", "docs"), (".txt", "docs"),
@@ -248,17 +256,38 @@ def q1_does_the_plan_make_sense(ev, plan) -> tuple[str, list[str]]:
                 return k
         return "code"
 
+    # THE PREDICTOR THAT ACTUALLY SEPARATES (F124), measured over 239 dispatched tasks with a plan
+    # entry. It is an INTERACTION, which is why neither factor alone was ever visible:
+    #     hard AND test-authoring   60.0% retry (n= 30)   <-- the whole retry burden lives here
+    #     hard, not a test task     12.1% retry (n= 91)
+    #     test task, not hard       12.5% retry (n= 16)
+    #     neither                    5.9% retry (n=102)
+    # Test tasks retried worse than their run's other tasks in 5 of the 6 runs that had any. A retry
+    # is ~83s x the task's turns of pure waste, so this is the single largest planner-visible cost to
+    # the overarching goal, and `kind_prompt` is the lever aimed straight at it (G3).
+    hard_tests = [t["id"] for t in tasks
+                  if t.get("difficulty") == "hard" and str(t.get("id", "")).startswith("test")]
+    if hard_tests:
+        bad.append(f"{len(hard_tests)} HARD TEST task(s) {hard_tests} — measured 60% retry (n=30) "
+                   f"against 12% for hard non-test work; this is the run's predictable waste region")
     for t, f in sorted(files.items(), key=lambda kv: -len(kv[1])):
         if len(f) < 2:
             continue
         kinds = {kind(x) for x in f}
         if len(kinds) > 1:
-            bad.append(f"{t} MIXES KINDS {sorted(kinds)} across {len(f)} files ({', '.join(f)}) with a "
-                       f"{desc.get(t, 0)}-char brief — the prompt asks for several files of ONE concern, "
-                       f"not several concerns; this is the shape that gets split mid-run")
+            warn.append(f"{t} mixes kinds {sorted(kinds)} across {len(f)} files ({', '.join(f)}) — the "
+                        f"shape is real but MEASURED at +3.0pp retry (F124), so it is noted, not charged")
         elif desc.get(t, 0) > 3000:
             warn.append(f"{t} owns {len(f)} same-kind files but carries a {desc.get(t,0)}-char brief — "
                         f"large even for a legitimate multi-file task")
+    # The brief-length ladder is real but ONLY inside test tasks: 0-1200 33.3%, 1200-1800 34.8%,
+    # 1800+ 64.3%. Across producing tasks the same buckets go 0.0% / 22.2% / 10.7% — no ladder at all.
+    # So length is not a general defect and must not be flagged as one.
+    fat_tests = [t["id"] for t in tasks
+                 if str(t.get("id", "")).startswith("test") and len(t.get("description") or "") >= 1800]
+    if fat_tests:
+        warn.append(f"test task(s) {fat_tests} carry a >=1800-char brief — that bucket retries 64% "
+                    f"(n=14) against 33% for shorter test briefs")
     thin = [t for t, k in desc.items() if k < 300]
     if thin:
         bad.append(f"THIN instructions (<300 chars) on {thin} — the degraded-brief signature")

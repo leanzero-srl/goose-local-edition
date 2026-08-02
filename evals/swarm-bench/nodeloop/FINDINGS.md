@@ -4986,3 +4986,87 @@ count is not a constant across node counts — it is the very thing node count c
 **Stop here.** A fourth pass at the same question with the same data would be motivated reasoning, not
 analysis. If G4 ever produces completed 1-node and 3-node runs on one build with replicates, this
 becomes answerable; until then it is recorded as unresolved.
+
+---
+
+## F124 — the retry burden is ONE class of task, and it is not the one my supervisor was flagging
+
+I was about to build a deterministic post-plan corrector that splits mixed-kind tasks (`api.py` +
+`web/index.html`, `__main__.py` + `README.md`) into same-kind children. `review.py`'s Q1 had returned
+**"NO — fix the planner"** on this shape, the story was plausible — one brief covering two concerns
+must dispatch worse — and `split_fat_modules` was sitting right there as the template to extend.
+
+**I measured the premise first, and it died.** Across all 17 archived plans, 262 producing tasks:
+
+| | n | retried >1 attempt |
+|---|---|---|
+| mixes KINDS | 22 | **18.2%** |
+| single kind | 217 | **15.2%** |
+
+**+3.0pp.** Four retry events against thirty-three. And the rule fires on **88% of plans (15/17)** —
+a verdict that says "fix the planner" on seven runs in eight, over a three-point non-effect. That is
+P4 (a measure that cannot separate two opposite situations) living inside the instrument I built to
+supervise the run. The shape is perfectly real and perfectly reproducible — only three collisions
+ever occur (`code+docs` 10, `asset+code` 9, `asset+code+docs` 3), always on `cli`/`main`/`entry` or
+`api`/`api-web` — but reproducible is not the same as costly.
+
+### What DOES separate: an interaction nobody could see one factor at a time
+
+239 dispatched tasks with a plan entry:
+
+| | n | retry |
+|---|---|---|
+| **hard AND test-authoring** | **30** | **60.0%** |
+| hard, not a test task | 91 | 12.1% |
+| test task, not hard | 16 | 12.5% |
+| neither | 102 | 5.9% |
+
+Neither factor alone is worth anything — `hard` is 12.1% without `test`, `test` is 12.5% without
+`hard`. **It is the interaction**, and it is why every single-factor scan I ran previously came back
+flat. Split three ways: producing code 12.2% (n=74), test tasks 43.5% (n=46), verify tasks 6.7%
+(n=119). Test tasks retried worse than their own run's other tasks in **5 of the 6 runs** that had
+any (the exception is the live 1-node unit at n=4, still in flight).
+
+Brief length compounds it, and **only inside test tasks**:
+
+| brief chars | test tasks | producing tasks |
+|---|---|---|
+| 0–1200 | 33.3% (n=9) | 0.0% (n=19) |
+| 1200–1800 | 34.8% (n=23) | 22.2% (n=27) |
+| 1800+ | **64.3%** (n=14) | 10.7% (n=28) |
+
+A monotone ladder for test authors; noise for everyone else. So "long briefs are bad" is NOT a
+general defect and must not be flagged as one — the same mistake as the mixed-kind rule, one level up.
+
+### Why this matters beyond the instrument
+
+A retry is ~83 s x the task's turns of pure waste (F116), so this is the largest planner-visible cost
+to the overarching goal, and it is concentrated in 30 tasks out of 239.
+
+**It also hands `kind_prompt` (G3) a readout that cannot be gamed.** F111 blocked that arm because
+its stated metric `kind_mismatch_pct` was hardcoded to zero with the lever ON — success by
+construction. **Test-task retry rate is computed from `task_dispatched.attempt` and nothing in the
+lever's accounting touches it.** REGISTERED PREDICTION: with `kind_prompt` on, the hard-test retry
+rate falls from 60% toward the 12% that hard non-test work already achieves. FALSIFIER: it stays at
+~60% => the mismatch is not what is breaking those tasks and the whole rules-density story is wrong.
+
+### One stale comment corrected while verifying the mechanism
+
+swarm.rs:19647 still justifies the lever with *"406 dispatches OWN a test_*.py and are told NEVER
+read the project's TEST files — the file they must produce is the file they may not open."* Checked
+the live OFF-path text at 19580: it now reads *"NEVER read the project's **OTHER** TEST files … any
+test file YOU OWN is your deliverable and is yours to read and write freely."* The flat contradiction
+was already fixed. What survives in the OFF path is softer and still wrong for a test author: *"Read
+AT MOST the ONE file you will edit"* (a test author must also read the module under test, to get real
+signatures) and *"STOP WHEN GREEN, the MOMENT your file's tests pass"* (a test author's tests may
+legitimately fail — they are testing someone else's code). Do not quote the strong version again.
+
+### Actions
+
+`review.py` Q1: mixed kinds demoted BAD -> warn with the +3.0pp attached; hard test tasks promoted to
+BAD with the 60% attached; a >=1800-char test brief added as a warn. Q1 now returns "YES, with
+reservations" on the live plan instead of "NO — fix the planner", which is the honest answer.
+
+**No corrector was written.** The measurement that would have justified it says it is worth three
+points, and I checked before building rather than after. That is lesson 11 applied in the one
+direction that actually saves work.
