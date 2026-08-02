@@ -190,7 +190,22 @@ def audit(path) -> dict:
     by_kind = {k: sum(1 for p in per_dispatch if p["kind"] == k) for k in KINDS}
     # The implementer prompt is the one the engine sends when kind_prompt is off, so every other
     # kind is receiving rules written for another job.
-    mismatched = n - by_kind["implementer"] if not kind_prompt_on else 0
+    # DEFINITIONALLY CIRCULAR, and it would have fabricated a win. This read
+    #     mismatched = n - by_kind["implementer"] if not kind_prompt_on else 0
+    # so with the lever ON the count was HARDCODED to zero. The kind_prompt arm's stated readout is
+    # "does kind_mismatch_pct fall toward zero", and it would have fallen to exactly zero BY
+    # CONSTRUCTION — a guaranteed success that measures nothing, on the very run bought to test it.
+    #
+    # The honest position: with the lever OFF this is a sound INFERENCE (the engine sends the
+    # implementer prompt to everyone, so every non-implementer kind is mismatched). With it ON the
+    # engine sends kind-specific rules and this file has no evidence of WHICH rules any dispatch
+    # actually received — system prompts are not reliably persisted, so only a deterministic engine
+    # event can prove it. `rules_kind` (engine-side) is that event; until a run carries it, the
+    # honest answer here is UNMEASURED, never zero.
+    if kind_prompt_on:
+        mismatched = None
+    else:
+        mismatched = n - by_kind["implementer"]
 
     # The named contradiction: owns a test file AND is told never to read test files.
     contradiction = sum(
@@ -238,7 +253,14 @@ def audit(path) -> dict:
         },
         "kind_counts": by_kind,
         "kind_mismatch_count": mismatched,
-        "kind_mismatch_pct": round(100.0 * mismatched / n, 1) if n else None,
+        "kind_mismatch_pct": (round(100.0 * mismatched / n, 1)
+                              if (n and mismatched is not None) else None),
+        # Says WHERE the number came from, so a reader never mistakes an inference for a measurement.
+        "kind_mismatch_basis": ("inferred: kind_prompt OFF, so every non-implementer kind receives "
+                                "the implementer prompt"
+                                if not kind_prompt_on else
+                                "UNMEASURED: kind_prompt is ON and the delivered rule-set is not in "
+                                "the log — needs the rules_kind engine event"),
         "test_author_contradiction_count": contradiction,
         "instruction_unmeasurable_count": len(unmeasurable),
         "instruction_unmeasurable_tasks": sorted(set(unmeasurable)),
@@ -277,8 +299,11 @@ def render(a: dict) -> str:
     tot = a["dispatches"] or 1
     out.append("  kind mix             : " + "  ".join(
         f"{k}={kc[k]} ({100.0 * kc[k] / tot:.1f}%)" for k in KINDS))
-    out.append(f"  KIND MISMATCH        : {a['kind_mismatch_count']} "
-               f"({a['kind_mismatch_pct']}%) got rules written for another job")
+    if a["kind_mismatch_count"] is None:
+        out.append(f"  KIND MISMATCH        : UNMEASURED — {a['kind_mismatch_basis']}")
+    else:
+        out.append(f"  KIND MISMATCH        : {a['kind_mismatch_count']} "
+                   f"({a['kind_mismatch_pct']}%) got rules written for another job")
     out.append(f"  test-author told 'never read TEST files' : "
                f"{a['test_author_contradiction_count']}")
     out.append(f"  SHIPPED one-liners (what workers got): "

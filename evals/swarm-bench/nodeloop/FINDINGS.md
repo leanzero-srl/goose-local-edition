@@ -4319,3 +4319,53 @@ have a single `smoke_*` function each. Those single-language helpers being Pytho
 design — they are called from the Python arm. The open question is whether the other arms are as
 THOROUGH, which is a different investigation and needs a non-Python spec on the bench to answer
 honestly. Filed rather than guessed at.
+
+---
+
+## F111 — G3's readout was CIRCULAR: the kind_prompt arm would have "succeeded" by construction
+
+Before spending a fleet unit on the `kind_prompt` arm, I checked whether the instrument could see the
+lever's effect. It could not — worse, it was guaranteed to report success.
+
+```python
+mismatched = n - by_kind["implementer"] if not kind_prompt_on else 0
+```
+
+**With the lever ON the count is HARDCODED to zero.** The arm's stated readout is *"does
+`kind_mismatch_pct` fall toward zero"*, and it would have fallen to **exactly zero, by definition,
+measuring nothing** — on the very run bought to test it. A fabricated win, caught by asking PATTERN 2's
+question (prove the precondition, and prove the instrument can see it) before running rather than
+after.
+
+The lever-OFF path is a sound INFERENCE and stays: the engine sends the implementer prompt to everyone,
+so every non-implementer kind genuinely is mismatched. That is where the measured **77.8%** comes from.
+The lever-ON path had no evidence at all, because **system prompts are not reliably persisted** — a
+phrase every worker receives appears ~19 times across 135k stored messages — so nothing in the log
+records which rules a dispatch actually got.
+
+### Two fixes
+
+**The instrument is now honest.** With `kind_prompt` on it reports `None` / `UNMEASURED` and states
+why, rather than `0`. It also carries `kind_mismatch_basis` so a reader can never mistake an inference
+for a measurement. That is PATTERN 4's rule applied to my own metric: a number whose two possible
+meanings are opposite must say which one it is.
+
+**And the evidence now exists.** `rules_delivered{task_id, kind, kind_prompt, tailored}` is emitted by
+the engine at the exact point the classifier resolves — the only provable channel, and the same shape
+as `user_notes_delivered`, which exists for precisely this reason. With the lever off, `tailored` is
+false everywhere, which is the baseline the arm has to beat.
+
+### What kind_prompt is actually worth, and why F87 raised it
+
+The lever SUBTRACTS rules; it never adds a persona (role-as-identity measured null on this model
+class, ±2%, p>0.05). What pays is density: Qwen-27B perfect compliance is **0.588 at 10 rules, 0.350 at
+20, 0.094 at 40**, and small models fail by wholesale OMISSION, so every rule silently evicts another.
+
+**F87 makes this newly measurable.** Until this morning the worker's 30-50 rules competed with 22,152
+chars of inherited global hints — 51% of the prompt, ~40 headings about Jira tenants and rsync. That
+noise floor is gone; the swarm's own prompt is now essentially all the model reads (1,305 of ~1,400
+system chars). A rule-density lever operating on a clean surface should show an effect that would have
+been invisible before.
+
+Registered as the arm's real hypothesis, with the mechanism readout being `rules_delivered.tailored`
+rather than a self-fulfilling zero.

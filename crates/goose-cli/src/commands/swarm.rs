@@ -19555,6 +19555,35 @@ impl TaskDispatcher for GooseAgentDispatcher {
              file only if you must call its exact API. Trust the manifest + dependency context; verify by \
              RUNNING (pytest), not by re-reading.\n"
         };
+        // WHICH RULE-SET THIS DISPATCH ACTUALLY RECEIVED, as a deterministic engine event.
+        //
+        // Without it the kind-mismatch metric is CIRCULAR: dispatch_audit.py inferred "every
+        // non-implementer kind is mismatched" when the lever is off, and HARDCODED the count to zero
+        // when it is on. So the kind_prompt arm's stated readout — "does kind_mismatch_pct fall
+        // toward zero" — would have fallen to exactly zero BY CONSTRUCTION, a guaranteed success on
+        // the very run bought to test it.
+        //
+        // System prompts are not reliably persisted (a phrase every worker receives appears ~19 times
+        // across 135k stored messages), so the delivered rule-set can only be proven by an event the
+        // engine emits at the moment it chooses. This is that event.
+        self.events.write_value(serde_json::json!({
+            "event": "rules_delivered",
+            "task_id": req.task_id,
+            "kind": if is_test_author {
+                "test-author"
+            } else if read_only_shard {
+                "read-only-shard"
+            } else if req.owned_files.is_empty() {
+                "owns-nothing"
+            } else {
+                "implementer"
+            },
+            "kind_prompt": kind_prompt_on,
+            // The rules a generic prompt would have sent versus what this kind actually got. With the
+            // lever OFF these are identical by definition, which is exactly the baseline the arm
+            // needs to beat.
+            "tailored": kind_prompt_on && is_test_author,
+        }));
         // "STOP WHEN GREEN" is meaningless to a task that authors tests rather than satisfying them.
         let stopping_rules = if kind_prompt_on && is_test_author {
             "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
