@@ -251,9 +251,17 @@ QUESTIONS: list[dict] = [
              "README. Can fail independently of the score."},
 ]
 
-# The node curve — goal one — runs LAST, deliberately. It is 6 units of fleet time and it measures
-# the CURRENT engine; running it before the mechanism arms would measure a configuration that the
-# mechanism arms are about to change.
+# THE NODE CURVE IS GOAL ONE AND IT RUNS THIRD, not last.
+#
+# It was last on the reasoning that the mechanism arms change the engine the curve measures. That is
+# true of exactly ONE of them: `retarget_off`. The prefix is ~25% of a run, 88-90% of it planning, and
+# it is NODE-INDEPENDENT overhead — halving it moves occupancy materially and would expire any curve
+# measured before it. The other five arms are n=1 MECHANISM readouts (does the fan fire, does the
+# report carry /v1, does kind_mismatch fall) and cannot move a score curve.
+#
+# So the curve waits for `retarget_off` and nothing else. Deferring it behind five readouts that
+# cannot affect it was deferring the only question the project exists to answer — every node-scaling
+# number on disk is still 1 node at 44.2% against a 3-node range of 42.7-88.7%, which straddles it.
 NODE_CURVE = [{"arm": "baseline", "nodes": n, "reps": 3} for n in (1, 2)]
 
 
@@ -261,9 +269,14 @@ def cells() -> list[dict]:
     """One entry per (arm, nodes) cell, in the order the questions are worth asking."""
     by_name = {a["name"]: a for a in arms_now()}
     out = []
-    for q in QUESTIONS + [{**c, "asks": "the node curve: does build quality and fleet occupancy "
-                                        "actually improve at this node count? Goal one."}
-                          for c in NODE_CURVE]:
+    curve = [{**c, "asks": "GOAL ONE — the node curve: does build quality and fleet occupancy "
+                           "actually improve at this node count? Every measurement on disk so far is "
+                           "1 node at 44.2% against a 3-node range of 42.7-88.7% that straddles it, "
+                           "so nothing is known yet."}
+             for c in NODE_CURVE]
+    # baseline, retarget_off, THEN the curve, then the mechanism readouts.
+    ordered = QUESTIONS[:2] + curve + QUESTIONS[2:]
+    for q in ordered:
         arm = by_name.get(q["arm"])
         if arm is None:
             continue  # an arm named here but not defined yet is skipped, never silently substituted
