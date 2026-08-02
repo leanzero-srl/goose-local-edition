@@ -7535,6 +7535,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
+    /// A PORT COLLISION IS NOT AN APP DEFECT. The swarm runs several tasks that each start the built
+    /// app, and on one machine they contend for its port. MEASURED: `Address already in use` appears
+    /// in 8 of 13 runs on disk, and on the run that surfaced it, it was the SINGLE finding holding the
+    /// build red — so the repair loop would have spent its budget on an app that was not broken. Same
+    /// class as the phantom "GET /` returned 404". Inconclusive, never a Failure and never a Pass.
+    #[test]
+    fn a_port_collision_is_inconclusive_not_a_test_failure() {
+        let out = "OSError: [Errno 48] Address already in use\n  warnings.warn(...)";
+        assert!(matches!(
+            interpret_pytest_run(Some(1), out),
+            TestRunVerdict::Inconclusive(_)
+        ));
+        // A REAL failure must still be a Failure — the guard must not swallow genuine defects.
+        assert!(matches!(
+            interpret_pytest_run(Some(1), "E   AssertionError: 247 != 0"),
+            TestRunVerdict::Failures(_)
+        ));
+        assert!(matches!(
+            interpret_pytest_run(Some(0), "8 passed"),
+            TestRunVerdict::Pass
+        ));
+    }
+
     #[test]
     fn smoke_pytest_run_interpretation() {
         use TestRunVerdict::*;
@@ -13402,6 +13425,10 @@ enum TestRunVerdict {
     NoTests,
     PytestMissing,
     Failures(String),
+    /// The run could not prove anything — an environment collision, not an app defect. Carries the
+    /// operator-facing reason. Never a finding (it would drive a fix for something the app did not do)
+    /// and never a pass (nothing was verified), which is the same treatment a pytest TIMEOUT gets.
+    Inconclusive(String),
 }
 
 /// Interpret a `python3 -m pytest -q` run from its exit code + combined output. Pure (no I/O) so it is
@@ -13413,6 +13440,29 @@ fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     let low = output.to_lowercase();
     if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
         return TestRunVerdict::PytestMissing;
+    }
+    // AN ENVIRONMENT COLLISION IS NOT AN APP DEFECT. The swarm runs several tasks that each START the
+    // built app — test-*, verify-e2e::*, integrate-verify, the complete/wire fix workers — and on one
+    // machine they contend for the app's port. The loser gets
+    // `OSError: [Errno 48] Address already in use`, pytest exits non-zero, and the gate turns that into
+    // a finding that drives the repair loop against an app that is not broken.
+    //
+    // MEASURED: `Address already in use` appears in **8 of 13 runs** on disk, across integrate-verify,
+    // test-api, verify-e2e::0, complete-fix and wire-fix — every phase that runs the app. On the run
+    // that surfaced it, this was the SINGLE finding holding the build red.
+    //
+    // Same class as the phantom "GET /` returned 404" that drove repair for weeks: a false finding
+    // about a real-looking failure is worse than no finding, because it consumes the fix budget AND
+    // leaves the real state unknown. The engine already has the right verdict for this — the pytest
+    // path records a timeout as INCONCLUSIVE, "not a failure and NOT a pass either" — so an
+    // infrastructure collision gets the same treatment rather than being suppressed or believed.
+    if low.contains("address already in use") || low.contains("errno 48") {
+        return TestRunVerdict::Inconclusive(
+            "`pytest -q` could not bind a port (Address already in use) — another task in this run \
+             was serving the app at the same time. This is a COLLISION IN THE HARNESS, not a defect \
+             in the app: nothing was proven either way, so do not 'fix' the app for it."
+                .to_string(),
+        );
     }
     match code {
         Some(0) => TestRunVerdict::Pass,
@@ -13975,6 +14025,12 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                         "`pytest -q` failed — the generated tests exercise runtime paths that \
                          `--help`/`--collect-only` never invoke:\n{t}"
                     ));
+                }
+                // Visible, but never a finding. Silently dropping it would make "nothing was checked"
+                // indistinguishable from "everything passed" — the vacuous-pass trap this file warns
+                // about in three other places.
+                if let TestRunVerdict::Inconclusive(ref why) = v {
+                    inconclusive.push(why.clone());
                 }
                 if let Some(f) = require_tests_finding(
                     &v,
