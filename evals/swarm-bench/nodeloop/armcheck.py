@@ -62,8 +62,21 @@ def arm_kind_prompt(ev):
     # lever is on — the exact circularity F111 found.
     if _count(ev, "rules_delivered") == 0:
         return "BLOCKED", ("no `rules_delivered` events — with the lever ON the delivered rule-set is "
-                           "unprovable and the readout is circular (F111). Needs the post-F111 engine.")
-    return "OK", f"{n} dispatches and rules_delivered present"
+                           "unprovable and the readout is circular (F111). Needs the post-F111 engine. "
+                           "NOTE: F124 gave this arm a SECOND, un-gameable readout that does not wait "
+                           "on the boundary — hard-test retry rate from task_dispatched.attempt "
+                           "(baseline 60%, n=30, vs 12% for hard non-test). Nothing in the lever's own "
+                           "accounting can touch it, which is exactly what killed the first readout.")
+    # PRECONDITION, second half: the lever only re-targets rules for kinds that ACTUALLY DISPATCH. If
+    # this baseline had no test-author dispatch there is no mismatch to fix and the arm is inert here.
+    test_disp = sum(1 for e in ev if e.get("event") == "task_dispatched"
+                    and str(e.get("task_id", "")).startswith("test"))
+    if test_disp == 0:
+        return "UNSUITABLE", ("rules_delivered present, but this baseline dispatched NO test-authoring "
+                              "task — the kind carrying the entire measured retry burden (F124) never "
+                              "ran, so the arm has nothing to improve against it")
+    return "OK", (f"{n} dispatches, rules_delivered present, and {test_disp} test-author dispatch(es) "
+                  f"— the kind F124 measured at 60% retry is present to be improved")
 
 
 def arm_retarget_off(ev):
