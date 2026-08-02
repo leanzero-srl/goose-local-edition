@@ -30,7 +30,9 @@ INSTRUCTIONS. Every fix should be checkable against that.
 
 ---
 
-## CURRENT GOAL — G1: do the ten shipped fixes actually change what a run produces?
+## G1 — CLOSED 2026-08-02. Verdict in FINDINGS.md F107. 8 of 9 predictions settled.
+
+## CURRENT GOAL — G2: arm `spec_repair` and measure the repair tail, which is now finally observable
 
 **Opened 2026-08-02 09:35 local. engine_build 1785652162-235742240.**
 

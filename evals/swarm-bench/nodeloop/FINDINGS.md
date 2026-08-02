@@ -4147,3 +4147,69 @@ the marker rule, because it is the same class of error: shipping a check that ca
 **Registered prediction:** the next default run emits `complete_fix_dispatched` with `path: "serial"`
 at least once per repair round, and `phases.py` reports a real occupancy number for the tail for the
 first time.
+
+---
+
+## F107 — G1 CLOSED. And the answer to goal one is: THE PLAN IS THE CEILING, at 1.92 nodes.
+
+First clean unit on engine_build 1785657605 — `baseline-n3-r0`, score **0.7186**, `aborted` false,
+`void` false, `timed_out` false, `contended` 0 (the F89 guard held), 3/3 nodes, 112 min wall.
+
+### The measurement that answers Mihai's goal directly
+
+```
+OCCUPANCY 0.5936          EXECUTE OCCUPANCY 0.6731
+biggest task: api-web = 0.495 OF ALL NODE-BUSY TIME
+only ONE node working for 1212.7s (18% of wall) — all of it api-web
+critical path 8877.3s of 17040.6s total work
+MAX USEFUL NODES = 1.92   (pool is 3)
+best occupancy ANY scheduler could reach on this plan: 0.6399   (actual 0.5936)
+```
+
+**More nodes cannot help this run.** Not because the scheduler wastes them — it achieved 0.594 against
+a theoretical best of 0.640, so it is running at 93% of what the plan permits. The ceiling is the DAG.
+
+**And the reason is one task.** `api-web` is 49.5% of all node-busy time. It is the same task that:
+- mixed KINDS, code + a static asset (F101)
+- stalled 11 minutes and had to be split by the judge (F99)
+- caps this entire run at 1.92 useful nodes
+
+Three independent instruments — the review's Q1, the split mechanism, and occupancy's ceiling — all
+point at one planning decision. **F101's fix is aimed exactly at what caps this run.**
+
+### G1's nine predictions, settled
+
+| | prediction | outcome |
+|---|---|---|
+| P1 | no `log_message` finding | **CONFIRMED** |
+| P2 | spec_contract stops "CHECKED NOTHING" | **mechanically YES, verdict WRONG** — 2 phantom 404s (F104) |
+| P3 | `grounded > 0` | **CONFIRMED** (2, was 0) |
+| P4 | `/v1` reaches task descriptions | **CONFIRMED** (2 of 16, was 0) |
+| P5 | tail emits a dispatch event | **FALSIFIED — 0.** My bug (F105), fixed (F106) |
+| P6 | pytest finding ends in a traceback | **CONFIRMED** |
+| P7 | replan fires twice | **NO** — still 1 |
+| P8 | `skeleton_drafts.dead == 0` | **CONFIRMED** (and exposed a missing `straggler_aborted`) |
+| P9 | prompt chars drop | **CONFIRMED** −68% total, −94% system |
+
+Supporting numbers: prefix **796s** (planning 587s = 74% of it, **0 redraft rounds**), **0 of 16**
+shipped one-liners, **0** detail-call failures, `kind_mismatch_pct` **77.8%** (G3's target, lever off).
+
+### The instrument error this closed on — PATTERN 6, twice in one function
+
+`review.py` level 4 said *"the plan can saturate 3 nodes (width 8 >= 3)"*. **Wrong.** Width is a
+structural upper bound; the real ceiling is duration-weighted. Eight tasks that can start together are
+not eight tasks' worth of work.
+
+My first correction was also wrong: weighting by `task_completed.elapsed_ms` gave `integrate-verify` at
+31% instead of `api-web` at 49.5%, because **a task superseded by a split never completes**, carries no
+`elapsed_ms`, and vanished from the sum. occupancy.py pairs dispatch->completion spans and unions them
+per task — precisely the case a naive completion-sum gets wrong.
+
+So the fix is to CALL occupancy.py, not to re-derive it. Re-implementing an instrument is a standing
+prohibition here and I broke it inside the fix for breaking it. The review now reports occupancy's own
+`max_useful_nodes` and names the dominating task.
+
+### G1 CLOSED. G2 opens: arm `spec_repair`.
+
+The tail is finally observable (F106), so the mechanism that races verified fix attempts can be
+measured rather than argued about — which is where this whole line started.
