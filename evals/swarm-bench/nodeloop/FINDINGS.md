@@ -4213,3 +4213,32 @@ prohibition here and I broke it inside the fix for breaking it. The review now r
 
 The tail is finally observable (F106), so the mechanism that races verified fix attempts can be
 measured rather than argued about — which is where this whole line started.
+
+---
+
+## F108 — F101's precondition confirmed at n=2: the planner reproduces the SAME mixed-kind grouping
+
+The unit after `baseline-n3-r0`, on the same engine and the same spec, produced an INDEPENDENT plan
+with different task ids — and the identical two defects:
+
+| this run | the closed unit | kinds mixed |
+|---|---|---|
+| `api` = `vendorsync/api.py` + `vendorsync/web/index.html` (3527-char brief) | `api-web` = the same pair (3811-char brief) | **asset + code** |
+| `cli` = `vendorsync/__main__.py` + `README.md` (1526 chars) | `main` = the same pair plus `__init__.py` | **code + docs** |
+
+Different names, different briefs, same grouping. **This is not a one-off observation, it is a
+systematic planner behaviour** — the architect consistently bundles the HTTP server with the static
+page it serves, and the entry point with the README that documents it. In both plans the
+asset+code task is also the FATTEST brief in the plan.
+
+That matters because of what it cost on the closed unit: `api-web` was **49.5% of all node-busy time**
+and the reason `MAX USEFUL NODES` was 1.92 against a pool of 3 (F107). The same shape is now in flight
+again.
+
+**F101's precondition is therefore confirmed before its fix has shipped**, which is the cleanest
+possible position to measure from: two pre-fix plans both exhibit the defect, so if the post-boundary
+plan does not, the attribution is unusually clean for this bench. Registered as such.
+
+**Q2 came back YES on this unit** — no drift. Worth noting because the F100 false-drift bug only fires
+when the replanner splices tasks, and this run has not replanned yet. The clean YES is real, not the
+bug being absent by luck.
