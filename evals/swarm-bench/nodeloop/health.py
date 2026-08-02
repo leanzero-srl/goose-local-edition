@@ -159,10 +159,27 @@ def main() -> int:
         rep.add("OK", f"every unit got the pool it asked for {got}")
 
     # 8. A broken instrument reports zeros, and a zero from a blind probe is a fabricated result.
+    #
+    # BUT A ZERO HAS TWO CAUSES AND THEY CALL FOR OPPOSITE RESPONSES, and this check could not tell
+    # them apart. MEASURED: it reported "the instrument is blind, so every number it emits is
+    # unearned" — the loudest verdict it has — about two units that had simply DIED BEFORE
+    # DISPATCHING. One was cut loose at 24 minutes still inside the skeleton draft; the other failed
+    # at 0 minutes on a port collision. Both produced `dispatches: 0`, and both were correct to.
+    #
+    # A false BAD is not a harmless over-warning. This check exists so an unattended operator can
+    # trust one line, and a check that cries blind at every early death trains its reader to ignore
+    # it — which is exactly when the real blindness would slip through. So: only a unit that RAN TO
+    # COMPLETION can indict the instrument.
+    finished = [r for r in rs if not r.get("aborted") and r.get("score") is not None]
     audited = [r for r in rs if isinstance(r.get("audit"), dict) and r["audit"].get("dispatches")]
-    if rs and not audited:
-        rep.add("BAD", "no unit produced a dispatch audit — the instrument is blind, so every "
-                       "number it emits is unearned")
+    if finished and not audited:
+        rep.add("BAD", "no COMPLETED unit produced a dispatch audit — the instrument is blind, so "
+                       "every number it emits is unearned")
+    elif rs and not audited:
+        dead = len(rs) - len(finished)
+        rep.add("WARN", f"no dispatch audit yet, but {dead} of {len(rs)} unit(s) died before "
+                        f"dispatching (aborted or failed) — that is a RUN problem, not a blind "
+                        f"instrument; chase why the units are dying")
     elif audited:
         errs = [r for r in audited if r["audit"].get("audit_error")]
         if errs:
