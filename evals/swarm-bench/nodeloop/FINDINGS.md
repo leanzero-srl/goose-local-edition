@@ -4826,3 +4826,56 @@ is a deliberate duplication and therefore exactly the shape this project keeps f
 (P1: two versions of one rule that disagree). It is written narrowly and the comment says so; if the
 Rust rule changes, the arm is what suffers, and the honest mitigation is that a wrong OK here costs one
 unit rather than a wrong verdict about the engine.
+
+---
+
+## F121 — armcheck reported a DISTRIBUTION as a CONSTANT, and a live run caught it within the hour
+
+F119 checked `retarget_off` against one baseline (`plan_confidence 100 >= ask_floor 85`) and I wrote it
+up as **"the ladder never runs"**. F118 had said the same from the archive.
+
+Then the very next unit — `swarm-1node-r0`, live — came in at:
+
+```
+confidence_retarget  round 1
+retarget_discarded   round 1
+confidence_retarget  round 1
+low_confidence_ask   plan_confidence 36
+low_confidence_ask_timeout  waited_secs 5
+```
+
+**Confidence 36, and the redraft fired twice.** The precondition I had just declared absent was
+present on the next run.
+
+### The survey I should have done first
+
+| nodes | plan_confidence observed |
+|---|---|
+| 1 | 100, 100, **36** |
+| 2 | 88 |
+| 3 | 88, 88, **84**, **84**, 88, **54**, 100, 88 |
+
+Confidence is **not structural** — it ranges 36-100 at every node count. `conf < floor` holds in
+**4 of 14 runs ≈ 29%**.
+
+So the precondition is neither absent nor reliable: it is a **coin flip**, and a single-baseline check
+reported a distribution as a constant. That distinction changes the ACTION — "this arm cannot work"
+means fix or delete it; "this arm needs a baseline that satisfies it" means pair it correctly.
+
+### Fix
+
+`armcheck.py` now distinguishes **BLOCKED** (the arm cannot work as built — a circular readout, a stale
+target) from **UNSUITABLE** (the arm is fine but THIS baseline does not satisfy its precondition, with
+the archive frequency stated). Only BLOCKED gates the queue. `retarget_off` moves to UNSUITABLE and the
+queue drops from 3 blocked to 2.
+
+### The lesson, and it is the fourth time today I have had to point one at my own tooling
+
+F110 — a windowed scan cried wolf. F112 — I published a headline from a phantom span. F120 — I noted a
+mirrored rule as a duplication risk. And now F121: **an instrument that samples ONE case and reports a
+verdict about the general case.** Every one was caught by evidence arriving after the claim, not by
+the instrument doubting itself.
+
+The generalisable rule: **before an instrument reports a property of a MECHANISM, check whether it
+sampled one instance or the distribution.** F119's other two verdicts survive precisely because they
+are properties of the code (a circular metric; a budget default), not of a run.

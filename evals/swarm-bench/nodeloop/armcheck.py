@@ -67,6 +67,17 @@ def arm_kind_prompt(ev):
 
 
 def arm_retarget_off(ev):
+    """STOCHASTIC precondition — and getting this wrong once is why this docstring exists.
+
+    F119 reported BLOCKED from a single baseline (`plan_confidence 100 >= ask_floor 85`) and I wrote
+    it up as "the ladder never runs". Then a live 1-node unit came in at **confidence 36** with the
+    redraft firing twice. Surveying all 14 archived runs: confidence ranges 36-100 at EVERY node count
+    (1 node: 100/100/36; 3 nodes: 54-100), and `conf < floor` holds in **4 of 14 ≈ 29%**.
+
+    So the precondition is neither absent nor reliable — it is a COIN FLIP, and a one-baseline check
+    reported a distribution as a constant. That is the difference between "this arm cannot work" and
+    "this arm needs a baseline that satisfies it", which are different actions.
+    """
     pl = _plan(ev)
     if not pl:
         return "UNKNOWN", "no plan_loaded"
@@ -74,8 +85,10 @@ def arm_retarget_off(ev):
     if conf is None or floor is None:
         return "UNKNOWN", "plan_loaded lacks confidence/floor"
     if conf >= floor:
-        return "BLOCKED", (f"plan_confidence {conf} >= ask_floor {floor}, so the redraft ladder never "
-                           f"runs on this baseline — switching it off changes nothing (F117/F118)")
+        return "UNSUITABLE", (f"plan_confidence {conf} >= ask_floor {floor} on THIS baseline, so the "
+                              f"ladder does not run here. Measured across the archive the "
+                              f"precondition holds ~29% of runs (conf 36-100 at every node count), so "
+                              f"the arm is not dead — it needs a LOW-CONFIDENCE baseline to pair with")
     return "OK", f"plan_confidence {conf} < ask_floor {floor}: the ladder fires"
 
 
@@ -215,6 +228,8 @@ def main(argv: list[str]) -> int:
             verdict, why = probe(ev, run) if name == "sink_review" else probe(ev)
         except Exception as exc:
             verdict, why = "UNKNOWN", f"probe raised: {exc}"
+        # UNSUITABLE means "not against THIS baseline" — a pairing problem, not a dead arm. Counting
+        # it as BLOCKED is what turned a 29%-likely precondition into "never runs".
         if verdict == "BLOCKED":
             blocked += 1
         print(f"  {verdict:<8} {name:<20} {why}")
