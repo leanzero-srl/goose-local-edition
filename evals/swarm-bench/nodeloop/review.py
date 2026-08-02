@@ -76,7 +76,16 @@ def _ts(v):
 def level1_logs(ev: list[dict]) -> list[str]:
     c = collections.Counter(e.get("event") for e in ev)
     t0, tn = _ts(ev[0].get("ts")), _ts(ev[-1].get("ts"))
+    # LOG-elapsed (first event -> last event) is NOT the run's elapsed time, and reading it as such
+    # cost me a tick. `integrate-verify` emits NOTHING between its dispatch and its completion, so
+    # during the sink — the single longest phase, 69% of the low-concurrency time (F151) — this clock
+    # FREEZES. Two consecutive ticks both printed "73.8 min" while the run was actually at 94, the
+    # heartbeat was 0s old and the sink digest had been written 2 minutes earlier. A frozen clock
+    # reads exactly like a wedged engine, which is the one thing this line must never fake.
     mins = (tn - t0).total_seconds() / 60 if t0 and tn else 0
+    now = datetime.datetime.now(tn.tzinfo) if tn else None
+    wall = (now - t0).total_seconds() / 60 if t0 and now else 0
+    quiet = (now - tn).total_seconds() / 60 if tn and now else 0
     disp = {e["task_id"] for e in ev if e.get("event") == "task_dispatched"}
     # STATUS IS PART OF THE EVENT AND IGNORING IT MADE A FAILED RUN READ AS A CLEAN ONE.
     # `task_completed` is emitted for BOTH a success and a terminal failure — swarm-1node-r0's
@@ -89,7 +98,8 @@ def level1_logs(ev: list[dict]) -> list[str]:
     failed = {e["task_id"] for e in ev if e.get("event") == "task_completed"
               and e.get("status") == "failed"}
     settled = done | failed
-    L = [f"elapsed {mins:.1f} min, {len(ev)} events, last = {ev[-1].get('event')}",
+    L = [f"elapsed {wall:.1f} min WALL ({mins:.1f} min of log, {quiet:.1f} min quiet), "
+         f"{len(ev)} events, last = {ev[-1].get('event')}",
          f"dispatched {len(disp)} / done {len(done)} / FAILED {len(failed)} / "
          f"in flight {len(disp - settled)}"]
     if failed:
