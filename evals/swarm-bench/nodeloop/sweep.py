@@ -144,6 +144,39 @@ ARMS = [
                 "non-zero makes it the first thing to fix.",
     },
     {
+        # THE ENGINE TELLS ITS ARCHITECT TO MAKE THE PLAN NARROW, AND IT OBEYS PERFECTLY.
+        #
+        # `converge` is ON by default (swarm.rs:1033, part of the golden bake). With it on, the
+        # architect receives BOTH of these:
+        #   homo_hint    "Commit to the SIMPLEST CANONICAL decomposition: the FEWEST cohesive modules
+        #                 that fully cover the spec ... Do NOT over-split; do NOT invent extra modules."
+        #   count_clause "decompose into the FEWEST cohesive module subtasks ... target is usually
+        #                 {worker_count} to 2x {worker_count}"
+        # With it OFF, the homogeneous branch says the OPPOSITE — "Split AGGRESSIVELY into many fine
+        # independent subtasks — do NOT fear interface divergence" — and the count target becomes
+        # 2x-3x worker_count.
+        #
+        # MEASURED across 19 archived plans, module counts are 3,3,3,4,4,4,4,4,4,4,5,5,5,5,5,5,5,6 —
+        # EVERY ONE inside [worker_count, 2x worker_count]. The instruction is not aspirational; it is
+        # obeyed exactly. Median 4 modules against a fleet of SIX concurrent slots (3 nodes x
+        # PARALLEL 2), and modules are the level-0 roots — the only tasks runnable at t=0.
+        #
+        # Its own comment says why it exists: to make independently-drafted plans CONVERGE so
+        # `plan_agreement` scores higher. That is an INTERNAL metric, and narrowing the plan to raise
+        # it is the engine trading the thing being measured for the measurement.
+        #
+        # HONEST RISK, stated before the run: converge is described as "the proven agreement raiser",
+        # and lower agreement drives the redraft ladder, which is ~40 min of prefix when it fires. So
+        # this arm can lose on wall-clock even if it wins on width. BOTH must be read.
+        "name": "converge_off",
+        "env": {"GOOSE_SWARM_CONVERGE": "0"},
+        "gate": "the default config instructs the architect to emit the FEWEST modules, and 19 of 19 "
+                "archived plans obeyed (3-6 modules, median 4, against 6 concurrent slots). This is "
+                "the most direct engine-side limit on how much parallelism a plan can express. "
+                "Readouts: module count per plan, max antichain width, execute occupancy, AND the "
+                "prefix — if agreement falls the redraft ladder costs back what width gains.",
+    },
+    {
         "name": "kind_prompt",
         "env": {"GOOSE_SWARM_KIND_PROMPT": "1"},
         "gate": "72-80% of dispatches receive rules written for another job, and 3-5 per run own a "
@@ -334,6 +367,17 @@ QUESTIONS: list[dict] = [
              "with no marker, which made the reviewer declare working handlers 'not defined' and sent "
              "that to the sink as a fix order). This asks what damage REMAINS. A null means KEEP "
              "pre-review — 2 of 4 archived findings were genuine catches."},
+    {"arm": "converge_off", "nodes": 3, "reps": 3,
+     "asks": "THE most direct engine-side limit on plan width, and it is ON by default. The architect "
+             "is told to emit 'the FEWEST cohesive modules ... do NOT over-split', with a target of "
+             "worker_count to 2x worker_count — and 19 of 19 archived plans landed inside that band "
+             "(3-6 modules, median 4) against SIX concurrent slots. Modules are the level-0 roots, so "
+             "at t=0 the plan can occupy only that many. The instruction exists to raise cross-draft "
+             "`plan_agreement`, an INTERNAL metric. With the lever off the architect is told to split "
+             "AGGRESSIVELY and target 2x-3x worker_count instead. RISK, registered first: lower "
+             "agreement drives the redraft ladder (~40 min of prefix when it fires), so this arm can "
+             "lose on wall-clock while winning on width — read module count, antichain width, "
+             "occupancy AND prefix together, not the score alone."},
     {"arm": "retarget_off", "nodes": 3, "reps": 3,
      "asks": "THE highest-value question, after F53. The redraft is the most expensive mechanism in "
              "the engine and it optimises draft-count parity. MEASURED on the last unit: prefix 3014s "
