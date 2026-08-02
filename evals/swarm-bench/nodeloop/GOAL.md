@@ -308,3 +308,20 @@ queued arm aimed at the population that actually fails, and every arm ahead of i
 not. It now sits at index 1, immediately after baseline, which only a restart delivers.
 
 USE THE QUEUE FALLBACK IF the restart cannot happen for any reason — a late arm still beats no arm.
+
+## THE IMPROVEMENT METRIC IS `python3 failures.py` — not a score (2026-08-02 23:2x)
+
+Mihai asked "any improvement so far?" and the honest answer needed a metric that was not a pooled
+score. F164 supplied it and `failures.py` now computes it:
+
+    implementer   63 completed,  0 failed     0%
+    test-author   42 completed, 13 failed    31%
+    verify/sink   99 completed,  1 failed     1%
+
+**Improvement means the test-author row moves.** A better pooled build score with that row unchanged
+is the swarm getting luckier, not better — F147 is the precedent, where a run scored 0.819 while
+silently LOSING a task. Run this before claiming any progress, and quote the cell with its n.
+
+The instrument reproduces F164 exactly (its control), and in doing so CORRECTED it: classifying the
+sink by task id BEFORE owned files moved `integrate-verify`'s single failure out of the implementer
+column, so implementers are 0/63, not 1/65. "No implementer has ever failed" is exact, not rounded.
