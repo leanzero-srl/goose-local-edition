@@ -88,6 +88,15 @@ pub struct JudgeInput {
     /// never fires either. A NON-ZERO value here is positive proof the worker is producing.
     /// `None` when no heartbeat is available, or on a digest written before this key existed.
     pub worker_thinking_chars: Option<u64>,
+    /// `worker_thinking_chars` AS OF THE PREVIOUS JUDGE OBSERVATION of this same attempt, if there
+    /// was one. `None` on the first look.
+    ///
+    /// A single snapshot cannot express "still producing". MEASURED (F143) on `test-meridian`: its
+    /// tool_calls sat at 3, unchanged, while reasoning climbed 5,818 -> 8,784 characters across three
+    /// consecutive observations — and it was killed for "re-reading or re-verifying", a diagnosis the
+    /// engine's own numbers refuted. The pair (previous, current) is the smallest thing that can tell
+    /// a worker mid-generation from a worker that has stopped.
+    pub prev_thinking_chars: Option<u64>,
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
@@ -426,6 +435,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         && input.task_id != "integrate-verify"
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
+        && !is_still_producing(input)
     {
         return Some(JudgeOutcome {
             verdict: Verdict::Looping,
@@ -492,6 +502,34 @@ fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
          plan you never wrote down. Do not read anything before that first write."
     ));
     h
+}
+
+/// Is this worker STILL GENERATING, as opposed to stopped?
+///
+/// `secs_since_last_write` is a fact about the FILE. It says nothing about whether the WORKER is
+/// working, and on a reasoning model those two routinely disagree: the model streams deliberation
+/// that is neither a tool call nor a write, so a worker mid-generation looks identical to a dead one
+/// through every file-shaped lens.
+///
+/// MEASURED, and this is why the guard exists (F143). `test-meridian` was killed for "stuck
+/// re-reading or re-verifying" at a moment when its tool_calls had been **3, unchanged**, across
+/// three consecutive observations while its reasoning climbed **5,818 -> 8,784 characters**. It ran
+/// no commands; it could not have been re-reading. It was generating, and it was killed for it —
+/// three attempts, then a terminal failure.
+///
+/// The rule is the DELTA, never the level. A worker that has emitted a great deal of reasoning and
+/// then STOPPED is exactly the case the spin trip is for, and suppressing that kill would be wrong —
+/// so growth between two observations is required, and a flat count (or a first look, where there is
+/// no previous value) leaves the trip armed.
+///
+/// This does not remove a backstop. `worker_timeout_secs`, the progress watchdog and the #134 spiral
+/// trip all still bound a worker that generates forever; this only declines to call a producing
+/// worker "stuck".
+fn is_still_producing(input: &JudgeInput) -> bool {
+    match (input.prev_thinking_chars, input.worker_thinking_chars) {
+        (Some(prev), Some(now)) => now > prev,
+        _ => false,
+    }
 }
 
 /// The finalize-spin correction, COMPOSED FROM WHAT THIS WORKER ACTUALLY DID.
@@ -575,6 +613,37 @@ fn spin_hint(input: &JudgeInput) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F143: a worker whose reasoning is CLIMBING is producing, and must not be killed for "stuck
+    /// re-reading". The rule is the DELTA, never the level — a worker that emitted a lot and then
+    /// STOPPED is exactly what the spin trip is for, so a flat count must still kill.
+    #[test]
+    fn a_worker_whose_reasoning_is_climbing_is_not_stuck() {
+        let cfg = JudgeConfig::default();
+        // The measured shape: file written, untouched 500s, tool_calls frozen, reasoning climbing.
+        let mut climbing = mk("test-meridian", true, Some(500), 900);
+        climbing.worker_tool_calls = Some(3);
+        climbing.prev_thinking_chars = Some(5818);
+        climbing.worker_thinking_chars = Some(8784);
+        assert!(
+            deterministic_verdict(&climbing, &cfg).is_none(),
+            "a worker mid-generation must not be killed for spinning"
+        );
+
+        // FALSIFIER, and it must hold: reasoning FLAT across two looks => genuinely stopped => kill.
+        let mut flat = climbing.clone();
+        flat.prev_thinking_chars = Some(8784);
+        let out = deterministic_verdict(&flat, &cfg).expect("a stopped worker is still killed");
+        assert_eq!(out.verdict, Verdict::Looping);
+
+        // No previous observation (first look) leaves the trip ARMED — absence is not proof of life.
+        let mut first = climbing.clone();
+        first.prev_thinking_chars = None;
+        assert!(
+            deterministic_verdict(&first, &cfg).is_some(),
+            "a first look has no delta and must not suppress the kill"
+        );
+    }
 
     /// The two "produced no file yet" variants asserted a MOTIVE ("you are deliberating") that F131
     /// measured to be true of only part of the population — median 1,229 thinking chars, but one
@@ -670,6 +739,7 @@ mod tests {
             secs_since_last_write: last_write,
             worker_tool_calls: None,
             worker_thinking_chars: None,
+            prev_thinking_chars: None,
             split_count: 0,
         }
     }
@@ -894,6 +964,10 @@ mod provenance_tests {
             secs_since_last_write: Some(10),
             worker_tool_calls: Some(3),
             worker_thinking_chars: Some(100),
+            // Added by F143, and the tripwire did its job: this literal is deliberately exhaustive so
+            // a new field cannot be introduced without a human deciding what it means HERE. It means
+            // "no previous observation", which leaves every trip armed — the safe default.
+            prev_thinking_chars: None,
             split_count: 0,
         };
         let cfg = JudgeConfig::default();

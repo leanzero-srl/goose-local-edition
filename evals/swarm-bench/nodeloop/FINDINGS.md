@@ -6021,3 +6021,54 @@ wrong and must fail its test.
 Expected effect if it holds: this task took **35 minutes and three attempts and still failed**, and
 at least the second kill looks unjustified. That is one task in one run — magnitude unknown until the
 arm runs, and I will not claim more than that.
+
+---
+
+## F144 — a predicate about the FILE is not a predicate about the WORKER
+
+F143's registered fix, built. The finalize-spin trip keyed on `secs_since_last_write >= 420` — a
+wall-clock fact about an ARTEFACT — and killed `test-meridian` while its `tool_calls` sat frozen at 3
+and its reasoning climbed **5,818 -> 8,784** characters. It ran no commands; it could not have been
+"re-reading". The field that says whether the WORKER is working was in the same struct, and its own
+doc-comment reads: *"A NON-ZERO value here is positive proof the worker is producing."*
+
+`is_still_producing()` now guards the trip, and **the rule is the DELTA, never the level**. A worker
+that emitted a great deal of reasoning and then STOPPED is precisely what the trip is for. So:
+
+- reasoning GREW between two observations -> the worker is generating -> **no kill**
+- reasoning FLAT -> genuinely stopped -> **kill, as before**
+- **first look, no previous value** -> trip stays ARMED. Absence of evidence is not proof of life.
+
+`prev_thinking_chars` is threaded from a per-task map in the dispatcher. Overwritten each observation,
+so a re-dispatch's first look may see a stale predecessor from the prior attempt — deliberate, and
+safe in one direction only: a stale HIGHER value makes `now > prev` false and leaves the trip armed.
+The failure mode is "kill as before", never "suppress a kill we should have made". No backstop is
+removed — `worker_timeout_secs`, the progress watchdog and the #134 spiral trip all still bound a
+worker that generates forever.
+
+48 goose-swarm tests pass. The test asserts all three arms including the falsifier.
+
+### The marker for this fix does not exist, and preflight said it did
+
+`prev_thinking_chars` is a struct FIELD; `is_still_producing` is a fn NAME. `JudgeInput` derives only
+`Clone`, so neither is ever serialized and NEITHER reaches the binary's data section. **`strings`
+would have reported ABSENT on a perfectly correct build** — the fourth time this rule has been
+relearned (F62, F71, `is_code_deliverable`, now this).
+
+**And `preflight.py` — written specifically to catch that — called it LITERAL**, because it only
+asked "is this line a comment". Closing that hole took three attempts, each breaking the other
+direction, which is the finding worth keeping:
+
+| | rule | what it broke |
+|---|---|---|
+| v1 | not a comment => literal | a bare identifier passed |
+| v2 | quotes on the same line | rejected F139's GOOD marker, a continuation line of a multi-line string |
+| v3 | track quote state across the file | **DRIFTED** — the escape test compared against two backslashes instead of one, so every `\"` flipped the state, and by line 15554 of a 24k-line file it called a plain comment a literal. **That is the original F71 failure, re-created by the check written to catch it.** |
+| v4 | LOCAL rule: comment, else quotes-before-it on this line, else previous non-empty line ends in a continuation backslash | all four controls pass |
+
+Controls, all four now asserted every run: 44 real markers -> exit 0; the historical comment-marker
+`THE SPEC STATES ITS ENDPOINTS` -> COMMENT, exit 1; `is_still_producing` -> IDENTIFIER, exit 1; a
+fabricated marker -> ABSENT, exit 1.
+
+F144 carries NO marker and is verified by its unit test instead — asserting behaviour, which is
+stronger than asserting presence.
