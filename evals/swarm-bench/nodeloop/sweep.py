@@ -85,6 +85,21 @@ ARMS = [
                 "naive version and put score recovery in single digits, so the MECHANISM count is "
                 "the readout, not the build score.",
     },
+    {
+        "name": "spec_repair",
+        "env": {"GOOSE_SWARM_SPEC_REPAIR": "1"},
+        "gate": "the ONE mechanism found that puts three nodes on a one-finding round. The tail is "
+                "13-26% of every run and has NEVER gone green — `passed` false in 13 of 13 archived "
+                "rounds, with findings RISING in 3 of them because the default fix path writes into "
+                "the real tree with nothing verifying the edit. This races one attempt per node in "
+                "its own shadow and promotes only a twin whose re-verify STRICTLY beats the round's "
+                "baseline. TWO readouts, and they are independent: (1) mechanism — does "
+                "spec_repair_wave fire with twins>1 and does complete_fix_dispatched finally give "
+                "the tail an occupancy number at all; (2) safety — `winner_findings` must never "
+                "exceed `baseline_findings`, which is the property the unit test asserts and this "
+                "is the live check of it. A round where NOTHING is promoted is a PASS for the "
+                "safety readout, not a failure of the mechanism.",
+    },
     # scoped_contracts was queued here and REMOVED before it ran. Measured on three real plans:
     # ZERO inter-module dependency edges among code modules, because the architect is explicitly told
     # "Default to a FLAT FAN: make every module a root with no deps" (swarm.rs:11493). A worker's DAG
@@ -226,6 +241,16 @@ QUESTIONS: list[dict] = [
              "ANYWAY. PREDICTION: score unchanged within the replicate spread, prefix roughly halved, "
              "occupancy up. If the score DROPS below the spread the redraft buys something real and "
              "it stays — that is the outcome that would make this arm worth more than a speedup."},
+    {"arm": "spec_repair", "nodes": 3, "reps": 1,
+     "asks": "the tail is 13-26% of every run, has an occupancy number of NONE (it emits no dispatch "
+             "at all), and has never once gone green — 13 of 13 archived rounds ended with findings "
+             "outstanding and 3 of them ended with MORE than they started, because the default fix "
+             "writes into the real tree unverified. This arm answers two things at once and they "
+             "are separable: does racing one attempt per node fire (`spec_repair_wave.twins`), and "
+             "does the verified-winner rule hold live (`winner_findings` < `baseline_findings`, "
+             "always). It also produces the tail's FIRST occupancy number via "
+             "complete_fix_dispatched, which is why it outranks the remaining n=1 readouts: they "
+             "measure mechanisms, this one measures a region of the run nobody has ever measured."},
     {"arm": "doc_fetch", "nodes": 3, "reps": 1,
      "asks": "DEMOTED by F53. It was cell 2 on the argument that losing `/v1` breaks the build; the "
              "83.4% unit lost it entirely and crunch still passed 7/7, because workers have shell and "
