@@ -1896,6 +1896,59 @@ instruction available and removes a coin flip — but it is no longer the highes
 `retarget_off` is, by a wide margin: 50 minutes of prefix, 90% planning, four rounds, ~15,800 chars
 re-derived, and the build came out fine anyway.
 
+## F56 — the judge ALREADY replaced the clocks for dispatched tasks. The gap is the PLANNING phase.
+
+Mihai's design: an idle node should take the judge role and investigate the others, and that
+judgement should eliminate hard-coded timings. Measured against the corpus, that design is **already
+implemented and already working** — for one half of the run, and completely absent from the other.
+
+**Who actually terminates a worker**, across all 9 runs on disk:
+
+    re-dispatches (attempt > 0)   32
+      caused by the JUDGE         30   (94%)
+      caused by a CLOCK            2   (6%)  — one stream-decode drop, one reasoning spiral
+
+851 judge verdicts: 814 `observed`, 30 `re_dispatch`, 7 `failed` — a 4.3% intervention rate. So the
+judge is not decorative and the clocks are not the decision-maker. `worker_timeout_secs` and
+`progress_watchdog_secs` behave exactly like the failsafes their doc comments claim to be: they fired
+**twice in nine runs**.
+
+The judge is also not clock-driven where it matters. Its inputs are behavioural — `any_owned_written`,
+`secs_since_last_write`, `tool_calls` — and its over-read trip is documented as firing "regardless of
+the clock".
+
+**So the premise needs correcting, and then it points somewhere better.** For DISPATCHED tasks the
+architecture is already what was asked for. Every measured harm from a fixed timing this week came
+from the **PLANNING phase, which no judge watches**:
+
+| fixed timing | where | measured harm |
+|---|---|---|
+| detail budget 75s | detail fan | **27 failures, ALL timeout**; `meridian` lost its spec 4x in one run |
+| `ask_wait_secs` 1800 | clarify gate | **30 minutes of idle fleet per run**, for an answer nothing writes |
+| draft/redraft rounds | best-of-N ladder | 3014s prefix, 90% planning, four rounds, ~15,800 chars re-derived |
+
+Scouts, plan drafts, the detail fan and contracts are **not scheduler tasks**. They are `fanout_over_fleet`
+calls bounded by `tokio::time::timeout`. No judge is attached, nothing inspects whether the call is
+producing or spinning, and the only available verdict is "the clock ran out". That is precisely the
+pathology the judge was built to end, surviving in the phase the judge never reached.
+
+**The design that follows, and it is Mihai's applied one level up:** a detail/draft call should be
+watched the same way a dispatched worker is. The signals exist in the same shapes — is it emitting,
+has it produced a spec, is it thinking with no output — and an idle node can form that judgement
+cheaply and at low context, which is the whole reason the judge works on a weak model.
+
+**Two of the judge's own clock-free trips are disabled by default**, so where a behavioural verdict
+could already replace a clock, it does not:
+
+- `spiral_thinking_chars: 0` — the reasoning-spiral trip is OFF. Its doc says it catches the spiral at
+  ~60-120s where the idle watchdog needs the full window. One of the two clock kills in the corpus was
+  exactly this pathology, caught late by the clock instead of early by the judge.
+- `split_enabled: false` — the judge can never propose a split, which is why `task_split` has never
+  fired.
+
+Both become arms rather than silent default flips: the readout is a mechanism event, so n=1 settles
+each.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
