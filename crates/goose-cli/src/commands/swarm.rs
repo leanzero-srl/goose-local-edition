@@ -12596,6 +12596,17 @@ impl GooseAgentDispatcher {
             "requested": n,
             "returned": candidates.len(),
             "dead": dead_drafts,
+            // THE ARITHMETIC MUST CLOSE, and on its first real reading it did not: requested 3,
+            // returned 2, dead 0 — one draft unaccounted for. `dead` counts the non-straggler path's
+            // losses (timeout / error / no final_output). It does NOT count a draft that
+            // `collect_drafts_with_straggler_stop` deliberately ABORTED once a quorum of valid
+            // skeletons had landed, which is a healthy outcome, not a loss.
+            //
+            // Two very different events were therefore indistinguishable in the log: a node that
+            // produced nothing, and a node that was correctly cut short to stop the run waiting on it.
+            // Naming the remainder makes the row self-checking — requested == returned + dead +
+            // straggler_aborted, always.
+            "straggler_aborted": n.saturating_sub(candidates.len() + dead_drafts),
             "secs": drafts_started.elapsed().as_secs(),
             "chars": candidates.iter().map(|c| c.chars().count()).collect::<Vec<_>>(),
             "worker_count": worker_count,

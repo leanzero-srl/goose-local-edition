@@ -131,6 +131,8 @@ middle elided
 # a planning prefix phases.py already reports as having no occupancy number. It is also where planning
 # answers goal one, since best_of_n is sized to the fleet.
 skeleton_drafts
+# and the remainder that made the row self-checking — requested == returned + dead + straggler_aborted
+straggler_aborted
 
 # F87 — THE BIGGEST ONE. Half of every prompt sent to the fleet was goose's global+project hints:
 # Mihai's imported claude-code CLAUDE.md (Jira test tenants, Mac Studio rsync, UI design rules, how to

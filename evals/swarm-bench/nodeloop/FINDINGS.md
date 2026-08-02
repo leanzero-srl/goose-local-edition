@@ -3608,3 +3608,56 @@ That input is now ~3,814 tokens. `skeleton_drafts.secs` (F85, also newly live) i
 **The compliance prediction remains untestable** and is NOT claimed. The replicate spread on this bench
 is 46 points; a single run cannot resolve a compliance change, however strongly the literature predicts
 one. It stays open until n>=3 exists on a post-F87 engine.
+
+---
+
+## F96 — first unit to reach dispatch on a post-F87 engine: P4 confirmed, planning more than halved
+
+`swarm-3node-r0` on engine_build 1785657605 became the first unit in this session to get past
+`plan_loaded`. Three readouts.
+
+### P4 CONFIRMED — `/v1` finally reaches the workers
+
+```
+/v1 in 2 of 16 task descriptions -> ['meridian', 'test-meridian']
+```
+
+Exactly the two tasks that need the vendor API path, and nothing else. Previously `/v1` reached **zero**
+task descriptions on every run, while research demonstrably reported it verbatim (F77). F72 — the
+detailer's verbatim rule extended from filenames to external literals — works.
+
+### The planning prefix more than halved
+
+```
+plan_loaded at +13.3 min      (pre-F87 baseline: +29.2 min)
+```
+
+**This is n=1 against n=1 and I am not calling it proven.** The pre-F87 figure is one run
+(preboundary-7); wall-clock spread across earlier runs was 25-39% on the prefix alone, so a single
+pairing cannot carry a factor-of-two claim by itself. What raises it above coincidence is that the
+mechanism is measured and the direction is forced: the prompt being prefilled fell 68% (F95), all
+three nodes prefill it independently (F86), and planning is where that prefill happens. G4's node
+curve at n>=3 is what settles it.
+
+### P8 — the instrument I shipped this morning failed its own arithmetic
+
+```
+skeleton_drafts: requested=3  returned=2  dead=0  secs=247  chars=[4987, 4851]
+```
+
+`dead == 0` was the prediction and it held. But **3 requested, 2 returned, 0 dead** does not close:
+one draft is unaccounted for.
+
+`dead` counts the non-straggler path's losses — timeout, error, no `final_output`. It does NOT count a
+draft that `collect_drafts_with_straggler_stop` deliberately ABORTED once a quorum of valid skeletons
+had landed. That is a healthy outcome, not a loss. So two opposite events were indistinguishable in the
+row: **a node that produced nothing, and a node correctly cut short so the run would not wait on it.**
+
+PATTERN 4 again, in an event I wrote six hours ago while documenting PATTERN 4. Fixed by naming the
+remainder — `straggler_aborted = requested - returned - dead` — which makes the row self-checking:
+`requested == returned + dead + straggler_aborted`, always.
+
+The latency reading (`secs=247`, ~4.1 min) is recorded but **cannot yet be attributed**: F85 and F87
+shipped in the SAME boundary, so this instrument has no pre-F87 baseline of its own. The only prior
+figure is a crude 12-minute event-gap that also contained the retarget rounds. Comparing them would be
+comparing two different measurements — the trap this file has caught three times today.
