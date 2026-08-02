@@ -76,6 +76,43 @@ ARMS = [
         "gate": "establishes the replicate spread, the detail-fallback rate, and the node curve. "
                 "Re-measured rather than assumed: a stale baseline turns fleet drift into a false win.",
     },
+    # scoped_contracts was REMOVED from this queue before it ever ran, and that removal was WRONG —
+    # not in its measurement, which was correct, but in the population it generalised from (F159).
+    #
+    # The old note said: the architect is told "Default to a FLAT FAN: make every module a root with
+    # no deps" (swarm.rs:11493), so a worker's DAG neighborhood is just itself, so scoping the bundle
+    # would delete every sibling interface and leave only the module's own stub. All true — OF
+    # IMPLEMENTERS. Measured on the live plan, per kind:
+    #
+    #     implementer   5/5 have an EMPTY neighborhood  -> `!req.neighborhood.is_empty()` fails, INERT
+    #     test-author   0/3 empty (each depends on the ONE module it tests)          -> LIVE
+    #     verify/sink   0/9 empty                                                    -> LIVE
+    #
+    # The flat fan gives tests and verifiers a neighborhood BY CONSTRUCTION — a test must depend on
+    # the thing it tests. So the lever is inert for 5 of 17 tasks and live for 12, and the 12 include
+    # every test-author: the exact population F156/F159 measure at 22,511-char prompts (2.3x the
+    # implementer), 3.3x the dry reasoning, and 3 of 3 of this run's judge interventions.
+    #
+    # What it would actually cut: the `test_meridian.py` author currently receives `## API of` blocks
+    # for ALL FIVE modules — 265 lines of implementation body against 35 signature lines, including
+    # six private methods (`_get_with_429`, `_handle_429`, `_send_json`, `_headers`, `_existing_ids`,
+    # `_do_request_with_429_retry`). Its neighborhood is `[meridian]`.
+    {
+        "name": "scoped_contracts",
+        "reps": 3,
+        "env": {"GOOSE_SWARM_SCOPED_CONTRACTS": "1"},
+        "gate": "READOUT IS ON TEST-AUTHORS ONLY — implementers are 5/5 empty-neighborhood and the "
+                "lever cannot touch them, so pooling the kinds would dilute a real effect into "
+                "nothing (that pooling error is F156, and re-making it here is what this arm exists "
+                "to avoid). Report, for test-author dispatches only: (1) system-prompt chars, vs the "
+                "22,511 baseline; (2) `## API of` blocks delivered, vs 5; (3) max dry reasoning "
+                "before the first owned write, vs a 3,402 median / 24,032 max; (4) judge "
+                "interventions on test-authors, vs 3. A cut in (1) and (2) with NO improvement in "
+                "(3) refutes the mechanism hypothesis and is the result that matters most — it would "
+                "mean prompt volume is not what delays the first write, and the next suspect is the "
+                "'DON'T OVER-READ / there is nothing further to look up' instruction sitting next to "
+                "12k of readable code. VOID the arm if any test-author reports an empty neighborhood.",
+    },
     {
         # Both LOSING 3-node units split their single most-detailed task; the 0.8708 winner never
         # split at all. On a split, `child_description()` (scheduler.rs:70-99) returns the literal
@@ -206,43 +243,6 @@ ARMS = [
                 "exceed `baseline_findings`, which is the property the unit test asserts and this "
                 "is the live check of it. A round where NOTHING is promoted is a PASS for the "
                 "safety readout, not a failure of the mechanism.",
-    },
-    # scoped_contracts was REMOVED from this queue before it ever ran, and that removal was WRONG —
-    # not in its measurement, which was correct, but in the population it generalised from (F159).
-    #
-    # The old note said: the architect is told "Default to a FLAT FAN: make every module a root with
-    # no deps" (swarm.rs:11493), so a worker's DAG neighborhood is just itself, so scoping the bundle
-    # would delete every sibling interface and leave only the module's own stub. All true — OF
-    # IMPLEMENTERS. Measured on the live plan, per kind:
-    #
-    #     implementer   5/5 have an EMPTY neighborhood  -> `!req.neighborhood.is_empty()` fails, INERT
-    #     test-author   0/3 empty (each depends on the ONE module it tests)          -> LIVE
-    #     verify/sink   0/9 empty                                                    -> LIVE
-    #
-    # The flat fan gives tests and verifiers a neighborhood BY CONSTRUCTION — a test must depend on
-    # the thing it tests. So the lever is inert for 5 of 17 tasks and live for 12, and the 12 include
-    # every test-author: the exact population F156/F159 measure at 22,511-char prompts (2.3x the
-    # implementer), 3.3x the dry reasoning, and 3 of 3 of this run's judge interventions.
-    #
-    # What it would actually cut: the `test_meridian.py` author currently receives `## API of` blocks
-    # for ALL FIVE modules — 265 lines of implementation body against 35 signature lines, including
-    # six private methods (`_get_with_429`, `_handle_429`, `_send_json`, `_headers`, `_existing_ids`,
-    # `_do_request_with_429_retry`). Its neighborhood is `[meridian]`.
-    {
-        "name": "scoped_contracts",
-        "reps": 3,
-        "env": {"GOOSE_SWARM_SCOPED_CONTRACTS": "1"},
-        "gate": "READOUT IS ON TEST-AUTHORS ONLY — implementers are 5/5 empty-neighborhood and the "
-                "lever cannot touch them, so pooling the kinds would dilute a real effect into "
-                "nothing (that pooling error is F156, and re-making it here is what this arm exists "
-                "to avoid). Report, for test-author dispatches only: (1) system-prompt chars, vs the "
-                "22,511 baseline; (2) `## API of` blocks delivered, vs 5; (3) max dry reasoning "
-                "before the first owned write, vs a 3,402 median / 24,032 max; (4) judge "
-                "interventions on test-authors, vs 3. A cut in (1) and (2) with NO improvement in "
-                "(3) refutes the mechanism hypothesis and is the result that matters most — it would "
-                "mean prompt volume is not what delays the first write, and the next suspect is the "
-                "'DON'T OVER-READ / there is nothing further to look up' instruction sitting next to "
-                "12k of readable code. VOID the arm if any test-author reports an empty neighborhood.",
     },
     # detail_budget is BLOCKED and STALE — armcheck.py flags it, and reading it shows why it is worse
     # than merely inert. It sets the budget to 300s. F49 already made the budget DERIVE from
