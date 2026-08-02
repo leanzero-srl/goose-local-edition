@@ -396,6 +396,32 @@ def engine_pids() -> list[int]:
         return []
 
 
+def _ppid(pid: int) -> int | None:
+    try:
+        r = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
+                           capture_output=True, text=True, timeout=10)
+        v = r.stdout.strip()
+        return int(v) if v.isdigit() else None
+    except Exception:
+        return None
+
+
+def intruder_engine_pids() -> list[int]:
+    """Engines that are NOT this sweep's own child.
+
+    The guard used to see `len(engine_pids()) > 1` and kill EVERY engine pgroup, its own included, then
+    cut the running unit loose. MEASURED: that destroyed THREE consecutive units in forty minutes —
+    baseline-n3-r0 at 24 min, baseline-n1-r0 at 19 min, and retarget_off which then failed instantly on
+    the port the dying process still held. An intruder cost an hour of fleet time, and the innocent unit
+    died with it every time.
+
+    A sweep KNOWS which engine is its own: it is the one it spawned, so its ppid is this process. Kill
+    the others and the contention is gone without the unit being sacrificed for it.
+    """
+    me = os.getpid()
+    return [p for p in engine_pids() if _ppid(p) != me]
+
+
 def median_unit_secs() -> float | None:
     """Median wall of units that actually finished, so "too long" is measured, not guessed."""
     walls = []
@@ -532,11 +558,39 @@ class Watchdog(threading.Thread):
         self.abandoned = False
         self.abandon_confidence = 0.0
         self.abandon_reasons: list[str] = []
+        self.contended = 0      # intruder engines evicted during this unit's life
+
+    def evict_intruders(self) -> int:
+        """Kill engines this sweep did not spawn. Returns how many were evicted.
+
+        Eviction is ALWAYS right — an engine nobody scheduled is contending for a fleet this unit is
+        being measured on. What is not right is taking the unit down with it, which is what the old
+        all-or-nothing kill did three times in forty minutes.
+        """
+        evicted = 0
+        for pid in intruder_engine_pids():
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                evicted += 1
+                log(f"[evict] {now()} {self.label}: killed INTRUDER engine pgroup {pid} — not this "
+                    f"sweep's child; the unit continues")
+            except Exception as exc:
+                log(f"[evict] {now()} could not kill intruder {pid}: {exc}")
+        if evicted:
+            # The unit ran under contention for some unknown slice of its life, so its WALL-CLOCK is
+            # tainted even though its build is not. Recorded rather than hidden: a timing number nobody
+            # flagged is worse than one nobody has.
+            self.contended += evicted
+        return evicted
 
     def doomed(self) -> str | None:
+        # EVICT FIRST, and only then ask whether this unit is beyond saving. An intruder is a reason to
+        # remove the intruder, not a reason to lose the measurement.
+        self.evict_intruders()
         pids = engine_pids()
         if len(pids) > 1:
-            return (f"{len(pids)} engines running at once {pids} — an orphan is contending for the "
+            return (f"{len(pids)} engines running at once {pids} AFTER eviction — they are this "
+                    f"sweep's own children, so something is spawning engines inside the unit; "
                     f"fleet and will skew this unit and every later one")
         if pids:
             beats = sorted(OUT.glob("*/heartbeat"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -679,6 +733,11 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "tiers": verdict.get("tiers"),
         "aborted": dog.reason is not None,
         "abort_reason": dog.reason,
+        # How many engines nobody scheduled were evicted while this unit ran. Non-zero means the
+        # WALL-CLOCK is tainted (the fleet was shared for some unknown slice) even though the build is
+        # not — so a timing comparison against this row must say so. A tainted number nobody flagged is
+        # worse than a number nobody has.
+        "contended": dog.contended,
         "abandoned": dog.abandoned,
         "abandon_confidence": dog.abandon_confidence,
         "abandon_reasons": dog.abandon_reasons,
