@@ -7622,3 +7622,49 @@ LESSON 60: **A TASK'S SELF-REPORTED DURATION IS NOT ITS OCCUPANCY.** When a mech
 early, late, or by force, the elapsed it writes is whatever that mechanism believes — here, the cap
 value. Derive duration from the dispatch and completion TIMESTAMPS, which no mechanism can rewrite,
 and only trust `elapsed_ms` after confirming the two agree.
+
+## F181 — the sink_review arm's verdict: MECHANISM FIRED, quality/speed UNSETTLED, and the restart is done
+
+The drain readout finally landed:
+
+    sink_review{ prewarmed: 15, survivors: 10, refuted: 5 }
+    detail[0]: "[edge-cases] api.py: `/api/summary` crashes with KeyError if any sto…"
+
+**The mechanism's primary question is ANSWERED and it is valid at n=1** (Lesson: judge a lever on a
+deterministic mechanism event, never a 1-vs-1 outcome delta). The gate said *"It has never run
+once"* — it has now:
+
+    FIRED, not DEAD.  15 findings prewarmed by idle nodes DURING the sink; the fail-closed
+    re-verification kept 10 and REFUTED 5 — a 33% refutation rate, so the re-gate is doing real
+    work rather than rubber-stamping.
+
+**The outcome numbers, and why I am NOT drawing a conclusion from them:**
+
+    baseline-n3-r0   score 0.8429   wall  97.4 min
+    sink_review-n3-r0 score 0.7326  wall 145.5 min      (-0.110, +49% wall)
+
+Both look damning and **neither settles anything.** The measured replicate spread on this fleet is
+**46 points** (44.2 / 86.7 / 90.0 on byte-identical config), so an 11-point drop is deep inside the
+noise floor. And 145.5 min sits inside the historical range for a finished 3-node run (101-219,
+median 125) — it is 97.4 that was unusually fast. **n=1 against n=1 cannot separate this arm from the
+fleet's own variance**, which is the entire reason the F154 freeze exists.
+
+What CAN be said, from mechanism evidence rather than score:
+  · the idle nodes really worked — three GENERATING against one in-flight task, ~40 min (F175)
+  · the sink really was slower per call — 257 s/call vs baseline 63, fleet median 83 (F179/F180)
+  · the sink really was cut off — `sink_capped` at +59.9 min against an 1800s cap (F180)
+So the arm buys real utilisation and pays on the critical path. **Whether that trade is net positive
+needs the baseline spread, which is now the next thing the sweep produces.**
+
+**RESTART EXECUTED** — the boundary I had been deferring since the r0/r1 gap. The sweep had already
+rotated to `swarm-1node-r0` off the OLD queue, i.e. the 1-node cell instead of the baseline
+replicates, so every further minute was spent on the wrong unit. Sequence, supervisor BEFORE engine
+per the boundary protocol: killed pid 78290, confirmed dead, killed the engine process group,
+confirmed `pgrep 'goose swarm run'` == 0, relaunched.
+
+    supervisor pid 99285 (ppid 1, detached)   engine pid 99288   heartbeat 2s
+    NOW: baseline-n3-r1     NEXT: baseline-n3-r2     33 in backlog
+    completed units skipped (baseline-n3-r0, sink_review-n3-r0 both on disk)
+
+**The freeze lifts after these two units.** Cost of the restart: ~8 minutes of an incomplete 1-node
+unit, which will simply re-run.
