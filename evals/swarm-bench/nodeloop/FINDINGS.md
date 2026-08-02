@@ -5498,3 +5498,71 @@ schemas. That re-points the through-line with a measurement rather than an intui
 My first query returned "0 of 261 requests have tools" — a blind parser, not an empty world: the
 payload is nested under `input`, not at the top level. I checked the structure instead of believing
 the zero, which is the standing rule and the reason this finding is not the opposite of itself.
+
+---
+
+## F134 — the pre-reviewer hallucinated a defect out of our own truncation and shipped it to the sink as an order
+
+The fresh-eyes research sweep (35 agents, 29 leads, 12 survived) opened by correcting me, and it was
+right to: **the regression is not established.** HEAD's own `03ac84aa5` measured three runs of an
+IDENTICAL config at 44.2 / 86.7 / 90.0 — a 46-point spread. The gap I have been quoting (0.8708 vs
+0.7186 / 0.6720) is ~15-20 points at n=1 per cell, comfortably inside that noise. I have been
+reporting it as "Mihai's complaint reproduced"; it is not reproduced until replicates say so.
+
+But two mechanisms cleared the bar the synthesis set — a firing pattern that matches the scoreline on
+the three real units — and **I verified both myself rather than trusting the agents**:
+
+| run | score | nodes | `task_split` | prereview findings |
+|---|---|---|---|---|
+| baseline-n1-r0 | **0.8708** | 1 | **0** | **0** |
+| baseline-n3-r0 | 0.7186 | 3 | 1 | 1 |
+| retarget_off-n3-r0 | 0.6720 | 3 | 1 | **3** |
+
+Perfect rank-order on both, and the winner had zero of each.
+
+### The phantom, traced end to end and now fixed
+
+`pre_review` fed the reviewer `c.chars().take(2400)` **with no truncation marker**, so the model was
+never told anything had been cut. On `retarget_off-n3-r0` it reported of `api.py`:
+
+> *"The file is truncated mid-function ... and none of the handler methods (`_handle_health`,
+> `_handle_payments`, `_handle_summary`, `_handle_sync`, `_handle_index`) nor the `serve()` function
+> are defined — so the API is never actually wired up and would crash on any request."*
+
+**`api.py` is 5731 chars and defines every one of them**: `_handle_health` at char 2561,
+`_handle_payments` 2787, `_handle_summary` 3736, `_handle_sync` 4689, `_handle_index` 5177, `serve`
+5407. All past the 2400-char cut. The defect is an artefact of the truncation, and nothing else.
+
+It was then persisted to `.swarm/prereview/` and injected into the SINK's prompt under *"CONFIRM each
+against the spec and FIX it before you finish"* — a mandatory repair order, against working code, at
+the head of the run's longest and most expensive task (26 min, the largest serial region).
+
+**FIXED:** the site now calls `review_file_excerpt`, which **already existed** and which both sibling
+reviewers already used (`:20138`, `:20220`). It shows any file under 6000 chars WHOLE — `api.py`
+would have arrived complete and the phantom could not have formed — and for larger files keeps head
+AND tail with an explicit `[middle elided]` marker. P1 again: one rule, two implementations, and the
+more expensive half was the copy nobody updated.
+
+### What this is and is NOT
+
+It is a real, traceable, node-correlated quality-destroying mechanism: pre-review is gated on spare
+capacity, so it fires more with more nodes. **It is not an explanation of a 15-point gap** — 2 of the
+4 persisted findings across the corpus are genuine catches (missing thousand-separators; a
+lexicographic-vs-instant sort bug that would let a broken sort pass). One bogus sentence cannot carry
+0.15, and deleting pre-review would throw the real catches away. So `PREREVIEW=0` is a MEASUREMENT of
+the damage, not the intended fix; the fix is the excerpt change above plus routing findings through
+the existing `verify_finding` skeptic.
+
+### The other verified lead, not yet acted on
+
+`split_inherit_spec` (`scheduler.rs:58`, env-only, default OFF): when the judge splits a task the
+child's ENTIRE statement becomes `"(split of <parent>) <child-id>"` — ~35 chars replacing a ~3833-char
+spec. Both losers split their single most-detailed task; the winner never split. Registered for the
+next arm set, with the guard the synthesis insisted on: **assert `task_split > 0` before scoring the
+arm**, or it is invalid by construction.
+
+### The rule that outranks all of it
+
+**Every arm from here runs 3 replicates.** A single-replicate arm on this bench measures nothing, and
+the first job of the next analysis is the within-config spread. If that is still ~46 points, no arm
+can be read and the next build's job is variance reduction, not levers.
