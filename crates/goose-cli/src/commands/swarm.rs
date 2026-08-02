@@ -23427,8 +23427,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // RE-VERIFY THE SHADOW, not the real tree. `run_smoke_gate` already takes its root
                             // as a parameter, so the twin is graded by the same deterministic gate that opened
                             // the round — no model gets a vote on which fix is better.
-                            let verified = match (&ran, me.speculative_root(&task_id)) {
-                                (Ok(Ok(_)), Some(root)) => {
+                            //
+                            // GRADE THE TREE, NOT THE AGENT'S EXIT. This deliberately does NOT require the
+                            // agent to have finished, and that distinction is load-bearing. The serial path
+                            // this replaces wraps the fix in `let _ = timeout(...)`, so when an agent is
+                            // killed at the cap its partial writes are already on the real tree and simply
+                            // stay — and a corpus sweep of 90 run logs found THREE historical rounds that
+                            // went from red to green exactly that way, on a round that hit the 1200s cap.
+                            // Discarding a timed-out twin would delete that outcome and make this change a
+                            // regression dressed as a safety improvement. A shadow holds whatever its agent
+                            // wrote before it was stopped, so the honest question is whether the TREE is
+                            // better, never whether the agent got to say so.
+                            let verified = match me.speculative_root(&task_id) {
+                                Some(root) => {
                                     let g = run_smoke_gate(&root, complete_lang).await;
                                     // `ran: false` means the gate could not run in this shadow at all. That is
                                     // not a clean twin — scoring it 0 findings would promote an UNCHECKED tree
@@ -23440,12 +23451,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         None
                                     }
                                 }
-                                _ => None,
+                                None => None,
                             };
                             sink_r.write_value(serde_json::json!({
                                 "event": "complete_fix_completed",
                                 "round": round, "twin": i, "model": model,
                                 "secs": started.elapsed().as_secs(),
+                                // Recorded, but NOT what decides the twin: a timed-out agent whose partial
+                                // writes verify better still wins. Kept so the two can be compared later —
+                                // "how often does a killed agent's tree beat a finished one" is a real
+                                // question and this is the only place it can be answered from.
                                 "agent_ok": matches!(ran, Ok(Ok(_))),
                                 "verified_findings": verified,
                                 "baseline_findings": baseline,
