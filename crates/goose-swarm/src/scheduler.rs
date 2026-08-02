@@ -2159,8 +2159,20 @@ impl Scheduler {
                             specs.iter().map(|sp| sp.id.clone()).collect();
                         match s.dag.splice_specs(specs) {
                             Ok(new_ready) => {
+                                // `added` must be what was ADDED, not what happened to become READY.
+                                // A spliced task whose deps are not yet satisfied is in the DAG and
+                                // will run, but it is not in `new_ready` — so reporting new_ready
+                                // under-counts, and can report ZERO for a successful replan.
+                                //
+                                // MEASURED: a live run emitted `Replanned { added: [], stopped: false }`
+                                // while `test-api-edge-cases` and `test-store-integrity` were both
+                                // spliced and later dispatched. `stopped: false` with an empty `added`
+                                // is a contradiction — the empty case takes the other branch — and it
+                                // made a plan-vs-execution review report two legitimately-added tasks
+                                // as UNPLANNED DRIFT. An event that cannot be reconciled with the
+                                // dispatch log turns a correct mechanism into a false alarm.
+                                let added = spliced_ids.clone();
                                 s.bonus_ids.extend(spliced_ids);
-                                let added = new_ready.clone();
                                 for id in new_ready {
                                     let fan_out = s.dag.tasks[&id].fan_out;
                                     s.ready.push(Ranked { fan_out, id });
