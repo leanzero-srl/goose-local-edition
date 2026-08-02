@@ -28,6 +28,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import statistics as st
 import sys
 
@@ -48,7 +49,23 @@ FLEET = "qwen3.6-27b"
 # The DISCRIMINATOR is ownership, because that is what actually changes the rules a call receives: a
 # file-owning worker is told "write NOTHING outside them"; the sink is told "you own no files, you may
 # edit ANY file the fix requires". Two opposite instructions, so they must never share a cell.
+#
+# ⚠ AND THE SECOND VERSION WAS WRONG THE SAME WAY, ONE LEVEL FINER (F156). A single `worker` cell
+# pooled IMPLEMENTERS with TEST-AUTHORS, and on one post-boundary run those are 9,900 and 22,647
+# chars — a 2.3x gap, wider than the sink/worker gap this file was written to separate. The median
+# over the mixture (21,736, quoted for a dozen ticks as "a clean worker system prompt") is a number
+# about no population that exists: it sat within 5% of the test-author cell and 2.2x above the
+# implementer cell, which is 40% of all dispatches.
+#
+# The gap is NOT bloat and must not be reported as one — it is ~12k of real signatures and code
+# excerpts a test author needs and an implementer does not. That is the engine doing the right
+# thing. But it means the two can never share a median, so they no longer do.
 OWNS = "YOU OWN — write EXACTLY these ABSOLUTE paths"
+# A test author is discriminated by the paths it OWNS, read from the ownership block itself rather
+# than from anywhere in the prompt — every worker on a Python run sees `tests/` somewhere in the file
+# layout, so a whole-text match would classify all of them as test authors.
+TEST_PATH = re.compile(r"(test_[\w.-]+\.py|[\w.-]+_test\.py|[\w.-]+_test\.go|/tests?/)")
+OWNS_WINDOW = 900
 SINK = ("You own no single file", "You own no file and must WRITE NO file",
         "you may edit ANY file the fix requires")
 WORKER = ("PROJECT FILE LAYOUT", "a dependency you import")
@@ -65,7 +82,8 @@ def sys_text(msg) -> str:
 
 def classify(t: str, n: int) -> str:
     if OWNS in t:
-        return "worker"
+        owned = t[t.index(OWNS):t.index(OWNS) + OWNS_WINDOW]
+        return "worker/test" if TEST_PATH.search(owned) else "worker/impl"
     if any(m in t for m in SINK):
         return "sink/fix"
     if any(m in t for m in WORKER):
@@ -119,7 +137,8 @@ def main(argv: list[str]) -> int:
         print(f"    window: after {datetime.datetime.fromtimestamp(since)}")
     print()
     print(f"{'kind':<16}{'n':>4}{'sys median':>12}{'sys max':>10}{'tools':>8}{'msgs median':>13}  inherited-hint calls")
-    for kind in ("worker", "sink/fix", "planner/detail", "scout/small", "judge/spiral"):
+    for kind in ("worker/impl", "worker/test", "sink/fix", "planner/detail", "scout/small",
+                 "judge/spiral"):
         g = [r for r in rows if r["kind"] == kind]
         if not g:
             continue
@@ -129,9 +148,8 @@ def main(argv: list[str]) -> int:
               f"{st.median([r['msgs'] for r in g]):>13,.0f}  "
               + (f"{bad}/{len(g)}  <-- F87 CONTAMINATION" if bad else "none"))
 
-    w = [r for r in rows if r["kind"] == "worker"]
+    w = [r for r in rows if r["kind"].startswith("worker/")]
     if w:
-        clean = [r for r in w if not r["hints"]]
         dirty = [r for r in w if r["hints"]]
         print()
         if dirty:
@@ -140,17 +158,24 @@ def main(argv: list[str]) -> int:
                   f"{datetime.datetime.fromtimestamp(newest)}")
             print("  If that timestamp PREDATES the F87 ship, this is history, not a regression —")
             print("  check before raising an alarm. I raised one and was wrong (F138).")
-        if clean and dirty:
-            print(f"  clean worker system prompt: median {st.median([r['sys'] for r in clean]):,.0f} "
-                  f"(n={len(clean)})   contaminated: {st.median([r['sys'] for r in dirty]):,.0f} "
-                  f"(n={len(dirty)})")
-        base = clean or w
-        med = st.median([r["sys"] for r in base])
-        tot = st.median([r["sys"] + r["msgs"] for r in base])
-        print(f"\nTHE LEVER: a worker system prompt is {med:,.0f} chars (n={len(base)}), "
-              f"{100 * med / tot:.0f}% of what that worker reads.")
-        print("  Compliance on this model class falls 0.588 at 10 rules to 0.094 at 40, so this is")
-        print("  the instruction-density budget — quote THIS number, with its n, and nothing pooled.")
+
+        # One line per KIND, and deliberately no combined figure — see the F156 note at the top.
+        # There is nothing to average here: the two cells are 2.3x apart and each answers a
+        # different question. An implementer's budget is the one that governs 40% of dispatches.
+        print("\nTHE LEVER — the instruction-density budget, PER KIND. Compliance on this model")
+        print("class falls 0.588 at 10 rules to 0.094 at 40, so this is what there is to spend:")
+        for kind in ("worker/impl", "worker/test"):
+            g = [r for r in w if r["kind"] == kind]
+            clean = [r for r in g if not r["hints"]] or g
+            if not clean:
+                continue
+            med = st.median([r["sys"] for r in clean])
+            tot = st.median([r["sys"] + r["msgs"] for r in clean])
+            print(f"  {kind:<14} {med:>8,.0f} chars (n={len(clean)}), "
+                  f"{100 * med / tot:.0f}% of what that worker reads")
+        if len({r["kind"] for r in w}) > 1:
+            print("  Quote ONE of these WITH ITS KIND AND n. A pooled 'worker prompt' median is a")
+            print("  number about no population that exists — that is what 21,736 was (F156).")
     return 0
 
 
