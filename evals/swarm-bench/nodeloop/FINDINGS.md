@@ -7241,3 +7241,49 @@ Mid-run state at 32 min: 11 dispatched / 9 done / 0 FAILED, `task_split` fired o
 `store-impl` + `store-tests`, so F140's `task_split > 0` guard is satisfiable on this build) and
 `pre_review` fired 3x with `had_findings: False`. `sink_review` has fired 0x — correct so far, the
 sink phase has not started.
+
+## F172 — F163's "new observable" already exists TWICE, and the judge throws one of them away
+
+F163 concluded the stall fix needed a new observable — a `last_delta_at` updated on any stream event —
+and I sized it as "a DIGEST-WRITER change, a larger blast radius than F160 implied". **Both halves of
+that were wrong.** Searching our own code first (Lesson 15) found it already there:
+
+**1. The physically-correct predicate is already implemented and already running.** swarm.rs:11262:
+
+    // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
+    // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
+    // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
+
+and it reports itself at :11547 as *"agent stalled — no progress for {idle_secs}s (no token/tool
+activity)"*. That is exactly the "no bytes of ANY kind" definition F163 said was missing, keyed on
+agent events rather than on `thinking_chars`, so it does NOT go blind while a tool payload streams.
+
+**And it did not fire on the three "frozen" workers — correctly.** They were emitting agent events
+the whole time; that is why `test-meridian` wrote at 294s. The idle watchdog was right and my
+proposed flat-delta trip would have overruled it. That is a second, independent confirmation of
+F163's refutation, from a mechanism I did not know existed when I wrote F160.
+
+**2. The judge already opens the file that carries the timestamp, and drops it.** swarm.rs:16528:
+
+    let digest = std::fs::read_to_string(cwd.join(".swarm").join("activity")
+                     .join(format!("{}.json", req.task_id))).ok()
+                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+
+`read_to_string` discards the metadata of the inode it just opened. The digest is rewritten on stream
+activity (coalesced to ~2.5/s, swarm.rs:11266-11269 with its own `last_digest_at`), so **the file's
+mtime IS the last-activity time** — and it is live on disk right now (`verify::meridian.json` 00:24,
+`verify::store.json` 00:17, `verify::main.json` 00:16). I used exactly that mtime by hand two ticks
+ago to prove the sink was alive when review.py's clock had frozen.
+
+So the fix is not a writer change at all: read `.metadata().modified()` alongside the string the
+judge already reads, and expose `secs_since_any_activity` on `JudgeInput`. No new event, no new
+writer, no new threshold — and the window can be derived from the existing `idle_secs` rather than
+picked.
+
+**EIGHTH instance of the family, and the most literal one yet.** F141 held the compile error, F142
+the thinking count, F149 the tool list, F153 the file list, F157 `is_test_author`, F158 `owned_files`,
+F159 was me doing it in a queue decision — and here the engine holds the answer **on the inode it has
+already opened**, then reasons about staleness from a counter that cannot see writing.
+
+CORRECTIONS TO MY OWN QUEUE ENTRY: F163's blast radius is ~3 lines in the judge, not a digest-writer
+change. Its priority rises accordingly — it was the most expensive queued fix and is now the cheapest.
