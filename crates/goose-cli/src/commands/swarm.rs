@@ -19644,12 +19644,28 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // The generic prompt is not neutral — it is the IMPLEMENTER's role prompt, sent to every kind.
         // MEASURED over 1,282 corpus dispatches: implementer 40.1%, test-author 31.1%, entrypoint
         // 16.1%, owns-nothing 12.1%, so ~60% receive instructions authored for a different job. The
-        // sharpest case is a contradiction, not a preference: 406 dispatches OWN a test_*.py file and
-        // are told "NEVER read the project's TEST files" — the file they must produce is the file they
-        // may not open — and "STOP WHEN GREEN, the moment your file's tests pass" when they have no
-        // tests of their own to green. Test tasks are 15/35 of all failures, dominant verdict
-        // broken_code with a SyntaxError in the test file, which a worker forbidden to open its own
-        // output cannot catch.
+        // sharpest case is the test author. The strongest form of that claim is now STALE and must not
+        // be re-quoted: the OFF path above no longer says "NEVER read the project's TEST files", it says
+        // "NEVER read the project's OTHER TEST files … any test file YOU OWN is your deliverable and is
+        // yours to read and write freely". The flat contradiction was already fixed. What survives is
+        // softer and still wrong for this kind: "Read AT MOST the ONE file you will edit" (a test author
+        // must ALSO read the module under test, to get its real signatures) and "STOP WHEN GREEN, the
+        // moment your file's tests pass" (a test author's tests may legitimately fail — they are testing
+        // someone else's code).
+        //
+        // The COST of that residue is measured, and it is the largest planner-visible waste in the run.
+        // F124, over 239 dispatched tasks with a plan entry, found an INTERACTION invisible to every
+        // single-factor scan: hard AND test-authoring retries 60.0% (n=30), against hard-not-test 12.1%
+        // (n=91), test-not-hard 12.5% (n=16), neither 5.9% (n=102). Test tasks retried worse than their
+        // own run's peers in 5 of the 6 runs that had any. A retry is ~83s x the task's turns of pure
+        // waste (F116).
+        //
+        // That is also this lever's REAL readout. The stated one — kind_mismatch_pct — was circular
+        // (F111): hardcoded to zero with the lever ON, success by construction. Hard-test retry rate is
+        // computed from `task_dispatched.attempt` and nothing in this lever's accounting touches it.
+        // REGISTERED: with kind_prompt on, hard-test retry falls from 60% toward the 12% that hard
+        // non-test work already reaches. FALSIFIER: it stays near 60% => the rules mismatch is not what
+        // breaks those tasks and the density story below is wrong for this kind.
         //
         // This SUBTRACTS rules; it never adds a persona. Role-as-identity is measured null on this
         // model class (Qwen 7B/14B/32B, +/-2%, p>0.05). The mechanism that pays is instruction
