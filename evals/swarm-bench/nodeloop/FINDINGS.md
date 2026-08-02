@@ -2226,6 +2226,38 @@ for the broader subtraction; this removes one self-contradiction that needed no 
 Fourth instance of the same shape this session: **a rule written for one kind of task applied to
 another.**
 
+## F64 — the engine had already fixed this exact bug once, for the sibling, and never carried it across
+
+Auditing `contracts` as the POSITIVE control — the sibling fan that works, 1 failure in 19 — and its
+own source comment turns out to be the strongest evidence for F49 in the repository:
+
+> The contract stub is a model call on the SAME fleet as workers, but the old **75/150s budget was ~5x
+> below the worker budget** — measured on mustsolve-test2 it **TIMED OUT on all 3 modules**, so every
+> module lost its frozen interface and the granular modules cascade-FAILED into an unusable app. Give
+> the stub **the worker budget** (the proven-adequate fleet timeout) so it actually completes; the
+> gated retry is then a second full-budget attempt.
+
+So `contracts` had **precisely the defect F49 fixed in `detail`** — a hardcoded 75s ceiling on a model
+call that needs the worker budget — it was diagnosed on real evidence, it was fixed by deriving from
+the worker timeout, and **the fix was never carried across to its sibling.** The two calls are the same
+kind of work on the same fleet, side by side in the same file.
+
+    contracts                                    detail (before F49)
+    budget   worker budget, DERIVED              hardcoded 75s, in TWO places
+    retry    yes, gated full-budget second try   NONE
+    failures 1 of 19  (5%)                       27, ALL timeout
+
+That is "when fixing a defect, find every other place that does the same thing" failing historically —
+and it is why the rule exists. F49 was not a new insight; it was an old one that had not been
+propagated.
+
+**The remaining asymmetry is the retry, and it is deliberately NOT being built.** With the ceiling
+derived, the failure mode it would cover is `filler`/`agent_error`, and 25 of 25 checked failures were
+`timeout`. A retry now would be a fix for a mode with no measured instances — exactly the speculative
+work this project keeps refusing. Recorded so the asymmetry is a decision rather than an oversight; if
+non-timeout detail failures ever appear in `detail_completed`/`detail_fallback`, the sibling already
+shows what to do.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
