@@ -2471,6 +2471,39 @@ the job — which is a quality question for the arms, not an instrument fault.
 
 Harness self-test passes with the full invariant set on this unit.
 
+## F71 — the check that gates green has NEVER seen a real endpoint on this bench
+
+Chasing the "CHECKED NOTHING" strings in the corpus led to the mechanism they come from, and it is
+worse than the phantom it replaced.
+
+`spec_contract` asks: *does the app implement what the spec advertises?* Its endpoint list comes from
+`spec_get_endpoints`, whose regex is `\bGET\s+(/\S*)` — **prose form**. The operator spec writes its
+endpoints as a MARKDOWN TABLE:
+
+    | `GET`  | `/api/health`  | service status |
+    | `GET`  | `/api/payments?limit=<int>&offset=<int>` | … |
+    | `GET`  | `/api/summary` | totals |
+    | `POST` | `/api/sync`    | pulls from the vendor |
+
+where `GET` is followed by a **backtick**, never whitespace-then-slash. Run on the real 3,943-character
+spec, the regex returns exactly one match: **`` /`. ``** — the F32 phantom. Table-aware extraction
+returns all four.
+
+So the arc is complete and unflattering: **before F32 this check fabricated a 404 against a correct
+app; after F32 it finds nothing and honestly reports CHECKED NOTHING (6 times across 3 runs). It has
+never once verified an endpoint.**
+
+**And the fix already existed in the same file.** `spec_advertised_surface` parses the table
+correctly — written for the e2e oracle. This is F64's shape for the third time: two siblings, one
+solved the problem, the other never got the fix. Merged rather than replaced, so a prose-written spec
+behaves exactly as before, and the param-route exclusion still drops
+`/api/payments?limit=<int>` for its `<`.
+
+**Registered prediction, before the arm runs:** `spec_contract` will now probe `/api/health` and
+`/api/summary` and emit `CHECKED NOTHING` no more. If it produces a FINDING, check it against
+`crunch.py` before believing it — this mechanism's history is two-for-two on phantoms, and a check
+that has never worked is not owed the benefit of the doubt on its first real verdict.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`

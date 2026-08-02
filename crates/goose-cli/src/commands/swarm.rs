@@ -6972,6 +6972,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             );
         }
 
+        // THE REAL SPEC STATES ITS ENDPOINTS IN A MARKDOWN TABLE. The prose regex finds only the
+        // `` /`. `` phantom there; the table-aware surface finds the real ones. Before this merge
+        // `spec_contract` — the check gating green — had NEVER seen a real endpoint on this bench.
+        let table = "| Method | Path | Returns |\n\
+                     |---|---|---|\n\
+                     | `GET` | `/api/health` | service status |\n\
+                     | `GET` | `/api/summary` | totals |\n\
+                     | `POST` | `/api/sync` | pulls from the vendor |\n";
+        let got = spec_get_endpoints(table);
+        assert!(got.contains(&"/api/health".to_string()), "{got:?}");
+        assert!(got.contains(&"/api/summary".to_string()), "{got:?}");
+        // POST is not a GET probe, and no phantom may survive the merge.
+        assert!(!got.iter().any(|p| p.contains("sync")), "{got:?}");
+        assert!(!got.iter().any(|p| p.contains('`')), "{got:?}");
+
         // Real, unambiguous endpoints still parse.
         let ok =
             spec_get_endpoints("The API exposes GET /api/health and GET /api/summary for status.");
@@ -15110,6 +15125,46 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
         }
         // A param'd route (`{id}`, `:id`, `<id>`) legitimately 404s/422s under a bare GET — exclude it.
         if path.contains('{') || path.contains('<') || path.contains(':') {
+            continue;
+        }
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    // THE SPEC STATES ITS ENDPOINTS IN A MARKDOWN TABLE, AND THE REGEX ABOVE CANNOT SEE ONE.
+    //
+    // `\bGET\s+(/\S*)` matches PROSE ("the API exposes GET /api/health"). The operator spec writes
+    // them as table rows — `| ``GET`` | ``/api/health`` | …` — where GET is followed by a BACKTICK,
+    // never whitespace-then-slash. MEASURED on the real 3,943-char spec: this regex finds exactly one
+    // match, `` /`. ``, which is the F32 phantom, while the table holds FOUR real endpoints
+    // (/api/health, /api/payments, /api/summary, POST /api/sync).
+    //
+    // So `spec_contract` — the check that gates green on "does the app implement what the spec
+    // advertises" — has NEVER seen a real endpoint on this bench. Before F32 it saw the phantom and
+    // fabricated a 404; after F32 it sees nothing and honestly reports CHECKED NOTHING. Neither state
+    // verifies anything.
+    //
+    // `spec_advertised_surface` in this same file already parses the table — it was written for the
+    // e2e oracle. F64's shape again: two siblings, one solved the problem, the other never got the
+    // fix. MERGED rather than replaced, so a prose-written spec keeps working exactly as before.
+    for adv in spec_advertised_surface(spec) {
+        let mut it = adv.split_whitespace();
+        let (Some(method), Some(raw_path)) = (it.next(), it.next()) else {
+            continue;
+        };
+        if !method.eq_ignore_ascii_case("GET") {
+            continue;
+        }
+        let path = raw_path
+            .trim_end_matches([';', ',', ')', '.', '/'])
+            .to_string();
+        // Same param-route exclusion as above: a placeholder route legitimately 404s under a bare GET.
+        if path.is_empty()
+            || !path.starts_with('/')
+            || path.contains('{')
+            || path.contains('<')
+            || path.contains(':')
+        {
             continue;
         }
         if seen.insert(path.clone()) {
