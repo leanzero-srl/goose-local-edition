@@ -97,7 +97,19 @@ def level1_logs(ev: list[dict]) -> list[str]:
             and e.get("status") != "failed"}
     failed = {e["task_id"] for e in ev if e.get("event") == "task_completed"
               and e.get("status") == "failed"}
-    settled = done | failed
+    # A SPLIT PARENT IS SUPERSEDED, NOT IN FLIGHT — and `occupancy.py` already knew this while this
+    # file did not. When the judge splits a task the parent's work is handed to its children and the
+    # parent NEVER emits `task_completed`, so `dispatched - settled` counts it as running for the
+    # rest of the run. Measured live: `api` and `store` showed "in flight" from minute 32 onward with
+    # their digests 22 and 31 minutes stale, while their children `api-implementation`/`store-impl`
+    # were the ones actually working. Real in-flight was 3, reported 5.
+    #
+    # It never tripped an impossibility check (Lesson 47) because 5 against 6 slots looks perfectly
+    # plausible — which is exactly why it survived. occupancy.py carries the same lesson at its
+    # `split_at` handling, where an uncorrected parent was once credited 5,940s, 9.1x its real span;
+    # those occupancy numbers (F150, F162) are therefore SOUND and only this readout was inflated.
+    split_parents = {e["task_id"] for e in ev if e.get("event") == "task_split"}
+    settled = done | failed | split_parents
     L = [f"elapsed {wall:.1f} min WALL ({mins:.1f} min of log, {quiet:.1f} min quiet), "
          f"{len(ev)} events, last = {ev[-1].get('event')}",
          f"dispatched {len(disp)} / done {len(done)} / FAILED {len(failed)} / "
