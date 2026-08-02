@@ -7491,3 +7491,47 @@ SETTLES NEXT TICK, and both outcomes are informative:
   · the sink completes with NO `sink_capped` while past its cap → the cap is not enforcing, or the
     event is not reaching the log, and a truncated sink is indistinguishable from a finished one in
     the row this project reads every verdict from.
+
+## F178 — the sink cap is 14 minutes overdue, and the idle-fill may be why the sink is slow
+
+Continuing F177. The sink is now **44.0 min against a 30.0-min cap — a 47% overrun — and
+`sink_capped` has fired 0 times.** The engine is healthy throughout: `loop alive`, `engine running`,
+`heartbeat 0s old`.
+
+Every benign explanation has now been checked and eliminated:
+
+    event misnamed?          NO  — two sites (11506, 11538) both write "event": "sink_capped"
+    cap env var unset?       NO  — swarm.rs:21303 bridges cfg->env inside run_swarm, BEFORE dispatch
+                                   (`ps eww` shows only the LAUNCH env, so its absence proved nothing)
+    cfg value zero/OFF?      NO  — levers_resolved reports sink_cap_secs 1800
+    deadline granularity?    NO  — 1.3 min was arguable; 14.0 min is not
+    worker dead/wedged?      NO  — 3 nodes GENERATING, digest still advancing (7 calls, 0 errors)
+
+**A safety cap that does not fire is worse than no cap**, because the run budget and every downstream
+timing assumption are written as though 1800s is a ceiling. F152 measured 3 of 8 prior sinks landing
+on *exactly* 30.0 min, so the mechanism demonstrably works on some runs — which makes this a
+conditional failure, not a dead feature, and conditional failures are the ones that survive review.
+
+**AND THE LIKELY CONFOUND IS THIS ARM ITSELF.** `sink_review` fills idle nodes with dimension
+reviews, and `lms ps` shows **all three nodes GENERATING sustained across ~40 minutes** — including
+the node serving the sink, since PARALLEL is 2 per node. So the sink is sharing its own device with
+the review work the lever spawned:
+
+    baseline r0 sink (lever OFF)   25.1 min, 24 calls
+    sink_review r0 sink (ON)       44.0+ min, 7 calls so far
+
+**Fewer calls over more wall-clock is the signature of a contended node, not a busier one.** Lesson
+36 asks what a mechanism trades away when it optimises an internal metric: this one optimises fleet
+occupancy — genuinely, F175 confirmed it — and the bill may be landing on the critical path, because
+the sink is the last task and nothing can start until it ends.
+
+⚠ STATED AS A HYPOTHESIS, NOT A RESULT: n=1 per arm, and F176 already killed one comparison tonight
+for a blind control. The clean test is the sink-window call count and sink duration on baseline r1/r2
+versus this, captured inside the retention window — exactly the measurement F176 specified.
+
+**This does NOT retract F175.** The idle nodes really are working. The open question is whether that
+work is FREE, and the first evidence says it may not be.
+
+REGISTERED: on the next baseline sink, `sink_capped` must fire if it exceeds 1800s. If a baseline
+sink also overruns without the event, the cap is broken generally and the arm is exonerated; if the
+baseline caps correctly, the overrun is specific to a saturated fleet and belongs to this lever.
