@@ -321,11 +321,22 @@ def q2_is_the_plan_being_followed(ev, plan) -> tuple[str, list[str]]:
     if unplanned:
         drift.append(f"DISPATCHED BUT NEVER PLANNED: {sorted(unplanned)} — not from the plan, a split "
                      f"or a replan; something is inventing work")
+    # A task that burned 3 attempts and then FINISHED is history, not drift. Reporting it as live
+    # drift is the same defect Q1 carried (F124): a predicate that cannot separate two opposite
+    # situations — "burning attempts right now" and "burned them and converged" — and it made the
+    # verdict say INTERVENE about `api` six minutes after `api` completed. The cost is not zero
+    # either way (F124: a retry is ~83s x turns of waste) so the finished case is still REPORTED,
+    # just not as a reason to intervene.
     retries = collections.Counter(e["task_id"] for e in ev if e.get("event") == "task_dispatched")
     hot = {t: k for t, k in retries.items() if k >= 3}
-    if hot:
-        drift.append(f"RE-DISPATCHED >=3x: {hot} — the plan IS being followed but a task is not "
-                     f"converging, and that is where a run dies")
+    stuck = {t: k for t, k in hot.items() if t not in done}
+    settled = {t: k for t, k in hot.items() if t in done}
+    if stuck:
+        drift.append(f"RE-DISPATCHED >=3x AND STILL IN FLIGHT: {stuck} — not converging, and that is "
+                     f"where a run dies")
+    if settled:
+        L.append(f"burned >=3 attempts but COMPLETED: {settled} — cost paid (~83s x turns each), "
+                 f"not a live problem")
     pending = sorted(planned - disp - superseded)
     if pending:
         L.append(f"planned, not yet dispatched: {pending}")
