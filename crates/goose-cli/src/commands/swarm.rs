@@ -13065,9 +13065,14 @@ impl GooseAgentDispatcher {
                 let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
                     spec for the worker who will build it: exact function/class names and signatures, key logic, the \
                     files it owns, edge cases to handle, and what its tests must check. Use the EXACT file paths the \
-                    subtask owns (given below) verbatim — NEVER invent, rename, or pluralize a filename. Be concrete \
-                    and self-contained, and BRIEF — about 150 words, no preamble. Output ONLY the spec prose; do NOT \
-                    write code files or restate the whole project."
+                    subtask owns (given below) verbatim — NEVER invent, rename, or pluralize a filename. \
+                    CARRY THROUGH EVERY EXTERNAL LITERAL from the research findings EXACTLY as written — API paths \
+                    and their version prefixes, header names, query parameters, status codes, field names. These \
+                    cannot be re-derived by the worker and a near-miss is a total failure: an endpoint off by a \
+                    `/v1` returns 404 on every call. If the findings give an endpoint, WRITE THE ENDPOINT. Be \
+                    concrete and self-contained, and BRIEF — about 150 words excluding those literals, which are \
+                    never the thing to cut. Output ONLY the spec prose; do NOT write code files or restate the \
+                    whole project."
                     .to_string();
                 let files_line = if files.is_empty() {
                     String::new()
