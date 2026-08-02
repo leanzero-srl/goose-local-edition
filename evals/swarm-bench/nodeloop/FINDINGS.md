@@ -2286,6 +2286,39 @@ that killed one arm cleared this one.
 F63 remains worth having independently — it repaired the GENERIC branch, which is what every worker
 gets while the lever is off, and it is correct for all kinds rather than conditional on a lever.
 
+## F66 — an independent estimate of idle-slot supply, and it corroborates F61 before the new event ships
+
+`pre_review` needs an idle node for exactly the same reason the judge's semantic review does. That
+makes its firing rate an INDEPENDENT measure of how often a spare node exists — measured with a
+different mechanism, on the same runs, without the event F61 added.
+
+Per run, pre_reviews as a share of judge ticks:
+
+    13.0%  4.3%  6.4%  7.4%  11.5%     (the five runs where pre_review ran at all)
+
+And the semantic judge review, measured separately: **34 of 851 = 4.0%**.
+
+Same order of magnitude, from two mechanisms that share one precondition. That is real corroboration
+for F61's claim that the binding constraint is **idle-slot supply**, not the gate F57 touched — and it
+arrives before `judge_skipped` has produced a single event. The next run will settle it directly; this
+says the answer is unlikely to surprise.
+
+**Two other things the data says, both worth having:**
+
+`pre_review` is not the constant I took it for. It is 7 on 15-18 task plans and **10 on the 20-task
+plan** — it scales with the work, which is the correct shape. My "exactly 7 every run" was an artefact
+of looking only at similar-sized plans.
+
+**It fires in 5 of 13 runs and not at all in the other 8.** The zeros are not small numbers, they are
+zeros — including runs with 45, 82, 171 judge ticks. So on most runs no idle slot is ever handed to
+the pre-reviewer, which is the same story again and sharpens it: the question is not "how often is a
+node idle" but "why do some runs have idle slots and most have none". `judge_skipped{no_idle_device}`
+will answer it per-tick rather than per-run.
+
+Cost side, for when this comes up for judgement: **38 pre_reviews produced 5 findings — a 13% hit
+rate** on otherwise-idle capacity. Cheap if the node would idle anyway; not free if it competes with a
+semantic judge for the same slot, which on this evidence it does.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
