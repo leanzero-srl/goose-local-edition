@@ -6272,3 +6272,60 @@ wall-clock. A score alone will not settle it; if width rises and the prefix rise
 is that convergence should be cheaper, not absent.
 
 preflight: `GOOSE_SWARM_CONVERGE` present in this binary, every queued arm can fire.
+
+---
+
+## F149 — the engine emits "can_look_things_up: false" every run, then tells the scout to look things up
+
+The scout audit's result is mostly a clean negative: **the four lenses are genuinely differentiated**
+— `codebase`, `edge-cases`, `architecture`, `libraries` each carry a distinct brief AND a distinct
+tool_hint, both interpolated per lens (swarm.rs:12042). That is the shape the prime directive asks
+for, and it already existed. Recorded so no future tick re-audits them.
+
+**One line was not.** The `libraries` lens ships:
+
+> tool_hint: *"Use the context7 tools (resolve-library-id then get-library-docs) and web-search."*
+
+and every scout's prompt closed with *"You have at most {max_lookups} tool call(s): **spend them on
+LOOKING THINGS UP**, not on exploring."*
+
+**The engine already knows this is false.** `research_tools` is emitted on every run of this fleet as:
+
+```json
+{"available": [], "can_look_things_up": false}
+```
+
+Three archived runs checked, all identical. No MCP extensions are attached by default; `exts` is
+empty and is **in scope at the very line that builds the prompt**.
+
+### Why this is worse than wasted tokens
+
+That lens's entire job is *"look up their REAL current API: function/class names, signatures, minimal
+usage snippets, and gotchas."* Ordered to look it up, with nothing to look it up WITH, a 27B's only
+remaining move is to produce the API **from memory** — and an invented signature does not stop there.
+It flows into the plan, and then into the FROZEN CONTRACTS every worker builds against.
+
+F78 measured the downstream half of exactly this: `grounded` was 0 on every run, so `doc_facts` — the
+one verbatim research→worker channel — carried nothing.
+
+### Fixed by telling it the truth and asking for CALIBRATION
+
+When nothing is attached, the tool_hint becomes *"You have NO documentation or web-search tools
+attached — do not attempt to use context7 or web-search, they are not there"*, and the closing clause
+becomes: answer from what you know, and **state plainly which API names and signatures you are
+CONFIDENT of, marking anything you are unsure of as UNVERIFIED rather than guessing a
+plausible-looking name** — because *"a signature you invent here becomes a frozen contract every
+worker builds against, so an honest 'unverified' is far more useful to the planner than a confident
+invention."*
+
+With extensions attached the prompt is **byte-identical** to today.
+
+This is lesson 29 in its purest form — the engine held the answer, in an event it emits itself, and
+said something generic instead — and it is the same class as F146 (an instruction that cannot apply),
+now found on the research phase rather than the worker.
+
+### The marker caught a mistake of mine
+
+My first marker spanned a Rust line-continuation, so it was not contiguous in source and preflight
+reported ABSENT — correctly. Narrowed to a fragment lying wholly on one line. That is the check doing
+precisely its job, before a rebuild rather than after.

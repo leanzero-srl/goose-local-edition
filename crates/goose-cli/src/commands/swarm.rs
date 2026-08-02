@@ -12037,6 +12037,46 @@ impl GooseAgentDispatcher {
                     style(lens.id).bold(),
                     model
                 );
+                // THE ENGINE ALREADY KNOWS WHETHER IT CAN LOOK ANYTHING UP, AND WAS TELLING THE SCOUT
+                // OTHERWISE.
+                //
+                // `research_tools` is emitted every run as {"available": [], "can_look_things_up": false}
+                // on this fleet — no MCP extensions are attached by default. Yet the `libraries` lens ships
+                // the tool_hint "Use the context7 tools (resolve-library-id then get-library-docs) and
+                // web-search", and the closing line ordered EVERY scout to "spend them on LOOKING THINGS UP".
+                //
+                // Naming tools that do not exist is worse than wasted tokens here. That lens's whole job is
+                // "look up their REAL current API: function/class names, signatures, minimal usage snippets".
+                // Told to look it up, with nothing to look it up WITH, a 27B's only remaining move is to
+                // produce the API from memory — and those invented signatures flow straight into the plan
+                // and then into the frozen contracts. F78 measured the downstream half of this: `grounded`
+                // was 0 on every run, so `doc_facts` — the one verbatim research->worker channel — carried
+                // nothing.
+                //
+                // So when there is nothing attached, say so, and ask for CALIBRATION instead of lookup: what
+                // it is confident of, and what it is NOT, marked. An honest "I am not certain of this
+                // signature" is worth more to the planner than a fluent invention.
+                let has_lookup = !exts.is_empty();
+                let tool_hint = if has_lookup {
+                    lens.tool_hint
+                } else {
+                    "You have NO documentation or web-search tools attached — do not attempt to use \
+                     context7 or web-search, they are not there."
+                };
+                let lookup_clause = if has_lookup {
+                    format!(
+                        "You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not \
+                         on exploring. Stop as soon as you can answer — an early, grounded answer beats a \
+                         long one."
+                    )
+                } else {
+                    "You cannot look anything up on this run, so answer from what you already know — and \
+                     CALIBRATE: state plainly which API names and signatures you are CONFIDENT of, and mark \
+                     anything you are unsure of as UNVERIFIED rather than guessing a plausible-looking name. \
+                     A signature you invent here becomes a frozen contract every worker builds against, so \
+                     an honest 'unverified' is far more useful to the planner than a confident invention."
+                        .to_string()
+                };
                 let system = format!(
                     "You are a SCOUT investigating ONE aspect of a coding task to inform the planner. \
                      Your lens is \"{}\": {} {} Return a CONCISE, factual brief (key facts, API names, \
@@ -12049,8 +12089,8 @@ impl GooseAgentDispatcher {
                      is plenty — large context is very slow on local models. \
                      STAY in the current working directory: for a NEW/empty project there is nothing on \
                      disk to investigate, so reason from the task itself; NEVER `ls`/`cat` parent or \
-                     sibling directories — they are unrelated projects. You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not on exploring. Stop as soon as you can answer — an early, grounded answer beats a long one.",
-                    lens.title, lens.brief, lens.tool_hint
+                     sibling directories — they are unrelated projects. {lookup_clause}",
+                    lens.title, lens.brief, tool_hint
                 );
                 // Write a per-scout activity digest (.swarm/activity/scout-<lens>.json) so the RESEARCH phase is
                 // no longer a black box — the desktop surfaces each scout's live tool calls + generation per node,
