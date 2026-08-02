@@ -6428,3 +6428,54 @@ the same discipline `armcheck.py` exists to enforce — applied to ordering rath
 
 armcheck already verified its precondition on a real baseline: *"the sink held a node alone for 1590s
 with the other nodes idle — that is the window idle-fill exists for."*
+
+---
+
+## F152 — the sink is not slow and does not waste turns navigating; ~30% of its turns are READING
+
+Chasing F151's target (the sink is 69% of all low-concurrency time), measured across 12 sink activity
+digests, 162 tool calls:
+
+**It is not slow.** 8 completed sinks: **16 calls median** (min 10, max 25), **21.8 min median**, an
+implied **79 s/call against a fleet median of 83**. F116 was exactly right — the sink's cost is
+entirely its TURN COUNT, and turns are the only thing worth attacking.
+
+**Three of eight ran to exactly 30.0 minutes** — `default_sink_cap_secs()` is **1800**. Those sinks
+did not finish; they were cut off. `sink_capped` shows **0 events across 21 run dirs**, but every one
+of those dirs is PRE-boundary and the marker shipped at 17:40 — so that zero is UNCONTROLLED and
+**F115 stays open**, exactly as the prediction gate requires.
+
+### What the turns are actually spent on
+
+| | calls | share |
+|---|---|---|
+| `cat` | 29 | 20% |
+| `ls` / `find` / `tree` / `grep` | 19 | 12% |
+| `python3` (running the app — its job) | 12 | 8% |
+| `edit` + `write` (fixing — its job) | 18 | 11% |
+| `lsof` / `rm` (port + temp cleanup) | 15 | 9% |
+
+**~30% of the sink's turns are reading and exploring a tree whose complete file manifest and injected
+dependency APIs are ALREADY in its 23,104-char prompt** (F145 measured that prompt: ~68% of it is
+exactly that per-task content). At ~80 s/call that is roughly **6.5 minutes per run spent
+re-discovering what it was already told**, on the task that owns 69% of the fleet's idle time.
+
+### Two wrong readings I caught, and how
+
+**"40% of the sink's shell calls are `cd`"** — false. All **58 are COMPOUND** (`cd <abs path> && <real
+work>`), **zero** bare navigation. Every one carries real work; the `cd` costs no extra turn. I only
+saw this by printing the commands.
+
+Before that, two classifiers disagreed with each other: the first put 70 calls in "shell: other", the
+second put 3. The first mis-bucketed compound commands; the second excluded on `"ls" in low`, which
+matches inside *calls*, *tools*, *false*. **Neither number was real.** The fix was to stop
+classifying and dump the raw commands — three keyword schemes in a row produced three different
+pictures of the same 162 calls, which is the clearest possible sign the keywords were the problem.
+
+### The lever, stated for the arm that will test it
+
+The sink re-reads what it already has. Two ways to spend fewer turns: **stop it re-reading** (its
+prompt already carries the manifest and the APIs — the same subtraction F139/F146 applied to
+workers), or **give the idle nodes something to do while it runs** (`sink_review`, now promoted to
+run second). The first reduces the sink's own 21.8 minutes; the second reduces what the other four
+slots lose to it. They are independent and both are worth having.
