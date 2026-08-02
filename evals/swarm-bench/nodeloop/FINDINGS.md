@@ -4273,3 +4273,49 @@ and the next boundary tests it.
 
 **Also observed:** `replanned added=[] stopped=false` again — the F100 bug, exactly as predicted for
 the pre-boundary binary. Expected, not a defect, and the fix is already committed.
+
+---
+
+## F110 — G7 phase one CLOSED: every language match is now exhaustive, and the scan is a durable instrument
+
+`langaudit.py` brace-matches every `match` on `TargetLang` in swarm.rs and reports gaps. Result:
+
+```
+5 language match blocks (brace-matched)
+  L13756  exhaustive     L14205  exhaustive     L14346  exhaustive
+  L14957  exhaustive     L19361  exhaustive
+no gaps: every language states its own answer, and adding a sixth will not compile until it does too
+```
+
+**The audit found two real defects and cleared one false positive:**
+
+| site | before | after |
+|---|---|---|
+| `verify_recipe` (13756) | `TypeScript \| Rust \| _` — a **Go** app was told to verify with `python3 -m pytest` | exhaustive (F102) |
+| `overview_run_command` (14957) | `Python \| Rust \| TypeScript \| _ => None` — a **Go** app had NO run command, nothing could probe its entry point | exhaustive (F103) |
+| `contract_stub_spec` (14205) | flagged as missing four variants | **FALSE POSITIVE** — it has all five, spread over 80 lines |
+
+**The false positive is the useful part.** My first scan read a fixed 16-line window after
+`match lang {`, so it could not see arms further down and cried wolf on correct code. Reading the
+source before acting — F101's standing lesson — is what stopped me "fixing" it. The scan is now
+brace-matched and that class of false alarm is gone.
+
+### The ratio that justifies the method, restated with the final numbers
+
+**366 `.py` literals. 128 `TargetLang::` references. FIVE match blocks. TWO defects.**
+
+Auditing literals would have been a week of reading with no way to know when it was done. Auditing
+arms took one scan, found both real gaps, and produces a definite answer: **no language now inherits
+another's tooling by default, and a sixth language cannot be added without the compiler demanding its
+answer.** That is the difference between cleaning up hard-coding and removing the mechanism that
+creates it.
+
+### What G7 phase TWO is, honestly
+
+Phase one asked "does any language silently inherit another's tooling" — answered, no. The remaining
+asymmetry is DEPTH, not defaulting: Python's gate has `interpret_pytest_collect`,
+`interpret_pytest_run`, `entry_package_from_paths` and `collect_py_files`; Go, Rust and TypeScript
+have a single `smoke_*` function each. Those single-language helpers being Python-shaped is CORRECT
+design — they are called from the Python arm. The open question is whether the other arms are as
+THOROUGH, which is a different investigation and needs a non-Python spec on the bench to answer
+honestly. Filed rather than guessed at.
