@@ -7573,3 +7573,52 @@ LESSON 59: **A MECHANISM THAT FILLS IDLE CAPACITY IS NOT FREE IF IT SHARES A DEV
 PATH.** With PARALLEL>1, "idle" work lands on the same node as the task everything is waiting for.
 Measure the critical task's SECONDS PER CALL, not the fleet's occupancy — occupancy will look
 excellent precisely when this is happening.
+
+## F180 — `sink_capped` DOES fire (F115 SETTLED), and a capped sink reports the CAP as its duration
+
+**I was wrong that the cap is not firing, and I am striking F178's headline.** The sink completed and:
+
+    sink_capped fired at +59.9 min
+      cap_secs: 1800
+      detail: "the sink was CUT OFF at its wall-clock cap ON AN EVENT GAP, not finished"
+    task_completed: status=done, elapsed_ms = 30.0 min, 14 calls
+
+**F115 IS NOW FULLY SETTLED, both halves:** baseline r0's sink finished naturally and emitted nothing
+(negative), this one was cut off and emitted `sink_capped` (positive). The instrument works.
+
+**But two things are badly wrong, and they matter more than the original question.**
+
+**1. The cap fires ~30 minutes late, and via the wrong path.** The detail says *"on an event gap"* —
+that is the SECOND emission site (11538), the one that trips when the stream goes quiet. The deadline
+branch (11506) never fired. So the cap is not a wall-clock ceiling at all; it is a ceiling that is
+only CHECKED when the stream stalls. On a contended node emitting a token every few minutes, the
+check simply does not run. 1800s let 3,594s through — 100% over.
+
+**2. A capped sink RECORDS THE CAP AS ITS ELAPSED TIME.** `task_completed.elapsed_ms` = 30.0 min for
+a task that occupied the fleet 59.9 min. Checked across every sink on disk, this is systematic:
+
+    n=14 sinks
+      RECORDED (elapsed_ms)  median 26.0 min
+      REAL (dispatch->done)  median 27.4 min
+      sinks whose recorded < real: 6/14, worst understatement 29.9 min
+
+Two prior sinks recorded **exactly 30.0 min with real durations of 41.8 and 47.7 min and NO
+`sink_capped` event** — capped on a build that predates the event, and invisible ever since.
+
+**THIS RETROACTIVELY CORRECTS F152.** Its "16 calls median, 21.8 min, 79 s/call" came from
+`elapsed_ms`, and its headline observation — *"3 of 8 hit EXACTLY 30.0 min"* — was read as sinks
+landing on the cap. They were not landing on it; **they were reporting it.** Their real durations were
+longer and unknown. Every s/call figure derived from `elapsed_ms` for a capped sink is understated by
+the same factor: this sink reads 129 s/call recorded, 257 s/call real.
+
+**F151/F150/F162 are SOUND** — `occupancy.py` pairs dispatch→completion timestamps rather than
+reading `elapsed_ms`, which is exactly the distinction that saves them.
+
+**F179 SURVIVES AND STRENGTHENS.** Real numbers: baseline 24 calls / 25.1 min = 63 s/call; this sink
+14 calls / 59.9 min = **257 s/call**, 4.1x slower, against a fleet median of 83. The contention story
+is unchanged and the true cost is larger than the recorded data admitted.
+
+LESSON 60: **A TASK'S SELF-REPORTED DURATION IS NOT ITS OCCUPANCY.** When a mechanism finalizes a task
+early, late, or by force, the elapsed it writes is whatever that mechanism believes — here, the cap
+value. Derive duration from the dispatch and completion TIMESTAMPS, which no mechanism can rewrite,
+and only trust `elapsed_ms` after confirming the two agree.
