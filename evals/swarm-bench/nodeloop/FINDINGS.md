@@ -3564,3 +3564,47 @@ the control did not merely fail to prove something — **it caused the damage it
 A test that exercises a destructive function against the live environment is not a test, it is the
 incident. Any future destructive helper gets its controls run against a SANDBOX of fake processes,
 never against the range the real system is using.
+
+---
+
+## F95 — P9 CONFIRMED and exceeded: the prompt lost 68%, the system prompt 94%
+
+First measurement on engine_build 1785657605, strictly after the restart, n=15:
+
+| | pre-F87 | post-F87 | change |
+|---|---|---|---|
+| median TOTAL prompt | 43,050 chars | **13,731** | **-68%** |
+| median SYSTEM prompt | 23,541 chars | **1,305** | **-94%** |
+| requests carrying `### Global Hints` | 16 of 16 | **0 of 15** | — |
+| ~tokens per request | ~11,958 | **~3,814** | **-68%** |
+
+Predicted -49%; measured **-68%**. The prediction was low because it assumed only the hint block would
+go, and the drop is larger than the hint block alone — worth noting rather than celebrating, since a
+result that beats its own prediction usually means the model of the system was incomplete.
+
+### A near-miss on the verdict, and the check that caught it
+
+The first pass filtered request logs by FILE mtime within 600s and reported **2 of 16 still carrying
+hints** — which would have been a real finding: an incomplete fix leaking on some path.
+
+It was an artifact. Those two files had mtimes of 598s and 599s, sitting exactly at the filter's edge,
+and were written just BEFORE the boundary restart. Every file touched since (1s to 236s) was clean.
+Re-run with a 300s window — strictly after the restart — gives **0 of 15**.
+
+Filtering a log by file mtime does not filter its ENTRIES, and a file straddling the moment of interest
+contains both eras. Same shape as PATTERN 4: a measurement that cannot distinguish two situations. The
+zero here is admissible only because the boundary in time was made unambiguous.
+
+### What this changes
+
+The swarm's own system prompt is now essentially ALL of its system prompt: 1,305 chars, versus 1,389
+measured pre-F87 as the non-hint remainder. That is the surface every instruction fix this loop shipped
+actually operates on, and it is no longer competing with sixteen times its volume of unrelated rules.
+
+**The latency prediction is now testable** on this unit: F86 measured thirteen minutes of
+`PROCESSINGPROMPT` across all three nodes during the skeleton draft, prefilling ~12,000 tokens each.
+That input is now ~3,814 tokens. `skeleton_drafts.secs` (F85, also newly live) is the readout.
+
+**The compliance prediction remains untestable** and is NOT claimed. The replicate spread on this bench
+is 46 points; a single run cannot resolve a compliance change, however strongly the literature predicts
+one. It stays open until n>=3 exists on a post-F87 engine.
