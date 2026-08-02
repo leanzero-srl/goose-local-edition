@@ -687,8 +687,29 @@ def reap_stray_listeners(port_lo: int, port_hi: int) -> list[int]:
         if len(parts) < 2 or not parts[1].isdigit():
             continue
         pid = int(parts[1])
-        # NEVER our own process: the sweep runs the vendor service in-process and would kill itself.
+        # NEVER our own process: the sweep runs the vendor service IN-PROCESS on a port inside this
+        # very range, so an identity check is the only thing standing between this reaper and suicide.
         if pid == me:
+            continue
+        # AND NEVER ANY SWEEP. `pid == me` is not enough, and this is not hypothetical: running the
+        # reaper's own control test from a throwaway process made the LIVE SWEEP look foreign — it was
+        # holding 127.0.0.1:8933 — and killed it mid-unit with no STOP sentinel and no log line. The
+        # identity guard was correct and the ASSUMPTION AROUND IT was wrong, because a guard written as
+        # "not me" silently means "everything except whoever happens to be calling".
+        #
+        # So the rule is now POSITIVE rather than negative: only kill something that looks like a
+        # leaked APP SERVER. A leaked server is `python -m <pkg>` / a bare app process; the sweep is
+        # `python .../sweep.py` and the engine is `.../goose swarm run`. Anything not recognisable as
+        # an app server is left alone, because the cost of a false kill here is a dead sweep and the
+        # cost of a false spare is one held port that the next unit's port allocation steps over.
+        try:
+            cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            continue
+        if not cmd or "sweep.py" in cmd or "goose swarm run" in cmd or "loop.sh" in cmd:
+            continue
+        if " -m " not in cmd and "python" not in cmd.split("/")[-1][:16]:
             continue
         try:
             os.killpg(os.getpgid(pid), signal.SIGKILL)
