@@ -191,3 +191,9 @@ GOOSE_SWARM_E2E_ORACLE
 # built) — which is why a built lever sat off and unmeasured. Raw inputs, emitted before every early
 # return so it lands on EVERY judge invocation.
 judge_observed
+
+# B1/F139: a test-author OWNS a file, so it fell into layout_block's generic owner branch and was
+# told "tests are a SEPARATE subtask" (it IS the test subtask) and "NEVER `cat` the module" (the one
+# file it must read for real signatures) — while reading_rules ~400 lines later, with kind_prompt ON,
+# told the SAME worker to read exactly that module. Both in one system prompt.
+YOU ARE TESTING to get its real signatures
