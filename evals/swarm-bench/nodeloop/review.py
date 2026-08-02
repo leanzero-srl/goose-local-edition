@@ -78,11 +78,24 @@ def level1_logs(ev: list[dict]) -> list[str]:
     t0, tn = _ts(ev[0].get("ts")), _ts(ev[-1].get("ts"))
     mins = (tn - t0).total_seconds() / 60 if t0 and tn else 0
     disp = {e["task_id"] for e in ev if e.get("event") == "task_dispatched"}
-    done = {e["task_id"] for e in ev if e.get("event") == "task_completed"}
+    # STATUS IS PART OF THE EVENT AND IGNORING IT MADE A FAILED RUN READ AS A CLEAN ONE.
+    # `task_completed` is emitted for BOTH a success and a terminal failure — swarm-1node-r0's
+    # `test-api` carries {"status": "failed", "elapsed_ms": 0, "tool_calls": 0}, the exhausted-attempts
+    # signature (F126), and this line counted it as done. The tick then reported "dispatched 13 /
+    # completed 13 / in flight 0" and Q2 answered YES on a run that had lost a task. P4 in the
+    # supervisor itself: a measure that cannot separate two OPPOSITE situations.
+    done = {e["task_id"] for e in ev if e.get("event") == "task_completed"
+            and e.get("status") != "failed"}
+    failed = {e["task_id"] for e in ev if e.get("event") == "task_completed"
+              and e.get("status") == "failed"}
+    settled = done | failed
     L = [f"elapsed {mins:.1f} min, {len(ev)} events, last = {ev[-1].get('event')}",
-         f"dispatched {len(disp)} / completed {len(done)} / in flight {len(disp - done)}"]
-    if disp - done:
-        L.append(f"in flight: {sorted(disp - done)}")
+         f"dispatched {len(disp)} / done {len(done)} / FAILED {len(failed)} / "
+         f"in flight {len(disp - settled)}"]
+    if failed:
+        L.append(f"FAILED TASKS: {sorted(failed)} — a terminal failure, not a completion")
+    if disp - settled:
+        L.append(f"in flight: {sorted(disp - settled)}")
     fired = [k for k in ("task_split", "speculated", "replanned", "pre_review",
                          "complete_fix_dispatched", "spec_repair_wave", "sink_review") if c[k]]
     L.append(f"idle-node mechanisms that FIRED: {fired or 'none'}")
@@ -373,7 +386,11 @@ def q2_is_the_plan_being_followed(ev, plan) -> tuple[str, list[str]]:
         return "UNKNOWN", ["no plan to follow yet"]
     planned = {t["id"] for t in (pl.get("tasks") or [])}
     disp = {e["task_id"] for e in ev if e.get("event") == "task_dispatched"}
-    done = {e["task_id"] for e in ev if e.get("event") == "task_completed"}
+    # Same correction as level 1: a terminal failure is not a completion.
+    done = {e["task_id"] for e in ev if e.get("event") == "task_completed"
+            and e.get("status") != "failed"}
+    failed_q2 = {e["task_id"] for e in ev if e.get("event") == "task_completed"
+                 and e.get("status") == "failed"}
     kids = {c for e in ev if e.get("event") == "task_split" for c in (e.get("children") or [])}
     added = {c for e in ev if e.get("event") == "replanned" for c in (e.get("added") or [])}
     superseded = {e.get("task_id") for e in ev if e.get("event") == "task_split"}
@@ -391,7 +408,11 @@ def q2_is_the_plan_being_followed(ev, plan) -> tuple[str, list[str]]:
     # just not as a reason to intervene.
     retries = collections.Counter(e["task_id"] for e in ev if e.get("event") == "task_dispatched")
     hot = {t: k for t, k in retries.items() if k >= 3}
-    stuck = {t: k for t, k in hot.items() if t not in done}
+    # SETTLED means the task reached a TERMINAL event — done OR failed. Keying "still in flight" off
+    # `done` alone made the failed `test-api` report as both terminally failed AND still in flight,
+    # which is the same class of defect as the one just fixed above: two mutually exclusive states
+    # asserted at once because the predicate used the wrong set.
+    stuck = {t: k for t, k in hot.items() if t not in done and t not in failed_q2}
     settled = {t: k for t, k in hot.items() if t in done}
     if stuck:
         drift.append(f"RE-DISPATCHED >=3x AND STILL IN FLIGHT: {stuck} — not converging, and that is "
@@ -404,8 +425,14 @@ def q2_is_the_plan_being_followed(ev, plan) -> tuple[str, list[str]]:
         L.append(f"planned, not yet dispatched: {pending}")
     if superseded:
         L.append(f"superseded by a split (correctly never completes under its own id): {sorted(superseded)}")
+    # A LOST TASK IS DRIFT. Q2 answered "YES, the plan is being followed" on a run whose `test-api`
+    # had terminally failed, because the counter above treated a failed task_completed as done.
+    # The plan committed to 13 tasks; delivering 12 and losing one is not faithful execution.
+    if failed_q2:
+        drift.append(f"TASK(S) TERMINALLY FAILED: {sorted(failed_q2)} — the plan committed to them "
+                     f"and they were not delivered")
     L.append(f"plan {len(planned)} | +split {len(kids)} | +replan {len(added)} | "
-             f"dispatched {len(disp)} | done {len(done)}")
+             f"dispatched {len(disp)} | done {len(done)} | FAILED {len(failed_q2)}")
     return ("NO — drifting" if drift else "YES"), [f"DRIFT {d}" for d in drift] + L
 
 
