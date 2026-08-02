@@ -27,9 +27,15 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+# The solo-window figure is occupancy.py's. Re-deriving it here would repeat the mistake review.py
+# made twice (F107/F112) — a completion-sum misses a task superseded by a split.
+import occupancy  # noqa: E402
+
 RUNS = HERE.parent / "runs" / "nodeloop"
 
 # For each arm: what must be TRUE of a baseline run for the arm to be able to change anything, and how
@@ -103,14 +109,27 @@ def arm_complete_parallel(ev):
     return "OK", f"a round had {best} findings: the fan has >1 item"
 
 
-def arm_sink_review(ev):
+def arm_sink_review(ev, run=None):
+    """Idle-fill during the sink needs idle capacity DURING the sink — which is exactly what
+    occupancy.py's solo window measures, so ask it rather than guessing."""
     if _count(ev, "sink_review"):
         return "OK", "sink_review already fires"
-    solo = any(e.get("event") == "task_dispatched" and e.get("task_id") == "integrate-verify" for e in ev)
-    if not solo:
+    if not any(e.get("event") == "task_dispatched" and e.get("task_id") == "integrate-verify"
+               for e in ev):
         return "UNKNOWN", "no integrate-verify dispatch to idle-fill around"
-    return "UNKNOWN", ("the sink ran, but whether idle capacity existed during it is not decidable from "
-                       "these events alone — needs occupancy's solo window")
+    if run is None:
+        return "UNKNOWN", "no run dir to hand occupancy.py"
+    try:
+        occ = occupancy.analyse(run)
+    except Exception as exc:
+        return "UNKNOWN", f"occupancy unavailable ({exc})"
+    solo = occ.get("solo_by_task") or {}
+    sink_solo = solo.get("integrate-verify", 0.0)
+    if sink_solo <= 0:
+        return "BLOCKED", ("the sink never ran ALONE, so there was no idle capacity to fill — "
+                           "idle-fill has no window")
+    return "OK", (f"the sink held a node alone for {sink_solo:.0f}s with the other nodes idle — "
+                  f"that is the window idle-fill exists for")
 
 
 def arm_detail_budget(ev):
@@ -136,8 +155,19 @@ def arm_e2e_oracle(ev):
 
 
 def arm_doc_fetch(ev):
-    return "UNKNOWN", ("needs the spec to name a fetchable document; not decidable from run events "
-                       "alone — check spec_doc_urls against the run prompt")
+    """The engine's own rule (spec_doc_urls): an http(s) URL with a PATH — a bare origin is the app's
+    base URL, not a document. Mirrored here deliberately and narrowly; if the two ever disagree the
+    arm is what suffers, so this states the rule rather than approximating it."""
+    rs = next((e for e in ev if e.get("event") == "run_started"), None)
+    spec = (rs or {}).get("prompt") or ""
+    if not spec:
+        return "UNKNOWN", "no run_started prompt to read"
+    urls = [u for u in re.findall(r"https?://[^\s`'\"<>()\[\]{},;]+", spec)
+            if u.split("://", 1)[-1].count("/") >= 1]
+    if not urls:
+        return "BLOCKED", ("the spec names no fetchable document (an http(s) URL WITH a path) — "
+                           "doc_fetch has nothing to fetch")
+    return "OK", f"the spec names {len(urls)} fetchable doc URL(s), e.g. {urls[0]}"
 
 
 ARMS = {
@@ -181,7 +211,10 @@ def main(argv: list[str]) -> int:
     print("can each queued arm change anything, and could we tell?\n")
     blocked = 0
     for name, probe in ARMS.items():
-        verdict, why = probe(ev)
+        try:
+            verdict, why = probe(ev, run) if name == "sink_review" else probe(ev)
+        except Exception as exc:
+            verdict, why = "UNKNOWN", f"probe raised: {exc}"
         if verdict == "BLOCKED":
             blocked += 1
         print(f"  {verdict:<8} {name:<20} {why}")

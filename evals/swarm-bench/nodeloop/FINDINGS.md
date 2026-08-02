@@ -4783,3 +4783,46 @@ the cheap half of the question.
 
 **This belongs in the tick routine alongside review.py**: before any arm is queued, the baseline must
 show its mechanism firing and its instrument watching.
+
+---
+
+## F120 — armcheck's two UNKNOWNs resolved, and both arms are viable
+
+F119 left `sink_review` and `doc_fetch` at UNKNOWN. UNKNOWN is the honest default, but leaving it there
+is not the same as being unable to decide — both were answerable with instruments already on disk.
+
+**`sink_review` — OK.** Idle-fill during the sink needs idle capacity DURING the sink, which is exactly
+what occupancy.py's `solo_by_task` measures. It reports **the sink held a node alone for 1590s with the
+other two idle**. That is the window the mechanism exists for, and it is 23.6% of the run. Asked
+occupancy rather than re-deriving it — the mistake review.py made twice (F107/F112), where a
+completion-sum silently missed a task superseded by a split.
+
+**`doc_fetch` — OK.** The engine's own rule (`spec_doc_urls`) is an http(s) URL WITH A PATH; a bare
+origin is the app's base URL, not a document. The bench spec names exactly one:
+`http://127.0.0.1:8930/v1/docs`. So the arm has something to fetch.
+
+### The queue now reads
+
+```
+BLOCKED  kind_prompt      readout circular until the boundary ships rules_delivered
+BLOCKED  detail_budget    stale and backwards — F49 already raised the ceiling to 420s
+BLOCKED  retarget_off     plan_confidence 100 >= floor 85, the ladder never runs
+OK       doc_prefetch     grounded=2
+OK       spec_repair      2 repair rounds
+OK       complete_parallel a round had 3 findings
+OK       e2e_oracle       3 shards ran
+OK       sink_review      1590s of solo sink to fill
+OK       doc_fetch        one fetchable doc URL in the spec
+```
+
+**Six viable arms, three blocked, nothing left unresolved that could be resolved.** The three BLOCKED
+are blocked for three different reasons — an instrument, a stale target, and a precondition — which is
+worth noting: there is no single class of failure to guard against, only the habit of asking.
+
+### One caution recorded against `doc_fetch`
+
+Its probe mirrors `spec_doc_urls`'s rule rather than calling it, because the rule lives in Rust. That
+is a deliberate duplication and therefore exactly the shape this project keeps finding defects in
+(P1: two versions of one rule that disagree). It is written narrowly and the comment says so; if the
+Rust rule changes, the arm is what suffers, and the honest mitigation is that a wrong OK here costs one
+unit rather than a wrong verdict about the engine.
