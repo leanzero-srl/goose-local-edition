@@ -68,6 +68,10 @@ is_code_deliverable
 # explicitly exempt — correct for every kind, no lever needed.
 OTHER TEST files
 
+# F67: a port collision between the swarm's own app-running tasks was reported as a build defect.
+# Now INCONCLUSIVE - never a finding, never a pass.
+COLLISION IN THE HARNESS
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

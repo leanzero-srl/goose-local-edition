@@ -2319,6 +2319,43 @@ Cost side, for when this comes up for judgement: **38 pre_reviews produced 5 fin
 rate** on otherwise-idle capacity. Cheap if the node would idle anyway; not free if it competes with a
 semantic judge for the same slot, which on this evidence it does.
 
+## F67 — the swarm collides with itself on a port, and reports it as a defect in the app
+
+The first `complete_verify.finding_texts` on this engine earned the event immediately. The SINGLE
+finding holding the live build red:
+
+    `pytest -q` failed — the generated tests exercise runtime paths that `--help` never invoke:
+      OSError: [Errno 48] Address already in use
+
+That is not a defect. Several tasks in a run each START the built app — `test-*`, `verify-e2e::*`,
+`integrate-verify`, and the complete/wire fix workers — and on one machine they contend for its port.
+The loser cannot bind, pytest exits non-zero, and the gate converts that into a finding that drives
+the repair loop against an app that is working.
+
+**It is systematic: `Address already in use` appears in 8 of the 13 runs on disk**, across
+`integrate-verify`, `test-api`, `verify-e2e::0`, `complete-fix` and `wire-fix` — every phase that
+runs the app.
+
+This is the same class as the phantom ``GET /` returned 404`` that drove repair for weeks, and worse
+than no finding: it consumes the fix budget AND leaves the app's real state unknown.
+
+**Fixed with the engine's own existing verdict.** The pytest path already records a TIMEOUT as
+inconclusive — *"not a failure and NOT a pass either"* — so a collision now gets the same treatment:
+a new `TestRunVerdict::Inconclusive` that is never a finding and never a pass, carrying the reason to
+the operator (*"a COLLISION IN THE HARNESS, not a defect in the app: nothing was proven either way,
+so do not 'fix' the app for it"*). It is pushed to the `inconclusive` list rather than dropped,
+because silently discarding it would make "nothing was checked" indistinguishable from "everything
+passed" — the vacuous-pass trap this file warns about in three other places.
+
+The regression test pins both directions: a collision is Inconclusive, and a real
+`AssertionError: 247 != 0` is still a Failure. A guard that swallowed genuine defects would be worse
+than the bug.
+
+**Not fixed here, and deliberately:** the collision itself. Making the app bind an ephemeral port, or
+serialising the tasks that run it, changes what the swarm produces or how it schedules — both are
+real changes needing their own measurement. Reclassifying a false finding costs nothing and stops the
+repair loop chasing it, which is the immediate harm.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
