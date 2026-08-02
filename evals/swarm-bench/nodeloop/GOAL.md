@@ -325,3 +325,32 @@ silently LOSING a task. Run this before claiming any progress, and quote the cel
 The instrument reproduces F164 exactly (its control), and in doing so CORRECTED it: classifying the
 sink by task id BEFORE owned files moved `integrate-verify`'s single failure out of the implementer
 column, so implementers are 0/63, not 1/65. "No implementer has ever failed" is exact, not rounded.
+
+## RESTART DECISION REVISED — wait for sink_review, not for baseline (2026-08-03 00:0x)
+
+I missed the r0/r1 gap; the sweep rotated at 23:48:49 while I was crunching. The running unit is
+**`sink_review-n3-r0`**, not a baseline replicate. Do NOT kill it. Its gate:
+
+    "the SINK owns 100% of the solo window in 2 of 3 measured runs — 543-1045s with two nodes idle
+     while integrate-verify runs alone — and this is the only mechanism built to fill it. It has
+     never run once: the scheduler's producer defaulted OFF while the drain and levers_resolved both
+     defaulted ON, so every run REPORTED it enabled and its queue was never filled."
+
+That is F162's problem and Prime Directive 3's mechanism, executing for the first time ever. It is
+worth strictly more than a queue reorder. **Restart at the sink_review/next boundary instead**
+(ETA ~01:26). Readout to take from it: `sink_review{prewarmed>0}` — if prewarmed is 0 with the lever
+ON, the producer still cannot see its precondition and the fix is incomplete.
+
+⚠ THE FREEZE CONDITION NEEDS RE-READING. `baseline` is at **n=1**, and the live NEXT is
+`baseline-n1-r0` — the ONE-node cell, not a second 3-node replicate. `backlog()` is rep-major
+(`for rep in range(target_reps): for c in cells()`), so `baseline-n3-r1` sits behind the entire rep-0
+pass (31 units, ETA Wed 02:07). "Freeze lifts at baseline n=3" therefore means ~26 hours, not ~3.
+Decide next tick whether to promote the two baseline replicates ahead of the rep-0 pass — that is a
+sweep-ordering change (instrument, allowed) and it is the difference between the freeze lifting
+tonight and lifting Wednesday.
+
+## r0 HEADLINE NUMBERS (2026-08-03)
+score 0.8429 | 97 min | pool 3/3 | void False | timed_out False | **fallbacks 0** (F49 detail-budget
+fix confirmed: detail_fallback is ZERO) | **kind_mismatch 84.0%** | prefix 849.2s / plan 555.1s /
+redraft 0. The kind-mismatch figure is the plan's Part-3 defect #2 measured on this build, and it is
+WORSE than the 60% that finding was written from — F157 and F158 are aimed straight at it.
