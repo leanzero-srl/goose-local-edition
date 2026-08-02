@@ -8133,6 +8133,57 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// The rule that makes racing N fix agents safe instead of merely triple the cost. Every case here is
+    /// a shape the corpus actually produced: 13 of 13 archived repair rounds ended with findings
+    /// outstanding, and the count ROSE in 3 of them under the current promote-on-agent-Ok behaviour.
+    #[test]
+    fn a_raced_twin_lands_only_when_it_strictly_beats_the_baseline() {
+        let t = |s: &str, v: Option<usize>| (s.to_string(), v);
+
+        // The win: one twin cleared the findings, the others did not. Lowest count takes the tree.
+        assert_eq!(
+            pick_repair_winner(&[t("a", Some(2)), t("b", Some(0)), t("c", Some(1))], 2),
+            Some((0, "b".to_string()))
+        );
+
+        // THE REGRESSION THIS EXISTS TO MAKE UNREACHABLE. Every twin came back WORSE than the round's
+        // baseline. The engine's current behaviour promotes on the agent returning Ok and would land one
+        // of these on the real app; here nothing is promoted and the tree survives the round unchanged.
+        assert_eq!(
+            pick_repair_winner(&[t("a", Some(3)), t("b", Some(4))], 2),
+            None
+        );
+
+        // A TIE IS NOT AN IMPROVEMENT. Equal counts can mean the fix traded one finding for another, and
+        // overwriting the tree on that is a coin flip dressed as progress.
+        assert_eq!(
+            pick_repair_winner(&[t("a", Some(2)), t("b", Some(2))], 2),
+            None
+        );
+
+        // UNKNOWN IS NEVER A WINNER. `None` is a twin that errored, timed out, or whose gate could not run.
+        // Scoring an unchecked tree as clean would promote it OVER a checked one — the vacuous-pass trap in
+        // its most damaging form, because the destination is the real app.
+        assert_eq!(pick_repair_winner(&[t("a", None), t("b", None)], 5), None);
+        assert_eq!(
+            pick_repair_winner(&[t("a", None), t("b", Some(1))], 5),
+            Some((1, "b".to_string()))
+        );
+
+        // DETERMINISM: equal winning counts resolve to the earliest twin, so two replicates of one run
+        // cannot diverge on which fix landed.
+        assert_eq!(
+            pick_repair_winner(&[t("a", Some(1)), t("b", Some(1))], 3),
+            Some((1, "a".to_string()))
+        );
+
+        // Vacuous truth: no twins at all must promote nothing, not succeed by default.
+        assert_eq!(pick_repair_winner(&[], 4), None);
+
+        // A baseline of zero cannot be beaten — the round should never have opened, and nothing may land.
+        assert_eq!(pick_repair_winner(&[t("a", Some(0))], 0), None);
+    }
+
     #[test]
     fn complete_rounds_defaults_and_clamps() {
         assert_eq!(complete_rounds_from(None), 2); // default
@@ -10702,6 +10753,22 @@ impl GooseAgentDispatcher {
             .unwrap()
             .insert(task_id.to_string(), (tmp, owned_files.to_vec()));
         Ok(path)
+    }
+
+    /// The shadow's own root, so a twin can be VERIFIED before anyone decides whether it won. Peeks
+    /// without removing — `promote_speculative` / `discard_speculative` still own the lifecycle, and a
+    /// caller that peeks must still call exactly one of them.
+    ///
+    /// This exists because the fix loop promoted on the AGENT returning Ok, never on the fix being
+    /// checked. MEASURED across six archived runs: the repair loop's `passed` was false in 13 of 13
+    /// rounds, and the finding count ROSE in 3 of them — an unverified edit landing in the real tree
+    /// is how a working app gets damaged with no round left to undo it.
+    fn speculative_root(&self, task_id: &str) -> Option<PathBuf> {
+        self.spec_shadows
+            .lock()
+            .unwrap()
+            .get(task_id)
+            .map(|(shadow, _)| shadow.path().to_path_buf())
     }
 
     /// `run_agent` wrapped in a wall-clock timeout (`worker_timeout_secs`). Used for PLANNER-side
@@ -20252,6 +20319,55 @@ fn complete_parallel() -> bool {
         .unwrap_or(false)
 }
 
+/// GOOSE_SWARM_SPEC_REPAIR (default OFF): race the SAME finding set across every fleet model at once —
+/// one independent attempt per node, each in its own shadow tree — then re-verify every shadow with the
+/// deterministic smoke gate and promote the BEST one, but only if it beats the pre-fix baseline.
+///
+/// This is the one use of three nodes on a one-finding round that this bench has found. `complete_parallel`
+/// fans by failing FILE and is therefore bounded by how many files the findings name: MEASURED across 31
+/// repair rounds, findings per round is min 0 / median 1 / max 2, so NO round has ever had work for a third
+/// node and 24 of 31 had work for one. The axis that does decompose is the ATTEMPT, not the finding.
+///
+/// The selection rule is what makes racing safe rather than merely triple the cost. Three published results
+/// point the same way and this bench's own corpus agrees with all three:
+///   - repeated independent sampling raises coverage, and a same-model repeat on an IDENTICAL task is not
+///     redundant because per-trial variance is large (SWE-bench Pro, Qwen3.6-27B: pass@1 50.7 -> pass@8 70.7)
+///   - a noisy verify-repair loop can repair a CORRECT program into an incorrect one, so the attempt count
+///     is only safe when a verifier — not a model — picks the winner
+///   - writes must stay single-threaded; extra agents contribute intelligence, not actions. Exactly one
+///     shadow is ever promoted, so the real tree still has one writer.
+///
+/// MONOTONIC BY CONSTRUCTION: a twin is promoted only when its re-verified finding count is STRICTLY below
+/// the count that opened the round. Ties and regressions promote NOTHING. The current engine promotes on the
+/// agent returning Ok — it never checks the fix at all — and the corpus shows the cost: findings ROSE in 3
+/// of 13 rounds. Requiring strict improvement makes that outcome unreachable rather than unlikely.
+fn spec_repair() -> bool {
+    std::env::var("GOOSE_SWARM_SPEC_REPAIR")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Which raced twin (if any) is allowed to touch the real tree. PURE, because this one rule is the whole
+/// safety argument for racing N writers, and it must be testable without a fleet.
+///
+/// `outcomes` is (task_id, re-verified finding count) — `None` means the twin errored, timed out, or its
+/// gate could not run, all of which are UNKNOWN and never winners. A twin lands only when its count is
+/// STRICTLY below `baseline`; equal is not an improvement, and promoting on equal would let a fix that
+/// merely traded one finding for another overwrite the tree on a coin flip. Lowest count wins, ties resolve
+/// to the earliest twin so replicates of the same run make the same choice.
+fn pick_repair_winner(
+    outcomes: &[(String, Option<usize>)],
+    baseline: usize,
+) -> Option<(usize, String)> {
+    outcomes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (t, v))| v.map(|n| (n, i, t.clone())))
+        .filter(|(n, _, _)| *n < baseline)
+        .min_by_key(|(n, i, _)| (*n, *i))
+        .map(|(n, _, t)| (n, t))
+}
+
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
 /// worker timeout is IDLE-based, so an agent that ACTIVELY over-generates (a reasoning model thinking for
 /// many minutes without writing a file) is never re-routed — observed: a serial complete-fix burned ~35min
@@ -23153,7 +23269,121 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
                 break;
             };
-            if complete_parallel() && !fleet_models.is_empty() {
+            if spec_repair() && !fleet_models.is_empty() {
+                // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
+                // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
+                let baseline = verdict.findings.len();
+                let attempts: Vec<(usize, String)> =
+                    fleet_models.iter().cloned().enumerate().collect();
+                eprintln!(
+                    "complete: fix round {round} — racing {} independent attempt(s) at {baseline} finding(s); \
+                     a twin lands only if its re-verify beats {baseline}",
+                    attempts.len()
+                );
+                let me = smoke_fix_dispatcher.clone();
+                let all_files = smoke_all_files.clone();
+                let dev = dev_id.clone();
+                let decisions = user_decisions.clone();
+                let facts = doc_facts.clone();
+                let desc = smoke_fix_description(&verdict.findings, complete_lang);
+                let sink_r = sink.clone();
+                let outcomes =
+                    fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
+                        let me = me.clone();
+                        let all_files = all_files.clone();
+                        let dev = dev.clone();
+                        let decisions = decisions.clone();
+                        let facts = facts.clone();
+                        let desc = desc.clone();
+                        let sink_r = sink_r.clone();
+                        async move {
+                            let task_id = format!("complete-fix::twin{i}");
+                            // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
+                            // all, so 13-26% of every run had no occupancy number and no change to it could be
+                            // judged. These two events are what make this mechanism measurable.
+                            sink_r.write_value(serde_json::json!({
+                                "event": "complete_fix_dispatched",
+                                "round": round, "twin": i, "model": model, "task_id": task_id,
+                                "baseline_findings": baseline,
+                            }));
+                            let started = std::time::Instant::now();
+                            let req = DispatchRequest {
+                                task_id: task_id.clone(),
+                                description: desc,
+                                device_id: dev,
+                                model_id: model.clone(),
+                                context_slice: String::new(),
+                                attempt: round,
+                                // The twin owns EVERY app file: which file the fix needs is exactly what is
+                                // unknown, and a promote copies only owned files. Its shadow is a cp -r of the
+                                // real tree, so the files it does not touch promote back byte-identical.
+                                owned_files: all_files.clone(),
+                                all_files: all_files.clone(),
+                                prior_hint: None,
+                                speculative: true,
+                                user_decisions: decisions,
+                                doc_facts: facts,
+                                neighborhood: Vec::new(),
+                            };
+                            let ran = tokio::time::timeout(
+                                std::time::Duration::from_secs(fix_cap_secs()),
+                                me.run(req),
+                            )
+                            .await;
+                            // RE-VERIFY THE SHADOW, not the real tree. `run_smoke_gate` already takes its root
+                            // as a parameter, so the twin is graded by the same deterministic gate that opened
+                            // the round — no model gets a vote on which fix is better.
+                            let verified = match (&ran, me.speculative_root(&task_id)) {
+                                (Ok(Ok(_)), Some(root)) => {
+                                    let g = run_smoke_gate(&root, complete_lang).await;
+                                    // `ran: false` means the gate could not run in this shadow at all. That is
+                                    // not a clean twin — scoring it 0 findings would promote an UNCHECKED tree
+                                    // over a checked one, which is the vacuous-pass trap in its most damaging
+                                    // form: it would land on the real app.
+                                    if g.ran {
+                                        Some(g.findings.len())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            };
+                            sink_r.write_value(serde_json::json!({
+                                "event": "complete_fix_completed",
+                                "round": round, "twin": i, "model": model,
+                                "secs": started.elapsed().as_secs(),
+                                "agent_ok": matches!(ran, Ok(Ok(_))),
+                                "verified_findings": verified,
+                                "baseline_findings": baseline,
+                            }));
+                            (task_id, verified)
+                        }
+                    })
+                    .await;
+                let winner = pick_repair_winner(&outcomes, baseline);
+                for (task_id, _) in &outcomes {
+                    if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
+                        smoke_fix_dispatcher.promote_speculative(task_id).await;
+                    } else {
+                        smoke_fix_dispatcher.discard_speculative(task_id).await;
+                    }
+                }
+                sink.write_value(serde_json::json!({
+                    "event": "spec_repair_wave",
+                    "round": round,
+                    "twins": outcomes.len(),
+                    "verified": outcomes.iter().filter(|(_, v)| v.is_some()).count(),
+                    "baseline_findings": baseline,
+                    "winner_findings": winner.as_ref().map(|(n, _)| *n),
+                    "promoted": winner.is_some(),
+                    "detail": if winner.is_some() {
+                        "a twin re-verified strictly better than the round's baseline and was promoted"
+                    } else {
+                        "NO twin beat the baseline — nothing was promoted, so the tree is unchanged \
+                         rather than damaged by an unverified edit"
+                    },
+                }));
+            } else if complete_parallel() && !fleet_models.is_empty() {
                 let (groups, unassigned) =
                     group_findings_by_file(&verdict.findings, &smoke_all_files);
                 eprintln!(
