@@ -82,13 +82,19 @@ literal, observed live burning 20 minutes with three idle nodes. Also: that 1200
 `fix_cap_secs()` (configurable, clamped) and once as a bare `from_secs(1200)` at swarm.rs:23596 — the
 two-versions-of-one-rule defect again.
 
+**G6 — stop the swarm leaking app servers.** A worker starts the built app to exercise it and never
+stops it; an orphan held port 8931 for 82 minutes after its run was killed, failed the next unit with
+`Errno 48`, and is the confirmed cause of the pytest-collect mystery (F88). Two fixes, and they are
+not alternatives: REAP the process (the worker that starts a server owns stopping it, and the harness
+should sweep survivors between units), and give `interpret_pytest_collect` the `Inconclusive` variant
+its sibling `interpret_pytest_run` already has — now justified by evidence rather than by a hunch.
+
 ---
 
-## OPEN, and NOT to be fixed without evidence
+## CLOSED — the pytest-collect mystery had a cause, and it was not the one I was leaning toward
 
-A tree that failed `pytest --collect-only` at 08:58 passes with exit 0 now, with neither source file
-modified since. `interpret_pytest_collect` has NO `Inconclusive` variant while its sibling
-`interpret_pytest_run` was given one by F67 — sibling functions, one fixed and one not. That is
-suggestive and it is NOT evidence. F83 makes the next occurrence readable; the fix follows the
-evidence rather than preceding it. Suppressing a finding class on a hunch is how a broken app ships
-green.
+RESOLVED by F88. A tree failed `pytest --collect-only` at 08:58 and passed at 09:20 unmodified because
+an ORPHANED APP SERVER a swarm worker had left running held the port a test needed. An environment
+collision, F67's class. Holding out for evidence was correct: the tempting fix (add `Inconclusive` to
+`interpret_pytest_collect`) is now justified, but it treats the symptom — the defect is the leak, and
+that is G6.
