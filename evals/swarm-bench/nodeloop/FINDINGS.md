@@ -4242,3 +4242,34 @@ plan does not, the attribution is unusually clean for this bench. Registered as 
 **Q2 came back YES on this unit** — no drift. Worth noting because the F100 false-drift bug only fires
 when the replanner splices tasks, and this run has not replanned yet. The clean YES is real, not the
 bug being absent by luck.
+
+---
+
+## F109 — the planner makes the same mistake and the judge makes the same repair, twice running
+
+Second independent run, same outcome:
+
+```
+run 1:  api-web -> [http-backend-api, static-frontend-html]     split at +24.1m
+run 2:  api     -> [api-backend,      web-frontend]             split at +28.2m
+```
+
+Both parents were `api.py` + `web/index.html` — server code bundled with the static page it serves.
+Both carried the fattest brief in their plan (3811 and 3527 chars). Both stalled for tens of minutes
+before the judge partitioned them along exactly the seam F101 says the architect should never have
+crossed.
+
+**This closes the loop on the diagnosis.** Three instruments and two runs agree:
+- the review's Q1 flags the mixed KINDS (F101, now n=2)
+- the judge independently splits at that same seam (F99, now n=2)
+- occupancy measures the cost: 49.5% of node-busy in one task, `MAX USEFUL NODES` 1.92 vs a pool of 3
+
+The judge's split is a good mechanism doing correct work — and it is REPAIRING A PLANNING ERROR that
+recurs every run. Repairing it costs 24-28 minutes of a node before the repair even starts.
+
+**What this does NOT prove**, and I am not claiming it: that the post-F101 plan will avoid the seam.
+Two pre-fix observations establish the precondition, not the cure. The prediction stands as registered
+and the next boundary tests it.
+
+**Also observed:** `replanned added=[] stopped=false` again — the F100 bug, exactly as predicted for
+the pre-boundary binary. Expected, not a defect, and the fix is already committed.
