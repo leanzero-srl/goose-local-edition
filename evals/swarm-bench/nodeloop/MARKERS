@@ -80,6 +80,10 @@ COLLISION IN THE HARNESS
 # stops asserting a spec requirement it cannot know about.
 has an EMPTY BODY
 
+# F71: spec_contract's endpoint extractor could not read a markdown table, so the check that gates
+# green had never seen a real endpoint on this bench. Now merged with the table-aware surface.
+THE SPEC STATES ITS ENDPOINTS
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin
