@@ -290,17 +290,6 @@ QUESTIONS: list[dict] = [
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
              "is a mechanism readout and is answered by the FIRST unit, not the third."},
-    {"arm": "retarget_off", "nodes": 3, "reps": 3,
-     "asks": "THE highest-value question, after F53. The redraft is the most expensive mechanism in "
-             "the engine and it optimises draft-count parity. MEASURED on the last unit: prefix 3014s "
-             "with 90% of it planning across FOUR redraft rounds, ~15,800 chars of model-authored "
-             "spec re-derived, occupancy 0.30 — and the build came out at 83.4% with crunch 7/7 "
-             "ANYWAY. PREDICTION: score unchanged within the replicate spread, prefix roughly halved, "
-             "occupancy up. If the score DROPS below the spread the redraft buys something real and "
-             "it stays — that is the outcome that would make this arm worth more than a speedup."},
-    # THE THREE ARMS THE FRESH-EYES SWEEP PUT AHEAD OF EVERYTHING (F134), each at reps 3 because a
-    # SCORE comparison is what they need and a score has to clear the 46-point replicate spread.
-    # They run right after baseline so the spread and the arms come from one binary and one session.
     {"arm": "split_inherit_spec", "nodes": 3, "reps": 3,
      "asks": "the ONLY mechanism whose firing pattern matches the scoreline on all three archived "
              "units: both 3-node losers split their single most-detailed task and the 1-node winner "
@@ -320,6 +309,17 @@ QUESTIONS: list[dict] = [
              "with no marker, which made the reviewer declare working handlers 'not defined' and sent "
              "that to the sink as a fix order). This asks what damage REMAINS. A null means KEEP "
              "pre-review — 2 of 4 archived findings were genuine catches."},
+    {"arm": "retarget_off", "nodes": 3, "reps": 3,
+     "asks": "THE highest-value question, after F53. The redraft is the most expensive mechanism in "
+             "the engine and it optimises draft-count parity. MEASURED on the last unit: prefix 3014s "
+             "with 90% of it planning across FOUR redraft rounds, ~15,800 chars of model-authored "
+             "spec re-derived, occupancy 0.30 — and the build came out at 83.4% with crunch 7/7 "
+             "ANYWAY. PREDICTION: score unchanged within the replicate spread, prefix roughly halved, "
+             "occupancy up. If the score DROPS below the spread the redraft buys something real and "
+             "it stays — that is the outcome that would make this arm worth more than a speedup."},
+    # THE THREE ARMS THE FRESH-EYES SWEEP PUT AHEAD OF EVERYTHING (F134), each at reps 3 because a
+    # SCORE comparison is what they need and a score has to clear the 46-point replicate spread.
+    # They run right after baseline so the spread and the arms come from one binary and one session.
     {"arm": "spec_repair", "nodes": 3, "reps": 1,
      "asks": "the tail is 13-26% of every run, has an occupancy number of NONE (it emits no dispatch "
              "at all), and has never once gone green — 13 of 13 archived rounds ended with findings "
