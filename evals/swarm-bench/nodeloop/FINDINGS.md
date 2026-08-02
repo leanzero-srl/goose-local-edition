@@ -5247,3 +5247,58 @@ worked there — emit the deterministic fields the judge already computes — an
 either direction is implemented, or whichever gets built will be judged on a metric that cannot see
 it. Registered as the next engine change; NOT built this tick, because it belongs with the batch at
 the boundary rather than as a fourth mid-run edit.
+
+---
+
+## F129 — CORRECTION to my own headline: the 1-node prefix is 3.2x mostly because it REDRAFTED
+
+I have carried this in the tick state block for several ticks running: *"prefix 53.8 min before the
+first dispatch, vs 13.3 (baseline@3n) and 20.3 (retarget_off@3n) — scouts, best-of-N drafting and the
+detail fan all collapse to serial on one node, and that is the mechanism by which more nodes win."*
+
+It is confounded. Running `prefix.py` (rather than my hand figure) on all three units:
+
+| | 1 node | 3n (a) | 3n (b) | 1n vs mean-3n |
+|---|---|---|---|---|
+| prefix total | 3226 s | 796 s | 1220 s | **3.20x** |
+| research | 588 s | 209 s | 235 s | **2.65x** |
+| planning TOTAL | 2638 s | 587 s | 986 s | 3.35x |
+| **planning ROUND 1** | **1054 s** | **587 s** | **986 s** | **1.34x** |
+| **redraft rounds** | **1** | **0** | **0** | — |
+
+**The 1-node run ran an extra redraft round; neither 3-node run ran any.** That single round cost
+**1584 s — 49% of its entire prefix.** Remove it and the prefix ratio falls from 3.20x to **1.63x**.
+
+And the redraft is not a node-count mechanism. F121 measured its trigger (`plan_confidence <
+ask_floor`) at **~29% of runs, with confidence ranging 36-100 at EVERY node count** — 1-node runs in
+the archive scored 100, 100 and 36. This unit drew a low card, not a small fleet. Comparing a run
+that redrafted against two that did not, and attributing the gap to node count, is precisely the
+F122 error: a plausible mechanism asserted over a number whose denominator moved.
+
+### What actually survives
+
+- **research 2.65x is real and is the one phase that provably fans out.** Scouts are independent
+  lenses dispatched across devices; on one node they serialise by construction. This is the honest
+  node-curve signal in the prefix, and it is worth 379 s here.
+- **planning round 1 is 1054 s vs 587 s and 986 s — 1.34x, on n=1 against n=2.** Not resolvable. The
+  best-of-N skeleton draft is *sized to the fleet*, so a node effect is expected, but this sample
+  cannot demonstrate it and I must stop saying it does.
+- **the redraft round is the largest single item in the prefix** and it is stochastic. That makes it
+  a target in its own right — `retarget_off` exists for exactly this, and F121 already established
+  it needs a low-confidence baseline to pair against. **This unit IS that baseline.**
+
+### The instrument asymmetry that hid it
+
+`phases.py` reports plan/detail for the 1-node run and NOT for the two 3-node runs, because the
+`plan` phase is bounded by `confidence_retarget` — an event a run only emits when it redrafts. So
+the phase table silently compares different spans across units, and my eye read the one long bar as
+a node effect. It is not wrong (each phase is correctly bounded); it is **incomparable across runs
+that differ in whether the ladder fired**, and nothing in its output says so.
+
+REGISTERED, not built: `phases.py` should label a phase whose boundary marker is condition-dependent
+so a cross-run comparison of that row is refused rather than merely awkward. Same class as the
+prediction gate — an instrument that lets you compare two things that are not the same thing.
+
+**Corrected claim for G4:** on this pair, one node costs ~2.6x on research and an unresolved ~1.3x on
+first-round planning; the headline 3.2x prefix gap is about half redraft, which is node-independent.
+The node curve is NOT yet demonstrated by the prefix, and I should stop leading with it.
