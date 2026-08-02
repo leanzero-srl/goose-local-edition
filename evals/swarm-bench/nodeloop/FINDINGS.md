@@ -5121,3 +5121,73 @@ crossed the moment the 1-node unit finishes, without discovering a phantom after
 The lesson is P6 again and it landed on the FIRST run of a new instrument: an instrument built to
 catch a blindness reproduced that blindness one layer down. The reason it cost nothing is that
 `strings` on the existing binary was one command away and I ran it before acting on the verdict.
+
+---
+
+## F127 — the judge's spin deadline is 420 s, and that explains the cluster I wrongly retracted
+
+Three corrections and one cost, all from reading `judge.rs` instead of inferring from events.
+
+### 1. The 420-488 s cluster IS a constant. My retraction of it was wrong.
+
+F126 dropped the "timeout constant" reading because the raw values spread 420.1 -> 488.6 s rather
+than repeating one number. **`judge.rs:410` and `judge.rs:441` both gate on
+`input.elapsed_secs >= cfg.min_age_secs.max(420)`** — the over-read trip and the finalize-spin trip.
+Neither can fire before 420 s, and the judge evaluates on a ~60 s tick, so every kill lands in
+[420, ~480]. That is a **FLOOR**, and a floor produces values just ABOVE it, never equal to it.
+
+I looked for a constant the values would EQUAL and concluded "cluster, not constant" when the shape
+was the signature of exactly what I had dismissed. Both readings were reached without opening the
+file that decides it.
+
+### 2. Judge interventions split three ways, and each implicates a DIFFERENT rule
+
+| phase | n | test / other | median dispatch -> hint |
+|---|---|---|---|
+| POST-write spin ("written but unchanged while you keep running") | **40 (55%)** | 28 / 12 | 9.7 min |
+| PRE-write paralysis ("produced no file yet") | **18 (25%)** | 11 test, 5 sink, 2 other | 7.5 min |
+| specific code defect | **15 (20%)** | 13 / 2 | 7.4 min |
+
+F126 treated spin as one thing and pinned it on the stopping rule. It is two things:
+
+- **POST-write spin implicates the STOPPING rule** — "STOP WHEN GREEN, the moment your file's tests
+  pass", unreachable for a test author (F126).
+- **PRE-write paralysis implicates the READING rule** — "read AT MOST the ONE file you will edit",
+  which is incoherent for a test author that must read the module under test to get its signatures.
+  A worker that cannot tell what it is allowed to read deliberates.
+
+**`kind_prompt` changes BOTH rules for a test author**, not one. That is a stronger case for the arm
+than F126 stated, and it is two independent chances for the readout to move rather than one.
+
+### 3. The 5 sink hits are PRE-FIX, and the existing fix corroborates to the exact count
+
+I was about to report "the judge tells `integrate-verify` to write files it does not own" as a live
+defect. `judge.rs:409` already gates on `owns_code = owned_files.iter().any(is_code_deliverable)`,
+and both offending runs are from **2026-08-01**, in each of which the planner had handed the sink
+`README.md`. The comment there records the fix's own measurement: *"in two of those the gate armed
+and killed it repeatedly ... 2 kills and 3 kills, attempts exhausted"*. My scan found **2 and 3**, in
+`baseline-n1-r0` and `baseline-n3-r0`. Independent corroboration of a shipped fix, not a new defect —
+the third time this session that checking source before reporting stopped a false alarm.
+
+### 4. The cost this exposes, and a registered proposal
+
+A judge-killed attempt cannot end before 420 s. At `max_attempts` 3 that is **>=21 minutes before a
+spinning task can fail**, and PRE-write paralysis fires at a 7.5 min median — i.e. **essentially at
+the floor**, so the floor is what is binding, not the detection.
+
+For the zero-action case that is a lot of waiting for a signal that arrives immediately: the branch
+already computes `read_nothing = input.worker_tool_calls == Some(0)`. **A worker with ZERO tool calls
+at 420 s was equally diagnosable at 60 s.** PROPOSAL (registered, not implemented — F124's lesson):
+give the `worker_tool_calls == 0` case its own shorter floor while leaving the has-read-but-not-
+written case at 420. Expected saving ~5-6 min per affected attempt, up to ~18 min across 3 attempts,
+on 18 of 73 interventions. FALSIFIER: if `worker_tool_calls` is commonly `None` rather than `Some(0)`
+at that point, the discriminator is not available early and the proposal is inert — CHECK THAT FIRST.
+
+Also noted for G7: **420 is a bare literal at two sites** (`judge.rs:410`, `judge.rs:441`), derived
+from nothing. Same two-versions-of-one-rule shape as the 1200 in G5.
+
+### 5. One precision note on the live run
+
+`test-api` in `swarm-1node-r0` re-dispatched 3x and is the current drift, but its difficulty is
+**`easy`**. It is NOT an instance of F124's hard-AND-test interaction and must not be cited as
+confirming it. F124 measured easy-test tasks at 12.5%; one of them retrying is unremarkable at n=1.
