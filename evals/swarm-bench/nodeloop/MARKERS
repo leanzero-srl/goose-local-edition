@@ -106,6 +106,12 @@ spec_repair_wave
 # a URL and a fetching program grounds; `echo <url>` still does not.
 fetched_external
 
+# F81 has NO marker, like F62. Both halves are Rust-level — a private struct field
+# (replan_declined_at_incomplete, no Serialize derive) and a boolean added to a tick condition — so
+# neither is in the binary's DATA. It is verified by its regression test instead
+# (an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag), which was confirmed to
+# FAIL with the fix reverted and PASS with it restored.
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

@@ -395,6 +395,18 @@ struct State {
     /// `user_decisions`. Empty when DOC_PREFETCH is off => the worker prompt is byte-identical.
     doc_facts: String,
     replans_done: u32,
+    /// How many tasks were still incomplete the last time the replanner answered with NOTHING.
+    ///
+    /// An empty answer used to burn the entire budget (`replans_done = max_replans`), which turned
+    /// "no more work is needed right now" into "never ask again". MEASURED on a live 3-node run: the
+    /// replan was asked at +50min with 9 of 18 tasks done, correctly declined because half the DAG was
+    /// still queued, and was thereby disabled for good — so at +68min, with ONE task in flight, two
+    /// nodes idle and idle_capacity()==5, the one mechanism built to fill them was off.
+    ///
+    /// The replanner's answer is a function of the DAG state when it was asked, so it is cached
+    /// against that state rather than forever: it may be asked again once STRICTLY FEWER tasks remain,
+    /// which is the only situation in which it could honestly give a different answer.
+    replan_declined_at_incomplete: Option<usize>,
     /// Ids of replanner-added (bonus) tasks — failures here are non-fatal to the run.
     bonus_ids: HashSet<TaskId>,
     /// Observed per-device speed: device index -> (total completed ms, count). Used to route the
@@ -445,6 +457,16 @@ impl State {
             .tasks
             .values()
             .all(|n| matches!(n.state, TaskState::Done | TaskState::Failed))
+    }
+
+    /// Tasks not yet terminal. The replan re-arm keys off this: a decline is only stale once the DAG
+    /// has actually shrunk.
+    fn incomplete_count(&self) -> usize {
+        self.dag
+            .tasks
+            .values()
+            .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+            .count()
     }
 
     fn total_in_flight(&self) -> u32 {
@@ -1985,6 +2007,7 @@ impl Scheduler {
             user_decisions,
             doc_facts: self.doc_facts.clone(),
             replans_done: 0,
+            replan_declined_at_incomplete: None,
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
@@ -2090,6 +2113,13 @@ impl Scheduler {
                         && s.idle_capacity() >= 2
                         && s.replans_done < self.max_replans
                         && !s.sink_in_flight()
+                        // A previous EMPTY answer is cached against the DAG size that produced it.
+                        // Re-ask only when strictly fewer tasks remain — the one change that can make
+                        // the replanner answer differently — so the tail gets its ask without the
+                        // planner being pestered at an unchanged state.
+                        && s
+                            .replan_declined_at_incomplete
+                            .is_none_or(|prev| s.incomplete_count() < prev)
                     {
                         s.replans_done += 1;
                         Some(s.make_replan_context())
@@ -2116,7 +2146,12 @@ impl Scheduler {
                             added: Vec::new(),
                             stopped: true,
                         });
-                        s.replans_done = self.max_replans;
+                        // REFUND the round and remember the state instead of burning the budget. An
+                        // empty answer costs one planner call and says nothing about a DAG that has
+                        // since shrunk; consuming the whole budget for it is what left two nodes idle
+                        // through an 18-minute single-task tail with the replanner switched off.
+                        s.replans_done = s.replans_done.saturating_sub(1);
+                        s.replan_declined_at_incomplete = Some(s.incomplete_count());
                     } else {
                         // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
                         // bonus failure cannot fail an otherwise-complete run (run success = core plan).
@@ -2318,6 +2353,12 @@ impl Scheduler {
             } else if self.judge.is_some()
                 || self.pre_reviewer.is_some()
                 || self.speculation_enabled
+                // The REPLANNER is an idle-node mechanism too, and it was missing from this list. Its
+                // trigger is "nodes idle while a task is still in flight", which by construction produces
+                // NO completion to wake on — so without a tick the one window it exists for is never
+                // re-examined, and the run waits out the tail with the check unevaluated. It only worked
+                // at all because a judge happened to be attached and was lending it a heartbeat.
+                || self.replanner.is_some()
             {
                 std::time::Duration::from_secs(15)
             } else {
