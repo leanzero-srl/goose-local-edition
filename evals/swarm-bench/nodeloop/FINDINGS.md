@@ -2946,3 +2946,60 @@ was a real defect caught and corrected mid-run, not a systemic one. The high non
 counts in those files (14-33) are fixtures and stub servers — the `test_meridian.py` above spins real
 `HTTPServer` instances to exercise pagination, UTC sorting, and 429 retry against BOTH `Retry-After`
 seconds and HTTP-date. That is genuinely thorough work, and a cruder metric would have libelled it.
+
+---
+
+## F83 — the only evidence for a repair round was truncated exactly where the error began
+
+The live unit's round-0 finding read, in full:
+
+```
+pytest --collect-only errors (cross-module import?):
+test_store.py::test_upsert_many_empty_is_noop
+... (six more collected test ids) ...
+================
+```
+
+A list of SUCCESSFULLY collected tests, then a separator, then nothing. I read that as a phantom — the
+engine calling a passing collect an error — and was one command away from publishing it.
+
+It is not a phantom. `finding_texts` truncates head-first at 400 chars, `tail_lines(output, 40)` had
+already selected the last 40 lines (which DO contain the error), and `================` is the opening
+of pytest's `=== ERRORS ===` banner, beginning one character past the cut. **The evidence existed and
+the instrument threw away the half that mattered.**
+
+### Why this is the worst kind of instrument defect
+
+F40 added `finding_texts` for exactly one reason: so the verdict that decides green could be checked
+against evidence afterwards. For the commonest finding class on this bench — a pytest failure — it
+kept the sentence naming the check and discarded the traceback. The finding was not merely
+abbreviated; it was rendered actively misleading, because what survived looks like a success.
+
+This file already carried the same lesson: `review_file_excerpt`'s docstring records a flat 2000-char
+head cut that hid the dispatch tail of every real entry point and FABRICATED "unwired/unreachable"
+findings. Same defect, same cause, second occurrence, and the second one was written after the first
+was understood.
+
+**Fix:** one `elide_middle(s, head, tail)` helper, char-based, now used by BOTH — `review_file_excerpt`
+(3500/2500) and `finding_texts` (150/650, deliberately tail-heavy). Extracting a shared helper rather
+than patching the second site is the F79 lesson applied before the divergence happens instead of after.
+
+### What is still open, and what I will NOT claim
+
+The tree that failed collect at 08:58 local passes `pytest --collect-only` with exit 0 now, and
+neither `vendorsync/store.py` (mtime 08:22) nor `test_store.py` (08:27) has been modified since. Same
+files, same tree, opposite verdict.
+
+That is genuinely unexplained. Two candidates, and I have evidence for NEITHER:
+
+1. a transient environment condition at verify time — which would make it F67's class, and note that
+   `interpret_pytest_collect` has **no `Inconclusive` variant** while its sibling
+   `interpret_pytest_run` was given one by F67. Sibling functions, one fixed, one not.
+2. a real import error that the fix worker has since repaired — but the mtimes say otherwise.
+
+I am NOT adding `Inconclusive` to `CollectVerdict` on this evidence. Doing so would suppress a finding
+class on a hunch, and the failure mode of a wrong suppression is an app shipped broken. F83 makes the
+next occurrence readable; the fix, if one is warranted, follows the evidence rather than preceding it.
+
+**Registered prediction:** the next run's `complete_verify.finding_texts` for a pytest failure will
+end in a traceback or an error banner, not in a list of collected tests.
