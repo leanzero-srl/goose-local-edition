@@ -61,3 +61,55 @@ task ids including `integrate-verify`, `cli` and `frontend` — a cluster, not a
 wall-clock** — it aborts only when NO agent event arrives, so a slow-but-progressing worker is never
 killed by it. A 60 s bucket is wide enough to manufacture a spike out of a broad cluster; the fix was
 to print the raw values, which took one command.
+
+## F164 — 93% of every failure this campaign has ever recorded is one dispatch kind
+
+Across **12 finished 3-node runs**, by kind:
+
+    implementer     65 completed     0 failed      0%
+    test-author     42 completed    13 failed     31%
+    verify/sink     97 completed     1 failed      1%
+
+Per task, which is the authoritative view (the kind-classifier put `integrate-verify` in the
+implementer column on the one run where it was dispatched WITH owned files — the totals are right,
+the label was not):
+
+    test-meridian          ran 10   FAILED 6   60%
+    test-api               ran 10   FAILED 5   50%
+    test-api-edge-cases    ran  2   FAILED 1   50%
+    test-api-server        ran  1   FAILED 1  100%
+    integrate-verify       ran 12   FAILED 1    8%
+
+**Fourteen failures, five distinct tasks, and thirteen of them are test-authors. No implementer has
+ever failed** — not once in 65 completions, across every engine build this campaign has run. The
+single non-test failure is the sink.
+
+A 31% failure rate against 0% is not a spread I need more replicates to believe; n is 42 and 65.
+
+**This unifies the night.** Every independent thread converged on the same population without my
+looking for it:
+
+    F156  test-authors carry 22,511-char prompts, 2.3x the implementer's 9,860
+    F159  3 of 3 judge interventions hit test-authors, 0 hit implementers; 3.3x the dry reasoning;
+          the `test_meridian.py` author gets `## API of` for ALL FIVE modules (265 lines of BODY
+          against 35 of signature, six private methods) when its declared dep is `meridian` alone
+    F163  the stall detector cannot see them, because flat counters cannot distinguish frozen from
+          writing
+    F164  they are 93% of all failures, at 31% versus 0%
+
+The swarm does not have a general reliability problem. It has ONE broken dispatch kind, and every
+measurement I have taken tonight from a different direction has landed on it.
+
+**And `test-meridian` is failing AGAIN right now** — re-dispatched 3x on r0 and not converging, which
+would make it 7 of 11. F143 recorded this exact task killed 3x to FAILED on an earlier build; it was
+read then as an instance and it is a *pattern*: the same task, the same way, on 60% of the runs it
+appears in.
+
+**Priority consequence.** `scoped_contracts` (F159) is aimed precisely at this population and has
+never run once. Its arm is queued at reps=3 with the readout on test-authors only. After the baseline
+reaches n=3 it is the first arm that should execute — ahead of `sink_review`, `split_inherit_spec`
+and everything else in the queue, because every other arm is tuning a population that does not fail.
+
+CAVEAT, stated: these 12 runs span several engine builds, so this is not a controlled comparison. It
+is stronger than one for this purpose — the concentration survived every build change, which is what
+a structural defect looks like and what a build-specific artefact does not.
