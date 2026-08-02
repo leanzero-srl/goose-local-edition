@@ -23592,8 +23592,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
                                     neighborhood: Vec::new(),
                                 };
+                                // ONE rule, one implementation. This was a bare `from_secs(1200)`
+                                // while its sibling — the serial fix on the other branch of this same
+                                // `if` — used `fix_cap_secs()`, which is env-overridable and clamped
+                                // to 120..=3600. Same default, same purpose, and only one of them
+                                // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
+                                // path and silently left the fanned path at 20 minutes.
                                 match tokio::time::timeout(
-                                    std::time::Duration::from_secs(1200),
+                                    std::time::Duration::from_secs(fix_cap_secs()),
                                     me.run(req),
                                 )
                                 .await
