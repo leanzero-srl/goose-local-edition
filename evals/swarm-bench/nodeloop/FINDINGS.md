@@ -5451,3 +5451,50 @@ read as a blocked arm either, because those call for opposite actions.
 Controls both ways: with no complete run on this build it refuses and names the parked pre-boundary
 directory while warning not to judge a new build's arms against it (that is what a boundary
 invalidates); pointed at a complete parked run it judges normally.
+
+---
+
+## F133 — the two upstream commits aimed at our through-line are INERT here, and the real budget is elsewhere
+
+First triage under the new upstream watch. 252 commits have landed on `block/goose` since fork-point
+`a0aed81f3607`; 61 are in scope. Two looked aimed straight at the instruction-density problem, since
+schema bytes are bytes not spent on the task:
+
+- `950575bcd perf(toolshim): compact tool schema JSON (#10409)`
+- `ca6ba6c44 feat(tools): collapse const-union enums in tool schemas (#10577)` — a 1,068-line
+  normalizer whose own comment says schemars emits documented unit enums as `$ref -> $defs -> oneOf`
+  of consts, **"~9x larger than an equivalent enum"**.
+
+A 9x reduction on a 27B whose rule-compliance collapses with prompt size is exactly the kind of thing
+worth adopting. So I measured our own requests before believing it applied.
+
+### Measured on our real `llm_request` payloads
+
+| | median | max |
+|---|---|---|
+| tool-schema chars | **2,064** | 2,064 |
+| system message | **10,587** | 13,719 |
+| all messages | 27,285 | 36,543 |
+| tool count | 4 | — |
+
+**Tool schemas are 7.0% of a median request. And 0 of 20 tool schemas contain `oneOf`, `anyOf`,
+`$defs` or `$ref` at all** — the exact shape `ca6ba6c44` exists to collapse. There is nothing here for
+it to collapse. Adopting either commit would be a byte-identical no-op: P2, a precondition that never
+holds, caught for the cost of one query instead of a merge and a rebuild.
+
+(Applicability rests on 20 schemas from 5 requests, which is a small sample — but the tool set is
+fixed at 4 tools and the schema SHAPE is structural, not stochastic, so the zero is a property of how
+our tools are declared rather than a thin sample.)
+
+### The number that matters instead
+
+**The system message is 10,587 chars — five times the tool schemas, and ~39% of the payload.** That
+is after F87 already cut inherited hints by 94%. So the remaining instruction-density budget is
+overwhelmingly the worker system prompt, and any future compaction work belongs there, not in
+schemas. That re-points the through-line with a measurement rather than an intuition.
+
+### On the instrument
+
+My first query returned "0 of 261 requests have tools" — a blind parser, not an empty world: the
+payload is nested under `input`, not at the top level. I checked the structure instead of believing
+the zero, which is the standing rule and the reason this finding is not the opposite of itself.
