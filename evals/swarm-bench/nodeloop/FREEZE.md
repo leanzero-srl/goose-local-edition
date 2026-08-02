@@ -1,3 +1,18 @@
+# OPERATING RULE — KILL AND RESTART ON MY OWN JUDGEMENT
+
+Mihai, 2026-08-02: *"stop making me ping you for the fleet's viability. Take this decision on your
+own, stop it when you must and continue building. You have to be autonomous and process results and
+then fix and restart the fleet."*
+
+So: **never ask whether a run is still worth finishing. Decide and act, then report what was done.**
+The test is one question — *can this unit still answer a question nobody has answered?* If not, kill
+it, batch the held fixes, cross the boundary, restart. A unit measuring a configuration that held
+fixes are about to change cannot answer anything, and finishing it is a courtesy to sunk cost.
+
+Kill order is always supervisor-then-engine (F39), or the supervisor scores the corpse.
+
+---
+
 # ENGINE FREEZE — in effect from 2026-08-01 21:30, engine_build 1785609208-235593584
 
 Tonight produced eleven findings and ZERO measurements. The instrumentation is now good and has
