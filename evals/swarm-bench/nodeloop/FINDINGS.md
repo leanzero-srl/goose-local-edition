@@ -3087,3 +3087,60 @@ stub.
 **Registered prediction for the next run:** `skeleton_drafts.requested == 3` and `dead == 0`. If
 `dead > 0`, some fraction of the 12-minute window is nodes producing nothing, and the planning prefix
 has a defect worth more than any tuning downstream of it.
+
+---
+
+## F86 — the planning prefix is NOT serial: all three nodes work through the silent window
+
+Measured LIVE during the 13-minute silent window F85 instruments, by sampling `lms ps` while the
+engine's event log emitted nothing:
+
+```
+gabee  PROCESSINGPROMPT   mihai  PROCESSINGPROMPT   workhorse  PROCESSINGPROMPT
+```
+
+All three, sustained across repeated samples. **The skeleton draft fan genuinely uses the whole
+fleet.**
+
+### What this retracts
+
+The plan document for this whole effort lists, under "PART 4 — THE PHASE ROUNDS":
+
+> Plan / best-of-N — drafts capped at distinct-model count; the cap exists for `PARALLEL:1`, not
+> model diversity
+
+That was true when all three hosts served ONE identifier, and it is **false now**. `best_of_n` is
+sized at the call site to `base.max(devices.len().clamp(1,5))`, so with three identifiers it is 3, and
+the fleet confirms three concurrent drafts. The cap was never the defect; the invisibility was (F85).
+
+### Why it matters more than it sounds
+
+It narrows the target. Taking the phases in turn, with what is now known about each:
+
+| phase | share of wall | fanned? | evidence |
+|---|---|---|---|
+| research (scouts) | 2-6% | YES | parallel fixed-lens scouts, `lenses_returned` |
+| skeleton draft | ~12-15% | **YES — 3 nodes** | this finding, sampled live |
+| detail fan | 9-25% | YES | `detail_completed` per task, occupancy floor 0.49 |
+| execute | 42-63% | YES | occupancy 0.62-0.93 |
+| repair tail | 13-26% | **NO — 1 node** | F74/F75; emits no dispatch at all |
+
+**Every phase except the tail is already fanned.** The serial-work problem is not spread across the
+architecture as I had been treating it; it is concentrated in one place, and that place is the one
+Mihai pointed at first ("that 44% needs to be done in parallel too").
+
+That makes G2 (`spec_repair`) and G5 (bring the tail under the judge) the whole of the remaining
+node-scaling work, and it demotes any further prefix tuning to a question about LATENCY, not about
+parallelism.
+
+### The new open question this raises
+
+Thirteen minutes in `PROCESSINGPROMPT` — prompt PREFILL, not generation — is a long time. The fleet
+reports context windows of 193,792 and 262,144 tokens. If the draft prompt is genuinely large enough
+to spend minutes prefilling on every node, that is a cost paid three times over in parallel, and it is
+a different lever entirely from anything examined so far (it would be about prompt SIZE, which is also
+exactly Mihai's through-line about instruction density).
+
+`fleetsample.sh` now records fleet state every 30s to `runs/nodeloop/fleet-samples.tsv`, read-only and
+detached, so the PROCESSINGPROMPT-vs-GENERATING split across a whole run becomes measurable instead of
+spot-checked. No conclusion is drawn from three samples.
