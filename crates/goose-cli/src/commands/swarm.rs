@@ -15608,6 +15608,11 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         };
     }
     let port = spec_port(spec);
+    // Read the port's state BEFORE spawning — after the spawn it is unknowable whether we or a
+    // squatter opened it, and that ambiguity is exactly what produced two false 404 findings.
+    let port_was_free_before_spawn = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .is_err();
     let mut server = tokio::process::Command::new("python3");
     server
         .args(["-m", &pkg])
@@ -15635,6 +15640,34 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    // A PORT BEING OPEN IS NOT PROOF THAT OUR CHILD OPENED IT, and treating it as proof is how this
+    // gate produced its third and fourth phantom. MEASURED on a live run: it reported
+    //   "GET /api/health returned 404 — the spec advertises this endpoint but the app does not
+    //    implement it"
+    // for /api/health AND /api/summary, while the built app implements BOTH (api.py:49 and :57) and
+    // answers 200 on each when started correctly.
+    //
+    // What it actually probed was the VENDOR MOCK. `spec_port` takes the FIRST port literal in the
+    // spec, and this spec opens with "The Meridian API documentation is at
+    // http://127.0.0.1:8930/v1/docs" — the EXTERNAL dependency's port. The app's own port is
+    // `--port N`, a placeholder with no literal to find. Port 8930 was already listening because the
+    // bench's vendor service holds it, so the wait "succeeded" instantly, curl hit the vendor, the
+    // vendor correctly 404'd on an endpoint that is not its, and the app was blamed.
+    //
+    // This is the standing law about proving a negative, applied to a positive: before an open port
+    // licenses a conclusion about OUR app, prove OUR app is what opened it. The cheap proof is that
+    // the port was CLOSED before the spawn — checked here rather than inferred.
+    if up && !port_was_free_before_spawn {
+        let _ = child.kill().await;
+        inconclusive.push(format!(
+            "spec-contract: port {port} was ALREADY BOUND before `python3 -m {pkg}` started, so the              server answering there is NOT this app — probing it would blame the app for another              process's responses. Most likely the spec's first port literal belongs to an external              dependency (a documented vendor/API base URL) rather than to the app."
+        ));
+        return SpecContractResult {
+            findings,
+            inconclusive,
+            verified,
+        };
     }
     if !up {
         let _ = child.kill().await;

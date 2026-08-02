@@ -4038,3 +4038,79 @@ Python-ness is spelled; the wildcards are where another language silently inheri
 Remaining from that scan: `swarm.rs:14169`, the contract-stub prompt, which has a Python arm and no
 other variants visible in the scanned window. Next pass — read it fully first, because F101 is the
 standing lesson that an instrument's reason can be wrong even when its verdict is right.
+
+---
+
+## F104 — spec_contract probed the VENDOR MOCK and blamed the app. Phantoms three and four.
+
+The tail arrived and settled four predictions. This is the one that matters.
+
+```
+spec_contract { round: 0, verified: 0, findings: 2,
+                detail: "an advertised check failed against the built app" }
+  GET /api/health  returned 404 — the spec advertises this endpoint but the app does not implement it
+  GET /api/summary returned 404 — the spec advertises this endpoint but the app does not implement it
+```
+
+**P2 is mechanically confirmed** — F71 worked, the gate stopped saying "CHECKED NOTHING" and probed
+real endpoints for the first time on this bench. **Its first real verdict is wrong.**
+
+### Verified before believing, per the standing caution
+
+The app implements both routes — `vendorsync/api.py:49` `if path == "/api/health"`, `:57`
+`if path == "/api/summary"`. Started correctly it answers:
+
+```
+GET /api/health  -> 200
+GET /api/summary -> 200
+GET /api/payments -> 200
+```
+
+### The cause, and it is two defects stacked
+
+`spec_port` takes the **FIRST** port literal in the spec:
+
+```rust
+regex: (?:127\.0\.0\.1:|localhost:|port\s+)(\d{4,5})
+```
+
+The spec's opening line is *"The Meridian API documentation is at `http://127.0.0.1:8930/v1/docs`"* —
+the **external dependency's** port. The app's own port is `--port N`, a placeholder with no literal to
+find. So the gate probed **8930, the vendor mock.**
+
+Then the liveness check: connect to the port, and if it answers, `up = true`. Port 8930 was already
+listening because the bench's own vendor service holds it — so the wait "succeeded" instantly, curl hit
+the vendor, the vendor **correctly** 404'd on an endpoint that is not its, and the app was blamed.
+
+**An open port is not proof that OUR child opened it.** That is the standing law about proving a
+negative, applied to a positive, and it is F88's shape (a port held by something else) relocated from
+the harness into the gate that decides green.
+
+### Fix
+
+The port's state is now read BEFORE the spawn. If it was already bound, the result is INCONCLUSIVE
+with the reason named — never a finding. That makes the phantom impossible regardless of which port
+`spec_port` picked, which is the more general fix; sharpening `spec_port` to tell an app's port from a
+documented dependency's is a separate, narrower job.
+
+### Consequence for the phantom ledger
+
+F82 put the phantom rate at 5% of findings (1 of 20, the port collision). This run alone adds **two
+more**, both from `spec_contract` — the mechanism now stands at **four phantoms across its lifetime**
+(a fabricated `GET /` 404, "CHECKED NOTHING" x6, and these two), and it has produced **zero** correct
+findings. It remains the only deterministic spec-to-oracle path in the engine, which is why it is worth
+fixing rather than deleting — but it has still never been right.
+
+## F105 — P5 FALSIFIED, and by my own hand: the tail's instrumentation is inside a default-OFF lever
+
+`complete_fix_dispatched` count: **0**.
+
+F76/F77 added it precisely so the repair tail would stop being a measurement black hole (F74). But I
+put the emit **inside the `spec_repair()` branch** — a lever that is default-OFF. So on any ordinary
+run the tail still emits nothing, and the black hole F74 identified is exactly as dark as before.
+
+This is PATTERN 2 — a mechanism whose precondition never holds — **in my own fix for it**, and it is
+the second time today an instrument of mine failed for a reason its own docstring warns about.
+
+The correct shape: the tail must emit dispatch events on the DEFAULT serial path too, not only when
+racing is armed. Queued as the first item of the next engine pass; not done mid-run.

@@ -146,6 +146,11 @@ CONTEXT_FILE_NAMES
 # did not say they must be the same KIND.
 SAME KIND
 
+# F104: spec_contract probed the VENDOR MOCK and blamed the app. An open port is not proof that OUR
+# child opened it — the port's state is now read BEFORE the spawn, and an already-bound port is
+# INCONCLUSIVE rather than a set of 404 findings.
+was ALREADY BOUND before
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

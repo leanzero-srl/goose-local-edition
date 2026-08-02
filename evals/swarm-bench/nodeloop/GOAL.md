@@ -42,12 +42,12 @@ event says otherwise. One baseline@3n unit tests all of these at once, which is 
 
 | # | Prediction | Where to read it | Outcome |
 |---|---|---|---|
-| P1 | `log_message` appears in NO review finding | `complete_verify.finding_texts` | |
-| P2 | `spec_contract` STOPS saying "CHECKED NOTHING" and probes real endpoints | `spec_contract.verified > 0` | |
+| P1 | `log_message` appears in NO review finding | `complete_verify.finding_texts` | **CONFIRMED** — absent from all 3 findings |
+| P2 | `spec_contract` STOPS saying "CHECKED NOTHING" and probes real endpoints | `spec_contract.verified > 0` | **MECHANICALLY YES, VERDICT WRONG** — it probed the VENDOR MOCK and produced 2 phantom 404s (F104) |
 | P3 | `grounded > 0` — a scout's curl now counts as a lookup | `research_completed.grounded` | **CONFIRMED** grounded=2, looked_nothing_up=0 (was 0 / 2) |
 | P4 | `/v1` reaches task descriptions verbatim | `plan_loaded.tasks[].description` | **CONFIRMED** 2 of 16 (`meridian`, `test-meridian`) — was ZERO |
-| P5 | the repair tail has an occupancy number for the first time | `complete_fix_dispatched` present | |
-| P6 | a pytest finding ends in a traceback, not a list of collected tests | `complete_verify.finding_texts` | |
+| P5 | the repair tail has an occupancy number for the first time | `complete_fix_dispatched` present | **FALSIFIED — 0.** I put the events inside the `spec_repair` branch, which is default-OFF (F105) |
+| P6 | a pytest finding ends in a traceback, not a list of collected tests | `complete_verify.finding_texts` | **CONFIRMED** — ends in FAILED test ids, with `[middle elided]` |
 | P7 | replan can fire a SECOND time after an empty answer | `replanned` count > 1 | |
 
 | P9 | prompt chars drop ~49% once F87 ships | `llm_request.*.jsonl` | **CONFIRMED, exceeded: -68% total, -94% system, 0 of 15 carry hints** |
