@@ -7668,3 +7668,48 @@ confirmed `pgrep 'goose swarm run'` == 0, relaunched.
 
 **The freeze lifts after these two units.** Cost of the restart: ~8 minutes of an incomplete 1-node
 unit, which will simply re-run.
+
+## F182 — the idle-node findings are REAL and precisely located, and the engine throws them away
+
+F181 left one question open: the 10 survivors are advisory and drive no fix — are they worth
+anything? I checked every concrete claim against the shipped tree. **All four verified, to the line:**
+
+    finding #2/#4/#7  "api.py sets currency = all_payments[0]['currency']"
+                      -> api.py:109   currency = all_payments[0]["currency"]          EXACT
+    finding #6/#10    "meridian.py total_count(): resp['total'] raises KeyError"
+                      -> meridian.py:141   return resp["total"]                       EXACT
+    finding #5        "create_payment: on 409 with no payment_id, err['payment_id'] raises"
+                      -> meridian.py:167   return err["payment_id"]  (inside `if status == 409`)  EXACT
+    finding #8        "serve() declares serve(port, store, client, blocking: bool = True)"
+                      -> api.py:18    def serve(..., blocking: bool = True)           EXACT
+
+Precise file, precise line, precise symbol. **The idle nodes are not producing plausible-sounding
+noise; they are reading the real tree and reporting real code.** The unguarded `resp["total"]` and
+`err["payment_id"]` are robustness defects on any reading of any spec. (The `currency` ones are only
+defects if the spec pins the currency — I verified the CODE matches the description, not that it
+violates the requirement, and I am not claiming the stronger thing.)
+
+**And the count is inflated. Ten survivors are NOT ten defects:**
+
+    #2, #4, #7   the SAME currency issue, three times
+    #1, #3       both /api/summary KeyError on missing/unparseable fields
+    #6, #10      both unguarded dict access in meridian.py
+    #9           "[domain-conventions] None found — code correctly handles…"  <-- A CLEAN REPORT,
+                 counted as a finding and passed by the fail-closed re-verification
+
+So ~10 survivors ≈ **4-5 distinct real defects, plus one non-finding**. The re-gate refuted 5 of 15
+for accuracy but does not deduplicate, and it let a "None found" through — which means `survivors`
+overstates the yield by roughly 2x and can never be zero even when the reviewers find nothing.
+
+**THE CONSEQUENCE IS THE POINT.** `sink_review-n3-r0` scored 0.7326 while carrying 4-5 real,
+precisely-located defects **that the swarm itself had already found**, written down, re-verified
+against the final tree — and then discarded, because the mechanism is advisory by design. The idle
+nodes did the hardest part of debugging (locating the defect) and the run shipped the bugs anyway.
+
+This is a far stronger case for the mechanism than its utilisation number, and it reframes F179's
+cost: the sink paid 257 s/call to share its node with reviewers whose output was thrown away. **The
+trade is only bad because the findings go nowhere.**
+
+QUEUED (new): **F182b — feed the surviving findings into the repair tail** rather than dropping them,
+and **deduplicate before counting**; **F182c — never count a "None found" report as a finding**, which
+also makes `survivors` a usable readout instead of an inflated one.
