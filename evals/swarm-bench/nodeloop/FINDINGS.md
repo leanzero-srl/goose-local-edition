@@ -7110,3 +7110,48 @@ something is either very wrong or very slow, and you cannot tell which from a fr
 Live, alongside it: 1 task in flight against 6 slots, two whole nodes IDLE for 21 minutes. That is
 F151/F162 happening in real time — the free capacity exists exactly when there is nothing left to
 assess with it.
+
+## F169 — baseline r0 CRUNCHED: the app actually runs. And my crunch nearly fabricated a failure.
+
+First clean post-boundary baseline. `nodeloop-result.json`: **score 0.8429, wall 5,841s = 97.4 min,
+actual_nodes 3, void false, timed_out false, engine_build 1785697869-235825056.** Phases:
+research 4.9 / planning 9.3 / **execute 82.3** / gates 0.1 of 96.5 min — execute is 85% of the run.
+Prior finished 3-node runs median 125 min, so this is faster, at n=1.
+
+**THE CRUNCH — done properly, against the built tree, not the score:**
+
+    python3 -m pytest                72 passed in 2.66s
+    python3 -m vendorsync --help     proper argparse help, --db required, --port default 8000
+    server on a free port            LISTENING, no crash
+    GET /                            200, serves the HTML dashboard `web` wrote
+    GET /api/payments                200, {"data": [], "total": 0, "limit": 25, "offset": 0}
+
+**The app runs and serves correctly-shaped paginated JSON.** 0.8429 is credible. And `test-meridian`
+— the task recorded as a terminal FAILURE — contributed **8 of those 72 passing tests** (F165).
+
+⚠️ **I NEARLY PUBLISHED "THE APP DOES NOT RUN".** My first attempt bound port 8931 and got
+`OSError: [Errno 48] Address already in use` plus 404s from something already listening. `lsof` named
+the holder: **PID 78290 — the sweep supervisor itself**, because `PORT_BASE = 8930` and the harness
+owns that range. The 404 was its mock vendor API, not the app. I had the traceback and a plausible
+story ("score 0.8429 on an app that crashes on startup — exactly F147") and it was entirely my own
+test's fault. The standing rule caught it: **an open port is not proof that YOUR process opened it.**
+Re-run on 18771, everything passed. Also verified the live r1 unit was unharmed (`pgrep` still 1).
+CRUNCH RULE, now explicit: **never bind a port within 100 of `PORT_BASE`; the harness owns that range.**
+
+**F115 — now a CONTROLLED zero, and only half settled.** No `sink_capped` event, and the sink
+completed `status: done` at **25.1 min, under the 30.0-min `sink_cap_secs`**. So the absence is
+CORRECT rather than blind — the run proves the sink was not capped. But that only confirms the
+NEGATIVE half of the prediction. Whether the event fires when a sink IS capped remains unproven and
+needs a capped sink to settle. Recording it as half-settled rather than settled.
+
+**F153 did NOT reduce the sink's turn count, and I predicted it would.**
+
+    F152 baseline (n=8)   16 calls median (range 10-25)   21.8 min   79 s/call
+    r0 sink               24 calls                        25.1 min   63 s/call
+    call mix              shell 20, write 3, edit 1       0 failed
+
+More turns and more wall-clock, not fewer — though each call was 20% faster and the count is inside
+F152's observed 10-25 range, at the top. n=1, so this is not a refutation, but it is emphatically not
+the improvement F153 was shipped to produce. The file-check text is verified gone (F166); the turns
+it was supposed to save did not materialise. The honest position: **F153 is verified as a prompt
+change and UNPROVEN as a speed change**, and the next sinks decide it.
