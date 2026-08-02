@@ -11482,6 +11482,24 @@ impl GooseAgentDispatcher {
                 eprintln!(
                     "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
                 );
+                // A TRUNCATED SINK AND A FINISHED ONE MUST NOT LOOK ALIKE. Finalizing as `done` is the
+                // right SCHEDULER behaviour — the app files exist and the deterministic gate backstops
+                // correctness — but until now the only record of the truncation was this eprintln on
+                // stderr. The structured log showed `task_completed status=done` and nothing else, so
+                // every instrument reading the run treated a sink cut off mid-work as one that had
+                // finished its job.
+                //
+                // MEASURED: integrate-verify ran exactly 1800s — its cap to the second — made 23 shell
+                // calls and 2 edits, and was recorded `status=done`. That row is where this project
+                // reads every verdict from. PATTERN 4, in the one place it costs the most.
+                self.events.write_value(serde_json::json!({
+                    "event": "sink_capped",
+                    "task_id": "integrate-verify",
+                    "cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS").ok(),
+                    "detail": "the sink was CUT OFF at its wall-clock cap, not finished — it is \
+                               finalized as done so the run can terminate, and the deterministic smoke \
+                               gate is what actually backstops correctness here",
+                }));
                 break;
             }
             // Wait at most `idle`, but no later than the sink cap (when set) so the cap fires promptly.
@@ -11500,6 +11518,18 @@ impl GooseAgentDispatcher {
                         eprintln!(
                             "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
                         );
+                        // SECOND cap site, same event. The cap can fire either at the top of the loop
+                        // (a continuously-active sink) or here on an event gap, and instrumenting only
+                        // one of them would make the truncation visible on some runs and invisible on
+                        // others — which is worse than never recording it, because the gap would read
+                        // as "this sink finished normally".
+                        self.events.write_value(serde_json::json!({
+                            "event": "sink_capped",
+                            "task_id": "integrate-verify",
+                            "cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS").ok(),
+                            "detail": "the sink was CUT OFF at its wall-clock cap on an event gap, not \
+                                       finished — finalized as done so the run can terminate",
+                        }));
                         break;
                     }
                     return Err(anyhow!(
