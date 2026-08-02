@@ -6807,3 +6807,59 @@ implementation; this finding does not separate that from prompt volume, and the 
 refutation explicitly — a cut in prompt size with NO improvement in dry reasoning kills the
 mechanism hypothesis and moves the suspicion to the "DON'T OVER-READ / nothing further to look up"
 instruction sitting directly beside 12k of readable code.
+
+## F160 — every deterministic stall trip keys on a LEVEL, so a worker that produces NOTHING is invisible to all of them
+
+Tracing r0's three stuck test-authors through their own `judge_observed` rows shows the interventions
+DO work — every re-dispatch eventually converted a dry worker into a writing one:
+
+    test-api                  a0 dry (think 5,080 -> 24,032)  a1 dry  a2 WROTE at 114s
+    test-api-input-validation a0 dry (flat 3,402)             a1 WROTE at 399s
+    test-meridian             a0 dry (flat 857)               a1 WROTE at 294s
+
+But the rows underneath are the finding. Three of those attempts were not slow — they were **frozen**,
+emitting nothing at all:
+
+    test-api a1                think 2,006, calls 1 — UNCHANGED across 4 observations, 221s -> 465s
+    test-api-input-validation  think 3,402, calls 0 — UNCHANGED across 5 observations, 165s -> 441s
+    test-meridian a0           think   857, calls 1 — UNCHANGED across 5 observations, 170s -> 422s
+
+**~772 seconds — 12.9 minutes — of dead wall-clock on ONE run**, on a fleet where wall-clock is
+turns x 83s, spent on slots the engine could already prove were producing nothing.
+
+**Why no deterministic trip caught them.** There are three, and each keys on a LEVEL:
+
+  1. compile errors — none here.
+  2. over-read: `worker_tool_calls >= over_read_tool_calls`, resolved **16**. A THRASHING worker makes
+     many calls; a FROZEN one makes zero. The trip is structurally blind to the failure that costs
+     most — it can only see the loud kind.
+  3. reasoning-spiral: resolved from the run's own `levers_resolved` as **`spiral_thinking_chars = 0`
+     — OFF**. (Not to be confused with `spiral_break_chars = 12000`, a different lever entirely; the
+     names are one word apart and only one of them is live.) Empirically confirmed too: test-api a0
+     sat at 14,707 chars with 0 calls at 350s and was NOT killed.
+
+So the only remaining detector is the LLM review — and it was skipped **60 of 69 times, every one
+`no_idle_device`**. Stall detection is reachable only when a node is free, which is never under load,
+which is exactly when a frozen slot is most expensive.
+
+**Enabling the existing lever would fix NONE of the three**, which is the decisive part. Its guard is
+`worker_tool_calls == Some(0)`: test-api a1 and test-meridian a0 both had **1** call and fail it
+outright, and test-api-input-validation's 3,402 chars is far under any defensible char threshold. No
+setting of a level-based trip catches a worker that stops after one tool call and 857 characters.
+
+**The signal the engine already has and does not use.** F144 added `prev_thinking_chars` to
+`JudgeInput` and `is_still_producing()` — and used the delta in ONE direction only, as a guard
+AGAINST killing (`GREW = no kill`). Its negation is the cleanest kill signal available: thinking
+chars AND tool calls both unchanged across consecutive observations is, deterministically, a worker
+producing nothing. It needs **no model, no idle device, and no tuned literal** — which is why it also
+answers the `no_idle_device` starvation above: it is arithmetic on two integers the engine already
+emits, so it runs when the whole fleet is busy.
+
+EIGHTH instance of the family, and the sharpest reading of "PRINCIPLE, NOT HARD-CODE" yet: three
+hard-coded levels (16 calls, a char cap that is off, a 90s min age) guarding a decision whose true
+predicate — *did anything change since last time?* — is already computed and thrown away.
+
+QUEUED behind the freeze (F154). Registered as F161 in PREDICTIONS since it introduces no literal:
+the trip fires on a worker flat across >=2 consecutive `judge_observed` rows; the falsifier is a flat
+worker that later produces on its own without being re-dispatched — which would mean flatness is an
+artefact of the observation cadence rather than a stall, and the fix must be abandoned.
