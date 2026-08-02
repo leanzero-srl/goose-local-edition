@@ -5600,3 +5600,51 @@ one file from ever being in flight together — so what remains is out-of-scope 
 
 **Readout:** violation count on a 3-node run. **ZERO closes "more nodes -> more interference" as a
 hypothesis. Non-zero promotes it to first place.**
+
+---
+
+## F136 — the KV prefix cache breaks on ~31% of worker turns, and upstream already fixed the cause
+
+Third upstream triage. `465269e5d fix(moim): freeze turn-context timestamp at turn start to preserve
+prefix cache` looked worth chasing because at ~83 s/turn anything that forces a cold re-prefill is
+pure wall-clock. Measured on our own request logs before deciding.
+
+**The mechanism is present here and we do not have the fix.** `crates/goose/src/agents/moim.rs:145`
+does `chrono::Local::now().format("%Y-%m-%d %H:%M:00")` on every `compose_moim` call, and the result
+lands in `<turn-context><current-time>` at the START of the user message — i.e. immediately after the
+system prompt, so everything downstream of it is invalidated whenever the minute rolls over. `grep
+turn_start` finds nothing in our tree: the freeze is upstream-only.
+
+### Measured, on real worker calls
+
+| | transitions | broke | median re-prefill on a break |
+|---|---|---|---|
+| all calls | 26 | 15 (58%) | 2,417 chars |
+| **workers only (system >= 5000 chars)** | **16** | **5 (31%)** | **14,569 chars** (max 15,188) |
+
+**Be honest about the size.** ~31% of worker turn transitions lose the prefix and re-prefill ~14.6k
+chars ≈ 4k tokens. Over ~100 turns that is ~31 re-prefills; on a local 27B prefill is far cheaper
+than decode, so the expected saving is roughly **1-3% of wall-clock on a ~120-minute run** — real,
+measurable, and small. It is not a lever that makes the swarm worth it, and it must not be sold as
+one.
+
+### A correction I made mid-measurement
+
+My first pass reported "median 2,570 chars, 23.5% of the request" across ALL calls. That number was
+dominated by the **spiral judge** — a tiny separate call whose system prompt is 379 chars and whose
+user message is literally *"This call has emitted N characters of reasoning"* (swarm.rs:11371). Its
+prompt necessarily changes every observation; that is its entire purpose, and caching it is
+meaningless. I had started to treat it as a second cache-breaking defect to fix. It is not a defect.
+Splitting real workers out moved the break rate 58% -> 31% and the per-break cost 2.4k -> 14.6k, i.e.
+**both numbers moved, in opposite directions.** Lesson 14 again: ask what the population is before
+explaining its average.
+
+### Action, deliberately deferred
+
+The fix lives in `crates/goose/src/agents/moim.rs`, which is upstream core — out of scope for
+knob-turning, but squarely in scope as UPSTREAM INGESTION, which is the sanctioned path for exactly
+this. **Not cherry-picked now**: a 12-unit replicate campaign is running and a core change landing
+mid-campaign is lesson 9 (a fix can rot an experiment). Registered for the next boundary, with its
+own expectation written down: **prefix-break rate on worker transitions falls from ~31% toward 0;
+wall-clock moves 1-3% or not at all.** If wall-clock moves MORE than that, something else was riding
+on the same cause and the model of where time goes is wrong.
