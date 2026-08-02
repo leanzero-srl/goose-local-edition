@@ -112,6 +112,11 @@ fetched_external
 # (an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag), which was confirmed to
 # FAIL with the fix reverted and PASS with it restored.
 
+# F83: complete_verify.finding_texts was head-truncated at 400 chars, which for a pytest failure keeps
+# "what was checked" and discards "what went wrong". One shared head+tail elision helper now serves both
+# it and review_file_excerpt, so the two cannot drift apart the way the --help parsers did (F79).
+middle elided
+
 # --- carried from the previous boundary, still required ---
 split_inherit_spec
 salvage_spin

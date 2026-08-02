@@ -8223,6 +8223,42 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// The rule that makes racing N fix agents safe instead of merely triple the cost. Every case here is
     /// a shape the corpus actually produced: 13 of 13 archived repair rounds ended with findings
     /// outstanding, and the count ROSE in 3 of them under the current promote-on-agent-Ok behaviour.
+    /// The diagnostic lives at the END. A head-only cut keeps "what was checked" and throws away "what
+    /// went wrong", which is how a pytest collect FAILURE was recorded as a list of successfully
+    /// collected tests: the error banner began one character past the old 400-char boundary.
+    #[test]
+    fn elision_keeps_the_end_of_a_finding_where_the_error_actually_is() {
+        // Short input is returned verbatim — no marker, no loss.
+        assert_eq!(elide_middle("short", 150, 650), "short");
+        assert_eq!(elide_middle("", 10, 10), "");
+
+        // The shape that motivated this: a banner of collected items, then the real error at the end.
+        let out = format!(
+            "pytest --collect-only errors:\n{}\n=== ERRORS ===\nImportError: cannot import name 'upsert_many'",
+            (0..80).map(|i| format!("test_store.py::test_{i}")).collect::<Vec<_>>().join("\n")
+        );
+        let e = elide_middle(&out, 150, 650);
+        assert!(
+            e.contains("pytest --collect-only errors"),
+            "the head must still name the check"
+        );
+        assert!(
+            e.contains("ImportError: cannot import name 'upsert_many'"),
+            "the ERROR must survive truncation — it is the only actionable part: {e}"
+        );
+        assert!(
+            e.contains("middle elided"),
+            "elision must be visible, never silent"
+        );
+        assert!(e.chars().count() < out.chars().count());
+
+        // Multi-byte safety: char-based, so it can never split a character.
+        let wide: String = "\u{1f9ea}".repeat(500);
+        let w = elide_middle(&wide, 10, 10);
+        assert!(w.starts_with(&"\u{1f9ea}".repeat(10)));
+        assert!(w.ends_with(&"\u{1f9ea}".repeat(10)));
+    }
+
     #[test]
     fn a_raced_twin_lands_only_when_it_strictly_beats_the_baseline() {
         let t = |s: &str, v: Option<usize>| (s.to_string(), v);
@@ -14818,21 +14854,34 @@ fn overview_source_excerpts(root: &Path, rel: &[String]) -> String {
     out
 }
 
+/// Shorten a long string by keeping its HEAD and its TAIL and eliding the middle. Char-based, so it
+/// never splits a multi-byte character.
+///
+/// Head-only truncation keeps the part that says WHAT was checked and discards the part that says what
+/// went WRONG, because diagnostics — tracebacks, pytest error banners, argparse dispatch tails — live at
+/// the end. Two separate defects in this file came from that: a flat 2000-char head cut hid the dispatch
+/// tail of every real entry point and fabricated "unwired/unreachable" findings, and a 400-char head cut
+/// on `complete_verify.finding_texts` rendered a pytest collect failure as a list of SUCCESSFULLY
+/// collected tests followed by `================` — the error banner beginning exactly where the
+/// truncation ended. That finding was unreadable, and it was the only evidence for the round.
+fn elide_middle(s: &str, head: usize, tail: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= head + tail {
+        return s.to_string();
+    }
+    let h: String = chars[..head].iter().collect();
+    let t: String = chars[chars.len() - tail..].iter().collect();
+    format!("{h}\n\n... [middle elided — head + tail shown] ...\n\n{t}")
+}
+
 /// File excerpt for the review / verify prompt. A small file is shown WHOLE; a large file shows its HEAD and
-/// its TAIL (where a CLI's argparse dispatch + command wiring lives) with the middle elided. The old flat
-/// 2000-char head-truncation hid the dispatch tail of every real entry point (logstat/ledgr/gradebook
-/// __main__.py are 3.9-5.2KB), fabricating "unwired/unreachable" false positives and missing tail crashes.
+/// its TAIL (where a CLI's argparse dispatch + command wiring lives) with the middle elided.
 fn review_file_excerpt(content: &str) -> String {
     const WHOLE: usize = 6000;
-    const HEAD: usize = 3500;
-    const TAIL: usize = 2500;
-    let chars: Vec<char> = content.chars().collect();
-    if chars.len() <= WHOLE {
+    if content.chars().count() <= WHOLE {
         return content.to_string();
     }
-    let head: String = chars[..HEAD].iter().collect();
-    let tail: String = chars[chars.len() - TAIL..].iter().collect();
-    format!("{head}\n\n... [middle elided — large file; head + tail shown] ...\n\n{tail}")
+    elide_middle(content, 3500, 2500)
 }
 
 /// Extract argparse SUBCOMMAND names from a top-level `--help` output — the `{convert,units}` subparser-choices
@@ -23254,7 +23303,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // other events — and the first inference was wrong. Truncated per finding and capped,
                 // because the fix-loop text can be long and this rides every round.
                 "finding_texts": verdict.findings.iter().take(12)
-                    .map(|f| f.chars().take(400).collect::<String>())
+                    // HEAD-LIGHT, TAIL-HEAVY. The head names the check; the tail carries the error, and
+                    // the error is the only part anyone can act on. MEASURED: a pytest collect failure
+                    // was recorded as a list of collected tests ending in `================`, the error
+                    // banner starting one character past the old 400-char head cut.
+                    .map(|f| elide_middle(f, 150, 650))
                     .collect::<Vec<_>>(),
             }));
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
