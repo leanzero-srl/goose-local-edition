@@ -7287,3 +7287,43 @@ already opened**, then reasons about staleness from a counter that cannot see wr
 
 CORRECTIONS TO MY OWN QUEUE ENTRY: F163's blast radius is ~3 lines in the judge, not a digest-writer
 change. Its priority rises accordingly — it was the most expensive queued fix and is now the cheapest.
+
+## F173 — a split parent was counted as "in flight" for the rest of the run, in the readout I read every tick
+
+`review.py` reported `in flight: ['api', 'store', 'verify-e2e::0', 'verify-e2e::1', 'verify-e2e::2']`
+at minute 56 of `sink_review-n3-r0`. Two of those five were dead. Checked with F172's own trick — the
+activity digest's mtime IS the last-activity time:
+
+    api                  digest 00:23:46   (22 min stale)   <- SPLIT, superseded
+    store                digest 00:14:18   (31 min stale)   <- SPLIT, superseded
+    api-implementation   digest 00:41:27   (4 min)          <- the child actually working
+    verify-e2e::0        digest 00:45:25   (now)
+
+The run's own events confirm it: `verdict: api split / split`, `verdict: store split / split`, and
+`task_split` handing `store -> [store-impl, store-tests]`, `api -> [api-implementation, api-tests]`.
+
+**A split parent never emits `task_completed`** — its work is handed to its children — so
+`dispatched - settled` counts it as running until the run ends. Real in-flight was 3; the readout
+said 5.
+
+**It never tripped an impossibility check, and that is why it survived.** 5 against 6 slots is
+perfectly plausible (Lesson 47 only catches values that cannot be true). The tell was not the number,
+it was noticing the same two ids in the list two ticks apart and asking what they were doing.
+
+**`occupancy.py` ALREADY KNEW THIS AND `review.py` DID NOT.** occupancy.py carries a `split_at` map
+and a comment recording that an uncorrected parent was once credited 5,940s against a real span of
+651s — 9.1x too much. So the occupancy figures F150 and F162 rest on are SOUND; only this readout was
+inflated. Two instruments over the same events, one taught and one not.
+
+FIXED: `settled = done | failed | split_parents`. In-flight now reports 3, matching the digests
+exactly. NEGATIVE CONTROL: `baseline-n3-r0` has zero split parents, so the change provably cannot
+move any number in the run this campaign's headline result came from.
+
+SCALE, stated honestly: 5 split parents across 4 of the runs on disk. Small — but it is the live
+in-flight figure I read every tick to decide whether the fleet is busy, and it reads high exactly
+when splitting is working, i.e. when the fleet is being used well.
+
+LESSON 55: **WHEN TWO INSTRUMENTS CONSUME THE SAME EVENT STREAM, A LESSON LEARNED BY ONE IS NOT
+LEARNED BY THE OTHER.** occupancy.py had the split-parent correction, with a measured 9.1x error in
+its comment, while review.py computed in-flight from the same log and got it wrong. After fixing any
+event-derived defect, grep for every other consumer of that event.
