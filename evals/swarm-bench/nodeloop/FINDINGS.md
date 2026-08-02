@@ -2258,6 +2258,34 @@ work this project keeps refusing. Recorded so the asymmetry is a decision rather
 non-timeout detail failures ever appear in `detail_completed`/`detail_fallback`, the sibling already
 shows what to do.
 
+## F65 — `kind_prompt`'s precondition IS met, unlike `doc_prefetch`'s. The arm is safe to spend a unit on.
+
+`doc_prefetch` was pulled from the queue without running because its precondition
+(`grounded == is_mcp && ok`) is never true on this machine — an arm that cannot fire is not evidence.
+`kind_prompt` is the next lever in the queue that promises to fix a measured defect, so it gets the
+same check BEFORE it costs two hours.
+
+**The classifier is exact on the corpus.** `is_test_author` is computed from OWNED FILES
+(`lang.is_test_file` on each basename), not from the task id — so a task named `test-api` that owned no
+test file would be missed, and a task named anything that owned one would be caught. Across every plan
+on disk:
+
+    id says test- , classifier agrees      40
+    id says other , classifier agrees     160
+    DISAGREEMENTS                           0
+
+Zero misclassifications in 200 tasks. So when `kind_prompt` is on, the per-kind branches route
+correctly, and they are already written: a test-author gets *"DO read what you are testing: the SOURCE
+module under test"* instead of the implementer's *"NEVER read the project's TEST files"*, and
+`read_only_shard` gets its own subtraction.
+
+**So the whole kind-mismatch class has a working fix that is switched off**, and the arm will measure
+exactly what it claims. That is the opposite of `doc_prefetch` and worth stating plainly: the check
+that killed one arm cleared this one.
+
+F63 remains worth having independently — it repaired the GENERIC branch, which is what every worker
+gets while the lever is off, and it is correct for all kinds rather than conditional on a lever.
+
 ## Open, in flight
 
 - `nodeloop/loop.sh` is running arms `baseline → kind_prompt → scoped_contracts → doc_prefetch`
