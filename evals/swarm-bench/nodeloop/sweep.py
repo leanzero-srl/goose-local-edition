@@ -669,6 +669,24 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     # counts as complete, gets skipped forever, and quietly contributes a row measured on a
     # different binary. That is the exact shape of the failure that once published a table showing
     # the cheaper model winning — every part of the loop did its job and the conclusion was wrong.
+    # AN ABANDONED OR NODE-SHORT UNIT IS NOT A COMPLETE UNIT.
+    #
+    # MEASURED (F227): all three `think_off` reps sat on disk marked complete, carrying scores of
+    # 0.0357 / 0.0918 / 0.0357 — with `abandoned: True` and `actual_nodes: 2`. They were runs I
+    # killed mid-flight during the fleet outage and the restart cycles, and every one of them wrote
+    # a scored result. Because this function looked only at instrument and engine versions, the arm
+    # was skipped forever and a fabricated 3.5% would have stood as `think_off`'s answer.
+    #
+    # `abandoned` is the supervisor's own verdict that the unit was not worth finishing; `aborted`
+    # is an explicit kill. Neither produces a measurement. And a unit whose ENGINE-RESOLVED pool is
+    # smaller than the pool it asked for is a different experiment wearing the right name — the
+    # campaign has had that rule since the beginning ("mismatch ⇒ row marked VOID") and it was
+    # never enforced HERE, which is the only place that decides whether to re-run.
+    if r.get("abandoned") or r.get("aborted"):
+        return False
+    want, got = r.get("nodes"), r.get("actual_nodes")
+    if isinstance(want, int) and isinstance(got, int) and got < want:
+        return False
     return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION
             and r.get("engine_build") == engine_build())
 
