@@ -8688,3 +8688,46 @@ offline replay separated them in milliseconds and showed one is inert on the ver
 it. Without that separation the run's result — good or bad — would have been attributed to the whole
 batch, and a genuinely useful safety net would have been credited with an improvement it cannot
 produce, or blamed for a regression it cannot cause.
+
+## F205 — the Accept branch is ARMED: `file_contents` keys match `owned_files` exactly
+
+Lesson 53 applied to my OWN change rather than to a lever. F204 showed `Verdict::Accept` is the one
+shipped change with a path to the metric — which makes its precondition the thing most worth
+falsifying. The offline replay SYNTHESISED `file_contents`, so it could not have caught a mismatch.
+
+`swarm.rs:16505-16525`, where the engine builds the input:
+
+```rust
+for f in &req.owned_files {
+    let path = cwd.join(f);
+    ...
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        if !contents.trim().is_empty() {
+            if let Some(err) = syntax_error(&path).await { compile_errors.push((f.clone(), err)); }
+        }
+        file_contents.push((f.clone(), contents));
+    }
+}
+```
+
+Three things had to hold and all three do:
+
+1. **It iterates `req.owned_files`** — every owned file is attempted, not a subset.
+2. **It pushes `f.clone()`**, the SAME string as in `owned_files` — so my
+   `file_contents.iter().any(|(p, c)| p == f && ...)` compares identical keys, not a path that has
+   been joined, canonicalised or relativised on one side only. That was the failure mode worth
+   checking: `cwd.join(f)` exists in this very loop, and had the pushed key been `path` instead of
+   `f`, `all_owned_present` would be false forever and Accept would never fire.
+3. **A file is pushed only when `read_to_string` succeeds**, and my check additionally requires
+   non-empty contents — so an existing-but-empty deliverable correctly fails to satisfy Accept.
+
+`compile_errors` is filled from `syntax_error(&path)` over the same set, so
+`input.compile_errors.is_empty()` means every present owned file parses.
+
+**Accept can fire.** It requires: every owned file readable and non-empty, no syntax errors, task is
+not `integrate-verify`, elapsed ≥ 420 s, no owned write for ≥ 420 s, and not still producing.
+
+**Registered run-based check (no new literal — Lesson 34):** `judge_accepted` appears in the attempt
+log and `judge_verdict{verdict:"accept", action:"accepted"}` in the event stream of the next run that
+has an idle-but-finished worker. Its absence across a full run with test-authors completing means the
+branch is unreachable in practice and F204's prediction is void.
