@@ -352,3 +352,44 @@ fails to parse, 0 of 4 carry a marker.
 **Interaction with the `dep_signatures` arm** independent. Extraction shrinks most bodies below the
 cap, but a large declaration surface still hits `min(3500)` and would be cut the same way. Both are
 needed; neither depends on the other.
+
+## 12. The over-read hint asserts the worker has APIs the engine truncated
+
+**Site** `crates/goose-swarm/src/judge.rs:355` (hint text) and its input struct.
+
+**Measured (F196 + F197)** all 11 `over_reading` verdicts ever recorded are on test-authors
+(0 of 85 implementer verdicts), and test-authors are the only kind receiving `## API of` blocks.
+Three of four of those blocks end mid-token; one fails `ast.parse`. The hint tells that worker
+*"you already have the spec, the file layout, and the injected dependency APIs"* — the engine
+computed the truncation at `swarm.rs:19638` and then denies it.
+
+**Change** carry the fact the engine already has. Add `truncated_deps: Vec<String>` to `JudgeInput`,
+populated from the same `capped` computation, and branch the hint:
+
+```rust
+let hint = if input.truncated_deps.is_empty() {
+    "…you already have the spec, the file layout, and the injected dependency APIs. WRITE …"
+} else {
+    &format!("You have written nothing yet. Note: {} was injected TRUNCATED, so reading it \
+              directly is legitimate — do that ONCE, then WRITE your owned file(s).",
+             input.truncated_deps.join(", "))
+};
+```
+
+**Why it is not cosmetic** the worker is being told its unusable input is sufficient. Under
+PRIME DIRECTIVE 2 a hint that contradicts what the engine knows is the generic failure in its
+purest form — the engine holds the fact and emits a canned sentence instead.
+
+**Registered check** on the next post-crossing run, every `over_reading` verdict on a task whose
+dependency paste was truncated must carry the truncated-dep hint. Today: 11 of 11 carry the generic
+text.
+
+**⚠ ORDERING** patch #11 (line-boundary cut + marker) reduces how often #12 triggers but does not
+replace it — a dependency larger than the cap is still truncated, correctly marked, and the worker
+still needs permission to read it.
+
+**⚠ PRECONDITION — this patch is INERT until the verdict does something.** F197 measured 0 kill
+events across 302 verdicts and no hint delivery in the retained window. Fixing the hint text of a
+verdict nobody consumes changes nothing. **Establish first, on the post-crossing run, whether an
+`over_reading` verdict ever reaches a worker; if it does not, THAT is the defect to fix and this
+patch waits behind it.**
