@@ -8615,3 +8615,41 @@ adds is the current magnitude on this fleet: **41 skips against 78 judge runs on
 ordering that made it unnecessary was eleven lines above the skip I was patching, in a file I had
 already opened twice this session. A patch whose registered check passes on the *unmodified* engine
 is worse than no patch: it manufactures evidence of an improvement that was never made.
+
+## F203 — CROSSED. Five engine changes are live and verified in the binary the sweep executes
+
+After 2.5 days in which the engine was never once changed and measured, the boundary is crossed.
+
+**Verified in `target/release/goose` (built 08:03), which is what `loop.sh:119` executes:**
+
+    no_first_write                 1
+    judge_accepted                 1
+    "the deliverable is complete"  1
+
+⚠ **A near-miss worth recording.** `which goose` resolves to `~/.local/bin/goose`, dated **June 17**
+with ZERO of these markers. Had the sweep invoked the PATH binary, this run would have measured
+six-week-old code and produced another null that looked like a failed idea. It does not —
+`loop.sh:119` pins `ROOT/target/release/goose` — but the check cost one command and the alternative
+was another wasted cycle. **Never assume the binary on PATH is the binary under test.**
+
+**What shipped (commit `dc54d9064`):**
+
+1. `Verdict::Accept` — the judge had no accept, so a finished deliverable and a stuck worker both
+   resolved to kill, and the third kill is terminal. Not gated like `salvage_spin`, which excludes
+   test tasks and therefore excludes 93% of all failures.
+2. An evidence term on the 420 s deadline — a worker still taking actions gets double the budget.
+3. `is_still_producing` keyed on ACTIONS, not reasoning, plus `prev_tool_calls` threaded through all
+   three dispatcher mirror sites.
+4. `Verdict::NoFirstWrite` — a zero-tool-call worker is no longer logged as "over_reading".
+5. `pick_device` — weight is DECISIVE for hard tasks, not a tie-break. And the pool config had the
+   **workhorse switched off** (`enabled: false`), along with `local`; the fastest machine in the
+   fleet was not receiving work at all.
+
+**And the pace fix, which matters more than any single change:** `crates/goose-swarm/tests/judge_replay.rs`
+replays archived observations through the REAL `deterministic_verdict`. **4 tests, 0.00 s.** Every
+judge change from here is validated in milliseconds, then confirmed on a run — not discovered by one.
+
+**LESSON 78 — IF THE FEEDBACK LOOP IS HOURS, BUILD THE OFFLINE ONE FIRST.** A pure function does not
+need a fleet. Two and a half days of 100-minute runs were spent validating judge behaviour that a
+200-line test settles instantly. The loop length was treated as a constraint to schedule around when
+it was a defect to fix.
