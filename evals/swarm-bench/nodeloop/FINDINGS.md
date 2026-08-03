@@ -10051,3 +10051,32 @@ stays as an arm to be MEASURED, not as a fact to be cited.
 goose puts **`repeat_penalty`** on the wire. A bench variant that sends a different key than the
 engine would send is not testing the config change it claims to predict — and the null it produced
 would have read as "the lever does nothing". Fixed.
+
+## F237 🔬 — THE REFUSAL LIVES IN THE FIRST TURNS OF A DISPATCH (REGISTERED, NOT CONCLUDED)
+
+Baseline triage on the live-model test-author cases, 27 samples so far: **4 refuse-to-act, 14.8%.**
+That is the first per-turn baseline rate this campaign has ever had, and it took two minutes a
+sample instead of ninety minutes a run.
+
+Where the refusals sit, by conversation depth at the decision point:
+
+    msgs <= 4 :  4 refused / 18 samples   22.2%
+    msgs >= 5 :  0 refused / 10 samples    0.0%
+
+**Every refusal is in the first turns after a dispatch.** Once the worker has acted once, it keeps
+acting. That is where a lever can reach — the prompt at turn 1 is the whole intervention surface,
+and it is exactly what `prefill`, `nudge`, `toolchoice` and `declared` modify.
+
+⚠ **REGISTERED AS A HYPOTHESIS, NOT A RESULT.** 18 vs 10 samples across 6 cases is far too thin,
+and depth is confounded with case identity — the shallow cases may simply be the hard tasks.
+**FALSIFIER: as the triage completes and re-harvesting widens the corpus, a refusal at msgs >= 5
+kills the "first turns only" framing.** I will look for that specifically rather than only counting
+confirmations.
+
+⚠ **AND THE STALL-NOTE COMPARISON IS SELECTION, NOT CAUSATION.** With the engine's own corrective
+note present: 4 refusals / 23 samples (17.4%). Without it: 0 / 5 (0.0%). It is tempting to read that
+as the note being useless or harmful. It is not evidence of either: **a case only RECEIVES a stall
+note because the worker was already failing**, so the note-bearing population is selected for
+difficulty. Fisher's exact on 4/23 vs 0/5 is p≈1.0. What can honestly be said is narrower and still
+worth saying: **the engine's own repair note is present in cases that go on to refuse 17% of the
+time, so it is not reliably fixing the behaviour it was written for.**
