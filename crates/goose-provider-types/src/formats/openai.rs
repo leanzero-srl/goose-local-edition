@@ -1445,18 +1445,45 @@ pub fn create_request_with_options(
         payload["stream_options"] = json!({"include_usage": true});
     }
 
+    // ASSISTANT-TURN PREFILL. Not a body field — a trailing message. A server that receives a
+    // conversation ending in an `assistant` turn appends NO generation prompt and continues that turn
+    // verbatim, so whatever text is placed here becomes the model's opening tokens.
+    //
+    // WHY IT EXISTS: the Qwen3.6 chat template's generation prompt ends with a literal open
+    // `<think>\n` unless `enable_thinking: false` reaches the renderer — and LM Studio drops that
+    // kwarg (bug tracker #1990, open). So every worker begins generation INSIDE an unclosed thinking
+    // block and the only exit is to write its way to `</think>`. MEASURED on a 22,187-char worker
+    // prompt: 47.3 s and 974 characters of prose with NO tool call by default, against 3.1 s with the
+    // tool call as the FIRST token when the block is pre-closed. Prefilling `<think>\n\n</think>\n\n`
+    // reaches that same template branch from the harness, over the API, without touching server config.
+    //
+    // Deliberately routed through `request_params` rather than a new ModelConfig field: this runs on
+    // EVERY request, so the prefill is re-applied after each tool response without any caller
+    // bookkeeping, and a provider that does not set the key is byte-identical to before.
+    let mut prefill: Option<String> = None;
     if let Some(params) = &model_config.request_params {
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in params {
-                if key != "thinking_effort" && !is_reserved_request_param_key(key) {
+                if key == PREFILL_ASSISTANT_KEY {
+                    prefill = value.as_str().map(str::to_string);
+                } else if key != "thinking_effort" && !is_reserved_request_param_key(key) {
                     obj.insert(key.clone(), value.clone());
                 }
             }
         }
     }
+    if let Some(text) = prefill.filter(|t| !t.is_empty()) {
+        if let Some(msgs) = payload["messages"].as_array_mut() {
+            msgs.push(json!({"role": "assistant", "content": text}));
+        }
+    }
 
     Ok(payload)
 }
+
+/// Request-param key whose value is appended as a trailing `assistant` message instead of being
+/// copied into the request body. See the prefill block in `create_request_with_options`.
+pub const PREFILL_ASSISTANT_KEY: &str = "__goose_prefill_assistant";
 
 /// Extract an explicit reasoning-effort suffix from a model name.
 ///

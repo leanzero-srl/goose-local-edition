@@ -853,6 +853,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_DEP_SIGNATURES env overrides.
     #[serde(default)]
     pub dep_signatures: Option<bool>,
+    /// GOOSE_SWARM_THINK_OFF overrides. Pre-close the thinking block on test-author dispatches.
+    pub think_off_test_authors: Option<bool>,
     /// SWARM-COHERENCE Phase-1 (DAG-scoped context, deterministic). The frozen-contract bundle is one global
     /// string holding EVERY module's stub, injected identically into EVERY worker — O(total modules) per
     /// worker, growing with every split. When ON, scope it to the worker's DAG neighborhood (its deps ∪ its
@@ -1088,6 +1090,7 @@ impl Default for SwarmConfig {
             doc_prefetch: false,
             doc_fetch: false,
             dep_signatures: None,
+            think_off_test_authors: None,
             scoped_contracts: None,
             fan_verify: true,
             require_tests: true,
@@ -11060,6 +11063,7 @@ impl GooseAgentDispatcher {
             extensions,
             self.planner_timeout_secs,
             activity_key,
+            None, // no assistant prefill on this path
             temp_override,
         )
         .await
@@ -11089,6 +11093,7 @@ impl GooseAgentDispatcher {
             extensions,
             idle_secs,
             activity_key,
+            None, // no assistant prefill on this path
             None,
         )
         .await
@@ -11113,6 +11118,14 @@ impl GooseAgentDispatcher {
         // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
         // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
         activity_key: Option<&str>,
+        // Text to PREFILL the assistant turn with (None = today's behaviour, byte-identical).
+        //
+        // A server that receives a conversation ending in an `assistant` message appends no generation
+        // prompt and continues that turn, so this text becomes the model's opening tokens. It exists
+        // because the Qwen3.6 template's generation prompt ends with a literal open `<think>\n` and
+        // LM Studio drops the `enable_thinking` kwarg that would close it (bug #1990). Prefilling
+        // `<think>\n\n</think>\n\n` reaches that same branch from here instead of from server config.
+        prefill_assistant: Option<&str>,
         // Per-call temperature override (Some → this call only; None → the shared sampling.temperature, i.e.
         // today's behavior). Used to draft plan skeletons at a LOW temperature so the weak fleet's independent
         // drafts converge (raises real agreement) without touching worker/coding calls.
@@ -11157,6 +11170,12 @@ impl GooseAgentDispatcher {
         }
         if let Some(v) = self.sampling.repeat_penalty {
             extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
+        }
+        if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
+            extra.insert(
+                goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
+                serde_json::json!(text),
+            );
         }
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
@@ -19018,6 +19037,17 @@ fn goals_enabled() -> bool {
 /// SWARM-COHERENCE Phase-1 (Tier-A): inject deterministically-extracted dependency SIGNATURES rather than
 /// full bodies into a consumer's prompt. Not in the assured bundle → default OFF (byte-identical): with no
 /// env var and no config key, `resolve_gate_cfg(None, None, assured, false)` = false.
+/// Pre-close the assistant's thinking block for test-authors (`GOOSE_SWARM_THINK_OFF` /
+/// `think_off_test_authors`). OFF by default: with it unset no prefill message is appended and the
+/// request body is byte-identical to today's.
+fn think_off_test_authors() -> bool {
+    swarm_gate_cfg_bundle(
+        "GOOSE_SWARM_THINK_OFF",
+        load_config().think_off_test_authors,
+        false,
+    )
+}
+
 fn dep_signatures_on() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_DEP_SIGNATURES",
@@ -20070,6 +20100,23 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 &self.worker_extensions,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
+                // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
+                //
+                // The template's generation prompt ends with a literal open `<think>\n`, so generation
+                // begins inside an unclosed thinking block and the only exit is to write to `</think>`.
+                // MEASURED on a 22,187-char worker prompt: 47.3 s and 974 characters of prose with NO
+                // tool call by default, versus 3.1 s with the tool call as the FIRST token when the
+                // block is pre-closed. Test-authors are 93% of all failures and are observed at
+                // `tool_calls == 0` at every kill.
+                //
+                // Scoped to test-authors on purpose. A planner or scout SHOULD deliberate; this
+                // suppresses deliberation only where the deliverable is a file the worker is failing to
+                // start. OFF by default so the change is byte-identical until the lever is set.
+                if think_off_test_authors() && is_test_author {
+                    Some("<think>\n\n</think>\n\n")
+                } else {
+                    None
+                },
                 None,
             )
             .await;

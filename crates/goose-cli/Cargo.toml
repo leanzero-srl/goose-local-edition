@@ -67,6 +67,7 @@ sigstore-verify = { version = "0.9", default-features = false, optional = true }
 axum.workspace = true
 axum-server = { version = "0.8", default-features = false, optional = true }
 clap_complete_nushell = { version = "4", default-features = false }
+goose-provider-types = { version = "1.41.0", path = "../goose-provider-types" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anstream = { version = "1", default-features = false, features = ["wincon"] }

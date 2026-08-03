@@ -9310,3 +9310,54 @@ WHOLE POINT.** I had five links proven and called the path "complete". It was co
 explanation and empty as a result. Two agents spent one request each to get the 47.3 s → 3.1 s number
 that settles it — a test I had explicitly deferred as "needs the fleet" while doing offline renders
 that could never answer it.
+
+## F217 — the prefill is implemented and gated; and my BUILD CHECK lied for two ticks
+
+**Implemented (commit below), three edits, OFF by default:**
+
+- `goose-provider-types/src/formats/openai.rs` — a `__goose_prefill_assistant` request-param key is
+  intercepted and appended as a trailing `{"role":"assistant","content":…}` message instead of being
+  copied into the body. The existing `thinking_effort` exclusion on that same line is the precedent.
+- `swarm.rs` `run_agent_in` — new `prefill_assistant: Option<&str>` parameter; `None` at both
+  planner-side call sites, so those paths are byte-identical.
+- `swarm.rs` worker dispatch — emits `<think>\n\n</think>\n\n` when `think_off_test_authors() &&
+  is_test_author`, behind `GOOSE_SWARM_THINK_OFF` / `think_off_test_authors`, **default OFF**.
+
+`is_test_author` (19296) and the dispatch (20063) proved to be in the SAME function (`run`, 19188),
+so no threading was needed — checked rather than assumed.
+
+**🔴 AND MY BUILD CHECK LIED FOR TWO TICKS.** I was running:
+
+    cargo build -p goose-cli 2>&1 | grep -E '^error' -A 6 | head -20; echo "BUILD_DONE"
+
+**`echo` after a pipeline reports the LAST command's status, and the marker prints unconditionally.**
+The build had failed with two errors and I reported it clean — then reported it clean a second time.
+The errors were real and both came from assumptions I did not check:
+
+    E0433  `goose_provider_types` is not a dependency of goose-cli   (I assumed the path existed)
+    E0308  `swarm_gate_cfg` takes `bool`, not `Option<bool>`          (the Option variant is
+                                                                       `swarm_gate_cfg_bundle`)
+
+Fixed by reading the real signatures (`swarm_gate_cfg` at :18900 vs `swarm_gate_cfg_bundle` at
+:18990, and `dep_signatures_on` calls the latter) and adding the crate with `cargo add --path` per
+AGENTS.md. Verified by reading cargo's own final line — `Finished dev profile … in 18.77s`.
+
+**This is the THIRD self-inflicted false-status bug in one session**, and all three share one shape:
+- F209: `failures.load()` returns raw events; reading `r["kind"]` gave `None` and printed a 0%.
+- F213: `cd x && cmd` — the `cd` failed, `&&` swallowed the write, the commit still succeeded.
+- F217: `cmd | grep …; echo MARKER` — the marker reports the grep, not the build.
+
+**LESSON 92 — A STATUS MARKER YOU PRINT YOURSELF IS NOT A STATUS.** `echo OK` after a pipeline, a
+boolean computed from a needle you wrote, a commit that "succeeded" — each is a claim by the harness
+about the harness, not evidence about the work. **Read the tool's own terminal output**: cargo's
+`Finished`/`error:` line, `git show --stat`, the `repr()` of the data. Every time this session that a
+self-authored flag disagreed with the underlying tool, the flag was wrong.
+
+**REGISTERED, BEFORE ANY MEASUREMENT — the streaming risk is the one that decides this.** The fleet
+evidence (47.3 s → 3.1 s) was measured on NON-streaming requests. **goose always streams**
+(`openai.rs:669-681`). Streaming tool-call parsing with a prefilled assistant turn is untested, and
+if the prefill fails that is the most likely place. **Check on the first run with the lever on:**
+`llm_request.*.jsonl` — the last element of `messages` must be `role: "assistant"` with the prefill
+content, **on every request of a worker's loop, not just the first**; and the swarm's own thinking
+accumulator must report 0 for that dispatch. If the message is present and thinking is still
+non-zero, the server is not taking the continuation path under streaming and the whole route is dead.
