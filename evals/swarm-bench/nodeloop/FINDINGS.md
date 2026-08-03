@@ -8940,3 +8940,80 @@ later reader does not mistake it for a broken predicate.
 the cheapest change in the batch and it produced the sharpest diagnostic step: "over_reading" invited
 theories about what the worker was reading, while "no_first_write" states the actual observable —
 zero actions — and immediately rules out every fix aimed at what a worker does AFTER it starts.
+
+## F211 — 🔬 THE MODEL FILE EXPLAINS THE DEFECT: thinking is PREFILLED ON and temp is 1.0
+
+Mihai's lead — *"check the actual model files and see if anything presents itself as an
+opportunity"* — paid off inside ten minutes. Read directly from the GGUF header (no model load; the
+KV store is at the head of the file, and neither the `gguf` python package nor llama.cpp is installed
+on this machine, so `scratchpad/ggufkv.py` parses the documented format directly).
+
+**FACT 1 — the author embedded sampling defaults, and they are tuned for PROSE, not tool calls:**
+
+    general.sampling.temp  = 1.0
+    general.sampling.top_k = 20
+    general.sampling.top_p = 0.95
+
+**FACT 2 — the model is a SEVEN-WAY MERGE and most parents are creative-writing models:**
+
+    general.name = "Qwen3.6 27B Architect Polaris2 Fable B F451 NM"
+    base_model.0 Qwen/Qwen3.6-27B
+    base_model.1 DavidAU/Qwen3.5-27B-Claude-4.6-OS-INSTRUCT
+    base_model.2 DavidAU/Qwen3.6-27B-Heretic2-Uncensored-Finetune-Thinking   <- "Thinking"
+    base_model.3 nightmedia/Qwen3.6-27B-Architect-Polaris
+    base_model.4 armand0e/Qwen3.6-27B-Fable-5-Experimental                   <- fiction
+    base_model.5 DavidAU/Qwen3.5-27B-Polar-Rev1-Uncensored-Heretic
+    base_model.6 DavidAU/Qwen3.6-27B-F451-AND-TRI-Polar-Ultra-Pro-Writer-…   <- "Ultra Pro Writer"
+
+Arch `qwen35`, 65 blocks, hybrid attention+SSM, `nextn_predict_layers = 1` (the MTP), 262144 context,
+vision projector alongside (`mmproj-F32.gguf`).
+
+**FACT 3 — THE CHAT TEMPLATE PREFILLS THE MODEL INTO THINKING MODE.** The generation prompt:
+
+```jinja
+{%- if add_generation_prompt %}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- '<think>\n\n</think>\n\n' }}      <- closes thinking immediately
+        {{- '<think>\n' }}                     <- DEFAULT PATH: opens thinking
+```
+
+**Unless `enable_thinking: false` is passed, every single dispatch begins with the assistant already
+inside an open `<think>` block.** The model is not choosing to deliberate — the template puts it
+there before it sees a single token of its own.
+
+**FACT 4 — the tool-call format is XML, and the template INVITES pre-call prose:**
+
+    <tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>
+    "You may provide optional reasoning for your function call in natural language BEFORE the
+     function call, but NOT after"
+
+**FACT 5 — GOOSE SENDS NOTHING TO COUNTERACT ANY OF IT.** `swarm.rs:1014`:
+
+    temperature: None,  top_p: None,  top_k: None,  min_p: None,  repeat_penalty: None,
+
+and `enable_thinking` / `chat_template_kwargs` appear **nowhere** in the swarm's LM Studio path
+(`enable_thinking` exists only in `goose-local-inference`, a different provider the swarm does not
+use). So every worker runs at the author's defaults: **temperature 1.0, thinking prefilled ON, on a
+merge whose majority parents are fiction models.**
+
+**This is a complete, evidence-backed explanation of F210's observation** — test-authors emitting
+1,992-24,032 characters of reasoning with `tool_calls = 0` for seven minutes. Not a mysterious model
+pathology; a configuration that asks for exactly that.
+
+**WHAT IS VERIFIED vs WHAT IS PROPOSED — stated separately on purpose.**
+- VERIFIED: all five facts above, each read from the file or the source.
+- PROPOSED and UNTESTED: that lowering temperature and/or passing `enable_thinking: false` will
+  increase tool calls and shorten time-to-first-write. **Plausible and unproven.** The falsifier is
+  cheap and does not need the fleet: a single `curl` to `localhost:1234` with a worker-shaped prompt,
+  once at the defaults and once with `temperature: 0.3` + `chat_template_kwargs:
+  {"enable_thinking": false}`, comparing whether a `<tool_call>` block appears and how many
+  characters precede it.
+- ⚠ **Disabling thinking outright may cost quality on genuinely hard tasks.** The nuanced version is
+  to disable it for the FIRST worker turn only (force an action, then allow deliberation), or to
+  lower temperature without touching thinking. Do not conflate the two changes — test them apart,
+  which is the F204 lesson.
+
+**LESSON 85 — WHEN A MODEL BEHAVES STRANGELY, READ ITS FILES BEFORE THEORISING ABOUT ITS MIND.**
+Five weeks of prompt engineering against a model whose own chat template opens a `<think>` tag on
+every turn and whose author ships temperature 1.0. The answer was in the first 4 MB of a file that
+sat on disk the entire time, and no amount of rewording the system prompt could have reached it.
