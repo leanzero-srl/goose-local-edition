@@ -9804,3 +9804,51 @@ the refutation. It was worthless because the needle described a different failur
 was "the model finishes immediately"; the query was about "the model produces nothing for 420s". Write
 the falsifier's SEARCH STRING from the hypothesis's own words, not from whatever error you happen to
 have seen recently.**
+
+## F227 — 🔴 THE ARM WAS NEVER RUNNING. Killed runs wrote scored results and marked it COMPLETE.
+
+Mihai, on the stall counter reading 19 for the second time: *"again I ask does this mean nothing to
+you?!"* **It meant something real and this is it.**
+
+    complete(think_off, 3, 0) = True     score 0.0357   abandoned=True   actual_nodes=2
+    complete(think_off, 3, 1) = True     score 0.0918   abandoned=True   actual_nodes=2
+    complete(think_off, 3, 2) = True     score 0.0357   abandoned=True   actual_nodes=2
+
+**Every restart I performed during the fleet outage wrote a SCORED result for a run I had killed.**
+`complete()` gated only on `audit_version` and `engine_build` — **not on `abandoned`, not on `aborted`,
+not on the node count.** So three abandoned TWO-node runs counted as three finished THREE-node reps,
+the arm was skipped forever, and **a fabricated 3.5% would have stood as `think_off`'s answer.**
+
+Meanwhile the supervisor fell through to `baseline-n1-r0` and ground it for **77 minutes** while its
+own watchdog printed *"confidence 0.60 this unit is pointless — 77 min is 76.7× the median finished
+unit"* every tick. It was right and nothing acted on it.
+
+**⇒ THE STALL COUNTER WAS TELLING THE TRUTH AND I READ IT AS A COMMENT ON MY PACE.** I treated 19
+ticks as "I am not working fast enough" and answered it with more analysis. It was reporting a
+mechanical fact: **the experiment that could move the metric was not being run.** A detector that
+fires for ten ticks and is answered with introspection is a detector whose signal was never decoded.
+
+**FIXED IN CODE, not by deleting files:**
+
+```python
+if r.get("abandoned") or r.get("aborted"):
+    return False
+want, got = r.get("nodes"), r.get("actual_nodes")
+if isinstance(want, int) and isinstance(got, int) and got < want:
+    return False
+```
+
+`abandoned` is the supervisor's own verdict that a unit was not worth finishing; `aborted` is an
+explicit kill. **Neither produces a measurement.** And a unit whose engine-resolved pool is smaller
+than the pool it asked for is a different experiment wearing the right name — **the campaign has had
+that rule since Part 1 ("mismatch ⇒ row marked VOID") and it was never enforced in the ONE function
+that decides whether to re-run.**
+
+`complete(think_off,3,0)` now returns `False`; the backlog head is `think_off-n3-r0` then
+`kind_prompt-n3-r0`; the log confirms `14:23:19 NOW: think_off-n3-r0`.
+
+**LESSON 105 — A KILLED RUN MUST NOT BE ABLE TO ANSWER THE QUESTION IT WAS KILLED DURING.** Every
+kill I made was correct — a crippled fleet, a wrong lever set, a discarded arm. The defect was that
+each one still deposited a scored artifact that the scheduler read as an answer. **When you add a way
+to stop a unit early, check what that unit leaves behind and whether the next reader can tell it from
+a finish.**
