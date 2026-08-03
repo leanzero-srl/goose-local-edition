@@ -19648,8 +19648,26 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     } else {
                         std::borrow::Cow::Borrowed(trimmed)
                     };
-                    let capped: String = api_source.chars().take(dep_budget.min(3500)).collect();
-                    dep_budget = dep_budget.saturating_sub(capped.chars().count());
+                    // CUT ON A LINE BOUNDARY AND SAY SO. The raw `.take(n)` sliced mid-identifier and the
+                    // fence below closed unconditionally, so the worker received a file that stops in the
+                    // middle of a `def` formatted exactly like a complete one. MEASURED (F196) on a live
+                    // test-author prompt: 3 of 4 blocks ended mid-token — `meridian.py` at `    def _up`,
+                    // whose pasted body FAILS `ast.parse` — and NONE of the four carried any indication it
+                    // had been truncated. The same prompt forbids the worker to `cat` the real file, so the
+                    // missing remainder was unrecoverable by any permitted action.
+                    let budget = dep_budget.min(3500);
+                    let head: String = api_source.chars().take(budget).collect();
+                    let truncated = head.chars().count() < api_source.chars().count();
+                    let capped = if truncated {
+                        let whole = head.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&head);
+                        format!(
+                            "{whole}\n# … TRUNCATED — this is a PARTIAL view of {f}. If you need what is \
+                             missing, read the file; it is not all shown here."
+                        )
+                    } else {
+                        head
+                    };
+                    dep_budget = dep_budget.saturating_sub(capped.chars().count().min(budget));
                     dep_block.push_str(&format!(
                         "## API of {f} (a dependency you import — use it from here, do NOT `cat` it):\n```\n{capped}\n```\n\n"
                     ));
