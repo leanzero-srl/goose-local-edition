@@ -118,6 +118,16 @@ pub struct JudgeInput {
     /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars` and the input
     /// `is_still_producing` keys on: reasoning that grows proves only that the model is talking.
     pub prev_tool_calls: Option<u32>,
+    /// `elapsed_secs` AS OF that previous observation, so the delta above can be read as a RATE rather
+    /// than as an unbounded "acted at some point since last time I looked".
+    ///
+    /// MEASURED on `swarm-3node-r0`: the gap between consecutive judge observations of the same attempt
+    /// has a median of 60s — but a p90 of 135s and a MAX of 1,267s, because the judge only runs when a
+    /// device is idle and the fleet suppressed 66 of 72 opportunities. 2 of the 21 `is_still_producing`
+    /// firings in that run spanned a gap LONGER than the 420s staleness threshold they were overriding,
+    /// and one of them was `test-meridian`, which had written its files 12 minutes earlier and still held
+    /// a slot at 27 minutes. An observation that old cannot certify that a worker is producing NOW.
+    pub prev_observed_secs: Option<u64>,
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
@@ -445,7 +455,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // original schedule. Combined with `is_still_producing` keying on ACTIONS rather than reasoning, a
     // spiral (thinking climbs, tool calls flat) is NOT producing and still dies at 420s — which is the
     // case this branch exists for.
-    let deadline = cfg.min_age_secs.max(420) * if is_still_producing(input) { 2 } else { 1 };
+    let deadline = cfg.min_age_secs.max(420) * if is_still_producing(input, cfg) { 2 } else { 1 };
     if owns_code && !input.any_owned_written && input.elapsed_secs >= deadline {
         let read_nothing = input.worker_tool_calls == Some(0);
         return Some(JudgeOutcome {
@@ -489,7 +499,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         && input.task_id != "integrate-verify"
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
-        && !is_still_producing(input)
+        && !is_still_producing(input, cfg)
     {
         return Some(JudgeOutcome {
             verdict: Verdict::Accept,
@@ -508,7 +518,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         && input.task_id != "integrate-verify"
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
-        && !is_still_producing(input)
+        && !is_still_producing(input, cfg)
     {
         return Some(JudgeOutcome {
             verdict: Verdict::Looping,
@@ -598,7 +608,7 @@ fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
 /// This does not remove a backstop. `worker_timeout_secs`, the progress watchdog and the #134 spiral
 /// trip all still bound a worker that generates forever; this only declines to call a producing
 /// worker "stuck".
-fn is_still_producing(input: &JudgeInput) -> bool {
+fn is_still_producing(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
     // ACTIONS, not reasoning. Keying this on thinking growth made it permanently true for a spiral, since
     // a spiral's thinking climbs monotonically BY DEFINITION — MEASURED (F191): test-api wrote its file at
     // 408s then ran 595s with ZERO tool calls while thinking went 2,897 -> 22,627, and every trip that
@@ -608,8 +618,20 @@ fn is_still_producing(input: &JudgeInput) -> bool {
     // Verified not to re-introduce F163's false kill (F195): that case had flat thinking AND flat tool
     // calls, and was protected by `any_owned_written == false` in all three flat observations, so this
     // predicate never got a vote there. The change is a strict narrowing.
+    //
+    // AND THE INCREASE MUST BE RECENT. The pair says "acted since I last looked", which is only the same
+    // thing as "producing now" while the looks are close together. The judge runs only on an idle device,
+    // so under load the gap stretches — measured to 1,267s in one run — and a single tool call anywhere
+    // inside a 21-minute window then reads as active generation, blocking the Accept branch and DOUBLING
+    // the stall deadline for a worker that finished long ago. The window is `cfg.min_age_secs.max(420)`,
+    // the SAME constant the Accept branch and the deadline use, deliberately: a predicate must not be
+    // allowed to override a staleness threshold using evidence coarser than that threshold. No new
+    // literal, and the rule stays true if that constant is ever retuned.
     match (input.prev_tool_calls, input.worker_tool_calls) {
-        (Some(prev), Some(now)) => now > prev,
+        (Some(prev), Some(now)) if now > prev => match input.prev_observed_secs {
+            Some(then) => input.elapsed_secs.saturating_sub(then) <= cfg.min_age_secs.max(420),
+            None => true,
+        },
         _ => false,
     }
 }
@@ -822,6 +844,7 @@ mod tests {
             worker_tool_calls: None,
             worker_thinking_chars: None,
             prev_thinking_chars: None,
+            prev_observed_secs: None,
             split_count: 0,
         }
     }

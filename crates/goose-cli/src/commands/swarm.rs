@@ -10871,7 +10871,10 @@ pub struct GooseAgentDispatcher {
     /// Per-task `worker_tool_calls` as of the previous judge observation. The ACTION counterpart to
     /// `judge_prev_thinking`; `is_still_producing` keys on this because a spiral's thinking grows
     /// monotonically by definition (F191) and so can never signal a stall.
-    judge_prev_calls: Mutex<HashMap<String, u32>>,
+    /// Stores `(tool_calls, elapsed_secs)` — the count AND when it was taken. Without the timestamp the
+    /// delta says only "acted since I last looked", and the judge only looks when a device is idle, so
+    /// under load "last looked" can be 21 minutes ago (measured).
+    judge_prev_calls: Mutex<HashMap<String, (u32, u64)>>,
     /// #121: when set, a task whose accumulated output carries the deterministic mid-stream body-drop
     /// signature (`is_stream_decode_interrupt`) is re-dispatched as Transient instead of being accepted as
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
@@ -16566,6 +16569,17 @@ impl Judge for GooseAgentDispatcher {
         let worker_thinking_chars = digest
             .as_ref()
             .and_then(|v| v.get("thinking_chars").and_then(|n| n.as_u64()));
+        // Read the PREVIOUS action count AND when it was taken, then record this one, so the judge can
+        // read the delta as a rate. Both halves must come from the SAME lock acquisition or a concurrent
+        // observation could pair this count with a different observation's timestamp.
+        let prev_calls = {
+            let mut g = self.judge_prev_calls.lock().unwrap();
+            let was = g.get(&req.task_id).copied();
+            if let Some(now) = worker_tool_calls {
+                g.insert(req.task_id.clone(), (now, req.elapsed_secs));
+            }
+            was
+        };
         let input = JudgeInput {
             task_id: req.task_id.clone(),
             description: req.description.clone(),
@@ -16586,14 +16600,8 @@ impl Judge for GooseAgentDispatcher {
                 }
                 was
             },
-            prev_tool_calls: {
-                let mut g = self.judge_prev_calls.lock().unwrap();
-                let was = g.get(&req.task_id).copied();
-                if let Some(now) = worker_tool_calls {
-                    g.insert(req.task_id.clone(), now);
-                }
-                was
-            },
+            prev_tool_calls: prev_calls.map(|(n, _)| n),
+            prev_observed_secs: prev_calls.map(|(_, at)| at),
             // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
