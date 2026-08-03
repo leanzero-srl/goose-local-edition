@@ -1242,9 +1242,21 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     #
     # This is the stall detector's own advice taken literally: feedback latency is a variable under my
     # control, and the cheapest decisive experiment is not the one the queue happens to schedule first.
-    arm = next((u for u in units if u[0]["name"] == "think_off" and u[1] == full), None)
-    if arm is not None:
-        units = [arm] + [u for u in units if u is not arm]
+    # ORDER THE TWO VERIFIED-DEFECT FLIPS FIRST. Both fix something MEASURED to be wrong rather than
+    # testing a hypothesis, and both target the population that is 93% of all failures:
+    #   think_off + dep_signatures : the prompt a test-author receives is half truncated dependency
+    #                                source (3 of 4 blocks cut mid-token, one failing ast.parse), and
+    #                                the model is handed an OPEN <think> tag it must write its way out of.
+    #   kind_prompt                : the tailored test-author rule blocks EXIST in the engine and are
+    #                                UNREACHABLE, so test-authors receive the IMPLEMENTER rules
+    #                                "NEVER read the project's OTHER TEST files" and "STOP WHEN GREEN"
+    #                                — instructions for a job that SATISFIES tests handed to one that
+    #                                AUTHORS them (F216, and commit d15ed448e measured the same class).
+    # Everything after these is a question; these two are defects with a switch already written.
+    for name in ("kind_prompt", "think_off"):
+        arm = next((u for u in units if u[0]["name"] == name and u[1] == full), None)
+        if arm is not None:
+            units = [arm] + [u for u in units if u is not arm]
     return units
 
 
