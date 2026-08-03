@@ -8277,3 +8277,60 @@ The live measurement is what separated them.
 test-author prompt is 22,511 chars" as a scalar. One section-by-section decomposition, available at
 any point, showed half of it is one component with a purpose-built lever already written for it.
 A total tells you something is too big; only the composition tells you which lever touches it.
+
+## F197 — `over_reading` is a TEST-AUTHOR-EXCLUSIVE verdict, and nothing acts on it
+
+Pooled over every archived run (5 runs, 302 `judge_verdict` events), verdict type × task kind:
+
+    verdict          implementer   test-author   verify/sink
+    over_reading               0            11             0
+    broken_code                2             1             0
+    looping                    1             3             0
+    spec_drift                 0             3             0
+    split                      2             0             0
+    ok                        80           178            21
+    TOTAL                     85           196            21
+
+**Every `over_reading` verdict this campaign has ever recorded — 11 of 11 — is on a test-author.
+Zero on 85 implementer verdicts. Zero on 21 sink verdicts.**
+
+**F196 is the mechanism, and it is not a coincidence of naming.** Test-authors are the ONLY kind that
+receives `## API of` blocks (implementers: median **0** blocks). Those blocks are the dependency's
+full source, cut at 3,500 raw chars mid-`def`, fenced as complete, carrying no truncation notice, and
+introduced with *"do NOT `cat` it"*. A worker whose pasted dependency does not parse has exactly one
+route to the truth — open the real file — and that route costs tool calls with nothing written, which
+is precisely the over-read guard's trigger (`judge.rs:349`: `!owned_files.is_empty() &&
+!any_owned_written && tool_calls >= over_read_tool_calls`).
+
+**⚠ MY OWN FRAMING WAS WRONG AND I AM STRIKING IT.** I was one step from writing that the engine
+"penalizes the worker for reading". It does not. Measured, not inferred:
+
+- **0 kill events across all 5 runs.** The only judge events on disk are `judge_observed` 302,
+  `judge_verdict` 302, `judge_skipped` 178. Nothing kills, nothing retries.
+- **The hint is not delivered.** Across the 16 qwen requests retained in a 70-minute window, **zero**
+  carry the hint's text. All four live `over_reading` verdicts are attempt 0 with no attempt 1.
+  ⚠ Retention is short (F176), so this is "not observed in the retained window" plus "no re-dispatch
+  happened", not a proof about all time.
+
+So the true shape is worse than a penalty and duller: **the judge correctly identifies the exact
+population that accounts for 93% of every failure (F164), names the exact behaviour F196 predicts,
+and the verdict goes nowhere.** That is the NINTH instance of the campaign's one defect shape —
+F141, F142, F149, F153, F157, F158, F172, F196, and now this — the engine holds the answer and does
+not use it.
+
+**And when the hint eventually is delivered, it will assert something false.** Its text:
+
+> "STOP investigating: you already have the spec, the file layout, and **the injected dependency
+> APIs**. WRITE your owned file(s) NOW"
+
+The worker does *not* have the dependency APIs. It has `meridian.py` cut at `    def _up`, which
+fails `ast.parse`. The engine computed that truncation itself (`swarm.rs:19638`) and then tells the
+worker the opposite. Queued as patch #12: the guard must consult the fact the engine already
+holds — if a dependency the worker owns a test for was truncated, the correct response is to GRANT
+the read, not to insist the paste is sufficient.
+
+**LESSON 72 — A DETECTOR THAT FIRES AND CHANGES NOTHING READS EXACTLY LIKE A DETECTOR THAT NEVER
+FIRED.** `over_reading` has been perfectly, exclusively right about the failing population for five
+runs, and no measurement in this campaign noticed, because "the judge is inert" and "the judge sees
+nothing" produce identical run outcomes. The way I found it was counting verdicts by KIND rather
+than in total — the same composition-over-total move as F196, one tick later.
