@@ -8853,3 +8853,47 @@ Two and a half days produced findings; this is the first engine change observed 
 live run. That deserves to be recorded as a distinct milestone from "the metric moved", because
 conflating them is how a campaign talks itself into a win it has not earned — and because if the row
 does NOT move, knowing the branch fired is exactly what narrows the next search to upstream causes.
+
+## F209 — the stall detector, and the metric that structurally COULD NOT MOVE
+
+Mihai installed an analysis flow: *"if your update continues to stay the same for 10 ticks which is
+your (2) and (3) then it means you need to shake things up. If (1) becomes resolved then this whole
+session is resolved."*
+
+`goalstate.py` implements it, and it is a SCRIPT rather than a habit on purpose. The failure it
+guards against is one an agent cannot self-police: every individual tick had a defensible reason to
+continue as it was — measure the variance first, wait for the arm, let the baseline finish. Ten such
+reasons in a row is a stall, and only something that persists across context compaction can see ten
+in a row. **The streak keys on the MEASURED metric read off the archive, not on the goal text I
+pass in, so it cannot be reset by rewording.**
+
+**Building it exposed two real defects, one in my own code and one in the campaign's headline metric.**
+
+**(a) My first `measured_metric()` fabricated its numbers.** It called `failures.load()` — which
+returns RAW EVENTS — and then read `r["kind"]` and `r["failed"]`, fields that exist on no event.
+Every lookup returned `None`, and it printed *"45 completed / 0 failed, 0% of all failures"* against
+a known 93%. Caught only because that 0% contradicted a number I already had (Lesson 47: an
+impossible value indicts the instrument). Now mirrors `failures.main`'s actual logic — same
+`kind_of`, same `run_finished` gate, same `status != "done"` test.
+
+**(b) `failures.py` — THE improvement metric — pools across every engine this campaign has ever
+run.** Its glob finds **33 logs, 27 of them in `nodeloop-preboundary-*` archives** from builds that
+no longer exist. So "test-authors are 14/15 = 93% of ALL failures" is an average over a day and a
+half of runs that **cannot respond to anything I change today**. A stall detector keyed on that
+number would fire every tick and mean nothing — and, worse, a genuine improvement would be invisible
+inside it.
+
+`goalstate.py` therefore scopes to **runs produced by the binary currently on disk**
+(`run.jsonl` mtime ≥ `target/release/goose` mtime). Self-maintaining: no manual boundary marker, it
+follows every future crossing automatically, and it states its claim precisely. The boundary
+procedure already kills the engine BEFORE rebuilding, which is what keeps a run from straddling.
+
+**Current reading: NO FINISHED RUN on this binary yet** — printed as absence of evidence, explicitly
+NOT as a 0% failure rate, because `0 completed / 0 failed` and "zero failures out of many" are
+different statements and the vacuous-truth trap (`all([])` is `True`) is exactly how a campaign
+credits itself with a perfect score it never earned.
+
+**LESSON 83 — A METRIC POOLED ACROSS BUILDS IS A METRIC THAT CANNOT MOVE.** F164's row was the
+campaign's north star for days while silently averaging pre-change and post-change runs together.
+Every improvement I could have made would have been divided by 27 runs of history. Before trusting a
+metric to detect a change, check that its SAMPLE can respond to the change at all.
