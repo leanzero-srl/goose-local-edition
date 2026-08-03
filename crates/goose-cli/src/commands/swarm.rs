@@ -16397,7 +16397,7 @@ mod shipped_defaults_tests {
     /// setting. The disabled device is in the fixture because filtering it out is half the rule.
     #[test]
     fn the_repair_round_targets_the_fastest_enabled_node() {
-        let devices = vec![
+        let devices = [
             DeviceCfg {
                 id: "gabee".into(),
                 model_id: "m1".into(),
