@@ -102,6 +102,7 @@ fn to_input(
     r: &Row,
     prev_calls: Option<u32>,
     prev_think: Option<u64>,
+    prev_at: Option<u64>,
     written_ok: bool,
 ) -> JudgeInput {
     let owned: Vec<String> = if r.owns_files {
@@ -130,6 +131,7 @@ fn to_input(
         worker_thinking_chars: r.thinking_chars,
         prev_thinking_chars: prev_think,
         prev_tool_calls: prev_calls,
+        prev_observed_secs: prev_at,
         split_count: 0,
     }
 }
@@ -152,7 +154,13 @@ fn a_worker_still_taking_actions_survives_the_first_write_deadline() {
         owns_files: true,
     };
     // Tool calls climbing 4 -> 9 between observations: this worker is doing things.
-    let producing = to_input(&base, Some(4), Some(3_000), false);
+    let producing = to_input(
+        &base,
+        Some(4),
+        Some(3_000),
+        Some(base.elapsed_secs - 60),
+        false,
+    );
     assert!(
         deterministic_verdict(&producing, &cfg).is_none(),
         "a worker whose tool-call count is still climbing was killed at {}s; the deadline needs an \
@@ -160,7 +168,13 @@ fn a_worker_still_taking_actions_survives_the_first_write_deadline() {
         base.elapsed_secs
     );
     // Same instant, but the counters are FLAT — nothing is happening. This one must still be caught.
-    let stalled = to_input(&base, Some(9), Some(4_000), false);
+    let stalled = to_input(
+        &base,
+        Some(9),
+        Some(4_000),
+        Some(base.elapsed_secs - 60),
+        false,
+    );
     let v = deterministic_verdict(&stalled, &cfg).expect("a stalled worker is still caught");
     assert_eq!(v.verdict, Verdict::OverReading);
     assert!(v.deterministic);
@@ -179,8 +193,11 @@ fn a_worker_that_ran_no_command_is_labelled_no_first_write() {
         secs_since_last_write: None,
         owns_files: true,
     };
-    let v = deterministic_verdict(&to_input(&r, Some(0), Some(9_000), false), &cfg)
-        .expect("the deadline still fires on a silent worker");
+    let v = deterministic_verdict(
+        &to_input(&r, Some(0), Some(9_000), Some(r.elapsed_secs - 60), false),
+        &cfg,
+    )
+    .expect("the deadline still fires on a silent worker");
     assert_eq!(
         v.verdict,
         Verdict::NoFirstWrite,
@@ -206,8 +223,11 @@ fn a_finished_deliverable_is_accepted_rather_than_failed() {
         secs_since_last_write: Some(600),
         owns_files: true,
     };
-    let v = deterministic_verdict(&to_input(&r, Some(6), Some(7_674), true), &cfg)
-        .expect("an idle worker with a finished file still gets a verdict");
+    let v = deterministic_verdict(
+        &to_input(&r, Some(6), Some(7_674), Some(r.elapsed_secs - 60), true),
+        &cfg,
+    )
+    .expect("an idle worker with a finished file still gets a verdict");
     assert_eq!(
         v.verdict,
         Verdict::Accept,
@@ -232,15 +252,16 @@ fn replay_the_whole_archive() {
     let cfg = JudgeConfig::default();
     let mut counts: std::collections::BTreeMap<&'static str, usize> = Default::default();
     let mut mislabelled = 0usize;
-    let (mut prev_calls, mut prev_think) = (None, None);
+    let (mut prev_calls, mut prev_think, mut prev_at) = (None, None, None);
     let mut last_task = String::new();
     for r in &rows {
         if r.task_id != last_task {
             prev_calls = None;
             prev_think = None;
+            prev_at = None;
             last_task = r.task_id.clone();
         }
-        let input = to_input(r, prev_calls, prev_think, r.any_owned_written);
+        let input = to_input(r, prev_calls, prev_think, prev_at, r.any_owned_written);
         match deterministic_verdict(&input, &cfg) {
             Some(o) => {
                 *counts.entry(o.verdict.as_str()).or_default() += 1;
@@ -252,6 +273,7 @@ fn replay_the_whole_archive() {
         }
         prev_calls = r.tool_calls;
         prev_think = r.thinking_chars;
+        prev_at = Some(r.elapsed_secs);
     }
     eprintln!("replayed {} archived observations: {counts:?}", rows.len());
     assert_eq!(
@@ -284,7 +306,7 @@ fn quantify_the_change_against_the_recorded_verdicts() {
     let mut trips_now_survive = 0usize;
     let mut trips_still_fire = 0usize;
     let mut accepts = 0usize;
-    let (mut prev_calls, mut prev_think) = (None, None);
+    let (mut prev_calls, mut prev_think, mut prev_at) = (None, None, None);
     let mut last = String::new();
     for r in &rows {
         if r.task_id != last {
@@ -292,7 +314,7 @@ fn quantify_the_change_against_the_recorded_verdicts() {
             prev_think = None;
             last = r.task_id.clone();
         }
-        let input = to_input(r, prev_calls, prev_think, r.any_owned_written);
+        let input = to_input(r, prev_calls, prev_think, prev_at, r.any_owned_written);
         let now = deterministic_verdict(&input, &cfg);
         // An archived row that WOULD have tripped the old bare stopwatch: owns code, nothing written,
         // past 420s. That predicate had no evidence term, so this is exactly the old branch.
@@ -323,5 +345,45 @@ fn quantify_the_change_against_the_recorded_verdicts() {
         trips_still_fire > 0,
         "the deadline must still catch a genuinely stalled worker — a change that disarms it entirely \
          would trade one failure mode for a worse one"
+    );
+}
+
+/// A tool-call increase seen across a 21-MINUTE gap is not evidence that the worker is producing NOW.
+///
+/// THE DEFECT, measured on `swarm-3node-r0`. The judge runs only when a device is idle, and that run
+/// suppressed 66 of 72 opportunities as `no_idle_device`. Consecutive observations of the same attempt
+/// therefore had a median gap of 60s but a MAX of 1,267s. `test-meridian` was observed at 360s with 0
+/// tool calls and again at 1,627s with 8 — a genuine increase, but spread over 21 minutes during which
+/// `secs_since_last_write` had reached 705s. `is_still_producing` returned true on that pair, which
+/// BLOCKED the Accept branch and DOUBLED the stall deadline for a worker that had finished its files
+/// twelve minutes earlier and was holding one of six fleet slots at 27 minutes.
+///
+/// The fix is not a new threshold: the increase must be observed inside the SAME window the predicate is
+/// overriding (`min_age_secs.max(420)`), so a predicate can never veto a staleness rule using evidence
+/// coarser than that rule.
+#[test]
+fn an_action_increase_across_a_stale_gap_does_not_count_as_producing() {
+    let cfg = JudgeConfig::default();
+    let r = Row {
+        task_id: "test-meridian".into(),
+        elapsed_secs: 1_627,
+        tool_calls: Some(8),
+        thinking_chars: Some(2_007),
+        any_owned_written: true,
+        secs_since_last_write: Some(705),
+        owns_files: true,
+    };
+    // The real pair from the run: previous look at 360s with 0 calls, this look at 1627s with 8.
+    let stale = to_input(&r, Some(0), Some(1_048), Some(360), true);
+    let v = deterministic_verdict(&stale, &cfg)
+        .expect("a worker idle for 705s must not be protected by a 21-minute-old action count");
+    assert!(v.deterministic);
+
+    // CONTROL, the other direction: the SAME counts observed 60s apart are real production and must
+    // still suppress the verdict. Without this the test would pass for a predicate that never fires.
+    let fresh = to_input(&r, Some(0), Some(1_048), Some(1_627 - 60), true);
+    assert!(
+        deterministic_verdict(&fresh, &cfg).is_none(),
+        "a worker that made 8 tool calls in the last 60s is producing and must not be killed"
     );
 }
