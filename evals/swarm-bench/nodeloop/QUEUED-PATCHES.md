@@ -486,7 +486,21 @@ differs from 420 on a run whose observed p90 exceeds it.
 **⚠ INTERACTION with #14** #14 fixes the label, this fixes the trigger. Land both or the log will
 describe the new behaviour with the old name.
 
-## 16. 37% of judge opportunities never run, and every skip is `no_idle_device`
+## 16. ~~37% of judge opportunities never run~~ — WITHDRAWN (F202)
+
+**WITHDRAWN BEFORE THE CROSSING.** The premise was wrong: `deterministic_verdict` already runs
+BEFORE the `no_idle_device` skip (`swarm.rs:16604` vs `:16610`), on every invocation. The engine's
+own comment says so — *"The cheap deterministic checks above already ran without a model; skip the
+LLM review rather than queue it behind a busy worker."* This patch would have changed nothing, and
+its registered check would have PASSED on the unmodified engine and read as a win.
+
+What is true and stays: only the SEMANTIC review is starved (34% on the live arm, 178 of 480 across
+the corpus), and `swarm.rs:16617` already documents the cause with occupancy attached — "high
+utilisation and semantic judging are in direct tension". No code change is proposed here.
+
+<details><summary>original text, kept for the audit trail</summary>
+
+### ~~16. 37% of judge opportunities never run, and every skip is `no_idle_device`~~
 
 **Site** the judge dispatch path in `crates/goose-swarm/src/scheduler.rs` (the `no_idle_device` skip).
 
@@ -507,3 +521,5 @@ gate for the LLM judge only.
 **Registered check** on the next post-crossing run, `judge_skipped` with a deterministic verdict
 available is 0; skips remain only where the semantic judge was wanted. Today: 178 of 178 skips are
 `no_idle_device`, and the deterministic branches cannot have run on any of them.
+
+</details>
