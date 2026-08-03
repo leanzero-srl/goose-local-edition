@@ -7782,3 +7782,38 @@ capped sink writes the cap value and that is what corrupted F152 (F180).
 
 ⚠ Still one run per cell. This does not become a result at n=1; it becomes a DIRECTION, and it tells
 me which of two queued fixes to spend a boundary crossing on.
+
+## F184 (provisional) — co-tenancy explains most of the sink slowdown; idle-fill adds more on top
+
+The third condition landed. All three from dispatch→completion timestamps, never `elapsed_ms`:
+
+    r0 baseline      sink SOLO, no idle-fill                     63 s/call   (24 calls / 25.1 min)
+    r1 baseline      sink + 3 REAL sibling tasks                148 s/call   (5 calls / 12.3 min, MID-FLIGHT)
+    sink_review r0   sink + idle_dimension_review on its node   257 s/call   (14 calls / 59.9 min)
+    fleet median (F116)                                          83 s/call
+
+**Neither registered branch wins outright, and the middle is the useful answer:**
+
+  · **Ordinary co-tenancy is a MAJOR driver — 63 → 148, a 2.3x slowdown from real sibling work
+    alone.** F179 attributed the whole effect to the idle-fill mechanism, and that attribution was
+    too strong. Partial retraction, stated plainly.
+  · **But idle-fill is still worse than ordinary co-tenancy — 148 → 257, another 1.7x.** So the lever
+    is NOT exonerated either; it is guilty of an increment, not of the whole cost.
+
+**This changes which fix earns the boundary crossing.** F179b (exclude the sink's device from
+idle-fill) addresses only the 148→257 portion — the smaller half. The larger half is that the sink,
+which is the LAST task and therefore the critical path, gets co-tenanted by ordinary siblings at all.
+The general fix is an EXCLUSIVE device for the sink, of which F179b is a special case. That is a
+bigger change than F179b and I am not queuing it on this evidence.
+
+⚠ **PROVISIONAL — three reasons, all real:**
+  1. **r1's sink is INCOMPLETE**: 5 calls over 12.3 min. Five is a small denominator and the figure
+     can move a lot; the same sink at 14 calls could read very differently.
+  2. **Co-tenancy was not constant** — 4 tasks live at dispatch, 3 live now. The "3 siblings" label
+     is the starting condition, not a steady state.
+  3. **n=1 per cell**, on a fleet whose replicate spread is 46 points.
+**RE-MEASURE AT COMPLETION before treating any of this as settled**, and again on r2.
+
+What is already safe to carry forward regardless of where the number lands: **the sink's seconds-per-
+call is sensitive to what else runs on its node, and it is the critical path.** That is the durable
+shape; the exact attribution between "siblings" and "idle-fill" needs the completed figure.
