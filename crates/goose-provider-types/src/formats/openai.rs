@@ -1491,12 +1491,18 @@ pub fn create_request_with_options(
     // call yet. The moment the worker acts, the constraint disappears on its own and the rest of the
     // session is byte-identical to before — no caller bookkeeping, no way to strand a worker in a
     // forced-call loop.
-    if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
+    if let Some(_tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
         let already_acted = payload["messages"]
             .as_array()
             .is_some_and(|msgs| msgs.iter().any(|m| m.get("tool_calls").is_some()));
         if !already_acted {
-            payload["tool_choice"] = json!({"type": "function", "function": {"name": tool}});
+            // "required", NOT the named-function object. MEASURED against the live server:
+            //   {"error":"Invalid tool_choice type: 'object'.
+            //             Supported string values: none, auto, required"}   -> HTTP 400
+            // The named form is what this was written to send and it is rejected outright, so shipping
+            // it would have made EVERY forced request fail. `required` is the strongest form the
+            // endpoint accepts, and it is also portable to providers that do accept the object form.
+            payload["tool_choice"] = json!("required");
         }
     }
     if let Some(text) = prefill.filter(|t| !t.is_empty()) {
@@ -4226,10 +4232,8 @@ mod force_tool_until_act_tests {
     fn the_named_tool_is_forced_while_nothing_has_been_called() {
         let msgs = vec![Message::user().with_text("write it")];
         let p = req(&cfg("write"), &msgs);
-        assert_eq!(
-            p["tool_choice"],
-            json!({"type": "function", "function": {"name": "write"}})
-        );
+        // "required", not the named object: the live server rejects the object form with HTTP 400.
+        assert_eq!(p["tool_choice"], json!("required"));
     }
 
     /// ...and it RELEASES ITSELF once an assistant turn carries a tool call. Without this half the

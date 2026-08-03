@@ -19112,10 +19112,18 @@ fn think_off_test_authors() -> bool {
     )
 }
 
-/// Force the write tool while a worker's owned files are all still missing. Default OFF: it is the one
-/// change in this batch that alters what the MODEL IS ALLOWED TO EMIT rather than what it is told, and
-/// the replay bench already showed that forcing "any tool" produces a `shell` call instead of a write.
-/// It ships behind a gate until the bench says the named-tool form actually lands a write.
+/// Require SOME tool call while a worker's owned files are all still missing.
+///
+/// STAYS OFF, and the bench says why. Two measurements, both against the live server:
+///   * the NAMED-function form is rejected outright — `{"error":"Invalid tool_choice type: 'object'.
+///     Supported string values: none, auto, required"}` — so "force the write tool" is not
+///     expressible here at all, and shipping it would have 400'd every forced request;
+///   * `"required"` is NOT hard-enforced (1 of 6 replays still produced no tool call) and biases to
+///     the wrong tool (`shell` on 3 of 5 acts, against a `write` the worker owes).
+///
+/// So this converts some refusals into actions and some into the wrong action. It is kept, wired and
+/// tested rather than deleted because it is the only mechanism that can make "finish without acting"
+/// impossible if the endpoint ever enforces it — but it does not earn a default on this evidence.
 fn force_write_tool() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_FORCE_WRITE",
