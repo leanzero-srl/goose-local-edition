@@ -8205,3 +8205,75 @@ grows while tool_calls do not, which is exactly the F191 spiral signature and no
 So the batch's one flagged interaction is settled, and settled the right way — the falsifier had a
 concrete address (three specific rows on disk), and checking it took one query. **This is what F163's
 registered falsifier bought: a year from now the reason F191b is safe is a table, not an argument.**
+
+## F196 — the "API of" block is the dependency's FULL SOURCE, cut mid-identifier, fenced as complete
+
+Taken as the registered readout on the live `scoped_contracts-n3-r0` (4 test-authors dispatched).
+
+**The arm works and its effect is small.** Test-author prompt **22,511 → 20,552 chars, a 8.7% cut**;
+`## API of` blocks **5 → 4**. That is the whole effect available to it, and the reason is structural:
+**a test-author's DAG neighborhood is genuinely most of the app** — it imports the module under test
+*and* that module's collaborators. Scoping the block COUNT was the wrong axis. (Implementers,
+separately: median **0** `## API of` blocks. The entire ~10k gap between an implementer prompt and a
+test-author prompt IS the contract bundle. F156's "2.3× prompt" is now decomposed.)
+
+**Where the bytes actually are.** Section-by-section on one live test-author prompt (19,916 chars):
+
+    3,606  18.1%  ## API of vendorsync/meridian.py
+    3,601  18.1%  ## API of vendorsync/api.py
+    2,890  14.5%  ## API of vendorsync/store.py
+    1,657   8.3%  ## PROJECT FILE LAYOUT
+      401   2.0%  ## FROZEN MODULE INTERFACES
+
+**The contract bundle — ALREADY SCOPED this run — is 10,097 chars = 50.7% of the entire prompt.**
+
+**And it is not an API.** The block header reads *"## API of {f} (a dependency you import — use it
+from here, do NOT `cat` it)"* and what follows is the file's **full source**: imports, comment
+banners, and every method BODY. Counted across the prompt: **6 private methods pasted against 5
+public ones** — more implementation the test-author can never call than surface it can.
+
+**Three of four blocks are truncated mid-token, with no notice, inside a closed fence:**
+
+    meridian.py  ends `    def _up`      -> pasted body FAILS ast.parse (line 104: expected '(')
+    api.py       ends `        self._se`
+    truncation notice present: False (all four)
+
+`swarm.rs:19638` — `let capped = api_source.chars().take(dep_budget.min(3500)).collect();` — a raw
+char cut, then `"```\n{capped}\n```"` closes the fence unconditionally. **So the worker receives a
+file that stops mid-`def`, formatted as if it were whole, together with an instruction forbidding it
+to open the real one.** A model given a truncated dependency and denied the file has nothing left to
+do but reason — which is F191's 595-second zero-tool-call spiral, from the other end.
+
+**THE ENGINE ALREADY HAS THE FIX AND IT IS SWITCHED OFF.** `swarm.rs:19628`:
+
+```rust
+let api_source: Cow<str> = if dep_sig_on {
+    let sigs = goose_swarm::extract_signatures(trimmed, sig_lang);
+    if sigs.trim().is_empty() { Cow::Borrowed(trimmed) } else { Cow::Owned(sigs) }
+} else { Cow::Borrowed(trimmed) };
+```
+
+`extract_signatures` (coherence.rs:34) — *"Function/method BODIES are removed; type, const and var
+declarations are kept as-is"* — handles Python, falls back to the full body when it finds nothing so
+ON can never inject an empty API. `dep_signatures: None` (swarm.rs:1090) ⇒ **OFF by default, never
+measured on this fleet.** It is emitted in `levers_resolved` (:22140), so F194's arm-armed check works.
+
+**This is the defect shape for the eighth time, and the sharpest instance yet** — F141 compile error,
+F142 thinking count, F149 tool list, F153 file list, F157 `is_test_author`, F158 `owned_files`, F172
+digest mtime, and now this: *the engine holds the capability and does not use it.* Here it does not
+merely fail to narrow — it pastes maximum detail (full bodies) of minimum relevance (private
+helpers) and truncates away whatever came last.
+
+**Queued as arm `dep_signatures` (reps=3) with its falsifier registered before the run**, and as
+patch #11 (the silent truncation is a defect in its own right — a large *signature* surface would
+still be cut mid-token and fenced as whole).
+
+**Honest correction:** sweep.py's own comment beside the `scoped_contracts` arm already said "265
+lines of implementation body against 35 signature lines, including six private methods." I had the
+observation and attached it to the wrong lever — fewer blocks, when the defect was fatter blocks.
+The live measurement is what separated them.
+
+**LESSON 71 — MEASURE THE COMPOSITION, NOT ONLY THE TOTAL.** Four ticks were spent on "the
+test-author prompt is 22,511 chars" as a scalar. One section-by-section decomposition, available at
+any point, showed half of it is one component with a purpose-built lever already written for it.
+A total tells you something is too big; only the composition tells you which lever touches it.

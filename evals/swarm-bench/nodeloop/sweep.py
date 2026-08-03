@@ -113,6 +113,40 @@ ARMS = [
                 "'DON'T OVER-READ / there is nothing further to look up' instruction sitting next to "
                 "12k of readable code. VOID the arm if any test-author reports an empty neighborhood.",
     },
+    # dep_signatures — the arm the LIVE scoped_contracts run argued for, which is not the same arm.
+    #
+    # Measured on `scoped_contracts-n3-r0` while it ran (F196): the lever IS armed and IS working, and
+    # it cut the test-author prompt from 22,511 to 20,552 chars — 8.7%, one `## API of` block of five.
+    # That is the whole effect available to it, because a test-author's DAG neighborhood is genuinely
+    # most of the app: it imports what it tests AND that module's collaborators. Scoping the COUNT of
+    # blocks was the wrong axis. The blocks that remain are 10,097 chars = **50.7% of the entire
+    # prompt**, and each one is the dependency's FULL SOURCE — 6 private methods against 5 public ones,
+    # under a header that says "## API of" and "do NOT `cat` it".
+    #
+    # swarm.rs:19628 already has the right mechanism and it is switched off: `dep_signatures_on()`
+    # swaps the pasted body for `goose_swarm::extract_signatures` (coherence.rs:34 — "Function/method
+    # BODIES are removed; type, const and var declarations are kept as-is"), with a fallback to the
+    # full body when extraction finds nothing, so ON can never inject an empty API. It targets the
+    # 50.7%, not the 8.7%.
+    {
+        "name": "dep_signatures",
+        "reps": 3,
+        "env": {"GOOSE_SWARM_DEP_SIGNATURES": "1"},
+        "gate": "ARM-ARMED CHECK FIRST, and per F194 read BOTH addresses: `levers_resolved."
+                "dep_signatures` (swarm.rs:22140 emits it) AND `run_started.gates`, requiring a "
+                "control run to differ on whichever is non-null. READOUT ON TEST-AUTHORS ONLY. "
+                "Registered BEFORE the run: (1) `## API of` bytes, vs the measured 10,097 = 50.7% of "
+                "prompt; (2) private methods pasted, vs 6 against 5 public; (3) blocks whose fenced "
+                "body FAILS `ast.parse`, vs 1 of 4 today (meridian.py is cut at `def _up`); (4) max "
+                "dry reasoning before the first owned write, vs 3,402 median / 24,032 max; (5) the "
+                "test-author row of `failures.py`, vs 42 completed / 13 failed = 31%. "
+                "THE FALSIFIER: if (1) and (2) fall sharply and (4)+(5) do NOT move, prompt volume is "
+                "not the cause of the test-author failure rate and this whole thread — F156, F159, "
+                "F164, F196 — has been chasing a correlate. That is the outcome worth the run. "
+                "VOID if extraction falls back to the full body on every dependency (an empty "
+                "`extract_signatures` return means the language was not recognised, not that the lever "
+                "worked).",
+    },
     {
         # Both LOSING 3-node units split their single most-detailed task; the 0.8708 winner never
         # split at all. On a split, `child_description()` (scheduler.rs:70-99) returns the literal
@@ -387,6 +421,18 @@ QUESTIONS: list[dict] = [
              "median / 24,032 max; judge interventions vs 3. A cut in size with NO improvement in "
              "dry reasoning REFUTES the mechanism hypothesis and is the most valuable outcome. VOID "
              "if any test-author reports an empty neighborhood."},
+    {"arm": "dep_signatures", "nodes": 3, "reps": 3,
+     "asks": "the same population as scoped_contracts, on the axis that actually holds the bytes. "
+             "Measured live on the scoped run (F196): scoping the block COUNT cut 8.7% (one block of "
+             "five) because a test-author's neighborhood is most of the app by nature. The four "
+             "surviving blocks are 10,097 chars = 50.7% OF THE WHOLE PROMPT, and each is the "
+             "dependency's full SOURCE — 6 private methods against 5 public, one of them truncated "
+             "mid-`def` and fenced as if complete, under a header reading 'API of' and 'do NOT `cat` "
+             "it'. swarm.rs:19628 already swaps that body for `extract_signatures` and is OFF. "
+             "READOUT ON TEST-AUTHORS ONLY. FALSIFIER: if `## API of` bytes and private-method count "
+             "fall sharply while dry reasoning and the failures.py test-author row do NOT move, then "
+             "prompt volume is a correlate and not the cause, and F156/F159/F164/F196 have been "
+             "chasing the wrong quantity. That is the result worth the fleet time."},
     {"arm": "sink_review", "nodes": 3, "reps": 1,
      "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
              "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
