@@ -754,7 +754,7 @@ pub struct SwarmConfig {
     // fallback at the `unwrap_or_else` is a DIRECT typed read that would fail the same way and
     // silently discard the user's whole `swarm:` block. bool::default() is false, which is this
     // lever's documented default, so this is byte-identical.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub kind_prompt: bool,
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
     /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
@@ -1078,7 +1078,7 @@ impl Default for SwarmConfig {
             spiral_thinking_chars: 0,
             contract_retry: false,
             read_on_fix: false,
-            kind_prompt: false,
+            kind_prompt: true,
             degrade_on_stall: false,
             split_fat: false,
             incremental_replan: false,
@@ -1089,7 +1089,7 @@ impl Default for SwarmConfig {
             research_tools: false,
             doc_prefetch: false,
             doc_fetch: false,
-            dep_signatures: None,
+            dep_signatures: Some(true),
             think_off_test_authors: None,
             scoped_contracts: None,
             fan_verify: true,
@@ -16342,6 +16342,35 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
 
 /// Default for the spec-ambiguity probe's `product_specified` when the model omits it: assume the product IS
 /// specified, so a parse gap never spuriously forces an ask (conservative — under-ask beats over-ask here).
+#[cfg(test)]
+mod shipped_defaults_tests {
+    use super::*;
+
+    /// The two verified defects that ship ON. Both had a switch already written and both were OFF,
+    /// so every run this campaign measured carried the defect.
+    ///
+    /// kind_prompt OFF hands a test-author the IMPLEMENTER reading rule — "Read AT MOST the ONE file
+    /// you will edit" — which for a test-author is its own test file, i.e. it is told not to read the
+    /// SOURCE MODULE whose signatures it must assert against. dep_signatures OFF injects the
+    /// dependency's whole body truncated mid-token (3 of 4 blocks cut, one failing ast.parse).
+    ///
+    /// A serde(default) would silently re-zero kind_prompt for any config.yaml omitting the key, so
+    /// the field carries default_true and this test pins BOTH paths.
+    #[test]
+    fn the_two_verified_defect_fixes_default_on() {
+        let d = SwarmConfig::default();
+        assert!(d.kind_prompt, "kind_prompt must ship ON");
+        assert_eq!(d.dep_signatures, Some(true), "dep_signatures must ship ON");
+
+        let from_empty: SwarmConfig =
+            serde_yaml::from_str("{}").expect("an empty swarm block must parse");
+        assert!(
+            from_empty.kind_prompt,
+            "a config.yaml omitting kind_prompt must KEEP the baked default, not serde's false"
+        );
+    }
+}
+
 fn default_true() -> bool {
     true
 }
