@@ -9852,3 +9852,34 @@ kill I made was correct — a crippled fleet, a wrong lever set, a discarded arm
 each one still deposited a scored artifact that the scheduler read as an answer. **When you add a way
 to stop a unit early, check what that unit leaves behind and whether the next reader can tell it from
 a finish.**
+
+## F228 — the 92% judge skip is ARITHMETIC, not a defect; and F207's routing IS armed
+
+Two things checked this tick, both raised against my OWN work.
+
+**The judge skip rate.** `think_off-n3-r0` skipped 66 of 72 judge opportunities, all `no_idle_device`
+— far above the 37% measured earlier (F202), which read like a regression I had caused by setting
+every pool device to `weight: 2`. It is not. The gate (swarm.rs:16642) hands the judge a model only
+when the scheduler finds a device with `in_flight < weight`; capacity is 3 nodes x 2 = 6 and the run
+carried 5 tasks in flight, so at most ONE judge can hold a slot and every other opportunity in that
+window must skip. The engine already states the tension in its own comment: *"High utilisation and
+semantic judging are in direct tension, and nothing in the log said so."* The earlier 37% was
+measured at lower occupancy. **Nothing to fix; the number is a function of utilisation, and a run
+that keeps the fleet busy will always suppress semantic judging.** Worth remembering the next time a
+skip rate looks alarming: ask what the occupancy was first.
+
+**F207 was one substring away from inert.** `pick_device`'s weight-decisive ordering keys on
+`DeviceCfg.speed_weight`, which is NOT the pool `weight` I edited — `weight` is a device's
+CONCURRENCY (swarm.rs:2106-2127, explicitly "NOT the speed_weight"), while routing priority comes
+from the separate `speed_weights` MAP matched by host/identifier substring. Had that map been
+absent, every device would resolve to speed_weight 1, the ordering key `u32::MAX - speed_weight`
+would be identical for all three, and the one mini-goal I count as RESOLVED would have been a no-op.
+It is present and correct — `gabee: 1, local: 2, worksmacstudio: 3` — and the match is on the
+lowercased `"{host} {identifier}"`, so `WorksMacStudio.lan` matches `worksmacstudio`. **Armed. But I
+had not verified it, and I was reporting it as resolved.**
+
+**First promptbench sample proves the transport.** A real 36-message test-author decision point,
+replayed against the live fleet: `acted=True, first_tool=write, ttfa=106.0s, thinking=668 chars`.
+106 seconds to the first tool token on a single turn is itself a data point for F223 — and it is
+consistent with F116's 83s/turn. The instrument works; the triage is what says which cases the
+baseline actually fails.
