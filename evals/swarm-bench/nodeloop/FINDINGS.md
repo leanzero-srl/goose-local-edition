@@ -9231,3 +9231,82 @@ would have to be:
 written by the same judgement it is meant to constrain, so its failure mode will be the one that lets
 that judgement off. Ask of every guard: *what is the cheapest way this passes without the thing it
 guards being true?* Here the answer was "any noise at all", and it took one non-result to expose it.
+
+## F216 — 🔬 THE RESEARCH LANDED. It supplies the behavioural evidence AND overturns my plan.
+
+Five agents, 628k tokens, 58 minutes. Three lenses converged independently on the same root cause, and
+**two of them MEASURED it on the fleet at real prompt size** — which is exactly the evidence F214 said
+the whole chain lacked.
+
+**THE BEHAVIOURAL EVIDENCE, measured, not rendered:**
+
+    /v1/completions, 22,187-char worker prompt:
+      default template          47.3 s · 974 chars of prose · NO TOOL CALL
+      enable_thinking=false      3.1 s · TOOL CALL AS THE FIRST TOKEN          ~15x
+
+    /v1/chat/completions, assistant-turn prefill "<think>\n\n</think>\n\n", 12,226-char prompt + tools:
+      finish_reason=tool_calls · ntc=1 · reasoning_tok=0 · wrote a real 10,424-char test file
+      3/3 reproducible on the trivial control
+
+**⇒ F212's registered falsifier is DISCHARGED.** The prefill does not merely change what reaches the
+model; it changes what the model does, by a factor of ~15 on time-to-first-action.
+
+**⚠ MY PLAN WAS THE WORSE ROUTE, AND THE AGENTS WERE RIGHT.** I intended to install the fixed template
+on all three LM Studio nodes. That is fleet reconfiguration — the very thing the standing rule forbids
+(*"run with the fleet as it is; if the engine can't use 3 identical nodes, fix swarm.rs, not the
+fleet"*) — and it is undocumented drift across three machines. **The prefill reaches the identical
+template branch from the harness, over the API, with ZERO fleet config.** I was about to bend a rule
+to get a result I could have had without bending it.
+
+**THE MECHANISM, proven rather than assumed:** LM Studio adds **no generation prompt when the last
+message is `assistant`** — it becomes a raw llama.cpp continuation. The control returning the literal
+`'assistant\n<think>\n\n</think>\n\nOK'` is the proof. So the HARNESS writes the assistant turn's
+opening tokens, and `<think>` is opened *and closed* before the model samples anything.
+
+**⚠ CORRECTION TO F211 — I reported the wrong sampler numbers.** I read `general.sampling.*` from the
+GGUF (temp 1.0, top_k 20, top_p 0.95). The **effective serve-time config** is
+`~/.lmstudio/.internal/user-concrete-model-default-config/…Q8_0.gguf.json`:
+
+    temp 1.0 · top_p 1.0 (NO nucleus truncation at all) · top_k 25 · min_p 0.2 · repeatPenalty 1.05
+
+**temp 1.0 with top_p 1.0 is the highest-entropy configuration available** — the exact opposite of
+what an agent emitting rigid XML needs. And **the MTP build requires `repetition_penalty = 1.0`; the
+live 1.05 is silently degrading speculative decoding.** The GGUF values are defaults the serve config
+overrides; quoting them as effective was my error.
+
+**NEW FACTS, each measured over 519 logged requests:**
+- goose sends **no sampler parameter whatsoever** on worker bodies. `max_tokens` in **0/519**.
+  `tool_choice` in **0/519** — never used on this path.
+- **`kind_prompt` is OFF**, so the tailored test-author blocks at `swarm.rs:19795`/`19847` are
+  **unreachable**, and test-authors — 93% of failures — receive the *implementer* rules
+  *"NEVER read the project's OTHER TEST files"* and *"STOP WHEN GREEN"*. Instructions for a job that
+  SATISFIES tests, handed to a job that AUTHORS them. This is d15ed448e's defect, still live.
+- **218 of 519 requests carry echoed `reasoning_content`, max 90,576 chars** — thinking is re-injected
+  as context, which lengthens the prompt, which produces more thinking. A compounding loop.
+
+**RANKED, BY CONFIDENCE (the agents' ranking, which I am not overriding):**
+1. **Assistant-turn prefill** — HIGH on mechanism, MEDIUM on shipping clean. Unknowns the agents
+   flagged themselves: turn ≥2 after a `tool` message, goose's `format_messages_with_options`
+   possibly reordering a synthetic trailing assistant, and **streaming tool-call parsing is entirely
+   untested while goose always streams**.
+2. **`kind_prompt: true`** — HIGH that it fires and is correct, MEDIUM that it moves the rate alone.
+3. **`preserves_thinking: false`** — HIGH that it works, MEDIUM net-positive; the Qwen card
+   *recommends* preserve_thinking for agents, so this is a genuine coin-flip and must be its own arm.
+4. **A real sampler profile** (0.6/0.95/20, repeat_penalty 1.0) — HIGH that it reaches the wire,
+   MEDIUM-LOW that it fixes the defect. Both fleet measurements agree: template 15×, samplers
+   second-order.
+5. **`dep_signatures: true`** — MEDIUM, and **the one item that can plausibly make output WORSE**
+   (a test-author with only signatures may fabricate behaviour it can no longer see).
+6. **`max_tokens` / `tool_choice:"required"`** — LOW as a fix, HIGH as instrumentation. Both lenses
+   that tested `required` found it **does not reduce thinking**, contradicting the naive reading.
+
+⚠ **THE PROBES RAN AGAINST THE LIVE FLEET** while `baseline-n3-r1` was executing. Requests at
+22,187 and 12,226 chars are not free (Lesson 59). **That run's timings are contaminated and must not
+be used for a wall-clock comparison.** Its task-level outcomes are still usable; its durations are not.
+I did not anticipate this when I fired the workflow, and it is my error, not the agents'.
+
+**LESSON 91 — WHEN YOU HAVE A COMPLETE CHAIN AND NO BEHAVIOURAL EVIDENCE, THE MISSING LINK IS THE
+WHOLE POINT.** I had five links proven and called the path "complete". It was complete as an
+explanation and empty as a result. Two agents spent one request each to get the 47.3 s → 3.1 s number
+that settles it — a test I had explicitly deferred as "needs the fleet" while doing offline renders
+that could never answer it.
