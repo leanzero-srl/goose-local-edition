@@ -8135,3 +8135,38 @@ comparable ground.
 
 This is not the freeze being extended — the freeze is over and the patches are ready, anchors
 verified, cost re-checked. It is refusing to spend a five-hour baseline to save ninety minutes.
+
+## F194 — `scoped_contracts` is ARMED (proven, with a control), and F171's rule needs a second address
+
+Before its readout can mean anything (F171), the arm must be proven armed. It is:
+
+    scoped_contracts-n3-r0   levers_resolved.scoped_contracts = True
+    baseline-n3-r2 (control) levers_resolved.scoped_contracts = False
+
+A positive with a negative control on the same field of the same event — the standard this campaign
+holds itself to, and the reason a later zero from this arm will be interpretable as DEAD rather than
+VOID.
+
+**BUT THE FLAG IS NOT WHERE F171 SAID TO LOOK.** F171 established `run_started.gates.<lever>` after
+hunting three wrong places for `sink_review`. For `scoped_contracts` that field is **`None` on BOTH
+the treatment and the control** — it carries no information at all. The reason is how the lever is
+plumbed:
+
+    sink_review        env-driven  (`GOOSE_SWARM_SINK_REVIEW`)  ->  run_started.gates.<lever>
+    scoped_contracts   CONFIG field (`swarm.rs:863 pub scoped_contracts: Option<bool>`)
+                                                                ->  levers_resolved.<lever>
+
+**So the arm-armed check has TWO addresses and which one carries the flag depends on the lever's
+plumbing.** Had I checked only `gates` — exactly what F171 instructs — I would have seen `None` on
+the treatment and concluded the arm was unarmed or the check was broken, on the campaign's most
+important arm.
+
+CORRECTED RULE, replacing F171's single address: **check `levers_resolved.<lever>` AND
+`run_started.gates.<lever>`, and require a CONTROL run to differ on whichever one is non-null.** A
+field that reads `None` on both arms is not evidence of anything — it is the wrong field, and that is
+distinguishable only by having the control in hand.
+
+This is the same shape as F171 itself (I hunted three wrong places) and as Lesson 52 (a guard
+protecting one direction implies the other is unguarded): **a lookup rule derived from ONE instance
+is a rule about that instance.** F171 was derived from an env lever and silently assumed all levers
+are env levers.
