@@ -193,3 +193,29 @@ FINISH the task rather than spending its last attempt.
 
 **REGISTERED CHECK:** `failures.py`'s test-author row moves. That row — not a pooled score — is the
 campaign's improvement metric (F164: implementers 0/63 failed, test-authors 13/42 = 31%).
+
+---
+
+## ANCHOR VERIFICATION — all ten sites confirmed present in source (2026-08-03 04:1x)
+
+Checked before the freeze lifts, so the batch applies without a hunt. Every string these patches key
+on still exists in the tree:
+
+    OK  F163   `let digest = std::fs::read_to_string(`            swarm.rs
+    OK  F163   `pub secs_since_last_write: Option<u64>,`          judge.rs   (the sibling field)
+    OK  F175b  `if !prewarmed.is_empty() {`                       swarm.rs   (the guard to move out of)
+    OK  F175b  `"event": "sink_review",`                          swarm.rs
+    OK  F180b  `"event": "sink_capped",`  x2 — BOTH sites         swarm.rs   (11506 deadline, 11538 gap)
+    OK  F158   `fn relevant_pitfalls(task_text: &str)`            swarm.rs
+    OK  F157   `TOOLS & ENVIRONMENT`                              swarm.rs
+    OK  F157   `any test file YOU OWN is your deliverable`        swarm.rs   (bullet 1 to gate)
+    OK  F157   `STOP WHEN GREEN`                                  swarm.rs   (bullet 2 to gate)
+    OK  F165   the `looping` verdict                              judge.rs
+
+The `sink_capped` count being exactly 2 matters: F180 established that the one which fired was the
+**event-gap** site, not the deadline site, so F180b must fix the deadline path and both sites must
+still be accounted for after the change.
+
+⚠ These anchors were verified against the CURRENT tree while the engine is FROZEN. If any further
+`crates/**` edit lands before the batch is applied, re-run this check — a moved anchor is a silent
+mis-apply, and there are nine patches to get wrong.
