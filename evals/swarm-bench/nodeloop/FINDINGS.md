@@ -7817,3 +7817,33 @@ bigger change than F179b and I am not queuing it on this evidence.
 What is already safe to carry forward regardless of where the number lands: **the sink's seconds-per-
 call is sensitive to what else runs on its node, and it is the critical path.** That is the durable
 shape; the exact attribution between "siblings" and "idle-fill" needs the completed figure.
+
+## F185 — F184's figure held when the denominator doubled; the co-tenancy split is real
+
+The provisional worry in F184 was the denominator: 148 s/call came from 5 calls. Re-measured at 10:
+
+    r1 baseline sink   5 calls / 12.3 min = 148 s/call
+                      10 calls / 24.4 min = 146 s/call     <-- 1.4% apart
+
+Doubling the sample moved it by 1.4%. **The small-denominator caveat is retired.** The three-cell
+picture stands:
+
+    r0 baseline      sink SOLO                                63 s/call
+    r1 baseline      sink CO-TENANTED with real siblings      146 s/call   -> 2.3x
+    sink_review r0   sink + idle_dimension_review              257 s/call   -> a further 1.8x
+    fleet median (F116)                                        83 s/call
+
+So the attribution splits roughly **2.3x to ordinary co-tenancy, 1.8x more to idle-fill on top** —
+F179's original "idle-fill causes the slowdown" remains partially retracted, and the lever remains
+partly guilty. That conclusion is now resting on a stable number rather than a five-call estimate.
+
+⚠ **ONE CAVEAT SHARPENS RATHER THAN DISAPPEARS.** Co-tenancy FELL during the window — 3 siblings at
+dispatch, 1 now (`test-meridian`) — yet s/call did not fall with it. 146 is a CUMULATIVE average, so
+it is dominated by the earlier heavily-contended period and cannot show whether the sink sped up once
+siblings drained. **The clean version is per-call intervals, not a running mean**, and that is what r2
+should be measured with. I am not claiming "sibling count drives s/call linearly" — only that a
+co-tenanted sink is ~2.3x a solo one.
+
+Also worth noting for F164: **`test-meridian` is STILL in flight at 71 minutes** — the same task that
+fails 7 of 11 times and that F165 caught being recorded FAILED while green. The pattern is holding on
+this run too.
