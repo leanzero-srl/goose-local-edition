@@ -7885,3 +7885,40 @@ third baseline could widen that range and swallow it. Do not promote this past "
 is worth watching" until r2 lands.
 
 `baseline-n3-r2` is running (5 min in). It settles both the spread and this.
+
+## F187 — both baseline apps RUN; the score gap is coverage, not correctness. And a 2-of-3 majority confirms F182's finding.
+
+Crunched `baseline-n3-r1` (0.7166) the same way as r0 (0.8429), on a port far from `PORT_BASE`:
+
+    pytest                 52 passed
+    python3 -m vendorsync --help    well-formed (note: `--db` OPTIONAL here, REQUIRED in r0)
+    server                 LISTENING, no crash
+    GET /                  200, HTML dashboard
+    GET /api/payments      200  {"data": [], "total": 0, "limit": 25, "offset": 0}
+    GET /api/summary       200  {"count": 0, "total_minor": 0, "currency": "EUR", "oldest": null, "newest": null}
+
+**The lower-scoring build works end to end, and its API responses are shape-identical to r0's.** So
+the 12.6-point score gap between the two baselines is NOT a functionality gap:
+
+    r0   72 test functions   72 passed   score 0.8429
+    r1   21 test functions   52 passed   score 0.7166
+
+**~3.4x the test functions.** The scorer is reading coverage depth, and both apps serve correctly.
+That is worth knowing before any future arm's score delta gets read as "it broke something".
+
+**AND A CROSS-RUN MAJORITY CONFIRMS F182'S CURRENCY FINDING.** I initially grepped the wrong tree —
+F182's subject was `sink_review-n3-r0`, not `baseline-n3-r0` — and the mistake produced better
+evidence than the comparison I intended:
+
+    baseline-n3-r0      0 dynamic-currency sites   (hardcodes "EUR")
+    baseline-n3-r1      0 dynamic-currency sites   (hardcodes "EUR", lines 119 and 133)
+    sink_review-n3-r0   the `all_payments[0]["currency"]` / `newest_dt["currency"]` sites F182 flagged
+
+**Two of three independent runs implement the currency as a hardcoded "EUR"; only the run the idle
+nodes reviewed got it wrong — and they caught it.** F182 carried the explicit caveat *"I verified the
+CODE matches the description, NOT that it violates the spec"*. That caveat can now be discharged by
+majority implementation: three independent 27B planning passes agreed on hardcoded EUR twice, so the
+dynamic version is a genuine deviation and the reviewers found a real defect, not a style preference.
+
+This is the second independent line of evidence that the idle-node findings are worth consuming
+(F182b), and it arrived from a direction I was not aiming at.
