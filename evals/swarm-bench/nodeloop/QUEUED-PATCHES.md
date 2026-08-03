@@ -388,7 +388,14 @@ text.
 replace it — a dependency larger than the cap is still truncated, correctly marked, and the worker
 still needs permission to read it.
 
-**✅ PRECONDITION ANSWERED — PROMOTED, NOT GATED (F198).** The gate asked whether the verdict is
+**⚠ RE-SCOPED AND DEPRIORITISED (F200).** The false sentence lives at `judge.rs:355` (needs 16 tool
+calls — never reached; measured max was 2) and `judge.rs:381` (the #134 spiral trip, OFF at
+`spiral_thinking_chars: 0`). **Neither branch fires at the shipping config**, so this changes nothing
+today; the branch that DOES fire (`judge.rs:418`) already composes an accurate hint from counts via
+`no_file_hint`. Keep the patch — it goes live the moment either branch is armed — but it ranks below
+#11 and #13. The note below is superseded on provenance and kept for the audit trail:
+
+**~~PRECONDITION ANSWERED — PROMOTED, NOT GATED (F198)~~.** The gate asked whether the verdict is
 ever consumed. It is: **all 11 `over_reading` verdicts carry `action = re_dispatch`** at confidence
 0.90. F197's "0 kill events" was my own query error — the scheduler stamps the action as a FIELD on
 `judge_verdict` (`scheduler.rs:1414`), it does not emit a separate kill event. So this hint is not
@@ -420,3 +427,29 @@ bool makes "was this an engine fact or a weak model's guess" a lookup instead of
 **Registered check** on the next post-crossing run, every `judge_verdict` carries `deterministic`,
 and every `over_reading` with `tool_calls < over_read_tool_calls` reports `deterministic: false`.
 Today: the field is absent on all 302 verdicts.
+
+## 14. The verdict label says `over_reading` for a worker that read nothing
+
+**Site** `crates/goose-swarm/src/judge.rs:418-427` (the 420s deadline branch) and `Verdict` in the
+same file.
+
+**Measured (F199 + F200)** all 11 trips fired with `tool_calls` 0-2 (median 0) at elapsed 420-485s,
+floor exactly 420. The branch computes `let read_nothing = input.worker_tool_calls == Some(0);` and
+uses it to compose an accurate hint — then stamps `Verdict::OverReading` regardless. The run log
+therefore records "over_reading" about workers that ran no command at all.
+
+**Change** add a `Verdict::NoFirstWrite` (serialising as `no_first_write`) and select on the flag the
+branch already computes:
+
+```rust
+verdict: if read_nothing { Verdict::NoFirstWrite } else { Verdict::OverReading },
+```
+
+**Why it matters** this label is the primary key of every downstream analysis. It sent me down a
+false causal chain three separate times (F197's trap story, F198's retraction, F199's provenance
+deduction) before I checked the tool-call column. A run log that misdescribes its own trips costs
+every future reader the same three ticks. The engine already has the bit; it just does not use it —
+the same shape as F196's unused `extract_signatures`.
+
+**Registered check** on the next post-crossing run, no `judge_verdict` carries `over_reading` with
+`tool_calls == 0`. Today: 9 of 11 do.

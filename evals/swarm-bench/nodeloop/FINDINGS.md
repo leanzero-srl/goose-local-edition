@@ -8456,3 +8456,64 @@ registered readout already includes dry reasoning before first write.
 "over_reading" was recorded 11 times against workers whose read counter was zero. I spent two ticks
 building a causal story on top of the verdict's NAME without once asking whether the thing it names
 had happened. The check is one column of the record I had already loaded twice.
+
+## F200 — the trip is a DETERMINISTIC 420-SECOND DEADLINE, and its hint is already good
+
+`judge.rs:418`, the branch the comment calls the "blind fallback":
+
+```rust
+let owns_code = input.owned_files.iter().any(|f| is_code_deliverable(f));
+if owns_code && !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
+    let read_nothing = input.worker_tool_calls == Some(0);
+    return Some(JudgeOutcome { verdict: Verdict::OverReading, confidence: 0.9,
+                               hint: no_file_hint(input, read_nothing),
+                               proposed_split: None, deterministic: true });
+}
+```
+
+**The eleven elapsed times, sorted: 420, 422, 422, 423, 441, 455, 457, 465, 467, 474, 485.**
+The floor is **exactly 420**. That is the constant, not a coincidence.
+
+**⚠ F199's "these are LLM judge opinions" is RETRACTED.** It was a deduction from the *other* guard's
+arithmetic — `tool_calls >= 16` cannot fire at 0 calls, therefore not deterministic — and I never
+asked whether a *third* branch could reach a 0-call worker. This one can and does: `deterministic:
+true`, no evidence term at all, **a stopwatch**. A model opinion cannot produce a floor at the
+predicate's own constant; the clustering was the fingerprint and I read past it.
+
+**And the hint that actually gets delivered is good.** Not the canned sentence I queued patch #12
+against — that branch never fires. `no_file_hint` (`judge.rs:468`) composes the observation from
+counts:
+
+> "After 7.9 minutes, none of the files you own exists on disk yet, and you have run no command —
+> you have emitted 24,032 characters of reasoning instead."
+
+Specific, factual, no false diagnosis. The engine computes `read_nothing` precisely so it does not
+tell a silent worker to stop reading. **PATCH #12 IS RE-SCOPED** — the *"you already have … the
+injected dependency APIs"* sentence lives at `judge.rs:355` (needs 16 tool calls, never reached) and
+`judge.rs:381` (the #134 spiral trip, `spiral_thinking_chars: 0` = OFF). Both are unreachable at the
+shipping config, so fixing their wording changes nothing today. **It becomes live the moment either
+is armed — and the `dep_signatures` arm does not arm them, so #12 drops behind #11 and #13.**
+
+**What is actually defective here, and it is what cost me three ticks:**
+
+**The verdict LABEL does not describe what fired.** A worker with zero tool calls is recorded as
+`over_reading`. The engine *knows* — it computes `read_nothing` on the line above and branches the
+hint on it — and then stamps the same label either way. So the run log says "over_reading" 11 times
+about workers that read nothing, the hint says the opposite, and every downstream analysis (mine,
+three times over) starts from the label. **Patch #14.**
+
+**The honest causal picture, with the unsupported links removed:**
+
+1. Test-authors carry a 2.3× prompt whose bulk is 10k chars of dependency source, most of it private
+   helpers, three of four blocks truncated mid-token (**F196 — verified byte by byte, stands**).
+2. Test-authors are the population that fails to write a file within 420 seconds — **11 of 11 trips,
+   0 of 85 implementer verdicts**.
+3. At 420s the deterministic deadline kills and re-dispatches them; none of the 11 finished in one
+   attempt, 2 never completed.
+4. **Whether (1) causes (2) is the open question.** It is plausible, it is what `dep_signatures`
+   tests, and it is NOT established. Everything else above is measured.
+
+**LESSON 75 — WHEN OBSERVED VALUES CLUSTER AT A FLOOR, FIND THE CONSTANT BEFORE THEORISING ABOUT
+THE CAUSE.** Eleven values in 420-485 with the minimum at exactly 420 is a `>=` against a literal,
+and nothing else. I had that column in front of me for two ticks and spent them on provenance
+arguments instead of grepping for the number.
