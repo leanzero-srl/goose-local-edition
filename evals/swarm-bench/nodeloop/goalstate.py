@@ -120,13 +120,50 @@ def history() -> list[dict]:
     return out
 
 
+# The old-build test-author failure rate, the null this campaign is trying to beat: 13 of 42.
+BASELINE_RATE = 13 / 42
+SIGNIFICANCE = 0.05
+
+
+def moved_significantly(m: dict) -> tuple[bool, float]:
+    """Is this metric DIFFERENT from the old-build rate, or is it a small sample behaving normally?
+
+    Returns (significant, p) where p = P(observing this few failures | rate unchanged).
+
+    ⚠ THIS EXISTS BECAUSE THE FIRST VERSION OF `streak()` FLATTERED ME. It keyed on the raw metric
+    dict, so ANY change reset the stall clock — and the very first sample on the new binary
+    (test-author 5 completed / 0 failed) reset a 5-tick streak to 1. That sample has p = 0.157 under
+    the null: roughly a one-in-six chance of appearing by luck with the failure rate completely
+    unchanged. A detector built to force a shake-up after 10 quiet ticks that can be reset by noise
+    is a detector that never fires. The loophole was in MY OWN instrument, written one hour earlier,
+    to police exactly this.
+    """
+    completed = m.get("test_author_completed", 0)
+    failed = m.get("test_author_failed", 0)
+    n = completed + failed
+    if n == 0:
+        return False, 1.0
+    if failed == 0:
+        p = (1 - BASELINE_RATE) ** n
+        return p < SIGNIFICANCE, p
+    # Any failures at all means the rate has not obviously collapsed; treat as unmoved and let the
+    # observed rate speak for itself in the printout.
+    return False, 1.0
+
+
 def streak(hist: list[dict]) -> int:
-    """Consecutive ticks whose (mini_goal, resolved, measured metric) are identical to the newest."""
+    """Consecutive ticks with no change to the mini-goal, the resolved list, or a SIGNIFICANT metric.
+
+    Deliberately NOT keyed on the raw metric — see `moved_significantly`. A metric that wobbles
+    inside its own noise is the same state, not a new one.
+    """
     if not hist:
         return 0
+
     def key(r: dict) -> str:
-        return json.dumps([r.get("mini_goal"), sorted(r.get("resolved") or []), r.get("metric")],
-                          sort_keys=True)
+        sig, _ = moved_significantly(r.get("metric") or {})
+        return json.dumps([r.get("mini_goal"), sorted(r.get("resolved") or []), sig], sort_keys=True)
+
     newest = key(hist[-1])
     n = 0
     for r in reversed(hist):
@@ -181,10 +218,18 @@ def report(mini: str | None, resolved: list[str] | None, record: bool) -> int:
         print("\nMEASURED: NO FINISHED RUN on the current binary yet — the metric has no sample. "
               "This is absence of evidence, not a zero failure rate.")
     else:
-        print(f"\nMEASURED (read off the archive, not declared; runs produced by the CURRENT binary "
-              f"only): test-author {m['test_author_completed']} completed / "
-              f"{m['test_author_failed']} failed, "
-              f"{m['test_author_share_of_failures']:.0%} of all failures")
+        sig, p = moved_significantly(m)
+        n = m["test_author_completed"] + m["test_author_failed"]
+        print(f"\nMEASURED (CURRENT binary only): test-author {m['test_author_completed']} completed "
+              f"/ {m['test_author_failed']} failed  (n={n})")
+        print(f"   vs the old-build rate 13/42 = {BASELINE_RATE:.1%}: "
+              f"P(this good by chance | rate unchanged) = {p:.3f}  ⇒ "
+              f"{'SIGNIFICANT' if sig else 'NOT SIGNIFICANT — this could be luck'}")
+        if not sig and m["test_author_failed"] == 0:
+            need = 1
+            while (1 - BASELINE_RATE) ** need >= SIGNIFICANCE:
+                need += 1
+            print(f"   a clean run of {need} test-author completions would be needed to clear p<0.05")
     print(f"UNCHANGED FOR {s} of {STALL_TICKS} ticks ({s * 10} of {STALL_TICKS * 10} minutes)")
 
     if s >= STALL_TICKS:
