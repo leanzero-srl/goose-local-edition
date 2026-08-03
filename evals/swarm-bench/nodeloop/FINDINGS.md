@@ -9551,3 +9551,46 @@ again.** That is the branch F212's falsifier named and I had begun treating as c
 demonstration; the first disagreement is the experiment. I wrote a headline off n=1 and the very next
 task contradicted it inside twenty minutes. **When a mechanism check passes, the next thing to look
 for is the case where it passed and the outcome did not follow.**
+
+## F222 — my own alarm REFUTED: the "no token activity" stall predates the prefill
+
+F221 raised a hypothesis against my own change: that prefilling `<think>\n\n</think>\n\n` might make
+the model read its turn as already complete and emit nothing, which would be a NEW failure mode I
+introduced. `test-store` stalled twice with *"agent stalled — no progress for 420s (no token/tool
+activity)"* on `mihai`, the node that stayed alive, so the fleet outage did not explain it.
+
+Checked offline against the archive, no fleet needed:
+
+    run                    prefill?   stalls   tasks
+    baseline-n3-r0             None        2   {integrate-verify: 1, test-meridian: 1}
+    baseline-n3-r1             None        0
+    baseline-n3-r2             None        0
+    sink_review-n3-r0          None        0
+    swarm-1node-r0             None        0
+    swarm-3node-r0 (arm)       True        2   {test-store: 2}
+    swarm-3node-r1             None        0
+
+**`baseline-n3-r0` — no prefill, older build — stalled twice, one of them on `test-meridian`, a
+TEST-AUTHOR.** The mode predates the change. **The hypothesis that I introduced it is refuted.**
+
+⚠ **What this does NOT show:** that the prefill leaves stall frequency unchanged. 2 stalls in 5
+non-prefill runs against 2 in 1 prefill run is far too small to compare rates, and I am not going to
+compute a p-value on it to make the point look sharper than it is. The claim I raised was "this is a
+NEW failure mode"; that specific claim is dead.
+
+**FLEET:** both remote nodes are back — `lms link status` shows Mac.lan and WorksMacStudio.lan
+**connected** with their identifiers loaded, `lms ps` lists all three IDLE. **`think_off-n3-r0` was
+DISCARDED, not resumed:** it lost two of three nodes partway through, so its result would have been a
+1-node run wearing a 3-node label. The arm re-runs from scratch on a verified 3-node fleet.
+
+⚠ **Still unexplained and NOT to be quietly dropped:** what took the two remote nodes offline at
+~08:42 UTC. `Mac.lan` did not answer ping — a machine off the network, which the harness cannot
+cause. `WorksMacStudio` pinged but its LM Link was down. The one thing I changed that touches load is
+`weight: 1 → 2` (goose config, not LM Studio), doubling concurrent requests per node to `PARALLEL: 2`
+— the level those nodes advertise. **I cannot rule it out and I am not claiming innocence I have not
+proven.** If it recurs on this re-run, weight is the first thing to test by reverting it.
+
+**LESSON 99 — RAISE THE ALARM AGAINST YOUR OWN CHANGE, THEN GO AND KILL IT.** The instinct that
+found this was suspicion of my own work, which is right. The discipline that resolved it was checking
+the archive rather than reasoning about plausibility — and it cost one query, on data already on
+disk, while the fleet was down and nothing else could run.
