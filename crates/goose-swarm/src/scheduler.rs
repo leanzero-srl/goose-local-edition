@@ -966,6 +966,8 @@ impl State {
                                 "stall-exhausted but owned file written; integrate-verify gates it"
                                     .to_string(),
                             action: "degraded".to_string(),
+                            // The scheduler's own stall accounting, not a judge opinion.
+                            deterministic: true,
                         });
                         self.relax_dependents(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
@@ -1450,6 +1452,7 @@ impl State {
                 confidence: outcome.confidence,
                 hint: outcome.hint.clone(),
                 action: "accepted".to_string(),
+                deterministic: outcome.deterministic,
             });
             self.attempt_log
                 .entry(tid.to_string())
@@ -1522,6 +1525,7 @@ impl State {
                 confidence: outcome.confidence,
                 hint: outcome.hint.clone(),
                 action: if applied { "split" } else { "observed" }.to_string(),
+                deterministic: outcome.deterministic,
             });
             return applied;
         }
@@ -1539,6 +1543,7 @@ impl State {
             confidence: outcome.confidence,
             hint: outcome.hint.clone(),
             action: action.to_string(),
+            deterministic: outcome.deterministic,
         });
         if terminal {
             if let Some(h) = self.abort_handles.remove(tid) {
@@ -1590,6 +1595,8 @@ impl State {
                     confidence: 1.0,
                     hint: error_text.clone(),
                     action: "salvaged".to_string(),
+                    // Engine bookkeeping on a terminal Looping, not a fresh judge call.
+                    deterministic: true,
                 });
             }
             self.attempt_log
