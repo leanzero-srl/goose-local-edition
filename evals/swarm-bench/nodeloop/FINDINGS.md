@@ -8731,3 +8731,43 @@ not `integrate-verify`, elapsed ≥ 420 s, no owned write for ≥ 420 s, and not
 log and `judge_verdict{verdict:"accept", action:"accepted"}` in the event stream of the next run that
 has an idle-but-finished worker. Its absence across a full run with test-authors completing means the
 branch is unreachable in practice and F204's prediction is void.
+
+## F206 — the new build's planning phase, and the baseline's registered question ANSWERED
+
+`baseline-n3-r0` sat at `skeleton_drafts` for 35 minutes with 0 dispatched, which looked like a stall
+and would have been blamed on my `pick_device` change. It is not a stall. The event tally:
+
+    run_started 1 · pool_resolved 1 · research_tools 1 · scouts_planned 1 · research_completed 1
+    levers_resolved 1 · skeleton_drafts 3 · detail_completed 18 · confidence_retarget 2
+    retarget_discarded 2
+
+**`skeleton_drafts{requested: 3, returned: 3, dead: 0, straggler_aborted: 0, secs: 222,
+chars: [5172, 4687, 4782], worker_count: 3}`** — three real drafts from three nodes, none dead, none
+aborted as a straggler. Best-of-N is drafting across the whole fleet, which is what it is for and
+which the pool could not do while two devices were `enabled: false`.
+
+**THE BASELINE'S REGISTERED QUESTION IS ANSWERED, and by the FIRST unit exactly as its gate said it
+would be: `detail_fallback` is ZERO.** Eighteen `detail_completed` events, `spec_chars` 1247-2085
+against `brief_chars` 201-303, `budget_secs` 420 with observed `secs` 36-75. Not one task fell back
+to the architect's one-line brief. That was Part 3 defect #4 — *"a detail that times out silently
+degrades to the architect's one-line brief"* — and on this build, at this fleet size, it does not
+happen: every worker will be dispatched with a 4-8× richer spec than the brief.
+
+**What the time is being spent on, and the open question it raises.** Two `confidence_retarget`
+rounds, both `action: "redraft"`, `binding_signal: "agreement"`, `conf_before: 83`, and
+`detail: "best_of_n 4→5"`. The ask floor resolves to 85 (80 + the weak-planner bump), so the plan
+sits **two points under the bar** and the engine keeps redrafting to close a 2-point gap — raising
+best-of-N each round. That is quality-seeking behaviour and it is the right instinct, but it is also
+where the 35 minutes went, and it is a HARD-CODED bar being chased by an UNBOUNDED number of
+redrafts. **Registered to check at run end: total wall-clock against the old build's 100-minute mean.
+If planning grew and execute did not shrink, the retarget loop is buying confidence points rather
+than quality, and `max_retarget_rounds` is the next lever.**
+
+⚠ **Not a comparison yet.** One unit, and the crossing invalidated cross-build score comparison
+(F192's 80.1%/12.6pt spread is now historical). This is a mechanism readout, which is valid at n=1
+(Lesson: FIRED ≠ CORRECT, but a fallback count of zero is a fact about the code path taken).
+
+**LESSON 80 — A PHASE THAT LOOKS STALLED MAY BE DOING MORE WORK, NOT LESS.** "35 minutes, nothing
+dispatched" reads as a hang. The event stream showed three concurrent drafts, eighteen completed
+detail specs and two deliberate redraft rounds. I nearly attributed it to my own most recent change;
+the tally took one command and named the actual consumer.
