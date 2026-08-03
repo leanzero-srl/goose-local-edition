@@ -219,3 +219,59 @@ still be accounted for after the change.
 ⚠ These anchors were verified against the CURRENT tree while the engine is FROZEN. If any further
 `crates/**` edit lands before the batch is applied, re-run this check — a moved anchor is a silent
 mis-apply, and there are nine patches to get wrong.
+
+---
+
+## 10. F191b — `is_still_producing` must require ACTION, not reasoning (~2 lines, `judge.rs`)
+
+**Why:** the finalize-spin trip (judge.rs:434) exists precisely for a worker that wrote its file and
+then stopped touching it. On r2, `test-api` attempt 0 met FOUR of its five conditions — file written
+at 408 s, not the sink, elapsed 1878 s, untouched far beyond 420 s — and spent **595 s making ZERO
+tool calls while `thinking_chars` climbed 2,897 → 22,627**. It was never killed, and the task took
+three dispatches.
+
+The fifth condition blocked it:
+
+```rust
+fn is_still_producing(input: &JudgeInput) -> bool {
+    match (input.prev_thinking_chars, input.worker_thinking_chars) {
+        (Some(prev), Some(now)) => now > prev,
+        _ => false,
+    }
+}
+```
+
+**A reasoning spiral is monotonically growing reasoning by definition, so `is_still_producing` is
+permanently true for it and the trip can never fire on the pathology it was written to catch.** I
+added this guard in F144 ("GREW = no kill; FLAT = kill") and it was right for its case — F163 later
+proved a flat-kill would have killed healthy workers streaming a tool payload.
+
+**Change:** require growth in something that represents ACTION. Thinking growth with a frozen
+`tool_calls` and an untouched file is the spiral signature, not progress:
+
+```rust
+// Thinking-only growth is NOT progress — it is the spiral signature (F191). A worker streaming a
+// tool payload has FLAT thinking but WILL advance tool_calls when the call lands, so keying on
+// action preserves F163's protection while closing the immunity this granted every spiral.
+fn is_still_producing(input: &JudgeInput) -> bool {
+    match (input.prev_tool_calls, input.worker_tool_calls) {
+        (Some(prev), Some(now)) => now > prev,
+        _ => false,
+    }
+}
+```
+
+This needs `prev_tool_calls` alongside the existing `prev_thinking_chars` on `JudgeInput`, mirrored
+in the dispatcher's per-task `judge_prev_*` map exactly as `prev_thinking_chars` already is.
+
+⚠ **INTERACTION WITH F163 — CHECK THIS EXPLICITLY.** F163's refutation case (`test-meridian` flat at
+1,209 chars / 0 calls for 129 s, then a successful write) must STILL survive: it had flat thinking
+AND flat tool_calls, so `is_still_producing` returns false either way — but the finalize-spin trip
+also requires `any_owned_written`, which was FALSE there. It is protected by a different condition.
+**Verify that before shipping**, because getting it wrong re-introduces exactly the false kill F163
+was registered to prevent.
+
+**REGISTERED CHECK:** on one run, a worker with a written file, `secs_since_last_write > 420`,
+growing `thinking_chars` and FLAT `tool_calls` receives a `Looping` verdict rather than running to
+its attempt cap. Falsifier: a healthy worker killed while mid-write — which would mean action-growth
+is also the wrong proxy and the trip needs the digest mtime from F163 instead.
