@@ -9883,3 +9883,82 @@ replayed against the live fleet: `acted=True, first_tool=write, ttfa=106.0s, thi
 106 seconds to the first tool token on a single turn is itself a data point for F223 — and it is
 consistent with F116's 83s/turn. The instrument works; the triage is what says which cases the
 baseline actually fails.
+
+## F229 — the defect is REPRODUCIBLE OFFLINE in ~2 minutes
+
+`promptbench.py` replays real archived worker decision points against the live fleet. First triage,
+13 samples: **case `2` (`test-meridian`, 14 messages, owns `tests/test_meridian.py`, already carrying
+the supervisor stall note) REFUSED TO ACT on 2 of 2 reps**, emitting 2,653 and 1,297 characters of
+reasoning instead of calling a tool. Every other case acted (ttfa 3–148s). That is the test-author
+failure, on demand, at ~2 minutes instead of ~90.
+
+⚠ **And the corpus was a MOVING TARGET.** Five of the ten triaged cases pointed at
+`llm_request.<N>.jsonl`, and the numbered files are RECYCLED by the running engine — one case
+returned `case unreadable` partway through. `sample()` re-read the file every rep, so two
+"replicates" could be two different conversations. **Fixed: `harvest` snapshots each payload to
+`bench/payloads/<sha1>.json`, content-addressed, and cases read the frozen copy.** The first
+baseline.jsonl was deleted rather than kept — it cannot be compared with anything measured after.
+
+## F230 — `goose-swarm`'s lib tests had not compiled for multiple sessions: 45 tests dark
+
+`cargo build` and `cargo test --test judge_replay` BOTH pass without ever compiling the in-lib
+`#[cfg(test)]` module. Two `JudgeInput` fixtures were missing `prev_tool_calls`, added sessions ago.
+Only `cargo clippy -p goose-swarm --all-targets` caught it. Three tests then failed, all encoding
+contracts my own later changes deliberately superseded (climbing-reasoning-protects, refuted by
+F191; zero-tool-call ⇒ `OverReading`, now `NoFirstWrite`; finalize-spin ⇒ `Looping`, now `Accept`).
+Each rewrite kept a falsifier for the path it stopped covering. **86 green, clippy 0.**
+
+## F231 — a tool call seen across a 21-minute gap is not proof of production (FIXED)
+
+Judge-observation gaps on `swarm-3node-r0`: median 60s, p90 135s, **MAX 1,267s** — the judge runs
+only on an idle device and 66 of 72 opportunities were suppressed. **2 of 21 `is_still_producing`
+firings spanned a gap longer than the 420s threshold they were overriding.** `test-meridian`: 360s/0
+calls → 1,627s/8 calls with `secs_since_last_write` at 705 ⇒ predicate TRUE ⇒ Accept blocked and the
+deadline doubled for a worker that had finished 12 minutes earlier and still held 1 of 6 slots at 27
+minutes. Fixed with `prev_observed_secs` and no new literal: the increase counts only inside
+`min_age_secs.max(420)`, the same constant it overrides.
+
+## F232 🔴🏆 — MY OWN SELF-TEST VOIDED A CLEAN 112-MINUTE RUN, AND IT WAS THE ONLY SAMPLE
+
+`think_off-n3-r0` finished: score 0.4428, pool 3/3, occupancy 0.476, `void=False`, `aborted=False`,
+`timed_out=False`, 0 FAILED tasks in 112 minutes. The harness then printed **"FAILED its own audit —
+this unit is NOT evidence"**, on this: *"finished run reports unfinished work, but ['test-meridian',
+'test-cli-edge-cases'] were RETRIED and did complete — the dispatch/completion pairing is wrong
+again"*.
+
+**The accusation was false, and it was my instrument accusing my other instrument.** The run's one
+genuinely unfinished task was `meridian-error-handling` — dispatched once, never completed.
+`test-meridian` (3 dispatches, 1 completion) and `test-cli-edge-cases` (2/1) were retried AND
+finished. Three different tasks. `occupancy.py` already gets this exactly right — it counts a task
+unfinished only when its LAST dispatch has no completion at or after it, and reports
+`unfinished_tasks: 1`. `selftest.py` check 4 **re-derived its own cruder rule** ("any task dispatched
+more than once that also completed") and fired whenever ANY retry existed anywhere in the run.
+
+⇒ **Lesson 55 again, and it cost the campaign its only measurable run.** A lesson learned by one
+instrument is not learned by another; occupancy fixed this exact confusion, wrote a comment about
+it, and the self-test kept the old bug three files away. **A self-test that voids GOOD runs is worse
+than no self-test: it destroys the evidence and looks rigorous doing it.**
+
+FIXED: `occupancy.analyse` now exports `unfinished_task_ids` (one definition, so the count and the
+list cannot drift), and check 4 asserts the invariant ON THOSE TASKS. `SELFTEST_VERSION` → `st-2`,
+because a verdict from the old logic is a different instrument. Re-run: **`harness self-test OK (st-2,
+controls + invariants on think_off-n3-r0)`** — and both directions of the occupancy controls still
+pass, so the fix did not simply disable the check.
+
+## F233 ⭐ — THE FIRST REAL SAMPLE ON THIS BINARY, AND A PREDICTION REGISTERED BEFORE THE OUTCOME
+
+With F232 fixed, `goalstate` reads a metric for the first time in 23 ticks:
+
+    MEASURED (CURRENT binary only): test-author 5 completed / 0 failed  (n=5)
+    vs the old-build rate 13/42 = 31.0%: P(this good by chance | rate unchanged) = 0.157
+    ⇒ NOT SIGNIFICANT — this could be luck
+
+**Say the honest thing: 5/0 is a one-in-six coincidence under the unchanged rate. It is not
+evidence, and it is the same number F215 already warned about.** Nine clean completions clear
+p<0.05.
+
+**REGISTERED NOW, BEFORE `think_off-n3-r1` FINISHES:** that arm should contribute ~5 more
+test-author completions. If it comes back clean, n=10 gives p = 0.69^10 = **0.024**, and the
+mini-goal clears significance. **If even ONE test-author fails in r1, p jumps back above 0.05 and
+the row has NOT moved** — and I will say so rather than reaching for a subgroup. The falsifier and
+the confirmation are the same run.

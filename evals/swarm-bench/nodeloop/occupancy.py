@@ -297,6 +297,13 @@ def analyse(path) -> dict:
     ceiling_wall = max(critical, total_work / n) if (n and critical > 0) else None
     ceiling_occ = (total_work / (ceiling_wall * n)) if (ceiling_wall and n) else None
 
+    # A task is unfinished when its LAST dispatch has no completion at or after it. Computed once here
+    # so the count and the ID list can never disagree.
+    unfinished = sorted(
+        t for t, ds in disp.items()
+        if (lambda last: last is not None and not any(
+            c is not None and c >= last for c in done.get(t, [])))(
+            max((s for s, _ in ds if s is not None), default=None)))
     return {
         "occupancy_version": OCCUPANCY_VERSION,
         "path": str(path),
@@ -338,11 +345,12 @@ def analyse(path) -> dict:
         # completion — even though the retry completed. That stale counter survived the pairing fix
         # and was caught by the harness self-test on its first real run, which is the whole point of
         # having one.
-        "unfinished_tasks": sum(
-            1 for t, ds in disp.items()
-            if (lambda last: last is not None and not any(
-                c is not None and c >= last for c in done.get(t, [])))(
-                max((s for s, _ in ds if s is not None), default=None))),
+        "unfinished_tasks": len(unfinished),
+        # The IDs, not only the count. The self-test needs to check the invariant ON THESE TASKS; when
+        # it re-derived its own cruder rule instead it voided a clean 112-minute run because two
+        # UNRELATED tasks had been retried, while the genuinely-unfinished one was a third task
+        # dispatched once and never completed. One definition, exported, or the two drift.
+        "unfinished_task_ids": unfinished,
     }
 
 
