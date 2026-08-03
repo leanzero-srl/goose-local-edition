@@ -388,8 +388,10 @@ text.
 replace it — a dependency larger than the cap is still truncated, correctly marked, and the worker
 still needs permission to read it.
 
-**⚠ PRECONDITION — this patch is INERT until the verdict does something.** F197 measured 0 kill
-events across 302 verdicts and no hint delivery in the retained window. Fixing the hint text of a
-verdict nobody consumes changes nothing. **Establish first, on the post-crossing run, whether an
-`over_reading` verdict ever reaches a worker; if it does not, THAT is the defect to fix and this
-patch waits behind it.**
+**✅ PRECONDITION ANSWERED — PROMOTED, NOT GATED (F198).** The gate asked whether the verdict is
+ever consumed. It is: **all 11 `over_reading` verdicts carry `action = re_dispatch`** at confidence
+0.90. F197's "0 kill events" was my own query error — the scheduler stamps the action as a FIELD on
+`judge_verdict` (`scheduler.rs:1414`), it does not emit a separate kill event. So this hint is not
+decoration: **it is the message a killed worker is restarted with**, and it tells that worker the
+truncated paste is sufficient. Of the 11 tasks hit, none finished in one attempt (8 took 3, 3 took
+2) and 2 never completed.

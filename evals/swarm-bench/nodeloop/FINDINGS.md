@@ -8334,3 +8334,61 @@ FIRED.** `over_reading` has been perfectly, exclusively right about the failing 
 runs, and no measurement in this campaign noticed, because "the judge is inert" and "the judge sees
 nothing" produce identical run outcomes. The way I found it was counting verdicts by KIND rather
 than in total — the same composition-over-total move as F196, one tick later.
+
+## F198 — RETRACTION of F197's central claim: the verdict IS consumed, on all 11
+
+**F197 said the `over_reading` verdict "goes nowhere" and called it the ninth instance of the
+engine-holds-the-answer shape. That is WRONG and I am striking it.** Every one of the 11 verdicts
+carries `action = re_dispatch`:
+
+    baseline-n3-r0  test-api                   action=re_dispatch  conf=0.90
+    baseline-n3-r0  test-api-input-validation  action=re_dispatch  conf=0.90
+    baseline-n3-r0  test-meridian              action=re_dispatch  conf=0.90
+    baseline-n3-r0  test-api                   action=re_dispatch  conf=0.90
+    baseline-n3-r1  test-cli-edge              action=re_dispatch  conf=0.90
+    baseline-n3-r1  test-meridian              action=re_dispatch  conf=0.90
+    baseline-n3-r2  test-meridian              action=re_dispatch  conf=0.90
+    swarm-3node-r0  test-store                 action=re_dispatch  conf=0.90
+    swarm-3node-r0  test-api                   action=re_dispatch  conf=0.90
+    swarm-3node-r0  test-meridian              action=re_dispatch  conf=0.90
+    swarm-3node-r0  test-api                   action=re_dispatch  conf=0.90
+    ACTION TALLY: {'re_dispatch': 11}
+
+**How I got it wrong.** I grepped the event stream for event *types* containing `kill`, found none
+(`judge_observed` 302, `judge_verdict` 302, `judge_skipped` 178), and read that silence as "nothing
+acts on the verdict". But the scheduler does not emit a separate kill event — **it records what it
+did as a FIELD on the verdict event** (`scheduler.rs:1414` `redispatch = actionable && interv <
+max_interventions_per_task`, then the action is stamped onto the emitted `JudgeVerdict`). The
+information was in the record I was already reading; I never listed its fields.
+
+**So the framing I struck one tick ago was the correct one, and striking it was the error.** The
+trap is real and closed:
+
+1. Only test-authors receive `## API of` blocks (implementers: median 0) — F196.
+2. Those blocks are the dependency's full source cut mid-`def`, fenced as complete, no truncation
+   notice, introduced with *"do NOT `cat` it"*. `meridian.py`'s paste does not parse.
+3. The worker reads the real file — the only route to the truth, and the one the prompt forbids.
+4. The over-read guard trips: **11 of 11 on test-authors, 0 of 85 implementer verdicts.**
+5. **The worker is KILLED and RE-DISPATCHED** — every time, at confidence 0.90.
+6. The hint it restarts with asserts *"you already have … the injected dependency APIs"* — which the
+   engine truncated one function earlier. So the restarted worker is told the unusable artifact is
+   sufficient, and is pointed back at it.
+
+**Consequence, measured.** Of the 11 tasks hit, **none finished in one attempt** — 8 needed 3
+attempts, 3 needed 2, and **2 never completed at all** (`test-api` on the live arm, still incomplete
+at the time of writing). ⚠ I also computed ~7,779 discarded worker-seconds, but that figure takes
+`max(elapsed_secs)` across *all* attempts of the task, not the killed attempt, so it is an upper
+bound with a known flaw and is NOT a result. The attempt counts are the robust signal.
+
+**Patch #12 is UNGATED and PROMOTED.** Its precondition — "establish whether the verdict is
+consumed" — is now answered: it is consumed 11 times out of 11, and the hint that rides the restart
+is the false one. Fixing the wording is no longer cosmetic; it is the message a killed worker is
+restarted with.
+
+**LESSON 73 — BEFORE READING "X NEVER HAPPENED" FROM AN EVENT STREAM, CHECK WHETHER X IS RECORDED AS
+A FIELD RATHER THAN AN EVENT.** The campaign already had the rule that a negative authorising a
+conclusion must be proven rather than observed (it is why `sink_review`'s zero and F176's retention
+zero were both struck). I applied it to arms and to the engine, and not to my own query: I searched a
+namespace of event *types* and concluded about *actions*. The one-line control I skipped — print the
+available field names before concluding from their absence — is the same `keys()` call that exposed
+it immediately afterwards.
