@@ -80,7 +80,11 @@ def report() -> int:
         dc = ds = None
         if prev and prev[3] == run:
             dc, ds = c - prev[1], t - prev[0]
-        rate = f"{ds/dc:.0f}" if dc else ("stalled" if dc == 0 else "")
+        # "no change" NOT "stalled": this file samples a digest and cannot tell a worker that is
+        # mid-call from one whose task has ENDED. r2's sink finished around 04:39 and every later
+        # sample read as "stalled" — which would be a fabricated stall if anyone believed the label.
+        # Cross-check the run log for `task_completed` before calling any flat stretch a stall.
+        rate = f"{ds/dc:.0f}" if dc else ("no change" if dc == 0 else "")
         print(f"{datetime.datetime.fromtimestamp(t).strftime('%H:%M:%S'):>10}{c:>7}"
               f"{(dc if dc is not None else ''):>9}{(f'{ds:.0f}' if ds is not None else ''):>8}"
               f"{rate:>9}  {run}")
