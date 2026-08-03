@@ -8771,3 +8771,47 @@ than quality, and `max_retarget_rounds` is the next lever.**
 dispatched" reads as a hang. The event stream showed three concurrent drafts, eighteen completed
 detail specs and two deliberate redraft rounds. I nearly attributed it to my own most recent change;
 the tally took one command and named the actual consumer.
+
+## F207 — ✅ THE WEIGHTS ASK IS DONE AND VERIFIED LIVE: both hard tasks landed on the workhorse
+
+Mihai's request: *"implement a logic where single tasks or bigger tasks always end up on the machine
+with highest amount of weights … it is workhorse that is the machine with the highest performance."*
+
+First dispatch wave of `baseline-n3-r0` on the new build:
+
+    task            difficulty   device
+    api             hard         worksmacstudio-workhorse-…     <- speed_weight 3
+    meridian        hard         worksmacstudio-workhorse-…     <- speed_weight 3
+    store           easy         mac-gabee-…                    <- speed_weight 1
+    readme          easy         local-mihai-…                  <- speed_weight 2
+    web             easy         local-mihai-…
+    verify::readme  easy         local-mihai-…
+
+**Both HARD tasks on the workhorse; every EASY task elsewhere.** The workhorse's two slots
+(weight 2) are filled by exactly the two hard tasks available, and the light work spread across the
+slower nodes instead of competing for the fast one.
+
+**Two independent defects had to be fixed for this, and either alone would have left it broken:**
+
+1. **The pool config had the workhorse switched OFF.** `enabled: false` on both `local-mihai` and
+   `worksmacstudio-workhorse` — the fastest machine in the fleet was receiving no work at all, and no
+   amount of routing logic can send a task to a disabled device.
+2. **`pick_device` sorted by `in_flight` FIRST for every task.** Speed was a tie-break only, so with
+   the fast host holding one task and a slower host idle, the heaviest task went to the SLOW host —
+   backwards, since the critical path is set by exactly those tasks. Weight is now decisive for hard
+   tasks, with observed ms/task breaking ties among equally-weighted hosts so a first-dispatch
+   timing accident cannot outrank the operator's stated fastest machine.
+
+The planner marked 8 of 19 tasks hard (`test-meridian`, `integrate-verify`, `api`, `meridian`,
+`test-api`, `verify-e2e::0/1/2`), so this routing will be exercised repeatedly through the run rather
+than being a one-off coincidence of the first wave.
+
+⚠ **What this does NOT claim.** It is a ROUTING fact, not a wall-clock result. Whether putting the
+hard tasks on the fast node actually shortens the run is a separate measurement, and the honest test
+is total wall-clock against the old build's 100-minute mean — reported at run end, not now. It also
+does not touch the test-author failure row, which remains the open mini-goal at 14/15.
+
+**LESSON 81 — A ROUTING RULE AND THE ELIGIBILITY IT ROUTES OVER ARE TWO SEPARATE FAILURES.** I could
+have written the perfect `pick_device` ordering and measured nothing, because the target device was
+`enabled: false` upstream of it. Before tuning a selection policy, confirm the thing being selected
+is in the candidate set at all.
