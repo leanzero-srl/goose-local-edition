@@ -8392,3 +8392,67 @@ zero were both struck). I applied it to arms and to the engine, and not to my ow
 namespace of event *types* and concluded about *actions*. The one-line control I skipped — print the
 available field names before concluding from their absence — is the same `keys()` call that exposed
 it immediately afterwards.
+
+## F199 — the `over_reading` verdicts are MODEL OPINIONS, and the workers read NOTHING
+
+Applying Lesson 73 properly this time — list the fields, then look at the state at the trip:
+
+    run               task                       tool_calls   thinking   elapsed
+    baseline-n3-r0    test-api                            0     24,032       474
+    baseline-n3-r0    test-api-input-validation           0      3,402       441
+    baseline-n3-r0    test-meridian                       1        857       422
+    baseline-n3-r0    test-api                            1      2,006       465
+    baseline-n3-r1    test-cli-edge                       0      8,257       420
+    baseline-n3-r1    test-meridian                       0      2,632       455
+    baseline-n3-r2    test-meridian                       0     11,326       423
+    swarm-3node-r0    test-store                          0      8,482       422
+    swarm-3node-r0    test-api                            0     10,743       467
+    swarm-3node-r0    test-meridian                       2      2,462       485
+    swarm-3node-r0    test-api                            0        795       457
+
+**tool_calls at the trip: min 0, median 0, max 2. The threshold is 16.**
+
+**Two things follow, and both correct me.**
+
+**1. F196's step 3 is RETRACTED.** I wrote that the worker "reads the real file — the only route to
+the truth — and that is exactly the over-read trigger." **It does not read the real file. It does not
+read anything.** Median zero tool calls. What it does is think: 795 to 24,032 chars of it, for
+420-485 seconds. The story I told was mechanically satisfying and the data does not support it.
+
+**2. These verdicts cannot be the deterministic guard, so they are model opinions.** `judge.rs:349`
+requires `worker_tool_calls >= cfg.over_read_tool_calls` (16). With 0-2 calls that predicate is
+false, every time. The verdict therefore comes from the LLM judge running on an idle node — a weak
+model looking at a silent worker and guessing "over_reading" at confidence 0.90. The scheduler then
+re-dispatches on it (`scheduler.rs:1414`; only *terminal-fail* requires `outcome.deterministic`,
+re_dispatch explicitly keeps "full STEERING power" for a model verdict).
+
+⚠ **I cannot PROVE provenance from the log, only deduce it from the guard's own arithmetic.** The
+`JudgeOutcome` struct carries a provenance flag — `judge.rs:126`, *"True only for a verdict produced
+by `deterministic_verdict` — a real engine fact"* — and **the emitted `JudgeVerdict` event does not
+include it**. Fields are exactly `action, confidence, device, event, hint, run_id, seq, task_id, ts,
+verdict`. The one bit that separates an engine fact from a weak model's guess is computed, used for
+the terminal-fail gate, and then dropped before anyone downstream can see it. **Patch #13.**
+
+**3. The engine already documented this exact failure and believes it fixed.** `swarm.rs:11217`:
+
+> "MEASURED: a task was killed for 'over_reading' three times at 457s/450s/430s with tool_calls=0,
+> having read nothing."
+
+457/450/430 against tonight's 474/441/422/465/420/455/423/422/467/485/457. **Same shape, same
+verdict, same population — 11 times across 5 runs including the live one.** The fix that comment
+describes was to *count* thinking chars so a reasoning worker stops looking hung. Counting them did
+not stop the mislabelling, because the thing consuming the count is a model being asked to judge, and
+nothing checks its answer against the tool-call number the engine already has.
+
+**What survives of the F196 chain, and what does not.** F196 itself stands — the `## API of` blocks
+are truncated whole-file pastes, verified byte by byte. What is now unsupported is my *link* from
+that to the kill. The honest version: a test-author receives 10k chars of dependency source, three
+of four blocks unusable, and then produces **zero tool calls** for seven minutes while thinking
+climbs. That is F191's spiral signature, not over-reading. Whether the broken paste *causes* the
+spiral is plausible and **unproven** — the `dep_signatures` arm is what would test it, and its
+registered readout already includes dry reasoning before first write.
+
+**LESSON 74 — WHEN A VERDICT NAMES A BEHAVIOUR, CHECK THE COUNTER THAT BEHAVIOUR WOULD MOVE.**
+"over_reading" was recorded 11 times against workers whose read counter was zero. I spent two ticks
+building a causal story on top of the verdict's NAME without once asking whether the thing it names
+had happened. The check is one column of the record I had already loaded twice.
