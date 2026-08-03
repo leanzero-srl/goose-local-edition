@@ -9411,3 +9411,37 @@ path under streaming ⇒ the route is dead, and that closes the lead cleanly.
 CHECK FIRST.** A gate exists to catch a real failure, so its own failure mode is indistinguishable
 from success at catching one. "VOID THE ARM" is exactly as cheap to produce by a typo in a `get()` as
 by a genuinely unarmed lever — and the expensive direction is trusting it.
+
+## F219 — negative control PASSES, and the instrument is validated before it has to decide anything
+
+`think_off-n3-r0` at 23 min: 8 dispatched, all implementers/verifiers — **no test-author yet**, so the
+streaming falsifier is not takeable. What IS takeable is the negative control, and after F218 I ran it
+specifically to prove the reader works on a case whose answer I already know.
+
+    kind=implementer  msgs= 2  last_role=user   prefill_present=False
+    kind=implementer  msgs= 8  last_role=tool   prefill_present=False
+    kind=implementer  msgs=14  last_role=tool   prefill_present=False
+    kind=implementer  msgs= 6  last_role=tool   prefill_present=False   (8 of 8 False)
+
+**The gate scopes correctly** — `think_off_test_authors() && is_test_author`, and an implementer gets
+nothing. If any implementer had shown `True` the gate would not be scoping and the arm would be
+measuring a fleet-wide change rather than a test-author one.
+
+**And the reader is validated.** Two failures had to be fixed to get here, both the F218 shape:
+- The first attempt parsed `files[-1]` and crashed: **the newest request log is 0 bytes** — a request
+  in flight, not yet flushed. Sorting by mtime and taking the last gives an EMPTY file.
+- It assumed line 1 is JSON without checking. Now: newest-first, skip empty, find the first line that
+  actually starts with `{`.
+
+**THE TURN ≥2 CASE IS VISIBLE IN THIS DATA AND IT IS THE UNTESTED ONE.** `last_role=tool` at msgs 6,
+8 and 14 — worker loops routinely reach turn 2+ with a `tool` message last. The research flagged
+exactly this as unknown: the prefill must be appended AFTER a tool message, not only on turn 1. My
+implementation appends unconditionally inside `create_request_with_options`, which runs on every
+request, **so it should hold — and "should" is not evidence.** The falsifier's wording is deliberate:
+*on EVERY request of a test-author's loop, not merely the first.* An implementation that prefills turn
+1 and silently stops would look like a win on the first dispatch and produce nothing thereafter.
+
+**LESSON 96 — RUN THE INSTRUMENT ON THE CASE WHOSE ANSWER YOU ALREADY KNOW, BEFORE IT HAS TO DECIDE
+ONE YOU DON'T.** F218 cost a near-void of a live experiment because the reader was first exercised on
+the question that mattered. Here the same reader was exercised on implementers — where `False` is the
+expected answer — and it caught two of its own bugs at zero cost.
