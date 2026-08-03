@@ -7750,3 +7750,35 @@ independent runs is not a sampling accident. The fixes ship on the confirmed ver
 Also captured: baseline r1 at 23 min had **6 dispatched / 1 done / 0 FAILED**, with `api`, `meridian`,
 `store`, `verify::cli`, `web` in flight — and NO idle-node mechanism fired, which is the correct
 control against `sink_review-n3-r0` (F175's three-nodes-generating happened only with the lever on).
+
+## F184 — a third condition arrived by accident, and it is a better experiment than the one I designed
+
+`baseline-n3-r1` dispatched `integrate-verify` **while three sibling tasks were still in flight**
+(`test-api`, `test-cli-edge`, `test-meridian`). Both previously-measured sinks ran SOLO. So the
+campaign now has three conditions instead of two, and the third one separates a confound I had
+baked into F179 without noticing:
+
+    r0 baseline        sink SOLO, no idle-fill                     63 s/call
+    sink_review r0     sink + idle_dimension_review on its node   257 s/call
+    r1 baseline        sink + 3 REAL sibling tasks                 ? s/call   <-- lands next tick
+
+**Why this matters.** F179 attributed the 4.1x slowdown to the idle-fill mechanism sharing the sink's
+device. But every comparison I had was solo-vs-contended, so "contention" and "idle-fill" were
+perfectly confounded — I could not tell whether the sink slows because *reviewers* are on its node or
+because *anything* is. r1 supplies the missing cell for free.
+
+REGISTERED BEFORE THE OUTCOME (standing rule), and both directions are informative:
+
+  · **r1's sink s/call is also far above 63** ⇒ ordinary co-tenancy is the driver, F179's mechanism
+    story narrows to "the sink is slow whenever it shares a node", and the lever is PARTLY
+    EXONERATED — it would be guilty only of creating co-tenancy at the worst moment, not of being
+    uniquely expensive. F179b (exclude the sink's device from idle-fill) would then be the wrong fix;
+    the right one is to stop scheduling ANYTHING on the sink's device.
+  · **r1's sink stays near 63 despite three siblings** ⇒ the idle-fill is doing something worse than
+    ordinary co-tenancy, F179 stands as written, and F179b is the correct targeted fix.
+
+MEASUREMENT RULE for it: real duration from dispatch→completion TIMESTAMPS, never `elapsed_ms` — a
+capped sink writes the cap value and that is what corrupted F152 (F180).
+
+⚠ Still one run per cell. This does not become a result at n=1; it becomes a DIRECTION, and it tells
+me which of two queued fixes to spend a boundary crossing on.

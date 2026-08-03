@@ -37,3 +37,4 @@ F160|-|with scoped_contracts ON, a test-author receives 1 `## API of` block (its
 # flat at 1,209 chars / 0 calls across three observations and then WROTE on its own. A >=2-flat
 # kill would have false-killed a productive worker. Predicate withdrawn; see F163 for why the
 # counters cannot see a worker streaming a tool payload, and what observable the fix needs.
+F184|-|baseline r1's sink runs CONCURRENT with 3 sibling tasks; if its s/call is also far above 63 then CONTENTION per se drives F179, not idle-fill specifically, and the lever is partly exonerated; if it stays near 63 despite siblings, the idle-fill is doing something worse than ordinary co-tenancy
