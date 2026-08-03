@@ -198,6 +198,17 @@ pub fn is_extension_enabled(key: &str) -> bool {
     extensions.get(key).map(|e| e.enabled).unwrap_or(false)
 }
 
+/// Returns the configured enabled state for an extension, or `None` when it has no entry.
+pub fn configured_enabled_state(config: &Config, name: &str) -> Option<bool> {
+    let extensions = get_extensions_map_with_config(config);
+    let key = name_to_key(name);
+    extensions
+        .values()
+        .find(|entry| entry.config.name() == name)
+        .or_else(|| extensions.get(&key))
+        .map(|entry| entry.enabled)
+}
+
 pub fn get_enabled_extensions() -> Vec<ExtensionConfig> {
     get_all_extensions()
         .into_iter()
@@ -662,5 +673,40 @@ extensions:
             "expected no logs for other extension keys, got {:?}",
             other_keys
         );
+    }
+
+    #[test]
+    fn test_configured_enabled_state_unknown_extension_is_none() {
+        let (config, _config_file, _secrets_file) = test_config("");
+
+        assert_eq!(
+            configured_enabled_state(&config, "not_a_real_extension"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_default_on_extension_enabled_when_config_empty() {
+        let (config, _config_file, _secrets_file) = test_config("");
+
+        assert_eq!(configured_enabled_state(&config, "developer"), Some(true));
+    }
+
+    #[test]
+    fn test_configured_enabled_state_tracks_changes() {
+        let (config, _config_file, _secrets_file) = test_config("");
+        set_extension_with_config(&config, builtin_entry("developer", false));
+
+        assert_eq!(configured_enabled_state(&config, "developer"), Some(false));
+
+        set_extension_enabled_with_config(&config, "developer", true);
+        assert_eq!(configured_enabled_state(&config, "developer"), Some(true));
+    }
+
+    #[test]
+    fn test_default_off_extension_disabled_when_config_empty() {
+        let (config, _config_file, _secrets_file) = test_config("");
+
+        assert_eq!(configured_enabled_state(&config, "chatrecall"), Some(false));
     }
 }

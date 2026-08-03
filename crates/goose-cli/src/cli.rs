@@ -1399,6 +1399,7 @@ struct ServeCommandArgs {
 
 async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     use axum::http::HeaderValue;
+    use goose::acp::server::AcpBuiltinSelection;
     use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
     use goose::acp::transport::create_router;
     use goose::config::paths::Paths;
@@ -1420,9 +1421,15 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     } = args;
 
     let builtins = if builtins.is_empty() {
-        vec!["developer".to_string()]
+        AcpBuiltinSelection {
+            defaults: vec!["developer".to_string()],
+            explicit: Vec::new(),
+        }
     } else {
-        builtins
+        AcpBuiltinSelection {
+            defaults: Vec::new(),
+            explicit: builtins,
+        }
     };
 
     let additional_source_roots = Config::global()
