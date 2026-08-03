@@ -9361,3 +9361,53 @@ if the prefill fails that is the most likely place. **Check on the first run wit
 content, **on every request of a worker's loop, not just the first**; and the swarm's own thinking
 accumulator must report 0 for that dispatch. If the message is present and thinking is still
 non-zero, the server is not taking the continuation path under streaming and the whole route is dead.
+
+## F218 — the arm IS armed. My check was wrong — and it would have destroyed a valid experiment.
+
+`think_off-n3-r0` is running. The registered arm-armed check (F194, Lesson 53) reported:
+
+    think_off_test_authors = *** ABSENT ***    ⇒ NOT ARMED — VOID THE ARM
+
+**That was my lookup, not the engine.** The event nests everything under a `levers` key:
+
+    TOP-LEVEL: ['build_sha','crate_version','event','levers','run_id','seq','ts','version']
+    levers (103 keys) → think_off_test_authors: True
+
+**The arm is ARMED.** I read the top level, found nothing, and was one step from voiding a correct
+experiment — a hundred minutes of fleet time thrown away on a bad `dict.get()`.
+
+**This is the FIFTH self-authored check that would have lied this session, and the first that would
+have destroyed a result rather than merely misinformed me:**
+
+    F209  read `r["kind"]` off raw events              → fabricated "0% of all failures"
+    F213  `cd x && cmd` with a failing cd              → commit succeeded carrying nothing
+    F217  `… | grep '^error'; echo BUILD_DONE`         → reported two failed builds as clean
+    F217b `grep -F` across a `format!` placeholder     → 0 for code demonstrably present
+    F218  top-level `get()` on a nested event          → "VOID THE ARM" on an armed arm
+
+Five instruments, one shape: **a claim the harness made about itself, believed without confirming
+against the underlying object.** Lesson 40 (raw data beats a boolean) has now been earned five
+separate times in one session, which suggests the rule is not the problem — remembering to apply it
+under time pressure is.
+
+**AND IT SETTLES THE STALENESS QUESTION, though not the way I expected.** `levers.think_off_test_authors`
+exists ONLY in commit `cbba565bb`. Its presence in the running engine's own event proves the binary
+carries that commit ⇒ **`./loop.sh check`'s "1 engine commit HELD" is a FALSE POSITIVE**, exactly the
+same-minute mtime-vs-commit artifact I diagnosed (binary 10:51, commit 10:51).
+
+⚠ **The event carries `build_sha`, which SHOULD be the definitive check — and it is the literal
+string `"dev"`.** A placeholder. So the engine stamps a build identifier that identifies no build.
+That is a real gap: every staleness question in this campaign has been answered by mtime heuristics
+or by hunting for a marker string, when one honest `build_sha` would answer it in one lookup.
+**Queued as a patch: stamp the actual git sha at compile time.** Not applied now — the arm is live and
+this is not worth a crossing.
+
+**NEXT, and it decides the route:** the streaming falsifier. The last element of `messages` must be
+`role:"assistant"` carrying `<think>\n\n</think>\n\n` on EVERY request of a test-author's loop, with
+the thinking accumulator at 0. Present-but-still-thinking ⇒ the server is not taking the continuation
+path under streaming ⇒ the route is dead, and that closes the lead cleanly.
+
+**LESSON 95 — WHEN A REGISTERED CHECK RETURNS THE ANSWER THAT DESTROYS THE EXPERIMENT, AUDIT THE
+CHECK FIRST.** A gate exists to catch a real failure, so its own failure mode is indistinguishable
+from success at catching one. "VOID THE ARM" is exactly as cheap to produce by a typo in a `get()` as
+by a genuinely unarmed lever — and the expensive direction is trusting it.
