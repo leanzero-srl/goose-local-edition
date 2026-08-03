@@ -8170,3 +8170,38 @@ This is the same shape as F171 itself (I hunted three wrong places) and as Lesso
 protecting one direction implies the other is unguarded): **a lookup rule derived from ONE instance
 is a rule about that instance.** F171 was derived from an env lever and silently assumed all levers
 are env levers.
+
+## F195 — F191b's interaction with F163 is CLEARED, verified from the original data
+
+F191b changes `is_still_producing` to key on `tool_calls` instead of `thinking_chars`. The registered
+risk was that it re-introduces the exact false kill F163 was written to prevent, because F163's
+refutation case had **flat thinking AND flat tool_calls** — so the new rule would also read "not
+producing" there. I had reasoned that `any_owned_written` protects it. **Reasoning is not evidence,
+so I went to the rows.**
+
+`test-meridian` attempt 1 on `baseline-n3-r0`, the flat stretch that refuted F160:
+
+    elapsed  calls    think   any_owned_written
+        105      0    1,209   False
+        174      0    1,209   False
+        234      0    1,209   False
+        294      0    1,216   True     <- it wrote
+        569      3    4,340   True
+
+**`any_owned_written` is False in all three flat observations.** The finalize-spin trip requires
+`any_owned_written == True`, so during that stretch it was blocked by a DIFFERENT condition entirely
+— `is_still_producing` never even got a vote. **F191b cannot re-introduce this false kill.** Verified
+from the original run's own rows.
+
+**A second case appeared in the same trace and it also comes out clean.** Later in that task:
+
+    1521      6    7,674   True
+    1656      6    7,674   True      <- BOTH tool_calls and thinking flat, file written
+
+Here the old rule and the new rule AGREE — both read "not producing", so F191b changes nothing about
+whether the trip fires. The change is a strict narrowing: it only alters behaviour where thinking
+grows while tool_calls do not, which is exactly the F191 spiral signature and nothing else.
+
+So the batch's one flagged interaction is settled, and settled the right way — the falsifier had a
+concrete address (three specific rows on disk), and checking it took one query. **This is what F163's
+registered falsifier bought: a year from now the reason F191b is safe is a table, not an argument.**
