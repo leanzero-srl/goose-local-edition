@@ -7960,3 +7960,45 @@ STILL OPEN, needing a real read when the freeze lifts:
     8b73e1a1b  stable agent event identity   (F172 made it moot for F163, may still matter elsewhere)
     ad87dd4c3  compaction structured summary (`compact` appears 13x in swarm.rs)
     d5785a367  session manager for tool summaries
+
+## F189 — F185's per-interval measurement was unobtainable, so I built the instrument for it
+
+F185 registered a specific improvement: measure the sink's seconds-per-call as PER-CALL INTERVALS
+rather than a cumulative average, because a running mean cannot show a change WITHIN its own window
+(co-tenancy fell 3 siblings → 1 during r1's sink and the mean could not see it). Both obvious sources
+turned out to be **blind**, and finding that out was most of the work:
+
+  · **`llm_request.*.jsonl` mtimes.** One file per call, so the mtimes ARE the call times — the ideal
+    source. But only **15 fleet calls were visible across a 2-hour window**, against **14 counted in
+    a single 8-minute window** earlier the same night. The logs rotate far faster than F176's "under
+    3 hours" estimate. The tell was the implausible count, not a wrong-looking trend.
+  · **`judge_observed` events.** They carry `(timestamp, tool_calls)` and would be exact. The judge
+    emits **exactly ONE** for `integrate-verify` — because the over-read gate is deliberately exempt
+    for tasks that own no files (the sink owns none, and that exemption exists because applying it
+    would guarantee killing the sink for over-reading). **The series does not exist and never did.**
+
+So every cumulative sink figure in this campaign — 63, 146, 257 s/call — is the ONLY form those
+numbers could have taken with the instruments available. That is worth knowing: they are not lazy
+approximations, they were the ceiling of what could be measured.
+
+**BUILT: `sinkwatch.py`.** The digest is rewritten on stream activity (coalesced ~2.5/s), so sampling
+it on a fixed cadence turns a counter into a series. Launched detached against r2's live sink and
+already differencing:
+
+    04:34:32   8 calls        <- sample
+    04:35:02   8 calls        stalled (no call in that 30s)
+    04:35:32   9 calls        <- call 9 landed inside this window
+
+Design choices that are deliberate rather than incidental:
+  · **READ-ONLY, no ports, no locks, no writes into the run dir.** A crunch that bound a harness port
+    once nearly produced a fabricated "the app does not run" (F169); an instrument that watches a
+    live run must be incapable of contending with it.
+  · **Newest run dir by MTIME, not by name.** `swarm-3node-r0` was three different runs tonight;
+    a name-based pick silently reads a finished unit.
+  · **Stops on its own evidence** — 20 unchanged samples means the sink finished or wedged — rather
+    than on a fixed duration, so it cannot outlive its subject or quit early on a slow one.
+  · **A torn read mid-rewrite is skipped, not fatal.** The engine rewrites this file constantly.
+
+LESSON 65: **WHEN A MEASUREMENT IS REGISTERED AND THEN TURNS OUT TO BE UNOBTAINABLE, THAT IS A
+FINDING, NOT A GAP TO SKIP.** Two blind sources explain why every existing figure is cumulative, and
+the honest response is to build the third source rather than quietly keep quoting the mean.
