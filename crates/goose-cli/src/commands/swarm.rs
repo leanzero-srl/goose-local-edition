@@ -22216,6 +22216,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 true,
             ),
             "dep_signatures": dep_signatures_on(),
+            "think_off_test_authors": think_off_test_authors(),
             "scoped_contracts": scoped_contracts_on(),
             "persona": swarm_gate_cfg("GOOSE_SWARM_PERSONA", load_config().persona),
             // map — a lever missing from it reads as OFF even while it is demonstrably firing. MEASURED:
