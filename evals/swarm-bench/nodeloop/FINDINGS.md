@@ -10008,3 +10008,46 @@ That would discard the 5/0 and void the registered n=10 test. **SEQUENCE: let `t
 finish → read the registered result (clean ⇒ p=0.024, the row moves; one failure ⇒ it has not) →
 THEN boundary, which picks up both the reorder and the F231 judge fix that is also not yet in the
 running binary.**
+
+## F236 ⭐ — THE FLEET IS NOT SAMPLING THE MODEL THE WAY THE MODEL SAYS TO
+
+Two gates passed this tick, and the second one is a lead.
+
+**GATE 1 — the sampler fields actually reach the model.** F213's precedent is LM Studio accepting
+`chat_template_kwargs` and silently ignoring it, so every sampler variant was worthless until this
+was proven. `sampler-preflight`, both directions:
+
+    temp 0.01 / top_k 1        -> 149r, 149r, 149r     (three BYTE-IDENTICAL replies)
+    temp 2.0 / top_k 200 / min_p 0 -> 253r, 137r, 56c+140r  (three DIFFERENT replies)
+
+Deterministic settings are deterministic and high-entropy settings vary ⇒ **the fields are honoured.**
+`samplers`, `temp06`, `rp10`, `minp0`, `declared` are live levers.
+
+**GATE 2 — the plumbing exists and is simply unset.** `swarm.rs:11160-11175` forwards
+`temperature`, `top_p`, `top_k`, `min_p` and `repeat_penalty` from `self.sampling` into the request.
+All five are `null` in `config.yaml`, which fully explains F216's "0 of 519 requests carried a
+sampler". **This is not a defect — it is an unset lever, fully wired.**
+
+**THE LEAD, from the model's OWN GGUF metadata (Lesson 85 — read the model's files):**
+
+    general.architecture        = qwen35
+    general.sampling.top_k      = 20
+    general.sampling.top_p      = 0.95
+    general.sampling.temp       = 1.0
+    qwen35.nextn_predict_layers = 1        (MTP confirmed)
+
+The fleet serves **top_k 25, top_p 1.0, min_p 0.2** (F216). **None of those match what the model
+declares.** goose sends no sampler, so the serve-time values win by default and every worker this
+campaign has ever measured was sampled differently from the way the model's own file specifies.
+New variant `declared` sends exactly the model's numbers — temperature deliberately left at the
+declared **1.0**, so it cannot be mistaken for a disguised `temp06`.
+
+⚠ **F216's "MTP REQUIRES repetition_penalty = 1.0" is DOWNGRADED to UNVERIFIED.** There is no
+penalty key of any kind in the GGUF (70 KV pairs read), and no model card on disk — only the
+weights. That claim came from a card I read in an earlier session and cannot re-verify locally. It
+stays as an arm to be MEASURED, not as a fact to be cited.
+
+⚠ **AND MY OWN VARIANT WAS SENDING THE WRONG KEY.** `rp10`/`samplers` sent `repetition_penalty`;
+goose puts **`repeat_penalty`** on the wire. A bench variant that sends a different key than the
+engine would send is not testing the config change it claims to predict — and the null it produced
+would have read as "the lever does nothing". Fixed.

@@ -258,14 +258,26 @@ def variant_payload(inp: dict, variant: str) -> dict:
     elif variant == "samplers":
         # All four at once — a SCREEN, not an attributable result. If it wins, the three variants
         # below decompose it; if it loses, none of them is worth a slot.
-        p.update({"temperature": 0.6, "top_p": 0.95, "top_k": 20, "repetition_penalty": 1.0})
+        p.update({"temperature": 0.6, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.0})
+    elif variant == "declared":
+        # THE MODEL'S OWN NUMBERS, read out of its GGUF metadata:
+        #   general.sampling.top_k = 20   general.sampling.top_p = 0.95   general.sampling.temp = 1.0
+        # The fleet serves top_k 25, top_p 1.0, min_p 0.2 (F216) — none of which match. goose sends no
+        # sampler at all (0 of 519 requests), so the serve-time values win by default. This variant is
+        # the only one with a justification that is not a guess: it asks what happens when the model is
+        # sampled the way its own file says to sample it. Temperature is left at the declared 1.0
+        # precisely so this is not a disguised `temp06`.
+        p.update({"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0})
     elif variant == "temp06":
         # Serve-time default is temperature 1.0 (F216) and goose sends no sampler at all (0 of 519
         # requests). Tool-call selection is a decision, not prose.
         p["temperature"] = 0.6
     elif variant == "rp10":
-        # The model's own files require repetition_penalty 1.0 for MTP; the server serves 1.05.
-        p["repetition_penalty"] = 1.0
+        # The key is `repeat_penalty`, NOT `repetition_penalty` — that is the name goose puts on the
+        # wire (swarm.rs, `self.sampling.repeat_penalty`). A bench variant that sends a different key
+        # than the engine would send is not testing the config change it claims to predict, and would
+        # have produced a null that looked like "the lever does nothing".
+        p["repeat_penalty"] = 1.0
     elif variant == "minp0":
         # Serve-time min_p is 0.2, which truncates hard. A tool-call token that the schema demands can
         # be a low-probability continuation of a sentence the model has started in prose.
@@ -286,7 +298,7 @@ def variant_payload(inp: dict, variant: str) -> dict:
     return p
 
 
-VARIANTS = ["baseline", "prefill", "samplers", "temp06", "rp10", "minp0",
+VARIANTS = ["baseline", "declared", "prefill", "samplers", "temp06", "rp10", "minp0",
             "toolchoice", "maxtok", "nudge", "nothink"]
 
 
