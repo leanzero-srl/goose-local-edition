@@ -8568,3 +8568,50 @@ instead of a literal, and arm on evidence (no progress) rather than on the clock
 harder" was wrong by rate and the contradiction it left — same rate, opposite outcomes — is what
 exposed both the `.html` exemption and the fact that the constant sits under everyone's p90. Had the
 first measurement agreed with me I would have stopped there and shipped a worse explanation.
+
+## F202 — patch #16 WITHDRAWN: the deterministic checks already run without a device
+
+I queued patch #16 last tick on a deduction — *"`deterministic_verdict` is a pure function of
+`JudgeInput`, so run it unconditionally and gate only the LLM judge"* — without reading the call
+site. Reading it (`swarm.rs:16603-16624`) shows **the engine already does exactly that**:
+
+```rust
+// Phase 1: cheap, unambiguous signals (won't-compile, no-output-while-old) act without a model.
+if let Some(out) = deterministic_verdict(&input, &cfg) {
+    return out;
+}
+// No idle device was free for the model review …
+if req.judge_model_id.trim().is_empty() {
+    me_events_skip(&self.events, &req.task_id, "no_idle_device");
+    return JudgeOutcome::ok();
+}
+```
+
+`deterministic_verdict` runs **before** the skip, on every invocation. The comment states the intent
+outright: *"The cheap deterministic checks above already ran without a model; skip the LLM review
+rather than queue it behind a busy worker."* **The patch would have changed nothing, and its
+registered check ("`judge_skipped` with a deterministic verdict available is 0") would have passed
+trivially on the unmodified engine and read as a success.**
+
+**⚠ F201's headline is CORRECTED. "37% of the supervision never runs" is WRONG.** What is true:
+**37% of the SEMANTIC review never runs.** Deterministic supervision runs 100% of the time — which
+is precisely why the 420 s deadline fires reliably while the model review does not. The two halves
+of the judge have completely different availability, and I collapsed them into one number.
+
+**The real finding survives, and the engine states it better than I did** (`swarm.rs:16617-16622`):
+
+> "The scheduler hands the judge a model ONLY when a device is idle … With execute occupancy measured
+> at 0.72-0.93, nodes are busy nearly all the time, so the semantic review is not being declined — it
+> is UNREACHABLE. **High utilisation and semantic judging are in direct tension, and nothing in the
+> log said so.**"
+
+That is the idle-node argument stated by the engine's own author, with the occupancy numbers
+attached. It is not a defect I found; it is a documented tension I re-derived badly. What my data
+adds is the current magnitude on this fleet: **41 skips against 78 judge runs on the live arm (34%),
+178 against 302 across the corpus**, every one `no_idle_device`.
+
+**LESSON 77 — READ THE CALL SITE BEFORE QUEUEING A PATCH, NOT ONLY THE FUNCTION.** I had read
+`deterministic_verdict` and `JudgeInput` and concluded the change was needed from their shapes. The
+ordering that made it unnecessary was eleven lines above the skip I was patching, in a file I had
+already opened twice this session. A patch whose registered check passes on the *unmodified* engine
+is worse than no patch: it manufactures evidence of an improvement that was never made.
