@@ -30,7 +30,7 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-SELFTEST_VERSION = "st-1"
+SELFTEST_VERSION = "st-2"   # st-2: check 4 tests the tasks REPORTED unfinished, not any retry
 
 
 
@@ -183,20 +183,33 @@ def run_invariants(unit: pathlib.Path) -> list[str]:
     # 4. A FINISHED run must not report work in flight. Reading "no completion" as "still running"
     #    is what hid the retry, and it also made three finished runs look live.
     if o.get("finished") and o.get("unfinished_tasks"):
-        # This is legitimate ONLY if a task genuinely never completed; assert the engine agrees by
-        # checking it is not simply a retry pairing artefact.
+        # This is legitimate ONLY if the tasks REPORTED unfinished genuinely never completed. The check
+        # must therefore be made ON THOSE TASKS.
+        #
+        # ⚠ THE FIRST VERSION OF THIS CHECK VOIDED A CLEAN 112-MINUTE RUN. It re-derived its own rule —
+        # "any task dispatched more than once that also completed" — and fired whenever ANY retry
+        # existed anywhere in the run, regardless of which task was actually unfinished. On
+        # think_off-n3-r0 the unfinished task was `meridian-error-handling` (dispatched once, never
+        # completed, genuinely outstanding) while `test-meridian` and `test-cli-edge-cases` were
+        # retried and finished — three different tasks. The audit accused the pairing of a bug that
+        # occupancy.py had already fixed, and declared the arm "NOT evidence". A self-test that voids
+        # good runs is worse than no self-test: it removes the evidence AND looks rigorous doing it.
         ev = occupancy.read_events(unit)
-        d = {}
-        c = {}
+        last_disp: dict[str, float] = {}
+        comps: dict[str, list] = {}
         for e in ev:
             if e.get("event") == "task_dispatched":
-                d[e["task_id"]] = d.get(e["task_id"], 0) + 1
+                s = occupancy.parse_ts(e.get("ts"))
+                if s is not None:
+                    last_disp[e["task_id"]] = max(s, last_disp.get(e["task_id"], s))
             if e.get("event") == "task_completed":
-                c[e["task_id"]] = c.get(e["task_id"], 0) + 1
-        retried = [k for k, v in d.items() if v > 1 and c.get(k, 0) >= 1]
-        if retried:
-            fails.append(f"finished run reports unfinished work, but {retried} were RETRIED and did "
-                         f"complete — the dispatch/completion pairing is wrong again")
+                comps.setdefault(e["task_id"], []).append(occupancy.parse_ts(e.get("ts")))
+        wrong = [t for t in (o.get("unfinished_task_ids") or [])
+                 if t in last_disp and any(c is not None and c >= last_disp[t]
+                                           for c in comps.get(t, []))]
+        if wrong:
+            fails.append(f"finished run reports {wrong} unfinished, but each COMPLETED at or after "
+                         f"its last dispatch — the dispatch/completion pairing is wrong again")
 
     # 4b. THE FOUNDING CASE. A task that completed must not also own a span running to the end of
     #     the run. Phantom time on a multi-node pool stays under the wall*N ceiling, so the aggregate

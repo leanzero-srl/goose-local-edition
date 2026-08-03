@@ -55,6 +55,7 @@ LOGS = pathlib.Path(os.path.expanduser("~/.local/state/goose/logs"))
 ENDPOINT = "http://localhost:1234/v1/chat/completions"
 
 WRITE_TOOLS = {"write", "edit", "developer__text_editor", "str_replace_editor"}
+MODEL_FOR_PROBE = "workhorse-qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp"
 BUDGET_TOKENS = 1200          # shared by EVERY variant; see replay()'s docstring
 
 
@@ -227,7 +228,20 @@ def variant_payload(inp: dict, variant: str) -> dict:
     elif variant == "prefill":
         p["messages"].append({"role": "assistant", "content": "<think>\n\n</think>\n\n"})
     elif variant == "samplers":
+        # All four at once — a SCREEN, not an attributable result. If it wins, the three variants
+        # below decompose it; if it loses, none of them is worth a slot.
         p.update({"temperature": 0.6, "top_p": 0.95, "top_k": 20, "repetition_penalty": 1.0})
+    elif variant == "temp06":
+        # Serve-time default is temperature 1.0 (F216) and goose sends no sampler at all (0 of 519
+        # requests). Tool-call selection is a decision, not prose.
+        p["temperature"] = 0.6
+    elif variant == "rp10":
+        # The model's own files require repetition_penalty 1.0 for MTP; the server serves 1.05.
+        p["repetition_penalty"] = 1.0
+    elif variant == "minp0":
+        # Serve-time min_p is 0.2, which truncates hard. A tool-call token that the schema demands can
+        # be a low-probability continuation of a sentence the model has started in prose.
+        p["min_p"] = 0.0
     elif variant == "toolchoice":
         p["tool_choice"] = "required"
     elif variant == "maxtok":
@@ -244,7 +258,8 @@ def variant_payload(inp: dict, variant: str) -> dict:
     return p
 
 
-VARIANTS = ["baseline", "prefill", "samplers", "toolchoice", "maxtok", "nudge", "nothink"]
+VARIANTS = ["baseline", "prefill", "samplers", "temp06", "rp10", "minp0",
+            "toolchoice", "maxtok", "nudge", "nothink"]
 
 
 # ---------------------------------------------------------------- replay
@@ -428,6 +443,7 @@ def main() -> int:
     t.add_argument("--workers", type=int, default=1)
     t.add_argument("--kind", default="test-author")
     sub.add_parser("report")
+    sub.add_parser("sampler-preflight")
     a = ap.parse_args()
     if a.cmd == "harvest":
         return harvest(a.limit)
@@ -437,8 +453,41 @@ def main() -> int:
         return run("baseline", a.kind, a.n, a.limit, a.workers, 300, False)
     if a.cmd == "report":
         return report()
+    if a.cmd == "sampler-preflight":
+        return sampler_preflight()
     return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def sampler_preflight() -> int:
+    """Does the server ACTUALLY apply the sampler fields, or silently drop them?
+
+    Lesson 4, and F213 is the precedent: LM Studio accepts `chat_template_kwargs` and ignores it, so a
+    variant built on it measures nothing while looking like a clean null. `temperature`, `top_k`,
+    `min_p` and `repetition_penalty` are not OpenAI-standard in the same way and could go the same
+    route. The probe is a short prompt at temperature ~0 versus temperature 2.0 with the truncation
+    samplers opened up: if the field is honoured the two populations must differ; if every one of the
+    six replies is byte-identical the fields are being dropped and every sampler variant is INERT.
+    """
+    prompt = [{"role": "user", "content": "Continue this sentence with exactly one more sentence: "
+                                          "The old lighthouse keeper opened his logbook and"}]
+    out = {}
+    for label, extra in (("temp0.01", {"temperature": 0.01, "top_k": 1}),
+                         ("temp2.0", {"temperature": 2.0, "top_k": 200, "min_p": 0.0,
+                                      "top_p": 1.0})):
+        reps = []
+        for _ in range(3):
+            body = {"model": MODEL_FOR_PROBE, "messages": prompt, "stream": True,
+                    "max_tokens": 40, **extra}
+            r = replay(body, 120)
+            reps.append(r.get("error") or f"{r.get('text_chars')}c/{r.get('reason_chars')}r")
+        out[label] = reps
+        print(f"{label:9s} -> {reps}")
+    same = len({tuple(v) for v in out.values()}) == 1
+    print("\nVERDICT:", "⚠ IDENTICAL populations — samplers look IGNORED, treat every sampler "
+          "variant as INERT" if same else
+          "the two sampler settings produce DIFFERENT output ⇒ the fields reach the model")
+    return 0
