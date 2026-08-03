@@ -113,6 +113,31 @@ ARMS = [
                 "'DON'T OVER-READ / there is nothing further to look up' instruction sitting next to "
                 "12k of readable code. VOID the arm if any test-author reports an empty neighborhood.",
     },
+    # think_off — the prefill arm. The ONLY queued lever with BEHAVIOURAL evidence rather than a
+    # mechanism argument: measured on this fleet at real prompt size, a 22,187-char worker prompt took
+    # 47.3 s and produced 974 characters of prose and NO tool call by default, against 3.1 s with the
+    # tool call as the FIRST token once the thinking block was pre-closed (F216).
+    #
+    # Everything else in this queue is a hypothesis about what the model SHOULD do. This one was
+    # watched doing it.
+    {
+        "name": "think_off",
+        "reps": 3,
+        "env": {"GOOSE_SWARM_THINK_OFF": "1"},
+        "gate": "STREAMING IS THE FALSIFIER AND IT DECIDES THE WHOLE ROUTE. The 47.3s->3.1s evidence "
+                "was measured NON-streaming; goose ALWAYS streams. FIRST, before any score: in "
+                "`llm_request.*.jsonl` the LAST element of `messages` must be role:'assistant' "
+                "carrying `<think>\n\n</think>\n\n`, ON EVERY REQUEST of a worker's loop and not "
+                "merely the first — `format_messages_with_options` may merge, drop or reorder a "
+                "synthetic trailing assistant, and turn>=2 after a `tool` message is untested. "
+                "SECOND: the swarm's own thinking accumulator must read 0 for those dispatches. "
+                "MESSAGE PRESENT BUT THINKING STILL NON-ZERO ⇒ the server is not taking the "
+                "continuation path under streaming ⇒ THE ROUTE IS DEAD, and that is the most "
+                "valuable outcome because it closes the lead rather than leaving it half-tested. "
+                "ONLY IF BOTH PASS does the test-author row mean anything: `python3 goalstate.py` "
+                "reports the p-value; n=5 clean is p=0.157 and NINE clean completions are needed to "
+                "clear p<0.05. VOID the arm if any worker's request lacks the trailing assistant.",
+    },
     # dep_signatures — the arm the LIVE scoped_contracts run argued for, which is not the same arm.
     #
     # Measured on `scoped_contracts-n3-r0` while it ran (F196): the lever IS armed and IS working, and
@@ -421,6 +446,13 @@ QUESTIONS: list[dict] = [
              "median / 24,032 max; judge interventions vs 3. A cut in size with NO improvement in "
              "dry reasoning REFUTES the mechanism hypothesis and is the most valuable outcome. VOID "
              "if any test-author reports an empty neighborhood."},
+    {"arm": "think_off", "nodes": 3, "reps": 3,
+     "asks": "whether pre-closing the thinking block makes a test-author ACT. This is the only arm "
+             "backed by a measurement of the model's behaviour rather than an argument about its "
+             "inputs: 47.3s/974 chars/no tool call by default vs 3.1s with the tool call as the first "
+             "token (F216). The falsifier is STREAMING, not the score — goose always streams and the "
+             "evidence was non-streaming. If the trailing assistant message is present on every "
+             "request and thinking is STILL non-zero, the route is dead and the lead closes."},
     {"arm": "dep_signatures", "nodes": 3, "reps": 3,
      "asks": "the same population as scoped_contracts, on the axis that actually holds the bytes. "
              "Measured live on the scoped run (F196): scoping the block COUNT cut 8.7% (one block of "
@@ -1177,7 +1209,7 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     # 3 of 4 of its blocks are truncated mid-token (one of them does not parse). Everything else in
     # the queue is a question; this one is a defect with a switch already written for it.
     first_base = units[0] if units and is_base(units[0]) else None
-    arm = next((u for u in units if u[0]["name"] == "dep_signatures" and u[1] == full), None)
+    arm = next((u for u in units if u[0]["name"] == "think_off" and u[1] == full), None)
     if first_base is not None and arm is not None:
         rest = [u for u in units if u is not first_base and u is not arm]
         units = [first_base, arm] + rest
