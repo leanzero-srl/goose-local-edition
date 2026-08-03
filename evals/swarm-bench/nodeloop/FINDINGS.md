@@ -9017,3 +9017,50 @@ pathology; a configuration that asks for exactly that.
 Five weeks of prompt engineering against a model whose own chat template opens a `<think>` tag on
 every turn and whose author ships temperature 1.0. The answer was in the first 4 MB of a file that
 sat on disk the entire time, and no amount of rewording the system prompt could have reached it.
+
+## F212 — ✅ PROVEN OFFLINE: `enable_thinking: false` pre-closes the think block. Zero tokens spent.
+
+F211 found the template branch; this renders it and proves what the switch does — with jinja2, on the
+real 7,764-char template extracted from the GGUF, using a worker-shaped message + tool list. **No
+request to `localhost:1234`, so no contention with the live measured run** (Lesson 59 applies to my
+own probes, not just to the engine's idle-fill).
+
+**The last 120 characters of the rendered prompt, both ways:**
+
+    UNSET  (what goose sends today):
+      …<|im_start|>user\nWrite the unit tests…<|im_end|>\n<|im_start|>assistant\n<think>\n
+
+    enable_thinking=False:
+      …<|im_start|>user\nWrite the unit tests…<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n
+
+    prompts differ: True   (1312 vs 1323 chars)
+
+**Today every worker is handed an OPEN `<think>` tag and must generate its way out of it before it
+can emit anything else.** With the switch off, the block is opened AND CLOSED for the model, so its
+first generated token is the answer — or the `<tool_call>`. That is the exact difference between
+"emits 24,032 characters of reasoning and zero tool calls" and "acts".
+
+⚠ **A check line in my own script printed a misleading `False`** — I wrote the needle with an escaped
+backslash inside an f-string, so it tested for a literal that never occurs. The `repr()` output is
+the evidence and it is unambiguous; the boolean was wrong, not the finding. Recording it because a
+green/red flag that disagrees with the raw data must always lose to the raw data (Lesson 40), and
+because the same class of bug silently fabricated the metric in F209.
+
+**WHAT REMAINS UNKNOWN, and it is the one thing between here and a fix:** whether LM Studio's
+OpenAI-compatible endpoint forwards `chat_template_kwargs` to the template renderer. If it does, this
+is a small change in the swarm's request path. If it does not, the alternatives are (a) a `/no_think`
+soft switch — **this template has no such branch, checked**, so that route is closed here; (b)
+prefilling the assistant turn; (c) driving llama.cpp directly. The research workflow's web lens is
+tasked with exactly this and its answer decides the implementation.
+
+**REGISTERED, BEFORE ANY MEASUREMENT:** the falsifier for "thinking-prefill causes the zero-action
+workers" is that turning it off changes neither `tool_calls` at first observation nor
+time-to-first-write. If both stay flat, the prefill is a correlate and the cause is elsewhere —
+most likely F196's truncated dependency blocks, which remain unfixed and are the other standing
+suspect. **Do not test this together with a temperature change (F204's lesson: five changes shipped
+at once nearly credited an inert one).**
+
+**LESSON 86 — THE CHEAPEST DECISIVE EXPERIMENT IS OFTEN A RENDER, NOT A RUN.** The question "does
+this switch do what I think" is about a template, and a template is a pure function of its inputs.
+It took one jinja2 render to answer definitively what would otherwise have been a fleet request
+competing with a measured run — or worse, a full arm.
