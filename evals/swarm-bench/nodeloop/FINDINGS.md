@@ -8517,3 +8517,54 @@ three times over) starts from the label. **Patch #14.**
 THE CAUSE.** Eleven values in 420-485 with the minimum at exactly 420 is a `>=` against a literal,
 and nothing else. I had that column in front of me for two ticks and spent them on provenance
 arguments instead of grepping for the number.
+
+## F201 — a 420-second deadline against a population whose p90 first-write is 831 seconds
+
+**My registered hypothesis was "the deadline is a knife aimed at test-authors", and the first
+measurement refuted it:**
+
+    kind             n    min  median    p90    max   wrote before 420s
+    implementer     21     90     216    475    823   17/21  (81%)
+    test-author     17     90     290    831   1099   14/17  (82%)
+    verify/sink      1     90      90     90     90    1/1
+
+**81% vs 82% — the proportions are the same.** So the deadline is not disproportionate *by rate*.
+That refutation is what led somewhere better, because it left a contradiction: if implementers cross
+420s at the same rate, why are the trips **11 of 11 test-author, 0 of 85 implementer**?
+
+**Because only one implementer ever sat past the deadline unwritten, and it is exempt by file
+extension.** Observations past 420s with nothing written: **test-author 11 across 5 distinct tasks;
+implementer 6, all on ONE task — `web`, which owns `vendorsync/web/index.html`.** And
+`is_code_deliverable` (`judge.rs:224`) lists `.py .rs .ts .tsx .js .jsx .go .java .rb .c` — **`.html`
+is not among them**, so `owns_code` is false and the trip never arms. Every *other* implementer wrote
+before 420s. The exclusivity is real and now has a mechanism.
+
+**The defect is the constant itself.** The deadline is **420 s**, and it sits BELOW the p90 of both
+populations it judges — implementer p90 **475**, test-author p90 **831**, test-author max **1099**.
+A tenth of test-authors legitimately need more than twice the deadline to produce their first byte.
+The branch has no evidence term (F200): it does not ask whether the worker is progressing, only what
+time it is. **PRIME DIRECTIVE 4 in one literal** — `min_age_secs.max(420)` is where the engine
+stopped measuring and started guessing.
+
+⚠ **Caveat on the distribution, stated because it cuts against me.** These first-write times come
+from `judge_observed`, which only samples when the judge actually runs, so each figure is the first
+*observation* at which the file existed, not the moment it was written — every number is an
+**upper bound**, and the true p90 is lower than 831. What it cannot inflate is the killed set: those
+11 were observed at 420-485 s with nothing on disk, and **2 of the 11 never completed across all
+three attempts.**
+
+**And 37% of the supervision never happens.** `judge_skipped` totals **178** — test-author 106,
+implementer 56, sink 16 — against 302 verdicts delivered, and **every single skip is
+`no_idle_device`**. The judge needs a free node to run. So whether a worker crossing the deadline is
+actually judged depends on fleet occupancy at that instant, not on its health. Under PRIME DIRECTIVE
+3 this is the sharpest form of the idle-node argument yet: **the busier the swarm, the less of its
+own supervision runs** — and supervision is the thing that is supposed to make more nodes better
+rather than merely faster.
+
+**Queued as patch #15** — derive the deadline from the run's own observed first-write distribution
+instead of a literal, and arm on evidence (no progress) rather than on the clock alone.
+
+**LESSON 76 — A REFUTED HYPOTHESIS IS A POINTER, NOT A DEAD END.** "The deadline hits test-authors
+harder" was wrong by rate and the contradiction it left — same rate, opposite outcomes — is what
+exposed both the `.html` exemption and the fact that the constant sits under everyone's p90. Had the
+first measurement agreed with me I would have stopped there and shipped a worse explanation.

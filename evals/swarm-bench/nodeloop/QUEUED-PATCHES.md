@@ -453,3 +453,57 @@ the same shape as F196's unused `extract_signatures`.
 
 **Registered check** on the next post-crossing run, no `judge_verdict` carries `over_reading` with
 `tool_calls == 0`. Today: 9 of 11 do.
+
+## 15. The 420s first-write deadline is a literal sitting below both populations' p90
+
+**Site** `crates/goose-swarm/src/judge.rs:418` — `input.elapsed_secs >= cfg.min_age_secs.max(420)`.
+
+**Measured (F201)** time-to-first-owned-write across all runs: implementer p90 **475 s**,
+test-author p90 **831 s**, test-author max **1099 s**. The deadline is **420 s** — under both p90s.
+The branch carries no evidence term at all: it does not ask whether the worker is progressing, only
+what time it is. All 11 trips fired at 420-485 s; none of those tasks finished in one attempt and 2
+never completed.
+
+**Change** two parts, both principle over literal:
+
+1. **Derive, do not hard-code.** The run already observes first-write times for every task it has
+   dispatched. Take the deadline from that distribution (e.g. p90 of first-writes observed so far in
+   this run, floored at the current 420 so a run with no data behaves as today) rather than a
+   constant that predates this fleet.
+2. **Arm on evidence, not the clock.** Require a no-progress term alongside the deadline — thinking
+   flat OR tool_calls flat since the previous observation — so a worker that is visibly still
+   producing is never cut merely for being slow. The inputs already exist in `JudgeInput`
+   (`prev_thinking_chars`, and `prev_tool_calls` once patch F191b lands).
+
+**Why it matters** a tenth of test-authors legitimately need more than twice this deadline to
+produce a first byte. Cutting them at 420 s restarts them from zero, and the restart inherits the
+same prompt that made the first attempt slow.
+
+**Registered check** on the next post-crossing run, no task is re-dispatched at the deadline while
+its thinking or tool-call count is still climbing; and the effective deadline recorded in the event
+differs from 420 on a run whose observed p90 exceeds it.
+
+**⚠ INTERACTION with #14** #14 fixes the label, this fixes the trigger. Land both or the log will
+describe the new behaviour with the old name.
+
+## 16. 37% of judge opportunities never run, and every skip is `no_idle_device`
+
+**Site** the judge dispatch path in `crates/goose-swarm/src/scheduler.rs` (the `no_idle_device` skip).
+
+**Measured (F201)** `judge_skipped` = **178** (test-author 106, implementer 56, sink 16) against 302
+verdicts delivered. **Every skip reason is `no_idle_device`.** So whether a worker crossing the
+deadline is judged at all depends on fleet occupancy at that instant rather than on its health.
+
+**Why it matters — this is the idle-node argument at its sharpest.** The swarm's supervision is
+exactly the mechanism that is supposed to make more nodes produce *better* work rather than merely
+faster work. Gating it on a free device means the busier the swarm gets, the less of its own
+supervision runs. A three-node fleet at full occupancy supervises itself *less* than a two-node fleet
+with a spare.
+
+**Change** the deterministic verdicts need no model and no device — `deterministic_verdict` is a pure
+function of `JudgeInput`. Run it unconditionally on every observation and reserve the idle-device
+gate for the LLM judge only.
+
+**Registered check** on the next post-crossing run, `judge_skipped` with a deterministic verdict
+available is 0; skips remain only where the semantic judge was wanted. Today: 178 of 178 skips are
+`no_idle_device`, and the deterministic branches cannot have run on any of them.
