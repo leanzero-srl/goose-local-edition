@@ -17,6 +17,17 @@ pid() { pgrep -f 'nodeloop/sweep.py' | head -1; }
 
 case "${1:-status}" in
   start|resume)
+    # PARK A POPULATED RUN TREE BEFORE REUSING IT. Run directories are REUSED across units, so
+    # `pkill` + `start` — as opposed to `boundary`, which parks — silently OVERWRITES the previous
+    # unit's run.jsonl. MEASURED (F224): discarding a crippled arm and restarting destroyed every raw
+    # observation behind three findings. That run was useless as a 3-node SCORE and was simultaneously
+    # the only place a mechanism had ever been observed on the wire. Parking costs a copy.
+    RUNDIR="$(cd "$(dirname "$0")" && pwd)/../runs/nodeloop"
+    if [ -d "$RUNDIR" ] && [ -n "$(find "$RUNDIR" -mindepth 2 -name run.jsonl -print -quit 2>/dev/null)" ]; then
+      PARK="$RUNDIR-parked-$(date +%s)"
+      mkdir -p "$PARK" && cp -R "$RUNDIR"/*/ "$PARK/" 2>/dev/null
+      echo "parked previous run tree -> $(basename "$PARK")"
+    fi
     if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
     # A check nobody runs is not a check. Refuse to launch a campaign whose arms cannot fire on this
     # binary — an absent lever produces a confident "no effect" that looks exactly like data.
