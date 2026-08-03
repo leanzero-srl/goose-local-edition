@@ -8002,3 +8002,37 @@ Design choices that are deliberate rather than incidental:
 LESSON 65: **WHEN A MEASUREMENT IS REGISTERED AND THEN TURNS OUT TO BE UNOBTAINABLE, THAT IS A
 FINDING, NOT A GAP TO SKIP.** Two blind sources explain why every existing figure is cumulative, and
 the honest response is to build the third source rather than quietly keep quoting the mean.
+
+## F190 — the per-interval series works, shows ~120 s BETWEEN calls, and caught my own instrument lying
+
+First real output from `sinkwatch.py` on r2's co-tenanted sink:
+
+    04:35:32   call  9
+    04:37:32   call 10      120 s
+    04:39:32   call 11      120 s
+    04:39:32 onward — no further change for 11 consecutive samples
+
+**Two clean inter-call intervals of 120 s each.** Against the cumulative figures — r0 solo 63, r1
+co-tenanted 146, sink_review + idle-fill 257, fleet median 83 — r2's co-tenanted sink sits at ~120 s
+between calls, consistent with r1's 146 cumulative and firmly above the 83 fleet median. **The
+co-tenancy penalty reproduces on a second run.**
+
+⚠ **QUANTIZATION, stated:** sampling is every 30 s, so an interval is only resolved to ±30 s. Two
+readings of exactly 120 s are 4 samples each, not a suspiciously precise measurement — the true
+intervals lie in 90-150 s. Do not quote 120 as if it were tight.
+
+**AND THE INSTRUMENT WAS LYING IN ITS LABEL.** Those 11 flat samples printed as `stalled`. The sink
+did not stall — it **finished** around 04:39, which the run log confirms (`in flight: ['test-api']`,
+`integrate-verify` gone). `sinkwatch` samples a digest and **cannot distinguish a worker mid-call
+from a task that has ENDED**; every post-completion sample read as a stall. Left alone, that label
+would have manufactured a "5.5-minute sink stall" finding out of a task that had already succeeded —
+the same shape as the port collision that nearly produced "the app does not run" (F169).
+
+FIXED: the column now reads `no change`, with the reason in the source, and the instruction to
+cross-check `task_completed` in the run log before calling any flat stretch a stall. **A label is a
+claim; this one was making a claim the data cannot support.**
+
+LESSON 66: **AN INSTRUMENT MUST NOT NAME WHAT IT CANNOT DISTINGUISH.** "stalled" and "finished" look
+identical to a counter sampler, so the honest label is the observation (`no change`), not the
+interpretation. I wrote this instrument one tick ago specifically to avoid a cumulative average
+hiding a change — and shipped it with a word that would have hidden a completion.
