@@ -259,3 +259,69 @@ fn replay_the_whole_archive() {
         "{mislabelled} observations were labelled `over_reading` with tool_calls == 0"
     );
 }
+
+/// WHAT THE SHIPPED CHANGES ACTUALLY DO TO THE ARCHIVE.
+///
+/// The corpus was produced by the OLD engine, so every `judge_verdict` in it is that engine's answer.
+/// Re-judging the same `judge_observed` rows with the CURRENT predicate and diffing the two gives the
+/// predicted effect of the change set — in milliseconds, on real data, before any run confirms it.
+///
+/// Registered as a PREDICTION, not a result: the run in flight is what confirms or refutes it.
+///
+/// ⚠ APPROXIMATION, stated because it bounds the claim: the archive keeps `owns_files` but not the
+/// owned PATHS, so `to_input` synthesises one `.py` deliverable per task. That is right for every task
+/// in the corpus except `web` (an `index.html` owner, which `is_code_deliverable` correctly exempts),
+/// so this OVERSTATES the population the deadline can touch by exactly that one task.
+#[test]
+fn quantify_the_change_against_the_recorded_verdicts() {
+    let rows = load_rows();
+    if rows.is_empty() {
+        eprintln!("no archive — quantification skipped");
+        return;
+    }
+    let cfg = JudgeConfig::default();
+    // The 11 archived deadline trips, by their measured (tool_calls, elapsed) signature.
+    let mut trips_now_survive = 0usize;
+    let mut trips_still_fire = 0usize;
+    let mut accepts = 0usize;
+    let (mut prev_calls, mut prev_think) = (None, None);
+    let mut last = String::new();
+    for r in &rows {
+        if r.task_id != last {
+            prev_calls = None;
+            prev_think = None;
+            last = r.task_id.clone();
+        }
+        let input = to_input(r, prev_calls, prev_think, r.any_owned_written);
+        let now = deterministic_verdict(&input, &cfg);
+        // An archived row that WOULD have tripped the old bare stopwatch: owns code, nothing written,
+        // past 420s. That predicate had no evidence term, so this is exactly the old branch.
+        let old_would_trip = r.owns_files && !r.any_owned_written && r.elapsed_secs >= 420;
+        if old_would_trip {
+            match &now {
+                None => trips_now_survive += 1,
+                Some(_) => trips_still_fire += 1,
+            }
+        }
+        if now.as_ref().is_some_and(|o| o.verdict == Verdict::Accept) {
+            accepts += 1;
+        }
+        prev_calls = r.tool_calls;
+        prev_think = r.thinking_chars;
+    }
+    eprintln!(
+        "PREDICTED EFFECT on {} archived observations:\n  \
+         deadline trips that NOW SURVIVE (worker was still acting): {}\n  \
+         deadline trips that STILL FIRE (worker genuinely stalled): {}\n  \
+         observations that NOW yield Accept instead of a kill:      {}",
+        rows.len(),
+        trips_now_survive,
+        trips_still_fire,
+        accepts
+    );
+    assert!(
+        trips_still_fire > 0,
+        "the deadline must still catch a genuinely stalled worker — a change that disarms it entirely \
+         would trade one failure mode for a worse one"
+    );
+}

@@ -8653,3 +8653,38 @@ judge change from here is validated in milliseconds, then confirmed on a run —
 need a fleet. Two and a half days of 100-minute runs were spent validating judge behaviour that a
 200-line test settles instantly. The loop length was treated as a constraint to schedule around when
 it was a defect to fix.
+
+## F204 — the offline loop's first dividend: one of my five changes is INERT on the observed data
+
+Replaying 253 archived observations through the CURRENT `deterministic_verdict`, in 0.00 s:
+
+    deadline trips that NOW SURVIVE (worker was still acting):  0
+    deadline trips that STILL FIRE (worker genuinely stalled):  7
+    observations that NOW yield Accept instead of a kill:       7
+
+**The evidence term on the 420 s deadline changes NOTHING on this corpus.** Every archived worker that
+hit the deadline had tool_calls 0-2 and FLAT between consecutive observations, so `is_still_producing`
+is false and the deadline stays at 420 exactly as before. F201 correctly identified that the constant
+sits below both populations' p90 — but the workers who actually got killed were not the slow-and-
+working ones that fact predicts; they were genuinely stalled. **The change is a safety net for a case
+this corpus does not contain.** It should stay (a slow-but-active worker must not be cut), but it must
+not be credited with any improvement that shows up in the run now in flight.
+
+**`Verdict::Accept` is the change that does work: 7 kills become completions.** That is the F165 fix,
+and it is the only one of the five with a measurable path to the test-author row.
+
+**Registered as a PREDICTION before the run confirms it:** if `failures.py`'s test-author row improves
+on the new build, the mechanism is Accept, not the deadline. If it does NOT improve, the Accept branch
+is either not firing (check for `judge_accepted` in the log) or the failures have a cause upstream of
+the judge entirely — and the next suspect is F196's truncated API blocks, which are still unfixed.
+
+⚠ **Approximation bounding the claim:** the archive keeps `owns_files` but not the owned PATHS, so the
+replay synthesises one `.py` deliverable per task. That is correct for every task in the corpus except
+`web` (an `index.html` owner that `is_code_deliverable` exempts), so the figures OVERSTATE the
+deadline-eligible population by exactly one task.
+
+**LESSON 79 — QUANTIFY A CHANGE BEFORE THE RUN, NOT AFTER.** Five changes shipped together; the
+offline replay separated them in milliseconds and showed one is inert on the very data that motivated
+it. Without that separation the run's result — good or bad — would have been attributed to the whole
+batch, and a genuinely useful safety net would have been credited with an improvement it cannot
+produce, or blamed for a regression it cannot cause.
