@@ -32,6 +32,7 @@ Operating rules below each cost a real overnight run at some point:
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import shutil
@@ -1277,6 +1278,32 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     #                                — instructions for a job that SATISFIES tests handed to one that
     #                                AUTHORS them (F216, and commit d15ed448e measured the same class).
     # Everything after these is a question; these two are defects with a switch already written.
+    # INTERLEAVE THE NODE CURVE WITH ITS OWN DENOMINATOR — goal ONE is the session-resolving question
+    # and it was queued behind seventeen mechanism arms.
+    #
+    # THE MEASUREMENT THAT FORCED THIS. On the 10 tasks completed by BOTH `swarm-1node-r0` and
+    # `think_off-n3-r0`, the SAME task took a median 0.75x as long with three nodes — not merely more
+    # tasks at once, but each task 25% faster, because one node at PARALLEL 2 runs two workers against
+    # one GPU while three nodes give each worker most of a machine. Plan size (16 vs 17 tasks), scout
+    # lenses (3) and findings (2) were identical, so this is not the 3-node run doing less work. That
+    # is the first quantitative signal for goal one in the whole campaign — and it is CONFOUNDED (two
+    # different arms, n=1 each, and the 1-node unit was killed at 81 min so its task set is
+    # selection-biased). A confounded signal on the session's own question earns a clean experiment,
+    # not a conclusion.
+    #
+    # Ordering matters more than it looks. Three n=3 replicates followed by three n=1 replicates yields
+    # NOTHING comparable until unit six, roughly twelve hours in, and a fleet outage anywhere in that
+    # window loses the lot. Interleaved, a MATCHED PAIR exists after every two units and each further
+    # pair tightens the interval. The same units run; the answer just stops being all-or-nothing.
+    #
+    # n=2 stays where it was: it shapes the curve, it does not answer "does 3 beat 1".
+    n3 = [u for u in units if u[0]["name"] == "baseline" and u[1] == full]
+    n1 = [u for u in units if u[0]["name"] == "baseline" and u[1] == 1]
+    if n3 and n1:
+        picked = {id(u) for u in n3} | {id(u) for u in n1}
+        paired = [u for pair in itertools.zip_longest(n3, n1) for u in pair if u is not None]
+        units = paired + [u for u in units if id(u) not in picked]
+
     for name in ("kind_prompt", "think_off"):
         arm = next((u for u in units if u[0]["name"] == name and u[1] == full), None)
         if arm is not None:

@@ -9962,3 +9962,49 @@ test-author completions. If it comes back clean, n=10 gives p = 0.69^10 = **0.02
 mini-goal clears significance. **If even ONE test-author fails in r1, p jumps back above 0.05 and
 the row has NOT moved** — and I will say so rather than reaching for a subgroup. The falsifier and
 the confirmation are the same run.
+
+## F234 ⭐ — THE FIRST QUANTITATIVE SIGNAL FOR GOAL ONE, AND IT IS CONFOUNDED
+
+I predicted the prefix was the wall-clock problem — 45.7 of 112 minutes before the first dispatch,
+41% of the run — and that the fleet would be idle through it. **The falsifier killed it on sight.**
+Fleet sampler, split at the first dispatch:
+
+    prefix : fleet occupancy 77.4%   (209 busy node-samples of 270)
+    execute: fleet occupancy 88.6%   (341 busy node-samples of 385)
+
+The nodes are working through planning, not waiting. So the 46 minutes is not lost parallelism; the
+swarm genuinely spends 46 minutes of THREE-NODE compute planning an app it then builds in 67.
+
+Then the comparison that actually matters — `swarm-1node-r0` vs `think_off-n3-r0`, on the 10 tasks
+BOTH completed:
+
+    plan tasks      16  vs  17          scout lenses  3 vs 3        findings  2 vs 2
+    median task   5.9m  vs  5.8m
+    median per-task ratio 3-node / 1-node = 0.75
+
+Same plan, same research, and **the SAME task took a median 25% LESS time with three nodes.** That
+is not concurrency — concurrency leaves per-task duration alone or makes it worse. It is one node at
+PARALLEL 2 running two workers against one GPU versus three nodes giving each worker most of a
+machine.
+
+**AND IT IS CONFOUNDED, so it is a reason to run the experiment, not a result.** Two different arms
+(`baseline`-era vs `dep_signatures`+`kind_prompt`), n=1 each, ratios spanning 0.35–1.84 over ten
+points, and the 1-node unit was KILLED at 81 minutes by the sweep — so its completed-task set is
+selection-biased toward tasks that finish early, which is exactly the direction that would inflate
+the 1-node times. I am not claiming three nodes are faster. I am claiming the clean experiment is
+now clearly worth its wall-clock.
+
+**ACTED ON:** `backlog()` now INTERLEAVES the node curve with its own denominator —
+`baseline-n3-r0, baseline-n1-r0, baseline-n3-r1, baseline-n1-r1, …`. Three n=3 replicates followed
+by three n=1 replicates produces nothing comparable until unit six, ~12 hours in, and one fleet
+outage in that window loses all of it. Interleaved, a MATCHED PAIR exists after every two units. The
+same units run; the answer stops being all-or-nothing. Verified order: think_off(running),
+kind_prompt, then the four interleaved baseline units.
+
+⚠ **PENDING, AND IT MUST NOT SIMMER (Lesson 23).** The supervisor holds the OLD `sweep.py` in memory,
+so the reorder applies only on restart — and `loop.sh boundary` also REBUILDS, which moves
+`target/release/goose`'s mtime and therefore RESETS `goalstate`'s binary-scoped sample to zero.
+That would discard the 5/0 and void the registered n=10 test. **SEQUENCE: let `think_off-n3-r1`
+finish → read the registered result (clean ⇒ p=0.024, the row moves; one failure ⇒ it has not) →
+THEN boundary, which picks up both the reorder and the F231 judge fix that is also not yet in the
+running binary.**
