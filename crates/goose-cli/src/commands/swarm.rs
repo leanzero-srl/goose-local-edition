@@ -862,6 +862,10 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_FORCE_WRITE overrides.
     #[serde(default)]
     pub force_write_tool: Option<bool>,
+    /// Append a one-line ACT-NOW directive as the LAST thing a worker reads, when it owns files and has
+    /// written none. Default ON. GOOSE_SWARM_ACT_NOW overrides.
+    #[serde(default)]
+    pub act_now_nudge: Option<bool>,
     /// SWARM-COHERENCE Phase-1 (DAG-scoped context, deterministic). The frozen-contract bundle is one global
     /// string holding EVERY module's stub, injected identically into EVERY worker — O(total modules) per
     /// worker, growing with every split. When ON, scope it to the worker's DAG neighborhood (its deps ∪ its
@@ -1099,6 +1103,7 @@ impl Default for SwarmConfig {
             dep_signatures: Some(true),
             think_off_test_authors: None,
             force_write_tool: None,
+            act_now_nudge: Some(true),
             scoped_contracts: None,
             fan_verify: true,
             require_tests: true,
@@ -16388,6 +16393,15 @@ mod shipped_defaults_tests {
         let d = SwarmConfig::default();
         assert!(d.kind_prompt, "kind_prompt must ship ON");
         assert_eq!(d.dep_signatures, Some(true), "dep_signatures must ship ON");
+        assert_eq!(
+            d.act_now_nudge,
+            Some(true),
+            "the act-now nudge must ship ON"
+        );
+        assert_eq!(
+            d.force_write_tool, None,
+            "force_write_tool must stay OFF: tool_choice required is not enforced and picks the wrong tool"
+        );
 
         let from_empty: SwarmConfig =
             serde_yaml::from_str("{}").expect("an empty swarm block must parse");
@@ -19124,6 +19138,12 @@ fn think_off_test_authors() -> bool {
 /// So this converts some refusals into actions and some into the wrong action. It is kept, wired and
 /// tested rather than deleted because it is the only mechanism that can make "finish without acting"
 /// impossible if the endpoint ever enforces it — but it does not earn a default on this evidence.
+/// The act-now nudge (see the dispatch site). Default ON: it is text, it is the last line the worker
+/// reads, and every alternative aimed at the same failure is either harmful or rejected by the server.
+fn act_now_nudge() -> bool {
+    swarm_gate_cfg_bundle("GOOSE_SWARM_ACT_NOW", load_config().act_now_nudge, true)
+}
+
 fn force_write_tool() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_FORCE_WRITE",
@@ -20151,6 +20171,39 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 req.description
             ),
             None => req.description.clone(),
+        };
+        // ACT-NOW NUDGE — the LAST thing the worker reads, when it owns files and has written none.
+        //
+        // MEASURED on the replay bench against real archived decision points, same cases, paired:
+        //   baseline  n=42  refused 23.8%   wrote-first 23.8%   5 of 9 cases refused at least once
+        //   nudge     n=12  refused  0.0%   wrote-first 66.7%   0 of 4 cases refused
+        // Small n and I am not calling it significant. It is shipped anyway because it is TEXT — no API
+        // surface, no failure mode beyond wasted tokens, instantly revertible — and because the three
+        // alternatives that target the same failure are all worse: the assistant prefill was measured
+        // HARMFUL (9 finish-without-writes against 3), the named `tool_choice` is rejected by the server
+        // outright, and `tool_choice: "required"` is not enforced and picks `shell` over `write`.
+        //
+        // Position is the point. The engine already says "Write `X` NOW, in one `write`" — but it says it
+        // in a SUPERVISOR NOTE at the TOP of a 3,000-character dispatch, and only on a re-dispatch. This
+        // is one line, at the very end, on the FIRST attempt too, where the failure actually starts.
+        //
+        // Gated on the FILESYSTEM, not on a guess: only when this worker owns files and none of them
+        // exists yet. A worker that owns nothing, or has already written something, reads nothing new.
+        let worker_user_text = if act_now_nudge()
+            && !req.owned_files.is_empty()
+            && !req.owned_files.iter().any(|f| root.join(f).is_file())
+        {
+            format!(
+                "{worker_user_text}\n\nYour next message must be a TOOL CALL, not prose. \
+                 {} does not exist yet — write it now, in one `write`, then verify by running it.",
+                req.owned_files
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            )
+        } else {
+            worker_user_text
         };
         // THE SINK IS NOT A WORKER, AND THE TURN BUDGET NEVER NOTICED.
         //
