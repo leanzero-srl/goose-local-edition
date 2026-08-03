@@ -5034,6 +5034,7 @@ dependencies = [
  "futures",
  "goose",
  "goose-mcp",
+ "goose-provider-types",
  "goose-providers",
  "goose-swarm",
  "indicatif 0.18.4",
