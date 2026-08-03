@@ -123,9 +123,26 @@ def level1_logs(ev: list[dict]) -> list[str]:
     L.append(f"idle-node mechanisms that FIRED: {fired or 'none'}")
     skips = collections.Counter(e.get("reason") for e in ev if e.get("event") == "judge_skipped")
     if c["judge_verdict"] or skips:
-        hints = sum(1 for e in ev if e.get("event") == "judge_verdict" and (e.get("hint") or "").strip())
+        # COUNT BY ACTION, NEVER BY "HAS A HINT". Every verdict carries a hint, including the ones that
+        # do not interrupt the worker — so a hint-presence count says "intervention" about a task the
+        # judge waved through. That was harmless while `observed` was the only non-interrupting action;
+        # it stopped being harmless the moment `accept` existed, because an ACCEPT is the judge FINISHING
+        # a task, and counting it as interference would make the fix that removes kills look like more
+        # of them. An instrument must not name what it cannot distinguish.
+        acts = collections.Counter(
+            str(e.get("action") or "?") for e in ev if e.get("event") == "judge_verdict"
+        )
+        interrupts = sum(n for a, n in acts.items() if a in ("re_dispatch", "split", "failed"))
+        finishes = sum(n for a, n in acts.items() if a in ("accepted", "salvaged", "degraded"))
+        prov = collections.Counter(
+            bool(e.get("deterministic")) for e in ev if e.get("event") == "judge_verdict"
+        )
         L.append(f"judge: {c['judge_verdict']} ran, {sum(skips.values())} skipped {dict(skips)}, "
-                 f"{hints} real interventions")
+                 f"{interrupts} interrupted the worker, {finishes} finished it  {dict(acts)}")
+        # Provenance is only present once the engine stamps it; a run from before that build prints
+        # nothing here rather than a misleading all-False.
+        if any(e.get("deterministic") is not None for e in ev if e.get("event") == "judge_verdict"):
+            L.append(f"   provenance: {prov[True]} engine facts, {prov[False]} model opinions")
     return L
 
 

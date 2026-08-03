@@ -75,6 +75,17 @@ pub enum SwarmEvent {
         confidence: f32,
         hint: String,
         action: String,
+        /// PROVENANCE: true when `deterministic_verdict` produced this — a real engine fact (a compile
+        /// error, an owned file never written, a measured char/tool count) — false when the judge MODEL
+        /// authored it.
+        ///
+        /// `confidence` cannot carry this: the model produces its own confidence, so a 0.90 from a weak
+        /// model is indistinguishable from a 0.90 the engine hard-codes. The flag exists on
+        /// `JudgeOutcome` and was used for the terminal-fail gate, then DROPPED before emit — so every
+        /// downstream analysis had to re-derive provenance from thresholds. That is not hypothetical:
+        /// it produced a wrong published finding (an `over_reading` verdict was attributed to the LLM
+        /// judge on exactly that reasoning, when a deterministic 420 s branch had emitted it).
+        deterministic: bool,
     },
     /// An idle node ran a correctness PRE-REVIEW of a completed task on a spare device (concurrently with
     /// the judge). Makes idle-node utilization observable in the jsonl; `had_findings` = a defect was found
