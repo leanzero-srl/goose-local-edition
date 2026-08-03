@@ -10080,3 +10080,31 @@ note because the worker was already failing**, so the note-bearing population is
 difficulty. Fisher's exact on 4/23 vs 0/5 is p≈1.0. What can honestly be said is narrower and still
 worth saying: **the engine's own repair note is present in cases that go on to refuse 17% of the
 time, so it is not reliably fixing the behaviour it was written for.**
+
+## F237b ⚠️ — THE NAIVE p LOOKS SIGNIFICANT AND IT IS NOT: THE SAMPLES ARE CLUSTERED
+
+33 baseline samples now, and the depth pattern held through every new sample — the registered
+falsifier (a refusal at msgs >= 5) has still not appeared:
+
+    SAMPLE level : shallow 6/20 refuse, deep 0/13    p(all refusals shallow) = 0.035
+    CASE   level : shallow 3 of 4 cases refuse, deep 0 of 3    p = 0.114
+
+**The 0.035 is the number I would have reported if I were not looking for the reason not to.** It
+treats 33 samples as 33 independent draws. They are not: they are 5 reps each of 7 cases, and a
+refusal is a property of the CASE far more than of the rep — `cd4715eb56` refused 3 of 5,
+`862669bfa0` refused 0 of 5, and both are `msgs=2`. Once the unit of analysis is the case, which is
+what the experiment actually randomises over, it is **3 of 4 versus 0 of 3 and p = 0.114. NOT
+SIGNIFICANT.**
+
+Two things this does say, and they are worth keeping:
+- **The direction has survived every sample so far** — 33 of 33 consistent, zero counter-examples,
+  with cases at msgs = 5, 8 and 20 all clean.
+- **`862669bfa0` is the case that matters most.** It is `msgs=2`, same system prompt size (25,103)
+  and same user text (2,215) as `c425662b57` and `cd4715eb56` — and it refuses 0 of 5 while they
+  refuse 1 of 5 and 3 of 5. Shallow depth is therefore NOT sufficient for refusal. Whatever the real
+  cause is, it varies between three near-identical prompts, which points at the CONVERSATION CONTENT
+  or the sampler, not at the prompt template.
+
+**To clear p<0.05 at case level I need more CASES, not more reps** — 5 more reps on the same seven
+cases buys nothing. The corpus is the bottleneck (9 live test-author cases), and it widens only when
+runs write fresh current-model payloads. Re-harvest after every arm.
