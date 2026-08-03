@@ -312,6 +312,7 @@ fn quantify_the_change_against_the_recorded_verdicts() {
         if r.task_id != last {
             prev_calls = None;
             prev_think = None;
+            prev_at = None;
             last = r.task_id.clone();
         }
         let input = to_input(r, prev_calls, prev_think, prev_at, r.any_owned_written);
@@ -330,6 +331,7 @@ fn quantify_the_change_against_the_recorded_verdicts() {
         }
         prev_calls = r.tool_calls;
         prev_think = r.thinking_chars;
+        prev_at = Some(r.elapsed_secs);
     }
     eprintln!(
         "PREDICTED EFFECT on {} archived observations:\n  \
