@@ -9706,3 +9706,54 @@ tree to `runs/nodeloop-parked-<epoch>` before `start|resume` reuses it.**
 false status this session was corrected within minutes because it was still on screen. This one was
 about to become the permanent record. **When a commit says a fix landed, the diff must contain the
 fix — check `git show --stat` for the FILE, not just that the commit succeeded.**
+
+## F225 — `dep_signatures` WORKS and my registered prediction about it is REFUTED
+
+Both levers armed (`levers.think_off_test_authors = True`, `levers.dep_signatures = True` — checked
+nested, per F218).
+
+**The lever does exactly what its code says.** The `## API of` block is now pure declaration surface:
+
+    class Store:
+        def __init__(self, path: str) -> None: ...
+        def upsert_many(self, payments: list[dict]) -> int: ...
+        def all_payments(self) -> list[dict]: ...
+
+1,665 chars, **zero indented body lines**, where a block was 3,606 with six private method bodies.
+`extract_signatures` did NOT fall back to the full body, so the registered VOID condition is not met.
+
+**AND THE PROMPT DID NOT SHRINK.**
+
+    kind            n   median chars   blocks     registered baseline
+    test-author     2         23,032        5     22,511   ⇒  +2%
+    implementer     8          8,270        0      9,900   ⇒ -16%
+
+**I registered "~22,500 → ~12,000 for test-authors" BEFORE the run. The measured value is 23,032 —
+unchanged.** That prediction is refuted, and it was mine.
+
+**Why, arithmetically, and it is a mistake I could have caught offline:** F196 measured ONE prompt
+with **4 blocks totalling 10,097** chars (avg 2,524). This arm has **5 blocks at ~1,665** ≈ **8,325**.
+So the bundle fell only ~18%, not ~50% — because (a) signature extraction of a large class still
+produces substantial text, and (b) **this plan generated FIVE dependency blocks where the measured
+one had four.** I projected a 50% cut from a per-block ratio without checking how many blocks a
+typical plan emits, and block COUNT varies per run. **That is F196's own lesson — "scoping the block
+COUNT was the wrong axis" — inverted and re-made: I then scoped block SIZE and ignored the count.**
+
+**WHAT THIS DOES TO THE ARM.** The `dep_signatures` half was included to test F223's prompt-PROCESSING
+hypothesis: a worker that never generates because LM Studio is still chewing a 22,511-char prompt.
+**A prompt that did not get smaller cannot test that hypothesis.** So:
+
+- If the test-author row moves in this run, **the credit belongs to `think_off`**, not to prompt size.
+- If it does not move, **F223's prompt-processing hypothesis remains UNTESTED** — not refuted. I must
+  not record a null here as evidence against it.
+- ⚠ n=2 test-authors. The median is weak. But +2% is nowhere near −47%, and the direction is the
+  point, not the precision.
+
+**A SEPARATE, SMALLER FACT WORTH KEEPING:** implementers fell 9,900 → 8,270 (**−16%**) with a median
+of **0** API blocks — so that reduction is NOT from the bundle. Something else in the implementer
+prompt is smaller on this build. Unexplained; recorded rather than guessed at.
+
+**LESSON 103 — A RATIO MEASURED ON ONE INSTANCE DOES NOT PREDICT A TOTAL THAT HAS A VARIABLE COUNT.**
+"50.7% of the prompt is dependency bodies" was true of the prompt I measured. Turning that into "the
+prompt will halve" required assuming the block count is fixed, and it is not — it is whatever the
+planner emitted that run. **Before predicting a total, ask which of its terms vary run to run.**
