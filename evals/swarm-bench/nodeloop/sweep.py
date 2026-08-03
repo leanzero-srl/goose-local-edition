@@ -1208,11 +1208,25 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     # pointed at the failing population: the `## API of` bundle is 50.7% of a test-author's prompt and
     # 3 of 4 of its blocks are truncated mid-token (one of them does not parse). Everything else in
     # the queue is a question; this one is a defect with a switch already written for it.
-    first_base = units[0] if units and is_base(units[0]) else None
+    # MECHANISM BEFORE SCORE. `think_off` runs FIRST, ahead of the baseline replicate.
+    #
+    # The ordering above (baseline, then arm) is correct when the question is a SCORE — a treatment
+    # needs a denominator. It is wrong when the question is whether the mechanism REACHES the model at
+    # all, and that is what this arm is really asking: the 47.3s->3.1s evidence was measured
+    # NON-streaming and goose always streams, so the first thing to learn is whether a synthetic
+    # trailing assistant message survives `format_messages_with_options` and the streaming path.
+    #
+    # That is answerable from the arm's FIRST test-author dispatch — one `llm_request` line — not from
+    # a finished run. Putting a 100-minute baseline in front of it buys nothing, because if the
+    # mechanism does not reach the model the score is uninterpretable regardless of denominator. A
+    # clean denominator already exists (n=5) and the remaining replicates refine an interval that a
+    # dead mechanism would make moot.
+    #
+    # This is the stall detector's own advice taken literally: feedback latency is a variable under my
+    # control, and the cheapest decisive experiment is not the one the queue happens to schedule first.
     arm = next((u for u in units if u[0]["name"] == "think_off" and u[1] == full), None)
-    if first_base is not None and arm is not None:
-        rest = [u for u in units if u is not first_base and u is not arm]
-        units = [first_base, arm] + rest
+    if arm is not None:
+        units = [arm] + [u for u in units if u is not arm]
     return units
 
 
