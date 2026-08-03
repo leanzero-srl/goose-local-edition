@@ -284,6 +284,13 @@ def variant_payload(inp: dict, variant: str) -> dict:
         p["min_p"] = 0.0
     elif variant == "toolchoice":
         p["tool_choice"] = "required"
+    elif variant == "forcewrite":
+        # EXACTLY what the shipped `force_write_tool` lever puts on the wire. Measured separately from
+        # `toolchoice` because "required" did NOT prevent a refusal (1 of 5) — the server does not hard
+        # enforce it — and because when it DID act it called `shell` 3 times out of 4. Naming the
+        # function is a strictly stronger constraint and it is the one the engine sends, so it is the
+        # one that has to be verified.
+        p["tool_choice"] = {"type": "function", "function": {"name": "write"}}
     elif variant == "maxtok":
         p["max_tokens"] = 2048
     elif variant == "nudge":
@@ -299,7 +306,7 @@ def variant_payload(inp: dict, variant: str) -> dict:
 
 
 VARIANTS = ["baseline", "declared", "prefill", "samplers", "temp06", "rp10", "minp0",
-            "toolchoice", "maxtok", "nudge", "nothink"]
+            "toolchoice", "forcewrite", "maxtok", "nudge", "nothink"]
 
 
 # ---------------------------------------------------------------- replay
