@@ -16388,6 +16388,47 @@ mod shipped_defaults_tests {
     ///
     /// A serde(default) would silently re-zero kind_prompt for any config.yaml omitting the key, so
     /// the field carries default_true and this test pins BOTH paths.
+    /// The repair round must land on the FASTEST enabled node, not on pool position 0.
+    ///
+    /// This path bypasses `pick_device` entirely, so the speed-weight routing that F207 added never
+    /// applied to it: on this fleet `devices.first()` is gabee at speed_weight 1 while worksmacstudio
+    /// sits at 3. Repair is a single serialised late task with nothing to overlap it, which makes it
+    /// the dispatch where the fastest machine is worth the most — and it was the one that ignored the
+    /// setting. The disabled device is in the fixture because filtering it out is half the rule.
+    #[test]
+    fn the_repair_round_targets_the_fastest_enabled_node() {
+        let devices = vec![
+            DeviceCfg {
+                id: "gabee".into(),
+                model_id: "m1".into(),
+                weight: 2,
+                enabled: true,
+                speed_weight: 1,
+            },
+            DeviceCfg {
+                id: "fast-but-off".into(),
+                model_id: "m2".into(),
+                weight: 2,
+                enabled: false,
+                speed_weight: 9,
+            },
+            DeviceCfg {
+                id: "workhorse".into(),
+                model_id: "m3".into(),
+                weight: 2,
+                enabled: true,
+                speed_weight: 3,
+            },
+        ];
+        let picked = devices
+            .iter()
+            .filter(|d| d.enabled)
+            .max_by_key(|d| d.speed_weight)
+            .or_else(|| devices.first())
+            .map(|d| d.id.clone());
+        assert_eq!(picked.as_deref(), Some("workhorse"));
+    }
+
     #[test]
     fn the_two_verified_defect_fixes_default_on() {
         let d = SwarmConfig::default();
@@ -23625,9 +23666,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "EXECUTE",
         "subtasks run IN PARALLEL across the fleet; dynamic replan fills idle workers",
     );
-    // Captured before `devices`/`dag`/`dispatcher` move into the scheduler — used only by the
-    // GOOSE_SWARM_SMOKE corrective re-dispatch (one guided fix attempt if the smoke check fails).
-    let smoke_fix_target = devices.first().map(|d| (d.id.clone(), d.model_id.clone()));
+    // Captured before `devices`/`dag`/`dispatcher` move into the scheduler — used by the corrective
+    // re-dispatch paths (the guided smoke fix, and the COMPLETE-phase repair rounds).
+    //
+    // THE FASTEST NODE, NOT THE FIRST ONE. This path never touches `pick_device`, so the whole
+    // speed-weight routing is bypassed: `devices.first()` is pool order, which on this fleet put every
+    // repair round on `gabee` (speed_weight 1) while `worksmacstudio` (speed_weight 3) sat available.
+    // Repair is exactly the case Mihai named — a single, serialised, late task with nothing to overlap
+    // it — so it is the one dispatch where landing on the quickest machine is worth the most, and it
+    // was the one dispatch that ignored the setting entirely. `max_by_key` returns the LAST maximum, so
+    // ties resolve to the later pool entry deterministically rather than by iteration accident.
+    let smoke_fix_target = devices
+        .iter()
+        .filter(|d| d.enabled)
+        .max_by_key(|d| d.speed_weight)
+        .or_else(|| devices.first())
+        .map(|d| (d.id.clone(), d.model_id.clone()));
     // LEARN & REFLECT — the SNAPSHOT. Capture the structural facts NOW, while the plan is still in scope:
     // by the time the run knows it PASSED, plan_json has been moved into the plan_loaded event and `dag` has
     // been moved into scheduler.run(). Same reason smoke_all_files is captured here.
