@@ -184,6 +184,7 @@ def harvest(limit: int) -> int:
             "kind": kind_of(tid, owned),
             "task_id": tid,
             "owned": owned,
+            "model": inp.get("model"),
             "n_msgs": len(inp["messages"]),
             "n_tools": len(inp.get("tools") or []),
             "sys_chars": len(sysp),
@@ -204,15 +205,42 @@ def harvest(limit: int) -> int:
     return 0
 
 
-def load_cases(kind: str | None) -> list[dict]:
+def live_models() -> set[str]:
+    """Identifiers the fleet is serving RIGHT NOW."""
+    try:
+        with urllib.request.urlopen("http://localhost:1234/v1/models", timeout=20) as r:
+            return {m["id"] for m in json.loads(r.read())["data"]}
+    except Exception:
+        return set()
+
+
+def load_cases(kind: str | None, live_only: bool = True) -> list[dict]:
+    """Cases replayable against the CURRENT fleet.
+
+    ⚠ THE ARCHIVE STRADDLES A FLEET MODEL SWAP. 158 of 224 frozen payloads name
+    `qwopus3.6-27b-coder-*`, the RETIRED model; only 38 name the current
+    `qwen3.6-27b-fable-fusion-711-…`. Replaying the retired ones returned HTTP 400 in 0.0s — 24 of
+    the first 44 samples — because that identifier is not loaded. The 400s were the visible symptom;
+    the real problem is that a decision point produced by a DIFFERENT model is a different
+    experiment, and this campaign is about the model on the fleet today. Filtering is the honest
+    scope, not a workaround, and it is why `model` is recorded per case.
+
+    Left as `model`-preserving rather than substituting a live identifier: the surviving payloads
+    already carry the three live node identifiers (14 workhorse / 13 gabee / 11 mihai), so the bench
+    spreads across the fleet by construction instead of pinning every sample to one node.
+    """
     if not CASES.is_file():
         return []
+    live = live_models() if live_only else set()
     out = []
     for line in CASES.read_text().splitlines():
         if line.strip():
             r = json.loads(line)
-            if kind is None or r["kind"] == kind:
-                out.append(r)
+            if kind is not None and r["kind"] != kind:
+                continue
+            if live_only and live and r.get("model") not in live:
+                continue
+            out.append(r)
     return out
 
 
@@ -425,6 +453,37 @@ def report() -> int:
     return 0
 
 
+def sampler_preflight() -> int:
+    """Does the server ACTUALLY apply the sampler fields, or silently drop them?
+
+    Lesson 4, and F213 is the precedent: LM Studio accepts `chat_template_kwargs` and ignores it, so a
+    variant built on it measures nothing while looking like a clean null. `temperature`, `top_k`,
+    `min_p` and `repetition_penalty` are not OpenAI-standard in the same way and could go the same
+    route. The probe is a short prompt at temperature ~0 versus temperature 2.0 with the truncation
+    samplers opened up: if the field is honoured the two populations must differ; if every one of the
+    six replies is byte-identical the fields are being dropped and every sampler variant is INERT.
+    """
+    prompt = [{"role": "user", "content": "Continue this sentence with exactly one more sentence: "
+                                          "The old lighthouse keeper opened his logbook and"}]
+    out = {}
+    for label, extra in (("temp0.01", {"temperature": 0.01, "top_k": 1}),
+                         ("temp2.0", {"temperature": 2.0, "top_k": 200, "min_p": 0.0,
+                                      "top_p": 1.0})):
+        reps = []
+        for _ in range(3):
+            body = {"model": MODEL_FOR_PROBE, "messages": prompt, "stream": True,
+                    "max_tokens": 40, **extra}
+            r = replay(body, 120)
+            reps.append(r.get("error") or f"{r.get('text_chars')}c/{r.get('reason_chars')}r")
+        out[label] = reps
+        print(f"{label:9s} -> {reps}")
+    same = len({tuple(v) for v in out.values()}) == 1
+    print("\nVERDICT:", "⚠ IDENTICAL populations — samplers look IGNORED, treat every sampler "
+          "variant as INERT" if same else
+          "the two sampler settings produce DIFFERENT output ⇒ the fields reach the model")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -460,34 +519,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def sampler_preflight() -> int:
-    """Does the server ACTUALLY apply the sampler fields, or silently drop them?
-
-    Lesson 4, and F213 is the precedent: LM Studio accepts `chat_template_kwargs` and ignores it, so a
-    variant built on it measures nothing while looking like a clean null. `temperature`, `top_k`,
-    `min_p` and `repetition_penalty` are not OpenAI-standard in the same way and could go the same
-    route. The probe is a short prompt at temperature ~0 versus temperature 2.0 with the truncation
-    samplers opened up: if the field is honoured the two populations must differ; if every one of the
-    six replies is byte-identical the fields are being dropped and every sampler variant is INERT.
-    """
-    prompt = [{"role": "user", "content": "Continue this sentence with exactly one more sentence: "
-                                          "The old lighthouse keeper opened his logbook and"}]
-    out = {}
-    for label, extra in (("temp0.01", {"temperature": 0.01, "top_k": 1}),
-                         ("temp2.0", {"temperature": 2.0, "top_k": 200, "min_p": 0.0,
-                                      "top_p": 1.0})):
-        reps = []
-        for _ in range(3):
-            body = {"model": MODEL_FOR_PROBE, "messages": prompt, "stream": True,
-                    "max_tokens": 40, **extra}
-            r = replay(body, 120)
-            reps.append(r.get("error") or f"{r.get('text_chars')}c/{r.get('reason_chars')}r")
-        out[label] = reps
-        print(f"{label:9s} -> {reps}")
-    same = len({tuple(v) for v in out.values()}) == 1
-    print("\nVERDICT:", "⚠ IDENTICAL populations — samplers look IGNORED, treat every sampler "
-          "variant as INERT" if same else
-          "the two sampler settings produce DIFFERENT output ⇒ the fields reach the model")
-    return 0
