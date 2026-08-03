@@ -7922,3 +7922,41 @@ dynamic version is a genuine deviation and the reviewers found a real defect, no
 
 This is the second independent line of evidence that the idle-node findings are worth consuming
 (F182b), and it arrived from a direction I was not aiming at.
+
+## F188 — four more upstream commits closed; one PROMOTED because our concurrency is the precondition
+
+Continuing the ratchet. Closed on facts about this deployment, not on diffs (Lesson 44):
+
+    ea2baea58  fix(summon): preserve fixed subrecipe values
+               `summon` appears 0 times in swarm.rs — the same fact that closed a commit in F155.
+    efc7ccc2c  fix(permissions): scope smart approval by request
+               `approval` and `smart_approval` both appear 0 times; the swarm is headless with no
+               approval flow at all.
+    c55b5fb62  feat(hooks): pass working_dir to the Stop hook context
+               `hooks` appears once in swarm.rs but **config.yaml declares ZERO hooks**, so no hook
+               runs on any of these runs. Checked the CONFIG, not just the source — a hook surface
+               that exists and is unconfigured is exactly the case a source grep gets wrong.
+    8d5bc5d49  fix(developer): expose AGENT_SESSION_ID to shell commands
+               Our workers DO use the developer extension's shell (tools are exactly `edit, shell,
+               tree, write`), so "we don't run shell" would have been the wrong close. The right one
+               is narrower: `AGENT_SESSION_ID` appears 0 times in swarm.rs and nothing in our worker
+               prompts references it, so the change adds an env var no code of ours reads.
+               Behaviourally inert HERE — stated as scope, not as irrelevance.
+
+**PROMOTED, NOT CLOSED — `d5a8a3fb9 fix(session): create inventory tables atomically with schema
+version`.** My reflex was to file this with the other session commits as low-relevance plumbing. That
+is wrong for THIS deployment specifically: the swarm runs **six concurrent workers**, each opening a
+session, so **concurrent inventory-table creation is our normal operating condition, not an edge
+case.** An atomicity fix on table creation has a precondition we meet on every single run. It stays
+open and moves to the front of the flagged list.
+
+That is the mirror of Lesson 44 and worth stating as its own rule: a deployment fact can make an
+upstream commit MORE relevant, not only less. I have used this check nine times to kill candidates
+and this is the first time it promoted one.
+
+STILL OPEN, needing a real read when the freeze lifts:
+    d5a8a3fb9  session inventory atomicity   <-- 6 concurrent workers meet its precondition every run
+    ee61c7c49  CLI streaming render O(n^2) -> incremental
+    8b73e1a1b  stable agent event identity   (F172 made it moot for F163, may still matter elsewhere)
+    ad87dd4c3  compaction structured summary (`compact` appears 13x in swarm.rs)
+    d5785a367  session manager for tool summaries
