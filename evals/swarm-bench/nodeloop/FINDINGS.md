@@ -9064,3 +9064,69 @@ at once nearly credited an inert one).**
 this switch do what I think" is about a template, and a template is a pure function of its inputs.
 It took one jinja2 render to answer definitively what would otherwise have been a fleet request
 competing with a measured run — or worse, a full arm.
+
+## F213 — 🔴 THE OBVIOUS FIX IS BROKEN IN LM STUDIO. The viable path is the TEMPLATE ITSELF.
+
+I was one commit from implementing `chat_template_kwargs: {"enable_thinking": false}` in the swarm's
+request path. **It would not have worked, and it would have looked like a failed hypothesis rather
+than a broken transport.**
+
+**LM Studio bug tracker issue #1990 (opened 2026-05-31, STILL OPEN):** `enable_thinking: false` is
+IGNORED for Qwen3.5 GGUF models over the OpenAI-compatible API. **All three suppression routes fail:**
+
+    1. "enableThinking": false        in /v1/chat/completions   — ignored
+    2. "chat_template_kwargs": {...}  in the request body       — ignored
+    3. defaultValue: false            in model.yaml             — ignored
+
+**The reporter's symptom is mine, exactly:** with `max_tokens: 100`, ~99 tokens go to
+`reasoning_content` and `message.content` comes back EMPTY. That is F210's zero-action worker
+described from the API side.
+
+**⇒ F212's proof stands** (the template DOES pre-close the block when the kwarg reaches it) **but the
+DELIVERY CHANNEL is broken.** This is the F202 pattern caught before the fact: a change whose
+registered check would have passed on an unmodified engine, teaching a false lesson about the
+hypothesis rather than about the plumbing.
+
+**THE VIABLE PATH — `froggeric/Qwen-Fixed-Chat-Templates`, prior art aimed at exactly this model
+family.** A corrected Jinja template for Qwen 3.5/3.6 that:
+
+- **Names and fixes "Empty Think Poisoning"** — an empty `<think>\n</think>` block teaches the model
+  to associate reasoning with tool calls. ⚠ **A warning about the naive fix**: even delivered
+  correctly, the empty block `enable_thinking: false` emits may itself degrade tool calling. Both
+  facts together mean the naive switch was doubly unsafe.
+- **Restores the native XML tool-call format** (`<function=name>`) "that Qwen was trained on".
+- **Adds `<|think_on|>` / `<|think_off|>` tags that work FROM INSIDE THE PROMPT.**
+- Two-tier agentic error escalation, so the model stops re-emitting an identical failing call.
+- Installed via LM Studio's per-model **Prompt Template** field — which **bypasses the broken
+  `chat_template_kwargs` transport entirely**, being applied server-side.
+
+**THE STRATEGIC POINT, and the reason this matters beyond one switch:** a template honouring
+**in-prompt** tags gives the ENGINE per-dispatch control over thinking **with no API support and no
+provider changes**. goose would emit `<|think_off|>` for a test-author and `<|think_on|>` for a
+planner — precisely the kind-aware behaviour this campaign has wanted since F157.
+
+**WHAT I AM NOT DOING, and why.** Replacing the prompt template is a **fleet-side change on three
+machines**, and a measured run is in flight (`baseline-n3-r0`, 20/21 done). Changing it now would
+invalidate that run AND confound the engine changes already under test. It also sits near the
+standing "never reconfigure the fleet" rule — that rule is about load/unload/re-alias and a template
+swap is different in kind, but it is still fleet-side and deserves a deliberate boundary.
+
+**REGISTERED PLAN, in order:** (1) let the run finish, take its readout; (2) diff the fixed template
+against the current one by rendering BOTH offline with jinja2 — the same zero-token method as F212,
+showing exactly what changes before anything is installed; (3) only then decide, and if installed, do
+all three nodes at a boundary recorded as a fleet-state change so no later comparison spans it.
+
+**LESSON 87 — CHECK THAT THE TRANSPORT WORKS BEFORE BLAMING THE HYPOTHESIS.** The mechanism was
+proven, the switch exists, the template honours it — and the API that carries it drops it on the
+floor. Had I shipped it, the null would have read as "thinking-prefill is not the cause" and closed
+the most promising lead of the campaign. **A negative result is evidence about the hypothesis only if
+the change actually reached the system.**
+
+**LESSON 88 — `cd x && cmd` SILENTLY SKIPS `cmd` WHEN THE `cd` FAILS.** This finding was "committed"
+once already and the commit contained only a one-line tick file: I was in `nodeloop` and wrote
+`cd evals/swarm-bench/nodeloop && cat >> FINDINGS.md`, the `cd` failed, and the `&&` swallowed the
+whole write. The commit SUCCEEDED and said what I meant to have written. Verifying with
+`git show --stat` is what caught it — the same "grep before asserting" rule that F170 and F191b both
+cost me.
+
+Sources: LM Studio bug tracker #1990; froggeric/Qwen-Fixed-Chat-Templates (HuggingFace).
