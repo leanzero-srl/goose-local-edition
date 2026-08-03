@@ -123,7 +123,25 @@ ARMS = [
     {
         "name": "think_off",
         "reps": 3,
-        "env": {"GOOSE_SWARM_THINK_OFF": "1"},
+        # BOTH LEVERS, ONE ARM — a deliberate departure from F204's "test them apart".
+        #
+        # F204 is right when the question is ATTRIBUTION. It is the wrong rule when the question is
+        # whether the metric moves AT ALL, and after 16 stalled ticks that is the question. The two
+        # levers attack the two failure modes actually observed in test-authors, and they are
+        # different modes, not two guesses at one:
+        #   THINK_OFF      -> the worker that GENERATES but only reasons (F216: 47.3s/no tool call
+        #                     -> 3.1s/tool call first). Proven to reach the wire (F220).
+        #   DEP_SIGNATURES -> the worker that never generates at all because LM Studio is still
+        #                     PROCESSING a 22,511-char prompt (F223: thinking_chars None for 390s
+        #                     means the digest is still the seed). 10,097 of those chars — 50.7% —
+        #                     are `## API of` dependency BODIES, 3 of 4 truncated mid-token, one
+        #                     failing ast.parse outright (F196). That is a broken artifact, and a
+        #                     broken artifact is a BUG, not a tuning preference.
+        #
+        # If the row moves, a follow-up arm with one lever separates them. If it does not move with
+        # BOTH on, neither is the cause and the search goes elsewhere — which is worth more than a
+        # clean null on either alone.
+        "env": {"GOOSE_SWARM_THINK_OFF": "1", "GOOSE_SWARM_DEP_SIGNATURES": "1"},
         "gate": "STREAMING IS THE FALSIFIER AND IT DECIDES THE WHOLE ROUTE. The 47.3s->3.1s evidence "
                 "was measured NON-streaming; goose ALWAYS streams. FIRST, before any score: in "
                 "`llm_request.*.jsonl` the LAST element of `messages` must be role:'assistant' "
