@@ -604,7 +604,45 @@ impl State {
                 .unwrap_or(0) as u64
                 * 1000
                 / sw;
-            (d.in_flight, speed, prefers_rank, weighted_load, i)
+            // ORDERING DEPENDS ON THE TASK, and this is the whole point of having weights.
+            //
+            // For a HARD task, SPEED IS PRIMARY: the biggest work must land on the highest-weighted
+            // (fastest) node that has free capacity, every time. Every device in `pool` already passed
+            // `in_flight < weight`, so preferring speed here can never oversubscribe a node — it only
+            // decides WHICH free node wins. Previously `in_flight` was primary for every task, so speed
+            // was a tie-break only: with the fastest host holding one in-flight task and a slower host
+            // idle, the heaviest task went to the SLOW host. That is backwards — the critical path is
+            // set by the big tasks, so those are exactly the ones that must not run on the slow node.
+            //
+            // For everything else load stays primary, which is what spreads ordinary work across the
+            // fleet and keeps idle nodes busy.
+            // WEIGHT IS DECISIVE FOR A HARD TASK — not a tie-break, and not overridable by a timing
+            // sample. Inverted so a HIGHER speed_weight sorts FIRST; observed ms/task then breaks ties
+            // among equally-weighted hosts, and load breaks ties after that.
+            //
+            // Ordering by observed speed alone was not enough: whichever host happened to be dispatched
+            // first acquires a real average while the others are still `u64::MAX - sw`, so a single
+            // sample on a slow host would beat the configured fastest host forever. The operator sets
+            // these weights precisely because they know which machine is fastest; a first-dispatch
+            // accident must not outrank that.
+            let weight_rank = u32::MAX - d.cfg.speed_weight.max(1);
+            if hard {
+                (
+                    weight_rank as u64,
+                    speed,
+                    d.in_flight as u64,
+                    weighted_load,
+                    i,
+                )
+            } else {
+                (
+                    d.in_flight as u64,
+                    speed,
+                    prefers_rank as u64,
+                    weighted_load,
+                    i,
+                )
+            }
         })
     }
 
@@ -1379,6 +1417,65 @@ impl State {
             .get(tid)
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
+        // ACCEPT — the deliverable is COMPLETE (every owned file exists and none fails its compile
+        // check). Finish the task instead of spending an attempt killing a worker that has already
+        // produced what it owed. This is the judge's only non-stopping lever; without it "looks done"
+        // and "looks stuck" both resolved to kill, and the third kill is terminal. MEASURED (F165):
+        // test-meridian was recorded a TERMINAL FAILURE with 8 passing test functions on disk that the
+        // crunched app still runs.
+        //
+        // Deliberately NOT gated the way `salvage_spin` is. That mechanism marks a spinning task Done —
+        // but excludes test tasks (`!is_test_task`), and test-authors are 93% of every failure this
+        // campaign has recorded (14 of 15). Excluding them excludes the entire population the salvage
+        // would help. Requires `deterministic` so a weak model can never hand itself a completion.
+        if still_live && outcome.verdict == Verdict::Accept && outcome.deterministic {
+            if let Some(h) = self.abort_handles.remove(tid) {
+                h.abort();
+            }
+            if let Some(dev) = self.claimed_device.remove(tid) {
+                if self.devices[dev].in_flight > 0 {
+                    self.devices[dev].in_flight -= 1;
+                }
+            }
+            if let Some(files) = self.held_by.remove(tid) {
+                for f in files {
+                    self.held_files.remove(&f);
+                }
+            }
+            self.attempt_started_at.remove(tid);
+            self.sink.emit(&SwarmEvent::JudgeVerdict {
+                task_id: tid.to_string(),
+                device: device.clone().unwrap_or_default(),
+                verdict: "accept".to_string(),
+                confidence: outcome.confidence,
+                hint: outcome.hint.clone(),
+                action: "accepted".to_string(),
+            });
+            self.attempt_log
+                .entry(tid.to_string())
+                .or_default()
+                .push(AttemptRecord {
+                    device: device.clone(),
+                    model: model.clone(),
+                    outcome: "judge_accepted".to_string(),
+                    error: None,
+                    elapsed_ms: 0,
+                });
+            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
+            self.relax_dependents(tid);
+            let attempts = self.attempt_log[tid].len() as u32;
+            self.sink.emit(&SwarmEvent::TaskCompleted {
+                task_id: tid.to_string(),
+                status: "done".to_string(),
+                device,
+                model,
+                attempts,
+                elapsed_ms: 0,
+                session_id: None,
+                tool_calls: Vec::new(),
+            });
+            return true;
+        }
         // SPLIT is an action on healthy-but-too-big work, handled separately below — keep it out of the
         // kill/re-dispatch path (which is for misbehaving workers).
         let is_split = still_live
