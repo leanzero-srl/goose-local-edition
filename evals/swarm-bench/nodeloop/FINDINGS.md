@@ -8897,3 +8897,46 @@ credits itself with a perfect score it never earned.
 campaign's north star for days while silently averaging pre-change and post-change runs together.
 Every improvement I could have made would have been divided by 27 runs of history. Before trusting a
 metric to detect a change, check that its SAMPLE can respond to the change at all.
+
+## F210 — `no_first_write` is live and correct, and it sharpens the test-author diagnosis
+
+`baseline-n3-r0` at 70 min, every non-`observed` verdict:
+
+    api                        verdict=accept           action=accepted
+    test-store-error-handling  verdict=no_first_write   action=re_dispatch
+    test-api                   verdict=no_first_write   action=re_dispatch
+    test-meridian              verdict=no_first_write   action=re_dispatch
+    test-api                   verdict=no_first_write   action=re_dispatch
+
+**PATCH #14's REGISTERED CHECK PASSES: zero `over_reading` verdicts carry `tool_calls == 0`.** On the
+old build 9 of 11 did, and that mislabel produced three separate false causal chains before anyone
+checked the counter beside it. Every kill in this run is now named for what actually happened.
+
+**And the label change immediately earns its keep, because it renames the problem correctly.** All
+four re-dispatches are test-authors, and the observations behind them are `calls=0` with thinking at
+1,992-7,118 chars and nothing written. These workers are not over-reading, not thrashing, and not
+finishing-then-spinning. **They never take a single action.**
+
+**That is the finding that matters for the mini-goal, and it CONSTRAINS what can fix it:**
+
+- **`Verdict::Accept` cannot help this population.** Accept requires every owned file present; these
+  workers have written nothing. F208's win on `api` was the "finished but idle" case, which is an
+  IMPLEMENTER pattern. The test-author failure mode is a different shape entirely.
+- **So F204's registered prediction is now expected to come out NEGATIVE for test-authors**, and the
+  reason is structural rather than a firing failure. Recording that BEFORE the run ends: if the
+  test-author row does not improve, the explanation is not "Accept did not fire" (it fired) and not
+  "the branch is unreachable" (F205 proved it armed) — it is that Accept addresses a failure mode
+  test-authors do not have.
+- **The next suspect is exactly where F196 pointed:** a test-author receives 10,097 chars of
+  dependency source, 50.7% of its prompt, three of four blocks truncated mid-token with one that does
+  not parse — and then takes zero actions for seven minutes. **`dep_signatures` is the arm that tests
+  it and it is now second in the queue.**
+
+⚠ `test-meridian`'s newest observation reads `elapsed=152` with the verdict already emitted — that is
+a POST-RESTART observation of the re-dispatched attempt, not a deadline firing at 152 s. Noted so a
+later reader does not mistake it for a broken predicate.
+
+**LESSON 84 — A CORRECT NAME NARROWS THE SEARCH; A WRONG ONE WIDENS IT.** Renaming the verdict was
+the cheapest change in the batch and it produced the sharpest diagnostic step: "over_reading" invited
+theories about what the worker was reading, while "no_first_write" states the actual observable —
+zero actions — and immediately rules out every fix aimed at what a worker does AFTER it starts.

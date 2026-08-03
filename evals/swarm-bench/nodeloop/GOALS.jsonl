@@ -1,1 +1,2 @@
 {"ts": "2026-08-03T09:09:35", "mini_goal": "move the test-author failure row", "resolved": ["weights routing: hard tasks land on the workhorse (F207)"], "metric": {"test_author_completed": 0, "test_author_failed": 0, "all_failed": 0, "test_author_share_of_failures": 0.0}}
+{"ts": "2026-08-03T09:14:08", "mini_goal": "move the test-author failure row", "resolved": ["weights routing: hard tasks land on the workhorse (F207)"], "metric": {"test_author_completed": 0, "test_author_failed": 0, "all_failed": 0, "test_author_share_of_failures": 0.0}}
