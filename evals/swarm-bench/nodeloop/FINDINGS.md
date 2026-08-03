@@ -9594,3 +9594,52 @@ proven.** If it recurs on this re-run, weight is the first thing to test by reve
 found this was suspicion of my own work, which is right. The discipline that resolved it was checking
 the archive rather than reasoning about plausibility — and it cost one query, on data already on
 disk, while the fleet was down and nothing else could run.
+
+## F223 — `thinking_chars: None` means the model emitted NOTHING. test-store was never generating.
+
+F221 said of `test-store`'s seven `None` rows: *"I do not know whether it was thinking."* **That was
+too weak, and the code says something sharper.**
+
+`build_worker_digest` (`swarm.rs:9148`) emits `"thinking_chars"` **unconditionally** — every digest it
+writes carries the field. But the digest is SEEDED at dispatch, before the first token
+(`swarm.rs:11273`), and the seed is a different, smaller object:
+
+```rust
+serde_json::json!({
+    "tool_calls": 0, "errors": 0, "recent": [], "last_text": "",
+    "model": model_id, "phase": "processing",     // <- NO thinking_chars
+})
+```
+
+**Therefore:**
+
+    thinking_chars: None  ⇒ the digest is STILL THE SEED ⇒ the stream has delivered NO chunk at all
+    thinking_chars: 0     ⇒ chunks HAVE arrived, and none of them were thinking
+
+**So `test-store` — 7 observations, 90 s to 390 s, `None` on every one — produced NOTHING for 390
+seconds.** Not thinking. Not tool calls. Not text. The seed's `phase: "processing"` says what it was
+doing: **LM Studio was still processing the prompt.**
+
+**THIS REMOVES THE PREFILL FROM SUSPICION ENTIRELY FOR THAT TASK.** A prefill can only influence what
+the model GENERATES. `test-store` never generated a token, so nothing about the assistant turn's
+opening content could have mattered. F221's counter-example is real but it is **not evidence against
+the prefill** — it is a different failure, and I had them conflated.
+
+**AND IT POINTS SOMEWHERE SPECIFIC.** If the stall is prompt-PROCESSING rather than generation, then
+the lever that helps is the one that makes the prompt SMALLER — and a test-author's prompt is 22,511
+chars of which **10,097 (50.7%) is the `## API of` dependency bundle** (F196). `dep_signatures`, which
+replaces those bodies with extracted signatures, is queued as arm #5 and was ranked as *"the one item
+that can make output WORSE"* on quality grounds. **On this evidence it is also the only queued lever
+that addresses prompt-processing time at all.**
+
+⚠ **WHAT WOULD FALSIFY THIS:** a `judge_observed` row with `thinking_chars: None` on a task that is
+demonstrably generating (a later row showing a large thinking count with no intervening re-dispatch),
+which would mean the digest can regress to the seed. I have not seen one. Also, the inference is from
+CODE, not from a `phase` field in the event — `judge_observed` does not carry `phase`, so I am reading
+the seed's identity from an absent key rather than a present marker. **Emitting `phase` in
+`judge_observed` would make this a lookup instead of an inference. Queued.**
+
+**LESSON 100 — AN ABSENT FIELD IS EVIDENCE ABOUT WHICH WRITER RAN.** "Absent, so unknown" was the
+cautious reading and it was wrong. Two writers produce this file, only one of them emits the field,
+so absence identifies the writer — and the writer identifies the state. **Before recording a missing
+value as unknown, ask what code path omits it.**
