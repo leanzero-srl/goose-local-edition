@@ -9502,3 +9502,52 @@ what it receives.
 watched only the score, a good run here would have been indistinguishable from luck (n=2, p≈0.5).
 Because the falsifier was written first and names a mechanism, a 7-row event dump settles what a
 100-minute score could not: the prefill reaches the model, survives turn ≥2, and suppresses thinking.
+
+## F221 — ⚠️ CORRECTING F220's HEADLINE: the prefill reaches the wire reliably; its EFFECT does not
+
+F220 reported the prefill "reproduces the lab result inside goose". **The second test-author refutes
+that as a general claim, and I am narrowing it before the run finishes rather than after.**
+
+    test-meridian   135s  calls=0  thinking=None  written=TRUE     <- supports the hypothesis
+                    255s  calls=0  thinking=0     written=TRUE
+                    315s  calls=1  thinking=0     written=TRUE
+
+    test-store       90s  calls=0  thinking=None  written=False    <- does NOT
+                    150s  calls=0  thinking=None  written=False
+                    210s  calls=0  thinking=None  written=False
+                    270s  calls=0  thinking=None  written=False
+                    330s  calls=0  thinking=None  written=False
+                    390s  calls=0  thinking=None  written=False
+                    365s  calls=0  thinking=None  written=False    <- elapsed RESET ⇒ new attempt
+
+**`test-store` has SEVEN observations with zero tool calls and nothing written, out to 390 s.** That
+is the old-build test-author signature, on a run where the prefill demonstrably reached every request
+(F220 check 1: 3 of 3, all turn ≥2).
+
+**⚠ AND I CANNOT CLAIM THINKING WAS SUPPRESSED FOR IT.** `thinking_chars` is `None` on all seven rows
+— **absent, not zero.** F220 itself warned that `None` is the digest not carrying the field, and I
+must apply that against my own hypothesis, not only in its favour. For `test-meridian` the field
+appears as `0` from the third row on; for `test-store` it never appears at all. So the honest
+statement is: **I do not know whether test-store was thinking.**
+
+**The elapsed sequence 390 → 365 is an attempt RESTART**, and no `judge_verdict` shows `re_dispatch`
+(all seven are `ok`/`observed`). So something other than the judge ended that attempt — a worker
+timeout or a transient error. **Not diagnosed; flagged rather than guessed.**
+
+**WHAT SURVIVES, STATED NARROWLY:**
+- **The transport works.** 3 of 3 test-author requests carried the trailing assistant message,
+  including turn ≥2 after a `tool` message. That claim is unchanged and well-evidenced.
+- **The effect is NOT uniform.** n=2 test-authors: one wrote at 135 s with thinking 0, one has
+  written nothing at 390 s. **1-of-2 is not "the lab result reproduces."**
+- **F220's headline was too strong** and I am striking the generalisation. What I should have written:
+  *the mechanism reaches the model; whether it changes behaviour is a separate question with n=2.*
+
+**WHY THIS MATTERS BEYOND ONE ARM.** If the prefill suppresses thinking (proven for test-meridian)
+and a worker STILL takes zero actions for 390 s, then thinking-prefill was not the whole cause of
+`no_first_write` — and **F196's truncated dependency blocks, still unfixed, become the live suspect
+again.** That is the branch F212's falsifier named and I had begun treating as closed.
+
+**LESSON 98 — THE SECOND CASE IS WHERE THE HYPOTHESIS EARNS ITS KEEP.** One clean confirmation is a
+demonstration; the first disagreement is the experiment. I wrote a headline off n=1 and the very next
+task contradicted it inside twenty minutes. **When a mechanism check passes, the next thing to look
+for is the case where it passed and the outcome did not follow.**
