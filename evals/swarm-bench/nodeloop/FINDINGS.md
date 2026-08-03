@@ -9182,3 +9182,52 @@ kind is test-author) must land in the same crossing, because either alone is ine
 **LESSON 89 — WHEN THE OFFICIAL CHANNEL IS BROKEN, LOOK FOR ONE THE SYSTEM CANNOT DROP.** The API
 field is optional metadata a server may ignore; the prompt is the payload it must process. Routing
 the control signal through the payload turned an upstream bug from a blocker into an irrelevance.
+
+## F215 — the first sample is NOT evidence, and my own stall detector had a loophole that flattered me
+
+`baseline-n3-r0` finished; the current-binary metric got its first sample: **test-author 5 completed
+/ 0 failed.** My first instinct was to report that as the row moving. It is not.
+
+    old-build test-author failure rate: 13/42 = 0.310
+    P(0 failures in 5 completions | rate UNCHANGED) = 0.157
+
+    n= 5   P(zero by chance) = 0.157      <- current sample
+    n=10                      0.025
+    n=15                      0.004
+
+**A roughly one-in-six chance of appearing by luck with the rate completely unchanged.** This sample
+cannot distinguish "fixed" from "lucky". **Nine clean test-author completions are needed to clear
+p<0.05**; five is not close. Reporting it as improvement would be exactly the failure this campaign
+keeps recording under other names — a number that looks green being allowed to stand for a result.
+
+**AND THE INSTRUMENT I BUILT TO POLICE MYSELF HAD THE SAME BLIND SPOT.** `goalstate.py`'s `streak()`
+keyed on the raw metric dict, so ANY change reset the stall clock. That non-significant 0/5 **reset a
+5-tick streak to 1** — meaning the forced shake-up at 10 ticks could be postponed indefinitely by
+ordinary noise, and the more samples arrive the more often it resets. **A stall detector that noise
+can reset never fires.** It was written one hour earlier for exactly this purpose.
+
+Fixed: the streak now keys on `(mini_goal, resolved, SIGNIFICANT-metric-move)`, where significance is
+`P(this few failures | old rate) < 0.05`. A metric wobbling inside its own noise is the same state,
+not a new one. The printout now states the p-value and, when not significant, how large a clean run
+would have to be:
+
+    MEASURED (CURRENT binary only): test-author 5 completed / 0 failed  (n=5)
+       vs the old-build rate 13/42 = 31.0%: P(this good by chance | rate unchanged) = 0.157
+       ⇒ NOT SIGNIFICANT — this could be luck
+       a clean run of 9 test-author completions would be needed to clear p<0.05
+    UNCHANGED FOR 6 of 10 ticks
+
+**HONEST ACCOUNTING OF THE CAMPAIGN AT THIS POINT**, because the alternative is a flattering summary:
+
+- **One verified win: the weights routing (F207) — and it was Mihai's idea, not mine.** He named the
+  defect; I found two causes and fixed them. It is real and it is his.
+- **Everything I found independently remains unproven on behaviour.** F211-F214 is an elegant,
+  fully-evidenced chain about what REACHES the model. Not one link is about how the model RESPONDS.
+- `Verdict::Accept` fires (F208) and cannot help the failing population (F210). That is a mechanism
+  working and a hypothesis narrowing, not a metric moving.
+- The row is unmoved at any defensible confidence.
+
+**LESSON 90 — AUDIT YOUR OWN GUARDRAILS FOR THE LOOPHOLE THAT FAVOURS YOU.** A self-imposed check is
+written by the same judgement it is meant to constrain, so its failure mode will be the one that lets
+that judgement off. Ask of every guard: *what is the cheapest way this passes without the thing it
+guards being true?* Here the answer was "any noise at all", and it took one non-result to expose it.
