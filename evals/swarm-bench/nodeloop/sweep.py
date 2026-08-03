@@ -1159,6 +1159,28 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     base = [u for u in units if is_base(u)]
     if base:
         units = base + [u for u in units if not is_base(u)]
+
+    # THEN INTERLEAVE THE ONE ARM AIMED AT THE METRIC, so it runs SECOND rather than seventh.
+    #
+    # Hoisting all three baseline replicates to the front is right for the DENOMINATOR and wrong for
+    # the CLOCK: it puts ~5 hours of replicates between the engine changes and the first treatment
+    # that could move the test-author row. Measured cost of that ordering: `dep_signatures` sat at
+    # position 7, about ten hours out.
+    #
+    # One baseline is enough to compare a treatment against — the second and third tighten the
+    # interval, they do not create it. So: first baseline, then the arm, then the remaining
+    # replicates. The same units still run and the interval still closes; the decisive comparison
+    # just stops waiting behind work that only refines it.
+    #
+    # `dep_signatures` specifically, because it is the only queued arm with a measured mechanism
+    # pointed at the failing population: the `## API of` bundle is 50.7% of a test-author's prompt and
+    # 3 of 4 of its blocks are truncated mid-token (one of them does not parse). Everything else in
+    # the queue is a question; this one is a defect with a switch already written for it.
+    first_base = units[0] if units and is_base(units[0]) else None
+    arm = next((u for u in units if u[0]["name"] == "dep_signatures" and u[1] == full), None)
+    if first_base is not None and arm is not None:
+        rest = [u for u in units if u is not first_base and u is not arm]
+        units = [first_base, arm] + rest
     return units
 
 
