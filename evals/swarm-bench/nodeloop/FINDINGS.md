@@ -8092,3 +8092,46 @@ verdict instead of running to its attempt cap.
 ⚠ SCOPE, honestly: n=1 instance, measured precisely. But the guard's logic is universal — every
 post-write spiral has growing thinking by construction — so this is a reasoned defect, not a
 statistical one, and it costs a full re-dispatch each time it fires.
+
+## F192 — BASELINE n=3: the spread is 13 POINTS, down from 46. The freeze lifts.
+
+    baseline r0   0.8429    97.4 min   (72 test fns)
+    baseline r1   0.7166    77.6 min   (21 test fns)
+    baseline r2   0.8422   126.0 min   (a replan added 4 tasks)
+    ------------------------------------------------------
+    mean 80.1%   SPREAD 13.0 POINTS   wall mean 100 min   fallbacks 0   kind_mismatch 83.5%
+
+**Thirteen points against the forty-six that caused the freeze.** That 46 came from 44.2 / 86.7 /
+90.0 on byte-identical config, and it is why every n=1 conclusion tonight was held loosely and why
+F154 stopped the campaign to measure it. **Run-to-run variance is ~3.5x tighter**, which is worth
+more than any single lever: it is the difference between an arm being readable and an arm being
+noise. Every measurement from here has 3.5x the resolution.
+
+Two things it settles immediately:
+  · **`sink_review`'s 0.7326 sits INSIDE [0.7166, 0.8429]** — confirmed ordinary on quality, at n=3
+    rather than by assertion. F181's "do not report the arm as harmful" holds on evidence now.
+  · **r2 scored 0.8422 with 126 min wall.** Its length is explained by a replan adding 4 tasks, not
+    by variance — worth stating because a 126 vs 78 min range would otherwise look like instability.
+
+**THE FREEZE (F154) IS LIFTED.** It held perfectly: `crates/` clean, zero engine edits, three
+comparable baselines on one build. That discipline is what makes the 13 points meaningful.
+
+## F193 — but the boundary crossing WAITS, and the reason is F154's own lesson
+
+`scoped_contracts-n3-r0` started at 05:45:25 — **the F164 arm**, aimed at the population producing
+93% of all failures, and the only queued arm that touches it. It is running RIGHT NOW on build
+1785697869, the same build all three baselines ran on.
+
+**Applying the ten patches requires a boundary crossing, and a crossing invalidates cross-build
+comparison — that is the exact thing F154 froze the campaign over.** Crossing now would:
+  · kill the in-flight `scoped_contracts` run, and
+  · **invalidate the baseline n=3 I just spent five hours obtaining**, because an arm on the new
+    build cannot be compared to a baseline on the old one.
+
+So the ten fixes wait for one more unit. **DECISION: let `scoped_contracts` finish (~100 min), take
+its readout against a VALID baseline, then cross once.** The crossing costs a re-baseline either way;
+doing it after this arm costs nothing extra and buys the campaign's most valuable measurement on
+comparable ground.
+
+This is not the freeze being extended — the freeze is over and the patches are ready, anchors
+verified, cost re-checked. It is refusing to spend a five-hour baseline to save ninety minutes.
