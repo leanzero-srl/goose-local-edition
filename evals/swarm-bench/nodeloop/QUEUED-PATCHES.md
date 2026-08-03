@@ -395,3 +395,28 @@ ever consumed. It is: **all 11 `over_reading` verdicts carry `action = re_dispat
 decoration: **it is the message a killed worker is restarted with**, and it tells that worker the
 truncated paste is sufficient. Of the 11 tasks hit, none finished in one attempt (8 took 3, 3 took
 2) and 2 never completed.
+
+## 13. `JudgeVerdict` drops the provenance bit that decides whether it is a fact or a guess
+
+**Site** `crates/goose-swarm/src/scheduler.rs:1421` and `:1441` (both `SwarmEvent::JudgeVerdict`
+constructions), event definition in `event.rs`.
+
+**Measured (F199)** all 11 `over_reading` verdicts fired at 0-2 tool calls against a threshold of
+16, so `deterministic_verdict` cannot have produced them — they are LLM judge opinions steering
+re-dispatches at confidence 0.90. But that is a DEDUCTION from the guard's arithmetic, not a
+reading: the emitted event's fields are `action, confidence, device, event, hint, run_id, seq,
+task_id, ts, verdict` and **provenance is not among them**. `JudgeOutcome.deterministic` exists
+(`judge.rs:126`, "True only for a verdict produced by `deterministic_verdict` — a real engine
+fact"), is used for the terminal-fail gate, and is then discarded.
+
+**Change** add `deterministic: bool` to the `JudgeVerdict` event and stamp `outcome.deterministic`
+at both emit sites.
+
+**Why it matters beyond tidiness** the campaign's standing rule is that only a deterministic engine
+event may confer or retract a verdict. That rule is currently unauditable from the run log: every
+analysis has to re-derive provenance from thresholds, which is exactly how I got F197 wrong. One
+bool makes "was this an engine fact or a weak model's guess" a lookup instead of an argument.
+
+**Registered check** on the next post-crossing run, every `judge_verdict` carries `deterministic`,
+and every `over_reading` with `tool_calls < over_read_tool_calls` reports `deterministic: false`.
+Today: the field is absent on all 302 verdicts.
