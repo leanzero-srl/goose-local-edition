@@ -9130,3 +9130,55 @@ whole write. The commit SUCCEEDED and said what I meant to have written. Verifyi
 cost me.
 
 Sources: LM Studio bug tracker #1990; froggeric/Qwen-Fixed-Chat-Templates (HuggingFace).
+
+## F214 — ⭐ THE PATH IS COMPLETE: an IN-PROMPT tag does what the broken API kwarg cannot
+
+Step 2 of F213's registered plan, executed offline with jinja2 on both real templates. **Zero tokens,
+no fleet contention, nothing installed.** The fixed template fetched from
+`froggeric/Qwen-Fixed-Chat-Templates` (16,289 bytes vs the current 7,764).
+
+Same worker-shaped system+user message, same tool list, `add_generation_prompt=True`:
+
+    render                                    ends with an OPEN <think>
+    CURRENT template, plain                   True     <- today's defect
+    FIXED   template, plain                   True     <- default PRESERVED
+    FIXED   template, "<|think_off|>…" prompt  FALSE    <- pre-closed
+    FIXED   template, enable_thinking=False    FALSE
+
+    FIXED + think_off tail: …<|im_start|>assistant\n<think>\n\n</think>\n\n
+
+**Three things this establishes, each of which matters separately:**
+
+1. **`<|think_off|>` placed in the PROMPT TEXT produces exactly the pre-closed block that
+   `enable_thinking: false` would.** Prompt text is something goose controls completely — no API
+   field, no `chat_template_kwargs`, **so LM Studio bug #1990 is bypassed rather than worked around.**
+2. **The fixed template's DEFAULT behaviour is identical to the current one** (plain render still ends
+   in an open `<think>`). So installing it does not silently change planners, scouts, or the judge —
+   suppression is strictly OPT-IN, per dispatch. That is the difference between a targeted fix and a
+   fleet-wide behaviour change, and it is why this is worth installing at all.
+3. **It gives the engine KIND-AWARE control of deliberation** — `<|think_off|>` for a test-author
+   that must write a file, nothing for a planner that genuinely should reason. This campaign has
+   wanted exactly that since F157 ("the engine holds a fact and does not use it to narrow what it
+   sends"), and here the fact is the task's KIND, which the dispatcher already computes.
+
+**THE FULL CHAIN, every link now evidence rather than argument:**
+
+    F210  test-authors take ZERO tool calls for 420-700s and are killed        (measured, live run)
+    F211  the chat template hands every worker an OPEN <think> tag             (read from the GGUF)
+    F212  enable_thinking:false pre-closes it                                  (rendered offline)
+    F213  …but LM Studio DROPS that kwarg — open bug #1990                     (upstream bug report)
+    F214  an in-prompt <|think_off|> tag achieves it through text alone        (rendered offline)
+
+**WHAT IS STILL NOT PROVEN, stated plainly.** That a pre-closed think block actually makes THIS model
+call a tool sooner. Every step above is about what reaches the model; none is about how it responds.
+The falsifier stays as registered in F212: if `tool_calls` at first observation and time-to-first-write
+both stay flat, the prefill is a correlate and F196's truncated dependency blocks are the cause.
+
+**INSTALLATION REQUIREMENTS, deliberately not done yet.** The template is per-model LM Studio state on
+THREE machines. It must go in at a boundary, on all three, recorded as a fleet-state change so no
+later comparison spans it — and the engine change (emit `<|think_off|>` for file-owning workers whose
+kind is test-author) must land in the same crossing, because either alone is inert.
+
+**LESSON 89 — WHEN THE OFFICIAL CHANNEL IS BROKEN, LOOK FOR ONE THE SYSTEM CANNOT DROP.** The API
+field is optional metadata a server may ignore; the prompt is the payload it must process. Routing
+the control signal through the payload turned an upstream bug from a blocker into an irrelevance.
