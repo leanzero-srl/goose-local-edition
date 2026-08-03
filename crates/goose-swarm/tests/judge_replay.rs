@@ -1,0 +1,261 @@
+//! Replay archived `judge_observed` rows through the REAL `deterministic_verdict`.
+//!
+//! WHY THIS EXISTS: every judge change was being validated by launching a ~100-minute swarm run and
+//! reading the resulting log. That is the wrong loop for a PURE FUNCTION. `deterministic_verdict` takes
+//! a `JudgeInput` and returns a verdict with no I/O, no model and no fleet — so every archived
+//! observation can be re-judged in milliseconds, and a change's effect on the whole corpus is knowable
+//! before a single node is booked.
+//!
+//! It reads the run logs the bench already writes (`evals/swarm-bench/runs/nodeloop/*/run.jsonl`) and
+//! is SKIPPED, not failed, when the archive is absent — so a clean checkout and CI stay green.
+//!
+//! The archive records the raw inputs deliberately (`judge_observed` carries tool_calls,
+//! thinking_chars, any_owned_written, secs_since_last_write, owns_files) rather than a re-derived
+//! "would_trip" flag, exactly so the predicate can be re-run offline against them.
+
+use goose_swarm::{deterministic_verdict, JudgeConfig, JudgeInput, Verdict};
+use std::path::{Path, PathBuf};
+
+/// One archived observation, plus the task id so the replay can reconstruct the file-ownership terms.
+struct Row {
+    task_id: String,
+    elapsed_secs: u64,
+    tool_calls: Option<u32>,
+    thinking_chars: Option<u64>,
+    any_owned_written: bool,
+    secs_since_last_write: Option<u64>,
+    owns_files: bool,
+}
+
+fn archive_dir() -> Option<PathBuf> {
+    let d = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .parent()?
+        .join("evals/swarm-bench/runs/nodeloop");
+    d.is_dir().then_some(d)
+}
+
+fn field_u64(line: &str, key: &str) -> Option<u64> {
+    let at = line.find(&format!("\"{key}\":"))? + key.len() + 3;
+    let rest = line[at..].trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit())?;
+    rest[..end].parse().ok()
+}
+
+fn field_bool(line: &str, key: &str) -> Option<bool> {
+    let at = line.find(&format!("\"{key}\":"))? + key.len() + 3;
+    let rest = line[at..].trim_start();
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn field_str(line: &str, key: &str) -> Option<String> {
+    let at = line.find(&format!("\"{key}\":\""))? + key.len() + 4;
+    let rest = &line[at..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn load_rows() -> Vec<Row> {
+    let Some(dir) = archive_dir() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let log = e.path().join("run.jsonl");
+        let Ok(text) = std::fs::read_to_string(&log) else {
+            continue;
+        };
+        for line in text.lines() {
+            if !line.contains("\"judge_observed\"") {
+                continue;
+            }
+            let Some(task_id) = field_str(line, "task_id") else {
+                continue;
+            };
+            out.push(Row {
+                task_id,
+                elapsed_secs: field_u64(line, "elapsed_secs").unwrap_or(0),
+                tool_calls: field_u64(line, "tool_calls").map(|v| v as u32),
+                thinking_chars: field_u64(line, "thinking_chars"),
+                any_owned_written: field_bool(line, "any_owned_written").unwrap_or(false),
+                secs_since_last_write: field_u64(line, "secs_since_last_write"),
+                owns_files: field_bool(line, "owns_files").unwrap_or(false),
+            });
+        }
+    }
+    out
+}
+
+/// Rebuild the `JudgeInput` the engine would have built. `owns_files` is the only ownership signal the
+/// archive keeps, so a `.py` deliverable stands in for the owned set — which is what every task in the
+/// corpus except `web` (an `index.html` owner) actually had.
+fn to_input(
+    r: &Row,
+    prev_calls: Option<u32>,
+    prev_think: Option<u64>,
+    written_ok: bool,
+) -> JudgeInput {
+    let owned: Vec<String> = if r.owns_files {
+        vec![format!("{}.py", r.task_id)]
+    } else {
+        Vec::new()
+    };
+    let file_contents = if written_ok {
+        owned
+            .iter()
+            .map(|f| (f.clone(), "x = 1\n".to_string()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    JudgeInput {
+        task_id: r.task_id.clone(),
+        description: String::new(),
+        owned_files: owned,
+        file_contents,
+        compile_errors: Vec::new(),
+        elapsed_secs: r.elapsed_secs,
+        any_owned_written: r.any_owned_written,
+        secs_since_last_write: r.secs_since_last_write,
+        worker_tool_calls: r.tool_calls,
+        worker_thinking_chars: r.thinking_chars,
+        prev_thinking_chars: prev_think,
+        prev_tool_calls: prev_calls,
+        split_count: 0,
+    }
+}
+
+/// A worker that is ACTIVELY MAKING TOOL CALLS must not be killed for missing the first-write deadline.
+///
+/// This is the F201 defect as a test: the deadline was a bare `elapsed >= 420` with no evidence term,
+/// while measured time-to-first-owned-write is p90 475s for implementers and p90 831s (max 1099s) for
+/// test-authors — a constant sitting BELOW the p90 of both populations it judged.
+#[test]
+fn a_worker_still_taking_actions_survives_the_first_write_deadline() {
+    let cfg = JudgeConfig::default();
+    let base = Row {
+        task_id: "test-meridian".into(),
+        elapsed_secs: 500,
+        tool_calls: Some(9),
+        thinking_chars: Some(4_000),
+        any_owned_written: false,
+        secs_since_last_write: None,
+        owns_files: true,
+    };
+    // Tool calls climbing 4 -> 9 between observations: this worker is doing things.
+    let producing = to_input(&base, Some(4), Some(3_000), false);
+    assert!(
+        deterministic_verdict(&producing, &cfg).is_none(),
+        "a worker whose tool-call count is still climbing was killed at {}s; the deadline needs an \
+         evidence term, not just a stopwatch",
+        base.elapsed_secs
+    );
+    // Same instant, but the counters are FLAT — nothing is happening. This one must still be caught.
+    let stalled = to_input(&base, Some(9), Some(4_000), false);
+    let v = deterministic_verdict(&stalled, &cfg).expect("a stalled worker is still caught");
+    assert_eq!(v.verdict, Verdict::OverReading);
+    assert!(v.deterministic);
+}
+
+/// A ZERO-tool-call worker is stuck before its first byte — it did not "over-read", it read nothing.
+#[test]
+fn a_worker_that_ran_no_command_is_labelled_no_first_write() {
+    let cfg = JudgeConfig::default();
+    let r = Row {
+        task_id: "test-api".into(),
+        elapsed_secs: 467,
+        tool_calls: Some(0),
+        thinking_chars: Some(10_743),
+        any_owned_written: false,
+        secs_since_last_write: None,
+        owns_files: true,
+    };
+    let v = deterministic_verdict(&to_input(&r, Some(0), Some(9_000), false), &cfg)
+        .expect("the deadline still fires on a silent worker");
+    assert_eq!(
+        v.verdict,
+        Verdict::NoFirstWrite,
+        "a worker with tool_calls == 0 must not be recorded as `over_reading` — that label sent three \
+         separate analyses down a false causal chain"
+    );
+}
+
+/// A COMPLETE deliverable must be ACCEPTED, not killed for spinning.
+///
+/// F165: `test-meridian` was recorded a TERMINAL FAILURE with its file on disk carrying 8 passing test
+/// functions that the crunched app still runs. Without an accept verdict the judge's only lever is
+/// kill, and the third kill is terminal.
+#[test]
+fn a_finished_deliverable_is_accepted_rather_than_failed() {
+    let cfg = JudgeConfig::default();
+    let r = Row {
+        task_id: "test-meridian".into(),
+        elapsed_secs: 1_656,
+        tool_calls: Some(6),
+        thinking_chars: Some(7_674),
+        any_owned_written: true,
+        secs_since_last_write: Some(600),
+        owns_files: true,
+    };
+    let v = deterministic_verdict(&to_input(&r, Some(6), Some(7_674), true), &cfg)
+        .expect("an idle worker with a finished file still gets a verdict");
+    assert_eq!(
+        v.verdict,
+        Verdict::Accept,
+        "a complete, compiling deliverable must finish, not fail"
+    );
+    assert!(
+        !v.verdict.is_problem(),
+        "Accept must never reach the intervention path"
+    );
+}
+
+/// THE CORPUS REPLAY. Re-judges every archived observation and reports what the current predicate does
+/// to it. Prints a summary and asserts only the invariant that must hold for any archive: the engine
+/// never labels a zero-tool-call worker `over_reading`.
+#[test]
+fn replay_the_whole_archive() {
+    let rows = load_rows();
+    if rows.is_empty() {
+        eprintln!("no archive under evals/swarm-bench/runs/nodeloop — replay skipped");
+        return;
+    }
+    let cfg = JudgeConfig::default();
+    let mut counts: std::collections::BTreeMap<&'static str, usize> = Default::default();
+    let mut mislabelled = 0usize;
+    let (mut prev_calls, mut prev_think) = (None, None);
+    let mut last_task = String::new();
+    for r in &rows {
+        if r.task_id != last_task {
+            prev_calls = None;
+            prev_think = None;
+            last_task = r.task_id.clone();
+        }
+        let input = to_input(r, prev_calls, prev_think, r.any_owned_written);
+        match deterministic_verdict(&input, &cfg) {
+            Some(o) => {
+                *counts.entry(o.verdict.as_str()).or_default() += 1;
+                if o.verdict == Verdict::OverReading && r.tool_calls == Some(0) {
+                    mislabelled += 1;
+                }
+            }
+            None => *counts.entry("(no verdict)").or_default() += 1,
+        }
+        prev_calls = r.tool_calls;
+        prev_think = r.thinking_chars;
+    }
+    eprintln!("replayed {} archived observations: {counts:?}", rows.len());
+    assert_eq!(
+        mislabelled, 0,
+        "{mislabelled} observations were labelled `over_reading` with tool_calls == 0"
+    );
+}

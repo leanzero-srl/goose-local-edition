@@ -30,6 +30,19 @@ pub enum Verdict {
     /// an ACTION on healthy-but-too-large work (carries `JudgeOutcome.proposed_split`), not a worker-in-
     /// trouble signal like the others.
     Split,
+    /// The worker has written none of its owned files AND has taken no action at all — it is stuck
+    /// before its first byte, not over-reading. Distinct from `OverReading` because the remedies differ
+    /// and because a log that calls a zero-tool-call worker "over_reading" misdirects every later reader.
+    NoFirstWrite,
+    /// The deliverable is DONE: every owned file exists and none fails its syntax/compile check, but the
+    /// worker is still running. Finish it rather than spending an attempt on a kill.
+    ///
+    /// MEASURED (F165): `test-meridian` was recorded a TERMINAL FAILURE with its file on disk carrying 8
+    /// test functions and 12 assertions, all passing — 8 of the 72 tests the crunched app passes. The
+    /// engine's own hint said so before killing it: "Nothing is reported failing, so the file is most
+    /// likely already done and you are polishing." Every other verdict is a way to STOP a worker; without
+    /// this one the judge's only lever is kill, and the third kill is terminal.
+    Accept,
 }
 
 impl Verdict {
@@ -41,12 +54,16 @@ impl Verdict {
             Verdict::BrokenCode => "broken_code",
             Verdict::SpecDrift => "spec_drift",
             Verdict::Split => "split",
+            Verdict::Accept => "accept",
+            Verdict::NoFirstWrite => "no_first_write",
         }
     }
 
-    /// Whether this verdict means the worker is in trouble (anything but `Ok`).
+    /// Whether this verdict means the worker is in trouble. `Accept` is a COMPLETION, not trouble — it
+    /// must never reach the intervention path, or the verdict that exists to stop a task being failed
+    /// would itself count toward failing it.
     pub fn is_problem(&self) -> bool {
-        !matches!(self, Verdict::Ok)
+        !matches!(self, Verdict::Ok | Verdict::Accept)
     }
 }
 
@@ -97,6 +114,10 @@ pub struct JudgeInput {
     /// engine's own numbers refuted. The pair (previous, current) is the smallest thing that can tell
     /// a worker mid-generation from a worker that has stopped.
     pub prev_thinking_chars: Option<u64>,
+    /// `worker_tool_calls` AS OF THE PREVIOUS JUDGE OBSERVATION of this same attempt, if there was one.
+    /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars` and the input
+    /// `is_still_producing` keys on: reasoning that grows proves only that the model is talking.
+    pub prev_tool_calls: Option<u32>,
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
@@ -416,10 +437,28 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // arm the trip. This is the same class as the worker prompt handing implementer rules to a
     // test-author: a rule written for one kind of task applied to another.
     let owns_code = input.owned_files.iter().any(|f| is_code_deliverable(f));
-    if owns_code && !input.any_owned_written && input.elapsed_secs >= cfg.min_age_secs.max(420) {
+    // EVIDENCE TERM ON THE DEADLINE. This branch used to be a pure stopwatch: it killed at 420s without
+    // ever asking whether the worker was progressing. MEASURED (F201), time-to-first-owned-write across
+    // the corpus is p90 475s for implementers and p90 831s (max 1099s) for test-authors — the constant
+    // sat BELOW the p90 of BOTH populations it judged, and all 11 trips fired in 420-485s. A worker that
+    // is still PRODUCING therefore gets double the budget, while one that has gone quiet dies on the
+    // original schedule. Combined with `is_still_producing` keying on ACTIONS rather than reasoning, a
+    // spiral (thinking climbs, tool calls flat) is NOT producing and still dies at 420s — which is the
+    // case this branch exists for.
+    let deadline = cfg.min_age_secs.max(420) * if is_still_producing(input) { 2 } else { 1 };
+    if owns_code && !input.any_owned_written && input.elapsed_secs >= deadline {
         let read_nothing = input.worker_tool_calls == Some(0);
         return Some(JudgeOutcome {
-            verdict: Verdict::OverReading,
+            // HONEST LABEL. `read_nothing` is computed on the line above and the hint already branches on
+            // it, but the verdict was stamped `OverReading` either way — so the run log recorded
+            // "over_reading" about workers whose tool-call count was ZERO (9 of 11 measured). That label
+            // is the primary key of every downstream analysis and it produced three false causal chains
+            // in this campaign before anyone checked the counter beside it.
+            verdict: if read_nothing {
+                Verdict::NoFirstWrite
+            } else {
+                Verdict::OverReading
+            },
             confidence: 0.9,
             hint: no_file_hint(input, read_nothing),
             proposed_split: None,
@@ -431,6 +470,40 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // The over-read check above can't see this (a file exists), so catch it here. Excludes the
     // integrate-verify sink, which legitimately edits OTHER modules' files for a long stretch and so
     // can leave its own file untouched while still doing real work.
+    // ACCEPT before Looping. A worker that has stopped touching files is only "spinning" if the work is
+    // UNFINISHED; if every owned file exists and none fails its compile check, it is finished and the
+    // honest verdict is DONE. MEASURED (F165): test-meridian was killed three times and recorded a
+    // TERMINAL FAILURE while its file sat on disk with 8 passing test functions that the crunched app
+    // still runs. The kill path was the judge's only lever, so "looks complete" and "looks stuck" both
+    // resolved to kill. This branch is deliberately placed FIRST and gated on the same evidence the
+    // spin branch uses, so the only cases it takes are the ones that would otherwise burn an attempt.
+    let all_owned_present = !input.owned_files.is_empty()
+        && input.owned_files.iter().all(|f| {
+            input
+                .file_contents
+                .iter()
+                .any(|(p, c)| p == f && !c.trim().is_empty())
+        });
+    if all_owned_present
+        && input.compile_errors.is_empty()
+        && input.task_id != "integrate-verify"
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        && input.secs_since_last_write.is_some_and(|s| s >= 420)
+        && !is_still_producing(input)
+    {
+        return Some(JudgeOutcome {
+            verdict: Verdict::Accept,
+            confidence: 1.0,
+            hint: format!(
+                "All {} owned file(s) exist and pass their syntax check, and nothing has changed for \
+                 {}s — the deliverable is complete.",
+                input.owned_files.len(),
+                input.secs_since_last_write.unwrap_or(0)
+            ),
+            proposed_split: None,
+            deterministic: true,
+        });
+    }
     if input.any_owned_written
         && input.task_id != "integrate-verify"
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
@@ -526,7 +599,16 @@ fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
 /// trip all still bound a worker that generates forever; this only declines to call a producing
 /// worker "stuck".
 fn is_still_producing(input: &JudgeInput) -> bool {
-    match (input.prev_thinking_chars, input.worker_thinking_chars) {
+    // ACTIONS, not reasoning. Keying this on thinking growth made it permanently true for a spiral, since
+    // a spiral's thinking climbs monotonically BY DEFINITION — MEASURED (F191): test-api wrote its file at
+    // 408s then ran 595s with ZERO tool calls while thinking went 2,897 -> 22,627, and every trip that
+    // could have caught it was blocked by this predicate. A tool call is the only signal that separates a
+    // worker doing work from one talking to itself.
+    //
+    // Verified not to re-introduce F163's false kill (F195): that case had flat thinking AND flat tool
+    // calls, and was protected by `any_owned_written == false` in all three flat observations, so this
+    // predicate never got a vote there. The change is a strict narrowing.
+    match (input.prev_tool_calls, input.worker_tool_calls) {
         (Some(prev), Some(now)) => now > prev,
         _ => false,
     }
