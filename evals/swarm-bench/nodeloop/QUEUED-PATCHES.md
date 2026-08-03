@@ -275,3 +275,39 @@ was registered to prevent.
 growing `thinking_chars` and FLAT `tool_calls` receives a `Looping` verdict rather than running to
 its attempt cap. Falsifier: a healthy worker killed while mid-write — which would mean action-growth
 is also the wrong proxy and the trip needs the digest mtime from F163 instead.
+
+---
+
+## ANCHOR VERIFICATION #2 — F191b (added after the first check, now confirmed) + a COST CORRECTION
+
+`is_still_producing` confirmed present with exactly the body the patch quotes:
+
+    fn is_still_producing(input: &JudgeInput) -> bool {
+        match (input.prev_thinking_chars, input.worker_thinking_chars) {
+            (Some(prev), Some(now)) => now > prev,
+            _ => false,
+        }
+    }
+
+Fields the replacement needs, all present:
+    judge.rs:81   `pub worker_tool_calls: Option<u32>,`      <- what the new version reads
+    judge.rs:99   `pub prev_thinking_chars: Option<u64>,`    <- the sibling to mirror
+
+**⚠ COST CORRECTED: "~2 lines in judge.rs" was WRONG.** The `prev_*` value is not carried on
+`JudgeInput` alone — the dispatcher maintains it in a per-task map with THREE sites that must all be
+mirrored for `prev_tool_calls`:
+
+    swarm.rs:10867  `judge_prev_thinking: Mutex<HashMap<String, u64>>,`   declaration
+    swarm.rs:10955  `judge_prev_thinking: Mutex::new(HashMap::new()),`    construction
+    swarm.rs:16558  `let mut g = self.judge_prev_thinking.lock()...`      read-then-write per observation
+
+So F191b is **~6 lines across 2 files with 3 mirror sites**, not 2 lines in one. Re-costing after
+reading the surface is the same discipline that took F163 from "a digest-writer change with a large
+blast radius" down to three lines — it moves in both directions, and the estimate written before the
+search is a guess either way.
+
+This does not change F191b's priority: it is still the fix for a defect that cost three dispatches of
+one task on r2, and the cost is still small. It changes what "applied correctly" means — miss the
+read-then-write at :16558 and `prev_tool_calls` is permanently `None`, `is_still_producing` returns
+`false` for everything, and the finalize-spin trip fires on healthy workers. **That failure mode is
+silent and is exactly the false kill F163 exists to prevent, so verify all three sites landed.**
