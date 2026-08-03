@@ -10108,3 +10108,38 @@ Two things this does say, and they are worth keeping:
 **To clear p<0.05 at case level I need more CASES, not more reps** — 5 more reps on the same seven
 cases buys nothing. The corpus is the bottleneck (9 live test-author cases), and it widens only when
 runs write fresh current-model payloads. Re-harvest after every arm.
+
+## F237c 🔴 — THE 9 CASES ARE 3 TASKS FROM ONE SPEC, AND NODE DOES NOT EXPLAIN THE SPLIT
+
+Two alternative explanations chased down, and the second one resets what this bench is allowed to
+claim.
+
+**NODE IS NOT THE CAUSE.** Each frozen payload pins a node identifier, so a refusal pattern could
+have been about hardware rather than prompts. Rates: gabee 1/12 (8.3%), mihai 4/15 (26.7%),
+workhorse 3/10 (30.0%). Suggestive — but the decisive test is within one node: `862669bfa0` and
+`cd4715eb56` are **both workhorse** and refuse **0/5 and 3/5**. **Node does not explain it.**
+
+**THE 9 CASES ARE 3 TASKS.**
+
+    ['test_api.py']            3 cases   msgs 2, 2, 8      mihai
+    ['tests/test_api.py']      5 cases   msgs 2, 2, 4, 5, 8  gabee + workhorse
+    ['tests/test_meridian.py'] 1 case    msgs 20           mihai
+
+They are all from the SAME app spec, because the model-swap filter (F235) leaves only payloads
+written by today's runs, and today's runs all built one spec. **So the corpus is 3 tasks from 1
+spec, sampled at several conversation depths — not 9 independent test-authors.**
+
+**WHAT THAT COSTS, AND WHAT IT DOES NOT.**
+- It **kills any claim about test-authors in general.** Three tasks from one spec cannot support one.
+- It **improves** F237's internal validity rather than harming it. The depth split is now visible to
+  be a WITHIN-TASK comparison — `tests/test_api.py` alone gives shallow 4/15 refuse (msgs 2, 2, 4)
+  against deep 0/10 (msgs 5, 8) — so task difficulty, my main confound, is held constant by
+  construction. It replicates in the second task and the third has only a deep case.
+- It leaves **variant comparison fully valid**, because that design is PAIRED: baseline and
+  `declared` run on the same frozen payloads, each case its own control. The limit is
+  generalisation, not internal validity, and I will state it that way rather than dropping it.
+
+**THE COROLLARY FOR THE PLAN:** the corpus cannot widen by running more reps, and it cannot widen by
+re-harvesting today's runs either — it needs runs of a DIFFERENT SPEC. That is a real constraint on
+how far the offline loop can carry this, and it is worth knowing now rather than after ten more
+arms.
