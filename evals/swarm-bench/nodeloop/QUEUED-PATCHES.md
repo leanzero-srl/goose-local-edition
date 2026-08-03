@@ -311,3 +311,44 @@ one task on r2, and the cost is still small. It changes what "applied correctly"
 read-then-write at :16558 and `prev_tool_calls` is permanently `None`, `is_still_producing` returns
 `false` for everything, and the finalize-spin trip fires on healthy workers. **That failure mode is
 silent and is exactly the false kill F163 exists to prevent, so verify all three sites landed.**
+
+## 11. The `## API of` paste is truncated mid-identifier and fenced as complete
+
+**Site** `crates/goose-cli/src/commands/swarm.rs:19638`
+
+```rust
+let capped: String = api_source.chars().take(dep_budget.min(3500)).collect();
+```
+
+then :19641 wraps it as ``` "```\n{capped}\n```" ``` unconditionally.
+
+**Measured (F196)** three of four blocks on a live test-author prompt end mid-token —
+`meridian.py` at `    def _up`, `api.py` at `        self._se` — and the pasted body **fails
+`ast.parse`**. No block carries a truncation notice. The same prompt forbids the worker to `cat`
+the real file, so the missing remainder is unrecoverable by any permitted action.
+
+**Change** cut on a line boundary and say so, instead of cutting mid-token and lying by omission:
+
+```rust
+let budget = dep_budget.min(3500);
+let full: String = api_source.chars().take(budget).collect();
+let capped = if full.chars().count() < api_source.chars().count() {
+    let head = full.rsplit_once('\n').map(|(h, _)| h).unwrap_or(&full);
+    format!("{head}\n# … TRUNCATED — this is a PARTIAL view of {f}; the rest is not shown")
+} else {
+    full
+};
+```
+
+**Why it is not merely cosmetic** a body that stops mid-`def` inside a closed fence is
+indistinguishable from a complete file. The worker cannot know it is missing anything, cannot open
+the file to find out, and the most likely response to an unreadable dependency is to reason rather
+than write — which is exactly the F191 spiral signature.
+
+**Registered check** re-run F196's extraction on the next post-crossing run: every `## API of`
+block's fenced body must either `ast.parse` clean or carry the `TRUNCATED` marker. Today: 1 of 4
+fails to parse, 0 of 4 carry a marker.
+
+**Interaction with the `dep_signatures` arm** independent. Extraction shrinks most bodies below the
+cap, but a large declaration surface still hits `min(3500)` and would be cut the same way. Both are
+needed; neither depends on the other.
