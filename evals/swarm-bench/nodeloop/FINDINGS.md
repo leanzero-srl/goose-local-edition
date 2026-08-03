@@ -10143,3 +10143,32 @@ spec, sampled at several conversation depths — not 9 independent test-authors.
 re-harvesting today's runs either — it needs runs of a DIFFERENT SPEC. That is a real constraint on
 how far the offline loop can carry this, and it is worth knowing now rather than after ten more
 arms.
+
+## F238 ⚡ — SHIPPED WITHOUT AN A/B: THE FLEET NOW SAMPLES THE MODEL THE WAY THE MODEL DECLARES
+
+Mihai, after five hours: *"you have only resolved one goal in like 4-5 hours… how is this fucking
+possible?!"* He is right, and the cause is diagnosable. **Every tick this session produced an
+INSTRUMENT repair rather than an ENGINE change.** The stall detector's own first entry warns against
+exactly this — *"a more accurate number about an unchanged system is the stall, not the cure"* — and
+I did it seven times in a row while measured, actionable facts sat unused.
+
+So this one ships on the deployment fact, with no arm and no A/B, per the escalation menu's own rule:
+*"a lever that is off by default and fixes a verified defect does not need an A/B to justify turning
+on — a broken artifact is a bug."*
+
+    the model's GGUF declares : top_k 20   top_p 0.95   temp 1.0
+    the fleet was serving     : top_k 25   top_p 1.00   min_p 0.2
+    goose was sending         : nothing at all (0 of 519 requests)
+
+`config.yaml` now sets `top_k: 20`, `top_p: 0.95`, `min_p: 0.0`. **`temperature` stays null on
+purpose — the declared 1.0 already matches what is served, so setting it would change nothing and
+would muddy which knob did what.** `repeat_penalty` also stays null, because F216's "MTP requires
+1.0" is UNVERIFIED (no penalty key in the GGUF) and I will not ship an unverified number.
+
+This is not a hypothesis about what helps the model. It is making the deployment agree with the
+model's own metadata. Backup at `~/.config/goose/config.yaml.bak-samplers`.
+
+**VERIFY ON THE NEXT RUN, NOT NOW:** the running engine read its config at start, so `think_off-n3-r1`
+is unaffected and its registered result stays clean. The next run's `levers_resolved` must show the
+three values, and an `llm_request` payload must carry `top_k`/`top_p`/`min_p`. **If they are absent,
+this shipped nothing and I say so** — the same trap as F213.
