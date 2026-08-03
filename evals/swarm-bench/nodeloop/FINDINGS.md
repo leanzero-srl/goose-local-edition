@@ -7847,3 +7847,41 @@ co-tenanted sink is ~2.3x a solo one.
 Also worth noting for F164: **`test-meridian` is STILL in flight at 71 minutes** — the same task that
 fails 7 of 11 times and that F165 caught being recorded FAILED while green. The pattern is holding on
 this run too.
+
+## F186 — baseline n=2: the spread collapsed to 12.6 points, and that makes the wall-clock signal readable
+
+`baseline-n3-r1` finished. The cell the entire F154 freeze was waiting on now has two points:
+
+    baseline r0   score 0.8429   wall  97.4 min
+    baseline r1   score 0.7166   wall  77.6 min
+    ------------------------------------------------
+    spread                12.6 points   wall range 77.6-97.4
+
+**12.6 points against the 46-point spread that motivated the freeze.** That historical figure came
+from 44.2 / 86.7 / 90.0 on byte-identical config, and it is why every n=1 conclusion tonight was held
+loosely. If r2 lands anywhere near these two, the engine's run-to-run variance has dropped by a
+factor of ~3.5 — which would be the single most consequential change of the campaign, because it is
+what makes every future arm readable at all. **Not claimed yet: n=2 cannot establish a spread. r2
+decides it.**
+
+**And it immediately re-reads the sink_review arm:**
+
+    sink_review   score 0.7326   ->  INSIDE the baseline range [0.7166, 0.8429]
+    sink_review   wall  145.5    ->  OUTSIDE the baseline range, 49% above the SLOWEST baseline
+
+So the arm's score is **ordinary** — it sits between the two baselines, and F181's "do not report the
+arm as harmful" was right for a better reason than I had at the time. Its WALL-CLOCK, though, is the
+one number that now falls outside baseline entirely.
+
+**That is a coherent story with F184/F185/F182 and it is the first time the pieces line up:**
+the arm buys real fleet utilisation (F175, three nodes generating), pays for it on the critical path
+(146→257 s/call, F185), produces genuinely accurate defect reports (F182, verified to the line), and
+then **discards them** — so the cost lands on wall-clock and the benefit never reaches the score.
+**The arm is not harmful; it is unfinished.** F182b (feed survivors into the repair tail) is what
+would convert its cost into a gain, and this is the strongest evidence yet for it.
+
+⚠ HONEST LIMITS: baseline n=2, arm n=1. The wall comparison is 145.5 against a 2-point range — a
+third baseline could widen that range and swallow it. Do not promote this past "the wall-clock signal
+is worth watching" until r2 lands.
+
+`baseline-n3-r2` is running (5 min in). It settles both the spread and this.
