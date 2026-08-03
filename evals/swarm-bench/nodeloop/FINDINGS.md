@@ -9445,3 +9445,60 @@ request, **so it should hold — and "should" is not evidence.** The falsifier's
 ONE YOU DON'T.** F218 cost a near-void of a live experiment because the reader was first exercised on
 the question that mattered. Here the same reader was exercised on implementers — where `False` is the
 expected answer — and it caught two of its own bugs at zero cost.
+
+## F220 — ⭐ THE PREFILL SURVIVES STREAMING. Both registered checks pass, live, in goose.
+
+`think_off-n3-r0`, lever armed (`levers.think_off_test_authors = True`).
+
+**CHECK (1) — does the trailing assistant message reach the wire?**
+
+    msgs   last_role   prefill?
+       3   assistant   True
+       5   assistant   True
+       3   assistant   True
+    3 of 3 test-author requests · turn>=2 requests: 3, prefill present on 3
+
+**All three are turn ≥2** — the case the research flagged as most likely to fail, where the prefill
+must be appended after a `tool` message. `format_messages_with_options` did not merge, drop or
+reorder the synthetic trailing assistant. **The registered failure mode — "prefills turn 1 and
+silently stops" — did not occur.**
+
+**CHECK (2) — did the SERVER take the continuation path?** `judge_observed` for test-authors:
+
+    test-meridian  135s  calls=0  thinking=None  written=TRUE
+    test-meridian  195s  calls=0  thinking=None  written=TRUE
+    test-meridian  255s  calls=0  thinking=0     written=TRUE
+    test-meridian  315s  calls=1  thinking=0     written=TRUE
+    test-meridian  438s  calls=1  thinking=0     written=TRUE
+    thinking_chars: n=4 non-null, min 0, max 0
+
+**Thinking is ZERO on every observation that records it.** Against the old-build test-author
+signature — 1,992 to 24,032 thinking chars, `any_owned_written=False`, killed at 420-485 s.
+
+**AND THE FILE EXISTED BY THE FIRST OBSERVATION, 135 SECONDS IN.** On the old build no test-author
+had written anything by 420 s; that is what `no_first_write` was firing on. This is the 47.3 s → 3.1 s
+lab result reproducing inside goose, under streaming, at real prompt size.
+
+**WHAT THIS IS AND WHAT IT IS NOT — the distinction matters more here than anywhere else in this
+campaign.**
+
+- **IT IS** a mechanism result, and a strong one: two registered checks, both stated before the run,
+  both passed, including the specific case predicted to break it.
+- **IT IS NOT the metric.** F164's row is `test-author completed/failed`, and this run has not
+  finished. Two test-authors and seven observations is not a failure rate. **Lesson 82: a mechanism
+  firing is the first half of a result.**
+- ⚠ `thinking_chars: None` on the two earliest rows is the digest not yet carrying the field, **not**
+  a measured zero. Four rows record an explicit 0; I am counting those and not the Nones.
+- ⚠ n=2 test-authors. The old-build failure rate was 31%, so even a perfect run of this size proves
+  little about the rate — **NINE clean completions are needed for p<0.05** and the arm has 3 reps
+  queued for that reason.
+
+**THE HONEST HEADLINE:** the route is alive. The thing that could have killed it — streaming — did
+not. That closes the largest open risk on the highest-confidence lever this campaign has, and it is
+the first time an engine change of mine has been observed changing what the model DOES rather than
+what it receives.
+
+**LESSON 97 — THE REGISTERED CHECK IS WORTH MORE WHEN IT PASSES THAN THE RESULT IT GUARDS.** Had I
+watched only the score, a good run here would have been indistinguishable from luck (n=2, p≈0.5).
+Because the falsifier was written first and names a mechanism, a 7-row event dump settles what a
+100-minute score could not: the prefill reaches the model, survives turn ≥2, and suppresses thinking.
