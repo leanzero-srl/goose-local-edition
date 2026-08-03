@@ -8815,3 +8815,41 @@ does not touch the test-author failure row, which remains the open mini-goal at 
 have written the perfect `pick_device` ordering and measured nothing, because the target device was
 `enabled: false` upstream of it. Before tuning a selection policy, confirm the thing being selected
 is in the candidate set at all.
+
+## F208 — ✅ `Verdict::Accept` FIRED IN A LIVE RUN, and the run has ZERO interrupts so far
+
+The registered prediction from F204 has its mechanism confirmed. `baseline-n3-r0`, 58 minutes in:
+
+    api   verdict=accept  action=accepted
+          "All 1 owned file(s) exist and pass their syntax check, and nothing has changed
+           for 612s — the deliverable is complete."
+
+**`api` completed at `attempts=1`.** On the old build that exact state — owned file written, untouched
+for 612 s, worker not producing — is the `finalize-spin` branch, which returns `Looping` → the
+scheduler re-dispatches → a second attempt, and the third kill is terminal. The judge's only lever
+was to stop the worker, so "this looks finished" and "this looks stuck" produced the same action.
+
+**Judge tally at 58 min: `{'observed': 17, 'accepted': 1}` — 0 interrupted the worker, 1 finished it.**
+Nine tasks completed, **every one at `attempts=1`**. Against the old build, where of the 11 tasks that
+hit a deadline kill **none finished in one attempt** (8 needed 3, 3 needed 2) and 2 never completed.
+
+**What this proves and what it does NOT.**
+
+- **PROVES:** the branch is reachable in production, its precondition (F205) holds against real
+  `file_contents`, and it takes the case it was written for. It is not a test-only path.
+- **DOES NOT PROVE the metric moved.** `api` is an IMPLEMENTER. F164's row is about TEST-AUTHORS, and
+  implementers already failed at 0/63. The tasks that matter — `test-api`, `test-meridian`,
+  `test-store-edgecases`, `test-store-error-handling` — are still in flight. `test-store` did complete
+  at `attempts=1`, which is the right shape, but one task is not a row.
+- **DOES NOT PROVE a wall-clock win.** Still owed against the old build's 100-minute mean.
+
+⚠ **`deterministic` reads `None` on every verdict** — correct and expected: patch #13 was committed
+AFTER the 08:03 binary was built, so this run predates the provenance field. It lands at the next
+crossing, and `review.py` deliberately prints the provenance line only when the field exists rather
+than reporting a misleading all-False.
+
+**LESSON 82 — A MECHANISM FIRING IS THE FIRST HALF OF A RESULT, AND IT IS WORTH SAYING SO SEPARATELY.**
+Two and a half days produced findings; this is the first engine change observed doing its job on a
+live run. That deserves to be recorded as a distinct milestone from "the metric moved", because
+conflating them is how a campaign talks itself into a win it has not earned — and because if the row
+does NOT move, knowing the branch fired is exactly what narrows the next search to upstream causes.
