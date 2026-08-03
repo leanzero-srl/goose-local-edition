@@ -9643,3 +9643,46 @@ the seed's identity from an absent key rather than a present marker. **Emitting 
 cautious reading and it was wrong. Two writers produce this file, only one of them emits the field,
 so absence identifies the writer — and the writer identifies the state. **Before recording a missing
 value as unknown, ask what code path omits it.**
+
+## F224 — F223 CONFIRMED by its own falsifier — and I destroyed the evidence for F220/F221 myself
+
+**F223's falsifier, run against every surviving log: 254 observations, ZERO violations.** No task
+ever shows `thinking_chars: None` AFTER a real value within the same attempt, so the digest never
+regresses to the seed and `None` reliably identifies "the seed is still there ⇒ nothing was emitted".
+**F223 holds.**
+
+**But when I went to verify the timing of `test-store`'s stall — was it inside the fleet-outage
+window or on a healthy 3-node fleet? — the data was gone.**
+
+    ../runs/nodeloop/swarm-3node-r0/run.jsonl   Aug 3 12:17   <- the NEW run
+    grep 'no progress for 420s' across runs/    -> only baseline-n3-r0 and preboundary archives
+
+**Run directories are REUSED.** The discarded `think_off-n3-r0` wrote to `swarm-3node-r0/`, and the
+re-run overwrote it. **Every raw observation behind F220, F221 and F223's test-store analysis no
+longer exists.** The findings are recorded with their numbers, so the reasoning survives — but I
+cannot re-derive or re-check any of them, and a later reader cannot audit them.
+
+**The mechanism is a gap between two paths I use interchangeably, and it is entirely my fault:**
+
+    ./loop.sh boundary  -> parks the run tree (that is where every `nodeloop-preboundary-*` came from)
+    pkill + ./loop.sh start -> does NOT archive; the next run reuses the directory
+
+I stopped the crippled arm with `pkill` and restarted with `start`, so nothing was parked. **And I
+already knew run dirs are reused** — `sinkwatch.py`'s own docstring says *"run dirs are reused across
+units (`swarm-3node-r0` was three different runs tonight), so a name-based pick silently reads a
+finished unit."* I wrote that warning and then walked into the consequence from a different direction.
+
+**WHAT SURVIVES AND WHAT DOES NOT:**
+- **F222 survives intact** — it was derived from `baseline-n3-r0`, which still exists.
+- **F223's falsifier survives** — it ran across the surviving corpus (254 observations).
+- **F220, F221, and F223's test-store rows are UNAUDITABLE.** I stand by what I recorded because I
+  read it directly at the time, but nobody — including me — can now check it.
+- **The timing question I set out to answer is unanswerable:** whether `test-store`'s first stall at
+  ~08:36 preceded the node drops (which began after 08:42, since both remotes were still receiving
+  dispatches then). My recollection says it did, **and recollection is exactly what this campaign
+  does not accept as evidence.** Recording it as OPEN, not as answered.
+
+**LESSON 101 — DISCARDING A RUN AND RESTARTING INTO THE SAME DIRECTORY DESTROYS ITS EVIDENCE.** A run
+worth discarding for its RESULT is often still the best evidence about a MECHANISM — the crippled arm
+was useless as a 3-node score and was simultaneously the only place the prefill had ever been observed
+on the wire. **Park before restarting; the archive is the cheap half and the irreplaceable half.**
