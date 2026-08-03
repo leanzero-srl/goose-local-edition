@@ -37,6 +37,7 @@ import argparse
 import concurrent.futures as cf
 import datetime
 import glob
+import hashlib
 import json
 import os
 import pathlib
@@ -49,6 +50,7 @@ import failures  # the metric's OWN kind classifier — Lesson 2
 HERE = pathlib.Path(__file__).resolve().parent
 BENCH = HERE / "bench"
 CASES = BENCH / "cases.jsonl"
+PAYLOADS = BENCH / "payloads"
 LOGS = pathlib.Path(os.path.expanduser("~/.local/state/goose/logs"))
 ENDPOINT = "http://localhost:1234/v1/chat/completions"
 
@@ -63,11 +65,16 @@ class _Acted(Exception):
 # ---------------------------------------------------------------- harvest
 
 def request_of(path: str) -> dict | None:
-    """The one request row in an llm_request file.
+    """The replayable payload: a FROZEN snapshot under bench/payloads, or a live llm_request file.
 
     F219: the newest file can be 0 bytes (request in flight) and most rows are `{data,usage}`
     streaming records, not requests. Only a row carrying `input.messages` is replayable.
     """
+    if path.endswith(".json"):                        # a frozen snapshot — the only stable source
+        try:
+            return json.loads(pathlib.Path(path).read_text())
+        except (OSError, ValueError):
+            return None
     try:
         with open(path) as fh:
             for line in fh:
@@ -137,10 +144,20 @@ def kind_of(task_id: str, owned: list[str]) -> str:
 
 
 def harvest(limit: int) -> int:
+    """Snapshot every worker decision point into `bench/payloads/` — the corpus must NOT be live.
+
+    ⚠ THE FIRST TRIAGE WAS MEASURING A MOVING TARGET. `llm_request.<N>.jsonl` files are RECYCLED by
+    the running engine: five of the ten triaged cases pointed at numbered files, one came back
+    `case unreadable` mid-run, and `sample()` re-read the file on every rep — so two "replicates of
+    case 2" could have been two entirely different conversations. A replicate that re-reads a file
+    somebody else is rewriting is not a replicate of anything, and every variant table built on it
+    would be uninterpretable in a way no amount of n would fix.
+    """
     BENCH.mkdir(exist_ok=True)
+    PAYLOADS.mkdir(exist_ok=True)
     files = [f for f in glob.glob(str(LOGS / "llm_request.*.jsonl")) if os.path.getsize(f) > 0]
     files.sort(key=os.path.getmtime, reverse=True)
-    rows = []
+    rows, seen = [], set()
     for f in files[:limit]:
         inp = request_of(f)
         if not inp:
@@ -151,9 +168,17 @@ def harvest(limit: int) -> int:
         utext = "\n".join(msg_text(m) for m in inp["messages"][1:] if m.get("role") == "user")
         owned = owned_files(utext)
         tid = task_id_of(utext)
+        # Content-addressed: a recycled file that now holds a DIFFERENT conversation gets its own case
+        # rather than silently replacing one, and re-harvesting is idempotent.
+        cid = hashlib.sha1(json.dumps(inp["messages"], sort_keys=True).encode()).hexdigest()[:12]
+        if cid in seen:
+            continue
+        seen.add(cid)
+        (PAYLOADS / f"{cid}.json").write_text(json.dumps(inp))
         rows.append({
-            "id": os.path.basename(f).replace("llm_request.", "").replace(".jsonl", ""),
-            "file": f,
+            "id": cid,
+            "src": os.path.basename(f),
+            "file": str(PAYLOADS / f"{cid}.json"),
             "mtime": os.path.getmtime(f),
             "kind": kind_of(tid, owned),
             "task_id": tid,
