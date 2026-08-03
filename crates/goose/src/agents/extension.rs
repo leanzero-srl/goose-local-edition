@@ -185,7 +185,7 @@ pub enum ExtensionConfig {
         description: String,
         cmd: String,
         args: Vec<String>,
-        #[serde(default)]
+        #[serde(default, alias = "env")]
         envs: Envs,
         #[serde(default)]
         env_keys: Vec<String>,
