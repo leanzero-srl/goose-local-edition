@@ -8036,3 +8036,59 @@ LESSON 66: **AN INSTRUMENT MUST NOT NAME WHAT IT CANNOT DISTINGUISH.** "stalled"
 identical to a counter sampler, so the honest label is the observation (`no change`), not the
 interpretation. I wrote this instrument one tick ago specifically to avoid a cumulative average
 hiding a change — and shipped it with a word that would have hidden a completion.
+
+## F191 — a post-write reasoning spiral is SHIELDED by the guard I added in F144
+
+`test-api` on r2, attempt 0. It wrote its file at 408 s and then:
+
+    obs 1283s  calls=8  think= 2,897   written=True
+    obs 1403s  calls=8  think= 5,774
+    obs 1538s  calls=8  think=10,540
+    obs 1673s  calls=8  think=15,445
+    obs 1758s  calls=8  think=18,289
+    obs 1878s  calls=8  think=22,627   <- 595 s, ZERO tool calls, ~20k chars of reasoning
+
+**Ten minutes of pure reasoning with no action, after the deliverable already existed.** Then attempt
+1 (healthy — calls climbed 4→11), then attempt 2, which is still running. Three dispatches for one
+test file.
+
+**MY FIRST READ WAS WRONG AND I AM CORRECTING IT.** I checked the guards and found all three
+`!any_owned_written` trips (over-read at :349, spiral at :375, no-file at :419) are blind once a file
+exists — and nearly concluded "no deterministic trip can fire on a written worker". **There IS one**,
+at judge.rs:434, and it targets exactly this case:
+
+    // Finalize-spin: the worker DID produce its owned file(s) but has not touched them in a long
+    // time while still running … The over-read check above can't see this (a file exists).
+    if input.any_owned_written
+        && input.task_id != "integrate-verify"
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        && input.secs_since_last_write.is_some_and(|s| s >= 420)
+        && !is_still_producing(input)
+
+The first four conditions are all MET here: file written, not the sink, elapsed 1878 s, untouched far
+beyond 420 s. **The fifth blocks it.** `is_still_producing` returns `thinking_chars > prev` — and
+this worker's thinking went 2,897 → 22,627 monotonically, so it reads as "still producing" at every
+single observation.
+
+**A reasoning spiral is, by definition, monotonically growing reasoning. So the guard can never let
+the trip fire on the pathology the trip exists to catch.** The condition that was supposed to protect
+a working worker instead grants permanent immunity to a looping one.
+
+**I ADDED THAT GUARD.** F144: *"DELTA, never level. GREW = no kill; FLAT = kill."* It was right about
+the case it was written for — F163 later confirmed that flat counters cannot distinguish frozen from
+writing, and a flat-kill would have killed healthy workers. But "grew" was never a safe proxy for
+"progressing", because thinking-only growth is precisely what a spiral produces.
+
+**THE FIX IS NARROW AND FOLLOWS FROM THE SAME EVIDENCE:** `is_still_producing` should require growth
+in something that represents ACTION — `tool_calls`, or a write — not in `thinking_chars` alone.
+Thinking growth alongside a frozen `tool_calls` and an untouched file is the spiral signature, not
+progress. That keeps F163's protection (a worker streaming a tool payload has flat thinking but WILL
+advance `tool_calls` on completion) while closing this hole.
+
+QUEUED as F191b in `QUEUED-PATCHES.md`. Registered check: on one run, a worker with a written file,
+`secs_since_last_write > 420`, growing `thinking_chars` and FLAT `tool_calls` receives a `Looping`
+verdict instead of running to its attempt cap.
+
+⚠ SCOPE, honestly: n=1 instance, measured precisely. But the guard's logic is universal — every
+post-write spiral has growing thinking by construction — so this is a reasoned defect, not a
+statistical one, and it costs a full re-dispatch each time it fires.
