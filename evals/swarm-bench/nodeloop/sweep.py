@@ -141,7 +141,13 @@ ARMS = [
         # If the row moves, a follow-up arm with one lever separates them. If it does not move with
         # BOTH on, neither is the cause and the search goes elsewhere — which is worth more than a
         # clean null on either alone.
-        "env": {"GOOSE_SWARM_THINK_OFF": "1", "GOOSE_SWARM_DEP_SIGNATURES": "1"},
+        # ⚠️ PREFILL REMOVED (F226). With it on, "You finished WITHOUT writing your owned file(s)"
+        # hit test-authors 9 times against 3 without, on identical dispatch counts, and four
+        # test-authors failed outright at 26 minutes where the prior run had zero at 99. That error
+        # is a turn that COMPLETED without acting — exactly what a pre-completed assistant turn
+        # produces. The remaining two levers change prompt CONTENT and cannot make a turn arrive
+        # already finished.
+        "env": {"GOOSE_SWARM_DEP_SIGNATURES": "1", "GOOSE_SWARM_KIND_PROMPT": "1"},
         "gate": "STREAMING IS THE FALSIFIER AND IT DECIDES THE WHOLE ROUTE. The 47.3s->3.1s evidence "
                 "was measured NON-streaming; goose ALWAYS streams. FIRST, before any score: in "
                 "`llm_request.*.jsonl` the LAST element of `messages` must be role:'assistant' "

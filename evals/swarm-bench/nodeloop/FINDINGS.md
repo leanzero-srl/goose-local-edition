@@ -9757,3 +9757,50 @@ prompt is smaller on this build. Unexplained; recorded rather than guessed at.
 "50.7% of the prompt is dependency bodies" was true of the prompt I measured. Turning that into "the
 prompt will halve" required assuming the block count is fixed, and it is not — it is whatever the
 planner emitted that run. **Before predicting a total, ask which of its terms vary run to run.**
+
+## F226 — 🔴 THE PREFILL LOOKS HARMFUL. F222 REFUTED THE WRONG STRING.
+
+`think_off-n3-r1` at 26 minutes: **4 FAILED, all four test-authors** — `test-api-edge-cases`,
+`test-meridian-client`, `test-meridian-resilience`, `test-store`, each after 3 attempts. The previous
+run had **0 FAILED at 99 minutes**.
+
+**The failure mode is not the old one.** Every retry reads:
+
+    "You finished WITHOUT writing your owned file(s): tests/test_store.py.
+     Your VERY FIRST action this attempt MUST be…"
+
+The worker **FINISHED its turn** without acting. That is not `no_first_write` (ran out of clock with
+no tokens) — it is the model completing immediately. **Which is exactly the mechanism a prefilled
+assistant turn would produce: the turn arrives already containing `<think>\n\n</think>\n\n`, and the
+model reads it as done and emits a stop.**
+
+    run              prefill   finish-without-write   test-author   dispatched
+    swarm-3node-r1      True                     11             9           18
+    swarm-3node-r0      None                      3             3           18
+
+**Same dispatch count. 9 test-author occurrences with the prefill against 3 without — 3×.**
+
+**⚠️ F222 IS WRONG, AND THE ERROR IS MINE.** In F221 I raised precisely this hypothesis: *"the model
+may read that turn as complete and emit an immediate stop."* Then in F222 I went to the archive,
+searched for **`"no progress for 420s (no token/tool activity)"`**, found it predates the change, and
+declared the claim **DEAD**. **I tested the wrong string.** The stall I checked and the finish I
+hypothesised are two different errors, and I closed the hypothesis on evidence about the other one.
+**F222's conclusion is RETRACTED**; what it actually showed is only that the *stall* mode predates the
+prefill, which was never the question I raised.
+
+**⚠️ WHAT THIS DOES NOT ESTABLISH.** The arm carries BOTH levers, so `dep_signatures` is not excluded
+by this data. But `dep_signatures` changes prompt CONTENT and cannot make a turn arrive pre-completed;
+the prefill changes turn STRUCTURE and can. **On mechanism, the prefill is the prime suspect.** n=2
+runs — I am acting on a 3× effect with a named mechanism, not claiming significance.
+
+**ACTION: the prefill lever goes OFF and the arm re-runs with `dep_signatures` + `kind_prompt`**, both
+of which are prompt-content changes with no turn-structure risk. **If "finished WITHOUT writing" falls
+back toward 3, the prefill was the cause and F226 stands. If it stays near 9, the prefill is exonerated
+and the cause is elsewhere — which is why the next arm must NOT carry it.**
+
+**LESSON 104 — WHEN YOU KILL YOUR OWN HYPOTHESIS, CHECK THAT THE EVIDENCE ADDRESSES THE HYPOTHESIS
+YOU RAISED.** F222 felt like exemplary practice — suspect your own change, go to the archive, accept
+the refutation. It was worthless because the needle described a different failure. **The hypothesis
+was "the model finishes immediately"; the query was about "the model produces nothing for 420s". Write
+the falsifier's SEARCH STRING from the hypothesis's own words, not from whatever error you happen to
+have seen recently.**
