@@ -718,27 +718,58 @@ fn spin_hint(input: &JudgeInput) -> String {
 mod tests {
     use super::*;
 
-    /// F143: a worker whose reasoning is CLIMBING is producing, and must not be killed for "stuck
-    /// re-reading". The rule is the DELTA, never the level — a worker that emitted a lot and then
-    /// STOPPED is exactly what the spin trip is for, so a flat count must still kill.
+    /// F143's contract, REWRITTEN because F191 refuted it: CLIMBING REASONING IS NOT PRODUCTION.
+    ///
+    /// The original test asserted that growing `thinking_chars` protects a worker from the spin trip.
+    /// That is exactly what a spiral looks like — a spiral's reasoning grows monotonically BY
+    /// DEFINITION. MEASURED (F191): `test-api` wrote its file at 408s then ran 595s with ZERO tool
+    /// calls while thinking climbed 2,897 -> 22,627, and every trip that could have caught it was
+    /// suppressed by this rule. `is_still_producing` now keys on ACTIONS, so the case below must be
+    /// CAUGHT, not protected. Keeping the old assertion would have pinned the defect in place.
     #[test]
-    fn a_worker_whose_reasoning_is_climbing_is_not_stuck() {
+    fn climbing_reasoning_alone_does_not_protect_a_worker() {
         let cfg = JudgeConfig::default();
-        // The measured shape: file written, untouched 500s, tool_calls frozen, reasoning climbing.
+        // The measured shape: file written, untouched 500s, tool_calls FROZEN, reasoning climbing.
         let mut climbing = mk("test-meridian", true, Some(500), 900);
         climbing.worker_tool_calls = Some(3);
+        climbing.prev_tool_calls = Some(3);
+        climbing.prev_observed_secs = Some(840);
         climbing.prev_thinking_chars = Some(5818);
         climbing.worker_thinking_chars = Some(8784);
+        // Under the OLD contract this returned None — reasoning growth alone bought the worker
+        // immunity. It now yields a verdict. That the verdict is `Accept` rather than a kill is the
+        // separate F165 correction: the owned file exists and compiles, so the deliverable is DONE and
+        // finishing it is right. What matters here is that climbing reasoning no longer BUYS SILENCE.
+        assert_eq!(
+            deterministic_verdict(&climbing, &cfg).map(|o| o.verdict),
+            Some(Verdict::Accept),
+            "climbing reasoning with FROZEN actions must not suppress the verdict"
+        );
+        // The control: the same worker with its ACTION count climbing is genuinely working.
+        let mut acting = climbing.clone();
+        acting.worker_tool_calls = Some(7);
         assert!(
-            deterministic_verdict(&climbing, &cfg).is_none(),
-            "a worker mid-generation must not be killed for spinning"
+            deterministic_verdict(&acting, &cfg).is_none(),
+            "a worker whose tool-call count is climbing must not be killed"
         );
 
-        // FALSIFIER, and it must hold: reasoning FLAT across two looks => genuinely stopped => kill.
+        // FALSIFIER, and it must hold: a worker that has genuinely STOPPED still gets a verdict. For a
+        // finished deliverable that is `Accept` (F165); the KILL path needs a worker with nothing on
+        // disk, or this block would only ever be exercising the completion branch.
         let mut flat = climbing.clone();
         flat.prev_thinking_chars = Some(8784);
-        let out = deterministic_verdict(&flat, &cfg).expect("a stopped worker is still killed");
-        assert_eq!(out.verdict, Verdict::Looping);
+        let out = deterministic_verdict(&flat, &cfg).expect("a stopped worker is still judged");
+        assert_eq!(out.verdict, Verdict::Accept);
+
+        let mut stopped_unfinished = mk("test-meridian", false, None, 900);
+        stopped_unfinished.worker_tool_calls = Some(3);
+        stopped_unfinished.prev_tool_calls = Some(3);
+        stopped_unfinished.prev_observed_secs = Some(840);
+        stopped_unfinished.worker_thinking_chars = Some(8784);
+        stopped_unfinished.prev_thinking_chars = Some(8784);
+        let killed = deterministic_verdict(&stopped_unfinished, &cfg)
+            .expect("a stopped worker with NOTHING written is still killed");
+        assert!(killed.verdict.is_problem(), "{:?}", killed.verdict);
 
         // No previous observation (first look) leaves the trip ARMED — absence is not proof of life.
         let mut first = climbing.clone();
@@ -844,6 +875,7 @@ mod tests {
             worker_tool_calls: None,
             worker_thinking_chars: None,
             prev_thinking_chars: None,
+            prev_tool_calls: None,
             prev_observed_secs: None,
             split_count: 0,
         }
@@ -884,7 +916,10 @@ mod tests {
         let cfg = JudgeConfig::default();
         let out =
             deterministic_verdict(&mk_no_write(4, 457, 0), &cfg).expect("killed, as measured");
-        assert_eq!(out.verdict, Verdict::OverReading);
+        // NoFirstWrite, not OverReading: a worker with ZERO tool calls did not over-read, it read
+        // NOTHING. Labelling it `over_reading` misdirects every later reader of the log, which is
+        // why the verdict was split in two. The remedies differ.
+        assert_eq!(out.verdict, Verdict::NoFirstWrite);
         // ...and the hint must NOT accuse a worker that has read nothing of re-reading.
         //
         // This assertion used to pin the exact canned sentence ("taken no action at all"), which made
@@ -914,13 +949,31 @@ mod tests {
         assert!(out.hint.contains("taken many actions"), "{}", out.hint);
     }
 
+    /// A finished deliverable that has gone stale is ACCEPTED, not killed for looping.
+    ///
+    /// This test asserted `Looping` before `Verdict::Accept` existed. F165 is why it changed:
+    /// `test-meridian` was recorded a TERMINAL FAILURE with its file on disk carrying 8 passing test
+    /// functions, because every judge verdict was a way to STOP a worker and the third stop is fatal.
+    /// The owned file here exists, is non-empty and compiles, so the deliverable IS done — killing the
+    /// worker spends an attempt to reach the same artifact.
     #[test]
-    fn finalize_spin_fires_when_owned_file_goes_stale() {
+    fn a_stale_but_finished_deliverable_is_accepted_not_killed() {
         let v = deterministic_verdict(
             &mk("scan-module", true, Some(500), 700),
             &JudgeConfig::default(),
         );
-        assert_eq!(v.map(|o| o.verdict), Some(Verdict::Looping));
+        assert_eq!(v.map(|o| o.verdict), Some(Verdict::Accept));
+    }
+
+    /// ...but an UNFINISHED one still trips the finalize spin. Without this the test above would pass
+    /// for an Accept branch that had swallowed the spin trip entirely.
+    #[test]
+    fn finalize_spin_still_fires_when_nothing_is_written() {
+        let v = deterministic_verdict(
+            &mk("scan-module", false, None, 700),
+            &JudgeConfig::default(),
+        );
+        assert!(v.is_some_and(|o| o.verdict != Verdict::Accept));
     }
 
     #[test]
@@ -1073,6 +1126,8 @@ mod provenance_tests {
             // a new field cannot be introduced without a human deciding what it means HERE. It means
             // "no previous observation", which leaves every trip armed — the safe default.
             prev_thinking_chars: None,
+            prev_tool_calls: None,
+            prev_observed_secs: None,
             split_count: 0,
         };
         let cfg = JudgeConfig::default();
