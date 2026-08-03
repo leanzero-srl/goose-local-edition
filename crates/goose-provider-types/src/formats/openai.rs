@@ -1461,15 +1461,42 @@ pub fn create_request_with_options(
     // EVERY request, so the prefill is re-applied after each tool response without any caller
     // bookkeeping, and a provider that does not set the key is byte-identical to before.
     let mut prefill: Option<String> = None;
+    let mut force_tool_until_act: Option<String> = None;
     if let Some(params) = &model_config.request_params {
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in params {
                 if key == PREFILL_ASSISTANT_KEY {
                     prefill = value.as_str().map(str::to_string);
+                } else if key == FORCE_TOOL_UNTIL_ACT_KEY {
+                    force_tool_until_act = value.as_str().map(str::to_string);
                 } else if key != "thinking_effort" && !is_reserved_request_param_key(key) {
                     obj.insert(key.clone(), value.clone());
                 }
             }
+        }
+    }
+    // FORCE THE WRITE TOOL, BUT ONLY UNTIL THE MODEL HAS ACTED ONCE. Self-limiting by construction.
+    //
+    // The failure this targets is a worker that COMPLETES ITS TURN WITHOUT ACTING — the engine's own
+    // words, "You finished WITHOUT writing your owned file(s)". A tool call cannot be omitted if the
+    // request demands one, and `tool_choice` is the one lever goose has never used: MEASURED 0 of 519
+    // requests carried it.
+    //
+    // A BLANKET `tool_choice` WOULD BE A BUG, not a fix. Forced on every turn the model can never emit
+    // a final answer, so the agent loop would run to `worker_max_turns` on every task. And measured on
+    // the replay bench, `tool_choice: "required"` made a refusing case act — by calling `shell`, not
+    // `write`. Forcing *a* tool is not forcing the *right* one.
+    //
+    // So this names ONE function and applies it ONLY while the conversation contains no assistant tool
+    // call yet. The moment the worker acts, the constraint disappears on its own and the rest of the
+    // session is byte-identical to before — no caller bookkeeping, no way to strand a worker in a
+    // forced-call loop.
+    if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
+        let already_acted = payload["messages"]
+            .as_array()
+            .is_some_and(|msgs| msgs.iter().any(|m| m.get("tool_calls").is_some()));
+        if !already_acted {
+            payload["tool_choice"] = json!({"type": "function", "function": {"name": tool}});
         }
     }
     if let Some(text) = prefill.filter(|t| !t.is_empty()) {
@@ -1484,6 +1511,11 @@ pub fn create_request_with_options(
 /// Request-param key whose value is appended as a trailing `assistant` message instead of being
 /// copied into the request body. See the prefill block in `create_request_with_options`.
 pub const PREFILL_ASSISTANT_KEY: &str = "__goose_prefill_assistant";
+
+/// Request-param key whose value names a tool that MUST be called until the model has called one.
+/// Applied as `tool_choice` only while no assistant turn in the conversation carries `tool_calls`,
+/// so it releases itself the moment the worker acts. See the block in `create_request_with_options`.
+pub const FORCE_TOOL_UNTIL_ACT_KEY: &str = "__goose_force_tool_until_act";
 
 /// Extract an explicit reasoning-effort suffix from a model name.
 ///
@@ -4169,5 +4201,61 @@ data: [DONE]"#;
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod force_tool_until_act_tests {
+    use super::*;
+    use rmcp::model::CallToolRequestParams;
+    use rmcp::object;
+    use serde_json::json;
+
+    fn cfg(tool: &str) -> ModelConfig {
+        let mut extra = std::collections::HashMap::new();
+        extra.insert(FORCE_TOOL_UNTIL_ACT_KEY.to_string(), json!(tool));
+        ModelConfig::new("m").with_merged_request_params(extra)
+    }
+
+    fn req(cfg: &ModelConfig, messages: &[Message]) -> Value {
+        create_request(cfg, "sys", messages, &[], &ImageFormat::OpenAi, false).unwrap()
+    }
+
+    /// Before the model has acted, the named tool is MANDATORY.
+    #[test]
+    fn the_named_tool_is_forced_while_nothing_has_been_called() {
+        let msgs = vec![Message::user().with_text("write it")];
+        let p = req(&cfg("write"), &msgs);
+        assert_eq!(
+            p["tool_choice"],
+            json!({"type": "function", "function": {"name": "write"}})
+        );
+    }
+
+    /// ...and it RELEASES ITSELF once an assistant turn carries a tool call. Without this half the
+    /// model could never emit a final answer and every task would run to `worker_max_turns` — which is
+    /// why a blanket `tool_choice` is a bug rather than a fix.
+    #[test]
+    fn the_constraint_disappears_after_the_first_tool_call() {
+        let msgs = vec![
+            Message::user().with_text("write it"),
+            Message::assistant().with_tool_request(
+                "1",
+                Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
+            ),
+        ];
+        let p = req(&cfg("write"), &msgs);
+        assert!(
+            p.get("tool_choice").is_none(),
+            "a worker that has acted must be free to finish: {p}"
+        );
+    }
+
+    /// No key set => byte-identical to before.
+    #[test]
+    fn absent_key_sets_no_tool_choice() {
+        let msgs = vec![Message::user().with_text("hi")];
+        let p = req(&ModelConfig::new("m"), &msgs);
+        assert!(p.get("tool_choice").is_none());
     }
 }

@@ -855,6 +855,13 @@ pub struct SwarmConfig {
     pub dep_signatures: Option<bool>,
     /// GOOSE_SWARM_THINK_OFF overrides. Pre-close the thinking block on test-author dispatches.
     pub think_off_test_authors: Option<bool>,
+    /// Force the `write` tool on a worker that owns files and has written NONE of them yet — the exact
+    /// state the engine re-dispatches with "You finished WITHOUT writing your owned file(s)". Released
+    /// automatically once the conversation carries any tool call, so a worker can never be trapped in a
+    /// forced-call loop. `tool_choice` was measured absent from all 519 archived requests.
+    /// GOOSE_SWARM_FORCE_WRITE overrides.
+    #[serde(default)]
+    pub force_write_tool: Option<bool>,
     /// SWARM-COHERENCE Phase-1 (DAG-scoped context, deterministic). The frozen-contract bundle is one global
     /// string holding EVERY module's stub, injected identically into EVERY worker — O(total modules) per
     /// worker, growing with every split. When ON, scope it to the worker's DAG neighborhood (its deps ∪ its
@@ -1091,6 +1098,7 @@ impl Default for SwarmConfig {
             doc_fetch: false,
             dep_signatures: Some(true),
             think_off_test_authors: None,
+            force_write_tool: None,
             scoped_contracts: None,
             fan_verify: true,
             require_tests: true,
@@ -11067,6 +11075,7 @@ impl GooseAgentDispatcher {
             self.planner_timeout_secs,
             activity_key,
             None, // no assistant prefill on this path
+            None, // planner-side calls are never forced to a tool
             temp_override,
         )
         .await
@@ -11097,6 +11106,7 @@ impl GooseAgentDispatcher {
             idle_secs,
             activity_key,
             None, // no assistant prefill on this path
+            None, // planner-side calls are never forced to a tool
             None,
         )
         .await
@@ -11129,6 +11139,17 @@ impl GooseAgentDispatcher {
         // LM Studio drops the `enable_thinking` kwarg that would close it (bug #1990). Prefilling
         // `<think>\n\n</think>\n\n` reaches that same branch from here instead of from server config.
         prefill_assistant: Option<&str>,
+        // Name of a tool the model MUST call until it has called one (None = today's behaviour).
+        //
+        // Targets the failure the engine itself reports as "You finished WITHOUT writing your owned
+        // file(s)": a worker that completes its turn without acting. `tool_choice` is the one request
+        // field goose has never sent — measured 0 of 519 requests — and a tool call cannot be omitted
+        // when the request demands one. The format layer applies it ONLY while no assistant turn
+        // carries `tool_calls`, so it releases itself the moment the worker acts; a blanket
+        // `tool_choice` would instead stop the model ever emitting a final answer and run every task to
+        // `worker_max_turns`. It names ONE function because forcing "any tool" was measured on the
+        // replay bench to produce a `shell` call rather than a `write`.
+        force_tool_until_act: Option<&str>,
         // Per-call temperature override (Some → this call only; None → the shared sampling.temperature, i.e.
         // today's behavior). Used to draft plan skeletons at a LOW temperature so the weak fleet's independent
         // drafts converge (raises real agreement) without touching worker/coding calls.
@@ -11173,6 +11194,12 @@ impl GooseAgentDispatcher {
         }
         if let Some(v) = self.sampling.repeat_penalty {
             extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
+        }
+        if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
+            extra.insert(
+                goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY.to_string(),
+                serde_json::json!(tool),
+            );
         }
         if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
             extra.insert(
@@ -19085,6 +19112,18 @@ fn think_off_test_authors() -> bool {
     )
 }
 
+/// Force the write tool while a worker's owned files are all still missing. Default OFF: it is the one
+/// change in this batch that alters what the MODEL IS ALLOWED TO EMIT rather than what it is told, and
+/// the replay bench already showed that forcing "any tool" produces a `shell` call instead of a write.
+/// It ships behind a gate until the bench says the named-tool form actually lands a write.
+fn force_write_tool() -> bool {
+    swarm_gate_cfg_bundle(
+        "GOOSE_SWARM_FORCE_WRITE",
+        load_config().force_write_tool,
+        false,
+    )
+}
+
 fn dep_signatures_on() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_DEP_SIGNATURES",
@@ -20151,6 +20190,23 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 // start. OFF by default so the change is byte-identical until the lever is set.
                 if think_off_test_authors() && is_test_author {
                     Some("<think>\n\n</think>\n\n")
+                } else {
+                    None
+                },
+                // FORCE THE WRITE TOOL WHILE THE DELIVERABLE IS STILL MISSING.
+                //
+                // Only when this worker OWNS files and NONE of them exists on disk yet. That is exactly
+                // the state the engine re-dispatches with "You finished WITHOUT writing your owned
+                // file(s)", and it is a fact about the filesystem, not a guess about the model. The
+                // format layer drops the constraint the moment the conversation carries a tool call, so
+                // a worker is never trapped in a forced-call loop and the rest of its session is
+                // unchanged. A worker that owns nothing (the sink, a read-only verify shard) is never
+                // forced — its job may legitimately end in prose.
+                if force_write_tool()
+                    && !req.owned_files.is_empty()
+                    && !req.owned_files.iter().any(|f| root.join(f).is_file())
+                {
+                    Some("write")
                 } else {
                     None
                 },
