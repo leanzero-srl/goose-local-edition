@@ -10349,3 +10349,34 @@ here is self-describing; every failure before this is not, and no amount of re-r
 will change that.
 
 `cargo fmt` clean, clippy 0 across `goose-swarm` + `goose-cli --all-targets`, 86 tests green.
+
+## F245 ⚡ — THE `broken_code` LEAD CLOSES ON A READ, NOT A SHIP. THE SINK IS THE FAILURE NOW.
+
+I predicted the `broken_code` re-dispatch sent a generic "your file is broken" and went to check
+before writing anything. **It does not.** `judge.rs:352-362` already composes:
+
+    "{path} does not compile ({snippet}). Fix the syntax so it parses and imports cleanly — if you
+     are unsure how, write a SMALLER, SIMPLER version that compiles and covers the core of the spec;
+     a working subset beats a broken whole."
+
+`snippet` is the first three lines of the actual compiler error. **The hint is already specific, and
+shipping the fix I had in mind would have changed nothing.** That is Lesson 42 doing its job —
+subtract what the engine already answered — and it cost one read instead of one commit.
+
+**WHAT THE FIRST POST-BOUNDARY RUN ACTUALLY FAILED ON:**
+
+    19 dispatched / 18 done / 1 FAILED
+    the failure: `integrate-verify` — kind verify/sink, 3 attempts, last judge verdict `ok`
+    test-authors: 2 completed / 0 failed
+
+**Not a test-author. The SINK.** That matches the historical shape (integrate-verify is the
+most-failed task in the archive) and it lands on a defect already read off the code and never
+addressed: `green_blocking_failed` (`swarm.rs:19020`) filters out `owns_nothing`, and the sink owns
+nothing — **so the single task that reconciles cross-module interfaces CANNOT block a green claim.**
+Its documented rationale is that a sink failure is a model self-report, never a deterministic veto.
+That rationale is sound for a model opinion and **wrong for a command exit code**, and the current
+code cannot tell the two apart.
+
+⚠ `error = None` on this failure, as expected: the running binary is `eb8027139`, built at the
+boundary, and F243/F244 came after. **The first failure that names its own reason will be on the next
+boundary's binary** — this one still had to be diagnosed from the outside.
