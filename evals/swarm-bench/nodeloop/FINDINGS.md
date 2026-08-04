@@ -12000,3 +12000,44 @@ not the pattern.** Either way the cell is KEPT — a failed sink is a datum, not
 
 ⇒ **L155. A SAFETY NET KEYED ON A DECLARED FIELD IS BLIND TO WORK THAT DOES NOT DECLARE IT — check
 what the task actually WROTE, not what it claimed to own.**
+
+## F294 — the 420s is `worker_timeout_secs`, it is an IDLE timer, and my knob doc says otherwise
+
+Chasing the "420s" in F293's stall message against the documented `progress_watchdog_secs` default of
+900. `levers_resolved` in the live run settles it:
+
+    progress_watchdog_secs: 900     worker_timeout_secs: 420
+    sink_cap_secs: 1800             max_attempts: 3      degrade_on_stall: false
+
+The sink's `idle_secs` is wired to **`worker_timeout_secs` = 420**, not the 900 watchdog.
+
+**And it is NOT a wall-clock cap.** `swarm.rs:11321-11324`: *"IDLE-based watchdog: kill the task only
+if NO agent event arrives for `idle_secs` (a genuinely stalled stream), NOT on total wall-clock — a
+slow-but-progressing local model emits an event every turn and must be allowed to finish."* The
+mechanism is `tokio::time::timeout(wait, stream.next())`, so ANY stream event resets it — including
+Thinking, which is separately classed non-productive for a different branch at 11612.
+
+⚠ **My own knob documentation calls `worker_timeout_secs` a "per-task wall-clock cap" with a baked
+default of 900. Both halves are wrong for this run: it is an idle-gap timer and it resolved to 420.**
+
+⇒ **THIS CORRECTS F293's HEADLINE, WHICH I OVERSTATED.** "57 minutes producing nothing" is false.
+Re-reading the same timeline through an idle timer:
+
+    attempt 0  01:09 → killed 01:33   ≈17 min PRODUCTIVE, then 7 min of stream silence
+    attempt 1  01:33 → killed 02:00   ≈20 min PRODUCTIVE, then 7 min of stream silence
+
+and the productive part is on disk: `store.py` 01:43, `api.py` 01:50, pytest caches 01:51 — all
+inside attempt 1's active window. **The sink does ~17-20 minutes of real work per attempt and then
+its stream dies.** What is lost is not the work, it is the COMPLETION — and with it the task's Done
+status, which is what the DAG and every dependent actually wait on.
+
+What survives from F293 unchanged: the stall burns the retry budget; `degrade_on_stall` cannot reach
+a task with `owned_files: None`; and two different devices produced the identical failure.
+
+I could not pin the silence on a hung `pytest` — the generated tests use daemon threads with
+`timeout=0.1` connection probes — so the CAUSE of the 7-minute gap is still unknown and I am not
+claiming one.
+
+⇒ **L156. READ WHAT THE TIMER ACTUALLY MEASURES BEFORE DESCRIBING WHAT TIMED OUT. "Ran 24 minutes
+then timed out" and "worked 17 minutes then went silent for 7" are different failures with different
+fixes, and only the second one is what happened.**
