@@ -12157,3 +12157,29 @@ check whether the value is a pure function of evidence already on disk — and r
 tool built for it (L42, and `reaudit.py` was written for precisely this moment).**
 ⇒ **L160. `start_new_session=True` CUTS BOTH WAYS: it makes children survive the launcher, which
 means a group kill cannot reach them. Kill by pid and VERIFY the count is zero before restarting.**
+
+## F299 — two corrections to F298, and the sweep already had the stray-killer I hand-rolled
+
+**Correction 1: the restart's first unit is `baseline-n3-r2`, not `baseline-n1-r0`.** I reported the
+latter. `complete(baseline,3,2)` is **False** because that row is the void 2-node 60-second refusal —
+so under `MIN_REPS=5` the curve genuinely still needs a third n3 baseline replicate, and the sweep is
+right to take it before the n1 arm. Verified: `complete` reads True/True/False/False/False for
+(3,0)/(3,1)/(3,2)/(3,3)/(1,0).
+
+**Correction 2: I raised a false alarm on a silent log.** `loop.log` had no new `>>>` line for 3.4
+minutes and I went looking for a failed restart. A `>>>` line is written ONCE PER UNIT and a unit
+runs ~2 hours — silence is the normal state, not a symptom. The restart had in fact succeeded at
+**02:32:31**; pid 80291 (`goose swarm run`) has **ppid 80288**, my new supervisor, and
+`swarm-3node-r2/run.jsonl` has been written continuously since.
+
+⇒ **L161. A LOG THAT WRITES ONCE PER UNIT IS SILENT FOR A UNIT'S DURATION. Before treating quiet as
+failure, work out the expected WRITE RATE of the thing you are watching.**
+
+**And the sweep already solved the problem I hand-solved.** Its own log carries:
+
+    [warn] killed stray engine pgroup for pid 80207
+
+`loop.sh start` cleans stray engine process groups by itself. My manual orphan hunt (F298, trap 1)
+was not wrong — verifying zero before restarting is still correct, and the tool's cleanup runs only
+at start, not at kill time — but the engine-side capability existed and I did not check for it first.
+That is L42 again: subtract what the system already does before building the same thing by hand.
