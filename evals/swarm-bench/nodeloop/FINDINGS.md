@@ -11751,3 +11751,31 @@ split reads:
 
 📌 **THE CURVE ANSWERS THIS PROPERLY FOR FREE.** Five `baseline` n3 cells on one frozen build will give a
 within-arm split on `redraft_rounds` with no arm confound. **Until then the honest answer is: unknown.**
+
+## F287 ⚙️ — THE RESTART COMMAND VERIFIED **BEFORE** IT IS NEEDED, AND IT IS NOT THE ONE I WROTE DOWN
+
+I had recorded the restart as `rm STOP && ./loop.sh start`. Reading `loop.sh` before the moment arrives
+(rather than during it) corrects that and surfaces two behaviours worth knowing:
+
+    start|resume)   1. COPIES the run tree to runs/nodeloop-parked-<epoch>  (cp -R, NOT mv — originals stay)
+                    2. refuses if a supervisor is already alive
+                    3. runs `preflight` and REFUSES TO START if it fails
+                    4. `rm -f STOP` itself   <- the separate `rm STOP` is unnecessary
+                    5. launches via start_new_session and verifies ppid == 1
+
+⇒ **`./loop.sh start` alone is the whole restart.** And step 3 is a real gate: a failing preflight would
+refuse the restart **at exactly the moment the fleet is idle and waiting**.
+
+**SO I RAN THE GATE NOW, WHILE THERE IS TIME TO FIX IT (L96 — run the check whose answer you need before
+you need it):**
+
+    every queued arm can fire on this binary        EXIT=0
+
+Ten arms checked against `strings` on the release binary — `converge_off`, `kind_prompt`,
+`doc_prefetch`, `spec_repair`, `detail_budget`, `complete_parallel`, `e2e_oracle`, `retarget_off`,
+`sink_review`, `doc_fetch` — **all present**. The restart will be accepted.
+
+⚠ **AND THE PARK IS A COPY, NOT A MOVE — I checked, because a `mv` there would have relocated
+`baseline-n3-r0`'s completed cell out from under `curve.py` at the instant of restart.** `cp -R` leaves
+the originals in place, so the collected cell survives. **That was worth two minutes of reading; it is
+the kind of thing that only shows up as a mystery empty result an hour later.**
