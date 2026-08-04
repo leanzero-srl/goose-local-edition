@@ -10268,3 +10268,35 @@ median must stay below the old 224s. **If it drifts back toward 224 the nudge di
 and I say so.** Attribution to the nudge specifically needs a paired arm with only that lever varied
 — the offline bench can do it (`nudge` vs `baseline` on identical frozen payloads) and the run-level
 comparison cannot.
+
+## F242 🔴🏆 — F237 IS REFUTED. THE DEPTH PATTERN DOES NOT REPLICATE, AND IT REVERSES.
+
+The registered falsifier fired on the first independent population it was given.
+
+                  SAMPLE level                    CASE level
+    test-author   shallow 8/22 (36%)  deep 2/20 (10%)    shallow 4/5   deep 1/4
+    implementer   shallow 3/15 (20%)  deep 5/12 (42%)    shallow 1/5   deep 2/4
+
+**F237 said "every refusal is in the first turns after a dispatch; once the worker acts once it keeps
+acting."** On implementers the effect is not merely absent — it is **REVERSED**, 42% deep against 20%
+shallow. Two populations, opposite signs, both small. **The honest conclusion is that there is no
+depth effect and the test-author version was the 3-task, one-spec artifact F237c warned it might be.**
+F237's own case-level p was already 0.114; this closes it.
+
+⚠ **Test-author deep refusals also appeared** — 2 of 20, where F237 recorded 0 of 13. More reps
+falsified it from inside its own population before the implementers did.
+
+**AND A SUBSTANTIVE REFRAME, which is the part worth keeping.** Per-turn refuse-to-act by kind:
+
+    implementer  8 of 27 = 29.6%
+    test-author 10 of 42 = 23.8%
+
+**Implementers refuse MORE OFTEN than test-authors.** The whole campaign has treated test-authors as
+the failing population because they are 93% of run-level failures — and that remains true — but it is
+**NOT because they refuse to act more often per turn**. Whatever makes a test-author's *task* fail is
+downstream of the decision this bench measures. That is a genuinely different question from the one I
+have been chasing, and the numbers say so plainly.
+
+⚠ Both figures are still one spec and few tasks. Neither licenses a general claim; what they license
+is dropping the depth framing and stopping the search for a test-author-specific refusal mechanism
+that the data does not show.
