@@ -10172,3 +10172,41 @@ model's own metadata. Backup at `~/.config/goose/config.yaml.bak-samplers`.
 is unaffected and its registered result stays clean. The next run's `levers_resolved` must show the
 three values, and an `llm_request` payload must carry `top_k`/`top_p`/`min_p`. **If they are absent,
 this shipped nothing and I say so** — the same trap as F213.
+
+## F239 ✅ — FOUR OF THE SEVEN ARE NOW VERIFIED ON THE WIRE, AND ONE GAP WAS MINE
+
+First run on the post-boundary binary. Verification, not assumption — the F213 trap has bitten this
+campaign twice.
+
+**CONFIRMED from the run's own `levers_resolved`:**
+
+    build_sha      = eb8027139-dirty     ← a REAL commit, first time in this campaign (was "dev")
+    kind_prompt    = true
+    dep_signatures = true
+
+**CONFIRMED on the wire**, scoped to `llm_request` files written after the rebuild:
+
+    13 of 13 payloads carry (top_k=20, top_p=0.95, min_p=0.0, temperature=None, repeat_penalty=None)
+
+That is **exactly what the model's own GGUF declares** (`top_k 20`, `top_p 0.95`, `temp 1.0` — so
+temperature is correctly left unset because the served default already matches), against **F216's
+measured 0 of 519** before. `temperature` and `repeat_penalty` are absent by design, not by accident.
+
+⚠ **THE READER TRAP, AGAIN.** My first pass reported **0 of 16 worker payloads** carrying the
+samplers and read as a total failure. It was scoped to the whole archive, and the current run has
+dispatched **zero** workers — it is still in `skeleton_drafts` at 23 minutes. Those 16 were
+pre-boundary. **Scoping the glob to files newer than the binary is not optional**, and it is the same
+mistake in a new costume: F209 pooled 33 logs from dead builds, F235 replayed payloads naming a
+retired model.
+
+🔴 **AND THE GAP I SHIPPED MYSELF.** `act_now_nudge` came back `None`. The lever had not failed —
+**neither it nor `force_write_tool` had a line in the `levers_resolved` emission at all.** That event
+is a hand-maintained list, so a new gate is invisible until someone adds it, and *absent from the
+event* is indistinguishable from *resolved to null*. I shipped two levers unverifiable-by-construction
+in the same session whose entire discipline is verify-do-not-assume. Fixed in `2f2558bac`, with
+`force_write_tool` included **precisely because it is OFF** — deliberately-off and vanished must never
+look the same in a log.
+
+**STILL OWED, and honestly owed rather than passed:** the nudge's literal text in a worker dispatch,
+and a repair dispatch naming the workhorse. Neither can be checked yet — this run has not dispatched
+a worker, let alone reached repair. Absence of a worker payload is a clock, not a defect.
