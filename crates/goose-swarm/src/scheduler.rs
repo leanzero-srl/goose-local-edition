@@ -483,6 +483,17 @@ impl State {
             .count()
     }
 
+    /// The worker session this task ran in, if one was recorded.
+    ///
+    /// Every FAILURE emit site hard-coded `session_id: None`, so a failed task's full trace — every
+    /// tool request and response in the sessions DB — was unjoinable, which is precisely the task you
+    /// most want to read. The map was already there and already populated on dispatch; line ~1944
+    /// performs this exact lookup for another event. Same class of defect as the missing `error`:
+    /// the engine had the value and the event dropped it.
+    fn task_session_id(&self, tid: &str) -> Option<String> {
+        self.task_session.get(tid).cloned().flatten()
+    }
+
     /// The reason the task's LAST attempt ended, or `None` if it succeeded.
     ///
     /// One helper rather than six inline expressions, because six copies of a rule is how the
@@ -994,7 +1005,7 @@ impl State {
                             model: model_id,
                             attempts,
                             elapsed_ms,
-                            session_id: None,
+                            session_id: self.task_session_id(tid),
                             error: ended_because,
                             tool_calls: Vec::new(),
                         });
@@ -1009,7 +1020,7 @@ impl State {
                             model: model_id,
                             attempts,
                             elapsed_ms,
-                            session_id: None,
+                            session_id: self.task_session_id(tid),
                             error: ended_because,
                             tool_calls: Vec::new(),
                         });
@@ -1062,7 +1073,7 @@ impl State {
                     model: model_id,
                     attempts,
                     elapsed_ms,
-                    session_id: None,
+                    session_id: self.task_session_id(tid),
                     error: ended_because,
                     tool_calls: Vec::new(),
                 });
@@ -1497,7 +1508,7 @@ impl State {
                 model,
                 attempts,
                 elapsed_ms: 0,
-                session_id: None,
+                session_id: self.task_session_id(tid),
                 error: ended_because,
                 tool_calls: Vec::new(),
             });
@@ -1650,7 +1661,7 @@ impl State {
                 model,
                 attempts,
                 elapsed_ms: 0,
-                session_id: None,
+                session_id: self.task_session_id(tid),
                 error: ended_because,
                 tool_calls: Vec::new(),
             });

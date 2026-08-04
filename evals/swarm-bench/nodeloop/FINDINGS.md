@@ -10330,3 +10330,22 @@ in particular is a syntax error in a file the engine already parses and can quot
 
 ⚠ `session_id` is also `None` on every failure, so a failed task's full trace is unjoinable to the
 sessions DB. Same class of defect, not yet fixed.
+
+## F244 ✅ — A FAILED TASK'S TRACE IS NOW JOINABLE. SAME DEFECT CLASS AS F243.
+
+Every `TaskCompleted` emit site hard-coded `session_id: None` except the success path. So a failed
+task — the one you most want to read tool-call by tool-call — could not be joined to the sessions DB
+at all, and this campaign hit that wall directly: an earlier attempt to pull failure traces returned
+`session_ids present: 0` for all 14.
+
+**The value was already there.** `self.task_session` is populated on dispatch (`scheduler.rs:866`)
+and line ~1944 performs this exact lookup for a different event. Five sites now call one helper,
+`task_session_id`, matching the `last_attempt_error` shape from F243 — because six inline copies of a
+rule is how `pick_device` and the repair path drifted apart in the first place.
+
+**Two events in two commits, one defect class: the engine held the value and the event dropped it.**
+Between them a failed task now says WHY it failed and WHERE its full trace is. Every failure from
+here is self-describing; every failure before this is not, and no amount of re-reading the archive
+will change that.
+
+`cargo fmt` clean, clippy 0 across `goose-swarm` + `goose-cli --all-targets`, 86 tests green.
