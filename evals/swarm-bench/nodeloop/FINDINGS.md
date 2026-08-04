@@ -11954,3 +11954,49 @@ to write there. One fewer patch queued for the boundary is a better outcome than
 
 ⇒ **L154. WHEN A MECHANISM LOOKS ABSENT, CHECK WHETHER IT IS FIRING AND YOU ARE NOT LOOKING AT ITS
 EVENTS. Two sessions of "the judge cannot escalate" died to one tally of `action` by `task_id`.**
+
+## F293 — the run's most expensive task declares no owned files, so every safety net is blind to it
+
+`baseline-n3-r1`'s `integrate-verify` has now burned **57+ minutes across 3 dispatches producing
+nothing**, and NOT via the judge ladder F292 described. Both retries read:
+
+    task_retry  integrate-verify  "agent stalled — no progress for 420s (no token/tool activity)"
+      attempt 0  dispatched 01:09 (gabee)      retried 01:33   — 24 min
+      attempt 1  dispatched 01:33 (workhorse)  retried 02:00   — 27 min
+      attempt 2  dispatched 02:00
+
+Two different devices, same failure ⇒ not one bad node. Across the corpus (2 runs on this binary)
+there are 4 stall retries and they hit exactly the heavy classes: `integrate-verify` ×2,
+`verify-e2e::1`, `test-api-edge-cases`.
+
+**A stall BURNS the retry budget.** `scheduler.rs:958-967`: `n.attempts += 1` and
+`exhausted = attempts - judge_kills >= max_attempts`, where `judge_kills` excludes judge
+interventions and omni aborts — but NOT stalls. So `integrate-verify` is one stall from Failed.
+
+**I had a candidate fix and killed it before building on it (L56).** `degrade_on_stall` is written,
+targets exactly this ("a transient exhaustion is usually a mid-generation model hang AFTER the worker
+already wrote its owned file"), and is OFF by default — which reads as a textbook L115 "flip it".
+**It would not have saved a single minute.** `plan_loaded` shows `integrate-verify` and all four
+`verify-e2e::N` with **`owned_files: None`**, and `critical_owned_files_written(&[])`
+(`scheduler.rs:199-209`) takes the `critical.is_empty()` branch down to `owned_files.iter().any(..)`
+over an EMPTY slice ⇒ **false**. `should_degrade_on_stall` therefore returns false for these tasks
+**by construction**. The comment at `scheduler.rs:952-954` says exactly this and I read it only after
+forming the hypothesis.
+
+⇒ **THE STRUCTURAL FINDING: the engine's stall salvage is keyed on `owned_files`, and the two most
+expensive task classes in a run declare none.** The sink and every verify task can exit a stall only
+by exhausting `max_attempts` into Failed.
+
+**And the premise behind that exclusion is false for the sink.** `owned_files: None` is a PLAN
+property, not a behavioural one — the sink demonstrably writes: `api.py` mtime **01:50** and
+`store.py` **01:43**, both AFTER attempt 1 was dispatched at 01:33, with `__pycache__`/`.pytest_cache`
+touched at 01:51. It was running tests 18 minutes into an attempt the engine then discarded whole.
+"Owns no files" is being used as a proxy for "produced nothing", and for the sink that proxy is wrong.
+
+📌 **REGISTERED PREDICTION, near-term and cheap to settle: `integrate-verify` FAILS in `baseline-n3-r1`**
+— attempt 2 is its last under `max_attempts`, and it has stalled on two different devices already.
+⚠ **FALSIFIER: it completes, in which case the stall is survivable and "3 dispatches then dead" is
+not the pattern.** Either way the cell is KEPT — a failed sink is a datum, not a void.
+
+⇒ **L155. A SAFETY NET KEYED ON A DECLARED FIELD IS BLIND TO WORK THAT DOES NOT DECLARE IT — check
+what the task actually WROTE, not what it claimed to own.**
