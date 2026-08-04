@@ -10549,3 +10549,28 @@ data. What it justifies is a REGISTERED third arm, not a config change: **nudge 
 the same frozen cases and judged at case level. **If that arm shows the stuck-case gain without the
 clean-case cost, the conditional nudge is earned. Until then the unconditional nudge stays ON for
 cost, not for proof, and the honest headline is p = 0.453.**
+
+## F251 🔴 — THE BENCH CANNOT TEST THE CONDITIONAL NUDGE. 12 OF 13 CASES ALREADY CARRY THE CONDITION.
+
+F250 registered a third arm: nudge only when `req.prior_hint.is_some()`. The frozen payloads already
+record that condition as `was_stalled` — an INPUT property, which is the honest way to split, unlike
+the outcome-based "baseline refused ≥50%" that produced the striking 86.7%→20.0% figure. So I split
+the completed paired data by it instead of buying a new arm.
+
+    was_stalled=TRUE   12 cases | baseline 13/36 (36.1%) -> nudge 5/36 (13.9%) | better 5, worse 2
+    was_stalled=FALSE   1 case  | baseline  0/3  ( 0.0%) -> nudge 0/3  ( 0.0%) | better 0, worse 0
+
+**There is no contrast. Twelve of thirteen replayable implementer cases ALREADY carry a supervisor
+note**, so the "does the nudge help only workers that already failed" question has exactly one
+counter-example and zero power. **The registered third arm cannot be run on this corpus at all.**
+
+**⚠ AND IT RETROSPECTIVELY EXPLAINS THE STRIKING SPLIT.** F250's 86.7%→20.0% on "stuck" cases was NOT
+stalled-versus-clean — nearly everything here is stalled. It was WITHIN-stalled variation, sorted by
+the outcome I was measuring. That is the post-hoc trap doing exactly what it does, and the input-based
+split is what exposed it.
+
+**WHAT THIS COSTS AND WHAT IT LEAVES:** the conditional-nudge question now needs the ENGINE change plus
+live runs — the offline bench is structurally blind to it, because its corpus is drawn from
+`llm_request` payloads that skew heavily toward re-dispatches. **That is a limit of the instrument, not
+a result about the lever**, and it belongs next to F237c's "3 tasks from one spec" as a known blind
+spot rather than being discovered again in a month.
