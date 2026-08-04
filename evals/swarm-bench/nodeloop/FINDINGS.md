@@ -10635,3 +10635,43 @@ the pre-dispatch startup window, not idleness under load. **This is a genuine 3-
 ⚠ **The 50% three-busy figure is not good, and it is precisely what goal one is measuring.** If three
 nodes turn out to barely beat one, low concurrency is the reason, and that will be a finding rather
 than a disappointment — but only the matched n1 cell can say so.
+
+## F254 🔴 — FIVE 60-SECOND REFUSALS WERE COUNTED AS FINISHED UNITS; THE MEDIAN READ 114x LOW
+
+`median_unit_secs()` filtered `timed_out` and `aborted` but **not `void`**. The pool-mismatch gate
+turns a unit round in ~60s and writes a result file, so the "finished unit" population was:
+
+    IN  baseline-n3-r0        60s   void=True     <- refusal
+    IN  baseline-n3-r1        60s   void=True     <- refusal
+    IN  baseline-n3-r2        60s   void=True     <- refusal
+    IN  kind_prompt-n3-r0     60s   void=True     <- refusal
+    IN  scoped_contracts-n3-r0 60s  void=True     <- refusal
+    IN  sink_review-n3-r0    8729s
+    IN  think_off-n3-r0      6376s
+    IN  think_off-n3-r1      7237s
+    IN  think_off-n3-r2      6524s
+    median = 60.3s            REAL median = 7236.9s      ⇒ **114x understatement**
+
+**Consequence, stated at its true size and no larger:** abandon-rule 4 ("far beyond the measured
+norm") therefore fired at **2.5 minutes into every real unit** and stayed lit for the whole ~2h run —
+which is 100% of healthy units, so it carried **zero information** (L66). It could **not** kill
+anything: `conf` is a `max()`, rule 4 caps at 0.6, and the kill line is 0.8. **No run was ever at
+risk from this.** What it did cost is a watch log that says "this unit is pointless" once a minute
+about a perfectly healthy run — the exact noise that makes a real warning unreadable.
+
+**DRILLED: the same rule existed TWICE and the two copies disagreed.** `median_unit_secs` excluded
+timed_out/aborted; the ETA's `durations` list excluded **nothing**, so a 60s refusal also dragged the
+sweep's own ETA. Both now go through **one** predicate, `is_real_unit()`, so the next reader cannot
+write a third variant.
+
+**The multiplier had to move, and here is why it is not fitting the instrument.** Against the real
+median, 2.5x lands at 18092s — **beyond the 16200s unit cap**, so the rule could never fire at all. A
+safeguard that cannot fire is dead code. **1.8x** fires at 13026s = **1.49x the slowest real unit
+ever observed** (8729s), with the whole observed distribution (0.88x-1.21x of median) far below it.
+⚠ **FALSIFIER REGISTERED BEFORE THE FIRST UNIT RUNS UNDER IT:** if a unit that later yields a VALID
+(non-void, scored) result ever trips rule 4, **1.8 is too tight and goes back up.**
+
+⚠ **THE RUNNING SUPERVISOR (pid 22764) DOES NOT HAVE THIS FIX** — L23, a live interpreter does not
+see source edits, and restarting it would take `baseline-n3-r0` down with it. So the noisy line keeps
+printing for this unit and the fix takes effect at the next supervisor start. **Nothing about the
+engine changed, so the curve's freeze (F253) is intact.**
