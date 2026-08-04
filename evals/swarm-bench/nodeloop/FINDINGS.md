@@ -10883,3 +10883,57 @@ slow versions of one process, and the score comparison is the one that can still
 **L143: SPEEDUP LIVES WHERE THE TIME IS, NOT WHERE THE PARALLELISM IS.** Execute was already at 99.7%
 and every previous instinct of mine pointed there. Decompose the wall before optimising the part that
 already works.
+
+## F262 ⭐⭐⭐ — THE 1-NODE ARM SKIPS A QUALITY GATE IT IS PHYSICALLY UNABLE TO COMPUTE
+
+The prefix decomposition, both arms, from their own timestamps:
+
+    swarm-3node-r0  prefix 2219s          swarm-1node-r0  prefix 2031s
+      +   0..297  research (3 lenses)       +   0..984  research (3 lenses)
+      +      520  skeleton_drafts #1        +     1267  skeleton_drafts (ONE)
+      + 982..1182 detail x5                 +1339..1878 detail x8 (serial)
+      +     1182  confidence_retarget       +     2031  contracts / plan_loaded
+      +     1182  retarget_discarded
+      +     1513  skeleton_drafts #2  <-- A SECOND FULL PLANNING PASS
+      +1950..2089 detail x5           <-- AND A SECOND DETAIL PASS
+      +     2162  low_confidence_ask -> timeout 5s, "the fleet idled for the whole window"
+      +     2219  contracts / plan_loaded
+
+**RESEARCH DOES SCALE — 984s → 297s = 3.3x.** My F261 phrasing "the prefix does not scale" was too
+coarse and is corrected here: research scales beautifully; the 3-node prefix is longer *in spite of*
+saving 687 s on research, because it then spends **~1240 s on a second planning pass** the 1-node arm
+never runs.
+
+🔴 **AND HERE IS WHY IT NEVER RUNS IT.** The engine's own events:
+
+    3 nodes:  skeleton_drafts {requested 3, returned 3}   plan_loaded {plan_confidence: 83, ask_floor: 85}
+              confidence_retarget {binding_signal: "agreement", action: "redraft", conf_before: 83}
+    1 node:   skeleton_drafts {requested 1, returned 1}   plan_loaded {plan_confidence: NULL}
+
+**Plan confidence is AGREEMENT ACROSS INDEPENDENT DRAFTS. At one node there is one draft, so the
+signal is `null` and the floor cannot be breached.** The 1-node run is not confident — **it is
+unmeasurable, and unmeasurable reads as "proceed".** More nodes make the swarm able to notice it does
+not know how to decompose the task, and that noticing costs a full planning pass. **Both arms then
+shipped the SAME 16 tasks.**
+
+⚠ **THIS IS THE CENTRAL ASYMMETRY OF GOAL ONE.** The 3-node arm pays wall-clock for a quality gate the
+1-node arm gets to skip for free. Any wall-clock comparison that ignores it is comparing a run that
+checked its own plan against one that could not.
+
+### 🔴 I ALMOST CALLED THE REDRAFT WASTE. THE ARCHIVE SAYS OTHERWISE.
+
+    unit              rounds  conf_before -> final plan_confidence   gap to floor (85)
+    think_off-n3-r1     2     41 -> 88   (+47)                        44
+    think_off-n3-r0     1     79 -> 100  (+21)                         6
+    swarm-3node-r0      1     83 ->  83  (  0)                         2
+
+`retarget_discarded` fires on **4 of 4 rounds across 3 of 3 runs**, yet final confidence ROSE in two of
+them. So it does **not** mean "the work was thrown away" — reading it that way was my error, caught
+before it was published. **Redrafts pay, and they pay in proportion to the gap.**
+
+📌 **HYPOTHESIS, n=3, NOT A RESULT (L10, L126): redraft gain scales with the confidence gap, and a gap
+of ~2 does not repay a full planning pass.** The engine's own `stall_stop` message already says
+*"further rounds cost a full planning pass to ship a plan already held"* — it just learns that only
+AFTER paying. A gap-gated redraft is the obvious change and **I am NOT shipping it on n=3.** The
+curve's five 3-node cells supply the observations. ⚠ **FALSIFIER: a run whose redraft starts from a
+gap ≤ 2 and still gains ≥ 10 points kills the hypothesis.**
