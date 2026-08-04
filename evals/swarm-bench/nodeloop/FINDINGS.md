@@ -11596,3 +11596,32 @@ predicted 1.51 moves with it.
 ⚠ **AND THE TWO ARE CLOSE.** 1.51 vs 1.60 is a 6% gap; a single replicate cannot separate them against
 a fleet whose identical-config runs have scored 44.2 / 86.7 / 90.0. **This will likely need the full
 five pairs to resolve, and may not resolve at all — which is a legitimate outcome, not a failure.**
+
+## F282 ⚙️ — THE THREE UNCOMPILED PATCHES, REVIEWED AS THE COMPILER WILL SEE THEM
+
+`cargo fmt` is clean but nothing has type-checked, so I read the diff as a type-checker would. **This is
+not a substitute for clippy — it is the mitigation available under the freeze**, and the boundary must
+still run `cargo clippy --all-targets -- -D warnings` (L108: `cargo build` skips `#[cfg(test)]`).
+
+    1  self.straggler_stop -> self.straggler_stop_degrade
+       Both are `bool` fields on the SAME dispatcher struct (`swarm.rs:10898` and `:10904`). A field
+       swap of identical type, used identically at `12314`/`13497`. SAFE.
+
+    2  prompt strings: "worker devices" -> "PARALLEL WORKER SLOTS", "one or more per worker" -> "one per
+       SLOT". Pure literals inside `format!`; `{worker_count}` still present in both. SAFE.
+
+    3  devices.iter().map(|d| d.weight as usize).sum::<usize>().max(devices.len())
+       `weight` is `u32` (`swarm.rs:136`), cast to usize, summed as usize, max against a usize. The same
+       `devices` vec is already indexed by `.speed_weight` and `.enabled` elsewhere, so the element type
+       carries the field. TYPE-CLEAN.
+
+**AND THE ONE REAL SYNTAX RISK IS DISPROVEN BY THE ENGINE ITSELF (L42).** I was about to defensively
+parenthesise the `if/else` expressions inside the `rules_sections` `json!` block, because a bare `if` in
+a `json!` value position is exactly where a macro-parsing error hides. **No change needed:** the very
+same `json!` invocation ALREADY contains a bare `if/else` chain for the `"kind"` field — and that code
+is in the RUNNING binary, so `serde_json::json!` demonstrably accepts it. **The proof was ten lines
+above the edit.**
+
+⚠ **WHAT THIS REVIEW CANNOT DO:** it cannot catch a borrow-checker or lifetime objection, and it cannot
+prove the `rules_sections` block does not trip a clippy lint that the build treats as an error. **The
+honest status stays "NOT COMPILED", and the boundary is where that changes.**
