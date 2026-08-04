@@ -11173,3 +11173,34 @@ the fix site before writing the fix).
 WIDTH sentences only — leaving the "one per worker" phrasing intact where it genuinely means devices.
 ⚠ **FALSIFIER:** if the planner call site already receives a slot-derived count, this finding is wrong
 and the 4.45 ceiling has another cause.
+
+## F270 ✅ — F269 DISCHARGED AND FIXED: THE PLANNER NOW GETS SLOTS, NOT DEVICES (THREE CALL SITES, NOT ONE)
+
+**The registered check is discharged, and it CONFIRMS F269 rather than refuting it.** Every planner
+call site passes the device count:
+
+    swarm.rs:22788  dispatcher.parallel_plan(..., plan_schema(), devices.len(), ...)   <- the LIVE path
+    swarm.rs:22827  dispatcher.plan(...,        plan_schema(), devices.len(), ...)
+    swarm.rs:22848  dispatcher.plan(...,        plan_schema(), devices.len(), ...)
+
+⚠ **I had said "two"; there are THREE**, and the one I had not found — `parallel_plan` — is the one
+actually used (`parallel_planning: true` in `levers_resolved`). Grepping for `.plan(` missed it because
+the name differs. **The instance in front of me was not the class.**
+
+**AND THE SAME ANCHOR SITS IN THE DRAFT SCORER.** `score_skeleton` (`swarm.rs:10596`, called at
+`10454` / `12999`) comments at `10657`: *"Size sanity: want at least worker_count subtasks to fill the
+fleet."* So even if a draft came back wider, **the scorer would not prefer it** — two independent
+mechanisms holding the plan down to the device count.
+
+**SHIPPED (queued for the boundary):** all three call sites now pass
+`devices.iter().map(|d| d.weight as usize).sum::<usize>().max(devices.len())`, and the two width
+sentences say **"There are {worker_count} PARALLEL WORKER SLOTS"** / **"one per SLOT"** instead of
+"worker devices" — because passing 6 while the sentence says "6 worker devices" would be a lie about
+the hardware. On this fleet that is **3 → 6**, and it is fleet-relative, never a fixed count.
+
+⚠ **NOT COMPILED — the engine is frozen, and `cargo check` would steal CPU from `local-mihai` mid-cell.
+`cargo fmt` ran clean. clippy runs at the boundary, BEFORE deploy.** ⚠ The scorer's anchor is
+**untouched** — it takes `worker_count` from a different path and I have not read that one (L130).
+📌 **REGISTERED: after the boundary, a 3-node `plan_loaded` must show MORE independent (zero-dep)
+subtasks than the 16-task / 4.45-ceiling plans this build produced. If the ceiling does not move, the
+binding constraint is the SCORER, not the prompt — and that is the next address.**

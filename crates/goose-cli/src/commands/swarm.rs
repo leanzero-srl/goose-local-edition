@@ -12563,7 +12563,7 @@ impl GooseAgentDispatcher {
             format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}{backbone_clause}\n\
-            There are {worker_count} worker devices that run in PARALLEL. Decompose into a SMALL number of COHESIVE subtasks — \
+            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into a SMALL number of COHESIVE subtasks — \
             {count_clause}. GROUP \
             several related commands or functions into ONE module subtask, {tests_directive} These models \
             are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
@@ -13747,8 +13747,8 @@ impl GooseAgentDispatcher {
         let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            There are {worker_count} worker devices that run in PARALLEL — decompose into MANY small INDEPENDENT subtasks \
-            (split by file / module / feature) and aim for AT LEAST {worker_count} independent subtasks (one or more per worker; more is better) \
+            There are {worker_count} PARALLEL WORKER SLOTS — decompose into MANY small INDEPENDENT subtasks \
+            (split by file / module / feature) and aim for AT LEAST {worker_count} independent subtasks (one per SLOT; more is better) \
             with NON-OVERLAPPING files and NO ordering dependency, so no worker sits idle. Only add a dependency when a subtask genuinely \
             needs another's output; a wide independent set is the goal.\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
@@ -22785,7 +22785,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         wm,
                         &opts.prompt,
                         plan_schema(),
-                        devices.len(),
+                        // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
+                        // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
+                        // "3", and the width sentence then asked for 3 independent subtasks on a machine that
+                        // can run 6 — MEASURED as a plan ceiling of 4.45 against achieved concurrency 4.447,
+                        // i.e. the scheduler already delivers everything the plan allows (F268/F269).
+                        devices
+                            .iter()
+                            .map(|d| d.weight as usize)
+                            .sum::<usize>()
+                            .max(devices.len()),
                         &research_findings,
                         effective_best_of_n,
                         cfg.homogeneous_models,
@@ -22824,7 +22833,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 &cfg.planner_model,
                                 &opts.prompt,
                                 plan_schema(),
-                                devices.len(),
+                                // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
+                                // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
+                                // "3", and the width sentence then asked for 3 independent subtasks on a machine that
+                                // can run 6 — MEASURED as a plan ceiling of 4.45 against achieved concurrency 4.447,
+                                // i.e. the scheduler already delivers everything the plan allows (F268/F269).
+                                devices
+                                    .iter()
+                                    .map(|d| d.weight as usize)
+                                    .sum::<usize>()
+                                    .max(devices.len()),
                                 &research_findings,
                             )
                             .await?
@@ -22845,7 +22863,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         &cfg.planner_model,
                         &opts.prompt,
                         plan_schema(),
-                        devices.len(),
+                        // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
+                        // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
+                        // "3", and the width sentence then asked for 3 independent subtasks on a machine that
+                        // can run 6 — MEASURED as a plan ceiling of 4.45 against achieved concurrency 4.447,
+                        // i.e. the scheduler already delivers everything the plan allows (F268/F269).
+                        devices
+                            .iter()
+                            .map(|d| d.weight as usize)
+                            .sum::<usize>()
+                            .max(devices.len()),
                         &research_findings,
                     )
                     .await?
