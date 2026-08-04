@@ -749,16 +749,26 @@ def intruder_engine_pids() -> list[int]:
     return [p for p in engine_pids() if _ppid(p) != me]
 
 
+def is_real_unit(r: dict) -> bool:
+    """Did this unit actually MEASURE something, i.e. may its wall-clock describe a normal unit?
+
+    A VOID unit is a refusal, not a run. The pool-mismatch gate turns one round in ~60 seconds and
+    writes a result file, so before this predicate existed FIVE 60-second refusals sat in a
+    nine-unit "finished" population and dragged the median to 60.3s against a real median of 7237s
+    — a 114x understatement that made every downstream "too long" judgement meaningless.
+
+    The rule lives HERE, once, because it had already been written twice with different filters:
+    `median_unit_secs` excluded timed_out/aborted and let voids through, and the ETA's `durations`
+    excluded nothing at all. Two copies of one rule that disagree is the shape of defect this
+    campaign keeps paying for.
+    """
+    return bool(r.get("wall_secs")) and not r.get("timed_out") \
+        and not r.get("aborted") and not r.get("void")
+
+
 def median_unit_secs() -> float | None:
     """Median wall of units that actually finished, so "too long" is measured, not guessed."""
-    walls = []
-    for f in OUT.glob("*/nodeloop-result.json"):
-        try:
-            r = json.loads(f.read_text())
-        except Exception:
-            continue
-        if r.get("wall_secs") and not r.get("timed_out") and not r.get("aborted"):
-            walls.append(r["wall_secs"])
+    walls = [r["wall_secs"] for r in read_results() if is_real_unit(r)]
     if not walls:
         return None
     walls.sort()
@@ -853,8 +863,14 @@ def abandon_decision(unit: Path, arm: dict, nodes: int, elapsed: float) -> tuple
     # 4. FAR BEYOND THE MEASURED NORM. Uses the median of units that actually finished, so it adapts
     #    rather than encoding a guess. Alone it is under the line — slow is not doomed — but it
     #    compounds with anything else.
+    # 2.5x was chosen when the median read 60s. Against the REAL median (7237s) it lands at 18092s,
+    # which is beyond the 16200s unit cap — the rule could never fire, and a rule that cannot fire is
+    # dead code wearing the costume of a safeguard. 1.8x fires at 13027s: 1.49x the slowest real unit
+    # ever observed (8729s), and still inside the cap.
+    # FALSIFIER: if a unit that later yields a VALID (non-void, scored) result ever trips this, 1.8 is
+    # too tight and goes back up. Recorded before the first unit runs under it.
     med = median_unit_secs()
-    if med and elapsed > 2.5 * med:
+    if med and elapsed > 1.8 * med:
         conf = max(conf, 0.6)
         reasons.append(f"{elapsed / 60:.0f} min is {elapsed / med:.1f}x the median finished unit "
                        f"({med / 60:.0f} min)")
@@ -1448,7 +1464,9 @@ def main() -> int:
                       "audit_version": dispatch_audit.AUDIT_VERSION,
                       "engine_build": engine_build(), "audit": {}}
 
-        durations.append(time.time() - started)
+        unit_secs = time.time() - started
+        if is_real_unit({**result, "wall_secs": result.get("wall_secs") or unit_secs}):
+            durations.append(unit_secs)
         result_path(arm["name"], nodes, rep).parent.mkdir(parents=True, exist_ok=True)
         result_path(arm["name"], nodes, rep).write_text(json.dumps(result, indent=2))
 
@@ -1469,7 +1487,7 @@ def main() -> int:
             f"prefix={(result.get('prefix') or {}).get('prefix_secs')}s"
             f"/plan{(result.get('prefix') or {}).get('planning_secs')}s"
             f"/redraft{(result.get('prefix') or {}).get('redraft_rounds')}  "
-            f"({round(durations[-1] / 60)} min)")
+            f"({round(unit_secs / 60)} min)")
 
         # FEASIBILITY GATE. If the very first unit cannot get the pool it asked for, every later
         # unit is measuring the same thing under different labels — which is exactly how this
