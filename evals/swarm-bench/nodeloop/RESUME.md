@@ -1,82 +1,85 @@
-# RESUME — parked 2026-08-03 ~18:40 local, at Mihai's request
+# RESUME — live state, rewritten 2026-08-05 ~01:05 local
 
-Everything below is on disk. Nothing needs to be re-derived.
+The previous version of this file described a park from 2026-08-03 and said *"seven engine changes
+committed, NONE yet verified"*. **All seven are now verified on the wire (F277), the node curve is
+running, and there is a live obligation below.** A stale resume file is worse than none: it tells the
+next reader to redo work that is done and hides the one thing that is not.
 
-## How to restart (in this order)
+## 🔔 THE ONE THING THAT MUST HAPPEN NEXT — CLEAR `STOP` AND RESTART
 
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
-rm STOP                      # the sweep refuses to start while this exists
-./loop.sh boundary           # parks the run tree, REBUILDS, verifies markers — see "owed" below
-./loop.sh status
+./loop.sh status                 # while it says RUNNING, wait — the current cell is being kept
+rm STOP && ./loop.sh start       # the MOMENT it is no longer RUNNING
 ```
 
-`loop.sh boundary` is the correct entry point, **not** `start`: the running binary predates seven
-committed engine changes, and the boundary is the only thing that rebuilds. It also resets
-`goalstate`'s binary-scoped sample — expected, not a bug.
+`./loop.sh stop` was issued deliberately (F280). `sweep.py:1421` checks the sentinel at the **top of
+the unit loop**, so `baseline-n3-r1` runs to completion and its result is kept; the supervisor then
+exits cleanly. The restart reloads **`MIN_REPS=5`** and the F254 watchdog fix.
 
-## What is stopped
+**Why it cannot be skipped:** the running supervisor (pid 22764) holds `MIN_REPS=3` in memory (L23).
+Backlog positions 1-6 are identical under either target, but **from position 7 a target-3 supervisor
+walks off to other arms and the curve stops at n=3 — and F260 proved n=3 can never clear 0.05 (smallest
+attainable p = 0.125).** ⚠ **A STOP sentinel nobody clears is a stopped campaign, which is exactly the
+state the previous resume was written from.**
 
-- **Sweep supervisor** — killed, and `STOP` written so it cannot take a new unit on its own.
-- **Engine** (`goose swarm run`) — killed. `.swarm/pause` was written first; the scheduler honours it
-  but the COMPLETE phase does not, so the kill was required.
-- **promptbench** arms — killed.
-- **LM Studio — NOT TOUCHED.** No model loaded, unloaded or re-aliased. `lms ps` shows 0 GENERATING;
-  the fleet is simply receiving no work.
+## 🧊 THE ENGINE IS FROZEN (F253)
 
-## The one number that matters, and its exact status
+`complete()` keys on `engine_build`, so **any boundary mid-curve voids every cell already collected.**
+Do not rebuild, do not `cargo check` (it also steals CPU from `local-mihai`). Reading source is free.
+Instrument fixes ship freely — `reaudit.py` means an `AUDIT_VERSION` bump costs **zero** unit re-runs.
 
-`goalstate` reads **test-author 5 completed / 0 failed, p = 0.157 — NOT significant.**
+**THREE ENGINE PATCHES ARE QUEUED AND UNCOMPILED.** `cargo fmt` is clean; nothing has type-checked.
+**The next boundary MUST run `cargo clippy --all-targets -- -D warnings` BEFORE deploying** (L108:
+`cargo build` skips `#[cfg(test)]` — that is how 45 lib tests went dark for sessions).
 
-`swarm-3node-r1` holds **five more test-authors, all `status=done`** (`test-store`, `test-api`,
-`test-meridian`, `test-api-edge`, `test-meridian-edge`). Ten clean completions against the historical
-31% rate would be **p = 0.0245** and would move the row.
-
-**They do not count and must not be counted.** `goalstate` requires `run_finished`, and r1 was killed
-in its COMPLETE phase before emitting it. That gate is correct — an unfinished run can still dispatch
-another test-author — and I am not loosening it to rescue my own result. The run reached 19
-dispatched / 18 done / 0 FAILED with the sink complete; the data is on disk under
-`runs/nodeloop/swarm-3node-r1/` if a later decision is made about it, but as it stands **the
-registered test is UNRESOLVED, not passed.**
-
-⚠ The confound stands regardless: the 31% baseline (13/42) is from an **older build era**, so this is
-a before/after across builds, **not a randomised A/B**. The clean n=3 `baseline` cells are still owed.
-
-## Seven engine changes committed, NONE yet verified on the wire
-
-| # | commit | what |
+| commit | what | expected effect |
 |---|---|---|
-| 1 | `e6064a428` | `kind_prompt` default ON — a test-author was told *"read AT MOST the ONE file you will edit"*, i.e. not to read the source module whose signatures it must assert. `#[serde(default)]` → `default_true`. |
-| 2 | `e6064a428` | `dep_signatures` default ON — dependency bodies were injected truncated mid-token (3 of 4 blocks cut, one failing `ast.parse`). |
-| 3 | `6efc6956c` | samplers matched to the model's own GGUF: `top_k 20`, `top_p 0.95`, `min_p 0.0`. Backup `~/.config/goose/config.yaml.bak-samplers`. |
-| 4 | `7da0b6f84` | `force_write_tool` — **default OFF and pinned OFF by test**; measurement rejected it. |
-| 5 | `f0a230d93` | every build stamps its own commit sha; `build_sha` read the literal `"dev"` on every run this campaign ever produced. |
-| 6 | `d9394ebda` | **act-now nudge, default ON** — one line, last position, only when the worker owns files and none exist. |
-| 7 | `5714f98e5` | repair routes to the **fastest enabled** node; it was pinned to `devices.first()` and never called `pick_device`, so every repair went to gabee (weight 1) while the workhorse (3) idled. |
+| `f1a20c99b` | scouts gated on `straggler_stop_degrade`, not `straggler_stop` | stop discarding 1 of 3 research lenses (F256) |
+| `95b36748f` | `rules_delivered` also emits `rules_sections` | makes kind-mismatch measurable again (F259) |
+| `00563c6ea` | planner gets Σ device weights, not `devices.len()` | plan width targets **6 slots**, not 3 devices (F269-F271) |
 
-**FIRST JOB AFTER THE BOUNDARY — verify on the wire, do not assume (the F213 trap):**
-- `levers_resolved` shows `kind_prompt: true`, `dep_signatures: true`, `act_now_nudge: true`
-- `levers_resolved.build_sha` is a **real sha**, not `"dev"`
-- an `llm_request` payload carries `top_k` / `top_p` / `min_p`
-- a worker dispatch contains **"Your next message must be a TOOL CALL"**
-- a repair dispatch names the **workhorse**
+## 🎯 GOAL ONE — the node curve
 
-Any one absent ⇒ that change shipped nothing, and it gets said plainly.
+**Claim:** a 3-node run beats a 1-node run on **BOTH** wall-clock **AND** shipped quality.
+**Protocol is frozen in `PREREGISTERED.md`; the verdict is mechanical — run `python3 curve.py`, never
+compute p by hand.**
 
-## Bench state (`promptbench.py`, replays real archived decision points, ~2 min/sample)
+    CELL 1 (finished, clean)  baseline-n3-r0
+      wall 7725.4 s · score 0.6595 · 3/3 nodes · prefix 2218.7 s · EXECUTE 5089.6 s @ 0.8568
+      mean concurrency 3.792 vs plan ceiling 5.046 · total_task_secs 19314.6 · critical path 3827.4 s
+    NOW   baseline-n3-r1     NEXT  baseline-n1-r0  <- the first matched pair
 
-    baseline    n=42  refused 23.8%  wrote-first 23.8%   5 of 9 cases refused
-    declared    n=39  refused 10.3%  wrote-first 33.3%   2 of 6 cases
-    nudge       n=12  refused  0.0%  wrote-first 66.7%   0 of 4 cases
-    toolchoice  n=18  refused  5.6%  wrote-first 33.3%   1 of 6 cases
-    forcewrite  n=27  ALL HTTP 400 — the named tool_choice form is rejected by the server
+**Two predictions are on record and they DISAGREE (F281). Do not widen either.**
+`F261` registered `n1_wall / n3_wall ∈ [1.6, 2.4]` from a partial read that F273 later proved biased;
+the finished-cell decomposition gives **1.51**. ≈1.5 ⇒ the band was wrong · 1.6-2.4 ⇒ the decomposition
+is missing something · outside 1.4-2.4 ⇒ both wrong.
 
-**Hard limit to remember: the 9 test-author cases are only 3 TASKS from ONE SPEC.** No claim about
-test-authors in general is available from this bench. Paired variant comparison is still valid.
-Widening requires runs of a **different spec** — reps cannot do it.
+## The findings a new reader most needs
 
-## Next after verification
+- **F273** — the partial read of a run is **biased, not just noisy**: unfinished said "no scheduling
+  slack", finished says **24.9% below the plan ceiling**. Tails and failures land at the END.
+- **F274** — the biggest task and the entire serial tail were the **same task, and it FAILED**
+  (24.6% of all node-busy, 3 dispatches, nothing produced).
+- **F276** — a repeat `over_reading` cannot escalate, but **the fix I proposed was banned by a comment
+  at the fix site**. The real gap: "did nothing" has a deterministic backstop, "acted a lot and
+  produced nothing" does not.
+- **F262** — the 1-node arm's `plan_confidence` is **`null`**, so it skips a quality gate it cannot
+  compute. An arm that cannot compute a check is not passing it.
+- **F272** — mini-goal 2 was **revoked by its own pre-registered rule** (10 attempted / 3 failed,
+  p = 1.000). **RESOLVED = ONE: F207, weights routing.**
 
-The interleaved node curve — `baseline-n3-r0, baseline-n1-r0, baseline-n3-r1, baseline-n1-r1, …` —
-is already at the front of `backlog()`. That is **goal one**, and it yields a matched pair after every
-two units instead of after six.
+## Instruments (never re-implement one — L2, violated this session in F266)
+
+`curve.py` verdict · `occupancy.py` occ-3 (concurrency histogram + prefix phases) · `dispatch_audit.py`
+da-3 · `reaudit.py` in-place row migration · `goalstate.py --tick` · `review.py` · `failures.py` ·
+`sweep.py` · `loop.sh {status,stop,start,boundary}` · `promptbench.py` (needs the fleet — **never run it
+during a measured cell**).
+
+⚠ `occupancy.py` / `dispatch_audit.py` / `curve.py` need an **ABSOLUTE** path; a relative one throws and
+`| head` swallows the exit code.
+
+## Fleet
+
+3 LM Studio nodes, `PARALLEL 2` ⇒ **6 slots**. **NEVER load, unload or re-alias anything in LM Studio.**
+If the engine cannot use three identical nodes, that is a `swarm.rs` bug, not a fleet question.
