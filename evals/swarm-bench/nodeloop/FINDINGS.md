@@ -12041,3 +12041,34 @@ claiming one.
 ⇒ **L156. READ WHAT THE TIMER ACTUALLY MEASURES BEFORE DESCRIBING WHAT TIMED OUT. "Ran 24 minutes
 then timed out" and "worked 17 minutes then went silent for 7" are different failures with different
 fixes, and only the second one is what happened.**
+
+## F295 — prediction CONFIRMED, and my own throwaway counter nearly inverted the report
+
+The engine's `run_finished.report` for `baseline-n3-r1`:
+
+    done   = 21   [api, cli, init-and-readme, meridian, store, test-api, test-cli,
+                   test-cli-error-handling, test-meridian, test-store, test-store-edgecases,
+                   verify-e2e::0/1/2, verify::api/cli/init-and-readme/meridian/store/web, web]
+    failed = 1    [integrate-verify]        attempts 3, final attempt 781 s, on local-mihai
+
+**F293's registered prediction — `integrate-verify` FAILS in this cell — is CONFIRMED.** Three
+dispatches, three stalls, exhausted. The falsifier (it completes ⇒ the stall is survivable) did not
+fire. Both n3 baseline cells now carry a failed capstone: r0 lost two tasks, r1 lost the sink.
+
+**But the finding that matters is how close I came to publishing the opposite.** My per-tick progress
+tally classified completions with `(done if e.get('ok', True) else fail)`. The engine's
+`task_completed` event has NO `ok` field — it has **`status`** — so `.get('ok', True)` returned the
+default `True` for every event and the counter read **22 done / 0 failed on a run with a failed
+capstone**. I had already typed "prediction refuted" before checking, and only caught it because the
+raw event carried `status: "failed"` in plain sight.
+
+Compounding it: the dict I printed to inspect the event was built with `{k: e.get(k) for k in ...}`,
+which renders a MISSING key as `null` — so the evidence I was reading made an absent field look like
+a present-and-null one, hiding the very bug that produced the wrong tally.
+
+⇒ **L157. AN AD-HOC COUNTER IS AN INSTRUMENT, AND IT GETS NO EXEMPTION FROM THE INSTRUMENT RULES.**
+A tally written inline for one tick still needs to be checked against a case whose answer is known
+(L96) — `.get(field, True)` on a field that does not exist is a green light wired to nothing, and it
+fails in the direction that flatters the run. The engine had already computed `report.failed`
+(L42: subtract what the engine already answered); reading it was one line and would have been right
+the first time.
