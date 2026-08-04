@@ -10380,3 +10380,31 @@ code cannot tell the two apart.
 ⚠ `error = None` on this failure, as expected: the running binary is `eb8027139`, built at the
 boundary, and F243/F244 came after. **The first failure that names its own reason will be on the next
 boundary's binary** — this one still had to be diagnosed from the outside.
+
+## F246 ⚡ — THE SINK-EXCLUSION CANDIDATE ALSO CLOSES ON A READ. TWO IN A ROW.
+
+I flagged `green_blocking_failed` filtering out `owns_nothing` as a false-green hole: the sink owns
+nothing, so its failure cannot block green. Read the call site before writing anything.
+
+**It is not a hole, for two independent reasons:**
+
+1. **`failed_tasks_block_green` DEFAULTS TRUE** (`swarm.rs:1081`), so a failed FILE-OWNING task does
+   drive the COMPLETE fix loop. My worry that the whole path was gated off is wrong.
+2. **The deterministic authority is the SMOKE GATE, not the task statuses.** The COMPLETE phase opens
+   each round with `run_smoke_gate`, which BUILDS AND RUNS the app. An app that does not work is
+   caught there regardless of what any task's status says — so excluding a model self-report from the
+   green veto removes an *opinion*, not evidence.
+
+**The exclusion is therefore correct as written**, and the comment at `swarm.rs:23918` already says
+exactly this: *"its failure is a MODEL self-report, not a deterministic engine event… only a
+FILE-OWNING task can block green — the exact engine-truth-not-model-claim doctrine."*
+
+**TWO CANDIDATES IN A ROW HAVE CLOSED ON A READ** — the `broken_code` hint (F245) and this. Both were
+things I was confident enough about to have shipped. The pattern is worth naming: after a long
+campaign the remaining "obvious defects" are increasingly things that were already fixed and
+documented, and the cheapest way to find that out is to read the call site instead of the plan file
+that flagged it months ago.
+
+**WHAT IS ACTUALLY STILL OPEN ON THE SINK:** it failed 3 attempts with a last judge verdict of `ok`,
+and on the running binary its `error` is `None`. **I cannot say why it failed, and that is exactly
+what F243/F244 fix — on the next boundary's binary.** Diagnosing it before then would be guessing.
