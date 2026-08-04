@@ -11472,3 +11472,38 @@ says nothing about whether the app works.**
 ⚠ **A SMALL EVENT GAP, NOTED NOT FIXED:** `complete_fix_dispatched` carries `model` but `device: null`.
 The model id is unambiguous here (`workhorse-…`), so the verification stands, but a future reader keying
 on `device` would see nothing. Queued with the other event-completeness work, not urgent.
+
+## F278 ⚙️⭐ — `curve.py`: GOAL ONE's VERDICT IS NOW MECHANICAL, AND IT WAS BUILT WHILE ZERO PAIRS EXISTED
+
+The node curve has one cell. When the second arm lands I would otherwise compute the sign test by hand
+— and a test authored after seeing the numbers is a test fitted to them. **This campaign has already
+had to withdraw a headline built exactly that way (F273).** So the verdict instrument exists first.
+
+    $ python3 curve.py
+    === GOAL ONE — the node curve  (curve-1)
+      matched pairs: 0
+      VERDICT: NOT YET — no matched pair
+
+`curve.py` reads the stored cells, pairs `baseline-n3-rK` with `baseline-n1-rK`, and **enforces all four
+`PREREGISTERED.md` falsifiers in code rather than in memory:**
+
+    1. a VOID / aborted / timed-out cell voids its PAIR — both halves dropped, with the reason printed
+    2. the two halves MUST share an `engine_build` (F253) — different engines are not a comparison
+    3. wall-clock without score is a FAIL: `both = p_wall < 0.05 AND p_score < 0.05`, never either
+    4. every drop is printed beside the p, because significance needing a drop is not significance
+
+It also prints **`min_attainable_p = 0.5**n`** next to the pair count, so the F260 trap — a design that
+cannot clear the bar even on a perfect result — is visible at a glance instead of being re-derived.
+
+**CONTROLS PASS IN BOTH DIRECTIONS**, which is what makes it a grader rather than a rubber stamp:
+
+    sign_test(5,5) == 0.03125   perfect 5-pair separation clears
+    sign_test(3,3) == 0.125     perfect 3-pair separation MISSES 0.05   (F260, encoded not remembered)
+    sign_test(4,5) == 6/32      ONE crossing at n=5 does NOT clear
+    sign_test(0,0) == 1.0       an empty curve scores NOTHING, never a pass (the vacuous-truth trap)
+
+⚠ **THIS INSTRUMENT CANNOT MAKE THE RESULT TRUE.** It can only stop me from deciding the rule after
+seeing the data. The five pairs still have to be run, and pair r0 needs `baseline-n1-r0`, which is two
+units away.
+
+**L151: BUILD THE VERDICT INSTRUMENT BEFORE THE DATA ARRIVES.**
