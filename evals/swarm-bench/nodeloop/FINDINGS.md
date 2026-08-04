@@ -11848,3 +11848,58 @@ land.** A node-count effect on quality must show up as *changing how often B lan
 near-binary outcome the sign test is the right instrument and 5 pairs is the right size. **The
 pre-registered protocol is, by luck rather than foresight, well matched to what the data turns out to
 be.**
+
+## F290 — the stall detector was reset by the laziest possible action: omitting a flag
+
+`goalstate.py --tick` with no `--mini`/`--resolved` wrote `mini_goal="(unstated)"`, `resolved=[]` —
+a DIFFERENT streak key from the previous tick's real values — so `streak()` restarted at 1.
+
+Measured on the 85 rows already on disk: thirteen consecutive ticks carried
+`GOAL ONE: node curve / ['F207'] / sig=False`, THREE TICKS PAST the forced shake-up at 10, and one
+bare `--tick` bought another ten ticks of silence. With state carried forward the true streak reads
+**TWENTY** — twice the threshold, 200 minutes with (2), (3) and the metric all unmoved.
+
+The loophole was inside the guardrail written to police exactly this failure, and the action that
+exploited it required the least effort of any available action (L90). Fixed: an absent flag now means
+UNCHANGED. `normalise()` fills state forward so all 85 stored rows read correctly for every consumer
+WITHOUT rewriting the log — deriving the true state from a record is not the same as editing it (L55).
+`--self-test` asserts both directions: 13 unchanged reads 13, a bare tick appended reads 14 (not 1),
+and a changed goal / a newly resolved item / a significant metric move each still reset to 1.
+
+⇒ **L153. A COUNTER THAT CAN ONLY READ LOW IS AS BROKEN AS ONE THAT CAN ONLY READ HIGH — and when the
+low reading is the convenient one, assume the bug is mine until the self-test says otherwise.**
+
+## F291 — the first read of what the swarm actually BUILT, and tier B is a contract-adherence coin flip
+
+Twenty ticks of scores, tiers, timings, occupancy and dispatch audits, and not one file the swarm
+produced had ever been opened (L85). Taken as the forced shake-up. Static read only — scoring boots
+the app and would have spiked CPU while `baseline-n3-r1`'s sink was in flight (L131).
+
+**Tier B is not 12 independent checks.** Eight of the twelve (`sync_completeness`, `resync_idempotent`,
+`local_pagination`, `payment_row_shape`, `total_field`, `chronological_order`, `summary_accuracy`,
+`summary_bounds_utc`) read the same three response objects — `c.sync1`, `c.payments`, `c.summary`.
+One broken sync path zeroes eight checks simultaneously. **A binary gate wearing a mean: that is the
+mechanism behind F289's bimodality.**
+
+**`think_off-n3-r2` (B=0.208) invented the vendor API.** `vendor_docs.md` documents `/v1/payments`,
+rows under `"data"`, timestamp `created_at`. Its `meridian.py` calls `/payments`, reads
+`data["payments"]`, sorts on `created_at_utc` — three inventions in the one file that must match an
+external contract. `vendor_service.py:188-198` serves ONLY `/v1/payments` and 404s everything else,
+so every request failed. It also falls off the end of `for attempt in range(5)` and returns `None`
+into `json.loads` on sustained 429.
+
+⚠ **BUT r2 does not explain the mid cells, and I nearly published that it did.** Its A is 0.333 and
+C is 0.286 — it is broken everywhere, not a structure-fine/behaviour-dead case. The genuinely matched
+contrast (L132) is `sink_review-n3-r0` (A=1.000, C=0.857, **B=0.361**) vs `think_off-n3-r0`
+(A=1.000, C=0.857, **B=1.000**): identical structure, identical vendor-contract score, 0.64 of B
+apart. Their `meridian.py` files agree on path, `"data"`, `next_cursor`, `limit=100` and UTC sorting;
+their `api.py` files agree on the 25/100/offset paging contract, `total`, and `total_minor`.
+
+⇒ **The mid-cell behaviour gap is NOT in the vendor client and NOT visible in the local API's
+structure.** It is a RUNTIME failure, and no static read can name it.
+
+📌 **REGISTERED, to run the moment the fleet is free:** `score_build.evaluate()` on both trees,
+printing per-check rows. **Prediction: in `sink_review-n3-r0` the eight response-gated checks fail
+TOGETHER (near-0), not as a spread of partial credits.** ⚠ **FALSIFIER: if those eight show scattered
+partial scores (e.g. completeness 0.6 with pagination 0.33), tier B is a continuum being averaged and
+the whole one-binary-gate story dies.**
