@@ -11078,3 +11078,34 @@ is not what this instant shows. ⚠ **One instant cannot refute a distribution**
 histogram is what would, and it is owed. ⚠ **`test-api-web` has been in flight 41 minutes** and
 occupancy names it the biggest task at 0.334 of node-busy; a single 41-minute task on a 3-node fleet
 is the tail risk worth watching.
+
+## F267 ⭐⭐⭐ — SLOT UTILISATION FALLS FROM 100% TO 74.8% WHEN YOU GO FROM 1 NODE TO 3
+
+`occupancy.py` occ-3 now computes the concurrent-task histogram in the **same exact interval sweep**
+that already produced solo time, off the **corrected** spans — the thing F266's hand-rolled version
+got catastrophically wrong. Max reading is now **6 on a 6-slot fleet**, never above.
+
+    1 NODE  (2 slots, 48 min dispatch window)      3 NODES (6 slots, 57 min dispatch window)
+       2 task(s): 100.0%  (47.6 min)                 1 task(s):   0.0%
+       ^ pinned full for the ENTIRE window           2 task(s):   1.3%  ( 0.8 min)
+                                                     3 task(s):   0.9%  ( 0.5 min)
+                                                     4 task(s):  65.8%  (37.4 min)   <- the median state
+                                                     5 task(s):  11.3%  ( 6.5 min)
+                                                     6 task(s):  20.6%  (11.7 min)
+
+**MEAN CONCURRENCY 2.00 → 4.49 tasks.** So tripling the slots bought **2.24x** the concurrent work,
+and **slot utilisation fell from 100.0% to 74.8%.**
+
+**This is the honest shape of goal one's speed half.** It is neither the "dead fleet" story (the swarm
+runs <3 tasks only **2.2%** of the window, and 1 task **0.0%**) nor free scaling. The 3-node fleet
+genuinely does more at once; it just cannot keep all six slots fed, because the DAG does not always
+have six ready tasks. That is a **plan-width** limit, not a scheduler defect — consistent with EXECUTE
+occupancy 0.9947 and `solo_node_secs` 0.0.
+
+⚠ **Both readings are from UNFINISHED runs on DIFFERENT engine builds** — provisional, and exactly what
+the matched pairs exist to replace. ⚠ **The 1-node 100% figure is not a virtue:** two slots are trivially
+easy to keep full, and that arm took **2853 s of execute wall against 899 s** (F261). **High utilisation
+of a small fleet is not the same as getting work done.**
+
+`self-test OK (occ-3)` — perfect/worst/1-node controls, vacuous-truth, real-zero, determinism and hog
+detection all still pass. Nothing keys on `occupancy_version`, so the bump re-ran no units.
