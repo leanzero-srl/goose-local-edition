@@ -17,6 +17,15 @@ actually keys on is the MEASURED metric read off the run archive by `failures.py
 so I cannot reset the counter by rewording the goal, and a genuine metric move resets it even if I
 describe the work identically. Declaring progress is not progress.
 
+⚠ OMITTING A FLAG MUST NOT RESET THE CLOCK (F290). It did, for 85 rows. A bare `--tick` recorded
+`mini_goal="(unstated)"`, `resolved=[]` — a DIFFERENT streak key than the previous tick's real values
+— so the counter went back to 1. Measured: thirteen consecutive rows carried
+`GOAL ONE: node curve / ['F207'] / sig=False`, THREE TICKS PAST the forced shake-up, and one bare
+`--tick` silenced the alarm for another ten. The loophole was in my own guardrail and the laziest
+possible action was the one that exploited it (L90). State now CARRIES FORWARD: absent flags mean
+"unchanged", which is what they have always meant in English, and the only way to reset the clock is
+to actually change the goal or move the metric. Passing the same value again is correctly a no-op.
+
 Usage:
     python3 goalstate.py --tick --mini "move the test-author failure row" --resolved "weights routing"
     python3 goalstate.py                 # report only, no record
@@ -156,14 +165,34 @@ def moved_significantly(m: dict) -> tuple[bool, float]:
     return False, 1.0
 
 
+def normalise(hist: list[dict]) -> list[dict]:
+    """Fill state forward across rows. Repairs the 85 rows already on disk WITHOUT rewriting them.
+
+    Editing the log to erase a bad row would be falsifying the record; deriving the true state from it
+    is not. A row whose `mini_goal` is "(unstated)" never meant the goal had been abandoned — it meant
+    the flag was not typed — so every reader must resolve it the same way (L55: a lesson learned by
+    one function is not learned by another).
+    """
+    out, mini, resolved = [], "(unstated)", []
+    for r in hist:
+        if r.get("mini_goal") and r["mini_goal"] != "(unstated)":
+            mini = r["mini_goal"]
+        if r.get("resolved"):
+            resolved = r["resolved"]
+        out.append({**r, "mini_goal": mini, "resolved": resolved})
+    return out
+
+
 def streak(hist: list[dict]) -> int:
     """Consecutive ticks with no change to the mini-goal, the resolved list, or a SIGNIFICANT metric.
 
     Deliberately NOT keyed on the raw metric — see `moved_significantly`. A metric that wobbles
-    inside its own noise is the same state, not a new one.
+    inside its own noise is the same state, not a new one. And keyed on the NORMALISED history, so a
+    tick that simply omitted a flag cannot masquerade as a change of state (F290).
     """
     if not hist:
         return 0
+    hist = normalise(hist)
 
     def key(r: dict) -> str:
         sig, _ = moved_significantly(r.get("metric") or {})
@@ -176,6 +205,28 @@ def streak(hist: list[dict]) -> int:
             break
         n += 1
     return n
+
+
+def self_test() -> int:
+    """Controls in BOTH directions. The bug being fixed was a counter that only ever read LOW."""
+    m_flat = {"test_author_completed": 10, "test_author_failed": 3}
+    rows = [{"mini_goal": "G", "resolved": ["F207"], "metric": m_flat} for _ in range(13)]
+    assert streak(rows) == 13, "a genuinely unchanged run of 13 must read 13"
+    # THE BUG: one bare tick used to reset this to 1.
+    assert streak(rows + [{"mini_goal": "(unstated)", "resolved": [], "metric": m_flat}]) == 14, \
+        "F290: omitting a flag must NOT reset the stall clock"
+    # ...and the counter must still be ABLE to reset, or the fix has merely broken it the other way.
+    assert streak(rows + [{"mini_goal": "DIFFERENT", "resolved": ["F207"], "metric": m_flat}]) == 1, \
+        "a real change of mini-goal MUST reset the clock"
+    assert streak(rows + [{"mini_goal": "G", "resolved": ["F207", "F999"], "metric": m_flat}]) == 1, \
+        "resolving something new MUST reset the clock"
+    m_moved = {"test_author_completed": 12, "test_author_failed": 0}
+    assert moved_significantly(m_moved)[0], "the control metric must actually be significant"
+    assert streak(rows + [{"mini_goal": "G", "resolved": ["F207"], "metric": m_moved}]) == 1, \
+        "a SIGNIFICANT metric move MUST reset the clock"
+    assert streak([]) == 0, "no history must score nothing, never a pass"
+    print("self-test OK — omitted flags carry forward; goal/resolved/metric changes still reset")
+    return 0
 
 
 # The escalation menu. NOT "try harder" — each entry is a concrete move that changes the SHAPE of the
@@ -197,14 +248,26 @@ SHAKES = [
 ]
 
 
+def carried(hist: list[dict]) -> tuple[str, list[str]]:
+    """The last state actually asserted. An unsupplied flag means UNCHANGED, never "wiped" (F290)."""
+    mini, resolved = "(unstated)", []
+    for r in hist:
+        if r.get("mini_goal") and r["mini_goal"] != "(unstated)":
+            mini = r["mini_goal"]
+        if r.get("resolved"):
+            resolved = r["resolved"]
+    return mini, resolved
+
+
 def report(mini: str | None, resolved: list[str] | None, record: bool) -> int:
     m = measured_metric()
     hist = history()
+    prev_mini, prev_resolved = carried(hist)
     if record:
         rec = {
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "mini_goal": mini or "(unstated)",
-            "resolved": resolved or [],
+            "mini_goal": mini or prev_mini,
+            "resolved": resolved if resolved is not None else prev_resolved,
             "metric": m,
         }
         with LOG.open("a") as fh:
@@ -214,8 +277,9 @@ def report(mini: str | None, resolved: list[str] | None, record: bool) -> int:
     s = streak(hist)
     print(f"(1) HIS GOAL — resolves the SESSION: {GOAL}")
     if hist:
-        print(f"(2) MINI-GOAL: {hist[-1]['mini_goal']}")
-        print(f"(3) RESOLVED : {hist[-1]['resolved'] or 'ZERO'}")
+        shown = normalise(hist)[-1]
+        print(f"(2) MINI-GOAL: {shown['mini_goal']}")
+        print(f"(3) RESOLVED : {shown['resolved'] or 'ZERO'}")
     # "0 completed / 0 failed" and "0 failures out of many" are NOT the same statement and must never
     # print the same way. An empty sample is the absence of evidence; printing it as 0% would read as
     # a perfect score and would be the vacuous-truth trap (`all([])` is True).
@@ -251,6 +315,8 @@ def report(mini: str | None, resolved: list[str] | None, record: bool) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if "--self-test" in argv:
+        return self_test()
     mini = None
     resolved = None
     if "--mini" in argv:
