@@ -10937,3 +10937,42 @@ of ~2 does not repay a full planning pass.** The engine's own `stall_stop` messa
 AFTER paying. A gap-gated redraft is the obvious change and **I am NOT shipping it on n=3.** The
 curve's five 3-node cells supply the observations. ⚠ **FALSIFIER: a run whose redraft starts from a
 gap ≤ 2 and still gains ≥ 10 points kills the hypothesis.**
+
+## F263 🔬 — THE FIRST SELF-DESCRIBING FAILURE, AND IT DESCRIBES ITSELF ONLY HALF WAY
+
+`baseline-n3-r0` produced its first failure at ~70 min, and thanks to `ca84de52d` + `d685eab15` the
+event carries a reason for the first time in this campaign:
+
+    task_completed {task_id: "test-core", status: "failed", attempts: 3,
+                    device: "mac-gabee-...", error: "no_first_write",
+                    elapsed_ms: 0, session_id: null, tool_calls: []}
+
+**`no_first_write` is a JUDGE VERDICT, not a dispatch error** (`goose-swarm/src/judge.rs:36,468`): the
+worker owned code, wrote none of it, and made **ZERO tool calls** past a ≥420 s deadline — *"stuck
+before its first byte, not over-reading"*. Its own comment records why the label exists: the verdict
+used to be stamped `OverReading` even when the tool-call count was zero, on **9 of 11 measured**
+workers, and that mislabel *"produced three false causal chains in this campaign"*. **So the WHY
+channel works, and it immediately paid for itself.**
+
+⚠ **AND IT IS A COUNTER-EXAMPLE TO MY OWN HEADLINE.** `test-core` is a **test-author** — the exact row
+F252 reported as 11 completed / 0 failed, p = 0.017. This cell now holds **5 completed / 1 failed** on
+the current binary. F252's confound (older-build baseline, five changes at once) already said the
+number attributes to the build, not a lever; this is the first contemporaneous failure of that kind
+and it must be counted, not explained away.
+
+🔴 **TWO FIELDS IN THE SAME EVENT ARE STILL LYING.**
+
+    elapsed_ms: 0      for a task that burned THREE attempts of >=420 s each — IMPOSSIBLE (L47).
+                       The same variable feeds `device_speed` (`e.0 += elapsed_ms`), so a failed
+                       task contributes ZERO to its device's measured speed.
+    session_id: null   `task_session` IS inserted on every completed run (scheduler.rs:876) from
+                       `TaskRunOutput`, so this null came from the WORKER, not the bookkeeping.
+
+Both point at the **judge-kill / abort path**: when the judge fires and the scheduler tears the worker
+down, the resulting `TaskRunOutput` appears to carry no session and no elapsed time. **I have NOT
+confirmed that and I am not asserting it** — the fix site must be read first (L130), and reading it is
+the next engine task. ⚠ **REGISTERED CHECK: any future `task_completed{status: "failed"}` whose
+`elapsed_ms` is 0 while `attempts >= 1` proves the abort path is the site; a non-zero one refutes it.**
+
+**The point of `d685eab15` was that a failure names WHERE to look. `session_id: null` means it still
+does not.** Half a channel is better than none and worse than it reads.
