@@ -11014,3 +11014,39 @@ existing ones.
 ⚠ **The two detail passes collapse into one `detail xN` span** — per-task `detail_completed` events
 would drown the list. The two-pass fact is carried by `draft_rounds` and `redraft_secs`, which is the
 number that matters; anyone needing per-task detail timing reads the log.
+
+## F265 🔴🔴 — MINI-GOAL 2 IS ABOUT TO BE REVOKED BY ITS OWN PRE-REGISTERED RULE, AND I MIS-STATED THE CELL
+
+**CORRECTION FIRST.** Last tick I wrote *"this cell reads 5 completed / 1 failed"*. **Wrong.**
+`goalstate` skips any run without `run_finished`, so `swarm-3node-r0` contributes **nothing** yet; the
+5/0 comes from OTHER finished runs on this binary. Measured with `failures.kind_of` on this cell's own
+dispatches:
+
+    implementer    done    5
+    test-author    done    1
+    test-author    failed  1        <- test-core
+    verify/sink    done    8
+
+**And `test-core` IS a test-author by the classifier, not by its name:** its `task_dispatched`
+`owned_files` are `['tests/test_meridian.py', 'tests/test_store.py']`. I asserted the kind from the id
+last tick and got lucky; the instrument was the thing that had to say it.
+
+🔴 **WHAT HAPPENS WHEN THIS CELL FINISHES.** `moved_significantly()` is unambiguous and was written
+before any of this: **`failed == 0` is required; any failure at all returns `(False, 1.0)`.** So the
+moment `run_finished` lands, the row becomes **7 attempted / 1 failed ⇒ p = 1.0, NOT SIGNIFICANT**, and
+**mini-goal 2 stops being resolved.** F252's confound already said the p=0.017 attributed to the build
+rather than to any lever; this is the same finding arriving as data. **I am not arguing with the rule
+I wrote — I am reporting that it is about to fire against my own headline.**
+
+### 🔬 AND THE FIRST FAILURE EXPOSED AN ARITHMETIC BUG IN THE SAME METRIC
+
+`by_kind` increments `slot[0]` for **every** `task_completed` and `slot[1]` only for the failures, so
+`slot[0]` is **ATTEMPTED** and the two overlap. The report then printed `n = completed + failed`,
+**counting every failure twice**. It never showed because every sample this campaign ever took had
+**zero** test-author failures, where the wrong formula happens to agree. The campaign's first failure
+is what made it visible. Fixed: `n = completed`.
+
+⚠ **The p-value itself was never affected** — that branch only runs when `failed == 0`, where the two
+formulas coincide. The lie was confined to the printed `n`, which is still a lie in a report that
+decides whether a goal is resolved. **L47 again: an impossible value indicts the instrument — and so
+does a value that is only correct in the case you have always been in.**
