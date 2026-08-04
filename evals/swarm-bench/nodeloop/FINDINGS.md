@@ -10439,3 +10439,40 @@ reasons instead of guesses.
 implementer cases whose baseline is n=27 / 29.6% refused — paired, one lever varied, each case its
 own control. That is the only design that can say whether the nudge itself does anything, as opposed
 to the five-change build it shipped inside.
+
+## F248 🔴 — THE NUDGE DOES NOT REDUCE REFUSALS. PAIRED, MATCHED, IDENTICAL: 3/12 vs 3/12.
+
+F241 registered the test and named the outcome that would kill the claim: *"if implementer refusals
+do not fall, the nudge's 0%-refused test-author number was the 4-case artifact it looks like, and I
+say so."* It did not fall.
+
+    MATCHED — the SAME 4 implementer cases, n=12 each, each case its own control
+    baseline   REFUSED 3 (25.0%)   wrote-first 1 ( 8.3%)
+    nudge      REFUSED 3 (25.0%)   wrote-first 3 (25.0%)
+
+**Identical refusal rate.** And the per-case breakdown shows it is not even a wash of equal parts:
+
+    case          msgs   baseline    nudge
+    8b74f0943289     2    0/3         0/3
+    496ab6194198     2    0/3         1/3   ← the nudge INTRODUCED a refusal
+    69a32909c3fc     2    0/3         1/3   ← and another
+    c98f45c7ee64    10    3/3         1/3   ← but rescued the one case that always refused
+
+**It moved refusals around rather than removing them.** The one genuinely stuck case improved 3/3 →
+1/3; two clean cases picked up a refusal each. Net zero on 12 samples.
+
+**⇒ THE `nudge` HEADLINE — 0% refused on test-authors, n=12, 4 cases — DOES NOT REPLICATE.** I shipped
+it default ON partly on that number. The number was thin and I said so at the time; the paired test
+now says the refusal claim is **unsupported**, and I am recording that against my own change.
+
+**WHAT SURVIVES, WEAKLY:** wrote-first goes 1 → 3 (8.3% → 25.0% matched; 2.6% → 25.0% unmatched).
+That IS the behaviour the nudge targets — write the owned file rather than shell around it — and
+**baseline implementers write-first on 1 of 39 samples, 2.6%**, which is a striking number on its own.
+But n=12 and a 2-of-12 difference is not a result either.
+
+**DECISION: the nudge STAYS ON**, and the reason is not the evidence — it is that it is TEXT with no
+API surface, one flag to revert, and the alternatives are worse (the prefill measured HARMFUL, the
+named `tool_choice` 400s, `"required"` is unenforced). **It is retained on cost, not on proof, and the
+FINDINGS must say that rather than let the earlier 0% stand as its justification.**
+**REGISTERED:** the arm continues to all 13 cases. **If matched refusal is still equal at n=39, the
+lever is inert on refusal and the only claim it may carry is wrote-first.**
