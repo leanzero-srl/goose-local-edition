@@ -31,9 +31,12 @@ import pathlib
 import sys
 from datetime import datetime
 
+# occ-3: adds the CONCURRENT-TASKS histogram, computed in the same exact interval sweep that
+# already produced solo time — off the CORRECTED spans, because a hand-rolled version read 9
+# concurrent tasks on a 6-slot fleet (F266). Above pool_size x 2 is impossible and is flagged.
 # occ-2: the prefix is no longer one lump — it reports its phases, draft rounds, plan_confidence
 # and the redraft cost, because that is where the arms differ in KIND and not merely in speed.
-OCCUPANCY_VERSION = "occ-2"
+OCCUPANCY_VERSION = "occ-3"
 
 # THE ENGINE'S OWN EVENT NAMES. Four of the eight keys here used to be names the engine has never
 # emitted — `prereview` for `pre_review`, `speculation`/`speculative_promoted` for `speculated`,
@@ -241,6 +244,16 @@ def analyse(path) -> dict:
     # rebuild the spans to get it.
     solo_secs = None
     solo_by_task: dict[str, float] = {}
+    # HOW MANY TASKS WERE RUNNING AT ONCE, in seconds at each level. The same exact interval sweep that
+    # already computes solo time answers it for free — and it must be computed HERE, off the corrected
+    # spans, because a hand-rolled version got it catastrophically wrong: pairing dispatch[i] with
+    # completion[i] and crediting unmatched retries to end-of-run reported NINE concurrent tasks on a
+    # SIX-SLOT fleet (F266). The retry/split/phantom-tail corrections above are the whole difference.
+    #
+    # The unit is CONCURRENT TASKS, not busy nodes: with PARALLEL 2 a 3-node fleet holds 6 tasks, so a
+    # reading of 4 is not "more nodes than exist". Anything above pool_size x 2 IS impossible and
+    # indicts this sweep.
+    concurrency: dict[int, float] = {}
     if spans and wall:
         marks = sorted({t for s in spans for t in s})
         solo = 0.0
@@ -248,6 +261,7 @@ def analyse(path) -> dict:
             mid = (a + b) / 2
             live = [tid for tid, ss in per_task_spans.items()
                     if any(s <= mid < e for s, e in ss)]
+            concurrency[len(live)] = concurrency.get(len(live), 0.0) + (b - a)
             if len(live) == 1:
                 solo += b - a
                 solo_by_task[live[0]] = solo_by_task.get(live[0], 0.0) + (b - a)
@@ -323,6 +337,9 @@ def analyse(path) -> dict:
         "device_share": {k: round(v / busy, 3) for k, v in sorted(per_device.items())} if busy else {},
         "biggest_task": biggest[0] if biggest else None,
         "biggest_task_share_of_busy": round(biggest[1] / busy, 3) if biggest and busy else None,
+        "concurrency_secs": {k: round(v, 1) for k, v in sorted(concurrency.items())},
+        "concurrency_share": ({k: round(v / sum(concurrency.values()), 3)
+                               for k, v in sorted(concurrency.items())} if concurrency else {}),
         "solo_node_secs": round(solo_secs, 1) if solo_secs is not None else None,
         "solo_by_task": {k: round(v, 1) for k, v in
                          sorted(solo_by_task.items(), key=lambda kv: -kv[1])},
@@ -445,6 +462,15 @@ def render(a: dict) -> str:
                f"EXECUTE OCCUPANCY {a['execute_occupancy']}   "
                f"— {a['pre_execute_secs']}s before the first dispatch is research/plan/contracts, "
                f"real node work that emits no task event")
+    if a.get("concurrency_secs"):
+        tot = sum(a["concurrency_secs"].values())
+        cap = (a["pool_size"] or 0) * 2      # PARALLEL 2 => slots; above this is IMPOSSIBLE
+        out.append(f"  CONCURRENT TASKS over {tot / 60:.0f} min of dispatch window "
+                   f"(fleet holds {cap} at PARALLEL 2)")
+        for k, v in a["concurrency_secs"].items():
+            flag = "   <-- IMPOSSIBLE, indicts this sweep" if cap and k > cap else ""
+            out.append(f"    {k:>2d} task(s): {a['concurrency_share'].get(k, 0):6.1%}  "
+                       f"({v / 60:6.1f} min){flag}")
     if a.get("prefix_phases"):
         out.append(f"  PREFIX breakdown  (draft rounds {a.get('prefix_draft_rounds')}, "
                    f"plan_confidence {a.get('prefix_plan_confidence')}, "
