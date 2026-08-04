@@ -233,3 +233,33 @@ UNVERIFIED rather than guessing a plausible-looking name
 # measured ~30% of the sink's turns going to exactly that, on the task holding 69% of all
 # low-concurrency time. The engine now stats the files itself and hands over the RESULT.
 FILE CHECK, ALREADY DONE FOR YOU
+
+# --- the seven changes shipped 2026-08-03, held for THIS boundary ---
+
+# The act-now nudge (default ON): one line appended as the LAST thing a worker reads, only when it
+# owns files and none exist on disk. Both the gate name and the delivered text are quoted literals;
+# the text fragment sits between {worker_user_text} and the {} interpolation, so it survives intact.
+GOOSE_SWARM_ACT_NOW
+Your next message must be a TOOL CALL, not prose.
+
+# force_write_tool: DEFAULT OFF and pinned OFF by test — the measurement rejected it. The marker is
+# here anyway, because "the lever is present and off" and "the lever silently vanished" must not look
+# the same, and this one has already shipped once in a form the server rejected 27 times out of 27.
+GOOSE_SWARM_FORCE_WRITE
+
+# The self-releasing tool_choice constraint lives in goose-provider-types, not swarm.rs — the binary
+# links every crate, which is the trap documented at the top of this file.
+__goose_force_tool_until_act
+
+# NO MARKER, deliberately, for four of the seven — the rule at the top of this file, applied rather
+# than relearned a fifth time:
+#   * kind_prompt / dep_signatures defaulting ON is a change to a Default impl. No literal exists.
+#     Verified by `the_two_verified_defect_fixes_default_on`, which pins BOTH the baked default and a
+#     parse of an empty swarm block (the serde-default trap), and pins force_write_tool as OFF.
+#   * the repair round targeting the fastest ENABLED node is `max_by_key` over a struct field.
+#     Verified by `the_repair_round_targets_the_fastest_enabled_node`, whose fixture includes a
+#     DISABLED high-weight device because filtering that out is half the rule.
+#   * the samplers are a config.yaml change, not a binary change at all — verified on the wire by an
+#     llm_request payload carrying top_k/top_p/min_p.
+#   * build_sha is verified by `strings` finding the actual commit sha, which is stronger than any
+#     marker: it proves WHICH build, not merely that a feature is present.
