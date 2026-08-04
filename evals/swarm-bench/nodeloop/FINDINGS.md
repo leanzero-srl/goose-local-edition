@@ -10476,3 +10476,43 @@ named `tool_choice` 400s, `"required"` is unenforced). **It is retained on cost,
 FINDINGS must say that rather than let the earlier 0% stand as its justification.**
 **REGISTERED:** the arm continues to all 13 cases. **If matched refusal is still equal at n=39, the
 lever is inert on refusal and the only claim it may carry is wrote-first.**
+
+## F249 🔬 — F248 WAS DRAWN AT n=12 AND IS SUPERSEDED. THE FULLER DATA IS STILL NULL, FOR A DIFFERENT REASON.
+
+The paired arm reached 8 shared cases and the sample-level numbers moved against my own F248:
+
+    MATCHED, 8 shared cases, n=24 each
+    baseline   REFUSED 8 (33.3%)   wrote-first 1 ( 4.2%)
+    nudge      REFUSED 4 (16.7%)   wrote-first 3 (12.5%)
+
+**Refusal halved — and it is STILL not a result, because the unit the experiment varies is the CASE,
+not the sample (Lesson 114):**
+
+    case          msgs | baseline | nudge | delta
+    496ab6194198     2 |   0/3    |  1/3  | WORSE
+    69a32909c3fc     2 |   0/3    |  1/3  | WORSE
+    8b74f0943289     2 |   0/3    |  0/3  | same
+    af1c626e0a58     4 |   3/3    |  1/3  | better
+    d4d23e5d410b     4 |   0/3    |  0/3  | same
+    ef7e70cae529     6 |   0/3    |  0/3  | same
+    b701d0c519e7     8 |   2/3    |  0/3  | better
+    c98f45c7ee64    10 |   3/3    |  1/3  | better
+    74aa66c14873    10 |   0/3    |  0/1  | same
+
+**nudge better on 3, worse on 2, same on 4. Sign test two-sided p = 1.0. NULL.**
+
+⚠ **F248's "identical, 3/12 vs 3/12" was drawn at FOUR cases and did not survive contact with eight.**
+I called a null too early, in the pessimistic direction, having earlier called a win too early in the
+optimistic one. Both errors have the same root — reading a number before the unit of analysis has
+enough draws — and recording it is the point.
+
+**⭐ THE POST-HOC PATTERN, REGISTERED AND NOT ACTED ON.** Every case the nudge IMPROVED had a baseline
+refusing **≥2 of 3** (3/3, 2/3, 3/3). Both cases it made WORSE had a baseline refusing **0 of 3**.
+Mechanistically plausible: an urgent directive helps a stuck worker and slightly destabilises one
+that was already working.
+**That is a POST-HOC SUBGROUP and shipping on it is exactly the trap this campaign keeps documenting.**
+The engine already carries the signal that would gate it — `req.prior_hint` is `Some` only on a
+RE-dispatch, i.e. only after the worker has already failed once.
+**REGISTERED BEFORE ANY CHANGE: if the nudge is worth conditioning, the test is a THIRD arm — nudge
+applied only when `prior_hint.is_some()` — compared on the same frozen cases. Until that arm runs, the
+nudge stays as it is and the honest summary is "case-level null, p=1.0".**
