@@ -10608,3 +10608,30 @@ two units instead of after six.
 **⇒ THE BOUNDARY IS NOW UNBLOCKED.** The order registered in F251 was metric-clears → boundary →
 diagnose. F243/F244 (a failed task's `error` and `session_id`) can deploy without spending a live
 measurement.
+
+## F253 🧊 — THE ENGINE IS FROZEN FOR THE DURATION OF THE NODE CURVE
+
+`complete()` gates on a matching `engine_build`. **Any boundary crossed mid-curve voids every cell
+already collected and makes the n3 and n1 arms incomparable** — which is the whole point of the
+comparison. So from `baseline-n3-r0` until the curve has its matched pairs: **no rebuild, no
+boundary.** Engine work is committed and deployed at the NEXT boundary, after the curve.
+
+That makes the standing "every tick must ship or measure an engine change" rule resolve to MEASURE
+for this stretch, and it is not idling — it is the same discipline as L131 (do not spend a live
+measurement to deploy a diagnostic), one level up: **do not spend a whole experiment to deploy a
+lever.**
+
+**MIHAI ASKED WHY THE RUN WAS USING ONLY 2 NODES. IT IS NOT.** Engine truth, from the run's own
+events rather than from `lms`:
+
+    run_started.pool          = 3 distinct devices (gabee | mihai | workhorse), weight 2 each
+    pool_resolved.worker_count = 3
+    lms ps                     = all three GENERATING
+
+Fleet sampler over 40 ticks: **3 busy 50%, 2 busy 7.5%, 1 busy 12.5%, 0 busy 30%** — and the 30% is
+the pre-dispatch startup window, not idleness under load. **This is a genuine 3-node cell, not the
+`actual_nodes=2` failure that voided three earlier baselines (F227).**
+
+⚠ **The 50% three-busy figure is not good, and it is precisely what goal one is measuring.** If three
+nodes turn out to barely beat one, low concurrency is the reason, and that will be a finding rather
+than a disappointment — but only the matched n1 cell can say so.
