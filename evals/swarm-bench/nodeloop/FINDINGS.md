@@ -11356,3 +11356,37 @@ contributes ZERO to its device's measured speed.** No longer a hypothesis; it ha
 ⚠ **CORRECTION TO MY OWN READING FIVE MINUTES AGO:** I called this task "the biggest consumer" and left
 it there. It is the biggest consumer **and a failure** — reporting the first without the second is the
 flattering half of the fact.
+
+## F275 🔴 — THE JUDGE IS MEMORYLESS: `JudgeInput` CARRIES NO PRIOR-VERDICT HISTORY, SO `over_reading` CAN NEVER ESCALATE
+
+F274 showed the run's most expensive task flagged `over_reading` **three times at 0.90 confidence** and
+still failing after three attempts, while the `Split` escalation fired once on a different task. **Read
+at the source, the reason is structural.** `JudgeInput` (`goose-swarm/src/judge.rs:75`) is:
+
+    task_id · description · owned_files · file_contents · compile_errors
+    elapsed_secs · any_owned_written · secs_since_last_write · worker_tool_calls · prev_observed_secs
+
+**Nothing tells the judge how many times it has already returned `over_reading` for this task.** A
+grep for `prev_verdict` / `verdict_history` / `consecutive` / `repeat` across `judge.rs` and
+`scheduler.rs` finds only prose in comments. **So each verdict is computed from scratch and the third
+identical flag is indistinguishable from the first.** The engine can say "you are exploring instead of
+producing" forever and never conclude "then this task is too big for one worker".
+
+**THE FIX AND WHY IT IS NOT WRITTEN YET.** The obvious shape — add `prior_over_reading: u32` to
+`JudgeInput` — is the shape that **already cost this campaign 45 dark lib tests (F230)**: a new field on
+a public struct breaks every test fixture that constructs it, and **I cannot compile under the freeze**,
+so I would not find out until the boundary.
+
+⇒ **The better design avoids the struct entirely: keep the counter in the SCHEDULER, which already owns
+`attempt_log` and sees every verdict.** On the Nth `over_reading` for one task, the scheduler forces the
+`Split` path (or fails fast) instead of dispatching a fourth identical hint. That is scheduler-local
+state — no public struct change, no fixture breakage — and it is what gets written next, **after reading
+the verdict-handling site (L130), not before.**
+
+📌 **REGISTERED: with the escalation in place, a task must not receive a 3rd `over_reading` without the
+run emitting either `task_split` for it or a fail-fast.** ⚠ **FALSIFIER: if a post-boundary run still
+shows 3+ `over_reading` on one task with no split and no early kill, the counter is in the wrong place.**
+⚠ **AND THE HONEST CAVEAT: n = 1 task, on one run.** `over_reading` totalled **6** across the whole run;
+this task owned **3** of them. Whether repeat-offender escalation pays is a hypothesis until a second
+run shows the same shape (L126) — but the STRUCTURAL fact, that no escalation is even possible, is not a
+hypothesis. It is read off the type.
