@@ -31,7 +31,9 @@ import pathlib
 import sys
 from datetime import datetime
 
-OCCUPANCY_VERSION = "occ-1"
+# occ-2: the prefix is no longer one lump — it reports its phases, draft rounds, plan_confidence
+# and the redraft cost, because that is where the arms differ in KIND and not merely in speed.
+OCCUPANCY_VERSION = "occ-2"
 
 # THE ENGINE'S OWN EVENT NAMES. Four of the eight keys here used to be names the engine has never
 # emitted — `prereview` for `pre_review`, `speculation`/`speculative_promoted` for `speculated`,
@@ -304,10 +306,15 @@ def analyse(path) -> dict:
         if (lambda last: last is not None and not any(
             c is not None and c >= last for c in done.get(t, [])))(
             max((s for s, _ in ds if s is not None), default=None)))
+    prefix = prefix_breakdown(events, t0)
     return {
         "occupancy_version": OCCUPANCY_VERSION,
         "path": str(path),
         "pool_size": n,
+        "prefix_phases": prefix["phases"],
+        "prefix_draft_rounds": prefix["draft_rounds"],
+        "prefix_redraft_secs": prefix["redraft_secs"],
+        "prefix_plan_confidence": prefix["plan_confidence"],
         "devices_that_worked": len(per_device),
         "wall_secs": round(wall, 1) if wall else None,
         "busy_node_secs": round(busy, 1),
@@ -354,6 +361,77 @@ def analyse(path) -> dict:
     }
 
 
+PREFIX_MILESTONES = (
+    "research_completed", "skeleton_drafts", "confidence_retarget", "retarget_discarded",
+    "low_confidence_ask", "low_confidence_ask_timeout", "contracts", "plan_loaded",
+)
+
+
+def prefix_breakdown(events: list[dict], t0: float | None) -> dict:
+    """Where the PRE-DISPATCH time actually goes, phase by phase.
+
+    The prefix is 71% of a 3-node run's wall (F261) and this file used to report it as one lump —
+    "2218.7s before the first dispatch" — so the phases had to be re-derived by hand every time, which
+    is how a fourth ad-hoc reader gets written (L2).
+
+    It is also where the arms differ in KIND, not just in speed (F262): plan confidence is agreement
+    across independent drafts, so a 1-node run computes `null`, cannot breach the ask floor, and never
+    redrafts — while a 3-node run resolves a real number, fails the floor, and pays for a second full
+    planning pass. `draft_rounds` and `redraft_secs` are what make that visible without reading a log.
+
+    `detail_completed` fires once per task and would drown the list, so it is collapsed into one
+    `detail x N` span. Everything is measured from `run_started`; a run with no first dispatch yet
+    reports what it has.
+    """
+    if t0 is None:
+        return {"phases": [], "draft_rounds": 0, "redraft_secs": None, "plan_confidence": None}
+    first_disp = None
+    marks: list[tuple[float, str]] = []
+    detail_at: list[float] = []
+    draft_rounds = 0
+    first_retarget = None
+    plan_conf = None
+    plan_loaded_at = None
+    for e in events:
+        ts = parse_ts(e.get("ts"))
+        ev = e.get("event")
+        if ts is None:
+            continue
+        if ev == "task_dispatched" and first_disp is None:
+            first_disp = ts
+        if first_disp is not None:
+            continue
+        if ev == "detail_completed":
+            detail_at.append(ts)
+            continue
+        if ev in PREFIX_MILESTONES:
+            if ev == "skeleton_drafts":
+                draft_rounds += 1
+            if ev == "confidence_retarget" and first_retarget is None:
+                first_retarget = ts
+            if ev == "plan_loaded":
+                plan_loaded_at = ts
+                plan_conf = e.get("plan_confidence")
+            marks.append((ts, ev))
+    if detail_at:
+        marks.append((max(detail_at), f"detail x{len(detail_at)}"))
+    marks.sort()
+
+    phases, prev = [], t0
+    for ts, label in marks:
+        phases.append({"phase": label, "at_secs": round(ts - t0, 1), "dur_secs": round(ts - prev, 1)})
+        prev = ts
+    if first_disp is not None:
+        phases.append({"phase": "first dispatch", "at_secs": round(first_disp - t0, 1),
+                       "dur_secs": round(first_disp - prev, 1)})
+    # The cost of NOT being confident: everything from the first retarget to a shipped plan. A 1-node
+    # run cannot enter this window at all, so `None` here is a structural fact, not a missing reading.
+    redraft = (round(plan_loaded_at - first_retarget, 1)
+               if (first_retarget is not None and plan_loaded_at is not None) else None)
+    return {"phases": phases, "draft_rounds": draft_rounds,
+            "redraft_secs": redraft, "plan_confidence": plan_conf}
+
+
 def render(a: dict) -> str:
     if a.get("occupancy") is None and a.get("pool_size") is None:
         return f"=== {a['path']}\n  {a.get('note', 'nothing measurable')}"
@@ -367,6 +445,16 @@ def render(a: dict) -> str:
                f"EXECUTE OCCUPANCY {a['execute_occupancy']}   "
                f"— {a['pre_execute_secs']}s before the first dispatch is research/plan/contracts, "
                f"real node work that emits no task event")
+    if a.get("prefix_phases"):
+        out.append(f"  PREFIX breakdown  (draft rounds {a.get('prefix_draft_rounds')}, "
+                   f"plan_confidence {a.get('prefix_plan_confidence')}, "
+                   # A 1-node run CANNOT enter the redraft window — its plan_confidence is null and the
+                   # floor is unbreachable — so "n/a (cannot redraft)" is the honest reading, not "0s".
+                   + (f"redraft cost {a['prefix_redraft_secs']}s)"
+                      if a.get("prefix_redraft_secs") is not None
+                      else "redraft cost n/a — this run never entered a redraft)"))
+        for p in a["prefix_phases"]:
+            out.append(f"    +{p['at_secs']:>7.0f}s  {p['dur_secs']:>6.0f}s  {p['phase']}")
     for d, s in a["per_device_secs"].items():
         out.append(f"    {d:<46} {s:>8.0f}s  {a['device_share'].get(d, 0):.1%}")
     out.append(f"  biggest task: {a['biggest_task']} = {a['biggest_task_share_of_busy']} of node-busy")

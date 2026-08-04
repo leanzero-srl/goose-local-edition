@@ -10976,3 +10976,41 @@ the next engine task. ⚠ **REGISTERED CHECK: any future `task_completed{status:
 
 **The point of `d685eab15` was that a failure names WHERE to look. `session_id: null` means it still
 does not.** Half a channel is better than none and worse than it reads.
+
+## F264 ⚙️ — THE PREFIX IS NO LONGER A LUMP: `occupancy.py` occ-2 REPORTS ITS PHASES
+
+F261/F262 were derived by hand from raw timestamps because `occupancy.py` printed the prefix as one
+number — *"2218.7s before the first dispatch"*. That is how a fourth ad-hoc reader gets written (L2),
+and the prefix is **71% of a 3-node run's wall**. It now reports itself, on every cell the curve
+produces:
+
+    3 nodes  PREFIX breakdown (draft rounds 2, plan_confidence 83, redraft cost 1036.6s)
+        +  297s   297s  research_completed
+        +  520s   222s  skeleton_drafts
+        + 1182s   662s  confidence_retarget
+        + 1182s     0s  retarget_discarded
+        + 1513s   331s  skeleton_drafts        <- second round
+        + 2095s   582s  detail x14
+        + 2162s    67s  low_confidence_ask
+        + 2167s     5s  low_confidence_ask_timeout
+        + 2219s    51s  contracts / plan_loaded / first dispatch
+
+    1 node   PREFIX breakdown (draft rounds 1, plan_confidence None,
+                               redraft cost n/a — this run never entered a redraft)
+        +  984s   984s  research_completed
+        + 1267s   283s  skeleton_drafts
+        + 1878s   611s  detail x8
+        + 2031s   153s  contracts / plan_loaded / first dispatch
+
+**F262's asymmetry is now a printed field rather than an argument: `draft rounds 2 vs 1`,
+`plan_confidence 83 vs None`, `redraft cost 1036.6s vs n/a`.** The 1-node line says **"n/a — this run
+never entered a redraft"**, deliberately NOT "0s": a run that cannot compute the check is not a run
+that passed it cheaply (L144), and a zero there would read as "the redraft is free at one node".
+
+`self-test OK (occ-2)` — the perfect/worst/1-node controls, the vacuous-truth guard, the real-zero
+case, determinism and hog detection all still pass, so the new field did not come at the cost of the
+existing ones.
+
+⚠ **The two detail passes collapse into one `detail xN` span** — per-task `detail_completed` events
+would drown the list. The two-pass fact is carried by `draft_rounds` and `redraft_secs`, which is the
+number that matters; anyone needing per-task detail timing reads the log.
