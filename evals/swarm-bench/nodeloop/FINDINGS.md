@@ -11654,3 +11654,36 @@ observation on *"redraft gain scales with the gap to the floor"* — that stays 
 83→83). **A run that skips the mechanism cannot measure it (L113).**
 ⚠ **The n1 arm cannot enter this branch at all** — `plan_confidence` is `null` at one draft (F262), so
 **this entire source of variance exists only in the 3-node arm.**
+
+## F284 ⭐⭐ — THE RESULT ROW ALREADY CARRIED EVERYTHING F283 NEEDED, AND IT SHARPENS THE REDRAFT PICTURE
+
+Before building anything to split n3 cells by redraft, I asked whether the engine had already answered
+it (L42). **It had.** `nodeloop-result.json` carries a whole `prefix` block:
+
+    prefix_secs 2218.7 · research_secs 297.4 · planning_secs 1921.3 · planning_share_of_prefix 0.866
+    redraft_rounds 1 · round_secs [884.6, 1036.6] · plan_task_count 16
+    reuse [{round 1, discarded 16, survived_by_id 16, survived_by_owned_files 7,
+            survivor_desc_chars 16877}]
+
+⇒ **No new instrument. `prefix.redraft_rounds` splits the cells; the F283 registered check is already
+mechanical.**
+
+**AND TWO NUMBERS IN THERE CHANGE THE PICTURE:**
+
+**1. PLANNING IS 86.6% OF THE PREFIX. RESEARCH IS 13.4%.** F262 measured research scaling beautifully
+(984 s → 297 s, **3.3x**) — but **that is only an eighth of the prefix.** The other seven eighths is
+planning, which is where the redraft lives and does **not** scale. Celebrating the research speed-up was
+celebrating the small half.
+
+**2. THE REDRAFT DID NOT CHANGE THE PLAN'S SHAPE — IT RESHUFFLED FILE OWNERSHIP.** On round 1 all
+**16 tasks were discarded, 16 survived by ID, and only 7 survived by `owned_files`.** So the second
+1036.6-second pass produced the same sixteen task ids with **nine different file assignments**, and
+`plan_confidence` went **83 → 83**. That is far sharper than "gained nothing": **it is a rewrite of who
+owns what, bought for 17 minutes, that the confidence signal could not tell apart from the original.**
+
+⚠ **THIS IS STILL n=1 FOR THE RESHUFFLE OBSERVATION** (L126). The archive's two *winning* redrafts
+(41→88, 79→100) have `reuse` blocks of their own that I have **not** read; whether a paying redraft
+changes the task SET while a wasted one only permutes ownership is a **hypothesis with an address**, and
+the address is `prefix.reuse` on those rows. 📌 **REGISTERED: a redraft that gains ≥10 confidence points
+should show a LOWER `survived_by_id` than one that gains nothing.** ⚠ **FALSIFIER: if the winning
+redrafts also show 16/16 survival by id, the reshuffle is not what distinguishes them.**
