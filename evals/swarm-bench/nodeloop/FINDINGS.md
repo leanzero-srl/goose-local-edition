@@ -10787,3 +10787,41 @@ mechanism that punishes fixing an instrument, at exactly the moment fixing it ma
 audit blob and version stamp only, never score / wall_secs / engine_build. **9 of 9 rows migrated
 `da-1 → da-2` with no run re-executed.** ⇒ **An instrument fix can now ship at ANY moment in a live
 campaign instead of waiting for a boundary**, which is what made F257 shippable under the F253 freeze.
+
+## F259 🔴🏆 — I RETRACT THE 42%. IT WAS AN ARTEFACT OF A ONE-BIT FLAG, NOT A PROPERTY OF THE ENGINE
+
+One tick after publishing **"kind_prompt ON leaves 40.9 / 42.3 / 41.7% of dispatches misinstructed"**
+I checked what the engine actually delivers, and the number does not survive.
+
+`tailored` is `kind_prompt_on && is_test_author` — **the test-author branch alone.** But the worker
+prompt is assembled from at least **three independently-branching sections**:
+
+    owned_part      read_only_shard && kind_prompt_on  |  owned_files.is_empty()  |  generic
+    reading_rules   test-author | kind-generic | off-generic
+    stopping_rules  test-author | kind-generic | off-generic
+
+And `swarm.rs:19518`'s own comment about the read-only-shard variant says: *"Subtracting the paragraph
+is the whole change: this kind sees FEWER rules, never more."* **`read-only-shard` receives a rule set
+written specifically for it, and my metric counted every one of those dispatches as misinstructed** —
+8, 8 and 8 of them across the three runs. The `owns-nothing` kind likewise gets the sink's own
+`owned_part` paragraph, which is **not gated on the lever at all**.
+
+⇒ **The lever-ON rate is WITHDRAWN and now reads UNMEASURED.** I am not replacing it with "≈0%"
+either: `reading_rules` and `stopping_rules` still branch only on test-author, so read-only-shard and
+owns-nothing genuinely do receive implementer-shaped text **in those two sections**. The truthful
+statement is that **the question is three-dimensional and the event exposed one bit of it.**
+
+**WHAT SURVIVES:** the lever-OFF figure, now labelled an **inferred UPPER BOUND** (75.0% on
+sink_review), because with the lever off reading/stopping rules are generic for every kind — while
+owns-nothing still gets its own sink paragraph, so the true figure is somewhat lower.
+
+**QUEUED ENGINE CHANGE:** `rules_delivered` now also emits **`rules_sections` {owned_part,
+reading_rules, stopping_rules}** naming the variant each section took, so a reader can say exactly
+which sections a kind got generic text for instead of inferring a rate from one bit. Audit bumped to
+**`da-3`**; `reaudit.py` migrated all 9 rows in place, **zero runs re-executed** — which is precisely
+the capability F258 bought, used the very next tick to withdraw a wrong number instead of leaving it
+in the table.
+
+**L141: AN EVENT FIELD IS A SUMMARY, AND A SUMMARY CAN BE NARROWER THAN THE BEHAVIOUR.** Diff the
+delivered TEXT before trusting a boolean. I built a headline on one bit of a three-bit question and
+published it; the only thing that caught it was going back to read the branch the flag does not cover.

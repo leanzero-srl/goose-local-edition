@@ -20039,6 +20039,46 @@ impl TaskDispatcher for GooseAgentDispatcher {
             // lever OFF these are identical by definition, which is exactly the baseline the arm
             // needs to beat.
             "tailored": kind_prompt_on && is_test_author,
+            // ONE BOOLEAN CANNOT SUMMARISE A PROMPT ASSEMBLED FROM THREE INDEPENDENT BRANCH POINTS.
+            //
+            // `tailored` above reports the test-author branch ONLY. The worker prompt is built from at
+            // least three separately-branching sections, and a reader that takes `tailored` as "did this
+            // dispatch get rules for its own job" gets the answer wrong in both directions:
+            //   owned_part     — branches on `read_only_shard && kind_prompt_on` (a SUBTRACTED rule set,
+            //                    this kind sees fewer rules) and again on `owned_files.is_empty()` (the
+            //                    sink's do-not-re-stat-the-tree paragraph, which is NOT gated on the lever)
+            //   reading_rules  — test-author / kind_prompt-generic / off-generic
+            //   stopping_rules — the same three
+            // MEASURED CONSEQUENCE: `dispatch_audit.py` read 40.9/42.3/41.7% "mismatched" off `tailored`
+            // for the three lever-ON runs, counting every `read-only-shard` and `owns-nothing` dispatch as
+            // misinstructed — when read-only-shard is in fact receiving a rule set written specifically
+            // for it. That number was an artefact of the flag's narrowness, not a property of the engine.
+            //
+            // So report WHICH VARIANT EACH SECTION TOOK. A reader can then say exactly which sections a
+            // kind received generic text for, instead of inferring a rate from one bit.
+            "rules_sections": {
+                "owned_part": if read_only_shard && kind_prompt_on {
+                    "read-only-shard"
+                } else if req.owned_files.is_empty() {
+                    "owns-nothing"
+                } else {
+                    "generic"
+                },
+                "reading_rules": if kind_prompt_on && is_test_author {
+                    "test-author"
+                } else if kind_prompt_on {
+                    "kind-generic"
+                } else {
+                    "off-generic"
+                },
+                "stopping_rules": if kind_prompt_on && is_test_author {
+                    "test-author"
+                } else if kind_prompt_on {
+                    "kind-generic"
+                } else {
+                    "off-generic"
+                },
+            },
         }));
         // "STOP WHEN GREEN" is meaningless to a task that authors tests rather than satisfying them.
         let stopping_rules = if kind_prompt_on && is_test_author {
