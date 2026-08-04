@@ -11625,3 +11625,32 @@ above the edit.**
 ⚠ **WHAT THIS REVIEW CANNOT DO:** it cannot catch a borrow-checker or lifetime objection, and it cannot
 prove the `rules_sections` block does not trip a clippy lint that the build treats as an error. **The
 honest status stays "NOT COMPILED", and the boundary is where that changes.**
+
+## F283 ⭐⭐ — TWO REPLICATES OF AN IDENTICAL CONFIG DIFFER BY **888 s OF PREFIX** BECAUSE A CONFIDENCE SAMPLE LANDED EITHER SIDE OF 85
+
+`baseline-n3-r1`, same engine, same spec, same 3-node pool as r0:
+
+    r0   PREFIX 2218.7 s   draft rounds 2   plan_confidence 83   redraft cost 1036.6 s
+    r1   PREFIX 1330.0 s   draft rounds 1   plan_confidence 88   redraft "n/a — never entered a redraft"
+
+**`ask_floor` is 85. r0 sampled 83 and paid for a second full planning pass; r1 sampled 88 and skipped
+it. That single crossing is a 888-second — 40% — difference in prefix between two replicates of a
+byte-identical configuration.**
+
+⇒ **A LARGE, BIMODAL COMPONENT OF THE 3-NODE WALL-CLOCK IS DECIDED BY WHICH SIDE OF 85 A MODEL-DERIVED
+CONFIDENCE SCORE FALLS ON.** This is not noise in the ordinary sense — it is a **discrete branch**, so
+n3 wall times should cluster in two groups roughly 900 s apart rather than scatter smoothly.
+
+**WHY THIS MATTERS FOR GOAL ONE, STATED BEFORE THE PAIRS LAND:** the sign test only asks which arm is
+faster per pair, so a bimodal n3 does not bias it — **but it widens the spread the effect has to clear,
+and it means a 3-node cell can lose a pair on wall-clock purely by having redrafted.** 📌 **REGISTERED:
+across the five n3 cells, wall-clock should separate by roughly the redraft cost (~900-1000 s) between
+those with `draft rounds 2` and those with `draft rounds 1`.** ⚠ **FALSIFIER: if redrafting and
+non-redrafting n3 cells show no wall-clock separation, the redraft is not the variance source and this
+is wrong.**
+
+⚠ **AND IT LEAVES THE F262 HYPOTHESIS EXACTLY WHERE IT WAS.** r1 never redrafted, so it contributes **no**
+observation on *"redraft gain scales with the gap to the floor"* — that stays at n=3 (41→88, 79→100,
+83→83). **A run that skips the mechanism cannot measure it (L113).**
+⚠ **The n1 arm cannot enter this branch at all** — `plan_confidence` is `null` at one draft (F262), so
+**this entire source of variance exists only in the 3-node arm.**
