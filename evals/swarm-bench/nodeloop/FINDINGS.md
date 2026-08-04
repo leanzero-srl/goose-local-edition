@@ -10516,3 +10516,36 @@ RE-dispatch, i.e. only after the worker has already failed once.
 **REGISTERED BEFORE ANY CHANGE: if the nudge is worth conditioning, the test is a THIRD arm — nudge
 applied only when `prior_hint.is_some()` — compared on the same frozen cases. Until that arm runs, the
 nudge stays as it is and the honest summary is "case-level null, p=1.0".**
+
+## F250 ✅ — THE REGISTERED ARM IS COMPLETE. 13/13 CASES. DIRECTION FAVOURABLE, p = 0.453, NOT SIGNIFICANT.
+
+The paired arm ran to every case it was registered for. This is the final readout and I am not
+revising it again as numbers wobble.
+
+    MATCHED, all 13 implementer cases, n=39 each, every case its own control
+    baseline   REFUSED 13 (33.3%)   wrote-first 1 (2.6%)
+    nudge      REFUSED  5 (12.8%)   wrote-first 3 (7.7%)
+
+    CASE LEVEL — the unit the experiment varies: better 5 · worse 2 · same 6
+    sign test, two-sided: p = 0.453   ⇒ NOT SIGNIFICANT
+
+**Sample-level refusal falls by 61% and the case-level test still cannot reject chance at 13 cases.**
+Both statements are true and only the second one decides. Five-better-two-worse is the direction you
+would want; it is also what a coin flip produces about a quarter of the time.
+
+**⭐ THE POST-HOC SPLIT, NOW WITH THE FULL SET — AND IT IS STRIKING:**
+
+    baseline-STUCK cases (>=50% refuse)   5 cases   86.7% -> 20.0%
+    baseline-CLEAN cases (0% refuse)      8 cases    0.0% ->  8.3%
+
+**The nudge is not neutral — it TRADES.** It rescues workers that were already failing (13 of 15
+refusals gone) and injects a small failure rate into workers that were fine (0 → 2 of 24). That is
+exactly the "urgent directive helps the stuck and destabilises the working" mechanism F249 guessed,
+now visible across the whole set.
+
+**⚠ IT REMAINS POST-HOC AND I AM NOT SHIPPING ON IT.** The subgroup was defined after seeing the
+data. What it justifies is a REGISTERED third arm, not a config change: **nudge only when
+`req.prior_hint.is_some()`** — the engine's own signal for "this worker already failed once" — run on
+the same frozen cases and judged at case level. **If that arm shows the stuck-case gain without the
+clean-case cost, the conditional nudge is earned. Until then the unconditional nudge stays ON for
+cost, not for proof, and the honest headline is p = 0.453.**
