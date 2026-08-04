@@ -12262,3 +12262,40 @@ branch resolves rather than fitted to it afterwards.
 
 **Also clean here:** `dead 0, straggler_aborted 0` on 3 of 3 drafts. F256's "6 of 6 runs lost exactly
 one scout lens" is about the SCOUT fanout, not skeleton drafting — the two must not be conflated.
+
+## F302 — I registered F301's band on a STALE five-cell subset; amending it BEFORE the outcome
+
+Pulled `redraft_rounds` and `prefix_secs` from every stored row rather than reusing F286's quoted
+lists (L17):
+
+    redraft_rounds = 0     1091.3 (sink_review-n3-r0)   1148.9 (think_off-n3-r2)   1330.0 (baseline-n3-r1)
+    redraft_rounds >= 1    1730.9 (think_off-n3-r0, 1)  2218.7 (baseline-n3-r0, 1) 2839.0 (think_off-n3-r1, 2)
+
+**F286's "not redrafted [1091.3, 1148.9]" was computed on FIVE cells, before `baseline-n3-r1`
+existed. r1 is a non-redraft cell at 1330.0 and it EXTENDS that band by 181 s.** I quoted r1's
+1330.0 myself in F283 and still wrote F301's prediction as "~[1050, 1200]" — a band that excludes a
+value I already held. That is fitting a prediction to a stale subset, and had cell 3 landed at 1300 s
+I would have recorded a falsification that was my arithmetic, not the engine's behaviour.
+
+**AMENDED, and the amendment is on record before cell 3 resolves:**
+
+    NO redraft  ⇒ prefix in [1091, 1330] s   (n=3, observed range, no extrapolation)
+    REDRAFT     ⇒ prefix in [1731, 2839] s   (n=3)
+    THE GAP     ⇒ (1330, 1731) — 400 s wide, and STILL EMPTY across all six cells
+
+⚠ **The falsifier is unchanged in kind, only in address: a prefix landing in (1330, 1731), or a
+redraft below it, or no redraft above it.** ⚠ **The zero-overlap claim SURVIVES the correction** —
+max non-redraft 1330.0 < min redraft 1730.9 — so the discrete-branch model itself is untouched; only
+my band was too narrow.
+
+**And my alarm one tick earlier was premature.** Cell 3 sat at ~1260 s with 0 dispatched and I read
+that as "already in the falsification gap". Against the corrected band, 1260 s is comfortably INSIDE
+the no-redraft range. **Nothing was falsified; I had mis-drawn the line.**
+
+📌 Note for whoever settles this: **`plan_confidence` is NOT in the stored `prefix` blob** (all six
+rows read `plan_conf=None`). F283's 83 and 88 came from the raw run log, so the confidence half of
+the prediction must be read from `run.jsonl`, not from the result row.
+
+⇒ **L162. A BAND BUILT FROM "THE CELLS I HAPPEN TO QUOTE" IS NOT A BAND. Re-derive the range from
+every stored row at the moment you register the prediction — a summary written three findings ago is
+already stale, and a too-narrow band manufactures falsifications out of your own arithmetic.**
