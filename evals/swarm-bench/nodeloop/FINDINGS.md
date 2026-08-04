@@ -11717,3 +11717,37 @@ costs nothing to compute — **`survived_by_id / discarded`**. A redraft round t
 set is one the engine could, in principle, detect and stop paying for. ⚠ **NOT a proposal yet:** with
 n=4 rounds this is a hypothesis, and the last time I turned a redraft observation into a design I had to
 withdraw it one tick later (F276).
+
+## F286 🔴🏆 — F283's WALL PREDICTION IS REFUTED. THE REDRAFT SEPARATES THE **PREFIX** PERFECTLY AND THE **WALL** NOT AT ALL.
+
+Split the five real 3-node cells by an INPUT (`prefix.redraft_rounds`, never by the outcome — L134):
+
+    PREFIX   redrafted [1730.9, 2218.7, 2839.0]   not [1091.3, 1148.9]   -> ZERO OVERLAP
+    WALL     redrafted [6376,   7237,   7729  ]   not [6524,   8729  ]   -> FULLY INTERLEAVED
+
+**F283 registered: *"n3 wall should separate by ~900-1000 s between redraft and non-redraft cells;
+FALSIFIER: no separation ⇒ the redraft is not the variance source."* The falsifier fired on WALL.**
+The longest run of all five (**8729 s**) never redrafted, and the shortest (**6376 s**) did.
+
+⇒ **The refined truth: the redraft IS the prefix variance source — the separation there is total — and it
+is NOT the wall variance source, because execute-phase variance swamps ~1000 s.** F283's mechanism was
+right and its consequence was wrong; I registered the consequence, so it is the consequence that dies.
+
+### THE SCORE QUESTION I ASKED CANNOT BE ANSWERED BY THIS DATA, AND I AM NOT ANSWERING IT
+
+I set out to ask whether the ~1000 s redraft buys any **score** — the quality half of goal one. The
+split reads:
+
+    3-node WITH redraft    n=3   [0.6595, 0.9143, 0.9057]   mean 0.827
+    3-node WITHOUT redraft n=2   [0.7326, 0.3273]           mean 0.530
+
+**I am not reporting that as a result, for two reasons, either of which is fatal:**
+1. **UNDERPOWERED BY CONSTRUCTION (L142, applied to my own analysis immediately):** 3 vs 2 cells gives a
+   smallest attainable one-sided exact p of **1/C(5,2) = 0.10**. **It could not reach 0.05 even on
+   perfect separation.**
+2. **CONFOUNDED WITH ARM (L132):** the two high scores are both `think_off` cells — a *treatment* arm,
+   not baseline. "With redraft" is 2/3 `think_off`; "without" is 1/2. **The comparison pools arms, so any
+   difference attributes to the arm as readily as to the redraft.**
+
+📌 **THE CURVE ANSWERS THIS PROPERLY FOR FREE.** Five `baseline` n3 cells on one frozen build will give a
+within-arm split on `redraft_rounds` with no arm confound. **Until then the honest answer is: unknown.**
