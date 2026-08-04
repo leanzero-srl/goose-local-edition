@@ -11507,3 +11507,36 @@ seeing the data. The five pairs still have to be run, and pair r0 needs `baselin
 units away.
 
 **L151: BUILD THE VERDICT INSTRUMENT BEFORE THE DATA ARRIVES.**
+
+## F279 ✅ — `curve.py` CONTROLLED IN BOTH DIRECTIONS ON A REAL CELL: THE ZERO IS EMPTY, NOT BLIND
+
+A brand-new instrument printing `0` is exactly the shape of a blind one (L4, L24). So before trusting
+`matched pairs: 0`, I ran it on the case whose answer I know (L96):
+
+    cells curve.py CAN SEE: [(3,0), (3,1), (3,2)]
+    n3-r0 visible: True  {'arm':'baseline','nodes':3,'rep':0,'score':0.6595,
+                          'wall_secs':7729.3,'engine_build':'1785868965-235742608'}
+
+    POSITIVE  inject a synthetic n1 partner -> pairs: 1, dropped: 0
+              {'rep':0,'wall_ratio':1.9,'faster_with_3':True,'better_with_3':True}
+    NEGATIVE  same partner, DIFFERENT engine_build -> pairs: 0, dropped: 1
+              reason: "the two halves ran on DIFFERENT engine builds (falsifier 2, F253)"
+
+⇒ **It reads the real stored row, forms a pair, scores the direction, and refuses a mixed-build pair
+with the right reason. The zero is an empty curve, not a blind reader.**
+
+**AND THE CONTROL FOUND SOMETHING I HAD NOT NOTICED:** `cells()` sees **(3,1) and (3,2)** as well —
+those are the OLD 60-second VOID refusals from the F254 era, still on disk under the same unit names.
+They are harmless because `is_real_unit` drops them and `baseline-n3-r1` is being overwritten by the
+unit running right now — **but I did not know they were there, and a pair built on one would have been
+silently wrong had the falsifier not caught it.**
+
+**FOUR FALSIFIERS, NOW EXERCISED RATHER THAN WRITTEN DOWN.** The self-test previously covered only the
+sign-test arithmetic; two of the four pairing rules had never been run. All four are now asserted:
+
+    clean pair FORMS (else every zero from this file is blind)  ·  mixed engine_build DROPS (falsifier 2)
+    a void cell voids its PAIR (falsifier 1)                    ·  five pairs faster but none better
+                                                                   is NOT support (falsifier 3)
+
+Falsifier 3 is asserted deliberately because it is the one most likely to be rationalised away when a
+tempting wall-clock win lands with no matching score.
