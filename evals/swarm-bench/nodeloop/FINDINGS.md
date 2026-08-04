@@ -10408,3 +10408,34 @@ that flagged it months ago.
 **WHAT IS ACTUALLY STILL OPEN ON THE SINK:** it failed 3 attempts with a last judge verdict of `ok`,
 and on the running binary its `error` is `None`. **I cannot say why it failed, and that is exactly
 what F243/F244 fix — on the next boundary's binary.** Diagnosing it before then would be guessing.
+
+## F247 ⚡ — THE HINT LAYER IS NOT THE PROBLEM. THREE CANDIDATES, THREE READS, THREE CLOSURES.
+
+`looping` is the TOP verdict before a test-author failure (11, against `broken_code` 5), so I went
+looking for a canned sentence. **`spin_hint` is fully composed** (`judge.rs:655-700`): it names the
+actual files and their byte sizes on disk, the minutes since the last write, the total elapsed
+minutes, and — when the engine knows one — quotes the compile error up to 400 chars.
+
+**That is three in a row:**
+
+| candidate | my prediction | reality |
+|---|---|---|
+| `broken_code` hint | generic "your file is broken" | quotes the real error's first 3 lines (F245) |
+| sink excluded from the green veto | false-green hole | smoke gate is the authority; `failed_tasks_block_green` defaults TRUE (F246) |
+| `looping` hint | one canned sentence | composed from files, sizes, idle time, compile error (F247) |
+
+**The conclusion is negative and it is worth stating plainly: the prompt/hint layer is in good shape,
+and my read-level list of "obvious defects" is exhausted.** Every remaining item I was confident
+enough to ship turned out to be already fixed and documented — which is what a campaign looks like
+after 240 findings, and it is a reason to stop generating candidates from memory.
+
+**WHAT ACTUALLY BLOCKS PROGRESS NOW IS DATA, NOT IDEAS.** I cannot say why the sink failed, because
+`error` is `None` on the running binary. F243/F244 fix that and are queued. **They must NOT be
+deployed yet** — a boundary resets the binary-scoped sample and the registered test is at **6 clean
+completions of the 9 it needs**. Order: let the metric clear, then boundary, then diagnose from real
+reasons instead of guesses.
+
+**MEANWHILE, THE ATTRIBUTION TEST F241 ASKED FOR IS NOW RUNNING.** `nudge` against the SAME 13
+implementer cases whose baseline is n=27 / 29.6% refused — paired, one lever varied, each case its
+own control. That is the only design that can say whether the nudge itself does anything, as opposed
+to the five-change build it shipped inside.
