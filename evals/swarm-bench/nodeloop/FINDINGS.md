@@ -11140,3 +11140,36 @@ unfinished, and the critical path only grows", so both ceilings are UPPER bounds
 runs finish. **The claim is registered now and gets re-read on the finished cells.**
 ⚠ **FALSIFIER:** if the finished 3-node cell shows mean concurrency materially BELOW its final plan
 ceiling, then scheduling slack does exist and this finding is wrong.
+
+## F269 🔴 — THE PLANNER IS TOLD "3 DEVICES" AND ASKED FOR 3 SUBTASKS, ON A FLEET THAT HOLDS 6
+
+F268 said the plan is the ceiling. This is why, and it has an address.
+
+    swarm.rs:13750  "There are {worker_count} worker devices that run in PARALLEL — decompose into MANY
+                     small INDEPENDENT subtasks ... and aim for AT LEAST {worker_count} independent
+                     subtasks (one or more per worker; more is better)"
+    swarm.rs:12566  "There are {worker_count} worker devices that run in PARALLEL. Decompose into a
+                     SMALL number of COHESIVE subtasks"
+    swarm.rs:21901  "worker_count": devices.len()          <- DEVICES, not slots
+    swarm.rs:136    pub weight: u32                        <- per-device concurrency, DEFAULT 2 (:992)
+
+**The fleet is 3 devices x weight 2 = 6 concurrent slots. The planner is anchored on 3.** The
+"more is better" clause is a soft hint; the hard number in the sentence is the device count, and
+`pool_resolved` confirms the engine's own value: `worker_count: 3` with `weight: 2` on every device.
+
+**MEASURED CONSEQUENCE (F268):** plan ceiling **4.45** on a **6-slot** fleet, and achieved concurrency
+**4.447** — the scheduler delivers essentially everything the plan allows, and the plan allows about
+4.5 because it was asked for 3. ⇒ **The width target should be SLOTS (Σ device weights), not devices.**
+Fleet-relative, never a fixed count — which is the standing doctrine, applied one level more precisely
+than it has been.
+
+⚠ **I AM NOT PATCHING THIS BLIND.** `worker_count` is threaded through several functions
+(`10441`, `12448`, `13743`) and I have located the EVENT's derivation (`devices.len()`) but **not the
+planner call site's source**. The engine is frozen so I cannot compile, and changing the meaning of a
+parameter that four call sites share, without a build, is exactly how a night gets burned (L130: read
+the fix site before writing the fix).
+📌 **REGISTERED, NEXT ENGINE TASK:** read the planner call site, confirm its `worker_count` is
+`devices.len()`, then pass `devices.iter().map(|d| d.weight).sum()` (floored at `devices.len()`) to the
+WIDTH sentences only — leaving the "one per worker" phrasing intact where it genuinely means devices.
+⚠ **FALSIFIER:** if the planner call site already receives a slot-derived count, this finding is wrong
+and the 4.45 ceiling has another cause.
