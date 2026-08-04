@@ -11050,3 +11050,31 @@ is what made it visible. Fixed: `n = completed`.
 formulas coincide. The lie was confined to the printed `n`, which is still a lie in a report that
 decides whether a goal is resolved. **L47 again: an impossible value indicts the instrument — and so
 does a value that is only correct in the case you have always been in.**
+
+## F266 🔴🏆 — I RE-IMPLEMENTED `occupancy.py` AND REPRODUCED THE EXACT BUG IT WAS WRITTEN TO FIX
+
+I wanted a concurrency histogram, so I wrote a throwaway span-builder instead of extending the
+instrument. It printed **"9 tasks running 55.3% of the time"** on a fleet with **6 slots** (3 nodes ×
+PARALLEL 2). **An impossible value indicts the instrument (L47) — and the instrument was mine.**
+
+The cause is documented, at length, inside `occupancy.py` itself: a retry re-dispatches before the
+first attempt completes, so pairing `dispatch[i]` with `completion[i]` leaves dispatches unmatched, and
+crediting an unmatched dispatch to the end of the run **invents time that was never spent**. That file
+also handles split parents (aborted, never completing under their own id) and the phantom-tail guard.
+My 30-line version had none of it. **L2 exists because of exactly this, and I did it anyway.**
+
+**THE NUMBERS ARE WITHDRAWN AND NOT REPORTED.** The correct move is a histogram built from
+`occupancy.py`'s already-corrected spans, and that is the next instrument task — not a second reader.
+
+**What IS measured, by the real instrument, and still stands:** `solo_node_secs` = **0.0 s** on this
+3-node cell — one node has never been the only one working. That is the run-wide form of the question
+I was trying to answer with a snapshot, and it was already available.
+
+**A live snapshot, which is a fact about one instant and nothing more (L10):** at 88 min the run had
+**5 tasks in flight across all three nodes** (gabee ×2, workhorse ×2, mihai ×1 — 5 of 6 slots) with
+`lms ps` showing all three GENERATING, and **`integrate-verify` running CONCURRENTLY with four other
+tasks**. F151 recorded the sink holding the fleet at ≤2 tasks for 69% of low-concurrency minutes; that
+is not what this instant shows. ⚠ **One instant cannot refute a distribution** — the corrected
+histogram is what would, and it is owed. ⚠ **`test-api-web` has been in flight 41 minutes** and
+occupancy names it the biggest task at 0.334 of node-busy; a single 41-minute task on a 3-node fleet
+is the tail risk worth watching.
