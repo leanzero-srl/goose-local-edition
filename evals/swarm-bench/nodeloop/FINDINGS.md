@@ -11204,3 +11204,41 @@ the hardware. On this fleet that is **3 → 6**, and it is fleet-relative, never
 📌 **REGISTERED: after the boundary, a 3-node `plan_loaded` must show MORE independent (zero-dep)
 subtasks than the 16-task / 4.45-ceiling plans this build produced. If the ceiling does not move, the
 binding constraint is the SCORER, not the prompt — and that is the next address.**
+
+## F271 ✅🔴 — CORRECTION: THE SCORER WAS NEVER "UNTOUCHED". IT INHERITS THE FIX — AND THE FIX IS NOT COSMETIC.
+
+**F270 said the draft scorer's anchor was left alone. That was wrong.** The function owning the
+`worker_count` parameter at `swarm.rs:12448` is **`parallel_plan`** — the live path, and the exact call
+site I patched at `22788`. So `worker_count` inside it is now the SLOT count, and it flows straight
+through `select_best_skeleton` (`12874`/`12975`/`13050`) into `score_skeleton`'s `wc`.
+
+**AND THE EFFECT IS A SIGN FLIP, NOT A NUDGE** (`swarm.rs:10657`):
+
+    let size_score = if n >= wc { 5 } else { -(wc - n) * 2 };
+
+    wc = 3 (before):  a 4-subtask plan scores  +5   <- the plans this build produced
+    wc = 6 (after):   a 4-subtask plan scores  -4
+                      a 6-subtask plan scores  +5
+
+So the narrow plans that gave the 4.45 ceiling were being **rewarded** by the scorer, and now they are
+**penalised**. That is the mechanism by which the prompt change can actually land: asking for six is
+useless if the selector still prefers the four-task draft.
+
+### ⚠ AND AN UNINTENDED SIDE EFFECT I AM FLAGGING AGAINST MY OWN CHANGE (L99)
+
+    let choke_pen = if max_fan_in > (wc / 2).max(1) { max_fan_in * 2 } else { 0 };
+
+    wc = 3 (before):  chokepoint penalty fires at fan-in > 1
+    wc = 6 (after):   chokepoint penalty fires at fan-in > 3
+
+**I loosened the chokepoint guard by a factor of three without meaning to.** The defensible reading is
+that a wider fleet genuinely can serve more dependents of one node, so tolerating a larger fan-in is
+correct — but that is a rationalisation after the fact, not the reason I made the change, and it must
+be said that way. ⚠ **REGISTERED FALSIFIER: if post-boundary 3-node plans show a HIGHER `max_fan_in`
+and the plan ceiling does NOT rise, the loosened choke penalty is doing harm and `choke_pen` must be
+re-anchored on `devices.len()` while `size_score` stays on slots.** The two uses of `wc` are asking
+different questions and may not deserve the same number.
+
+**L146: GREP FOR THE CONCEPT, NOT THE SPELLING.** `.plan(` missed `parallel_plan(` — the only call site
+that runs — and that one miss is what made me report both "two call sites" and "the scorer is
+untouched", each wrong for the same reason.
