@@ -40,10 +40,13 @@ import pathlib
 import re
 import sys
 
-# da-2: kind-mismatch is now MEASURED from the engine's `rules_delivered` event instead of
+# da-3: the lever-ON mismatch rate is RETRACTED — it was read off `tailored`, which reports the
+# test-author branch alone, so every read-only-shard counted as misinstructed while receiving
+# rules written for it. Lever-ON now reads UNMEASURED until a run carries `rules_sections`.
+# da-2: kind-mismatch is MEASURED from the engine's `rules_delivered` event instead of
 # reading UNMEASURED whenever kind_prompt is ON. A stale row does NOT need its unit re-run —
 # `reaudit.py` recomputes the audit from the stored run.jsonl and rewrites the row in place.
-AUDIT_VERSION = "da-2"
+AUDIT_VERSION = "da-3"
 
 # A dispatch's KIND is decided by the files it owns, because that is what the engine itself keys
 # its behaviour on (owns_nothing, test relaxation, entry wiring). Order matters: a task owning
@@ -223,13 +226,39 @@ def audit(path) -> dict:
     # ⚠ AND IT DOES NOT FALL TO ZERO WHEN THE LEVER IS ON. `tailored` is `kind_prompt_on &&
     # is_test_author`, so `read-only-shard` and `owns-nothing` still receive the implementer-shaped
     # generic rules. That is the number the campaign actually wants and could not see.
+    # 🔴 RETRACTED, ONE TICK AFTER I PUBLISHED IT. Reading mismatch off `tailored` gave 40.9 / 42.3 /
+    # 41.7% for the three lever-ON runs. **That number was wrong and it is withdrawn.** `tailored` is
+    # `kind_prompt_on && is_test_author` — the TEST-AUTHOR BRANCH ONLY — while the worker prompt is
+    # assembled from at least three independently-branching sections, and `owned_part` has a dedicated
+    # `read_only_shard && kind_prompt_on` variant whose own comment says "this kind sees FEWER rules,
+    # never more". So every read-only-shard dispatch was counted as misinstructed while it was in fact
+    # receiving a rule set written specifically for it. L141: a boolean summary can be narrower than
+    # the behaviour it summarises.
+    #
+    # The engine now emits `rules_sections` {owned_part, reading_rules, stopping_rules} naming the
+    # variant each section took. Until a run carries it the honest answer for a lever-ON run is
+    # UNMEASURED — never a rate derived from one bit of a three-bit question.
     rules_events = [e for e in events if e.get("event") == "rules_delivered"]
-    if rules_events:
-        mismatched = sum(1 for e in rules_events
-                         if e.get("kind") != "implementer" and not e.get("tailored"))
-        mismatch_n = len(rules_events)
-        basis = ("MEASURED from the engine's own rules_delivered events: a dispatch is mismatched "
-                 "when its kind is not implementer and its rules were not tailored to it")
+    sectioned = [e for e in rules_events if e.get("rules_sections")]
+    if sectioned:
+        GENERIC = {"generic", "kind-generic", "off-generic"}
+        mismatched = sum(
+            1 for e in sectioned
+            if e.get("kind") != "implementer"
+            and any(v in GENERIC for v in (e["rules_sections"] or {}).values()))
+        mismatch_n = len(sectioned)
+        basis = ("MEASURED from rules_sections: a dispatch is mismatched when its kind is not "
+                 "implementer and at least one prompt section took a generic variant")
+    elif rules_events and kind_prompt_on:
+        mismatched, mismatch_n = None, len(rules_events)
+        basis = ("UNMEASURED: rules_delivered carries only `tailored`, which reports the test-author "
+                 "branch alone; a rate off that bit counted every read-only-shard as misinstructed "
+                 "when it receives rules written for it. Needs rules_sections.")
+    elif rules_events:
+        mismatched, mismatch_n = sum(1 for e in rules_events if e.get("kind") != "implementer"), len(rules_events)
+        basis = ("inferred UPPER BOUND: kind_prompt OFF, so reading/stopping rules are the generic set "
+                 "for every kind. Called an upper bound because owns-nothing still receives the sink's "
+                 "own owned_part paragraph, which is not gated on the lever.")
     elif kind_prompt_on:
         mismatched, mismatch_n = None, n
         basis = ("UNMEASURED: kind_prompt is ON and this run predates the rules_delivered event, so "
