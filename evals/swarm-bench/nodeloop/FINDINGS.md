@@ -11390,3 +11390,53 @@ shows 3+ `over_reading` on one task with no split and no early kill, the counter
 this task owned **3** of them. Whether repeat-offender escalation pays is a hypothesis until a second
 run shows the same shape (L126) — but the STRUCTURAL fact, that no escalation is even possible, is not a
 hypothesis. It is read off the type.
+
+## F276 🔴🏆 — F275's PROPOSED FIX IS WRONG, AND READING THE SITE SHOWS WHY. THE REAL GAP IS A MISSING **DETERMINISTIC** BACKSTOP.
+
+I said "the scheduler has no counter, so add one". **Both halves are wrong.** `scheduler.rs:1526-1549`:
+
+    let actionable = outcome.verdict.is_problem() && verdict != Split
+                     && still_live && outcome.confidence >= cfg.intervene_confidence;
+    let terminal   = actionable && outcome.deterministic
+                     && cfg.max_interventions_per_task > 0
+                     && interv >= cfg.max_interventions_per_task && elapsed >= cfg.terminal_min_secs;
+    let redispatch = actionable && interv < cfg.max_interventions_per_task;
+
+**`interv` is a per-task intervention counter that already exists.** Repeat `over_reading` DOES escalate
+— to re-dispatch, up to the cap. What is missing is not counting.
+
+🔴 **AND MY PROPOSED ESCALATION VIOLATES A DOCUMENTED, EVIDENCE-BACKED RULE OF THIS ENGINE.** The comment
+at the same site: *"only a DETERMINISTIC engine event may create or kill a verdict… MEASURED:
+nf-ts-cadence's integrate-verify went over_reading -> re_dispatch, re_dispatch, FAILED at confidence
+0.90 from the LLM path… that single model opinion turned the whole run red."* **`over_reading` and
+`Split` are BOTH judge-model outputs.** Promoting three model opinions into a structural split is
+precisely the failure that rule was written after. **F275's fix is withdrawn.**
+
+### THE ACTUAL GAP, AND IT IS SHARPER
+
+Compare the run's two failures:
+
+    test-core              ZERO tool calls, no owned write  -> `no_first_write`, a DETERMINISTIC verdict -> killed
+    test-sync-idempotency  MANY actions, no owned write     -> `over_reading`, a MODEL verdict only
+                                                            -> 3 full attempts, 24.6% of all node-busy, failed
+
+**"Did nothing at all" has a deterministic backstop. "Acted a lot and produced nothing" does not.** The
+judge distinguishes them precisely — `NoFirstWrite` exists *because* labelling a zero-tool-call worker
+`over_reading` misdirected three earlier causal chains (F263) — but only one of the two branches can
+stop a task. A worker burning a quarter of the fleet while writing nothing is the more expensive case
+and the one with no deterministic answer.
+
+📌 **THE CORRECT CHANGE IS THEREFORE DETERMINISTIC, AND IT COSTS NO NEW STRUCT FIELD:** the same
+`owns_code && !any_owned_written && elapsed >= deadline` predicate that yields `NoFirstWrite` already
+has `worker_tool_calls` beside it — it branches on `worker_tool_calls == Some(0)` purely to pick the
+LABEL. **Both branches are deterministic facts about the worker.** Marking the non-zero branch
+`deterministic: true` as well would let the existing `terminal` path do its job at the cap, with no
+model opinion involved.
+⚠ **NOT WRITTEN THIS TICK — the site is `judge.rs:459-470` and I have read it, but the blast radius is
+`deterministic` semantics across every verdict consumer, and I cannot compile.** ⚠ **REGISTERED
+FALSIFIER: if a post-boundary run shows a task terminal-failed on a NON-deterministic verdict, the flag
+was set too broadly and this is wrong.**
+
+**L150: WHEN THE FIX YOU PLANNED CONTRADICTS A COMMENT AT THE FIX SITE, THE COMMENT USUALLY WON ITS
+ARGUMENT ALREADY.** I proposed exactly the behaviour a measured incident had banned. Reading the site
+cost one tick; shipping it would have cost a run.
