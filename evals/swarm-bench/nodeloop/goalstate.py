@@ -97,6 +97,11 @@ def measured_metric() -> dict:
             slot[0] += 1
             if e.get("status") != "done":
                 slot[1] += 1
+    # slot[0] is incremented for EVERY task_completed event and slot[1] only for the failures, so
+    # slot[0] is ATTEMPTED, not "completed", and the two overlap. Reporting `n = completed + failed`
+    # therefore counts every failure TWICE. It has never shown because every sample until now had
+    # ZERO failures, where the arithmetic happens to agree — the campaign's first test-author failure
+    # is what exposed it. Kept under the old key names so stored history stays readable.
     ta = by_kind.get("test-author", [0, 0])
     total_failed = sum(f for _, f in by_kind.values())
     return {
@@ -140,7 +145,7 @@ def moved_significantly(m: dict) -> tuple[bool, float]:
     """
     completed = m.get("test_author_completed", 0)
     failed = m.get("test_author_failed", 0)
-    n = completed + failed
+    n = completed          # ATTEMPTED — `completed` already includes the failures (see the note above)
     if n == 0:
         return False, 1.0
     if failed == 0:
@@ -219,7 +224,7 @@ def report(mini: str | None, resolved: list[str] | None, record: bool) -> int:
               "This is absence of evidence, not a zero failure rate.")
     else:
         sig, p = moved_significantly(m)
-        n = m["test_author_completed"] + m["test_author_failed"]
+        n = m["test_author_completed"]   # attempted; failures are already inside it
         print(f"\nMEASURED (CURRENT binary only): test-author {m['test_author_completed']} completed "
               f"/ {m['test_author_failed']} failed  (n={n})")
         print(f"   vs the old-build rate 13/42 = {BASELINE_RATE:.1%}: "
