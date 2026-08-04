@@ -12120,3 +12120,40 @@ supervisor was still RUNNING, and its post-processing is exactly what writes tha
 
 ⇒ **L158. A RESULTS ROW IS NOT READABLE WHILE ITS WRITER IS ALIVE.** Check the writer's liveness
 before quoting a row, the same way an archive read is scoped by binary mtime (L122).
+
+## F298 — the restart fired, and a stale AUDIT STAMP was about to cost 2h15m of fleet time
+
+**The obligation this session owed is discharged.** The detached watcher caught the supervisor's exit
+at **02:26:22**, parked the tree and started a new supervisor (ppid=1, EXIT=0), clearing `STOP` and
+loading **`MIN_REPS=5`**. n=5 is now reachable; F260's "n=3 can never clear 0.05" no longer binds.
+
+**But the new supervisor's first line read `NOW: baseline-n3-r1` — re-running a cell already on
+disk.** Cause: `audit_version` **`da-1`** on r1 vs **`da-3`** current, and `sweep.complete()` treats a
+stale stamp as INCOMPLETE. r0 read `da-3` only because I had reaudited it earlier, before r1 existed;
+the supervisor that produced r1 was started before the `da-3` edit and held `da-1` in memory (L23).
+
+`reaudit.py` exists for exactly this and I nearly let the re-run proceed instead of using it:
+
+    reaudited  baseline-n3-r1: da-1 -> da-3     1 of 9 rows rewritten
+    complete(baseline,3,1)  False -> True       complete(baseline,1,0) = False
+
+Zero re-runs, and the next unit is now the first n1 cell. **Cell 2 verified intact afterwards:
+score 0.478, wall 8488.0 s, `void=False`.**
+
+**TRAP 1 — killing the supervisor's process group does NOT kill its workers.** After
+`kill -KILL -74576`, `pgrep -f 'goose swarm run'` still returned **1**. The orphan (74579) had
+**pgid 74579, its own group**, because the sweep spawns children with `start_new_session=True` — the
+very practice that makes the sweep survivable makes it unkillable by group. An orphaned worker
+against a shared fleet is the failure that once ran 33 minutes unnoticed and skewed everything after
+it. Killed explicitly by pid; verified 0 before restarting.
+
+**TRAP 2 — `./loop.sh start | tail -6` returned exit 1 and looked like a failure.** It had actually
+started (pid 80288); the pipeline's exit code was not the command's. The second invocation said
+"already running" and parked the tree a second time — harmless only because `start` COPIES rather
+than moves (F287). Checking `status` rather than trusting the exit code is what caught it.
+
+⇒ **L159. A STALE VERSION STAMP IS A RE-RUN ORDER. Before letting a campaign recompute anything,
+check whether the value is a pure function of evidence already on disk — and reach for the migration
+tool built for it (L42, and `reaudit.py` was written for precisely this moment).**
+⇒ **L160. `start_new_session=True` CUTS BOTH WAYS: it makes children survive the launcher, which
+means a group kill cannot reach them. Kill by pid and VERIFY the count is zero before restarting.**
