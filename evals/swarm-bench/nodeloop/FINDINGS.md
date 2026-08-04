@@ -10210,3 +10210,34 @@ look the same in a log.
 **STILL OWED, and honestly owed rather than passed:** the nudge's literal text in a worker dispatch,
 and a repair dispatch naming the workhorse. Neither can be checked yet — this run has not dispatched
 a worker, let alone reached repair. Absence of a worker payload is a clock, not a defect.
+
+## F240 ✅ — SIX OF THE SEVEN ARE VERIFIED ON THE WIRE; ONLY THE REPAIR ROUTE IS OUTSTANDING
+
+First post-boundary run, 35 min, 6 dispatched / 1 done / 0 FAILED / 5 in flight.
+
+**THE ACT-NOW NUDGE IS LIVE, AND IT IS VERIFIED IN BOTH DIRECTIONS** — which is stronger than
+presence alone, because a check that only looks for the text would pass for a version that appends it
+to every dispatch indiscriminately:
+
+    worker dispatches on the new binary : 12
+    carrying "Your next message must be a TOOL CALL" : 10
+    NOT carrying it : 3, and EVERY ONE has owns_nothing = True
+
+That is exactly the gate (`!req.owned_files.is_empty()` and no owned file on disk). A read-only
+verify shard and the sink legitimately end in prose and must not be told to call a tool; they are not
+told to.
+
+**RUNNING TOTAL — verified, not assumed:**
+
+| # | change | status |
+|---|---|---|
+| 1 | `kind_prompt` default ON | ✅ `levers_resolved` |
+| 2 | `dep_signatures` default ON | ✅ `levers_resolved` |
+| 3 | samplers matched to the GGUF | ✅ 13/13 on the wire, exact values |
+| 4 | `force_write_tool` OFF | ✅ pinned OFF by test; measurement rejected it |
+| 5 | build stamps its own sha | ✅ `build_sha = eb8027139-dirty` on a run |
+| 6 | act-now nudge | ✅ 10/12, and the 3 exclusions are all `owns_nothing` |
+| 7 | repair → fastest enabled node | ⏳ needs the COMPLETE phase; **not yet checkable** |
+
+**#7 is OUTSTANDING, not passing.** The run has not reached repair. An unreached phase is a clock,
+not a verdict, and it stays in the owed column until a repair dispatch actually names the workhorse.
