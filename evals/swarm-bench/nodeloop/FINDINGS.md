@@ -11687,3 +11687,33 @@ changes the task SET while a wasted one only permutes ownership is a **hypothesi
 the address is `prefix.reuse` on those rows. 📌 **REGISTERED: a redraft that gains ≥10 confidence points
 should show a LOWER `survived_by_id` than one that gains nothing.** ⚠ **FALSIFIER: if the winning
 redrafts also show 16/16 survival by id, the reshuffle is not what distinguishes them.**
+
+## F285 ✅ — F284's PREDICTION DISCHARGED AND SUPPORTED: THE REDRAFT THAT GAINED NOTHING IS THE ONLY ONE THAT KEPT EVERY TASK ID
+
+Registered last tick, with the address: *"a redraft that gains ≥10 confidence points should show a
+LOWER `survived_by_id` than one that gains nothing."* The `prefix.reuse` blocks:
+
+    baseline-n3-r0    conf 83 -> 83   (gain  0)   discarded 16 · survived_by_id 16  = 100.0%
+    think_off-n3-r0   conf 79 -> 100  (gain 21)   discarded 17 · survived_by_id 12  =  70.6%
+    think_off-n3-r1   conf 41 -> 88   (gain 47)   r1: discarded 12 · survived 10    =  83.3%
+                                                  r2: discarded 18 · survived 15    =  83.3%
+
+⇒ **The prediction held. The only redraft that gained nothing is the only one that preserved EVERY task
+id; both runs whose confidence rose churned ids.** A redraft that merely permutes file ownership across
+an unchanged task set is the shape of a wasted 17 minutes.
+
+⚠ **HONEST LIMITS, STATED WITH THE RESULT.** n = 4 redraft rounds across 3 runs — **small**, and the
+separation is 100% vs 70.6/83.3%, which is a direction rather than a chasm. ⚠ **AND I CANNOT ATTRIBUTE
+`think_off-n3-r1`'s +47 TO A ROUND:** that run had TWO rounds and the per-round confidence is not in this
+block, so its two 83.3% figures are pooled evidence, not two independent observations (L114).
+
+**SECOND POPULATION CONFIRMS THE 87% PLANNING SHARE (L126).** F284 read `planning_share_of_prefix
+0.866` off one run; across three it is **0.866 · 0.866 · 0.907**. ⇒ **Planning is consistently ~87-91%
+of the prefix, and the prefix is where the 3-node arm loses its lead.** Research scaling 3.3x is real and
+is worth about an eighth of that phase.
+
+📌 **WHAT THIS BUYS THE QUEUED WORK:** it gives the gap-gated-redraft idea (F262) a *second* signal that
+costs nothing to compute — **`survived_by_id / discarded`**. A redraft round that returns the same task
+set is one the engine could, in principle, detect and stop paying for. ⚠ **NOT a proposal yet:** with
+n=4 rounds this is a hypothesis, and the last time I turned a redraft observation into a design I had to
+withdraw it one tick later (F276).
