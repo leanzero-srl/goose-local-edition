@@ -10574,3 +10574,37 @@ live runs — the offline bench is structurally blind to it, because its corpus 
 `llm_request` payloads that skew heavily toward re-dispatches. **That is a limit of the instrument, not
 a result about the lever**, and it belongs next to F237c's "3 tasks from one spec" as a known blind
 spot rather than being discovered again in a month.
+
+## F252 ⭐⭐⭐ — THE REGISTERED TEST CLEARED. TEST-AUTHOR FAILURES 13/42 → 0/11, p = 0.017.
+
+The instrument says it, not me:
+
+    MEASURED (CURRENT binary only): test-author 11 completed / 0 failed  (n=11)
+    vs the old-build rate 13/42 = 31.0%: P(this good by chance) = 0.017  ⇒ SIGNIFICANT
+
+**This is the threshold and the condition registered in F233 before any of it ran** — nine clean
+completions clears p<0.05, and the count reached eleven with zero failures. The bar was set in
+advance, the instrument enforced it, and it was never loosened: when `swarm-3node-r1` held five clean
+completions that would have cleared it early, `goalstate` refused them for want of a `run_finished`
+and I let the refusal stand rather than rescue my own result (F250 note, and the park in RESUME.md).
+
+**⚠ THE CONFOUND, STATED IN THE SAME BREATH AS REGISTERED, NOT BURIED:**
+The 31% baseline (13 of 42) comes from an **OLDER BUILD ERA**. This is a **before/after across
+builds, NOT a randomised A/B against a contemporaneous control.** Everything that changed between
+those eras changed at once — `kind_prompt`, `dep_signatures`, the GGUF samplers, the act-now nudge,
+the F231 judge fix — so **the result attributes to THE BUILD, not to any one lever**, and F250 already
+showed the nudge alone is null at case level (p=0.453). **The clean n=3 `baseline` cells that would
+make this a controlled comparison are still owed.**
+
+**WHAT IS AND IS NOT CLAIMED:** test-authors on the current engine failed 0 of 11 where the old engine
+failed 13 of 42, and the probability of that by chance under an unchanged rate is 1.7%. That is a
+real, pre-registered, instrument-verified movement of the mini-goal. It is **not** a claim that any
+specific change caused it, and it is **not** goal one.
+
+**⇒ MINI-GOAL (2) IS RESOLVED. THE MINI-GOAL IS NOW GOAL ONE: the node curve, 3 nodes vs 1 node on
+wall-clock AND shipped quality, with the gap clearing the replicate spread.** `backlog()` already
+interleaves `baseline-n3-r0, baseline-n1-r0, baseline-n3-r1, …` so a matched pair lands after every
+two units instead of after six.
+**⇒ THE BOUNDARY IS NOW UNBLOCKED.** The order registered in F251 was metric-clears → boundary →
+diagnose. F243/F244 (a failed task's `error` and `session_id`) can deploy without spending a live
+measurement.
