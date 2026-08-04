@@ -141,6 +141,27 @@ def self_test() -> int:
     # Vacuous truth: an empty curve must say "not yet", never "supported".
     v = {"n_pairs": 0, "p_wall": 1.0, "p_score": 1.0}
     assert not (v["p_wall"] < 0.05 and v["p_score"] < 0.05)
+
+    # THE PAIRING FALSIFIERS, EXERCISED — not merely written down. A zero from this file is only
+    # evidence once it has been shown to produce a NON-zero on a case whose answer is known (L4/L96).
+    ok3 = {"arm": "baseline", "nodes": 3, "rep": 0, "wall_secs": 100.0, "score": 0.7,
+           "engine_build": "b1"}
+    ok1 = {**ok3, "nodes": 1, "wall_secs": 190.0, "score": 0.65}
+    pairs, dropped = pair_up({(3, 0): ok3, (1, 0): ok1})
+    assert len(pairs) == 1 and not dropped, "a clean pair must FORM — else every zero here is blind"
+    assert pairs[0]["faster_with_3"] and pairs[0]["better_with_3"], "3-node win must read as a win"
+
+    _, d = pair_up({(3, 0): ok3, (1, 0): {**ok1, "engine_build": "b2"}})
+    assert len(d) == 1 and "engine build" in d[0]["reason"], "falsifier 2: mixed builds must DROP"
+
+    _, d = pair_up({(3, 0): ok3, (1, 0): {**ok1, "void": True}})
+    assert len(d) == 1 and "void" in d[0]["reason"], "falsifier 1: a void cell must void its PAIR"
+
+    # Falsifier 3 is the one most likely to be rationalised away later, so it is asserted, not trusted:
+    # five pairs all faster but NONE better must NOT be reported as support.
+    fast_only = {"n_pairs": 5, "p_wall": 0.03125, "p_score": 1.0}
+    assert not (fast_only["p_wall"] < 0.05 and fast_only["p_score"] < 0.05), \
+        "falsifier 3: wall-clock without score is a FAIL, not a partial win"
     print(f"self-test OK ({CURVE_VERSION}) — sign-test controls both directions, empty curve scores nothing")
     return 0
 
