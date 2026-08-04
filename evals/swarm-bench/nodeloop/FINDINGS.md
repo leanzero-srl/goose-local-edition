@@ -11779,3 +11779,38 @@ Ten arms checked against `strings` on the release binary — `converge_off`, `ki
 `baseline-n3-r0`'s completed cell out from under `curve.py` at the instant of restart.** `cp -R` leaves
 the originals in place, so the collected cell survives. **That was worth two minutes of reading; it is
 the kind of thing that only shows up as a mystery empty result an hour later.**
+
+## F288 ⭐⭐⭐ — THE QUALITY HALF OF GOAL ONE IS ONE TIER. **TIER B** CARRIES THE BIGGEST WEIGHT AND SCORES 0.32.
+
+I have been treating `score` as a black box while claiming goal one needs *"shipped quality"*. The row
+carries the decomposition, so there was never an excuse (L42):
+
+    tier  mean     checks  weight   contribution
+    A     0.8333   6       0.25     0.2083
+    B     0.3194   12      0.30     0.0958   <- LARGEST WEIGHT, WORST MEAN
+    C     0.8571   7       0.25     0.2143
+    D     0.7050   10      0.20     0.1410
+                                    ------
+                                    0.6594   (= the reported 0.6595)
+
+**TIER B ALONE IS THE DEFICIT.** Bring B to the level A and C already reach (~0.85) and the score goes
+**0.6595 → 0.819** — a **+16-point** move, larger than every other tier's shortfall combined. A, C and D
+are not the problem.
+
+**AND TIER B IS THE APPLICATION'S ACTUAL BEHAVIOUR** (`score_build.py:210-272`):
+
+    sync_completeness · resync_idempotent · local_pagination · payment_row_shape
+    total_field · chronological_order · summary_accuracy · (12 checks in tier B)
+
+⇒ **The swarm is good at structure and passable at hygiene, and it fails at DOING THE JOB THE SPEC
+DESCRIBES.** The names are the spec's own semantics — does a resync stay idempotent, is the row shape
+right, is the order chronological, is the summary accurate. That is not a prompt-formatting problem or
+a scheduling problem; it is the work itself.
+
+⚠ **THIS IS ONE CELL (L10/L126).** Whether tier B is systematically the floor, or was simply this run's
+bad luck, needs the other cells — and the archive has four more scored 3-node runs whose `tiers` blocks
+I have **not** read. 📌 **REGISTERED: across the five 3-node cells, tier B should have the lowest mean in
+the majority.** ⚠ **FALSIFIER: if B is not the worst tier in at least 3 of 5, the deficit is not
+structural and this is one run's noise.**
+📌 **AND IT SHARPENS GOAL ONE'S SECOND HALF:** *"shipped quality"* is, in practice, **mostly tier B**. Any
+node-count effect on quality will show up there or not at all.
