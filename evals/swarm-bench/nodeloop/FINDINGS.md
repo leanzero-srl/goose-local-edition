@@ -11242,3 +11242,36 @@ different questions and may not deserve the same number.
 **L146: GREP FOR THE CONCEPT, NOT THE SPELLING.** `.plan(` missed `parallel_plan(` — the only call site
 that runs — and that one miss is what made me report both "two call sites" and "the scorer is
 untouched", each wrong for the same reason.
+
+## F272 ⭐⭐⭐ — THE FIRST CURVE CELL IS IN, AND MINI-GOAL 2 IS FORMALLY REVOKED
+
+**`baseline-n3-r0` FINISHED CLEAN — the node curve has its first real cell:**
+
+    score 0.6595 · wall 7729.3 s · actual_nodes 3/3 · void False · aborted False · timed_out False
+
+Not void, not abandoned, pool matched the cell. `reaudit.py` migrated its row `da-1 → da-3` **in place,
+so a 2-hour unit was NOT re-run for an instrument bump** — exactly what F258 bought, collected the
+first time it could have cost something.
+
+🔴 **AND THE REGISTERED PREDICTION IS DISCHARGED — AGAINST ME.** F265 said that on `run_finished` the
+test-author row would go not-significant. `goalstate` now reads:
+
+    test-author 10 completed / 3 failed  (n=10)   p = 1.000  ⇒ NOT SIGNIFICANT
+
+**MINI-GOAL 2 IS REVOKED. RESOLVED = ONE (F207, weights routing).** ⚠ And it is WORSE than I projected:
+I said 7 attempted / 1 failed; it is **10 / 3**. My projection under-counted because I reasoned from
+the one failure I had seen instead of waiting for the run's own tally — the same error as calling
+`test-core` a test-author from its name. **The 31%-baseline confound (F252) said this number attributed
+to the build, not a lever; it has now attributed itself to nothing at all.**
+
+⚠ **THE SUPERVISOR RESTART IS DELIBERATELY NOT DONE, AND HERE IS THE REASONING.** A unit boundary just
+passed, but `baseline-n3-r1` started ~6 min ago, so the gap is already closed. Killing it costs 6
+minutes; the benefit — `MIN_REPS` 5 — **does not bind until backlog position 7**, hours away, because
+the first six positions are IDENTICAL under both targets. Verified against the live supervisor:
+
+    >>> 23:54:15  NOW: baseline-n3-r1   NEXT: baseline-n1-r0
+    current source backlog: baseline-n3-r1, baseline-n1-r0, baseline-n3-r2, baseline-n1-r1, ...
+
+**The interleave is intact — the first matched pair lands after this unit and the next.** Against that,
+restarting mid-unit risks an orphaned engine contending for the fleet, which this project has already
+paid for once (33 unnoticed minutes). ⇒ **Restart at a later gap; there is no cost to waiting.**

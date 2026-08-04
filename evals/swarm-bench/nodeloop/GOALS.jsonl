@@ -64,3 +64,4 @@
 {"ts": "2026-08-04T23:31:37", "mini_goal": "GOAL ONE: node curve", "resolved": ["F207 weights routing"], "metric": {"test_author_completed": 5, "test_author_failed": 0, "all_failed": 0, "test_author_share_of_failures": 0.0}}
 {"ts": "2026-08-04T23:37:32", "mini_goal": "GOAL ONE: node curve", "resolved": ["F207 weights routing"], "metric": {"test_author_completed": 5, "test_author_failed": 0, "all_failed": 0, "test_author_share_of_failures": 0.0}}
 {"ts": "2026-08-04T23:43:37", "mini_goal": "GOAL ONE: node curve", "resolved": ["F207"], "metric": {"test_author_completed": 5, "test_author_failed": 0, "all_failed": 0, "test_author_share_of_failures": 0.0}}
+{"ts": "2026-08-04T23:56:10", "mini_goal": "GOAL ONE: node curve", "resolved": ["F207"], "metric": {"test_author_completed": 10, "test_author_failed": 3, "all_failed": 3, "test_author_share_of_failures": 1.0}}
