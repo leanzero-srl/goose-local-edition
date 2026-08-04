@@ -10241,3 +10241,30 @@ told to.
 
 **#7 is OUTSTANDING, not passing.** The run has not reached repair. An unreached phase is a clock,
 not a verdict, and it stays in the owed column until a repair dispatch actually names the workhorse.
+
+## F241 🔬 — TIME-TO-FIRST-WRITE, THE NUDGE'S INTENDED EFFECT: DIRECTION FAVOURABLE, n=4, NOT A RESULT
+
+The nudge exists to make a worker act sooner. Presence on the wire (F240) is the first half; this is
+the counter it should move. Measured as the `elapsed_secs` of the first `judge_observed` carrying
+`any_owned_written=true`, restricted to file-OWNING workers:
+
+    POST-boundary (nudge ON)   n= 4   median 139s   p90 532s   max  532s
+    pre-boundary  (no nudge)   n=26   median 224s   p90 832s   max 1053s
+
+Median −38%, p90 −36%. **And it is NOT a result. Three reasons, all of which have to be said before
+the numbers are quoted anywhere:**
+
+1. **n=4.** Four workers on a single run. The pre-boundary column is 26 across many runs.
+2. **CONFOUNDED ACROSS FIVE SIMULTANEOUS CHANGES.** The post-boundary binary carries `kind_prompt`,
+   `dep_signatures`, the GGUF samplers, the nudge and the F231 judge fix. Nothing here attributes the
+   move to the nudge; it attributes it to *the build*.
+3. **CENSORED BY THE JUDGE'S OWN CADENCE.** First-write time is observed only when the judge runs,
+   and the judge runs only on an idle device (F228: 66 of 72 opportunities skipped at high
+   occupancy). Two runs at different occupancies are sampled at different resolutions, and the
+   direction of that bias is not obvious.
+
+**REGISTERED, so it cannot be quietly re-read as a win later:** as n on this binary passes ~20, the
+median must stay below the old 224s. **If it drifts back toward 224 the nudge did nothing measurable
+and I say so.** Attribution to the nudge specifically needs a paired arm with only that lever varied
+— the offline bench can do it (`nudge` vs `baseline` on identical frozen payloads) and the run-level
+comparison cannot.
