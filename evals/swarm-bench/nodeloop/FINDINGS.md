@@ -11540,3 +11540,30 @@ sign-test arithmetic; two of the four pairing rules had never been run. All four
 
 Falsifier 3 is asserted deliberately because it is the one most likely to be rationalised away when a
 tempting wall-clock win lands with no matching score.
+
+## F280 ⏰ — THE CURVE WAS ON TRACK TO BE INCONCLUSIVE BY CONSTRUCTION. `./loop.sh stop` ARMS THE CLEAN RESTART.
+
+**The live risk, named before it cost anything.** Supervisor pid 22764 holds **`MIN_REPS=3`** in memory
+(L23). Backlog positions **1-6 are identical** under target 3 or 5 — but **from position 7 a target-3
+supervisor walks off to other arms and the curve stops at r2, n=3.** F260 already proved **n=3 cannot
+clear 0.05 even on perfect separation (min p = 0.125)**. ⇒ **Left alone, this loop spends ~8 more hours
+producing a result that could never have been significant.**
+
+**WHY "CATCH A GAP ON A TICK" WAS NEVER A PLAN:** gaps between units are near-instantaneous, and killing
+mid-unit voids a cell and risks an orphan engine on the shared fleet — which has already cost this
+project 33 unnoticed minutes.
+
+**VERIFIED BEFORE ACTING (CHECK BEFORE ASSERTING), because the wrong verb kills the running cell:**
+
+    sweep.py:1421   the STOP check sits at the TOP of the unit loop -> exits BETWEEN units, never mid-unit
+    loop.sh:388     `stop)  touch STOP` — "the loop exits after the current unit (results are kept)"
+    loop.sh:233     `boundary)` ALSO touches STOP but then KILLS the in-flight unit — NOT this one
+
+⇒ **`./loop.sh stop` issued.** `baseline-n3-r1` runs to completion and is kept; the supervisor then
+exits cleanly; the next tick restarts it holding **`MIN_REPS=5`** and the F254 watchdog fix.
+⚠ **COST, STATED PLAINLY: the fleet idles from r1's finish until a tick notices — at most 5 minutes.**
+That buys the difference between a curve that can reach p = 0.031 and one that is capped at 0.125.
+⚠ **AND IT CREATES AN OBLIGATION: the next ticks MUST check for the clean exit and restart.** A STOP
+sentinel nobody clears is a stopped campaign, which is exactly the state this whole session was revived
+from. **`./loop.sh status` reports "STOP sentinel present — it will exit after the current unit", so the
+state is visible rather than silent.**
