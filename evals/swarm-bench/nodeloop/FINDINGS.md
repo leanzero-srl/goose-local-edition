@@ -11314,3 +11314,45 @@ failures, not work in progress"* (that is `test-core`, F263).
 all land at the end, so mid-run numbers systematically favour the optimistic story. When an instrument
 labels a figure provisional, the honest options are to WAIT or to publish it with the direction of the
 bias stated — never to headline it.
+
+## F274 🔴🔴🔴 — THE SERIAL TAIL AND THE BIGGEST TASK ARE THE SAME TASK, AND IT **FAILED**
+
+I asked the instrument where F273's 24.9% slack goes. It answers with one name:
+
+    solo_node_secs      465.1 s  (6.0% of wall)
+    solo_by_task        {'test-sync-idempotency': 465.1, 'api': 0.0}   <- ALL of it, one task
+    biggest_task        test-sync-idempotency = 0.246 of ALL node-busy (~4753 node-seconds)
+    phantom_tail_tasks  []                                             <- not an instrument artefact
+
+**One task is simultaneously the entire serial tail and a quarter of all fleet work.** And then:
+
+    task_dispatched  attempt 0 -> workhorse      owned ['/tests/test_sync_idempotency.py']
+    task_dispatched  attempt 1 -> local-mihai
+    task_dispatched  attempt 2 -> workhorse
+    task_completed   status FAILED, elapsed_ms 0
+    judge verdicts   over_reading x3 (confidence 0.90), ok x12
+
+⇒ **THE MOST EXPENSIVE TASK IN THE RUN PRODUCED NOTHING.** So F273's "the scheduler leaves a quarter
+of the parallelism on the floor" needs its cause named: **a large part of that quarter is not a
+scheduling loss at all — it is one task burning 24.6% of the fleet across three attempts and failing.**
+Adding nodes cannot help a run whose biggest consumer is a repeat failure.
+
+🔴 **AND THE JUDGE SAW IT — THREE TIMES.** `over_reading` at confidence **0.90**, hint: *"You have taken
+many actions but written no file yet — you are exploring/re-reading instead of producing."* The engine
+HAS an escalation for exactly this: the `Split` verdict, *"too big/slow for ONE worker"*. It fired
+**once in the whole run — on `test-api-web`, not on this task.** Run totals:
+`{ok 92, over_reading 6, accept 1, split 1, no_first_write 2, broken_code 1}`.
+**Three flags at 0.90 confidence, no escalation, three attempts, one failure.** That is the addressable
+defect: **a repeat `over_reading` offender is never promoted to `Split` or killed early.**
+
+### ✅ AND IT DISCHARGES F263's REGISTERED CHECK — CONFIRMING THE ABORT PATH
+
+F263 registered: *"a future failed task with `elapsed_ms == 0` and `attempts >= 1` proves the abort path
+is the site; a non-zero one refutes it."* **`test-sync-idempotency` is that second case: FAILED, three
+attempts, `elapsed_ms: 0`.** Two independent failures, both zero. ⇒ **The judge-kill/abort path does not
+record elapsed time, and it feeds `device_speed` (`e.0 += elapsed_ms`), so every failed task
+contributes ZERO to its device's measured speed.** No longer a hypothesis; it has two witnesses.
+
+⚠ **CORRECTION TO MY OWN READING FIVE MINUTES AGO:** I called this task "the biggest consumer" and left
+it there. It is the biggest consumer **and a failure** — reporting the first without the second is the
+flattering half of the fact.
