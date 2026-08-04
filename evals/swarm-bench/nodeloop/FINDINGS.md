@@ -11109,3 +11109,34 @@ of a small fleet is not the same as getting work done.**
 
 `self-test OK (occ-3)` — perfect/worst/1-node controls, vacuous-truth, real-zero, determinism and hog
 detection all still pass. Nothing keys on `occupancy_version`, so the bump re-ran no units.
+
+## F268 ⭐⭐⭐ — THE EXECUTE WINDOW *IS* THE CRITICAL PATH: THE SCHEDULER WASTES NOTHING, THE PLAN IS THE CEILING
+
+    3 nodes   mean concurrency 4.447 tasks     plan ceiling (max_useful_nodes) 4.45
+    1 node    mean concurrency 2.000 tasks     plan ceiling                    2.49
+
+**The 3-node arm's achieved concurrency and its plan ceiling agree to two decimals.**
+
+⚠ **AND THAT IS NOT A TAUTOLOGY, THOUGH IT LOOKS LIKE ONE — the check matters.** `max_useful_nodes` is
+`total_task_secs / critical_path_secs`; mean concurrency over the dispatch window is
+`total_task_secs / dispatch_window`. They coincide **exactly when the dispatch window equals the
+critical path**. So the measured agreement is the statement:
+
+> **The 3-node execute window is exactly as long as its longest dependency chain. There is no
+> scheduling slack left to recover.**
+
+That is consistent with everything else this cell has produced — EXECUTE occupancy **0.9947**,
+`solo_node_secs` **0.0**, devices within 0.3 points of an even split — and it converts them from
+"looks good" into a ceiling statement: **the only way a 3-node run gets faster is a WIDER or SHALLOWER
+PLAN. Nothing in the scheduler is available to win.** ⇒ Any future speed work belongs in the
+**planner** (fleet-relative width, shallower dependency depth), not in dispatch.
+
+**The 1-node arm is the control that proves the reading.** Its ceiling is **2.49** against 2 slots, so
+it is **slot-limited, not plan-limited** — it has more parallel work available than it can run. The two
+arms therefore fail for *opposite* reasons, which is exactly what the curve should show.
+
+⚠ **BOTH FIGURES ARE PROVISIONAL.** `occupancy.py` prints them as "NOT YET MEANINGFUL — the run is
+unfinished, and the critical path only grows", so both ceilings are UPPER bounds that will fall as the
+runs finish. **The claim is registered now and gets re-read on the finished cells.**
+⚠ **FALSIFIER:** if the finished 3-node cell shows mean concurrency materially BELOW its final plan
+ceiling, then scheduling slack does exist and this finding is wrong.
