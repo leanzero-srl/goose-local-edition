@@ -1304,10 +1304,21 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
         paired = [u for pair in itertools.zip_longest(n3, n1) for u in pair if u is not None]
         units = paired + [u for u in units if id(u) not in picked]
 
-    for name in ("kind_prompt", "think_off"):
-        arm = next((u for u in units if u[0]["name"] == name and u[1] == full), None)
-        if arm is not None:
-            units = [arm] + [u for u in units if u is not arm]
+    # GOAL ONE GOES FIRST, NOW THAT THE MINI-GOAL IT WAS QUEUED BEHIND HAS RESOLVED.
+    #
+    # `kind_prompt` and `think_off` were hoisted here because they were the only arms pointed at the
+    # test-author failure row. That row is CLOSED — F252: 11 completions, 0 failures, p = 0.017 — and
+    # both levers are now DEFAULT ON and verified on the wire, so those arms would re-measure a
+    # question already answered while the session-resolving one waited four more hours behind them.
+    #
+    # The node curve is Mihai's actual goal: does a 3-node run beat a 1-node run on wall-clock AND on
+    # shipped quality. It is also the only thing that supplies the contemporaneous control F252 is
+    # missing — that result is a before/after across builds, and the n=3 baseline cells are what turn
+    # it into a comparison rather than a coincidence.
+    curve = [u for u in units if u[0]["name"] == "baseline" and u[1] in (full, 1)]
+    if curve:
+        picked = {id(u) for u in curve}
+        units = curve + [u for u in units if id(u) not in picked]
     return units
 
 
