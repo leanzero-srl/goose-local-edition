@@ -58,7 +58,25 @@ STOP = HERE / "STOP"
 QUEUE = HERE / "QUEUE"
 PORT_BASE = 8930
 TIMEOUT = 16200          # 4.5h. A cap that truncates the work measures the cap, not the entrant.
-MIN_REPS = 3             # n=1 is uninterpretable against a measured 46-point spread.
+# n=1 is uninterpretable against a measured 46-point spread — and n=3 turns out to be barely better.
+#
+# COMPUTED BEFORE THE FIRST PAIR EXISTS, so this is not a threshold moved to fit a result. The node
+# curve is a MATCHED-PAIR design (same spec, alternating n3/n1), so its natural test is the one-sided
+# sign test, whose smallest attainable p is 0.5**n:
+#
+#     n=3  perfect separation -> p = 0.125   <- CANNOT REACH 0.05 EVEN IF FLAWLESS
+#     n=4  perfect separation -> p = 0.0625  <- still misses
+#     n=5  perfect separation -> p = 0.031   <- clears, AND tolerates nothing less
+#
+# Read unpaired instead (exact permutation) and n=3 reaches exactly 0.05 on perfect separation and
+# 0.20 the moment ONE replicate crosses. On a fleet whose identical-config replicates have scored
+# 44.2 / 86.7 / 90.0 and whose real unit walls run 6376-8729 s, **one crossing is the expected case,
+# not the exception.** So n=3 spends ~12 hours of fleet time to reach a number that was never able to
+# clear the bar. n=5 costs ~20 hours and can.
+#
+# BLAST RADIUS: this raises every SCORE cell, not just the curve. Mechanism cells (`reps == 1`) are
+# capped at 1 in `backlog()` and are untouched.
+MIN_REPS = 5
 TRANSIENT = ("500", "502", "503", "529", "overloaded", "rate limit", "throttl",
              "connection reset", "stream decode", "temporarily", "unreachable")
 MAX_ATTEMPTS = 3

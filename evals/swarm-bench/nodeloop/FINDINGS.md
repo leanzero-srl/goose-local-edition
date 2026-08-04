@@ -10825,3 +10825,29 @@ in the table.
 **L141: AN EVENT FIELD IS A SUMMARY, AND A SUMMARY CAN BE NARROWER THAN THE BEHAVIOUR.** Diff the
 delivered TEXT before trusting a boolean. I built a headline on one bit of a three-bit question and
 published it; the only thing that caught it was going back to read the branch the flag does not cover.
+
+## F260 ⭐⭐ — THE CURVE AS SCOPED COULD NEVER HAVE REACHED SIGNIFICANCE. n=3 → n=5, DECIDED BEFORE THE FIRST PAIR.
+
+The node curve is a **matched-pair** design, so its natural test is the one-sided **sign test**, whose
+smallest attainable p is `0.5**n`:
+
+    n=3  perfect separation -> p = 0.125   ← CANNOT REACH 0.05 EVEN IF FLAWLESS
+    n=4  perfect separation -> p = 0.0625  ← still misses
+    n=5  perfect separation -> p = 0.031   ← clears
+
+Read **unpaired** instead (exact permutation) and n=3 reaches exactly **0.0500** on perfect separation
+and **0.2000 the moment ONE replicate crosses**. On a fleet whose identical-config replicates scored
+**44.2 / 86.7 / 90.0** and whose real unit walls run **6376-8729 s**, **one crossing is the expected
+case, not the exception.**
+
+⇒ **`MIN_REPS` 3 → 5.** n=3 would have spent **~12 hours of fleet time to produce a number that was
+never able to clear the bar**; n=5 costs ~20 h and can. **Computed and committed while
+`baseline-n3-r0` was still in EXECUTE, with no matched pair in existence** — this is a threshold set
+before the data, not moved to fit it.
+
+**BLAST RADIUS, stated honestly:** this raises every SCORE cell, not only the curve. Mechanism cells
+(`reps == 1`) are capped at 1 in `backlog()` and are untouched.
+
+**`PREREGISTERED.md` now holds the whole protocol** — claim, test, the four falsifiers (a VOID cell
+voids its pair; a mid-curve boundary voids everything collected; wall-clock without score is a FAIL;
+significance that needs a pair removed is not significance), and what is explicitly not claimed.
