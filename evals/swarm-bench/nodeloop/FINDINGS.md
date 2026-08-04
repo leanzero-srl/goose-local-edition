@@ -10300,3 +10300,33 @@ have been chasing, and the numbers say so plainly.
 ⚠ Both figures are still one spec and few tasks. Neither licenses a general claim; what they license
 is dropping the depth framing and stopping the search for a test-author-specific refusal mechanism
 that the data does not show.
+
+## F243 🔴🏆 — A FAILED TASK RECORDED NO REASON. THE ENGINE HAD IT AND THREW IT AWAY.
+
+All **14** failed test-author tasks in the entire archive carry an empty error. Not because the
+failures were unexplained — because **`SwarmEvent::TaskCompleted` had no `error` field at all**
+(`event.rs:20-29`). `TaskRetry` has carried one all along, so an intermediate retry recorded a reason
+while the TERMINAL outcome recorded nothing.
+
+**The string was in scope and discarded.** `scheduler.rs` builds
+`AttemptRecord { outcome: "terminal", error: Some(msg), .. }` immediately before the emit, then emits
+a `TaskCompleted` that does not mention it. Every later reader — including days of this campaign —
+had to INFER the cause from judge verdicts.
+
+**FIXED:** `error: Option<String>` on the event, populated at all **six** emit sites from one helper
+(`last_attempt_error`). One helper rather than six inline expressions, because six copies of a rule
+is exactly how the dispatch paths drifted apart before — `pick_device` learned speed-weight routing
+and the repair path never did. A successful task reports `None` naturally, since the winning attempt
+carries no error. Build clean, clippy 0, 86 tests green.
+
+**AND THE VERDICT DATA ALREADY REDIRECTS THE CAMPAIGN.** Last judge verdict before a test-author
+failure, across the archive:
+
+    looping 11   broken_code 5   over_reading 1   ok 22
+
+**Not `no_first_write`.** Test-authors act; what they produce either spins or does not compile. That
+is F242's reframe arriving independently from a second source, and it is the lead now — `broken_code`
+in particular is a syntax error in a file the engine already parses and can quote back.
+
+⚠ `session_id` is also `None` on every failure, so a failed task's full trace is unjoinable to the
+sessions DB. Same class of defect, not yet fixed.

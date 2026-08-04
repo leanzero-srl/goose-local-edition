@@ -25,6 +25,14 @@ pub enum SwarmEvent {
         attempts: u32,
         elapsed_ms: u64,
         session_id: Option<String>,
+        /// WHY it ended this way — `None` on success, the last attempt's error on a failure.
+        ///
+        /// It was absent entirely, and `TaskRetry` has carried one all along: intermediate retries
+        /// recorded a reason while the TERMINAL outcome recorded nothing. MEASURED: all 14 failed
+        /// test-author tasks in the whole archive say only "failed", so every later reader had to
+        /// INFER the cause from judge verdicts. The engine already had the string — `AttemptRecord`
+        /// is built with `error: Some(msg)` immediately before the emit — and threw it away.
+        error: Option<String>,
         tool_calls: Vec<ToolCallRecord>,
     },
     TaskRetry {

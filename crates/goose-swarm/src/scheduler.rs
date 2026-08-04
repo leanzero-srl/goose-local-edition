@@ -483,6 +483,20 @@ impl State {
             .count()
     }
 
+    /// The reason the task's LAST attempt ended, or `None` if it succeeded.
+    ///
+    /// One helper rather than six inline expressions, because six copies of a rule is how the
+    /// dispatch paths drifted apart before (`pick_device` learned speed-weight routing and the repair
+    /// path did not). Every `TaskCompleted` reads this, so a successful task naturally reports `None`
+    /// — the winning attempt carries no error — and a failure reports the string the engine already
+    /// had and used to discard.
+    fn last_attempt_error(&self, tid: &str) -> Option<String> {
+        self.attempt_log
+            .get(tid)
+            .and_then(|a| a.last())
+            .and_then(|r| r.error.clone())
+    }
+
     fn total_in_flight(&self) -> u32 {
         self.devices.iter().map(|d| d.in_flight).sum()
     }
@@ -870,6 +884,7 @@ impl State {
                     n.avoid_device = None;
                 }
                 self.ctx.merge(tid, output);
+                let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
                     status: "done".to_string(),
@@ -878,6 +893,7 @@ impl State {
                     attempts,
                     elapsed_ms,
                     session_id,
+                    error: ended_because,
                     tool_calls,
                 });
                 self.relax_dependents(tid);
@@ -970,6 +986,7 @@ impl State {
                             deterministic: true,
                         });
                         self.relax_dependents(tid);
+                        let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
                             status: "done".to_string(),
@@ -978,11 +995,13 @@ impl State {
                             attempts,
                             elapsed_ms,
                             session_id: None,
+                            error: ended_because,
                             tool_calls: Vec::new(),
                         });
                     } else {
                         self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
                         self.fail_descendants(tid);
+                        let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
                             status: "failed".to_string(),
@@ -991,6 +1010,7 @@ impl State {
                             attempts,
                             elapsed_ms,
                             session_id: None,
+                            error: ended_because,
                             tool_calls: Vec::new(),
                         });
                     }
@@ -1034,6 +1054,7 @@ impl State {
                 self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
                 self.fail_descendants(tid);
                 let attempts = self.attempt_log[tid].len() as u32;
+                let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
                     status: "failed".to_string(),
@@ -1042,6 +1063,7 @@ impl State {
                     attempts,
                     elapsed_ms,
                     session_id: None,
+                    error: ended_because,
                     tool_calls: Vec::new(),
                 });
             }
@@ -1467,6 +1489,7 @@ impl State {
             self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
             self.relax_dependents(tid);
             let attempts = self.attempt_log[tid].len() as u32;
+            let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
                 status: "done".to_string(),
@@ -1475,6 +1498,7 @@ impl State {
                 attempts,
                 elapsed_ms: 0,
                 session_id: None,
+                error: ended_because,
                 tool_calls: Vec::new(),
             });
             return true;
@@ -1618,6 +1642,7 @@ impl State {
                 self.fail_descendants(tid);
             }
             let attempts = self.attempt_log[tid].len() as u32;
+            let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
                 status: status.to_string(),
@@ -1626,6 +1651,7 @@ impl State {
                 attempts,
                 elapsed_ms: 0,
                 session_id: None,
+                error: ended_because,
                 tool_calls: Vec::new(),
             });
             return true;
