@@ -11903,3 +11903,54 @@ printing per-check rows. **Prediction: in `sink_review-n3-r0` the eight response
 TOGETHER (near-0), not as a spread of partial credits.** ⚠ **FALSIFIER: if those eight show scattered
 partial scores (e.g. completeness 0.6 with pagination 0.33), tier B is a continuum being averaged and
 the whole one-binary-gate story dies.**
+
+## F292 — F276 REFUTED: the backstop I said did not exist has been firing all along
+
+175 judge verdicts across the 2 runs on this binary. My "the judge is decorative" hypothesis died on
+arrival (L56): it emits `ok` 156×, but also `over_reading` 8, `accept` 5, `no_first_write` 2, and one
+each of `split`, `broken_code`, `looping`, `spec_drift`.
+
+**The escalation ladder is real and it terminates.** Per-task sequences:
+
+    baseline-n3-r0  test-core              over_reading → re_dispatch
+                                           no_first_write → re_dispatch
+                                           no_first_write → FAILED
+    baseline-n3-r0  test-sync-idempotency  over_reading → re_dispatch   20:31:14
+                                           over_reading → re_dispatch   20:38:29
+                                           over_reading → FAILED        20:47:14
+
+⇒ **F276 is WRONG on both counts.** A repeat `over_reading` DOES escalate — `interv >=
+cfg.max_interventions_per_task` (`scheduler.rs:1544-1549`) fails the task on the third strike. And
+"acted a lot and produced nothing has no deterministic backstop" is false: `over_reading` IS that
+backstop, and it killed the run's biggest time sink. **The comment at the fix site won its argument
+because the mechanism it was defending already existed (L150, again).**
+
+**A documented fix VERIFIED ON THE WIRE.** `scheduler.rs:1535-1543` records a past incident —
+nf-ts-cadence's `integrate-verify` went `over_reading → re_dispatch, re_dispatch, FAILED` at
+confidence 0.90 *from the LLM path*, turning a whole fan-verify run red on one model opinion — and
+adds `outcome.deterministic` to the `terminal` predicate. I observed the identical 0.90 sequence and
+had to check whether the guard was live (L139: a source line predicts, the event decides).
+**It is: 100% of terminal fails carry `deterministic=True`.** The single non-deterministic acting
+verdict is one `broken_code` at 0.85 → `re_dispatch`, which the comment explicitly permits — a model
+keeps full STEERING power and loses only the power to fail a task.
+
+**THE REAL GAP, and it is not the one F276 named.** `looping` and `spec_drift` each fired once, both
+at confidence **0.5**, both `action: "observed"` — below `cfg.intervene_confidence` (which is ≤0.85,
+since a 0.85 `broken_code` acted). In `swarm-3node-r1`, `test-cli-error-handling` ran
+`looping(0.5, observed) 21:59 → over_reading(re_dispatch) 22:00 → spec_drift(0.5, observed) 22:26 →
+accept 22:30`: **31 minutes in which the judge twice named the exact pathology and could do nothing.**
+
+The pattern is not arbitrary. The verdicts that ACT (`over_reading`, `no_first_write`) are the ones
+with a DETERMINISTIC detector behind them, so they arrive at 0.90 + `deterministic=True`. The
+verdicts with no detector (`looping`, `spec_drift`) are pure model opinion, arrive at 0.5, and are
+inert by construction. ⇒ **The judge's effective vocabulary is 2 verdicts, not 8.**
+
+⚠ **The fix is NOT to lower `intervene_confidence`** — that is precisely what the 1535-1543 comment
+forbids, and it would hand irreversible failures back to a model opinion. The fix is to give
+`looping` a deterministic detector, the way `over_reading` has one.
+
+📌 **F276's queued engine change at `judge.rs:459-470` is WITHDRAWN, not deferred.** There is nothing
+to write there. One fewer patch queued for the boundary is a better outcome than one more.
+
+⇒ **L154. WHEN A MECHANISM LOOKS ABSENT, CHECK WHETHER IT IS FIRING AND YOU ARE NOT LOOKING AT ITS
+EVENTS. Two sessions of "the judge cannot escalate" died to one tally of `action` by `task_id`.**
