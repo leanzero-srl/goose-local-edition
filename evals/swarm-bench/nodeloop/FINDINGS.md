@@ -10741,3 +10741,49 @@ cause is NOT straggler-stop and the whole comment is wrong.
 ⚠ **NOT COMPILED — deliberately.** `cargo check` on this crate would steal CPU from `local-mihai` mid-run
 and perturb the very measurement in flight. The edit swaps one bool field for another of the same type,
 used identically 200 lines away at `12314`/`13497`. **clippy runs at the boundary, before deploy.**
+
+## F257 🔴🏆 — THE HEADLINE DISPATCH-QUALITY METRIC READ "UNMEASURED" BECAUSE THE READER LOOKED FOR AN EVENT NAME THAT WAS NEVER USED
+
+`dispatch_audit.py` returned `kind_mismatch_pct: None` for every run on the shipped build, with the
+basis string *"needs the `rules_kind` engine event"*. **The engine emits `rules_delivered`, and has
+been emitting it all along** — per dispatch, carrying `task_id`, `kind`, `kind_prompt`, `tailored`.
+It was added deliberately, and its own comment explains that without it the metric would be circular.
+
+    run                rules_delivered events
+    sink_review-n3-r0        24   (kind_prompt False)
+    swarm-1node-r0           14   (kind_prompt False)
+    think_off-n3-r0          22   (kind_prompt True)
+    think_off-n3-r2          24   (kind_prompt True)      ⇒ BOTH DIRECTIONS present (L123)
+
+**THE RECOVERED NUMBER — and the lever did NOT do what "fixed" implies:**
+
+    kind_prompt OFF   sink_review-n3-r0   75.0%   18/24 mismatched
+                      swarm-1node-r0      64.3%    9/14
+    kind_prompt ON    think_off-n3-r0     40.9%    9/22
+                      think_off-n3-r1     42.3%   11/26
+                      think_off-n3-r2     41.7%   10/24
+
+⇒ **~70% → ~42%.** Real, measured, both directions. ⚠ **AND IT STOPS THERE.** `tailored` is
+`kind_prompt_on && is_test_author`, so **`read-only-shard` and `owns-nothing` still receive the
+implementer-shaped generic rules** — **4 in 10 dispatches are still told to do another job.** On a
+3-node run those two kinds are 10 of 24 dispatches. **That is the next engine change, and it is
+exactly the "more nodes ⇒ more undifferentiated work" mechanism goal one is about.**
+
+**Definition, taken from the engine's fields rather than an assumption:** mismatched = `kind !=
+implementer AND NOT tailored`. **POSITIVE CONTROL:** with the lever off nothing is tailored, so the
+rule reduces to the old inference — sink_review reads **75.0%** under the new rule against the
+**79.2%** the inference produced, the gap being dispatches with no plan entry. **Both classifiers are
+now exposed** via `kind_counts_from_events` and `kind_source_disagreement` rather than silently
+reconciled; they disagree on `entrypoint`, which the engine never labels.
+
+## F258 ⚙️ — AN INSTRUMENT BUMP MUST NEVER COST A UNIT RE-RUN (`reaudit.py`)
+
+`sweep.complete()` treats a row whose `audit_version` differs from the current one as INCOMPLETE, so
+bumping the audit **re-runs the unit** — ~2 hours of fleet time to recompute a pure function of a log
+already on disk, and mid-curve it would re-run cells the node curve had already collected. That is a
+mechanism that punishes fixing an instrument, at exactly the moment fixing it matters most.
+
+**`reaudit.py` recomputes the audit from the stored `run.jsonl` and rewrites the row in place** —
+audit blob and version stamp only, never score / wall_secs / engine_build. **9 of 9 rows migrated
+`da-1 → da-2` with no run re-executed.** ⇒ **An instrument fix can now ship at ANY moment in a live
+campaign instead of waiting for a boundary**, which is what made F257 shippable under the F253 freeze.

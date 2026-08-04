@@ -40,7 +40,10 @@ import pathlib
 import re
 import sys
 
-AUDIT_VERSION = "da-1"
+# da-2: kind-mismatch is now MEASURED from the engine's `rules_delivered` event instead of
+# reading UNMEASURED whenever kind_prompt is ON. A stale row does NOT need its unit re-run —
+# `reaudit.py` recomputes the audit from the stored run.jsonl and rewrites the row in place.
+AUDIT_VERSION = "da-2"
 
 # A dispatch's KIND is decided by the files it owns, because that is what the engine itself keys
 # its behaviour on (owns_nothing, test relaxation, entry wiring). Order matters: a task owning
@@ -202,10 +205,49 @@ def audit(path) -> dict:
     # actually received — system prompts are not reliably persisted, so only a deterministic engine
     # event can prove it. `rules_kind` (engine-side) is that event; until a run carries it, the
     # honest answer here is UNMEASURED, never zero.
-    if kind_prompt_on:
-        mismatched = None
+    # THE EVENT EXISTS AND THIS FILE WAS WAITING FOR A NAME THAT WAS NEVER USED.
+    #
+    # The comment above asks for a `rules_kind` engine event. The engine emits **`rules_delivered`**
+    # — and has been emitting it all along, per dispatch, carrying `task_id`, `kind`, `kind_prompt`
+    # and `tailored`. MEASURED: 24 / 22 / 24 / 14 events across four archived runs, in BOTH lever
+    # states (kind_prompt True on the think_off runs, False on sink_review and swarm-1node), which is
+    # the both-directions control this metric needs. So the headline dispatch-quality number read
+    # UNMEASURED for every run on the shipped build purely because the reader looked for the wrong key.
+    #
+    # WHAT COUNTS AS MISMATCHED, taken from the engine's own fields rather than from an assumption:
+    # a dispatch is mismatched when its kind is not `implementer` and the rules it got were not
+    # `tailored` to it. With the lever OFF nothing is tailored, so this reduces exactly to the old
+    # inference — which is the positive control: sink_review reads 75.0% under the new rule against
+    # the 79.2% the inference produced, the small gap being dispatches with no plan entry.
+    #
+    # ⚠ AND IT DOES NOT FALL TO ZERO WHEN THE LEVER IS ON. `tailored` is `kind_prompt_on &&
+    # is_test_author`, so `read-only-shard` and `owns-nothing` still receive the implementer-shaped
+    # generic rules. That is the number the campaign actually wants and could not see.
+    rules_events = [e for e in events if e.get("event") == "rules_delivered"]
+    if rules_events:
+        mismatched = sum(1 for e in rules_events
+                         if e.get("kind") != "implementer" and not e.get("tailored"))
+        mismatch_n = len(rules_events)
+        basis = ("MEASURED from the engine's own rules_delivered events: a dispatch is mismatched "
+                 "when its kind is not implementer and its rules were not tailored to it")
+    elif kind_prompt_on:
+        mismatched, mismatch_n = None, n
+        basis = ("UNMEASURED: kind_prompt is ON and this run predates the rules_delivered event, so "
+                 "the delivered rule-set is not in the log")
     else:
-        mismatched = n - by_kind["implementer"]
+        mismatched, mismatch_n = n - by_kind["implementer"], n
+        basis = ("inferred: kind_prompt OFF, so every non-implementer kind receives the implementer "
+                 "prompt")
+
+    # A SECOND OPINION ON THE SAME QUESTION, EXPOSED RATHER THAN RECONCILED. `classify(owned_files)`
+    # and the engine's own `kind` answer the same question from different sides; if they disagree one
+    # of them is wrong and the reader must be told which runs are affected, not handed a silent pick.
+    event_kinds = {k: sum(1 for e in rules_events if e.get("kind") == k)
+                   for k in {e.get("kind") for e in rules_events}} if rules_events else {}
+    kind_disagreement = (sorted(
+        (k, by_kind.get(k, 0), event_kinds.get(k, 0))
+        for k in set(by_kind) | set(event_kinds)
+        if by_kind.get(k, 0) != event_kinds.get(k, 0)) if rules_events else [])
 
     # The named contradiction: owns a test file AND is told never to read test files.
     contradiction = sum(
@@ -253,14 +295,12 @@ def audit(path) -> dict:
         },
         "kind_counts": by_kind,
         "kind_mismatch_count": mismatched,
-        "kind_mismatch_pct": (round(100.0 * mismatched / n, 1)
-                              if (n and mismatched is not None) else None),
+        "kind_mismatch_pct": (round(100.0 * mismatched / mismatch_n, 1)
+                              if (mismatch_n and mismatched is not None) else None),
         # Says WHERE the number came from, so a reader never mistakes an inference for a measurement.
-        "kind_mismatch_basis": ("inferred: kind_prompt OFF, so every non-implementer kind receives "
-                                "the implementer prompt"
-                                if not kind_prompt_on else
-                                "UNMEASURED: kind_prompt is ON and the delivered rule-set is not in "
-                                "the log — needs the rules_kind engine event"),
+        "kind_mismatch_basis": basis,
+        "kind_counts_from_events": event_kinds,
+        "kind_source_disagreement": kind_disagreement,
         "test_author_contradiction_count": contradiction,
         "instruction_unmeasurable_count": len(unmeasurable),
         "instruction_unmeasurable_tasks": sorted(set(unmeasurable)),
