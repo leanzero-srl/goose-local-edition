@@ -12072,3 +12072,51 @@ A tally written inline for one tick still needs to be checked against a case who
 fails in the direction that flatters the run. The engine had already computed `report.failed`
 (L42: subtract what the engine already answered); reading it was one line and would have been right
 the first time.
+
+## F296 — my rescore harness fails its own control, and I published a "confirmation" from it
+
+Ran F291's registered check — `score_build.evaluate()` per check on the matched contrast — during the
+one window with no cell being timed. First result read beautifully:
+
+    sink_review-n3-r0   GATED EIGHT [0.0, 0.0, 0.333, 0.0, 0.0, 0.0, 0.0, 0.0]   OTHER FOUR [1,1,1,1]
+
+7 of 8 at hard zero, four unrelated checks perfect — exactly the one-binary-gate prediction, and I
+said so. **That confirmation is WITHDRAWN.** Two controls fail:
+
+1. **The B values are the INVERSE of storage.** Stored: `sink_review-n3-r0` B=0.3611,
+   `think_off-n3-r0` B=1.0. My rescore: sink_review B=**1.00**, think_off B=**0.36**.
+2. **Tier C came out 0% on BOTH trees**, where both store C=0.8571. C is graded from the request
+   trace, so a systematic 0 says my trace wiring is not what the sweep's is.
+
+A harness that cannot reproduce a stored value it was pointed at cannot adjudicate anything (L4).
+The block whose numbers I quoted also happened to be the one that matched on tier A, which is exactly
+how a broken instrument buys credibility.
+
+**Two mechanisms, both mine.** `vendor_service` holds module-global STATE (request counts, the
+`fired` phase set), and I scored two trees **in one process** — the first run's fixture state poisons
+the second. And I ran them in the wrong order: **L96 says run the instrument on the case whose answer
+you already know, FIRST.** I ran the unknown first and read its output as evidence.
+
+⇒ **What can be said, and it is not small: the same tree scores B=1.000 under my harness and B=0.361
+under the sweep's. At least one of those two scoring ENVIRONMENTS is not measuring the app.** If it
+is the sweep's, then F289's "bimodal tier B" is partly an artifact of the scorer's environment rather
+than of what the swarm built — which would put a question mark over the entire quality half of goal
+one. Not claimed; stated as the thing to settle.
+
+📌 **RE-RUN, corrected: ONE tree per PROCESS, control FIRST** (`think_off-n3-r0`, stored
+A 1.0 / B 1.0 / C 0.857 / D 0.75). **If a single-tree process reproduces those four numbers, the
+harness is sound and sink_review can be re-tested. If it does not, the harness is still broken and
+NOTHING about tier B may be concluded from it.**
+
+## F297 — I read a results row while the supervisor was still writing it
+
+Mid-tick, `baseline-n3-r1` read **score 0.0561, A=0.0** — a scored-as-empty capstone cell, which
+would have been the worst news of the campaign. Ninety seconds later the same row read **score 0.478,
+A=0.8333**. The first read caught the row mid-write.
+
+I nearly opened a whole investigation into "the scorer is scoring an empty directory", on the
+strength of a number that was never final. The tell was available and I did not use it: the
+supervisor was still RUNNING, and its post-processing is exactly what writes that row.
+
+⇒ **L158. A RESULTS ROW IS NOT READABLE WHILE ITS WRITER IS ALIVE.** Check the writer's liveness
+before quoting a row, the same way an archive read is scoped by binary mtime (L122).
