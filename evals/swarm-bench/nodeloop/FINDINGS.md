@@ -11440,3 +11440,35 @@ was set too broadly and this is wrong.**
 **L150: WHEN THE FIX YOU PLANNED CONTRADICTS A COMMENT AT THE FIX SITE, THE COMMENT USUALLY WON ITS
 ARGUMENT ALREADY.** I proposed exactly the behaviour a measured incident had banned. Reading the site
 cost one tick; shipping it would have cost a run.
+
+## F277 ✅✅ — #7 DISCHARGED ON THE WIRE: THE REPAIR DISPATCH NAMED THE **WORKHORSE**. SEVEN SHIPPED, SEVEN VERIFIED.
+
+The last outstanding wire verification of this campaign, closed on `baseline-n3-r0`'s own COMPLETE phase:
+
+    complete_failed_tasks
+    complete_verify        {passed: false}
+    complete_fix_dispatched{task_id: "complete-fix",
+                            model: "workhorse-qwen3.6-27b-fable-fusion-711-...-mtp"}   <- speed_weight 3
+    complete_fix_completed
+    complete_verify        {passed: true}
+    complete_result        {passed: true}
+
+**`5714f98e5` shipped the fix that routes repair to the fastest ENABLED node instead of `devices.first()`;
+this is the deterministic engine event proving it fired.** Before it, every repair went to **gabee**
+(speed_weight 1) while the workhorse (3) idled. ⇒ **SEVEN SHIPPED, SEVEN VERIFIED ON THE WIRE** —
+`kind_prompt`, `dep_signatures`, GGUF samplers (13/13), `force_write_tool` OFF, the build sha, the
+act-now nudge, and now the repair target.
+
+**And the whole repair LOOP is verified end to end, not just the routing:** verify failed → a fix was
+dispatched to the fastest node → the fix completed → **re-verify passed**. That is the mechanism
+`23d9bf2d9` ("the integrator already exists — it just never runs when it is needed") was written for,
+observed working.
+
+⚠ **`complete_result{passed: true}` IS A CLAIM, NOT EVIDENCE.** This campaign's standing rule is that
+only a deterministic engine event may confer a green, and `complete_result` is the model's own verdict —
+measured as a false green on 7+ runs historically. **The graded number for this cell is `score 0.6595`,
+not 1.0**, and two tasks failed outright. **The repair loop firing correctly is a MECHANISM result; it
+says nothing about whether the app works.**
+⚠ **A SMALL EVENT GAP, NOTED NOT FIXED:** `complete_fix_dispatched` carries `model` but `device: null`.
+The model id is unambiguous here (`workhorse-…`), so the verification stands, but a future reader keying
+on `device` would see nothing. Queued with the other event-completeness work, not urgent.
