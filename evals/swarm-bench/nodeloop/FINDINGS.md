@@ -12183,3 +12183,49 @@ failure, work out the expected WRITE RATE of the thing you are watching.**
 was not wrong — verifying zero before restarting is still correct, and the tool's cleanup runs only
 at start, not at kill time — but the engine-side capability existed and I did not check for it first.
 That is L42 again: subtract what the system already does before building the same thing by hand.
+
+## F300 — the deterministic "looping" detector F292 asked for EXISTS, is OFF, and would be INERT
+
+F292 ended with "give `looping` a deterministic detector — NOT WRITTEN". It is written. `judge.rs`
+`deterministic_verdict` has a **reasoning-spiral branch** (a worker with many thinking chars, ZERO
+tool calls and no owned file) that returns a **deterministic** verdict. It is gated on
+`cfg.spiral_thinking_chars` and the live run resolves:
+
+    spiral_break_chars:    12000     <- baked golden, ON  (swarm.rs:1040, a WORKER-side break)
+    spiral_thinking_chars:     0     <- default OFF       (swarm.rs:1089, the JUDGE branch)
+
+**Two different mechanisms, near-identical names, and only the one that cannot produce a judge
+verdict is armed** (L146 — grep the concept, not the spelling).
+
+**But flipping it would change nothing here, and I checked before proposing it (L115 needs a VERIFIED
+defect).** Across 175 observations carrying `thinking_chars` on the current binary:
+
+    would-fire (tool_calls == 0 AND thinking_chars >= 12000):   0 / 175
+
+**Controls in both directions, because a zero from an instrument is worth nothing until it is shown
+it could have been non-zero (L4):**
+
+    thinking_chars   nonzero in 175/175, median 2009, max 24576, and >=12000 in EIGHT observations
+    tool_calls == 0  in 26 observations
+
+Both terms occur, independently and often. **They never co-occur.** The eight heavy thinkers were all
+ALSO making tool calls — they are "acting a lot", not "spiralling in silence". The conjunction this
+branch detects is the empty set on this corpus.
+
+⇒ **Do NOT flip `spiral_thinking_chars`. It is a correct detector for a failure mode this engine no
+longer exhibits.** And it would not have reached the sink regardless: the branch requires
+`!owned_files.is_empty()`, and `swarm.rs:352` already says so in as many words — *"spiral_thinking_chars
+could not fire (it is a JUDGE branch gated on owning files; a scout owns none)"*. Same structural
+blindness as F293/L155, third instance.
+
+**AND THE ENGINE HAS ALREADY DOCUMENTED MY CELL-2 FAILURE, WITH THE OPPOSITE READING.**
+`judge.rs:373-378`: no-owned-files tasks are **deliberately EXEMPT** from `over_reading`, because
+applying it *"GUARANTEES it is killed once it makes a few tool calls (the observed false-negative:
+integrate-verify judge_killed x3 -> run reported FAILED though the app works)"*. So the sink is
+routed to the idle `worker_timeout` **by design** — and that is exactly the timer that killed it
+three times in `baseline-n3-r1`.
+📌 **That comment names a run that reported FAILED while the app WORKED. `baseline-n3-r1` has the
+identical signature (sink killed 3x, run reports 1 failed) and stored score 0.478 — and F296 already
+shows one tree scoring B=1.000 fresh against B=0.361 stored. REGISTERED: these may be the same
+phenomenon.** ⚠ **NOT CLAIMED — settling it needs the isolated rescore of `sink_review-n3-r0` in a
+window with no cell being timed.**
