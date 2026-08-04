@@ -22393,6 +22393,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "read_on_fix": swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix),
             "kind_prompt": swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt),
+            // TWO LEVERS SHIPPED WITHOUT A LINE HERE, AND THE LOG COULD NOT SAY WHETHER EITHER WAS ON.
+            //
+            // `levers_resolved` is a hand-maintained list, so a new gate is invisible until someone adds
+            // it — and "absent from the event" reads EXACTLY like "resolved to null". MEASURED on the
+            // first post-boundary run: `act_now_nudge` came back None from an engine where it defaults
+            // ON, which is indistinguishable from the nudge silently not shipping. That is the same
+            // failure MARKERS exists to prevent, one layer up: this event is how a run says which levers
+            // it ran, and a lever missing from it is unverifiable by construction.
+            //
+            // `force_write_tool` is here precisely BECAUSE it is off. A lever deliberately held off and a
+            // lever that vanished must not look the same in the log, and this one has already shipped
+            // once in a form the server rejected 27 times out of 27.
+            "act_now_nudge": act_now_nudge(),
+            "force_write_tool": force_write_tool(),
             "degrade_on_stall": swarm_gate_cfg("GOOSE_SWARM_DEGRADE_ON_STALL", load_config().degrade_on_stall),
             "split_fat": swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat),
             // These three coherence levers were FUNCTIONALLY gated from config but ABSENT from this echo, so
