@@ -10851,3 +10851,35 @@ before the data, not moved to fit it.
 **`PREREGISTERED.md` now holds the whole protocol** — claim, test, the four falsifiers (a VOID cell
 voids its pair; a mid-curve boundary voids everything collected; wall-clock without score is a FAIL;
 significance that needs a pair removed is not significance), and what is explicitly not claimed.
+
+## F261 ⭐⭐⭐ — THE WHOLE 3-NODE ADVANTAGE IS IN EXECUTE, AND THE PREFIX IS **LONGER** WITH 3 NODES
+
+`occupancy.py` on both cells. ⚠ **Both readings come from UNFINISHED runs on DIFFERENT engine builds
+— provisional lower bounds, not a result.** The curve exists to replace them with matched pairs.
+
+    n3 (live)  wall 3117.7s  busy 2688.3 node-s  occ 0.2874 | EXECUTE  899.0s @ 0.9968 | prefix 2218.7s
+               per-device 899 / 899 / 890 s = 33.4 / 33.4 / 33.1%   |   one-node-only 0.0s
+    n1 (arch)  wall 4884.4s  busy 2853.1 node-s  occ 0.5841 | EXECUTE 2853.1s @ 1.0    | prefix 2031.3s
+
+**EXECUTE SCALES ESSENTIALLY PERFECTLY.** 2853.1 s of execute wall at one node becomes 899.0 s at
+three — **3.17x** — with **zero one-node-only time** and the three devices within 0.3 points of an even
+split. There is no scheduling defect to find here, and "the swarm wastes fleet time in execute" is
+refuted a second time (F234 said 88.6%; this run says 99.68%).
+
+🔴 **AND IT BARELY MATTERS, BECAUSE THE PREFIX IS WHERE THE TIME IS.** 2218.7 s of the 3-node run's
+3117.7 s — **71%** — is spent before the first dispatch, and that phase is **187 s LONGER at three
+nodes than at one (+9%)**. Adding nodes lengthened the part that dominates the wall and shortened the
+part that does not. **That is Amdahl, measured, with an address** — and it is the same phase where
+F256's aborted scout lens is thrown away.
+
+📌 **REGISTERED BEFORE ANY CURVE PAIR EXISTS: `n1_wall / n3_wall` will land between 1.6 and 2.4.**
+⚠ **FALSIFIER: a ratio outside that band means this prefix/execute decomposition is wrong.**
+
+⚠ **THE RISK TO GOAL ONE IS THE QUALITY HALF, NOT SPEED.** `PREREGISTERED.md` falsifier 3 is explicit:
+wall-clock without score is a FAIL. The idle-node work differs sharply between the arms —
+n3 `{judge 39, pre_review 2, split 1}` vs n1 `{judge 90}` — so the two arms are not merely fast and
+slow versions of one process, and the score comparison is the one that can still go either way.
+
+**L143: SPEEDUP LIVES WHERE THE TIME IS, NOT WHERE THE PARALLELISM IS.** Execute was already at 99.7%
+and every previous instinct of mine pointed there. Decompose the wall before optimising the part that
+already works.
