@@ -11275,3 +11275,42 @@ the first six positions are IDENTICAL under both targets. Verified against the l
 **The interleave is intact — the first matched pair lands after this unit and the next.** Against that,
 restarting mid-unit risks an orphaned engine contending for the fleet, which this project has already
 paid for once (33 unnoticed minutes). ⇒ **Restart at a later gap; there is no cost to waiting.**
+
+## F273 🔴🏆🏆 — F268 IS REFUTED BY ITS OWN REGISTERED FALSIFIER. SCHEDULING SLACK EXISTS: 24.9%.
+
+F268 claimed *"the execute window IS the critical path — there is NO scheduling slack left to
+recover"*, and registered the falsifier: **a finished 3-node cell whose mean concurrency sits
+materially below its final plan ceiling.** `baseline-n3-r0` is finished. The falsifier fired.
+
+    UNFINISHED (what I published):  mean concurrency 4.447   ceiling 4.45   -> "no slack"
+    FINISHED   (the truth):         mean concurrency 3.792   ceiling 5.046  -> 24.9% BELOW
+
+    plan ceiling = 19314.6 s total work / 3827.4 s critical path = 5.046
+    slot utilisation = 3.792 / 6 = 63.2%   (was reported as 74.8% on the partial read)
+
+**⇒ THE SCHEDULER LEAVES ABOUT A QUARTER OF THE AVAILABLE PARALLELISM ON THE FLOOR.** "Speed work
+belongs in the planner, never in dispatch" is **WITHDRAWN**. The planner width fix (F269-F271) is still
+justified — the ceiling is 5.05 against 6 slots — but it is no longer the *only* place to win, and I
+said it was.
+
+**AND THE TAIL I DECLARED ABSENT IS REAL.** I reported `solo_node_secs` **0.0 s** and "one node has
+never been the only one working". On the finished cell:
+
+    1 task running:  9.1% of the dispatch window (7.8 min)
+    2 tasks:        11.2% (9.5 min)
+    EXECUTE occupancy fell 0.9947 -> 0.8568 once the tail landed
+
+**Every one of those numbers arrived in the last 15% of the run** — which is precisely why
+`occupancy.py` prints *"NOT YET MEANINGFUL — the run is unfinished, and the critical path only grows"*.
+**The instrument warned me in writing, on every read, and I published anyway.** The partial reading
+was not merely imprecise; it was systematically flattering, because a run's serial tail is the LAST
+thing to happen.
+
+**Also now visible on the finished cell:** `idle-node jobs {judge 103, pre_review 7, split 1, replan 1}`
+and the instrument's own note — *"1 task dispatched and NEVER completed on a finished run — those are
+failures, not work in progress"* (that is `test-core`, F263).
+
+**L148: A PARTIAL READ OF A RUN IS BIASED, NOT JUST NOISY.** Tails, failures and critical-path growth
+all land at the end, so mid-run numbers systematically favour the optimistic story. When an instrument
+labels a figure provisional, the honest options are to WAIT or to publish it with the direction of the
+bias stated — never to headline it.
