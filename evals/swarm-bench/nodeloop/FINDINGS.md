@@ -12229,3 +12229,36 @@ identical signature (sink killed 3x, run reports 1 failed) and stored score 0.47
 shows one tree scoring B=1.000 fresh against B=0.361 stored. REGISTERED: these may be the same
 phenomenon.** ⚠ **NOT CLAIMED — settling it needs the isolated rescore of `sink_review-n3-r0` in a
 window with no cell being timed.**
+
+## F301 — a prefix prediction registered BEFORE the branch resolves, on the live cell 3
+
+`baseline-n3-r2` emitted `skeleton_drafts` at 02:43:40 local, 11 minutes into the run:
+
+    requested 3   returned 3   dead 0   straggler_aborted 0   secs 236   worker_count 3
+
+Two things, one live confirmation and one registered prediction.
+
+**LIVE CONFIRMATION of the queued patch's premise (F270/F271).** `worker_count: 3` — the planner is
+told there are **3** workers while the fleet has **6 slots** (3 devices x PARALLEL 2). `00563c6ea` is
+queued to pass Σ device weights instead of `devices.len()`. **The defect is now observed on the wire
+in the live engine, not merely read off a source line (L139).**
+
+**REGISTERED PREDICTION, before `plan_loaded` exists.** F283/F286 established that the redraft is a
+DISCRETE branch on `plan_confidence` against `ask_floor` = 85, and that it splits the prefix with
+ZERO OVERLAP:
+
+    redrafted      prefix  [1730.9, 2218.7, 2839.0]
+    not redrafted  prefix  [1091.3, 1148.9]
+
+📌 **PREDICTION: when this cell's `plan_loaded` lands, `plan_confidence >= 85` ⇒ NO redraft ⇒ prefix
+in ~[1050, 1200] s; `plan_confidence < 85` ⇒ redraft ⇒ prefix in ~[1700, 2900] s.**
+⚠ **FALSIFIERS, any one of which kills the discrete-branch model:** a prefix landing BETWEEN the two
+bands (1200-1700 s) · a redraft at confidence ≥85 · no redraft at confidence <85 · a prefix outside
+both bands entirely.
+
+This is the cheap kind of test the campaign should run more of: the outcome arrives in under an hour,
+it costs no fleet time beyond what is already running, and the prediction is on record before the
+branch resolves rather than fitted to it afterwards.
+
+**Also clean here:** `dead 0, straggler_aborted 0` on 3 of 3 drafts. F256's "6 of 6 runs lost exactly
+one scout lens" is about the SCOUT fanout, not skeleton drafting — the two must not be conflated.
