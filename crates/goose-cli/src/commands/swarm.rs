@@ -12075,10 +12075,32 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let prompt = user_prompt.to_string();
         let lenses = select_lenses(is_amendment, max_lenses);
-        // #135 straggler-stop for scouts: once 2 of 3 lenses report, stop the lone lagging scout instead of
-        // idling the fleet on it (measured 111s idle on a 199s scout). Advisory phase, so dropping the last
-        // scout only loses one lens of context. grace 0 => OFF => the wrapper is a byte-identical await-all.
-        let scout_grace = if self.straggler_stop {
+        // #135 straggler-stop for scouts, now gated by `straggler_stop_degrade` (default OFF) rather than
+        // `straggler_stop` (default ON) — the same category CONTRACTS and DETAIL already sit in, and for the
+        // same stated reason: these fanouts CAN CHANGE A WORKER'S BUILD INPUTS.
+        //
+        // THE ASYMMETRY THAT WAS MISSED. Plan drafts are REDUNDANT — best-of-N produces N candidates and one
+        // is kept, so aborting the slowest costs nothing. Scout lenses are COMPLEMENTARY — each covers ground
+        // no other lens covers, so aborting the slowest costs that ground outright. A redundancy optimisation
+        // was applied to a complementary fanout.
+        //
+        // MEASURED, on every archived run that reached research: 6 of 6 lost EXACTLY ONE lens, never zero and
+        // never two — 33.3% of planned research discarded by design, on 1-node and 3-node runs alike.
+        //
+        // THIS ALSO REFUTES THE PREVIOUS FIX AT ITS OWN ADDRESS. fb0885328 reordered SCOUT_LENSES to put
+        // `edge-cases` FIRST, reasoning that straggler-stop "sacrifices the LAST lens" and the order is the
+        // dispatch order. It is not positional: `collect_fleet_with_straggler_stop` arms the grace on the
+        // COMPLETION count, so the victim is whichever lens is SLOWEST. Run swarm-20260804-184525912, on a
+        // binary built 2026-08-04 21:42 (the reorder landed 2026-08-01 14:14, so it WAS armed), still lost
+        // `edge-cases` — now first in the order — while architecture and libraries reached `phase: done`.
+        // Edge-cases asks for failure modes and concrete tests, the most generative of the three prompts, so
+        // it is reliably the slowest and reliably the one killed.
+        //
+        // The trade is not close: research ran 297s of a ~7200s unit, so waiting out the straggler costs on
+        // the order of 1% of wall-clock to recover 50% more research, and research feeds every later dispatch.
+        // FALSIFIER: if a run under this change shows `lenses_returned` still short of `scouts_planned`, the
+        // cause is NOT straggler-stop and this comment is wrong.
+        let scout_grace = if self.straggler_stop_degrade {
             self.straggler_grace_secs.clamp(10, scout_budget.max(10))
         } else {
             0

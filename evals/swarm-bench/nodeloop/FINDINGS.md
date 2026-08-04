@@ -10675,3 +10675,69 @@ ever observed** (8729s), with the whole observed distribution (0.88x-1.21x of me
 see source edits, and restarting it would take `baseline-n3-r0` down with it. So the noisy line keeps
 printing for this unit and the fix takes effect at the next supervisor start. **Nothing about the
 engine changed, so the curve's freeze (F253) is intact.**
+
+## F255 ✅ — BEST-OF-N DOES **NOT** COLLAPSE TO ONE DRAFT (my own claim, killed by the event)
+
+I read the cap at `swarm.rs:11551` (drafts capped at DISTINCT MODELS), saw `lms ps` reporting one node
+GENERATING, and concluded the skeleton phase runs on a single node. **The run's own event says no:**
+
+    skeleton_drafts {requested: 3, returned: 3, dead: 0, straggler_aborted: 0, secs: 222,
+                     chars: [4380, 3842, 4057], worker_count: 3}
+
+The engine scales drafts to **`worker_count`**, not to the lever (`best_of_n_skeletons` reads 2 and it
+requested 3). **The skeleton phase genuinely uses all three nodes.** ⇒ **L139: a source line predicts,
+the event decides.** One `lms ps` sample is a single frame of a 222-second phase.
+
+## F256 🔴🔴 — A REDUNDANCY OPTIMISATION WAS APPLIED TO A **COMPLEMENTARY** FANOUT: 33% OF ALL RESEARCH IS DISCARDED BY DESIGN
+
+**6 of 6 archived runs that reached research lost EXACTLY ONE scout lens. Never zero. Never two.**
+
+    unit                 planned  returned  LOST
+    sink_review-n3-r0       3        2      architecture
+    swarm-1node-r0          3        2      libraries
+    think_off-n3-r0         3        2      edge-cases
+    think_off-n3-r1         3        2      edge-cases
+    think_off-n3-r2         3        2      edge-cases
+    swarm-3node-r0 (CUR)    3        2      edge-cases
+    ------------------------------------------------
+    6/18 planned lenses lost = 33.3%,  on 1-node and 3-node runs alike
+
+⚠ **The five 60-second VOID refusals were EXCLUDED** — they never ran research, and counting them would
+have read 63.6%. That is L138 again, in a second instrument, one tick after the first.
+
+**MECHANISM, from the call site.** `run_scouts` (`swarm.rs:12081`) sets `scout_grace` from
+**`self.straggler_stop`** — baked **ON**. `collect_fleet_with_straggler_stop` arms the grace once
+`should_arm_straggler_grace(3, 2)` holds, i.e. **the moment 2 of 3 scouts finish the third gets 45 s and
+is ABORTED**.
+
+**THE ASYMMETRY NOBODY NAMED.** Plan drafts are **REDUNDANT** — best-of-N makes N candidates and keeps
+one, so killing the slowest costs nothing. Scout lenses are **COMPLEMENTARY** — each covers ground no
+other lens covers, so killing the slowest costs that ground outright. The engine already knows this
+distinction: `straggler_stop_degrade` exists, defaults **OFF**, and its doc says it is separate because
+those fanouts *"CAN change a worker's build inputs"*. **Research findings feed the plan and every later
+dispatch — they are the definition of a build input.** CONTRACTS and DETAIL are correctly gated on it;
+scouts were not. **QUEUED FIX: gate `scout_grace` on `straggler_stop_degrade`.**
+
+### 🔴🏆 AND IT REFUTES THE PREVIOUS FIX AT ITS OWN ADDRESS
+
+`fb0885328` (2026-08-01) reordered `SCOUT_LENSES` to put `edge-cases` **first**, on the reasoning that
+straggler-stop *"sacrifices the LAST lens"* and that order is dispatch order. **It is not positional.**
+The grace arms on the **completion count**, so the victim is whichever lens is **SLOWEST**.
+
+    binary built   2026-08-04 21:42:45
+    reorder landed 2026-08-01 14:14:24   ⇒ THE ARM WAS ARMED (L53)
+    result         swarm-3node-r0 lost `edge-cases` — now FIRST in the order
+                   scout-edge-cases.json never reaches `phase: done`
+                   scout-architecture.json / scout-libraries.json both `phase: done`
+
+`edge-cases` asks for failure modes and the concrete tests that prove the task done — the most generative
+of the three prompts, so it is reliably the slowest and reliably the one killed. **Reordering could never
+have helped.**
+
+**COST OF THE FIX, QUANTIFIED BEFORE THE RUN (L79):** research ran **297 s of a ~7200 s unit**, so waiting
+the straggler out costs on the order of **1% of wall-clock to recover 50% more research**.
+⚠ **FALSIFIER:** if a run under this change still shows `lenses_returned` short of `scouts_planned`, the
+cause is NOT straggler-stop and the whole comment is wrong.
+⚠ **NOT COMPILED — deliberately.** `cargo check` on this crate would steal CPU from `local-mihai` mid-run
+and perturb the very measurement in flight. The edit swaps one bool field for another of the same type,
+used identically 200 lines away at `12314`/`13497`. **clippy runs at the boundary, before deploy.**
