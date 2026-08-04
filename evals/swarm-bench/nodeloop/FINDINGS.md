@@ -11814,3 +11814,37 @@ the majority.** ⚠ **FALSIFIER: if B is not the worst tier in at least 3 of 5, 
 structural and this is one run's noise.**
 📌 **AND IT SHARPENS GOAL ONE'S SECOND HALF:** *"shipped quality"* is, in practice, **mostly tier B**. Any
 node-count effect on quality will show up there or not at all.
+
+## F289 ⭐⭐⭐ — TIER B IS **BIMODAL**, AND THE SCORE IS ESSENTIALLY A FUNCTION OF IT. THAT IS THE 46-POINT SPREAD.
+
+F288 registered: *"tier B should be the worst tier in the majority of the five 3-node cells; FALSIFIER:
+not worst in ≥3 of 5."* Discharged — **B is worst in 3/5**, which passes at exactly the bar I set, by the
+minimum margin. **But the table says something far more useful than the pass:**
+
+    unit                score     A      B      C      D     worst
+    think_off-n3-r2     0.3273  0.333  0.208  0.286  0.550    B
+    baseline-n3-r0      0.6595  0.833  0.319  0.857  0.705    B
+    sink_review-n3-r0   0.7326  1.000  0.361  0.857  0.800    B
+    think_off-n3-r1     0.9057  1.000  0.972  0.857  0.750    D
+    think_off-n3-r0     0.9143  1.000  1.000  0.857  0.750    D
+
+⇒ **TIER B IS BIMODAL WITH NOTHING IN BETWEEN: {0.208, 0.319, 0.361} or {0.972, 1.000}.** And the two
+runs where B is ~1.0 are exactly the two runs that score ~0.91. **Score tracks B almost perfectly**
+— 0.33 / 0.66 / 0.73 for low-B, 0.91 / 0.91 for high-B — while A, C and D barely move (C is **0.857 in
+four of five**).
+
+**⭐ THIS IS THE 46-POINT REPLICATE SPREAD THAT STARTED THIS CAMPAIGN.** The identical-config scores
+44.2 / 86.7 / 90.0 were never a continuum of quality wobbling — **they are a coin flip on whether tier
+B lands, i.e. whether the app actually does the job the spec describes.**
+
+**AND THE ARM IS NOT THE EXPLANATION.** `think_off` holds both extremes — **B = 0.208 in r2 and
+B = 1.000 in r0** — so the bimodality lives *within* one arm, not between arms.
+
+⚠ **n = 5 across THREE arms (L126, L132).** The bimodal *shape* is visible in all five, but "the score
+is a function of B" is a description of five points, not a law. **The curve's five baseline n3 cells on
+one frozen build are the clean test, and they are already scheduled.**
+📌 **WHAT IT CHANGES FOR GOAL ONE:** *"shipped quality"* is not a dial to nudge — **it is a mode to
+land.** A node-count effect on quality must show up as *changing how often B lands*, and with a
+near-binary outcome the sign test is the right instrument and 5 pairs is the right size. **The
+pre-registered protocol is, by luck rather than foresight, well matched to what the data turns out to
+be.**
