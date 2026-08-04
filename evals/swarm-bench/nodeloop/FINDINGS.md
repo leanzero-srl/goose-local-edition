@@ -11567,3 +11567,32 @@ That buys the difference between a curve that can reach p = 0.031 and one that i
 sentinel nobody clears is a stopped campaign, which is exactly the state this whole session was revived
 from. **`./loop.sh status` reports "STOP sentinel present — it will exit after the current unit", so the
 state is visible rather than silent.**
+
+## F281 ⚠📌 — MY REGISTERED WALL-RATIO BAND AND MY OWN DECOMPOSITION NOW DISAGREE. BOTH ARE ON RECORD BEFORE THE DATA.
+
+F261 registered **`n1_wall / n3_wall` ∈ [1.6, 2.4]** — from the PARTIAL read of `baseline-n3-r0`, the
+same read F273 proved is systematically flattering. Re-deriving from the **FINISHED** cell:
+
+    n3 (measured):  wall 7725 s = prefix 2219 + execute 5090
+    n1 (predicted): wall 11689 s = prefix 2031 (measured on the archived 1-node run)
+                                 + execute 9657 (= 19314.6 total task-secs / 2 slots, and F267
+                                   measured the 1-node arm PINNED at 2 concurrent 100% of its window)
+    PREDICTED RATIO = 1.51        REGISTERED BAND = [1.6, 2.4] ⇒ n1 wall 12361-18541 s
+
+⇒ **1.51 IS OUTSIDE MY OWN REGISTERED BAND.** They cannot both be right, and I am **not widening the
+band** — that is the move this campaign exists to prevent. Both numbers are recorded **before
+`baseline-n1-r0` runs**, so neither outcome can be claimed retroactively:
+
+    ratio lands ≈1.5   -> the BAND was wrong, built on the biased partial read; the decomposition holds
+    ratio lands 1.6-2.4 -> the band holds and the decomposition is missing something (most likely that
+                           the 1-node prefix is NOT ~2031 s on this engine build)
+    ratio lands <1.4 or >2.4 -> BOTH are wrong and the model of where the wall goes needs rebuilding
+
+⚠ **THE PREDICTION CARRIES ITS OWN CONFOUND, AND I NAME IT RATHER THAN BURY IT:** the 2031 s prefix
+comes from `swarm-1node-r0`, a **DIFFERENT ENGINE BUILD**. F262 showed the 1-node prefix is
+structurally different — `plan_confidence: null`, one draft round, **no redraft** — so it is the one
+term here that is not measured on the frozen binary. If the n1 prefix on THIS build differs, the
+predicted 1.51 moves with it.
+⚠ **AND THE TWO ARE CLOSE.** 1.51 vs 1.60 is a 6% gap; a single replicate cannot separate them against
+a fleet whose identical-config runs have scored 44.2 / 86.7 / 90.0. **This will likely need the full
+five pairs to resolve, and may not resolve at all — which is a legitimate outcome, not a failure.**
