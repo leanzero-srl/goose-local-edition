@@ -13607,3 +13607,47 @@ single-node tail can only add wall with one node busy, so the figure has nowhere
 ⇒ L187. **A FLEET THAT IS "USED" IS NOT A FLEET THAT IS BUSY — count node-SECONDS, not dispatches,
 and look at what is in flight at the END, because the tail is where a parallel run quietly becomes a
 serial one.**
+
+## F334 — F333's "TWO OF THREE NODES IDLE" WAS MY OWN COUNTER MISREADING SPLIT PARENTS
+
+F333, published one tick ago, opened on a live read of cell 4:
+
+> *"`api` and `meridian` were dispatched at 2882.7 s — the FIRST dispatch, attempt 0, zero retries —
+> and have held the same device for 51 minutes. Two of three nodes have nothing in flight."*
+
+**Both tasks carry a `task_split` event:**
+
+    task_split  api       -> children ['http-api-server', 'frontend-page', 'api-tests']
+    task_split  meridian  -> children ['meridian-client', 'meridian-tests']
+
+**A SPLIT PARENT NEVER EMITS `task_completed` — ITS CHILDREN DO.** My in-flight calculation was
+`dispatched − completed`, which counts every split parent as a worker stuck forever. Correcting for
+it, cell 4 has **ZERO genuinely in-flight tasks**, not three, and the "51 minutes on one device" was
+a parent record with no worker behind it.
+
+**WHAT DIES:** the live-read framing — "two of three nodes have nothing in flight", "api and meridian
+have monopolised the workhorse", and the implication that `worker_timeout_secs` was failing to fire
+on a 51-minute worker. There was no 51-minute worker. That was the observation I opened F333 with and
+the reason I went looking at all.
+
+**WHAT SURVIVES, and it is the substance:** the occupancy numbers came from `occupancy.py` (occ-3,
+self-test passes) on FINISHED cells and are untouched by this — **0.6499 / 0.5645 / 0.4737, mean
+0.563 against a one-node floor of 0.333**, the perfect inverse ordering with wall-clock, the 36.7%
+single-task window in the worst cell, and the EXECUTE-occupancy caveat. Those are the instrument's
+numbers, not mine. **The headline "the fleet delivers ~1.7 of its 3 nodes" stands; the anecdote I
+used to introduce it does not.**
+
+⚠ THIS IS THE THIRD AD-HOC COUNTER THIS SESSION TO PRODUCE A WRONG READING (F295's
+`e.get('ok', True)`, F326's double-counted revert, now this), and each time the rule I already had
+was L2 — the instrument existed. `occupancy.py` models split parents correctly; I hand-rolled a
+`dispatched − completed` in a throwaway script because it was three lines, and it was three wrong
+lines. **The reason to reuse the instrument is not effort, it is that the instrument knows things I
+have forgotten.**
+
+⚠ AND I INVENTED A MECHANISM TO EXPLAIN MY OWN ARTIFACT. I reached straight for F294 —
+*"`worker_timeout_secs` cannot touch them: it is an IDLE-gap timer"* — a real, correctly-remembered
+engine fact, deployed to explain an observation that was never real. A true premise makes a false
+observation feel confirmed (L56: kill your own explanation before building on it).
+
+⇒ L188. **A PARENT THAT SPAWNS CHILDREN DOES NOT COMPLETE — any "still running" count built from
+`dispatched − completed` will report every split, fan-out or delegation as a permanent hang.**
