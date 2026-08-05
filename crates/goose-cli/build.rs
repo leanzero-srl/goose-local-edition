@@ -45,6 +45,27 @@ fn main() {
                 if dirty { "-dirty" } else { "" }
             );
         }
+        // WATCHING `.git/HEAD` ALONE DOES NOT SEE A COMMIT, and the line below used to be the whole
+        // mechanism while the comment above claimed "committing or switching branches re-stamps".
+        // Only the SWITCH half was true: `git commit` on the same branch leaves `.git/HEAD` byte-for-byte
+        // identical (`ref: refs/heads/<branch>`) and moves `.git/refs/heads/<branch>` instead. So cargo
+        // saw no input change, reused the object file, and the stamp froze.
+        //
+        // MEASURED: a release binary built 2026-08-05 17:25, carrying six engine changes committed that
+        // afternoon, reported `build_sha: eb8027139-dirty` — a commit from 2026-08-03 18:40, TWO DAYS
+        // STALE. The field whose entire purpose is to answer "did this run contain my change?" was
+        // answering about a different day, which is worse than the "dev" it replaced: "dev" is obviously
+        // useless, a plausible wrong sha is believed.
         println!("cargo:rerun-if-changed=../../.git/HEAD");
+        // The ref HEAD points at — this is the file a commit actually moves.
+        if let Ok(head) = std::fs::read_to_string("../../.git/HEAD") {
+            if let Some(r) = head.strip_prefix("ref: ").map(str::trim) {
+                println!("cargo:rustc-env=GOOSE_BUILD_REF={r}");
+                println!("cargo:rerun-if-changed=../../.git/{r}");
+            }
+        }
+        // And the packed form: `git gc` moves refs out of `refs/heads/` into this single file, after
+        // which the path above stops existing and watching only it would silently freeze again.
+        println!("cargo:rerun-if-changed=../../.git/packed-refs");
     }
 }
