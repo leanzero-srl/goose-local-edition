@@ -13321,3 +13321,55 @@ much worse than 0.432 the bar is met easily and this file cost nothing.
 
 ⇒ L181. **POWER IS NOT MONOTONIC IN SAMPLE SIZE FOR A DISCRETE TEST — check the tolerance table
 before buying more samples, because the next one up may buy a harder test.**
+
+## F328 — THE 1-NODE ARM WAS STARVED BY A SCHEDULER THAT NEVER ADVANCED PAST ITS OWN HEAD
+
+`sweep.py` interleaved the curve with `itertools.zip_longest(n3, n1)`, producing
+`[n3_next, n1_r0, n3_..., ...]` — `n1_r0` at index 1. The comment above it promised *"a MATCHED PAIR
+exists after every two units"*.
+
+**`main()` recomputes `backlog()` on EVERY iteration (`sweep.py:1426`) and always takes `todo[0]`
+(`:1435`).** So when the head n3 unit finished, the recomputed backlog zipped a *fresh* n3 rep into
+index 0 and pushed `n1_r0` straight back to index 1. An ordering that only works if the list is
+consumed in sequence is no ordering at all when the list is rebuilt each step.
+
+**MEASURED, and the evidence was in front of me for four ticks:** `baseline-n3-r0`, `r1`, `r2`, `r3`
+ran consecutively while the log printed **`NEXT: baseline-n1-r0` every single time.** I read that
+line four times and treated it as a schedule rather than a symptom. The `NEXT` field is
+`todo[1]` — a unit at index 1 that never becomes index 0 is not "next", it is starving.
+
+**CONSEQUENCE FOR GOAL ONE:** no matched pair could exist until the ENTIRE n3 arm finished. Zero
+pairs after four cells and roughly eight hours of fleet time, on the session-resolving question.
+
+**THE FIX** — `curve_first()`, a PURE FUNCTION OF WHAT IS STILL INCOMPLETE, so it yields the same
+sequence whether the list is consumed once or rebuilt at every step: sort curve units by
+`(rep, then 3-nodes-before-1-node)`.
+
+    simulation, taking todo[0] and recomputing each step:
+      NEW rule  n3-r0 n1-r0 n3-r1 n1-r1 n3-r2 n1-r2 ...   first pair closes at unit 2
+      OLD rule  (all n3 first)                            first pair closes at unit 6
+
+`curve_order_self_test()` runs that simulation for both rules and asserts the OLD one FAILS it — a
+test the previous implementation also passes proves nothing (L96/L123). It further asserts no unit
+is scheduled twice, every curve unit still runs, and a backlog with no curve units passes through
+unchanged.
+
+**IMMEDIATE EFFECT ONCE THE SUPERVISOR RESTARTS:** the next three units are `n1-r0`, `n1-r1`,
+`n1-r2` — their n3 partners are already complete, so **three matched pairs close in three units**
+instead of none in six.
+
+### F327's n=8 IS NOW WIRED, AND SCOPED
+
+`CURVE_REPS = 8`, applied ONLY to `baseline` at nodes ∈ {3, 1}. Raising the global `MIN_REPS` would
+have dragged every score arm to 8 reps as well (`cap = max(c.reps, target_reps)`) — a far larger
+blast radius than the decision justifies. Backlog now shows 13 curve units owed and no non-curve
+unit anywhere in the head.
+
+⚠ **NEITHER CHANGE IS LIVE.** `MIN_REPS`, `CURVE_REPS` and `curve_first` all belong to the RUNNING
+supervisor (pid 80288), and a running process does not see source edits (L23). **The restart happens
+at a UNIT BOUNDARY** — cell 4 is ~5000 s into execute and restarting now would discard it (L101).
+This is a SWEEP restart, not an engine boundary: the binary is untouched and no collected cell is
+voided, so F253 is not in play.
+
+⇒ L182. **A "NEXT" THAT NEVER BECOMES "NOW" IS A STARVATION BUG, NOT A SCHEDULE — if the queue is
+rebuilt every step, any order that depends on consuming the list is decoration.**
