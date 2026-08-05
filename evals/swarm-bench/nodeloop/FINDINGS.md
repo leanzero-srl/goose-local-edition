@@ -15385,3 +15385,52 @@ is "one run's tests exist and the other's do not", NOT "the fleet built more."**
 corrected in the same commit rather than left to read as a claim this finding has refuted.
 📌 **AND THE BIGGER PRIZE IS NOW THE RETRY BURST**, which is fleet-independent, hits the SMALL fleet
 hardest, and cost this run its entire test suite.
+
+## F371 — 🏆 THE DEFECT IS TASK KIND, NOT FLEET SIZE: test-authoring tasks fail at 29% against 1% for everything else — and the shipped remedy is already ON.
+
+F370 left "the retry burst" as the next target and assumed it was about the 1-node arm. Splitting all
+five cells by task kind first (L126 — a pattern in one population is a hypothesis until a second sees
+it) shows the fleet was never the variable:
+
+    kind        n    failed        attempts/task
+    test-*     21    6  (29%)      2.05
+    other      74    1  ( 1%)      1.07
+
+**A test-authoring task is ~29× more likely to fail than any other task and takes twice the attempts.**
+It is NOT a 1-node phenomenon — `baseline-n3-r0` failed 3 of its 5 test tasks too.
+
+🔴 **AND THE REMEDY IS ALREADY SHIPPED AND ACTIVE.** `kind_prompt` is a baked default (`swarm.rs:1156`,
+with a test asserting it "must ship ON"), and **all five runs' own `levers_resolved` records
+`kind_prompt: True`**. The engine's `rules_delivered` event goes further: **`tailored: true` on test
+tasks, `false` on the rest** — so the kind-gating fired, delivered tailored rules, and the failure
+rate is what it is *with the fix working*. **FIRED ≠ CORRECT, measured on the mechanism's own event.**
+
+**TWO EXPLANATIONS KILLED IN PASSING:**
+- **"The test spec is thin"** (the plan's 43-char split-child defect, applied to this population) —
+  **REFUTED. Test specs are the LONGEST**: median **2160 chars vs 1236** for everything else, min 1341.
+  They fail *more* with *more* instruction, which is the direction the density argument predicts and
+  the thin-spec argument does not.
+- **"The 1-node arm is being starved"** — refuted above; n3-r0 failed 3 of 5.
+
+**THE FAILURE SIGNATURE IS UNIFORM**: `status=failed`, **ZERO tool calls**, ~7 s per attempt, the
+engine's own `missing_deliverable_gate` text, then 3-4 attempts inside **~22 s** with no backoff
+(`scheduler.rs` has zero sleeps). The model answers with prose and never calls `write` — it does not
+even read first.
+
+🔴 **A "FAILED" TASK DOES NOT IMPLY A MISSING FILE — A FALSE RED.**
+
+    baseline-n3-r0   tests/test_meridian.py  owner=test-core  task=FAILED  file=3035 B  ← exists
+                     tests/test_store.py     owner=test-core  task=FAILED  file=2566 B  ← exists
+                     tests/test_api.py       owner=test-api-web task=None  file=9524 B  ← split parent, F334
+    baseline-n1-r0   all three               owners FAILED                 ALL MISSING
+
+So a failed owner left **5601 B of real test code** on one run and **nothing** on the other. **The
+run's `failed` count overstates damage on some runs and exactly describes it on others** ⇒ **L216.**
+
+📌 **THE FIX IS NOT ANOTHER RULES TWEAK.** kind_prompt is on, tailored, and insufficient; the spec is
+already the longest one in the run. What has NOT been tried is a **forcing function** — the gate
+detects the failure perfectly and then re-asks the same model the same way three times in 22 seconds.
+⚠ **CONFIDENCE: the DEFECT is high-confidence (n=21 vs 74, two fleet sizes, mechanism confirmed on by
+the engine's own events). The FIX is NOT designed yet, and with no fleet I cannot measure one — so the
+next step is to read the retry/dispatch path and find what the engine can do DIFFERENTLY on attempt 2,
+not to re-word a prompt I cannot test.**
