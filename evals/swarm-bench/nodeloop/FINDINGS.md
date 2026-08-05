@@ -14478,3 +14478,58 @@ will not** — and until one does, this is a mechanism that is written, not a me
 under ~20 s, the estimate that put pre_review at roughly half of judge+pre_review slot-time was
 wrong, and F348's ~0.30 central figure is too high** — which would matter, because that number is
 what killed F346.
+
+## F352 — judge load is now attributable to a node. Every judge_verdict in the archive blamed the wrong one.
+
+`judge_verdict.device` comes from `self.task_final_device.get(tid)` (`scheduler.rs:1439-1442`) — **the
+device of the JUDGED WORKER, not the node that ran the judge**. A judge claims a real fleet slot
+(`self.devices[i].in_flight += 1`, `scheduler.rs:1205-1207`), so its inference cost lands on some
+node; the log attributed that cost to the node being reviewed instead. The judging node was
+unrecoverable from the event stream.
+
+That is not a cosmetic mislabel. **It is precisely the field needed to test the one surviving
+selection defect** — `scheduler.rs:1099`/`:1220` pick the idle-job device with `position(...)` (the
+FIRST device with any free slot) while `pick_device` at `:592-600` deliberately sorts by `in_flight`,
+so idle jobs pile onto whichever node is lowest-index rather than the genuinely idle one. Simulation
+put the cost of that at roughly half the achievable contribution (+0.062/+0.064/+0.069/+0.110 today
+against +0.143/+0.156/+0.186/+0.198 if placement were correct). **Until now that could only be
+simulated, never measured, because the log named the wrong node.**
+
+**FIX:** `SwarmEvent::JudgeVerdict` gains `judge_node`, recorded from `claimed_device` at the moment
+the judge fires. `device` is left exactly as it was — it is a real fact about the judged worker, and
+silently redefining an existing field would invalidate every reader of the archive.
+
+**A SINGLE `Option<String>` IS SUFFICIENT AND THE REASON IS AN INVARIANT, NOT AN ASSUMPTION.** The
+judge is single-flight under `judge_running` (`scheduler.rs:446`, set at `:1200`, cleared by
+`IdleSlotGuard::drop`). The F348 falsifier verified the consequence directly against the archive:
+`judge_observed` and `judge_verdict` counts match **exactly** — 103/103, 72/72, 64/64, 43/43 — and
+never interleave. A comment at the field records that if the single-flight invariant is ever relaxed,
+this must become a per-task map.
+
+**`None` IS MEANINGFUL, NOT MISSING.** When every node is busy the judge deliberately fires anyway
+with `claimed_device = None` and an empty `judge_model_id`, runs deterministic-only, and costs no slot
+and no inference (`scheduler.rs:1091-1095`) — 59/26/15/11 of the judge firings per cell. An empty
+`judge_node` therefore *means* "deterministic, unclaimed", which is exactly the population that must
+be excluded when computing judge slot-seconds.
+
+🔴 **A THIRD TYPE CONFUSION IN ONE SESSION, AND THE SAME SHAPE EVERY TIME.** I wrote
+`self.devices[i].model_id` — `devices` is `Vec<DeviceRt>`, which wraps `cfg: DeviceCfg`, so the field
+is `.cfg.model_id`. Today that is: `SwarmDevice` vs `DeviceCfg` (F350), and now `DeviceRt` vs
+`DeviceCfg`. **Three structs in this engine carry a `model_id` and a `weight`, and I have now guessed
+wrong about which one is in hand three times.** The compiler caught all three, which is the system
+working — but the pattern is that I reach for a field name from memory instead of reading the binding
+two lines up (L130 applies to the TYPE, not just the fix site).
+
+✅ `cargo clippy --all-targets -- -D warnings` **exit 0**. ✅ `cargo test -p goose-swarm`: **86 tests
+pass, 0 failed** across all four targets.
+
+⚠ **UNMEASURED.** The fleet has had no models loaded since 08:03:59.
+
+📌 **REGISTERED BEFORE THE DATA, and it doubles as a correctness check on the fix itself:** on the
+next 3-node run, `judge_node` must be **non-empty on roughly 40-75% of `judge_verdict` events** (the
+claimed fraction was 44/103, 46/72, 49/64, 32/43) and empty on the rest. **If it is empty on ALL of
+them the field is not being set; if it is non-empty on ALL of them the deterministic-only path is not
+being distinguished — and either way the number is worthless.** And the payload that matters: with
+correct placement the distribution of `judge_node` across the three model-ids should be roughly even.
+**If it is concentrated on one node, the `position()` defect is confirmed from the log rather than
+from a simulation.**

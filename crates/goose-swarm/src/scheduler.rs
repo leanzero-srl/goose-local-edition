@@ -444,6 +444,11 @@ struct State {
     /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
     split_generation: HashMap<TaskId, u32>,
     judge_running: bool,
+    /// Which node is running the CURRENT judge. A single Option is sufficient and correct because
+    /// `judge_running` makes the judge single-flight — `judge_observed` and `judge_verdict` counts
+    /// match exactly (103/103, 72/72, 64/64, 43/43) across every archived run, and they never
+    /// interleave. If that invariant is ever relaxed this must become a per-task map.
+    judge_node: Option<String>,
     idle_jobs: u32,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): rotating review-dimension index for idle nodes during the
     /// sink, so successive idle reviews cover different angles.
@@ -987,6 +992,7 @@ impl State {
                         self.sink.emit(&SwarmEvent::JudgeVerdict {
                             task_id: tid.to_string(),
                             device: dev_id.clone().unwrap_or_default(),
+                            judge_node: self.judge_node.clone().unwrap_or_default(),
                             verdict: "degraded_stall".to_string(),
                             confidence: 1.0,
                             hint:
@@ -1198,6 +1204,10 @@ impl State {
             split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
         };
         self.judge_running = true;
+        // Record the JUDGING node before the call, not after: the verdict emit reads
+        // `task_final_device`, which is the judged worker. `None` here is meaningful — it is the
+        // deterministic-only path where no device was claimed and no inference was spent.
+        self.judge_node = claimed_device.map(|i| self.devices[i].cfg.model_id.clone());
         self.idle_jobs += 1;
         self.last_judged.insert(tid.clone(), Instant::now());
         // Claim the idle device's slot now that the judge is actually firing, so a worker dispatch (which
@@ -1481,6 +1491,7 @@ impl State {
             self.sink.emit(&SwarmEvent::JudgeVerdict {
                 task_id: tid.to_string(),
                 device: device.clone().unwrap_or_default(),
+                judge_node: self.judge_node.clone().unwrap_or_default(),
                 verdict: "accept".to_string(),
                 confidence: outcome.confidence,
                 hint: outcome.hint.clone(),
@@ -1556,6 +1567,7 @@ impl State {
             self.sink.emit(&SwarmEvent::JudgeVerdict {
                 task_id: tid.to_string(),
                 device: device.clone().unwrap_or_default(),
+                judge_node: self.judge_node.clone().unwrap_or_default(),
                 verdict: outcome.verdict.as_str().to_string(),
                 confidence: outcome.confidence,
                 hint: outcome.hint.clone(),
@@ -1574,6 +1586,7 @@ impl State {
         self.sink.emit(&SwarmEvent::JudgeVerdict {
             task_id: tid.to_string(),
             device: device.clone().unwrap_or_default(),
+            judge_node: self.judge_node.clone().unwrap_or_default(),
             verdict: outcome.verdict.as_str().to_string(),
             confidence: outcome.confidence,
             hint: outcome.hint.clone(),
@@ -1626,6 +1639,7 @@ impl State {
                 self.sink.emit(&SwarmEvent::JudgeVerdict {
                     task_id: tid.to_string(),
                     device: device.clone().unwrap_or_default(),
+                    judge_node: self.judge_node.clone().unwrap_or_default(),
                     verdict: "salvaged_spin".to_string(),
                     confidence: 1.0,
                     hint: error_text.clone(),
@@ -2195,6 +2209,7 @@ impl Scheduler {
             omni_aborts: HashMap::new(),
             split_generation: HashMap::new(),
             judge_running: false,
+            judge_node: None,
             idle_jobs: 0,
             sink_review_dim: 0,
             last_judged: HashMap::new(),
