@@ -15488,3 +15488,48 @@ from all 519 archived requests"* — i.e. it was known never to have been exerci
 shipped anyway ⇒ **L217.**
 📌 **NEXT: make `force_write_tool` fail safe rather than fail 400** — it is a real engine defect, it is
 fleet-independent, and unlike a prompt change I can fix it without a fleet.
+
+## F373 — 🔴 F372's HEADLINE IS WRONG AND I AM RETRACTING IT. The engine had already measured the 400, documented it verbatim, and TEST-GUARDED the lever OFF.
+
+F372 called `force_write_tool` *"a live landmine… known never to have been exercised, and shipped
+anyway"* and made it the next action. **That is false in every part.** Reading the sites I skipped:
+
+**`swarm.rs:19445-19456`** — the function's own doc:
+> *"STAYS OFF, and the bench says why. Two measurements, both against the live server: the
+> NAMED-function form is rejected outright — `{"error":"Invalid tool_choice type: 'object'. Supported
+> string values: none, auto, required"}` — so "force the write tool" is not expressible here at all,
+> **and shipping it would have 400'd every forced request**; `"required"` is NOT hard-enforced (1 of 6
+> replays still produced no tool call) and biases to the wrong tool (`shell` on 3 of 5 acts)… It is
+> kept, wired and tested rather than deleted because it is the only mechanism that can make "finish
+> without acting" impossible **if the endpoint ever enforces it** — but it does not earn a default on
+> this evidence."*
+
+**`swarm.rs:16718`** — a test asserts it: *"force_write_tool must stay OFF: tool_choice required is not
+enforced and picks the wrong tool"*. **`swarm.rs:22722`** — it is emitted in `levers_resolved`
+*"precisely BECAUSE it is off… and this one has already shipped once in a form the server rejected
+**27 times out of 27**"* — **the engine quotes my own bench's exact number.**
+
+**SO THE SECOND HALF OF F372 IS RETRACTED TOO.** I wrote that I had "benchmarked all three levers and
+never read the result". **The result WAS read** — it is encoded in that doc, that test, and that event
+field. What I failed to read was **the engine**. The bench did its job; I re-derived its conclusion
+from scratch and then reported the engine as defective for a state it had deliberately chosen and
+documented in three places. ⇒ **L217 as written is WRONG and is replaced: A DEFAULT-OFF LEVER WITH A
+TEST PINNING IT OFF IS A DECISION, NOT AN OVERSIGHT — READ THE GATE FUNCTION, NOT JUST THE FIELD DOC.**
+
+**WHAT SURVIVES F372, AND IT IS THE PART THAT MATTERS:**
+- The matched-case bench table stands: **nudge 48.0% wrote vs baseline 23.8%, `no_tool_call` 4% vs 24%**
+  on the 9 shared cases.
+- **`act_now_nudge` is that nudge, is ON by default, and shipped `d9394ebda` 08-03 18:17 — before both
+  baseline runs.** ⇒ **the 29% test-task failure rate (F371) is measured WITH the best available
+  intervention active**, and the engine's doc says why nothing better is available: *"every alternative
+  aimed at the same failure is either harmful or rejected by the server."*
+
+🔴 **THIS IS THE THIRD TIME TODAY A COMMENT AT THE SITE HELD THE ANSWER** (`:12665`, `:1152`, `:267`,
+now `:19445`), **and the second time I published a defect the engine had already guarded.** The
+pattern is exact and I keep repeating it: **I grep for the FIELD, read its doc, and stop — without
+reading the GATE FUNCTION that resolves it.** The field doc at `:884` sells the mechanism; the gate
+function at `:19445` records that it does not work. Both were one grep apart.
+📌 **CONSEQUENCE FOR THE ACTUAL GOAL: the test-task failure has NO cheap remedy left.** kind_prompt ON
+and tailored, act-now nudge ON, tool_choice rejected by the server, `"required"` harmful. **That is a
+real dead end, established from the engine's own measurements plus mine — and knowing it is a dead end
+is worth more than another tick spent re-discovering it.**
