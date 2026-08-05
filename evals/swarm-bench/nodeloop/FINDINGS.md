@@ -13373,3 +13373,56 @@ voided, so F253 is not in play.
 
 ⇒ L182. **A "NEXT" THAT NEVER BECOMES "NOW" IS A STARVATION BUG, NOT A SCHEDULE — if the queue is
 rebuilt every step, any order that depends on consuming the list is decoration.**
+
+## F329 — F325 COUNTED ONE RUN FOUR TIMES. THE WIN IS REAL BUT MARGINAL, NOT DECISIVE.
+
+Two ticks ago F325 published *"the engine has decisively beaten the null"* at run-clustered
+p = 3.7e-05 on "6 of 7 runs entirely clean". **Four of those seven runs are the SAME RUN.**
+
+    nodeloop-parked-1785869121   run_id=swarm-20260804-163317049
+    nodeloop-parked-1785885982   run_id=swarm-20260804-163317049
+    nodeloop-parked-1785886345   run_id=swarm-20260804-163317049
+    nodeloop-parked-1785886357   run_id=swarm-20260804-163317049   ← all four are `think_off-n3-r2`
+
+**`loop.sh start` PARKS THE RUN TREE WITH `cp -R` ON EVERY SINGLE START.** I read that block this
+tick while pre-flighting the restart procedure (L152) and it explained a composition caveat I had
+written off as "parked runs are selection-biased" — they are not killed runs at all, they are
+**copies**.
+
+**AND THE COPY DEFEATS THE PROVENANCE CHECK, IN THE DIRECTION THAT FLATTERS.** `binary_mtime()`
+exists so a run produced by an older engine cannot contribute (L122). `cp -R` stamps the copies with
+a FRESH mtime, so the copies PASS the scope check while the original — untouched, older mtime — is
+correctly excluded. The live `think_off-n3-r2` was filtered out; its four clones were counted. A
+guard keyed on filesystem metadata cannot survive a filesystem operation.
+
+### THE HONEST NUMBER
+
+    distinct current-binary runs: 3
+      baseline-n3-r0   5 attempted, 3 failed
+      baseline-n3-r1   6 attempted, 0 failed
+      baseline-n3-r2   7 attempted, 0 failed
+
+    task-level      3 failures in 18, null predicts 5.57      p = 0.1442   NOT significant
+    run-clustered   2 of 3 runs clean, null predicts 0.34      p = 0.0343   significant, MARGINALLY
+
+    published in F325 (with the duplicates):                   p = 0.00071 / p = 3.7e-05
+
+**F325's headline is withdrawn as stated.** What survives: the run-clustered test still reads
+p = 0.0343 on three genuinely distinct runs — below 0.05, but marginal, on n=3, and the task-level
+test does not reach significance at all. "The engine appears to have improved on the old build, at
+p ≈ 0.03 with three runs" is the claim the data supports. "Decisively beaten" is not.
+
+### THE FIX
+
+`measured_metric()` now takes provenance and identity from INSIDE the log, where copying cannot
+reach: `run_started.ts` (written by the engine at the moment the run began) replaces the file mtime
+for the build scope, and `run_id` deduplicates. Both are engine facts; the filesystem around them is
+not evidence.
+
+⚠ THIS BUG WAS ALREADY VISIBLE IN F325's OWN CAVEAT. I wrote *"4 of the 7 in-scope runs are
+`nodeloop-parked-*`, whose completed sets are selection-biased toward success"* — I noticed the
+composition was odd, invented a plausible story for it, and published the number anyway instead of
+opening one of the four directories. The caveat was the falsifier and it had an address (L70).
+
+⇒ L183. **A GUARD KEYED ON FILESYSTEM METADATA IS VOID THE MOMENT ANYTHING COPIES THE FILES — take
+provenance and identity from inside the artifact, never from the directory it happens to sit in.**
