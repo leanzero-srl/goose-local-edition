@@ -12852,3 +12852,39 @@ any app-side cell below it.**
 **Also, for the curve itself:** cell 3 is the **FASTEST n3 baseline cell so far** —
 wall **6752.6** against r0's 7729.3 and r1's 8488.0 — and its stored `prefix_secs` is **1316.0**,
 exactly the figure I derived live from the event log in F303. The instrument and the row agree.
+
+## F317 — `bonusclass.py`: the F313 test made mechanical, before the next four cells land
+
+I classified the replan bonus work by hand twice and got it wrong the first time — F312 asserted
+"all 14 added tasks are `test-*`" from their NAMES, and `owned_files` showed three own
+`vendorsync/api.py` and `vendorsync/web/index.html` (L171). Four more cells are coming and each
+arrives with its class knowable BEFORE its score, so the rule belongs in a script, not in my eye
+(L151 — build the verdict instrument before the data arrives).
+
+`bonusclass.py` reads `replanned.added`, joins each added task to its `task_dispatched.owned_files`,
+classifies by **PATH not name**, joins to the stored tier B, and evaluates the registered prediction
+with its falsifier. Current output:
+
+    think_off-n3-r0     B 1.0000  APP-SIDE   api-input-validation[A], web-error-handling[A]
+    think_off-n3-r1     B 0.9715  APP-SIDE   frontend[A], test-meridian-edge-cases[T]
+    sink_review-n3-r0   B 0.3611  TEST-ONLY
+    baseline-n3-r0      B 0.3194  TEST-ONLY
+    baseline-n3-r2      B 0.3194  TEST-ONLY  <- the out-of-sample cell (F316)
+    baseline-n3-r1      B 0.2083  TEST-ONLY
+    think_off-n3-r2     B 0.2083  TEST-ONLY
+
+    prediction: TEST-ONLY -> B < 0.5 · APP-SIDE -> B > 0.9     hits 7   MISSES 0
+    exact p (app-side are the top-k of n): 0.0476
+
+**The self-test asserts BOTH directions and the exact trap that bit me:** a task owning
+`["vendorsync/api.py", "tests/test_api.py"]` must read **APP-SIDE**, `vendorsync/tests/test_*.py`
+must read TEST-ONLY, and — the part that matters — **`exact_p` must REFUSE to produce a number when
+the split is not a clean top-k.** A statistic that cannot decline is not a statistic; I made it
+decline on a synthetic case where an app-side cell sits at B 0.20.
+
+⚠ **The script PRINTS its own caveats every run, so no later reader mistakes the p for a mechanism:**
+the mechanism is falsified (F314), the p is not pre-registered, and only `baseline-n3-r2` was
+out-of-sample. **Any miss falsifies the claim outright and the script says so.**
+
+⇒ **L173. WHEN A CLASSIFICATION WILL BE REPEATED, WRITE IT DOWN AS CODE THE FIRST TIME YOU GET IT
+WRONG — not the third.**
