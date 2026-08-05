@@ -27,8 +27,32 @@ from __future__ import annotations
 import json
 import sys
 from math import comb
+from pathlib import Path
 
+import bonusclass          # L2: the bonus classifier already exists and already has a self-test
 import sweep
+
+RUNS = (Path(__file__).resolve().parent.parent / "runs" / "nodeloop").resolve()
+
+
+def bonus_of(unit: str) -> tuple[int, str]:
+    """(how many tasks the replanner ADDED, what class they were) for one stored unit.
+
+    F312 is the confound this exists to expose: **the 1-node arm CANNOT REPLAN, by construction** —
+    `dynamic_replan` requires `idle_capacity() >= 2` and a task in flight, which one device cannot
+    reach. So the two arms do DIFFERENT WORK, and every n3 cell so far carries 2-4 tasks of extra
+    work that its n1 partner was structurally incapable of doing.
+
+    That biases WALL against the claim (n3 does more, so it takes longer — safe) and SCORE toward it
+    (n3 ships more, so it may score higher — NOT safe). A verdict printed without this number invites
+    exactly the reading it cannot support: "3 nodes build better apps", when part of the gap is
+    "3 nodes were allowed to build more of the app". L124 · L170.
+    """
+    log = RUNS / unit / "run.jsonl"
+    if not log.is_file():
+        return 0, "NO-LOG"
+    cls, detail = bonusclass.bonus_class(log)
+    return len(detail), cls
 
 CURVE_VERSION = "curve-1"
 FAST_ARM, SLOW_ARM = 3, 1     # nodes per arm; the curve compares these two levels of `baseline`
@@ -74,6 +98,8 @@ def pair_up(by_cell: dict) -> tuple[list[dict], list[dict]]:
             "n3_score": fast.get("score"), "n1_score": slow.get("score"),
             "engine_build": fast.get("engine_build"),
         }
+        row["n3_bonus"], row["n3_bonus_class"] = bonus_of(f"baseline-n{FAST_ARM}-r{rep}")
+        row["n1_bonus"], row["n1_bonus_class"] = bonus_of(f"baseline-n{SLOW_ARM}-r{rep}")
         if why:
             dropped.append({**row, "reason": why})
         else:
@@ -120,7 +146,9 @@ def render(v: dict) -> str:
                    f"n1 {p['n1_wall']:.0f}s / {p['n1_score']:.4f}   "
                    f"ratio {p['wall_ratio']}  "
                    f"{'3n FASTER' if p['faster_with_3'] else '3n slower'}  "
-                   f"{'3n BETTER' if p['better_with_3'] else '3n worse'}")
+                   f"{'3n BETTER' if p['better_with_3'] else '3n worse'}"
+                   f"   bonus n3 +{p['n3_bonus']} [{p['n3_bonus_class']}] "
+                   f"vs n1 +{p['n1_bonus']} [{p['n1_bonus_class']}]")
     for d in v["dropped"]:
         out.append(f"    r{d['rep']}  DROPPED — {d['reason']}")
     if v["n_pairs"]:
@@ -129,6 +157,18 @@ def render(v: dict) -> str:
     out.append(f"  VERDICT: {v['verdict']}")
     if v["caveat_dropped"]:
         out.append(f"  ⚠ {v['caveat_dropped']}")
+    if v["pairs"]:
+        n3b = sum(p["n3_bonus"] for p in v["pairs"])
+        n1b = sum(p["n1_bonus"] for p in v["pairs"])
+        out.append(f"  ⚠ REPLAN BONUS, printed beside the verdict because it is the design's own "
+                   f"confound (F312): n3 +{n3b} tasks, n1 +{n1b}.")
+        out.append("    The 1-node arm CANNOT replan — `dynamic_replan` needs idle_capacity() >= 2, "
+                   "which one device never reaches.")
+        out.append("    So the arms did DIFFERENT WORK. Bias: WALL against the claim (safe), "
+                   "SCORE toward it (NOT safe).")
+        if n1b == 0 and n3b > 0:
+            out.append("    A score win here is PART node-count and PART 'n3 was allowed to build "
+                       "more'. Read `bonusclass.py` before quoting it as quality.")
     return "\n".join(out)
 
 
@@ -144,17 +184,26 @@ def self_test() -> int:
 
     # THE PAIRING FALSIFIERS, EXERCISED — not merely written down. A zero from this file is only
     # evidence once it has been shown to produce a NON-zero on a case whose answer is known (L4/L96).
-    ok3 = {"arm": "baseline", "nodes": 3, "rep": 0, "wall_secs": 100.0, "score": 0.7,
+    ok3 = {"arm": "baseline", "nodes": 3, "rep": 99, "wall_secs": 100.0, "score": 0.7,
            "engine_build": "b1"}
     ok1 = {**ok3, "nodes": 1, "wall_secs": 190.0, "score": 0.65}
-    pairs, dropped = pair_up({(3, 0): ok3, (1, 0): ok1})
+    pairs, dropped = pair_up({(3, 99): ok3, (1, 99): ok1})
     assert len(pairs) == 1 and not dropped, "a clean pair must FORM — else every zero here is blind"
     assert pairs[0]["faster_with_3"] and pairs[0]["better_with_3"], "3-node win must read as a win"
+    # L124/L170: the bonus columns must EXIST on every pair, or the confound goes unprinted exactly
+    # when the verdict is most quotable. A missing log reads NO-LOG, never a silent 0/"".
+    for k in ("n3_bonus", "n1_bonus", "n3_bonus_class", "n1_bonus_class"):
+        assert k in pairs[0], f"every pair must carry {k} beside the verdict"
+    assert pairs[0]["n3_bonus_class"] == "NO-LOG" and pairs[0]["n1_bonus_class"] == "NO-LOG", \
+        "rep 99 has no log on disk — a missing log must SAY NO-LOG, never a silent 0"
+    # ...and the reader must be able to see a REAL class, or the column is decorative.
+    assert bonus_of("baseline-n3-r0")[1] in ("APP-SIDE", "TEST-ONLY", "NONE"), \
+        "a unit that IS on disk must classify, not fall through to NO-LOG"
 
-    _, d = pair_up({(3, 0): ok3, (1, 0): {**ok1, "engine_build": "b2"}})
+    _, d = pair_up({(3, 99): ok3, (1, 99): {**ok1, "engine_build": "b2"}})
     assert len(d) == 1 and "engine build" in d[0]["reason"], "falsifier 2: mixed builds must DROP"
 
-    _, d = pair_up({(3, 0): ok3, (1, 0): {**ok1, "void": True}})
+    _, d = pair_up({(3, 99): ok3, (1, 99): {**ok1, "void": True}})
     assert len(d) == 1 and "void" in d[0]["reason"], "falsifier 1: a void cell must void its PAIR"
 
     # Falsifier 3 is the one most likely to be rationalised away later, so it is asserted, not trusted:
