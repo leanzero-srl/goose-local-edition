@@ -13735,3 +13735,61 @@ absence) that I had corrected forty minutes earlier.
 
 ⇒ L190. **A DEFECT DESCRIBED IN A SOURCE COMMENT IS NOT THEREBY MEASURABLE — check that the event
 log can carry the quantity before planning any measurement of it, and say plainly when it cannot.**
+
+## F337 — CELL 4 LANDS: THE n1 ARM IS FINALLY RUNNING, ONE PREDICTION HITS, TWO CLAIMS DIE
+
+`autorestart.sh` fired unattended at **06:27:01** — *"supervisor down, 0 engines — restarting"* — new
+supervisor pid 91810 (ppid 1), 1 engine, and the log now reads **`>>> NOW: baseline-n1-r0`** with
+`NEXT: baseline-n1-r1`. **The 1-node arm is running for the first time in this campaign.** F328's
+starvation fix is confirmed on the wire, not merely in a self-test.
+
+**CELL 4 `baseline-n3-r3`: score 0.8157, wall 7302.6 s** — A 0.8333 · **B 0.875** · C 0.8571 · D 0.653.
+**The best cell of the four by a wide margin** (0.6595 / 0.4780 / 0.6030 / **0.8157**), from the run
+with the LONGEST prefix (2882.7 s), TWO discards, a REVERT, and the LOWEST accepted plan confidence
+of any cell (61 against a floor of 85).
+
+### ✅ THE REGISTERED OCCUPANCY PREDICTION HITS
+
+    predicted: final overall occupancy BELOW 0.4737    measured: 0.2582    ✅
+    falsifier was ">= 0.4737" — not triggered
+
+### 🔴 AND THE SAME NUMBER KILLS F333's ORDERING
+
+    unit              occ      wall      score
+    baseline-n3-r2   0.6499   6751.9   0.6030
+    baseline-n3-r0   0.5645   7725.4   0.6595
+    baseline-n3-r1   0.4737   8487.0   0.4780
+    baseline-n3-r3   0.2582   7301.9   0.8157   ← LOWEST occupancy, SECOND-SHORTEST wall
+
+    rank(occ) [2,1,3,0]; a perfect inverse would need [1,0,3,2]   ⇒ 🔴 BROKEN
+
+F333 reported *"occupancy and wall order PERFECTLY INVERSELY across all three"* and labelled it a
+DIRECTION at P(luck) = 0.167, not a result. **The fourth point killed it.** That is the label doing
+its job — and the EXECUTE column does not rescue it either (0.8568 / 0.5746 / 0.8139 / 0.5910 against
+walls 7725 / 8487 / 6752 / 7302 is not monotone in any direction).
+
+**The cell with the least fleet utilisation shipped the best app.** Whatever governs quality here, it
+is not how busy the nodes were.
+
+### 🔴 F313 IS FALSIFIED BY ITS OWN INSTRUMENT
+
+`bonusclass.py` reports **hits 7, MISSES 1 — `baseline-n3-r3`**. It is APP-SIDE (bonus work
+`web`[APP] + `verify-edge`[TEST]) with **B = 0.875 against a registered threshold of B > 0.9**.
+
+The script's own line is *"ANY MISS above falsifies the claim. A miss is the result, not a rounding
+error."* I wrote that sentence specifically to stop myself arguing that 0.875 is basically 0.9. **The
+threshold prediction is dead.**
+
+⚠ WHAT SURVIVES IS THE SEPARATION, NOT THE THRESHOLD. All three APP-SIDE cells are still the top
+three by B (1.0, 0.9715, 0.875) and all five TEST-ONLY sit below (0.3611 … 0.2083), so the exact
+top-k p is now **0.0179** on 8 cells. But the p was never pre-registered (F317's own caveat) and the
+MECHANISM was already falsified by F314. An ordering with a dead mechanism and a post-hoc p is a lead
+that keeps refusing to die, not a finding.
+
+### ✅ THE n1 ARM IS ARMED, RE-CONFIRMED
+
+`swarm-1node-r0`: `worker_count = 1`, `planner_pushed = False`, pool of one device. F331's chain
+holds. The live `baseline-n1-r0` will be checked the same way once it emits `pool_resolved`.
+
+⇒ L191. **A DIRECTION AT n=3 IS A COIN THAT LANDED THE SAME WAY THREE TIMES — the honest label is
+what lets the fourth point kill it cleanly instead of being explained away.**
