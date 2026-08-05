@@ -206,6 +206,20 @@ def self_test() -> int:
     _, d = pair_up({(3, 99): ok3, (1, 99): {**ok1, "void": True}})
     assert len(d) == 1 and "void" in d[0]["reason"], "falsifier 1: a void cell must void its PAIR"
 
+    # A UNIT THAT NEVER STARTED IS NOT VOID, NOT ABORTED, NOT TIMED OUT — it just returns instantly
+    # with score 0.0 because the fleet had no models loaded. Asserted HERE and not only in sweep.py
+    # because this instrument is the one that publishes the verdict: on 2026-08-05 it paired 113 such
+    # rows into SEVEN fabricated pairs and printed "4/8 favour 3 nodes, p = 0.6367" while the single
+    # real pair said the opposite. A filter that lives only in the callee is one refactor away from
+    # letting that happen again (L55).
+    _, d = pair_up({(3, 99): ok3, (1, 99): {**ok1, "harness_ok": False}})
+    assert len(d) == 1, "a cell the scorer marked harness_ok=False must DROP its pair"
+    _, d = pair_up({(3, 99): ok3, (1, 99): {**ok1, "wall_secs": 0.2}})
+    assert len(d) == 1, "a cell that finished in 0.2s never ran and must DROP its pair"
+    # ...and both directions: a real cell must still pair, or the guard has eaten the experiment.
+    p, d = pair_up({(3, 99): ok3, (1, 99): ok1})
+    assert len(p) == 1 and not d, "a genuine pair must survive both new guards"
+
     # Falsifier 3 is the one most likely to be rationalised away later, so it is asserted, not trusted:
     # five pairs all faster but NONE better must NOT be reported as support.
     fast_only = {"n_pairs": 5, "p_wall": 0.03125, "p_score": 1.0}
