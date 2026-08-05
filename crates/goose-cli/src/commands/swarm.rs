@@ -4978,6 +4978,34 @@ mod tests {
         );
     }
 
+    /// The HTTP-timeout fact must REACH the module that owns the client, and must not spray.
+    ///
+    /// `client_timeouts` is the only check of 35 where all four archived 3-node cells score below the
+    /// 1-node cell — every one of them shipped "no request timeout". The fact existing in the library
+    /// is worth nothing if no trigger carries it to the author, which is exactly the failure
+    /// `pitfall_items_match_triggers` cannot see: that test only proves the ROW EXISTS.
+    #[test]
+    fn the_http_timeout_fact_reaches_a_client_task_and_no_one_else() {
+        let client = relevant_pitfalls(
+            "Build the Meridian client: fetch payments from http://127.0.0.1:8930/v1/payments",
+        )
+        .expect("a task that calls an HTTP endpoint must retrieve the timeout pitfall");
+        assert!(client.contains("outbound HTTP call needs an EXPLICIT timeout"));
+
+        // Library names, not domain words. The archived plans put "vendor" in 11 of 16 task specs and
+        // "api" in 6, so triggering on either would hand this fact to tasks that open no socket.
+        assert!(
+            relevant_pitfalls("Store the vendor payment rows in the api schema").is_none(),
+            "domain words must NOT trigger it — that is the crying-wolf this library forbids"
+        );
+
+        // And it must not drag the rest of the library along with it.
+        assert!(
+            !client.contains("CRON day-of-week"),
+            "cron trivia must not ride along with the network fact"
+        );
+    }
+
     #[test]
     fn summarize_tool_call_extracts_the_intent_field() {
         // shell: the whole command line is the summary.
@@ -9732,7 +9760,12 @@ truncates toward zero; modulo sign follows the dividend in C, the divisor in Pyt
 10. Mutable default args (def f(x, acc=[])) are created ONCE and shared across calls; use a None sentinel. \
 Default string sort is lexicographic/codepoint, not numeric ('10' < '2') and not locale/case-insensitive.
 11. Week start: Sunday in the US locale, Monday in ISO-8601. Business-day math skips weekends (and often \
-holidays); day+1 is not always the next business day. Percentages: 5% is 0.05, basis points are /10000.\
+holidays); day+1 is not always the next business day. Percentages: 5% is 0.05, basis points are /10000.
+12. An outbound HTTP call needs an EXPLICIT timeout: Python requests and urllib.urlopen default to NO \
+timeout and Go's zero-value http.Client has none, so a server that accepts the connection and never \
+answers hangs the caller forever with no recovery. Pass a timeout on every request (connect AND read), \
+and bound any retry loop with a maximum attempt count plus backoff — an unbounded retry is the same \
+hang with extra steps.\
 ";
 
 /// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
@@ -9823,6 +9856,23 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "holiday",
         "percentage",
         "basis point",
+    ],
+    // Deliberately the LIBRARY/SCHEME names, never the domain words. MEASURED against the four archived
+    // 3-node plans before being written: "vendor" hits 11 of 16 tasks and "api" 6 — the exact crying-wolf
+    // the note above this const forbids — while this row reaches the module that actually owns the HTTP
+    // client (`meridian`) in EVERY cell tested and only ~25% of tasks overall.
+    &[
+        "http://",
+        "https://",
+        "urllib",
+        "urlopen",
+        "httpx",
+        "requests.get",
+        "requests.post",
+        "axios",
+        "fetch(",
+        "http client",
+        "api client",
     ],
 ];
 
