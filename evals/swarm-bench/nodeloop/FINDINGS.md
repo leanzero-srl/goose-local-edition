@@ -14945,3 +14945,65 @@ thing the next real run can answer.
 
 ⇒ **L208. "THERE IS A SWITCH FOR THIS" IS A HYPOTHESIS ABOUT THE CONFIG, AND `levers_resolved` IS
 WHERE IT DIES — check what the run actually resolved before proposing to turn anything on.**
+
+## F361 — the spiral threshold IS derivable from the archive, and the derivation kills the lever.
+
+**First, a correction to F360.** I wrote that deriving a `spiral_thinking_chars` value "needs the next
+run". **It did not.** `judge_observed` already carries everything required and it is in every archived
+log:
+
+    {"task_id":"store","elapsed_secs":90,"tool_calls":0,"thinking_chars":725,
+     "any_owned_written":false,"owns_files":true,"secs_since_last_write":null}
+
+`tool_calls` and `any_owned_written` are **exactly** the gate `spiral_thinking_chars` uses, so the
+eligible population can be reconstructed precisely. ⇒ **L209. "THIS NEEDS NEW DATA" IS ITSELF A CLAIM
+— CHECK THE EVENT PAYLOAD BEFORE DEFERRING WORK TO A RUN THAT MAY NEVER COME.** I deferred it while
+the fleet was dead, which would have parked the question indefinitely.
+
+**THE DISTRIBUTION, over observations matching the gate (0 tool calls, nothing written yet), split by
+what the task eventually did:**
+
+    clean     n=21   509 … 931, then one at 1781
+    salvaged  n=1    527
+    failed    n=11   1059 x4, 1250, 1995, 2016 x5
+
+A threshold at 1800-1900 fires on 6 of 11 failed observations with **0 of 21 false positives**, which
+looks shippable.
+
+### 🔴 IT IS NOT. THE ELEVEN "FAILED" OBSERVATIONS ARE **ONE TASK**.
+
+All eleven come from `test-core` in a single cell, observed repeatedly by the judge as it spiralled.
+**n = 11 observations, n = 1 task.** The clean side is 21 observations across many tasks; the failed
+side is one task's trajectory sampled eleven times. **The apparent clean separation is the shape of a
+single run's single stall, and a threshold fitted to it is fitted to one event** (L114 — reps are not
+samples, cluster by case; L180 — a within-run pair is one observation). **A "0 false positives"
+figure computed against n=1 on the other arm is not a false-positive rate.**
+
+### 🔴🔴 AND THE LEVER CANNOT HELP THE CASE THAT MOTIVATED IT
+
+`integrate-verify` — the sink that stalled three times and failed, the whole reason I went looking —
+**never matches the gate:**
+
+    {"task_id":"integrate-verify","elapsed_secs":324,"tool_calls":1,"thinking_chars":1080,
+     "any_owned_written":false,"owns_files":false,"secs_since_last_write":null}
+
+**`tool_calls: 1`.** The gate requires ZERO. One tool call, and the lever is blind to it for the rest
+of the task. Note also **`owns_files: false`** — the sink owns no files at all, so the "no owned file"
+half of the gate is trivially true and carries no information for it either.
+
+⇒ **`spiral_thinking_chars` is irrelevant to BOTH populations I care about**: excluded from all 11
+salvages by construction (they had written files), and excluded from the sink by a single tool call.
+**The switch I spent two ticks evaluating cannot fire on anything in this corpus except `test-core`.**
+**NOT SHIPPING IT.** Not because the threshold is unknown — I derived a plausible one — but because
+the mechanism does not reach the failures.
+
+✅ **WHAT THIS DOES ESTABLISH, and it is the engine's own claim confirmed with data:** the clean and
+spiralling distributions **overlap** (clean reaches 1781, spiralling starts at 1059). `swarm.rs:361`
+says *"a spiral looks identical by volume… a threshold never can"* tell them apart. **Measured here,
+that holds** — and the one clean observation at 1781 sits above four spiralling ones. **A char cap is
+the wrong instrument for this, which is why the engine disarms it and runs `omni_judge` instead.**
+
+📌 **THE TARGET IS UNCHANGED AND NOW BETTER EVIDENCED: `omni_judge` was ON and missed these** (F360).
+The question is not what threshold to add, it is **why a judge that reads the text does not call this
+looping.** That needs a spiralling task's actual reasoning text — which is the 19%-dark transcript
+route (F355), so it needs the `session_id` gap closed first.
