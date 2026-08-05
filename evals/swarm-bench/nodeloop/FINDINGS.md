@@ -16555,3 +16555,53 @@ yields a pass. The test pins all four cases plus a loop asserting the pass strin
 ⇒ **L230. A "NOTHING HAPPENED" GUARD MUST KEY ONLY ON THE AFFIRMATIVE SIGNAL, NEVER ON THE ABSENCE OF
 EVERY OTHER SIGNAL** — because diagnostics are signals, and a guard that counts them will be switched
 off by the very act of explaining itself.
+
+---
+
+## F396 — THE L230 SWEEP: ONE REAL DEFECT CHARACTERISED, TWO CLEAN EXONERATIONS
+
+F395's pattern — a reassuring summary emitted when nothing was checked — is general enough to hunt,
+so I swept the other verdict events in the archive rather than reading code for it.
+
+### ✅ `cross_module_drift` is NOT vacuous
+
+`checked` = 5 / 11 / 11 / 8 / 9 across the five cells, never 0. It reports the size of what it
+examined alongside its verdict, which is exactly what `spec_contract` failed to do. No change needed.
+
+### 🔴 29% OF FROZEN CONTRACT STUBS ARE SYNTACTICALLY INVALID PYTHON
+
+`contract_validate` parses each generated stub, and **6 of 21 across the archive do not parse**, every
+one with `public: []` — not a single symbol extractable:
+
+| cell | unparseable stubs |
+|---|---|
+| n1-r0 | `meridian` 423 B *"Perhaps you forgot a comma?"*, `api` 172 B *"invalid syntax"* |
+| n3-r0 | — |
+| n3-r1 | `store` 595 B *"expected ':'"*, `init-and-readme` 124 B |
+| n3-r2 | `cli` 175 B |
+| n3-r3 | `api` **2150 B** *"invalid syntax"* |
+
+### ✅ AND THE ENGINE ALREADY HANDLES IT — my hypothesis was wrong
+
+I expected malformed stubs to be injected into worker prompts under the banner *"FROZEN MODULE
+INTERFACES — build against these EXACTLY"*, which would be handing a weak model garbage labelled as
+the contract. **Measured: `injected_modules` and the unparseable set are DISJOINT in 5 of 5 cells.**
+Never once overlapping is not luck — the exclusion is deliberate and it works. `contract_validate`,
+whose own doc says it "gates nothing", is in practice feeding a filter that does.
+
+**What it costs instead is silent:** a module whose stub fails to parse ships with **no frozen
+interface at all** for its consumers. `contracts` records `modules: 4, injected: 2`, so the loss is
+recoverable from the event — but nothing states it, and 2 of 4 modules having no contract is not
+something a reader infers from a count they have to subtract themselves.
+
+**I also checked whether that explains `sync_shape`, and it does not.** `api`'s stub was excluded in
+n1-r0 (sync_shape **1.00**) and n3-r3 (**0.00**), and injected in n3-r0 (**0.00**), n3-r1 (**0.00**)
+and n3-r2 (**1.00**). No pattern in either direction. Recorded so the association is not re-derived
+later and mistaken for a cause.
+
+⇒ **The defect is UPSTREAM of the engine.** The stubs are model-authored, and a ~29% syntax-failure
+rate is the weak local model, not a code path. That makes it a MOLDING problem — a bounded re-ask for
+the one stub that failed, or a deterministic fallback that extracts signatures from the module's own
+spec, rather than anything to fix in the contract plumbing. Registering it as characterised, not
+fixed: I have no evidence that a re-ask succeeds more often than the first attempt, and inventing one
+would be exactly the unmeasured mechanism this log exists to avoid.
