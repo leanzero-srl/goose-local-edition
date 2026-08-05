@@ -12670,3 +12670,60 @@ added tests cannot influence, the confound is real but inert.**
 
 ⇒ **L170. AN ARM THAT CANNOT ENTER A BRANCH IS NOT A CONTROL FOR IT — before comparing two
 configurations, check which mechanisms are STRUCTURALLY unavailable to one of them.**
+
+## F313 — REFUTING MY OWN F312: the replanner sometimes writes APP code, and those cells are the two highest-B
+
+F312 asserted *"all 14 tasks the replanner has ever added are `test-*` tasks"*. **I pattern-matched on
+names. Reading `owned_files` instead (L146 — grep the concept, not the spelling):**
+
+    baseline-n3-r0       test-sync-idempotency     tests/test_sync_idempotency.py
+                         test-api-edge-cases       tests/test_api_edge_cases.py
+    baseline-n3-r1       test-store-edgecases      tests/test_store_edgecases.py
+                         test-cli-error-handling   tests/test_cli_edgecases.py
+    sink_review-n3-r0    store-edge-tests          tests/test_store.py
+                         main-cli-tests            tests/test_main.py
+    think_off-n3-r2      test-meridian-resilience  tests/test_meridian_resilience.py
+                         test-api-edge-cases       tests/test_api_edge_cases.py
+    baseline-n3-r2       4 x test-*::1             test_*.py
+    ---------------------------------------------------------------------------------
+    think_off-n3-r0      api-input-validation      **vendorsync/api.py**
+                         web-error-handling        **vendorsync/web/index.html**
+    think_off-n3-r1      frontend                  **vendorsync/web/index.html**
+
+**Three of the added tasks own GRADED APPLICATION FILES.** `score_build.py:501-503` reads
+`web/index.html` (feeding tier B's `ui_states`, `ui_currency`, `ui_offline`), and `api.py` drives
+essentially every behavioural check in tier B.
+
+⭐⭐⭐ **AND THE SEPARATION IS PERFECT:**
+
+    app-side bonus work   think_off-n3-r0  B = 1.0000     think_off-n3-r1  B = 0.9715
+    test-only bonus work  baseline-n3-r0   B = 0.3194     baseline-n3-r1   B = 0.2083
+                          sink_review-n3-r0 B = 0.3611    think_off-n3-r2  B = 0.2083
+
+**The two cells whose replanner injected a second pass over `api.py` / `index.html` are EXACTLY the
+two highest-B cells in the corpus. Zero overlap.** Exact combinatorial p under no association:
+**1/C(6,2) = 1/15 = 0.067** — **NOT significant at 0.05, and I am not claiming it is.** But unlike
+F306's 0.20 association this one comes with a MECHANISM: the added tasks literally rewrite the files
+the low-B checks grade.
+
+✅ **AND THE ARM CONFOUND IS CONTROLLED WITHIN `think_off`:** r0 and r1 got app-side bonus work and
+scored B 1.0 / 0.9715; r2 got test-only bonus work and scored **0.2083**. Same arm, opposite outcome,
+split by an INPUT (L134).
+
+🔴🔴 **THIS MAKES F312's CONFOUND WORSE, NOT INERT — AND I HAD BEEN ABOUT TO CONCLUDE THE OPPOSITE.**
+I checked whether the grader reads tests (`pytest`, `tests/`, `test_*` appear NOWHERE in
+`score_build.py`; the only `test_` hit is the API-key string) and was ready to record "the confound
+cannot flatter the score". **That conclusion is right only for the test-file tasks.** The
+app-file tasks have a DIRECT path into tier B, and **the n1 arm can never receive them, because it
+can never replan at all (F312).**
+
+📌 **REGISTERED, and this is now the sharpest open question of the campaign: is F289's bimodal tier B
+just "did the replanner spend its budget on app code or on tests?"** ⚠ **FALSIFIERS: a cell with
+app-side bonus work and B < 0.5 · a cell with test-only bonus work and B > 0.9 · cell 3
+(`baseline-n3-r2`, test-only, 4 tasks) coming back with high B.** **Cell 3 is in flight and is the
+next datum — its bonus work is 100% test files, so under this model its B should be LOW.**
+⚠ That prediction is in direct tension with F310's (genuine sink ⇒ high B). **One of the two dies
+this tick. Good.**
+
+⇒ **L171. A TASK'S NAME IS NOT ITS EFFECT — read `owned_files` before classifying what a unit of work
+could possibly have changed.**
