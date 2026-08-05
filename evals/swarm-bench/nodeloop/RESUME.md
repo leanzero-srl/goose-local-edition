@@ -22,6 +22,29 @@ exactly the 5 pairs already registered.** Collecting 102 cells or widening the g
 routes, and **only engine work is affordable.** *"MEASURING IS SUBORDINATE TO SHIPPING"* is, here, the
 arithmetic — not a preference.
 
+## ⚠️ F387 — TWO SINK FAILURE MODES, AND F386 BLAMED THE WRONG ONE
+
+| cell | integrate-verify | capped | outcome | score |
+|---|---|---|---|---|
+| n3-**r0** | **1800.1 s** | **yes** | finalized `done` | **0.6595 — ABOVE the arm mean** |
+| n3-**r1** | 781.1 s | no | **FAILED: "no progress for 420 s"** (IDLE watchdog) | **0.4780 — worst** |
+| n3-r2 | 1656.4 s | no | clean | 0.6030 |
+| n3-r3 | 499.3 s | no | clean | 0.8157 |
+
+**The capped run scored ABOVE the mean.** F369 (cap scaling) fixes the mode that cost the arm nothing;
+the worst cell died of a **420 s total-silence stall**, a different mechanism entirely. ⇒ **L226: "the
+worst cell" and "the cell with the dramatic failure event" are different rows until joined.**
+
+🎯 **THE ONE CHECK THAT SEPARATES THE ARMS:** `client_timeouts` — n1 `1.00 "timeout set"`, and
+`0.00 "no request timeout"` in **4 of 4** three-node runs. It is the ONLY check of 35 where every
+3-node cell loses to the 1-node cell. Closing it moves the gap +0.0593 → +0.0793 and the design
+**51 → 30 pairs**. ⚠️ **NOT instruction dilution** — the spec never mentions timeouts (0 hits in 3943
+chars), so nothing was lost in the split; one agent added it as craft and four split runs did not.
+⚠️ "n1 passes" rests on ONE cell; "n3 fails 4/4" is the solid half.
+
+📌 The tier model (A .25/6, B .30/12, C .25/7, D .20/10) **reproduces all five published scores
+exactly** — so those counterfactuals run through the real scorer, not a reconstruction of it.
+
 ## 🛑 THE ONE BLOCKER: the fleet is empty
 
 At **08:03:59** all three LM Studio nodes went from GENERATING to **no models loaded**
@@ -96,9 +119,11 @@ silently conflated.
    4077.6 — a 2.2× spread with nothing varied**. r0 is the worst of the three; against r2 the 3-node
    arm is FASTER on e2e (425.7 vs the 1-node arm's 437.8). **One pair cannot locate a deficit inside
    that spread (L223).**
-3. **The 3-node arm lost the tier-A integration check while its integrator was cut off** — `sync_shape`
-   1.00 → 0.00 on the run whose `integrate-verify` was terminated at **1800.1 s == `sink_cap_secs`
-   exactly**, mid-repair (10 shell + 9 write + 1 edit, 56 messages over 1705 s, zero final output).
+3. 🔴 **RETRACTED BY F387 — the sink's fate does NOT predict `sync_shape`.** This line used to read
+   "the arm lost the tier-A check while its integrator was cut off". Measured across the four cells:
+   `sync_shape` is **0.00 in r0 (capped at 1800.1 s), r1 (idle-stalled) AND r3** — and **r3's sink
+   finished cleanly in 499.3 s with zero failures and posted the arm's BEST score, 0.8157.** r2 ran
+   1656.4 s, nearly to the cap, and **kept** it. The correlation was never there.
 4. **Test-authoring tasks fail 8-21× more than any other kind**, on BOTH fleet sizes, with
    `kind_prompt` ON and `tailored: true` — FIRED ≠ CORRECT.
 5. **A failed task does not imply a missing file** — n3-r0's `test-core` FAILED yet left 3035 B + 2566 B.
