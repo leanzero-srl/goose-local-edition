@@ -15337,3 +15337,51 @@ that nearly shipped backwards.
 constant fitted to n=1, and I do not know that 2600 s is enough — r0's join was cut at 1800 s
 mid-repair and nothing says how much more it needed. **FALSIFIER unchanged and still registered: if
 any join exceeds 4326 s, or `sync_shape` still fails on a 3-node run, REVERT.**
+
+## F370 — 🔴🔴 THE APPS ARE THE SAME SIZE. F366's HEADLINE IS DEAD, KILLED BY ITS OWN NEXT MEASUREMENT.
+
+Auditing declared-but-absent owned files across all five cells (a loose end from F369, not a hypothesis):
+
+    baseline-n1-r0   declared  9   MISSING 3   ← tests/test_api.py, test_meridian.py, test_store.py
+    baseline-n3-r0   declared 10   MISSING 0
+    baseline-n3-r1   declared 11   MISSING 0
+    baseline-n3-r2   declared 10   MISSING 0 (1 empty)
+    baseline-n3-r3   declared 10   MISSING 0
+
+Only the 1-node run lost files, and **all three are its entire test suite**. Splitting the trees:
+
+    baseline-n3-r0   NON-TEST 6 files = 27087 B   TEST 4 files = 16241 B   total 43328
+    baseline-n1-r0   NON-TEST 6 files = 27103 B   TEST 3 files =     0 B   total 27103
+
+🔴 **THE NON-TEST SOURCE TREES ARE IDENTICAL TO WITHIN 16 BYTES — 0.06%.** The 3-node run did NOT build
+a bigger app. It built the SAME app and additionally succeeded at writing tests. **The whole 2.18×
+"more code" figure was three test files the 1-node run FAILED to produce.**
+
+**WHAT DIED HERE, EXPLICITLY:**
+- **F366's headline — "more nodes bought 2.18× the code" — IS FALSE.** Source volume is equal.
+- **F366's chain "more slots ⇒ more modules ⇒ more code" is dead at BOTH links.** F369 killed the middle
+  one (7 file-owning tasks vs 8). This kills the last one.
+- **F369's framing "the tasks each WROTE MORE" is ALSO false.** They wrote the same. **Three tasks on the
+  1-node arm wrote NOTHING.**
+
+**WHAT ACTUALLY HAPPENED**, from the retry payloads: all three failed **honestly** — `status=failed`,
+3-4 attempts, **zero tool calls, no session**, and the engine's own `missing_deliverable_gate` message:
+*"You finished WITHOUT writing your owned file(s)… Your VERY FIRST action MUST be to `write`"*. **NO
+FALSE GREEN — the gate worked.** But every attempt ran ~7 s (`elapsed_ms` is the final attempt only,
+F306) and all 3-4 burned inside **~22 seconds total**: the model answered with text, called no tool,
+was nudged, and did the same again. ✅ Confirmed at the source: **`scheduler.rs` contains ZERO sleeps —
+a retry is re-queued immediately** (`:1044-1065`, `state = Ready`, straight back on `self.ready`).
+**A "transient" retry that fires four times in seven seconds is not a retry, it is a burst.**
+
+⚠️ **GOAL ONE IS REFRAMED AGAIN, AND THIS TIME AGAINST MY OWN RESULT.** "3 nodes 1.32× slower" compares a
+run that **completed its plan** against one that **abandoned three tasks in 22 s and shipped no tests**.
+n1's 5843 s is cheap partly because it did less; its 0.5798 is low partly because it shipped no suite.
+**Neither arm's number is a like-for-like measure of the other** ⇒ **L215.**
+
+✅ **DOES F369 (`816d2abcd`) SURVIVE? THE MECHANISM YES, THE RATIONALE NO.** The join must BUILD AND RUN
+the tree — and the n3 join really did face 16241 B of tests that the n1 join never saw, so a ceiling
+that scales with the tree still ranks these two runs correctly and for a real reason. **But the reason
+is "one run's tests exist and the other's do not", NOT "the fleet built more."** The doc comments are
+corrected in the same commit rather than left to read as a claim this finding has refuted.
+📌 **AND THE BIGGER PRIZE IS NOW THE RETRY BURST**, which is fleet-independent, hits the SMALL fleet
+hardest, and cost this run its entire test suite.
