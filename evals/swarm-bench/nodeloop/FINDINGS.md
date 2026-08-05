@@ -14699,3 +14699,64 @@ session trace and easy to get wrong.
 📌 **QUEUED ENGINE FIX, and it is the cheapest real one left:** find why `session_id` is `None` on
 that path and populate it. Until then every stall investigation is one-in-five likely to hit a wall,
 and stalls are exactly the population worth investigating.
+
+## F356 — 14% of "successes" are progress-watchdog SALVAGES of stalled tasks, and nothing in the log says so. The stall is endemic.
+
+F355 queued "populate `session_id`" as the next engine fix. **That fix already exists** —
+`d685eab15`, *"failed tasks now carry their session id"*, committed **2026-08-04 19:11**, and the
+binary that produced these logs was built **21:42**. It was in. I would have re-implemented a fix that
+had been shipped six hours before the run (L2, again). **Reading the comment at `scheduler.rs:491-499`
+before writing anything is what stopped it.**
+
+So the value is `None` **at the source**, not dropped by the event layer. `task_session` is populated
+from `TaskRunOutput.session_id`, and `swarm.rs:20703` returns it as `None` on one specific path:
+
+    // progress-watchdog stall, but all owned files already written; accepting as done
+    return Ok(TaskRunOutput {
+        output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)",
+        session_id: None,
+        tool_calls: Vec::new(),
+    });
+
+**That gives a checkable signature — `status: done` with ZERO tool calls — and it separates the
+population exactly:**
+
+    baseline-n3-r0   api                                                    SALVAGE
+                     test-core / test-api-edge-cases / test-sync-idempotency        (failed)
+    baseline-n3-r1   api / test-meridian / test-cli / test-cli-error-handling  SALVAGE x4
+                     integrate-verify                                               (failed)
+    baseline-n3-r2   test-meridian / test-integration::1 / test-concurrency::1  SALVAGE x3
+    baseline-n3-r3   frontend-page / meridian-client / meridian-tests           SALVAGE x3
+
+**11 of 15 are salvages. The other 4 are all failures — a different population entirely.** Not one
+row is unexplained, which is what makes this a result rather than a pattern I liked.
+
+### What it means, and it is bigger than the audit gap
+
+**11 of 79 completed tasks — 14% — did not finish. They STALLED in a thinking-only spiral, happened
+to have written their owned files first, and were accepted as `done`.** In the log they are
+indistinguishable from clean successes: same `task_completed`, same `status: done`. The only tell is
+a null session and an empty tool-call list, and I found that by accident while chasing something else.
+
+⇒ **THE THINKING-ONLY SPIRAL IS NOT AN `integrate-verify` QUIRK. IT IS ENDEMIC — roughly one task in
+seven.** F354 found the sink stalling three times and failing; **the difference is not that the sink
+is special, it is that the sink had not written its owned files, so there was nothing to salvage.**
+Same phenomenon, two outcomes, and only the unsalvageable one was visible.
+
+⚠ **THE SALVAGE ITSELF IS CORRECT AND I AM NOT PROPOSING TO REMOVE IT.** Files written is files
+written; re-dispatching would waste a slot to re-do finished work. **The defect is that it is
+SILENT.** A run reporting 19 of 19 done is really reporting 18 clean and 1 salvaged, and every score,
+every occupancy figure and every "the swarm works" claim has been computed over a population that
+silently mixes the two (L92 — a status you print yourself is not a status).
+
+📌 **QUEUED ENGINE FIX, and it is small:** emit a distinguishing marker on the salvage path — either a
+`salvaged: true` field on `TaskCompleted` or a dedicated event — so the two populations can be
+counted apart. **Until then no instrument can tell a clean run from a salvaged one**, and I have been
+scoring both as identical all campaign.
+
+⚠ **ALSO CORRECTED: `d685eab15` fixed the READ, not the WRITE.** The four failed tasks still show a
+null session because `task_session` was never populated for them — every attempt returned `None`, so
+the map the failure emit sites now correctly read from is empty. **A fix that reads a value the
+producer never wrote is only half a fix**, and the commit message's claim that failed tasks "now carry
+their session id" is **not true for a task whose every attempt stalled**. ⇒ **L205. WHEN A FIX WIRES A
+READER TO A MAP, CHECK THAT SOMETHING WRITES THE MAP ON THE PATH YOU CARE ABOUT.**
