@@ -279,12 +279,18 @@ pub struct SwarmConfig {
     /// `GOOSE_SWARM_SINK_CAP_REF_BYTES` overrides.
     ///
     /// WHY THIS EXISTS. The paragraph above claims the cap "can ONLY ever bite a LOOPING join, never a healthy
-    /// one". MEASURED, that is false once the fleet produces more: a 3-node run and a 1-node run on the SAME
-    /// spec and binary built declared trees of 43328 B and 27103 B, and the 3-node join was terminated at
+    /// one". MEASURED, that is false once a run has more to integrate: a 3-node run and a 1-node run on the
+    /// SAME spec and binary faced declared trees of 43328 B and 27103 B, and the 3-node join was terminated at
     /// exactly 1800s while actively repairing — 10 shell + 9 write + 1 edit calls, 56 messages continuous over
     /// 1705s, zero final output. It then scored 0.00 on the tier-A `sync_shape` whole-program check that the
-    /// 1-node run passed. The join's work tracks the assembled tree while its budget was a constant, so the
-    /// swarm got WORSE at integrating exactly as it got better at building.
+    /// 1-node run passed.
+    ///
+    /// ⚠ WHY THE TREES DIFFERED IS *NOT* "THE FLEET BUILT MORE" — measured and refuted. The two runs' NON-TEST
+    /// sources are 27087 B and 27103 B, identical to 0.06%. The whole gap is TEST files: the 1-node run's three
+    /// test tasks each finished without ever calling `write`, tripped `missing_deliverable_gate`, and failed.
+    /// So the join's budget must track what a run ACTUALLY PRODUCED, which is exactly why this is sized from
+    /// the tree on disk at dispatch and not from the plan, the fan, or the device count — none of which
+    /// distinguishes a run whose tests exist from one whose tests do not.
     ///
     /// The 311-1591s healthy band that justified 1800 was measured on smaller trees, so it never covered this
     /// case. ⚠ RESHAPING the budget instead (progress-shaped, like `progress_watchdog_secs`) does NOT work and
@@ -1011,15 +1017,19 @@ fn default_sink_cap_ref_bytes() -> u64 {
 ///
 /// MEASURED (baseline-n3-r0 vs baseline-n1-r0, same spec, same binary): the 3-node run's declared tree was
 /// 43328 B against the 1-node run's 27103. The join must build and RUN the whole app, so its work tracks the
-/// assembled tree; a fixed ceiling therefore truncates it more surely the more the fleet produces. r0's join
-/// was terminated at exactly 1800s having made 10 shell + 9 write + 1 edit calls, with 56 messages spread
+/// assembled tree; a fixed ceiling therefore truncates it more surely the more a run produced. r0's join was
+/// terminated at exactly 1800s having made 10 shell + 9 write + 1 edit calls, with 56 messages spread
 /// continuously over 1705s and NO final output: cut mid-repair, not looping. That run then scored 0.00 on the
 /// tier-A whole-program `sync_shape` check the 1-node run passed.
 ///
+/// ⚠ THE GAP IS TESTS, NOT A BIGGER APP. The two runs' non-test sources are 27087 B and 27103 B — equal to
+/// 0.06%. The 1-node run simply never wrote its three test files (each task finished without calling `write`
+/// and failed the missing-deliverable gate), so its join had 16241 B less to build and run.
+///
 /// ⚠ SIZE, NOT FAN WIDTH. The obvious input — how many modules the plan splits into — was measured and does
 /// NOT track this: the 3-node plan declared SEVEN file-owning tasks against the 1-node plan's EIGHT. Scaling
-/// on fan width would have handed the 1-node run the larger budget, i.e. exactly backwards. The extra code
-/// came from tasks writing more, not from more tasks.
+/// on fan width would have handed the 1-node run the larger budget, i.e. exactly backwards. Only the bytes
+/// actually on disk distinguish a run whose deliverables exist from one whose tasks failed to write them.
 ///
 /// The clamp is the load-bearing part. Extending without a bound would let the pathological join — measured
 /// re-running the same four test blocks five times over, 4326s — run forever, because a LOOP emits tool calls
