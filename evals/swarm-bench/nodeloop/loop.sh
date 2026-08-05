@@ -22,11 +22,26 @@ case "${1:-status}" in
     # unit's run.jsonl. MEASURED (F224): discarding a crippled arm and restarting destroyed every raw
     # observation behind three findings. That run was useless as a 3-node SCORE and was simultaneously
     # the only place a mechanism had ever been observed on the wire. Parking costs a copy.
+    # ⚠⚠ THE PARK USED TO DESTROY WHAT IT EXISTED TO SAVE. `cp -R "$RUNDIR"/*/ "$PARK/"` copies each
+    # source directory's CONTENTS, not the directory itself, so twelve unit directories collapsed into
+    # ONE park directory and eleven were silently overwritten — last writer wins. MEASURED: all twelve
+    # existing parks hold exactly ONE run.jsonl each, four run_ids appear on disk more than once as
+    # duplicate copies of whichever unit sorted last, and `swarm-1node-r0`'s original log
+    # (run_id swarm-20260803-100147948, the only 1-node observation this campaign had) is GONE —
+    # overwritten in place by the new unit reusing that directory, and never parked because the park
+    # had already discarded it.
+    #
+    # `cp -R "$RUNDIR" "$PARK"` copies the TREE. The trailing `/*/` was the whole bug.
+    # F329 is the downstream symptom: those duplicate run_ids are what made one run look like four.
     RUNDIR="$(cd "$(dirname "$0")" && pwd)/../runs/nodeloop"
     if [ -d "$RUNDIR" ] && [ -n "$(find "$RUNDIR" -mindepth 2 -name run.jsonl -print -quit 2>/dev/null)" ]; then
       PARK="$RUNDIR-parked-$(date +%s)"
-      mkdir -p "$PARK" && cp -R "$RUNDIR"/*/ "$PARK/" 2>/dev/null
-      echo "parked previous run tree -> $(basename "$PARK")"
+      cp -R "$RUNDIR" "$PARK" 2>/dev/null
+      # A park that saved fewer runs than the tree held is not a park. Count both and say so.
+      SRC=$(find "$RUNDIR" -mindepth 2 -name run.jsonl 2>/dev/null | wc -l | tr -d ' ')
+      DST=$(find "$PARK"   -mindepth 2 -name run.jsonl 2>/dev/null | wc -l | tr -d ' ')
+      echo "parked previous run tree -> $(basename "$PARK")  ($DST of $SRC run logs)"
+      [ "$DST" != "$SRC" ] && echo "  !! PARK LOST $((SRC-DST)) RUN LOG(S) — evidence loss, do NOT proceed blind"
     fi
     if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
     # A check nobody runs is not a check. Refuse to launch a campaign whose arms cannot fire on this
