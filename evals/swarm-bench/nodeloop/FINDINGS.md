@@ -14077,3 +14077,48 @@ reconciliation is not done, and I am not quoting either as settled until it is.*
   now **8 of 8**.
 - **LIKE-FOR-LIKE PREFIX, one discard each:** n1 **2925.8** vs n3-r0 **2218.7** ⇒ ratio **1.32**,
   independently consistent with the 1.364 gap ratio.
+
+## F344 — THE F285/F343 TENSION IS RESOLVED: F285 NEVER SAID PLANNING DOES NOT SCALE. MY SUMMARY DID.
+
+F343 flagged a tension with F285 and refused to quote either as settled until it was reconciled. It is
+now reconciled, and **there is no contradiction — my compression invented one.**
+
+**WHAT F285 ACTUALLY SAYS**, read from the file rather than recalled:
+
+> *"Planning is consistently ~87-91% of the prefix, and the prefix is where the 3-node arm loses its
+> lead. Research scaling 3.3x is real and is worth about an eighth of that phase."*
+
+That is a **SHARE** claim — planning's fraction of the prefix, measured as `planning_share_of_prefix`
+0.866 · 0.866 · 0.907 across three **3-node** runs. **It is not a scaling claim, and it could not have
+been one: until tonight there was no 1-node cell on this binary to scale against.**
+
+**AND THE CAUSAL STORY IT DID CARRY IS NOW DEAD.** F284's text, which F285 built on:
+
+    3 nodes:  skeleton_drafts {requested 3, returned 3}  plan_loaded {plan_confidence: 83}
+              confidence_retarget {binding_signal: "agreement", action: "redraft"}
+    1 node:   skeleton_drafts {requested 1, returned 1}  plan_loaded {plan_confidence: NULL}
+
+> *"the 3-node prefix is longer in spite of saving 687 s on research, because it then spends ~1240 s on
+> a second planning pass the 1-node arm never runs."*
+
+**THE 1-NODE ARM NOW RUNS IT.** F342 measured tonight's n1 requesting **2** drafts, not 1 — so it can
+compute agreement, and it redrafted. The asymmetry that explained F285's whole prefix picture
+(*"a second planning pass the 1-node arm never runs"*) **does not hold on the current binary.**
+
+⇒ **F343 stands unqualified.** It is the first measurement of planning's scaling ACROSS node counts,
+because it is the first time both arms could take the same branch.
+
+### ⚠ THE REAL ERROR IS MINE, AND IT IS A REPEAT
+
+My loop prompt carried *"planning is ~87-91% of the prefix and does NOT scale"* for many ticks. The
+second clause is not in F285. Worse — **F261 said exactly that ("the prefix does not scale"), and F284
+explicitly retracted it as "too coarse"**. I compressed a corrected finding back into the phrasing that
+had already been withdrawn once, and then spent a tick treating my own revived error as a conflict in
+the evidence.
+
+⚠ WHAT REMAINS TRUE FROM F285: the 87-91% planning **share**, the 3.3x **research** scaling, and the
+`survived_by_id` observation. None of those are touched.
+
+⇒ L195. **A SUMMARY IS A CLAIM AND DECAYS LIKE ONE — when a finding and a summary disagree, open the
+finding; and check whether the summary's phrasing is one you already retracted, because a withdrawn
+claim re-enters through the note that quotes it.**
