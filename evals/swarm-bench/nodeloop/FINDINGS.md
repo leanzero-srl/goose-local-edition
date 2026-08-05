@@ -15851,3 +15851,48 @@ ANY max/last/mean OVER `task_completed` SILENTLY EXCLUDES SPLIT PARENTS, AND THE
 NEVER A RANDOM SAMPLE.** ⚠ Also note F379 was ALREADY a self-correction of a first bad filter
 (−161.4 s). **Three passes on the same quantity, three different wrong answers, one right one — the
 value of the archive is that this cost a tick instead of a run.**
+
+## F381 — L221 APPLIED AS A SWEEP. F371's headline SURVIVES, but its multiplier is a RANGE, not 29x.
+
+L221 says any statistic over `task_completed` silently drops split parents. The obvious place that
+could bite is **my own biggest finding of the day**: F371's *"test-authoring tasks fail at 29% against
+1%"*, computed exactly that way. So I pointed the new lesson at it first (L96 — run the instrument on
+the case whose answer you know).
+
+**THE INSTRUMENT SWEEP.** `failures.py:92` and `goalstate.py:130` both compute failure RATES over
+`task_completed`; `review.py:102` already documents the trap explicitly (*"parent NEVER emits
+`task_completed`, so `dispatched - settled` counts it as running"*). A rate that excludes a superseded
+parent from **both** numerator and denominator is defensible — a split parent is neither a success nor
+a failure. **The defect would only be real if splitting correlated with KIND**, which would quietly
+remove the hardest tasks of one kind from its own denominator.
+
+**MEASURED across all five cells:**
+
+    kind      dispatched  completed  NEVER completed  splits
+    test              22         21                1       1
+    verify            45         45                0       0
+    other             31         29                2       2
+
+✅ **THE ACCOUNTING IS COMPLETE: exactly 3 tasks never completed, and they are exactly the 3 splits**
+(`test-api-web` in r0; `api` and `meridian` in r3). **No unexplained dropout** — which is itself the
+control this sweep needed, because an unexplained gap would mean a second, unknown mechanism.
+
+✅ **SPLITS ARE NOT CONCENTRATED IN TEST TASKS:** 1/22 (4.5%) for test against 2/31 (6.5%) for other
+and 0/45 for verify. **If anything the bias runs the other way.**
+
+**SO F371 SURVIVES — AND ITS NUMBER TIGHTENS.** Bounding the multiplier by both extreme assumptions
+about the 3 excluded parents:
+
+    every split parent counted as a FAILURE:   test 7/22 = 31.8%  vs other 3/76 = 3.9%  ⇒  8.1x
+    every split parent counted as a SUCCESS:   test 6/22 = 27.3%  vs other 1/76 = 1.3%  ⇒  20.8x
+
+⇒ **THE HONEST STATEMENT IS "8x TO 21x", NOT "~29x".** The direction, the magnitude class and every
+downstream conclusion are unchanged — test-authoring is still the one kind that fails an order of
+magnitude more often, and the cheap-fix space is still exhausted. **But the point estimate was
+narrower than the evidence supports, and I am correcting it rather than leaving the tidier number
+standing** ⇒ **L222. A RATE COMPUTED OVER A POPULATION WITH EXCLUSIONS IS A RANGE — REPORT THE BOUNDS
+FROM BOTH EXTREME ASSUMPTIONS, NOT THE MIDPOINT THAT HAPPENS TO FALL OUT OF THE DEFAULT.**
+
+📌 **NO INSTRUMENT NEEDS A CODE FIX FROM THIS SWEEP.** The rates are computed correctly for what they
+claim; what was wrong was **my reporting of one as a point estimate**. Recorded rather than patched,
+because patching a correct computation to chase a wrong write-up is how instruments rot.
