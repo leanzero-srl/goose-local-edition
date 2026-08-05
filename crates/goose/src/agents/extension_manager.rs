@@ -172,6 +172,7 @@ pub struct ExtensionManagerCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct GooseMcpAppToolAttachment {
     pub tool_name: String,
+    pub tool_name_is_actual: bool,
     pub extension_name: String,
     pub resource_uri: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -396,7 +397,6 @@ pub fn is_hidden_extension(name: &str) -> bool {
 
 /// Result of resolving a tool call to its owning extension
 struct ResolvedTool {
-    tool_name: String,
     extension_name: String,
     actual_tool_name: String,
     client: McpClientBox,
@@ -1385,7 +1385,8 @@ impl ExtensionManager {
         let resource_uri = resolved_tool.resource_uri.clone()?;
 
         let mut attachment = GooseMcpAppToolAttachment {
-            tool_name: resolved_tool.tool_name.clone(),
+            tool_name: resolved_tool.actual_tool_name.clone(),
+            tool_name_is_actual: true,
             extension_name: resolved_tool.extension_name.clone(),
             resource_uri: resource_uri.clone(),
             tool_meta: resolved_tool.tool_meta.clone(),
@@ -1763,7 +1764,6 @@ impl ExtensionManager {
                 })?;
 
                 return Ok(ResolvedTool {
-                    tool_name: tool.name.to_string(),
                     extension_name: owner,
                     actual_tool_name,
                     client,
@@ -1776,7 +1776,6 @@ impl ExtensionManager {
                 let owner = name_to_key(prefix);
                 if let Some(client) = self.get_server_client(&owner).await {
                     return Ok(ResolvedTool {
-                        tool_name: name.to_string(),
                         extension_name: owner,
                         actual_tool_name: actual.to_string(),
                         client,
@@ -3005,7 +3004,8 @@ mod tests {
             .resolve_tool("test-session-id", "test_client.tool")
             .await
             .expect("mangled dotted name should resolve to the real tool");
-        assert_eq!(resolved.tool_name, "test_client__tool");
+        assert_eq!(resolved.extension_name, "test_client");
+        assert_eq!(resolved.actual_tool_name, "tool");
     }
 
     #[tokio::test]
@@ -3021,7 +3021,8 @@ mod tests {
             .resolve_tool("test-session-id", "functions.test_client__tool")
             .await
             .expect("functions-prefixed name should resolve to the real tool");
-        assert_eq!(resolved.tool_name, "test_client__tool");
+        assert_eq!(resolved.extension_name, "test_client");
+        assert_eq!(resolved.actual_tool_name, "tool");
     }
 
     #[tokio::test]
@@ -3037,7 +3038,7 @@ mod tests {
             .resolve_tool("test-session-id", "dotted__db.query")
             .await
             .expect("exact dotted tool name must resolve");
-        assert_eq!(resolved.tool_name, "dotted__db.query");
+        assert_eq!(resolved.extension_name, "dotted");
         assert_eq!(resolved.actual_tool_name, "db.query");
     }
 
@@ -3054,7 +3055,7 @@ mod tests {
             .resolve_tool("test-session-id", "dotted.db.query")
             .await
             .expect("mangled extension separator should resolve");
-        assert_eq!(resolved.tool_name, "dotted__db.query");
+        assert_eq!(resolved.extension_name, "dotted");
         assert_eq!(resolved.actual_tool_name, "db.query");
     }
 
@@ -3129,7 +3130,8 @@ mod tests {
     fn test_insert_trusted_tool_update_meta_stores_backend_payload() {
         let mut result = CallToolResult::success(vec![]);
         let attachment = GooseMcpAppToolAttachment {
-            tool_name: "weather__render".to_string(),
+            tool_name: "render__secret".to_string(),
+            tool_name_is_actual: true,
             extension_name: "weather".to_string(),
             resource_uri: "ui://weather/app".to_string(),
             tool_meta: None,
@@ -3152,7 +3154,8 @@ mod tests {
             meta.0.get(TRUSTED_TOOL_UPDATE_META_KEY),
             Some(&serde_json::json!({
                 "mcpApp": {
-                    "toolName": "weather__render",
+                    "toolName": "render__secret",
+                    "toolNameIsActual": true,
                     "extensionName": "weather",
                     "resourceUri": "ui://weather/app",
                     "resourceResult": {
