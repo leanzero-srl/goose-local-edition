@@ -15982,3 +15982,52 @@ gate, and that is now stated. `F375` is settled by reading the dispatched prompt
 📌 **THREE OF SEVEN REGISTERED BANDS WERE UNSETTLEABLE AS WRITTEN, AND ALL THREE WERE MINE FROM
 TODAY.** Every one was derived from a single cell before F382 quantified the spread. **The variance was
 knowable from the archive the whole time — I simply never asked it before writing the thresholds.**
+
+---
+
+## F385 — THE PRE-REGISTERED DESIGN CANNOT SETTLE GOAL ONE. IT NEEDS **51 PAIRS**, NOT 5.
+
+F382 closed with *"the honest next step is replicates, not another mechanism hunt."* Before spending
+fleet time on replicates, the question L142 demands first: **how many would it actually take?**
+
+`power.py` already owns this arithmetic and its published table stops at 12 pairs. I did not
+re-derive it (L2) — I imported its own `q_for_power()` and `gap_for_q()`, memoised the pure
+`max_losses()` (a cache changes no result), and extended the table until the required gap fell to the
+one actually observed.
+
+**THE OBSERVED GAP IS +0.0593** — n3 mean 0.6391 over four cells (0.6595/0.4780/0.6030/0.8157)
+against the single n1 cell at 0.5798.
+
+| true gap | % of n3 mean | pairs @50% power | pairs @80% |
+|---|---|---|---|
+| **0.0593 (observed)** | 9.3% | **51** | **115** |
+| 0.0800 | 12.5% | 30 | 62 |
+| 0.1000 | 15.6% | 18 | 42 |
+| 0.1500 | 23.5% | 11 | 18 |
+| 0.2236 | 35.0% | 8 | 11 |
+| 0.3000 | 46.9% | **5** | 8 |
+
+**PREREGISTERED.md fixes FIVE pairs.** At the observed gap that buys a coin-flip chance only at 51 —
+**102 cells, ~204 h of fleet at ~2 h/cell.** The planned sweep is short by an order of magnitude.
+
+⚠️ **I CAUGHT MYSELF PUBLISHING THE FLATTERING SD.** My first pass used `pstdev` (n) = 0.1213 and
+printed **37** pairs. `power.py`'s own report says **0.1401** — the sample sd (n−1). Same four
+numbers, two divisors, and the one I reached for first was the one that made the design look 27%
+more feasible. The table above uses the instrument's sd, not mine. ⇒ **L225.**
+
+**THIS IS NOT AN ARTEFACT OF THE SIGN TEST.** Its asymptotic efficiency against a magnitude-using
+test is 2/π ≈ 0.64, so even the most efficient test available still needs ~33 pairs — **6.6× the
+pre-registered 5.** No choice of statistic rescues a 0.059 gap at n=5. And switching the test now,
+having seen the data, is precisely the post-hoc fitting the loop doctrine forbids.
+
+**WHAT THIS DOES NOT SAY.** It does not say 3 nodes is no better than 1. It says **this design cannot
+tell**, at this effect size. The n1 arm is ONE cell, the sd comes from four points, and the n1 spread
+is ASSUMED equal to the n3 spread (`power.py`'s stated assumption, carried through unchanged).
+
+🎯 **THE CONSTRUCTIVE READING — IT VALIDATES THE STANDING DIRECTIVE.** Read the table upward: a gap of
+**0.30 settles at exactly the 5 pairs already pre-registered.** So there are two ways to make goal one
+answerable, and only one of them is affordable — collect 102 cells, or **make the 3-node arm
+decisively better.** Mihai's 07:45 directive (*"fixes and improvements in the engine"*) and
+"MEASURING IS SUBORDINATE TO SHIPPING" are not merely a preference here; **engine work is the only
+path that brings goal one inside the measurable range.** A day spent widening the gap is worth more
+than a week spent narrowing the error bars.
