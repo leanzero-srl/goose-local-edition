@@ -13793,3 +13793,52 @@ holds. The live `baseline-n1-r0` will be checked the same way once it emits `poo
 
 ⇒ L191. **A DIRECTION AT n=3 IS A COIN THAT LANDED THE SAME WAY THREE TIMES — the honest label is
 what lets the fourth point kill it cleanly instead of being explained away.**
+
+## F338 — THE PARK THAT EXISTS TO PRESERVE EVIDENCE HAS BEEN DESTROYING IT EVERY TIME IT RAN
+
+`loop.sh start` parks the run tree before reusing it. Its own comment says why:
+
+> *"MEASURED (F224): discarding a crippled arm and restarting destroyed every raw observation behind
+> three findings… Parking costs a copy."*
+
+The copy is `cp -R "$RUNDIR"/*/ "$PARK/"`. **The trailing `/*/` copies each directory's CONTENTS, not
+the directory** — so twelve unit directories collapse into ONE park directory and eleven are silently
+overwritten, last writer wins.
+
+**MEASURED ON DISK, not inferred:**
+
+    12 parked directories, each holding exactly 1 run.jsonl
+    51 run.jsonl files, 42 distinct run_ids — 4 run_ids appear more than once, as duplicate
+       copies of whichever unit happened to sort last
+    swarm-1node-r0's ORIGINAL log (run_id swarm-20260803-100147948) — 🔴 GONE
+
+That last one is the campaign's **only 1-node observation before tonight**. It was overwritten in
+place when the new `baseline-n1-r0` reused the directory, and the park did not save it because the
+park had already discarded it in favour of an alphabetically-later sibling. F322 and F331 were both
+computed from it; the findings survive in the ledger, the raw log does not.
+
+**AND THIS IS F329's ROOT CAUSE.** F329 found four parked directories all carrying
+`run_id=swarm-20260804-163317049` and correctly concluded the metric was counting one run four times.
+I fixed the *metric* (dedupe by `run_id`, provenance from `run_started.ts`) and never asked **why the
+duplicates existed**. This is why: each park saved only the last subdirectory's contents, so twelve
+parks produced twelve copies of a handful of runs. I treated the symptom and left the cause running
+for another two hours, during which it ate the n1 log.
+
+**THE FIX IS THE TRAILING `/*/`.** `cp -R "$RUNDIR" "$PARK"` copies the tree. Controlled on a
+synthetic tree whose answer is known (L96):
+
+    source holds 3 run logs
+    OLD  cp -R src/*/ park/   -> 1 log   🔴 loses 2
+    NEW  cp -R src park       -> 3 logs  ✅ preserves all
+
+`loop.sh` now also **counts both sides and refuses to be quiet about a mismatch** — it prints
+`(N of M run logs)` on every park and shouts `!! PARK LOST n RUN LOG(S)` when they differ. A backup
+that does not verify its own output is a ritual, not a backup.
+
+⚠ WHAT IS NOT RECOVERABLE: the old n1 log is gone. Tonight's `baseline-n1-r0` is a fresh run on the
+CURRENT binary (`run_id swarm-20260805-032707363`, `pool_resolved worker_count 1, planner_pushed
+false`) — which is the observation the curve actually needs, so the loss costs the campaign a
+historical cross-check rather than a live one.
+
+⇒ L192. **A BACKUP THAT DOES NOT COUNT WHAT IT SAVED IS A RITUAL — and when duplicates show up in
+your data, the duplication mechanism is the bug, not the counter that noticed them.**
