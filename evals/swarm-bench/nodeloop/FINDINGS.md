@@ -16837,3 +16837,55 @@ signal where there was silence. That was the outcome I could not assume and did 
 useless to working; it did not move it onto the defect that matters most. That gap is now the sharpest
 remaining engine target, and unlike everything else today it is a DESIGN question (probing a POST has
 side effects) rather than a bug.
+
+---
+
+## F402 — THE POST PROBE FAILS FEASIBILITY, AND THE REASON TEMPERS F390's PRIZE
+
+The sharpest remaining target was `POST /api/sync`, disclosed-as-unprobed by F391 and the endpoint
+whose shape 4 of 5 cells break. Feasibility-tested before building, as with F398 and F399.
+
+**The safety objection dissolves on inspection:** `spec_contract` already spawns and executes the
+generated app, and F400 gave it a scratch DB, so one POST is not a new class of risk. The blocker
+turned out to be evidence, not safety.
+
+### FIRST ATTEMPT WAS UNFAITHFUL, AND I ALMOST BELIEVED IT
+
+Probing without the vendor mock gave 4/5 agreement — which looked like a pass. It was not: n1-r0 (the
+cell scoring `sync_shape` **1.00**) hit a 15 s TimeoutError, and the 500/502s elsewhere were
+*"vendor unreachable"*, not shape violations. **The scorer runs the vendor mock; I had not.** A 4/5
+that comes from testing in a degraded environment is a coincidence, not a validation.
+
+### WITH THE VENDOR RUNNING, IT INVERTS — 3 of 5, and the wrong two
+
+| cell | scorer `sync_shape` | POST | keys returned | expected subset? |
+|---|---|---|---|---|
+| n1-r0 | 1.00 | 502 | error, fetched, inserted, total | ✅ agrees |
+| n3-r0 | **0.00** | **200** | fetched, inserted, total | ❌ **probe says fine** |
+| n3-r1 | 0.00 | ERR | — | ✅ agrees |
+| n3-r2 | 1.00 | 200 | fetched, inserted, total | ✅ agrees |
+| n3-r3 | **0.00** | **200** | fetched, inserted, total | ❌ **probe says fine** |
+
+**A checker that disagrees with the grader on 2 of 5 cells does not ship.** F398's detector earned its
+place at 5/5 against the same grader; this one cannot.
+
+### 🔴 THE REASON MATTERS MORE THAN THE VERDICT
+
+Re-running the SAME binaries against a FRESH vendor and a clean DB, the sync now **succeeds** in r0 and
+r3 — the two cells the scorer recorded as broken. **The failure is not a property of the code; it is a
+property of the run.** State, timing, or vendor condition at that moment.
+
+That is why nothing reaches this family: static analysis cannot see a runtime failure (L231), and a
+re-run cannot see it either **because it does not happen again**.
+
+⚠️ **AND IT TEMPERS F390.** That finding sized the sync family at **51 → 5 pairs** and I flagged it as
+sizing the prize rather than the lever. It now needs a second caveat: **part of that prize is
+flakiness, not a fixable defect.** If r0 and r3 sync correctly on a re-run with nothing changed, then
+`doc_fetch` teaching the fleet the cursor protocol cannot recover the whole 0.1327 — some of it was
+never a knowledge problem. The arm is still the best available and its mechanism readout is unchanged;
+its expected SCORE gain should be read as an upper bound, and F382's replicate-spread warning applies
+to it more strongly than I wrote.
+
+⇒ **L232. BEFORE BUILDING A CHECK FOR A DEFECT, RE-RUN THE DEFECT.** If it does not reproduce under
+the check's own conditions, no checker can catch it and the honest target is the flakiness, not the
+symptom.
