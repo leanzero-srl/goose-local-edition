@@ -13559,3 +13559,51 @@ missing log must say so; it must never read as a silent zero (L24).
 
 ⇒ L186. **A STANDING NOTE IS NOT AN IMPLEMENTATION — if a caveat must appear beside a number, put it
 in the code that prints the number, on the day you first write the caveat.**
+
+## F333 — THE 3-NODE FLEET DELIVERS ~56% OF ITSELF, AND THE TAIL COLLAPSES TO ONE NODE
+
+Cell 4 is in its sink phase, and a live read of its dispatch record showed something worth measuring
+properly:
+
+    local-mihai      dispatched 7   done 7   IN FLIGHT 0
+    mac-gabee        dispatched 4   done 4   IN FLIGHT 0
+    workhorse        dispatched 8   done 5   IN FLIGHT 3   ← api 3086 s, meridian 3086 s, sink 395 s
+
+**Two of three nodes have nothing in flight.** `api` and `meridian` were dispatched at 2882.7 s — the
+FIRST dispatch of the run, attempt 0, zero retries — and have held the same device for 51 minutes.
+`worker_timeout_secs` cannot touch them: it is an IDLE-gap timer, not a wall-clock cap (F294).
+
+Rather than hand-compute, I ran the instrument that already exists for this (L2). `occupancy.py`
+(occ-3, self-test passes) on the three FINISHED n3 cells:
+
+    unit              occupancy   wall      score    time with only 1 task in flight
+    baseline-n3-r2     0.6499     6751.9s   0.6030    10.4%  ( 9.3 min)
+    baseline-n3-r0     0.5645     7725.4s   0.6595     9.1%  ( 7.8 min)
+    baseline-n3-r1     0.4737     8487.0s   0.4780    36.7%  (42.8 min)
+
+**Mean occupancy 0.563 against a perfect 1.0 and a one-node-only floor of 0.333** — the 3-node fleet
+is delivering roughly 1.7 nodes' worth of work. The fleet holds SIX concurrent tasks at PARALLEL 2,
+and time spent at six is 13.8% / 6.4% / 0.8%.
+
+**OCCUPANCY AND WALL-CLOCK ORDER PERFECTLY INVERSELY across all three cells** — 0.65 → fastest,
+0.56 → middle, 0.47 → slowest. Occupancy and SCORE do not (r0 has the best score at middling
+occupancy). ⚠ P(a perfect 3-item ordering by chance) = 1/3! = **0.167**. This is a direction on n=3,
+not a result (L10/L133) — but it points the wall-clock arm of goal one at OCCUPANCY rather than at
+node count, which is F143 stated in numbers rather than in principle.
+
+⚠ THE INSTRUMENT'S OWN CAVEAT, which I must not drop when quoting the headline: the overall figure
+divides by the WHOLE wall, and the prefix emits no task events while still being real node work. So
+0.563 UNDERSTATES what the nodes did. The honest per-phase number is **EXECUTE occupancy: 0.8568 /
+0.5746 / 0.8139** — and `baseline-n3-r1`, the worst cell on every axis, is the one that spent 36.7%
+of its dispatch window with a single task in flight.
+
+📌 REGISTERED, BEFORE CELL 4 LANDS. Its live overall occupancy currently reads **0.309 — below the
+one-node floor of 0.333** — because its 2882.7 s prefix (three draft rounds, redraft cost 1837.0 s,
+accepted confidence 61) is pure denominator. Its EXECUTE occupancy is 0.6237. **PREDICTION: cell 4's
+final overall occupancy lands BELOW 0.4737, the lowest of the three finished cells.** The
+single-node tail can only add wall with one node busy, so the figure has nowhere to go but down.
+⚠ FALSIFIER: a final overall occupancy at or above 0.4737.
+
+⇒ L187. **A FLEET THAT IS "USED" IS NOT A FLEET THAT IS BUSY — count node-SECONDS, not dispatches,
+and look at what is in flight at the END, because the tail is where a parallel run quietly becomes a
+serial one.**
