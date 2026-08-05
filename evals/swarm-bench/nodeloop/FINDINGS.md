@@ -12628,3 +12628,45 @@ bonus tasks than n3 cells, then part of any measured wall-clock gap is injected 
 
 ⇒ **L169. COUNTING HOW OFTEN A MECHANISM FIRED IS NOT MEASURING WHAT IT DID — open the payload
 before concluding a universal event is a constant.**
+
+## F312 — the 1-node arm CANNOT replan, by construction. The arms do different amounts of work.
+
+Following F311's caveat into the source rather than waiting for the first n1 cell.
+
+    scheduler.rs:516-522   idle_capacity() = Σ over enabled devices of (weight − in_flight)
+    scheduler.rs:2292      replan trigger: idle_capacity() >= 2  AND a task still in flight
+    run_started pools      n1: ONE device, weight 2   ·   n3: THREE devices, weight 2 each (capacity 6)
+
+⇒ **On the 1-node arm, `idle_capacity() >= 2` requires BOTH slots free — i.e. the single device
+totally idle — while the trigger simultaneously requires a task in flight, which necessarily occupies
+a slot on that same device. The two conditions are mutually exclusive. THE DYNAMIC REPLANNER CAN
+NEVER FIRE ON A 1-NODE RUN.** On 3 nodes, two idle devices give capacity 4 and it fires readily —
+empirically **7 of 7**.
+
+**Empirical agreement:** `swarm-1node-r0` recorded **0** `replanned` events, against 1 in every 3-node
+run. n=1, but the structural argument is the proof; the run merely fails to contradict it.
+
+⇒ **THE TWO ARMS OF THE CURVE DO NOT DO THE SAME AMOUNT OF WORK.** Every n3 cell receives **+2**
+extra tasks (cell 3 got **+4**); every n1 cell receives **0** and is incapable of receiving any.
+
+**The direction of the bias matters and it is not symmetric:**
+
+- **WALL-CLOCK — biased AGAINST the claim, which is safe.** n3 carries work n1 never does, inflating
+  n3's wall. A "3 nodes are faster" result would be understating itself. **Conservative.**
+- **SCORE — biased TOWARD the claim, which is dangerous.** Every task the replanner adds is a
+  **`test-*`** task (all 14 across the seven runs). Extra tests plausibly raise graded quality. **A
+  "3 nodes ship better" result could be partly "3 nodes got more tests written for them".**
+
+⚠ **`curve.py` CANNOT DISTINGUISH THESE.** Its sign test on score is blind to why a score is higher.
+**This does not invalidate the pre-registered test — it bounds what a positive result may be claimed
+to mean**, and I would rather have that written down before the data than argued about after (L124: a
+favourable number from a multi-change setup attributes to the setup).
+
+📌 **THE MITIGATION IS CHEAP AND ALREADY IN HAND: `replanned.added` is recorded per run.** When the
+curve completes, report bonus-task counts alongside the verdict, and if n3 wins on score, check
+whether the tiers that moved are the ones the added `test-*` tasks could touch.
+⚠ **FALSIFIER for the confound mattering at all: if the n3 cells' score advantage sits in tiers the
+added tests cannot influence, the confound is real but inert.**
+
+⇒ **L170. AN ARM THAT CANNOT ENTER A BRANCH IS NOT A CONTROL FOR IT — before comparing two
+configurations, check which mechanisms are STRUCTURALLY unavailable to one of them.**
