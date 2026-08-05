@@ -273,6 +273,26 @@ pub struct SwarmConfig {
     /// probes) is the correctness backstop. `GOOSE_SWARM_SINK_CAP_SECS` still overrides; 0 disables.
     #[serde(default = "default_sink_cap_secs")]
     pub sink_cap_secs: u64,
+    /// The tree size (bytes of the plan's declared owned files) `sink_cap_secs` is the budget FOR. The effective
+    /// sink ceiling scales linearly with the tree actually on disk when the sink is dispatched, clamped to
+    /// [1x, 2x]. 0 = OFF (byte-identical: the ceiling is `sink_cap_secs` whatever was built).
+    /// `GOOSE_SWARM_SINK_CAP_REF_BYTES` overrides.
+    ///
+    /// WHY THIS EXISTS. The paragraph above claims the cap "can ONLY ever bite a LOOPING join, never a healthy
+    /// one". MEASURED, that is false once the fleet produces more: a 3-node run and a 1-node run on the SAME
+    /// spec and binary built declared trees of 43328 B and 27103 B, and the 3-node join was terminated at
+    /// exactly 1800s while actively repairing — 10 shell + 9 write + 1 edit calls, 56 messages continuous over
+    /// 1705s, zero final output. It then scored 0.00 on the tier-A `sync_shape` whole-program check that the
+    /// 1-node run passed. The join's work tracks the assembled tree while its budget was a constant, so the
+    /// swarm got WORSE at integrating exactly as it got better at building.
+    ///
+    /// The 311-1591s healthy band that justified 1800 was measured on smaller trees, so it never covered this
+    /// case. ⚠ RESHAPING the budget instead (progress-shaped, like `progress_watchdog_secs`) does NOT work and
+    /// was rejected on this same evidence: the pathological join re-ran four test blocks five times, and a loop
+    /// emits tool calls, so no progress rule can separate repair from loop. The ceiling had to scale, not change
+    /// shape — hence a bounded multiplier rather than an extension.
+    #[serde(default = "default_sink_cap_ref_bytes")]
+    pub sink_cap_ref_bytes: u64,
     /// PROGRESS WATCHDOG (seconds): the max continuous wall-time a NON-sink worker may spend WITHOUT a productive
     /// event (a real tool call/result, final_output, or non-empty non-thinking text) before it is cut as a
     /// thinking-only spiral. Bounds the "streams reasoning tokens forever, resets the idle watchdog, makes zero
@@ -980,6 +1000,39 @@ fn default_sink_cap_secs() -> u64 {
     1800
 }
 
+fn default_sink_cap_ref_bytes() -> u64 {
+    // The largest tree measured whose join finished comfortably inside the base budget: baseline-n1-r0's
+    // declared owned files totalled 27103 B and its integrate-verify completed in 229s. Rounded up so that
+    // tree — and anything smaller — keeps the base budget exactly.
+    30_000
+}
+
+/// The sink's ceiling for a run whose declared owned files total `tree_bytes`. See `sink_cap_ref_bytes`.
+///
+/// MEASURED (baseline-n3-r0 vs baseline-n1-r0, same spec, same binary): the 3-node run's declared tree was
+/// 43328 B against the 1-node run's 27103. The join must build and RUN the whole app, so its work tracks the
+/// assembled tree; a fixed ceiling therefore truncates it more surely the more the fleet produces. r0's join
+/// was terminated at exactly 1800s having made 10 shell + 9 write + 1 edit calls, with 56 messages spread
+/// continuously over 1705s and NO final output: cut mid-repair, not looping. That run then scored 0.00 on the
+/// tier-A whole-program `sync_shape` check the 1-node run passed.
+///
+/// ⚠ SIZE, NOT FAN WIDTH. The obvious input — how many modules the plan splits into — was measured and does
+/// NOT track this: the 3-node plan declared SEVEN file-owning tasks against the 1-node plan's EIGHT. Scaling
+/// on fan width would have handed the 1-node run the larger budget, i.e. exactly backwards. The extra code
+/// came from tasks writing more, not from more tasks.
+///
+/// The clamp is the load-bearing part. Extending without a bound would let the pathological join — measured
+/// re-running the same four test blocks five times over, 4326s — run forever, because a LOOP emits tool calls
+/// and so looks productive to any progress-shaped rule. 2x holds the largest tree at 3600s, still below that
+/// loop, so the loop is cut and the repair is not.
+fn scaled_sink_cap(base_secs: u64, tree_bytes: u64, ref_bytes: u64) -> u64 {
+    if base_secs == 0 || ref_bytes == 0 || tree_bytes == 0 {
+        return base_secs;
+    }
+    let scale = (tree_bytes as f64 / ref_bytes as f64).clamp(1.0, 2.0);
+    (base_secs as f64 * scale).round() as u64
+}
+
 impl Default for SwarmConfig {
     fn default() -> Self {
         Self {
@@ -1032,6 +1085,7 @@ impl Default for SwarmConfig {
             max_tool_response_chars: None,
             scout_budget_secs: default_scout_budget_secs(),
             sink_cap_secs: default_sink_cap_secs(),
+            sink_cap_ref_bytes: default_sink_cap_ref_bytes(),
             progress_watchdog_secs: 900,
             sink_lean_prefill: Some(true),
             backbone_skip_confident: Some(true),
@@ -7507,9 +7561,57 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(cfg.verify_commands);
         assert!(cfg.fan_e2e);
         assert_eq!(cfg.sink_cap_secs, 1800);
+        assert_eq!(cfg.sink_cap_ref_bytes, 30_000);
         assert_eq!(cfg.progress_watchdog_secs, 900);
         // And a key that IS set is honoured.
         assert!(cfg.persona);
+    }
+
+    /// The sink ceiling scales with the TREE, and — the half that actually protects the run — STOPS scaling
+    /// before it reaches the one join measured to loop.
+    #[test]
+    fn the_sink_ceiling_scales_with_tree_size_but_never_past_the_measured_loop() {
+        const REF: u64 = 30_000;
+        // The two matched cells this was built from, at their real declared-tree sizes. The 1-node tree
+        // finished its join in 229s and must be left EXACTLY alone; the 3-node tree is the one whose join
+        // was cut mid-repair at 1800s.
+        assert_eq!(
+            scaled_sink_cap(1800, 27_103, REF),
+            1800,
+            "n1 tree unchanged"
+        );
+        assert_eq!(
+            scaled_sink_cap(1800, 43_328, REF),
+            2600,
+            "n3 tree gets more"
+        );
+
+        // ⚠ THE REGRESSION THAT NEARLY SHIPPED. Keyed on plan FAN WIDTH the n3 run (7 file-owning tasks)
+        // would have scored BELOW the n1 run (8), handing the smaller job the bigger budget. Size ranks them
+        // the right way round, and that ordering is the whole point of the change.
+        assert!(
+            scaled_sink_cap(1800, 43_328, REF) > scaled_sink_cap(1800, 27_103, REF),
+            "the run that BUILT MORE must get the larger ceiling"
+        );
+
+        // THE BOUND. A tree can be arbitrarily large; the ceiling may not follow it past the 4326s join that
+        // re-ran the same four test blocks five times. Without this clamp a loop outlives every budget,
+        // because a loop makes tool calls and so defeats any progress-shaped rule.
+        for big in [60_000u64, 500_000, 50_000_000] {
+            let got = scaled_sink_cap(1800, big, REF);
+            assert_eq!(got, 3600, "clamped at 2x for a {big}-byte tree");
+            assert!(got < 4326, "must still cut the measured loop");
+        }
+
+        // OFF in every direction must be byte-identical, not merely small. An unmeasurable tree (nothing
+        // frozen, or nothing written) reads 0 bytes and must keep the base rather than collapse it.
+        assert_eq!(scaled_sink_cap(1800, 99_999, 0), 1800, "ref 0 disables it");
+        assert_eq!(
+            scaled_sink_cap(1800, 0, REF),
+            1800,
+            "0 bytes keeps the base"
+        );
+        assert_eq!(scaled_sink_cap(0, 99_999, REF), 0, "cap 0 stays OFF");
     }
 
     /// load_config MERGES the config over the struct Default, so the baked golden formula survives an
@@ -7724,7 +7826,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // change NOTHING. Asserted because the dedup's own comment records duplicates being measured
         // dead — 6 requested, exactly 3 survived — and a future edit that drops the dedup would
         // otherwise silently turn a concurrency fix into a doubled, mostly-dead draft fan.
-        let pool = vec![cfg_w("a", "m-a", 2), cfg_w("b", "m-b", 2), cfg_w("c", "m-c", 2)];
+        let pool = vec![
+            cfg_w("a", "m-a", 2),
+            cfg_w("b", "m-b", 2),
+            cfg_w("c", "m-c", 2),
+        ];
         let distinct: Vec<String> = pool.iter().map(|d| d.model_id.clone()).collect();
         let slots = fleet_slot_models(&pool);
         let dedup = |models: &[String]| -> usize {
@@ -7734,7 +7840,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 .filter(|m| seen.insert(m.clone()))
                 .count()
         };
-        assert_eq!(dedup(&slots), dedup(&distinct), "the vote width must be unchanged");
+        assert_eq!(
+            dedup(&slots),
+            dedup(&distinct),
+            "the vote width must be unchanged"
+        );
         assert_eq!(dedup(&slots), 4, "planner + 3 distinct models");
     }
 
@@ -10901,6 +11011,11 @@ pub struct GooseAgentDispatcher {
     /// worker prompt so modules cohere to the same north star through context compaction. Distilled once
     /// at plan time (post-plan), set before EXECUTE. Empty -> the injection is a no-op (flag off).
     pillars: std::sync::OnceLock<String>,
+    /// Every file the loaded plan DECLARES an owner for, frozen at plan time. Read only when the
+    /// integrate-verify sink is dispatched, to size the tree the join must actually integrate and scale its
+    /// ceiling accordingly (see `sink_cap_ref_bytes`). A declared list, never a directory walk — the run's own
+    /// files and nothing else. Empty -> the sink keeps the unscaled base budget.
+    sink_tree_files: std::sync::OnceLock<Vec<String>>,
     /// SPECULATIVE EXECUTION (GOOSE_SWARM_SPECULATE): per-twin shadow workspace + its owned files, keyed by
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
@@ -11028,6 +11143,7 @@ impl GooseAgentDispatcher {
             sampling,
             contracts: std::sync::OnceLock::new(),
             pillars: std::sync::OnceLock::new(),
+            sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             clarity_fail: Mutex::new(None),
@@ -11396,7 +11512,20 @@ impl GooseAgentDispatcher {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .filter(|&s| s > 0)
-                .map(|s| tokio::time::Instant::now() + std::time::Duration::from_secs(s))
+                .map(|base| {
+                    // The base is the budget for a reference-sized tree; the join's real work tracks the tree
+                    // the fleet actually built, which is on disk now (every module it depends on is done).
+                    let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
+                    let bytes = self.sink_tree_bytes(&work_dir);
+                    let secs = scaled_sink_cap(base, bytes, ref_bytes);
+                    if secs != base {
+                        eprintln!("  sink ceiling {base}s -> {secs}s for a {bytes}-byte tree");
+                    }
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(secs)
+                })
         } else {
             None
         };
@@ -12318,6 +12447,28 @@ impl GooseAgentDispatcher {
     /// GOOSE_SWARM_GOALS: freeze the rendered app-PILLARS block before EXECUTE. Set once; every worker reads it.
     pub fn set_pillars(&self, block: String) {
         let _ = self.pillars.set(block);
+    }
+
+    /// Freeze the plan's declared owned files before EXECUTE, so the sink's ceiling can be sized against the
+    /// tree it will have to integrate. Set once; read only at the integrate-verify dispatch.
+    pub fn set_sink_tree_files(&self, files: Vec<String>) {
+        let _ = self.sink_tree_files.set(files);
+    }
+
+    /// On-disk bytes of the plan's declared owned files, at the moment the sink is dispatched. Missing files
+    /// contribute 0 — a task that never wrote its file leaves the join LESS to integrate, not more, so the
+    /// budget should not grow for it.
+    fn sink_tree_bytes(&self, work_dir: &std::path::Path) -> u64 {
+        self.sink_tree_files
+            .get()
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(|f| std::fs::metadata(work_dir.join(f)).ok())
+                    .map(|m| m.len())
+                    .sum()
+            })
+            .unwrap_or(0)
     }
 
     /// GOOSE_SWARM_GOALS (part 1): distill the app's non-negotiable PILLARS from the spec + research + the
@@ -16063,9 +16214,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
 fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
     devices
         .iter()
-        .flat_map(|d| {
-            std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1))
-        })
+        .flat_map(|d| std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1)))
         .collect()
 }
 
@@ -23121,8 +23270,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         "GOOSE_SWARM_RESEARCH_TOOLS",
                                         cfg.research_tools,
                                     )));
-                                let worker_models: Vec<String> =
-                                    fleet_slot_models(&devices);
+                                let worker_models: Vec<String> = fleet_slot_models(&devices);
                                 let findings = dispatcher
                                     .run_research(questions, research_exts, worker_models)
                                     .await;
@@ -23829,6 +23977,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             dispatcher.set_pillars(render_pillars_block(&pillars));
         }
     }
+
+    // Freeze the tree the join will have to integrate. Sized at DISPATCH, not here: at plan time the files do
+    // not exist yet, and the quantity that matters is what the fleet actually wrote. Plan FAN WIDTH was measured
+    // and rejected as the input — the 3-node plan declared SEVEN file-owning tasks against the 1-node plan's
+    // EIGHT, so scaling on width would enlarge the wrong run's budget.
+    dispatcher.set_sink_tree_files(
+        dag.tasks
+            .values()
+            .flat_map(|n| n.spec.owned_files.iter().cloned())
+            .collect(),
+    );
 
     let mut plan_evt = serde_json::json!({
         "event": "plan_loaded",

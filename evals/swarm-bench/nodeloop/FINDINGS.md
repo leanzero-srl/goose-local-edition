@@ -15301,3 +15301,39 @@ while leaving the loop cut. **PRE-REGISTERED FALSIFIER: if a scaled ceiling lets
 4326 s, or `sync_shape` still fails on a 3-node run, REVERT.** ⚠ Confidence in the DIAGNOSIS is high
 (two instruments, one exact cap hit, a tier-A miss). Confidence in the MAGNITUDE is low: n=1 for
 "working sink cut off", and the 4326 s loop is also n=1.
+
+## F369 — 🔴 I ALMOST SHIPPED A FIX THAT WOULD HAVE ENLARGED THE WRONG RUN'S BUDGET. The fan does NOT grow with the fleet; the TREE does.
+
+F368 stated the defect as *"the join's budget is a CONSTANT while the work it integrates scales with the
+fleet"* and I implemented, tested (green) and clippy-cleared a ceiling keyed on **plan fan width** —
+the count of file-owning tasks. Then I checked the input against the two cells (L201, and L4: prove
+the instrument can see the thing):
+
+    baseline-n3-r0   16 tasks,  7 FILE-OWNING   declared tree 43328 B   produced 1337 lines / 11 files
+    baseline-n1-r0   16 tasks,  8 FILE-OWNING   declared tree 27103 B   produced  613 lines /  5 files
+
+🔴 **THE 3-NODE PLAN HAS FEWER FILE-OWNING TASKS THAN THE 1-NODE PLAN — 7 against 8.** Keyed on fan
+width my fix would have given the **1-node** run the larger ceiling: **exactly backwards, on the very
+pair it was built from.** Green tests and clean clippy said nothing about it, because the logic was
+right and the INPUT was wrong ⇒ **L117 again, and ⇒ L214.**
+
+**SO F368'S OWN FRAMING IS HALF WRONG, AND I AM CORRECTING IT RATHER THAN QUIETLY REWORDING IT.** The
+fan did NOT widen with the fleet. **The tasks each WROTE MORE.** 7 tasks produced 11 files and 1337
+lines; 8 tasks produced 5 files and 613 lines. F366's chain "more slots ⇒ more modules ⇒ more code"
+is wrong in its middle link — the correct chain is **more slots ⇒ more CODE PER TASK ⇒ a bigger tree
+⇒ a join whose work grew while its budget did not.** (Why per-task output rises with the fleet is now
+OPEN and unexplained; do not assume the planner. n1 also declared 9 owned files and only **6 exist on
+disk** — three tasks never wrote theirs at all, which is its own defect and may be most of the gap.)
+
+✅ **REWIRED AND SHIPPED against the quantity that actually discriminates:** declared-owned-file bytes,
+**43328 vs 27103 = 1.60×**, sized **at sink dispatch** (the files do not exist at plan time) from a
+frozen list of the run's OWN declared files — never a directory walk (the `$HOME`-scan class of bug).
+`sink_cap_ref_bytes` = 30000 (the largest tree measured whose join finished comfortably: 27103 B in
+229 s). The n3 tree now gets **2600 s** instead of 1800. **The clamp at 2× (3600 s) is unchanged and
+is the load-bearing half — it still cuts the 4326 s loop.** A regression test asserts the ORDERING
+that nearly shipped backwards.
+
+⚠ **CONFIDENCE, HONESTLY.** DIAGNOSIS high. **MAGNITUDE LOW and now lower**: `sink_cap_ref_bytes` is a
+constant fitted to n=1, and I do not know that 2600 s is enough — r0's join was cut at 1800 s
+mid-repair and nothing says how much more it needed. **FALSIFIER unchanged and still registered: if
+any join exceeds 4326 s, or `sync_shape` still fails on a 3-node run, REVERT.**
