@@ -14892,3 +14892,56 @@ looking for thin files.**
 bad, but because a run that salvages 4 of 22 is telling you the *model* is spiralling ~1 task in 7,
 and that is a prompt/model signal even when the engine handles it correctly. **What I will not now do
 is treat salvage count as a quality proxy.**
+
+## F360 — the spiral mitigations were ALREADY ON during every spiral. L115 does not apply.
+
+The obvious move after F356 was L115 — *a verified defect with a switch already written needs no A/B,
+flip it.* **The switches are already flipped.** `levers_resolved` from `baseline-n3-r1`, the cell that
+salvaged 4 tasks and lost its sink to three stalls:
+
+    omni_judge              = True        ← ON
+    spiral_break_chars      = 12000       ← ON
+    progress_watchdog_secs  = 900
+    worker_timeout_secs     = 420
+    spiral_thinking_chars   = 0           ← OFF
+
+**Both designed anti-spiral mechanisms were active, and 11 of 79 tasks spiralled anyway.** The
+mitigations are **insufficient, not absent** — a completely different problem from the one I was about
+to "fix", and the only reason I know is that I read `levers_resolved` instead of the Default impl
+(L121: a lever with no line in `levers_resolved` is unverifiable; the converse also holds — the line
+is what proves it was armed).
+
+**AND THE ENGINE ALREADY EXPLAINS WHY A THRESHOLD CANNOT SOLVE THIS** (`swarm.rs:361-363`):
+
+> *"a CHAR CAP cannot police plan drafts, because healthy drafts reach 57,443 chars (from runs scoring
+> 100/100) and a spiral looks identical by volume — which is why `spiral_budget_for` DISARMS that
+> kind. A judge that READS the text can tell them apart; a threshold never can."*
+
+`omni_judge` is that judge, it is ON, and it still did not catch these. **So the open problem is not
+"add a spiral guard" — it is "the reading judge misses this shape of spiral".** That is a far more
+specific and more interesting target than anything I had before.
+
+### The one switch that IS off, and why I am NOT flipping it blind
+
+`spiral_thinking_chars: 0` — *"kill+re-dispatch a worker that emits more than this many thinking chars
+with ZERO tool calls **and no owned file**, with a forceful 'write now' nudge"*.
+
+- **It is irrelevant to the 11 salvages.** They HAD written their owned files — that is the salvage
+  precondition. The gate excludes them by construction.
+- **It is exactly on-target for the FAILED sink.** `integrate-verify` stalled three times having
+  written nothing, which is precisely the population this lever names, and it would have fired on
+  char volume — sooner than the 420 s idle watchdog — with a nudge the retry does not carry.
+- **But I have n = 1 for the case it helps, and no basis for choosing the threshold.** Picking a
+  char count out of the air is exactly the band-from-nothing this project keeps punishing (L163), and
+  the neighbouring comment records healthy work at 57,443 chars. **A number I cannot derive is a
+  number I should not ship.**
+
+📌 **REGISTERED AS THE CANDIDATE, NOT THE DECISION:** enabling `spiral_thinking_chars` needs a
+threshold derived from the actual distribution of thinking-chars-before-first-write, split by whether
+the task eventually wrote anything. **That distribution is measurable from `judge_observed`'s
+`thinking_chars` field** — which the engine already emits — **and I could not read it today because
+the sessions route is 19% dark (F355) and this corpus predates the salvage flag.** It is the first
+thing the next real run can answer.
+
+⇒ **L208. "THERE IS A SWITCH FOR THIS" IS A HYPOTHESIS ABOUT THE CONFIG, AND `levers_resolved` IS
+WHERE IT DIES — check what the run actually resolved before proposing to turn anything on.**
