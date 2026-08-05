@@ -16963,3 +16963,57 @@ Mid-EXECUTE dispatch counts: **worksmacstudio 5 · local-mihai 5 · mac-gabee 4*
 context overflow on gabee despite its 65536 ceiling against the other two nodes' 200192. The 6-slot
 pool is genuinely spreading work across three distinct devices — the precondition for any node-scaling
 claim, holding in a live run rather than assumed.
+
+---
+
+## F405 — 🔴 THE ENTIRE 3-NODE ADVANTAGE LIVES IN THE CHECKS THAT DO NOT REPRODUCE
+
+F402 established that the sync family's failures are a property of the RUN, not the code: re-running
+the same binaries against a fresh vendor, syncs the scorer marked broken succeed. The obvious next
+question, which I had not asked: **how much of the measured gap survives if those checks are removed?**
+
+| partition | n1 | n3 mean | gap | pairs @50% |
+|---|---|---|---|---|
+| all 35 checks | 0.5798 | 0.6390 | **+0.0593** | 51 |
+| **24 stable checks** (sync family removed) | **0.8089** | **0.8097** | **+0.0007** | never |
+
+**+0.0007.** On every check that reproduces, three nodes and one node are the same to within a
+thousandth. The whole +0.0593 — the number this project's entire node-scaling question rests on, the
+number F385 computed 51 pairs against — **is concentrated in the eleven checks with demonstrated
+non-reproducibility.**
+
+### What this does and does not say
+
+**It does NOT say the swarm is bad.** Both arms score ~0.81 on the stable 24. The apps are largely
+correct; the arms are simply indistinguishable there.
+
+**It does NOT say parallelism fails.** ~2.5x throughput and 0.86 execute occupancy stand — three nodes
+genuinely do more work per wall-second. They just do not convert it into a better app.
+
+**It DOES say the honest answer to "is 3 nodes better than 1" is currently NO** — not "yes but
+unproven". I have been treating +0.0593 as a real-but-small effect to be amplified. It is better read
+as noise in the one family that does not reproduce.
+
+### ⚠️ Three caveats, stated because they cut against the finding's authority
+
+1. **The n1 arm is ONE cell.** 0.8089 is a single observation; its own spread is unmeasured. This
+   partition cannot be stronger than that.
+2. **The FLAKY set is my judgement and it is POST-HOC** — the 11 sync-dependent checks from F390 plus
+   the shape checks F402 showed non-reproducing. Removing checks after seeing results is exactly the
+   "fit the instrument to the answer" trap. The defence is that the removal criterion is
+   *non-reproduction*, established independently in F402 before this partition existed, and that it
+   REMOVES the 3-node arm's advantage rather than manufacturing one. **The honest version is
+   pre-registered: the next sweep should declare the stable set BEFORE scoring.**
+3. It is 4 n3 cells against 1 n1 cell, all pre-dating today's engine changes.
+
+### 🎯 The constructive read — this makes `doc_fetch` the ONLY arm that matters
+
+If the arms differ nowhere except the sync family, then the sync family is not noise to be excluded —
+it is **the entire measurable surface of the question.** And `doc_fetch` targets precisely it: the
+vendor's cursor/pagination protocol, readable only in the document no scout can open, which decides
+whether a run retrieves all 247 payments. Only 1 of 5 archived cells ever did.
+
+So the target sharpens rather than dissolves: **not "widen the gap", but "make the sync family
+reproduce."** A 3-node run that reliably syncs where a 1-node run does not would be a real effect in
+the only place an effect can currently show up. A 3-node run that syncs *variably* produces exactly
+the +0.0593 mirage measured here.
