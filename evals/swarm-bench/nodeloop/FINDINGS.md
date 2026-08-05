@@ -14760,3 +14760,50 @@ the map the failure emit sites now correctly read from is empty. **A fix that re
 producer never wrote is only half a fix**, and the commit message's claim that failed tasks "now carry
 their session id" is **not true for a task whose every attempt stalled**. ⇒ **L205. WHEN A FIX WIRES A
 READER TO A MAP, CHECK THAT SOMETHING WRITES THE MAP ON THE PATH YOU CARE ABOUT.**
+
+## F357 — the salvage is now visible in the log. And the engine already knew about it, which corrects F356.
+
+`TaskCompleted` now carries **`salvaged: bool`**, threaded from the one path that sets it
+(`swarm.rs:20705`, the progress-watchdog accept) through `TaskRunOutput` and a per-task map to all
+**six** emit sites. ✅ `cargo clippy --all-targets -- -D warnings` **exit 0**; **86 goose-swarm tests
+pass**.
+
+Booleans default to false here rather than being optional, per the repo's own rule — and that is the
+right default for this field: a task is a normal completion unless the watchdog says otherwise.
+
+### 🔴 F356 OVERSTATED THE RISK, AND THE CORRECTION WAS SITTING IN A COMMENT
+
+F356 said *"no instrument can tell a clean run from a salvaged one."* **True of the LOG. Not true of
+the ENGINE.** `swarm.rs:24155` already carries this:
+
+> *"#120/#134 (R1): a task SALVAGED to Done can still have left its deliverable UNWRITTEN — measured
+> on mustsolve-test4, cli-entry was salvaged after writing only a 24-byte go.mod,
+> cmd/logfold/main.go was never created, so the app had no runnable binary yet the smoke gate
+> reported verified:true… A MISSING or EMPTY planned SOURCE deliverable is a HARD finding regardless
+> of task Done/Failed status."*
+
+**So the phenomenon is known, named ("SALVAGED to Done"), previously measured, and already defended
+against by `missing_deliverable_gate` — a deterministic stat, re-evaluated every fix round.** The
+harmful case (salvaged task leaves nothing on disk) is caught. **What was missing was only
+observability**, and that is what this commit adds.
+
+That materially lowers F356's severity and I am saying so rather than leaving the stronger claim
+standing. **What survives F356 intact:** 11 of 79 completed tasks (14%) took the salvage path; they
+are indistinguishable in the event log; the thinking-only spiral is endemic rather than an
+`integrate-verify` quirk; and every score this campaign has published mixes the two populations. What
+does NOT survive is the implication that nothing in the engine guards it.
+
+⇒ **L206. BEFORE CALLING A GAP UNGUARDED, GREP FOR THE CONCEPT IN THE ENGINE'S OWN COMMENTS — this
+codebase records its own measured defects at the site, and twice today a comment I had not read
+already contained the answer** (`:12665` on the draft dedup, `:24155` on salvage).
+
+📌 **NOW POSSIBLE ON THE NEXT RUN, and the instrument change is trivial because the signature is
+explicit rather than inferred:** count `salvaged: true` against total completions and report clean vs
+salvaged separately. Until now `occupancy.py` and the scorer could only have inferred it from
+`session_id == null && tool_calls == []`, which is an accident of the implementation and would break
+the moment either field was populated on that path.
+
+⚠ **UNMEASURED.** No run has produced this field — the fleet has had no models loaded since 08:03:59.
+📌 **REGISTERED:** on the next 3-node run I expect **1-3 tasks with `salvaged: true`** (11 across four
+cells ⇒ ~2.75/run). **Zero on every run would mean the flag is not wired to the path that fires**, not
+that stalls stopped.

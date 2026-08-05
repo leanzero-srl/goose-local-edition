@@ -449,6 +449,7 @@ struct State {
     /// match exactly (103/103, 72/72, 64/64, 43/43) across every archived run, and they never
     /// interleave. If that invariant is ever relaxed this must become a per-task map.
     judge_node: Option<String>,
+    task_salvaged: std::collections::HashMap<String, bool>,
     idle_jobs: u32,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): rotating review-dimension index for idle nodes during the
     /// sink, so successive idle reviews cover different angles.
@@ -877,7 +878,11 @@ impl State {
                     output,
                     session_id,
                     tool_calls,
+                    salvaged,
                 } = run;
+                // Remembered per task, because the completion event is emitted from six sites and only
+                // one of them is on the path that produced this value.
+                self.task_salvaged.insert(tid.to_string(), salvaged);
                 self.task_session
                     .insert(tid.to_string(), session_id.clone());
                 self.task_tool_calls
@@ -903,6 +908,7 @@ impl State {
                 let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
+                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                     status: "done".to_string(),
                     device: dev_id,
                     model: model_id,
@@ -1006,6 +1012,7 @@ impl State {
                         let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
+                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                             status: "done".to_string(),
                             device: dev_id,
                             model: model_id,
@@ -1021,6 +1028,7 @@ impl State {
                         let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
+                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                             status: "failed".to_string(),
                             device: dev_id,
                             model: model_id,
@@ -1074,6 +1082,7 @@ impl State {
                 let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
+                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                     status: "failed".to_string(),
                     device: dev_id,
                     model: model_id,
@@ -1514,6 +1523,7 @@ impl State {
             let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
+                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                 status: "done".to_string(),
                 device,
                 model,
@@ -1670,6 +1680,7 @@ impl State {
             let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
+                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
                 status: status.to_string(),
                 device,
                 model,
@@ -2210,6 +2221,7 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             judge_node: None,
+            task_salvaged: std::collections::HashMap::new(),
             idle_jobs: 0,
             sink_review_dim: 0,
             last_judged: HashMap::new(),

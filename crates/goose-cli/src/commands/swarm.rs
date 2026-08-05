@@ -20649,6 +20649,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     output,
                     session_id: Some(out.session_id),
                     tool_calls: out.tool_calls,
+                    salvaged: false,
                 })
             }
             Err(e) => {
@@ -20702,6 +20703,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
                             output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
                             session_id: None,
                             tool_calls: Vec::new(),
+                            salvaged: true,
                         });
                     }
                 }

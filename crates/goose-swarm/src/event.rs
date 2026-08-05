@@ -20,6 +20,10 @@ pub enum SwarmEvent {
     TaskCompleted {
         task_id: String,
         status: String,
+        /// True when `status` is `done` only because the progress watchdog salvaged a stalled task
+        /// whose owned files were already written. 14% of completed tasks in the archive took this
+        /// path and were counted as ordinary successes.
+        salvaged: bool,
         device: Option<String>,
         model: Option<String>,
         attempts: u32,
