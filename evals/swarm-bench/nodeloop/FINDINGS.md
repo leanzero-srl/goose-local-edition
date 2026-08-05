@@ -12555,3 +12555,35 @@ them, and I have been caught before by treating a gap in a live log as a fact ab
 `integrate-verify`, and compare dispatch→terminal against 1800.** ⚠ **If it ends `done` with
 `sink_capped = 0` and total < 1800, cell 3 is the SECOND genuine capstone completion in the corpus —
 which would double the sample of the only outcome that has ever coincided with B = 1.0.**
+
+## F310 — the sink cap is a SOFT deadline checked at loop boundaries, and cell 3 is the SECOND genuine completion
+
+F309's three open readings are settled by the run's own terminal event:
+
+    baseline-n3-r2 sink:  retries=0 · sink_capped=0 · dispatch->terminal 1907 s (31.8 min) · status DONE
+
+**It ran 107 s PAST `sink_cap_secs` = 1800 and was never capped.** That refutes the model I had after
+seeing two caps land at exactly 1800 s: **the deadline is not a hard bound.** `swarm.rs:11576-11603`
+evaluates it only at the top of the loop and on an event-gap `timeout(wait, stream.next())` — so a
+sink whose stream ENDS between those checks exits normally, past its deadline, with no cap event.
+The two 1800 s caps fired on the wire because those sinks were still streaming when the check came
+round; this one finished first.
+
+⇒ **`sink_cap_secs` bounds the sink SOFTLY: it is a deadline evaluated at loop boundaries, not a
+timer that stops the task.** Combined with F307/F309 (it is also per ATTEMPT and resets on retry), the
+honest description is: *nothing in the engine hard-bounds the sink's total time, and even its own
+attempt deadline can be overshot.* ⚠ n=1 on the overshoot — one cell, 107 s.
+
+⭐⭐ **AND THE REGISTERED DATUM LANDS: cell 3 is the SECOND GENUINE CAPSTONE COMPLETION in the corpus**
+(`done`, 0 caps, 0 retries), against 3 caps and 2 deaths in the six prior runs. **The genuine-completion
+rate goes from 1/6 to 2/7.**
+
+📌 **THE REGISTERED CHECK IS NOW LIVE AND CHEAP: the ONLY prior genuine completion (`think_off-n3-r0`)
+had B = 1.0. If cell 3's tier B also lands high, that is 2/2 for genuine-completion ⇒ high B.**
+⚠ **FALSIFIER, and it is a real one: cell 3 comes back with B < 0.5.** That would kill the
+capped/genuine story outright and leave F289's bimodality unexplained by the sink.
+⚠ **DO NOT read the row yet — `test-meridian` is still in flight and scoring runs after the unit
+finishes (L158: a results row is not readable while its writer is alive).**
+
+⇒ **L168. A DEADLINE THAT IS POLLED IS NOT A DEADLINE THAT IS ENFORCED — before treating a cap as a
+bound, find WHERE it is checked, because whatever finishes between checks escapes it.**
