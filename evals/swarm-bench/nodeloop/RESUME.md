@@ -59,9 +59,12 @@ silently conflated.
 
 1. **The parallelism WORKS.** Execute occupancy 0.86 on the 3-node arm; matched by task id (n=11) the
    median duration ratio is **1.19 at a median concurrency ratio of 2.98** ⇒ ~2.5× real throughput.
-2. **The deficit is three whole-app readers**, and they have the *lowest* concurrency ratios, so
-   contention does not explain them: `integrate-verify` 7.85×, `verify-e2e::0` 3.65×, `verify-e2e::1`
-   4.04× against 0.21-1.51× for every other matched task. Critical path 3827 s vs 2036 s.
+2. 🔴 **THERE IS NO LOCATED DEFICIT (F382 — this line used to claim one).** The "three whole-app
+   readers" figures (`integrate-verify` 7.85×, `verify-e2e::0` 3.65×, `verify-e2e::1` 4.04×) come from
+   **r0 alone**, and `e2e+sink` across three cells of the IDENTICAL config is **1890.9 / 2082.1 /
+   4077.6 — a 2.2× spread with nothing varied**. r0 is the worst of the three; against r2 the 3-node
+   arm is FASTER on e2e (425.7 vs the 1-node arm's 437.8). **One pair cannot locate a deficit inside
+   that spread (L223).**
 3. **The 3-node arm lost the tier-A integration check while its integrator was cut off** — `sync_shape`
    1.00 → 0.00 on the run whose `integrate-verify` was terminated at **1800.1 s == `sink_cap_secs`
    exactly**, mid-repair (10 shell + 9 write + 1 edit, 56 messages over 1705 s, zero final output).
@@ -94,8 +97,11 @@ slot-concurrency contract now has a test** · `430ab9393` **F377 `slot_count()` 
 
 ⚠ **F374 is REGISTERED, NOT FIXED, deliberately.** `worker_count` also feeds `fan_e2e_split`, so a
 3-node run now emits **four** e2e shards where the archive shows three, and each shard builds and runs
-the whole app. Sign unknown. **Falsifiers: e2e node-seconds > 3037 s, or any shard reporting clean
-having enumerated zero commands ⇒ move the shard count to the oracle length.**
+the whole app. Sign unknown. **Settleable at n=1: the shard COUNT (deterministic from the plan) and
+any shard reporting clean having enumerated zero commands.** ⚠ **The cost half is NOT settleable at
+n=1 and its ">3037 s" band is WITHDRAWN** — F382 measured e2e at 2277.5/425.7/1391.6 across three
+cells of the identical config, so 3037 sits inside the replicate spread. **Cost needs ≥3 replicates
+per arm, compared as medians.**
 
 ⛔ **Do NOT ship the selection fix** (`scheduler.rs:1099`/`:1220` use `position()` while `pick_device`
 sorts by `in_flight`). F380 exonerated it on *dispatch latency* — that is **not** the same as
