@@ -15061,3 +15061,56 @@ supervision starvation and spiralling are linked and the judge's idle-only gatin
 **If the fractions are flat across cells, they are independent and this is a dead end.** r0 showed 59
 of 103 firings skipped overall (57%) against 1 salvage; r1's per-task numbers are what the next run
 must be compared against.
+
+## F363 — the judge-starvation hypothesis is DEAD. Registered in advance, tested, killed.
+
+F362 registered: *"if the `no_idle_device` skip fraction is higher in cells with more salvages, then
+supervision starvation and spiralling are linked… **if the fractions are flat across cells, they are
+independent and this is a dead end.**"*
+
+    cell   judge attempts   skipped no_idle   skip%    salvaged   score
+    r0     162              59                0.364    1          0.6595
+    r1      98              26                0.265    4          0.4780
+    r2      79              15                0.190    3          0.6030
+    r3      54              11                0.204    3          0.8157
+
+    Spearman(skip%, salvaged) = -0.103
+    Spearman(skip%, score)    =  0.000
+
+**FLAT, and the salvage correlation is slightly NEGATIVE — the wrong sign.** The cell with the
+**highest** starvation (r0, 36.4%) has the **fewest** salvages (1). The score correlation is exactly
+zero. **By the criterion I set before looking: dead end.**
+
+⇒ **Judge starvation and spiralling are independent in this corpus.** The judge's idle-only gating is
+real (F348: it takes the same slot a task does) and it does degrade supervision when the fleet is
+busy — but **that degradation does not track the thing I was trying to explain.** I am dropping it as
+a target rather than keeping it alive on the strength of the mechanism sounding right (L91).
+
+⚠ **THE HONEST LIMIT: n = 4 cells cannot detect a modest effect**, and a null at n=4 is as premature
+as a win at n=4 (L133). What makes me willing to call it dead rather than unproven is that **both
+correlations point the wrong way or nowhere at all** — a real effect would at minimum have shown the
+right sign. **If a later corpus reverses this, the reversal is the finding, not a vindication.**
+
+### Where this leaves the whole F354 → F363 line
+
+Six ticks of investigation, and the honest summary is a chain of **my own hypotheses dying against the
+engine's own record**:
+
+- "the sink tail is serialisation" → **three 420 s stalls, and it FAILED** (F354)
+- "salvage means degraded output" → **refuted, sign reversed** (F359)
+- "flip the existing spiral switch" → **the switches were already on** (F360)
+- "derive the threshold" → **derived it; n=11 was ONE task and the gate cannot reach the sink** (F361)
+- "the reading judge missed it" → **it was deliberately never asked** (F362)
+- "judge starvation explains the spirals" → **flat, wrong sign** (F363)
+
+**What SURVIVES all of it, and is worth more than any of the dead hypotheses:**
+1. **~14% of completed tasks are watchdog salvages** — measured, now flagged in the engine (F357) and
+   counted by the harness (F358).
+2. **The salvage is a genuine rescue** — salvaged tasks wrote MORE, and none left a file missing.
+3. **An owns-nothing task has no early stall detection by construction**, a documented trade whose
+   cost nobody had priced: **3837 s, three attempts, failed, 30% of a run's wall.**
+4. **A char threshold provably cannot separate spiral from healthy work on this corpus** — the
+   engine's own claim, now confirmed with data rather than asserted.
+
+**Nothing here needed the fleet, and nothing here is a guess.** The next real run tests the four
+registered predictions; it does not need another hypothesis from me first.
