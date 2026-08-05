@@ -15896,3 +15896,43 @@ FROM BOTH EXTREME ASSUMPTIONS, NOT THE MIDPOINT THAT HAPPENS TO FALL OUT OF THE 
 📌 **NO INSTRUMENT NEEDS A CODE FIX FROM THIS SWEEP.** The rates are computed correctly for what they
 claim; what was wrong was **my reporting of one as a point estimate**. Recorded rather than patched,
 because patching a correct computation to chase a wrong write-up is how instruments rot.
+
+## F382 — 🔴 F366'S SURVIVING CLAIM IS AN ARTEFACT OF WHICH n3 CELL I PICKED. The verify-family "deficit" does not survive the other two cells.
+
+F370 showed the two apps are the same size, leaving F366 with one standing claim: *"the entire deficit
+is three whole-app readers"* (`integrate-verify` 7.85×, `verify-e2e::0` 3.65×, `verify-e2e::1` 4.04×).
+The obvious remaining explanation was workload — n3-r0 produced **16241 B of tests** and n1-r0 produced
+**none**, so its verifiers had a suite to build and run. **Measured across every complete cell, and the
+explanation dies immediately:**
+
+    cell             test-bytes   e2e node-s   sink     e2e+sink
+    baseline-n3-r0        16241       2277.5   1800.1     4077.6
+    baseline-n3-r2      **27713**    **425.7**  1656.4     2082.1
+    baseline-n3-r3        24752       1391.6    499.3     1890.9
+    baseline-n1-r0            0        437.8    229.5      667.2
+
+🔴 **r2 CARRIES THE MOST TEST BYTES AND THE LOWEST e2e COST OF ANY 3-NODE CELL — 425.7 s, essentially
+identical to the 1-node arm's 437.8 s, which has ZERO tests.** Test-suite size does not drive verify
+cost. **Hypothesis dead on arrival.**
+
+🔴 **AND THE REAL FINDING IS WORSE FOR F366 THAN THE DEAD HYPOTHESIS WAS.** Across three cells of the
+**identical configuration**, `e2e+sink` runs **1890.9 / 2082.1 / 4077.6** — a **2.2× spread with nothing
+varied**. **F366's matched pair used r0, which is the WORST of the three on exactly this metric.**
+Against r2 instead, the e2e comparison is **425.7 vs 437.8 — the 3-node arm is FASTER.**
+
+⇒ **"THE DEFICIT IS THREE WHOLE-APP READERS" IS NOT ESTABLISHED. It is one cell's number, and the cell
+was not chosen for being representative — it was chosen for being the only closed matched pair.**
+⇒ **L223. A MATCHED PAIR CONTROLS FOR THE CONFIGURATION, NOT FOR THE VARIANCE — IF THE SAME CONFIG
+SPANS 2.2× ACROSS REPLICATES, ONE PAIR CANNOT LOCATE A DEFICIT NO MATTER HOW CAREFULLY IT IS MATCHED.**
+
+✅ **WHAT SURVIVES F366, AND IT IS THE PART THAT MATTERED:** the **within-cell** matched-task result —
+median duration ratio **1.19** at median concurrency ratio **2.98** ⇒ ~2.5× real throughput ⇒ **the
+parallelism works, and the LM-Link-bottleneck hypothesis stays dead.** That comparison never depended
+on which cell was quoted, because it is computed *inside* the pair, task by task.
+
+📌 **CONSEQUENCE FOR GOAL ONE, STATED PLAINLY: the swarm has no located deficit any more.** The apps
+are the same size (F370), the fleet is not idle (0.86), dispatch is instant (F380), the parallelism
+delivers ~2.5× (F366), and the verify-family gap is inside the replicate spread (F382). **What remains
+is a wall-clock comparison between one run that completed its plan and one that abandoned three tasks
+— and n=1 either way.** ⚠ **The honest next step is REPLICATES, not another mechanism hunt** — which is
+exactly what the fleet is needed for, and exactly what no amount of archive reading can substitute for.
