@@ -12812,3 +12812,43 @@ OWN baked-in port, only between units).
 eight failing checks all read `sync1` / `payments` / `summary` responses, which those two files
 produce. ⚠ **But note the base rate: I have now eliminated three static hypotheses in three ticks, so
 the prior on a fourth static explanation should be LOW.**
+
+## F316 — CELL 3 SETTLES THE COLLISION: F310 is REFUTED, F313 survives an OUT-OF-SAMPLE test, and I called it wrong
+
+    baseline-n3-r2   score 0.603 · wall 6752.6 s · A 1.0 · B 0.3194 · C 0.4286 · D 0.75
+                     prefix 1316.0 (redraft 0) · sink GENUINE (0 retries, 0 caps, 1907 s) · replan +4 test-only
+
+🔴 **F310 IS DEAD.** "A genuine capstone completion ⇒ high tier B" now has n=2 and reads
+**{1.0, 0.3194}**. Cell 3's sink finished on its own merits and its B is in the low group.
+
+✅ **F313 SURVIVES, AND ON AN OUT-OF-SAMPLE PREDICTION.** F313 said cell 3's bonus work was 100% test
+files therefore **B LOW**, registered before the number existed. It is low. Updated split, n=7:
+
+    APP-SIDE bonus     think_off-n3-r0  1.0000     think_off-n3-r1  0.9715
+    TEST-ONLY bonus    baseline-n3-r0   0.3194     baseline-n3-r1   0.2083
+                       sink_review-n3-r0 0.3611    think_off-n3-r2  0.2083
+                       baseline-n3-r2   0.3194  ← the out-of-sample cell
+
+**Still perfect separation, now 2 versus 5.** Exact p that the two app-side cells are the top two of
+seven under no association: **1/C(7,2) = 1/21 = 0.0476.**
+
+⚠🔴 **AND I PREDICTED THE WRONG ONE.** Last tick I wrote, on the record and before the number:
+*"F314 already killed F313's mechanism, so I EXPECT HIGH B."* **It came back low.** The surviving
+prediction is the one whose mechanism I had just falsified — which is exactly why the falsifier goes
+on record before the outcome and why I do not get to re-narrate this as obvious.
+
+⚠ **WHAT THIS DOES AND DOES NOT SUPPORT.** The 0.0476 is an EXACT combinatorial p on a split I
+constructed AFTER seeing six cells — it is **not** a pre-registered test, and the honest weight comes
+almost entirely from the one genuinely out-of-sample cell. **And the mechanism is still missing:**
+F314 showed the UI checks are saturated, so `think_off-n3-r1`'s app-side bonus (index.html only)
+cannot be what lifted its B. **A strengthened correlation with a falsified mechanism is a lead, not a
+finding.**
+
+📌 **THE CLEAN TEST IS NOW OBVIOUS AND FREE: every remaining curve cell arrives with a bonus-work
+class known BEFORE its score.** Predict low B for every test-only cell and high B for every app-side
+cell, from here on, and let the sweep adjudicate. ⚠ **FALSIFIER: any test-only cell above B 0.5, or
+any app-side cell below it.**
+
+**Also, for the curve itself:** cell 3 is the **FASTEST n3 baseline cell so far** —
+wall **6752.6** against r0's 7729.3 and r1's 8488.0 — and its stored `prefix_secs` is **1316.0**,
+exactly the figure I derived live from the event log in F303. The instrument and the row agree.
