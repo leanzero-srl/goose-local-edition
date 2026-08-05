@@ -13470,3 +13470,55 @@ entirely (L123). The stuck case still trips the same rung it always did.
 ⇒ L184. **A TIMEOUT ON TOTAL ELAPSED CANNOT DISTINGUISH SLOW FROM STOPPED. When the subject emits
 progress events, time them from the LAST ONE — otherwise every legitimate long branch is on a
 collision course with the guard, and the guard wins.**
+
+## F331 — THE n1 ARM IS ARMED ON THE CURRENT BINARY, AND I NEARLY PROVED IT WITH OUT-OF-SCOPE EVIDENCE
+
+The next three units are 1-node cells (~6 hours). L53 says prove the arm is armed BEFORE spending
+them, and `abandon_decision`'s own rule-1b comment describes a defect that would void every one:
+
+> *"MEASURED on the 1-node unit: pool of 1, dispatches to `mac-gabee-…` AND `planner`, peak of TWO
+> devices working at once."*
+
+A 1-node cell that dispatches to two devices is VOID by construction, and three void cells is three
+lost pairs.
+
+**FIRST ANSWER, AND IT WAS OUT OF SCOPE.** `swarm-1node-r0` reads exactly what I wanted:
+`run_started.pool` = 1 device, `pool_resolved` = `worker_count 1, planner_pushed False`, and all 14
+dispatches to a single device. I was one keystroke from writing "the arm is armed".
+**That run started 2026-08-03T10:01:47Z. The current binary was built 2026-08-04T18:42:45Z.** It is
+evidence about a DIFFERENT ENGINE — the precise error F329 had just cost me, caught this time by
+applying my own rule one tick later (L122/L183).
+
+**THE IN-SCOPE CHAIN, all three links verified on what is actually running:**
+
+1. `swarm.rs:21867` — the planner is pushed only when
+   `swarm_gate_cfg("GOOSE_SWARM_PLANNER_ALSO_WORKS", cfg.planner_also_works)` passes AND the pool
+   does not already contain the planner model. The gate exists in the current source.
+2. `bench/run_build.py:94-95` — the harness sets **`GOOSE_SWARM_MAX_NODES=<nodes>` AND
+   `GOOSE_SWARM_PLANNER_ALSO_WORKS=0`** for every unit. This file is current on disk.
+3. The lever is present in the binary the curve runs (below).
+
+⇒ **the n1 arm will build a genuine 1-device pool.** The engine still decides (L139), and rule 1b
+catches a violation at minute one rather than after two hours, so the downside is bounded either way.
+
+### ⚠ THE MARKER CHECK REPORTED ALL FOUR ABSENT, AND THE BINARY WAS FINE
+
+    GOOSE_SWARM_PLANNER_ALSO_WORKS     ABSENT      ← every one of these was WRONG
+    GOOSE_SWARM_MAX_NODES              ABSENT
+    pool_resolved                      ABSENT
+    planner_pushed                     ABSENT
+
+I had written `grep -qF -- "$M" <(strings "$BIN")`, the process-substitution form. It failed for all
+inputs. The positive control settled it in one command: `strings` yields **1,216,157 lines** and
+`run_started`, `task_dispatched`, `swarm` and `GOOSE_SWARM_MAX_NODES` are all present. Materialising
+`strings` to a file once and grepping that gives **1 hit for every one of the six markers**.
+
+**THIS IS THE SECOND TIME THIS EXACT CHECK HAS MANUFACTURED FALSE ABSENCES** — `loop.sh boundary`
+carries a comment about the first occasion, where `grep -q` SIGPIPE'd `strings` under `pipefail` and
+"would have refused every boundary forever". Different root cause, identical symptom, and the
+symptom is the most dangerous one available: **four confident ABSENTs that would have read as "the
+engine is missing the levers the curve depends on"**, sending me to fix a defect that does not exist.
+
+⇒ L185. **A MARKER CHECK THAT REPORTS EVERYTHING ABSENT IS REPORTING ON ITSELF — before believing
+any zero from a search, run it against a string you KNOW is there, in the same invocation. An
+instrument that cannot find `swarm` in the swarm binary has not made a discovery.**
