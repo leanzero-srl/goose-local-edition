@@ -14169,3 +14169,57 @@ completely. The three-node arm's EXECUTE occupancy is 0.8568 / 0.5746 / 0.8139 /
 three nodes have, it is not that they are better used — they are worse used, and must win on raw
 throughput despite that. Registered as a falsifier for any later claim that the fleet is the
 bottleneck: it is the plan's parallel width that is.
+
+## F346 — the SCHEDULER, not the plan, is where the three-node arm loses its capacity. F345b is DEAD.
+
+One tick ago F345b concluded *"the fleet is not the bottleneck — the plan's parallel width is"* and I
+**registered it as a falsifier for exactly this question.** It is falsified, by the instrument that
+was already written to answer it, within the hour.
+
+`occupancy.py`'s plan ceiling — `max_useful_nodes = total_work / critical_path`, the node count
+beyond which no scheduler can go faster:
+
+    cell             critical    total work    MAX USEFUL    attainable occ    ACTUAL occ
+    baseline-n3-r0    3827.4s      19314.6s      **5.05**        1.0             0.5645
+    baseline-n3-r1    6906.0s      18203.9s        2.64          0.8787          0.4737
+    baseline-n3-r2    3353.2s      16006.3s      **4.77**        1.0             0.6499
+    baseline-n3-r3    1767.8s       8406.6s      **4.76**        1.0             0.2582
+
+**In 3 of 4 cells the plan affords ~4.8-5 nodes and the fleet only has 3. Those plans are NOT the
+ceiling — the scheduler is, and it delivers 0.26-0.65 of an attainable 1.0.** There is real,
+plan-available, dependency-free work sitting unscheduled on a fleet that has slots for it.
+
+**Only `baseline-n3-r1` is genuinely plan-limited at 2.64 — and it is the WORST cell** (score 0.4780,
+the longest wall at 8488.0s, zero redrafts, the shortest prefix at 1330.0s). The cheapest planning
+produced the narrowest DAG and the worst app.
+
+**`baseline-n3-r3` is the sharpest case and it cuts against every tidy story:** best score of the
+campaign (0.8157), a plan that could use 4.76 nodes, and the LOWEST occupancy measured (0.2582
+against an attainable 1.0). The best app came from the run that had the most fleet available to it
+and used the least of it.
+
+⚠🔴 **THE UPWARD BIAS IS REAL AND I AM NOT HIDING IT.** `longest_path()` does
+`plan_deps.setdefault(tid, [])` for every dispatched task, so **any task absent from `plan_loaded`
+becomes a dependency-free root and inflates `max_useful`**:
+
+    cell   planned   dispatched   NOT IN PLAN (forced to root)
+    r0       16          20            4   (all `test-*` — replan-injected)
+    r1       20          22            2
+    r2       17          21            4   (all `test-*::1`)
+    r3       12          19          **7   including `http-api-server`, `meridian-client`,
+                                           `frontend-page` — NOT test tasks**
+
+For r0/r2 the extras are replan-injected test tasks, which the replanner injects **because they are
+independent** (F311), so rooting them is defensible. **r3's are not, and r3's 4.76 is the least
+trustworthy number in the table** — 12 planned against 19 dispatched on the cell that redrafted three
+times and REVERTED means the last `plan_loaded` is not the plan that executed. ⇒ **the instrument
+should read the ACCEPTED plan (`best_plan`), not the last `plan_loaded`.** Queued as an instrument
+fix; it does not touch the frozen engine.
+
+**What survives the bias:** r1's 2.64 has only 2 extras and is the one number BELOW the pool, so the
+"cheap planning ⇒ narrow DAG ⇒ worst cell" observation is the most robust line in this finding. The
+claim that 3 of 4 plans exceed the pool is **DIRECTIONALLY** supported and needs the `best_plan` fix
+before it is quoted as a magnitude.
+
+⇒ **L197. WHEN A DAG METRIC DEFAULTS AN UNKNOWN NODE TO "NO DEPENDENCIES", IT DEFAULTS IN THE
+DIRECTION THAT FLATTERS PARALLELISM — count the unknowns before quoting the ratio.**
