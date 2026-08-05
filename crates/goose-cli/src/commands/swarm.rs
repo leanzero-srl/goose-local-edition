@@ -2730,6 +2730,17 @@ fn repeat_call_hash(name: &str, summary: &str, ok: bool, result: &str) -> u64 {
     h.finish()
 }
 
+/// A short content digest for OBSERVABILITY, never for a cache key. Lets an event say "this text is the
+/// same one I saw before" without carrying the text. Deliberately not `detail_memo_key`: that hashes the
+/// detailer's INPUT to decide reuse; this hashes an OUTPUT to decide whether reuse would have been safe.
+fn short_digest(s: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:08x}", h.finish() as u32)
+}
+
 /// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
 /// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
 /// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
@@ -24034,6 +24045,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         .map(|n| serde_json::json!({
                                             "id": n.spec.id,
                                             "desc_chars": n.spec.description.trim().len(),
+                                            // THE EVENT COULD NOT ANSWER ITS OWN QUESTION. It exists to decide
+                                            // whether a reuse path is worth building, and the comment above says
+                                            // to intersect it against `plan_loaded` afterwards. MEASURED on
+                                            // baseline-n3-r0: the detail fan ran THREE times (9 + 8 + 9 = 26
+                                            // detail_completed) and by round 2 **18 of 18 discarded tasks came
+                                            // back with the same id**, differing by 8-10 chars out of 1200-2000
+                                            // — uniform 8-char deltas across unrelated verify tasks.
+                                            //
+                                            // A 100% id hit rate says "build the reuse path". An 8-char delta
+                                            // says "or maybe something real changed". `desc_chars` cannot tell
+                                            // those apart, so the decision stalls exactly where the instrument
+                                            // was supposed to settle it. A digest can: identical hash proves the
+                                            // re-detail was pure rework, a differing hash proves it was not, and
+                                            // neither requires this event to carry kilobytes of prose or to bake
+                                            // in a similarity threshold it deliberately avoids.
+                                            "desc_sha": short_digest(n.spec.description.trim()),
                                             "owned_files": n.spec.owned_files,
                                             "deps": n.spec.deps,
                                         }))
