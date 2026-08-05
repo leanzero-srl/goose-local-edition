@@ -12390,3 +12390,36 @@ busy" glance.
 ⇒ **L164. A DIAGNOSTIC THAT BOOTS THE SUBJECT INHERITS THE SUBJECT'S HARD-CODED DEPENDENCIES. Before
 running one beside a live system, grep the subject for literal hosts/ports/paths and check who owns
 them — "I gave it its own port" is not isolation if the subject never reads the port you gave it.**
+
+## F305 — 8 of 8 apps hardcode the vendor port, the scorer's env plumbing is DEAD CODE, and offline re-scoring is structurally impossible during a run
+
+Following F304 through. Every built app in the archive:
+
+    baseline-n3-r0 · baseline-n3-r1 · sink_review-n3-r0 · swarm-1node-r0
+    swarm-3node-r2 · think_off-n3-r0 · think_off-n3-r1 · think_off-n3-r2
+    → hardcoded vendor URL: 8/8      → reads MERIDIAN_BASE_URL / getenv / environ: 0/8
+
+**Unanimous. This is a property of the system, not a defect of one build (L126 — a pattern in one
+population is a hypothesis; 8 of 8 across four arms is the population).**
+
+**And the apps are not at fault.** `MERIDIAN_BASE_URL` and `MERIDIAN_API_KEY` appear in exactly ONE
+place in the whole bench — `score_build.py:507-508`, where `gather` puts them in the child env. They
+are in no spec, no doc, no other module. **Nothing reads them.** The spec hands the model a literal
+URL and the model bakes it in, which is exactly what it was told to do. ⇒ **the scorer's env plumbing
+is dead code, and believing in it is what invalidated my entire rescore.**
+
+**THE CONSEQUENCE THAT MATTERS FOR THE CAMPAIGN:** `sweep.py:59` sets `PORT_BASE = 8930` and assigns
+vendor ports upward from there per unit. So **an archived tree can only be re-scored by binding the
+exact port it was built against, and every one of those ports is inside the range a live sweep is
+using.** Offline re-scoring is not merely inadvisable during a run — it is in structural conflict
+with one. **The `sink_review-n3-r0` question can only be settled BETWEEN units.**
+
+⚠ **The campaign has already been bitten by this exact class of thing and wrote it down.**
+`sweep.py:1025-1030` records a leftover process that *"held 8931 for EIGHTY-TWO MINUTES after its run
+was parked, failed the next unit outright"*. A stale listener on an 89xx port is a known unit-killer
+here — which is the company my 8930 requests were keeping (F304 verified no measured cell was hit,
+but the class of error is one this repo has a scar from).
+
+⇒ **L165. WHEN A CONFIG CHANNEL EXISTS BUT NOTHING READS IT, IT IS NOT A CHANNEL — IT IS A COMMENT.
+Before relying on env/args/flags to redirect a subject, grep the SUBJECT for the reader, not the
+harness for the writer.**
