@@ -5096,6 +5096,41 @@ mod tests {
     /// contradict the default". Phrase-matching was tried and failed three different ways (F393) — a
     /// claim split across two doc lines, a claim in `//` rather than `///`, and an off-by-default
     /// phrase sitting inside an ARGUMENT rather than an assertion. A marker has none of those shapes.
+    /// A round that verified NOTHING must never read as a pass, however much else it recorded.
+    ///
+    /// MEASURED: 9 of 9 `spec_contract` events in the archive carried
+    /// `verified: 0, findings: 0, inconclusive: 1` and the string "every advertised check that bound
+    /// was satisfied". The old condition demanded all three counters be zero before saying "CHECKED
+    /// NOTHING", so the single message explaining WHY it could not conclude promoted the round to
+    /// success — the check reported best when it was most honest.
+    #[test]
+    fn a_spec_contract_round_that_verified_nothing_never_reads_as_a_pass() {
+        // The exact archived shape: nothing bound, one recorded reason.
+        assert!(
+            spec_contract_detail(0, 0).starts_with("CHECKED NOTHING"),
+            "{}",
+            spec_contract_detail(0, 0)
+        );
+        // A real pass needs an affirmative 2xx, and only then.
+        assert_eq!(
+            spec_contract_detail(3, 0),
+            "every advertised check that bound was satisfied"
+        );
+        // A finding outranks everything, including a verified endpoint alongside it.
+        assert!(spec_contract_detail(0, 1).contains("blocking the green claim"));
+        assert!(spec_contract_detail(3, 1).contains("blocking the green claim"));
+        // The regression itself: verified==0 must NOT be rescued by a nonzero verified count elsewhere
+        // or by any other signal — the only input that can produce a pass is `verified`.
+        for verified in 0..4usize {
+            let d = spec_contract_detail(verified, 0);
+            assert_eq!(
+                d == "every advertised check that bound was satisfied",
+                verified > 0,
+                "verified={verified} produced {d}"
+            );
+        }
+    }
+
     #[test]
     fn every_baked_on_lever_declares_itself_baked_on() {
         const SRC: &str = include_str!("swarm.rs");
@@ -16383,6 +16418,23 @@ fn spec_port(spec: &str) -> u16 {
         .unwrap_or(8000)
 }
 
+/// The one-line verdict for a `spec_contract` round. Pure, so the ORDER can be pinned by a test.
+///
+/// `inconclusive` is deliberately NOT a parameter. It used to participate, and that was the bug:
+/// "checked nothing" required inconclusive to be zero too, so recording WHY a check could not conclude
+/// promoted the round to "everything satisfied". Only an affirmative `verified` can make this a pass.
+fn spec_contract_detail(verified: usize, found: usize) -> &'static str {
+    if found > 0 {
+        "an advertised check failed against the built app — blocking the green claim"
+    } else if verified == 0 {
+        "CHECKED NOTHING — not one advertised endpoint returned a 2xx, so a clean result here is \
+         silence, not evidence (inconclusive reasons are recorded separately and do NOT make this a \
+         pass)"
+    } else {
+        "every advertised check that bound was satisfied"
+    }
+}
+
 fn spec_contract_enabled() -> bool {
     swarm_gate_cfg_bundle(
         "GOOSE_SWARM_SPEC_CONTRACT",
@@ -24917,14 +24969,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "verified": sc_verified,
                     "findings": sc_found,
                     "inconclusive": sc_incon,
-                    "detail": if sc_verified == 0 && sc_found == 0 && sc_incon == 0 {
-                        "CHECKED NOTHING — no advertised endpoint or entry point bound, so a clean \
-                         result here is silence, not evidence"
-                    } else if sc_found == 0 {
-                        "every advertised check that bound was satisfied"
-                    } else {
-                        "an advertised check failed against the built app — blocking the green claim"
-                    },
+                    // ORDER MATTERS, AND THE PREVIOUS ORDER WAS BACKWARDS. The "CHECKED NOTHING" arm
+                    // required all THREE counters to be zero — including `inconclusive`. But recording
+                    // WHY a check could not conclude is exactly what puts a message in `inconclusive`,
+                    // so the honest path fell through to "every advertised check that bound was
+                    // satisfied". **The more candidly this check explained itself, the more certainly
+                    // it reported success.**
+                    //
+                    // MEASURED: 9 of 9 `spec_contract` events across all five archived cells emitted
+                    // `verified: 0, findings: 0, inconclusive: 1` and the reassuring string — on this
+                    // bench the check has NEVER concluded, because the spec's only port literal is the
+                    // vendor's (8930) and the already-bound guard correctly refuses to blame the app
+                    // for a port a dependency holds. Zero checks bound, zero satisfied, and the summary
+                    // read as a pass: `all([])` is true, in the engine's own false-green detector.
+                    //
+                    // `verified` alone decides it now. Nothing was affirmatively verified => the result
+                    // is silence, whatever else is or is not recorded alongside it.
+                    "detail": spec_contract_detail(sc_verified, sc_found),
                 }));
                 verdict.findings.extend(sc.findings);
                 verdict.inconclusive.extend(sc.inconclusive);
