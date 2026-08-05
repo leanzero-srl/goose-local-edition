@@ -99,6 +99,24 @@ def read_events(path) -> list[dict]:
     return out
 
 
+def slot_count(pool: list) -> int | None:
+    """Concurrent tasks the fleet can hold: the SUM of device weights, not a device count times two.
+
+    The engine emits `weight` per device in `run_started.pool` and this instrument was ignoring it,
+    hardcoding `pool_size * 2` with the comment "PARALLEL 2 => slots". That is right only while every
+    device happens to be weight 2. On a weight-1 fleet — the one this file's OWN self-test builds — the
+    impossibility guard was twice as permissive as the hardware, so a sweep reporting 2 concurrent tasks
+    on a 1-slot device would have passed silently. A guard that can only read permissive is as broken as
+    a counter that can only read low (L153).
+
+    Falls back to one slot per device when `weight` is absent, so an older log still gets a real cap
+    rather than None.
+    """
+    if not pool:
+        return None
+    return sum(max(int(d.get("weight") or 1), 1) for d in pool)
+
+
 def analyse(path) -> dict:
     events = read_events(path)
     if not events:
@@ -259,8 +277,9 @@ def analyse(path) -> dict:
     # SIX-SLOT fleet (F266). The retry/split/phantom-tail corrections above are the whole difference.
     #
     # The unit is CONCURRENT TASKS, not busy nodes: with PARALLEL 2 a 3-node fleet holds 6 tasks, so a
-    # reading of 4 is not "more nodes than exist". Anything above pool_size x 2 IS impossible and
-    # indicts this sweep.
+    # reading of 4 is not "more nodes than exist". Anything above the SUMMED DEVICE WEIGHTS
+    # (slot_count(), never pool_size x 2 — that literal was wrong for any fleet not at weight 2) IS
+    # impossible and indicts this sweep.
     concurrency: dict[int, float] = {}
     if spans and wall:
         marks = sorted({t for s in spans for t in s})
@@ -383,6 +402,7 @@ def analyse(path) -> dict:
         "occupancy_version": OCCUPANCY_VERSION,
         "path": str(path),
         "pool_size": n,
+        "slot_count": slot_count(pool),
         "prefix_phases": prefix["phases"],
         "prefix_draft_rounds": prefix["draft_rounds"],
         "prefix_redraft_secs": prefix["redraft_secs"],
@@ -627,9 +647,10 @@ def render(a: dict) -> str:
                f"real node work that emits no task event")
     if a.get("concurrency_secs"):
         tot = sum(a["concurrency_secs"].values())
-        cap = (a["pool_size"] or 0) * 2      # PARALLEL 2 => slots; above this is IMPOSSIBLE
+        # SUMMED WEIGHTS, not devices x 2 — see slot_count(). Above this is IMPOSSIBLE.
+        cap = a.get("slot_count") or 0
         out.append(f"  CONCURRENT TASKS over {tot / 60:.0f} min of dispatch window "
-                   f"(fleet holds {cap} at PARALLEL 2)")
+                   f"(fleet holds {cap} across {a['pool_size']} device(s))")
         for k, v in a["concurrency_secs"].items():
             flag = "   <-- IMPOSSIBLE, indicts this sweep" if cap and k > cap else ""
             out.append(f"    {k:>2d} task(s): {a['concurrency_share'].get(k, 0):6.1%}  "
@@ -831,6 +852,23 @@ def self_test() -> int:
     # this is exactly where that bites.
     a = analyse(write([]))
     check("empty log -> occupancy None", a["occupancy"], None)
+    # SLOT COUNT — the literal `pool_size * 2` this replaced was right only at weight 2, and WRONG in
+    # the permissive direction everywhere else. Checked in BOTH directions (L123), because a cap that is
+    # too generous fails silently: it flags nothing and reads exactly like a clean sweep.
+    check("weight-1 fleet: 3 devices = 3 slots", slot_count(pool(3)), 3)
+    check("weight-2 fleet: 3 devices = 6 slots",
+          slot_count([{"id": "a", "model_id": "m", "weight": 2},
+                      {"id": "b", "model_id": "m", "weight": 2},
+                      {"id": "c", "model_id": "m", "weight": 2}]), 6)
+    check("mixed weights sum, they do not average",
+          slot_count([{"id": "a", "model_id": "m", "weight": 1},
+                      {"id": "b", "model_id": "m", "weight": 4}]), 5)
+    # An absent or zero weight must still be worth ONE slot: a device that can run nothing is not a
+    # device, and returning 0 would make every concurrency reading "impossible".
+    check("missing weight falls back to 1", slot_count([{"id": "a", "model_id": "m"}]), 1)
+    check("zero weight still holds one", slot_count([{"id": "a", "model_id": "m", "weight": 0}]), 1)
+    check("no pool -> None, never 0", slot_count([]), None)
+
     check("empty log -> pool None", a["pool_size"], None)
 
     # A run with a pool but no dispatches is real ZERO occupancy, not "unmeasurable".

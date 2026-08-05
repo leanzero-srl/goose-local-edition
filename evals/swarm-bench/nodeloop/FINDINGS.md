@@ -15657,3 +15657,39 @@ rewriting it to match the new shape would destroy the only check that the pool n
 device it was given once. Two fixtures, two contracts.
 ⇒ **L219. WHEN A CHANGE ALTERS WHAT CALLERS PASS, THE OLD GUARD KEEPS PASSING ON THE OLD FIXTURE — A
 GREEN SUITE AFTER AN INPUT-SHAPE CHANGE IS EVIDENCE ABOUT THE FIXTURE, NOT THE ENGINE.**
+
+## F377 — ✅ THE INSTRUMENT'S IMPOSSIBILITY GUARD WAS HARDCODED TO `pool_size * 2`. It had the weight and ignored it.
+
+Last consumer of the same device-vs-slot substitution: `occupancy.py`. F348 already caught this file
+dividing by DEVICES; this is the other half.
+
+**`analyse()` captures the whole `run_started.pool` — dicts carrying `weight` — and uses only
+`len(pool)`.** The slot count was then reconstructed as a literal:
+
+    cap = (a["pool_size"] or 0) * 2      # PARALLEL 2 => slots; above this is IMPOSSIBLE
+
+**Right only while every device happens to be weight 2**, which is exactly this fleet, so it produced
+no wrong number today. But the same file's comment at `:196` already reasons *"a weight-1 device runs
+one task at a time, so it cannot be busy for more…"* — **the instrument knows weight-1 semantics and
+then applies a blanket ×2 anyway**, and `pool()` in its OWN self-test builds `weight: 1` devices. On
+such a fleet the impossibility guard is **twice as permissive as the hardware**: a sweep reporting 2
+concurrent tasks on a 1-slot device passes silently.
+
+🔴 **A GUARD THAT ERRS PERMISSIVE FAILS INVISIBLY** — it flags nothing and reads exactly like a clean
+sweep. That is L153's shape (a counter that can only read low), and it matters more here than in the
+engine, because this instrument's numbers get published as findings — **F346 died of a wrong
+denominator in this very file.**
+
+✅ **FIXED:** `slot_count(pool)` sums the weights the engine already emits, `min 1` per device, falling
+back to one-slot-per-device when `weight` is absent so an older log still gets a real cap instead of
+`None`. Exposed as `slot_count` in the JSON and used for the cap; the render line now reads
+*"fleet holds 6 across 3 device(s)"* instead of asserting PARALLEL 2.
+
+✅ **CONTROLS IN BOTH DIRECTIONS** (L123), since a too-generous cap cannot announce itself: weight-1 ⇒ 3,
+weight-2 ⇒ 6, **mixed 1+4 ⇒ 5 (sums, does not average)**, absent weight ⇒ 1, **zero weight ⇒ 1** (a
+device that can run nothing is not a device, and 0 would make every reading "impossible"), empty pool
+⇒ `None`, never 0. `--self-test` passes.
+
+✅ **NO NUMERIC DRIFT ON REAL DATA, verified rather than assumed** — `baseline-n3-r0` still reports
+`slot_count 6`, `execute_occupancy 0.8568`, the exact F348 figure. **The change is a no-op on today's
+fleet and a correction on every other one.**
