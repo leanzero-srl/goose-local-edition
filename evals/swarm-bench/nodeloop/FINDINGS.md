@@ -16452,3 +16452,46 @@ a parser I have actually falsified, not one that merely agrees with me today.
 ⇒ **L228. A CORRECTNESS TEST BUILT ON A PARSER IS ONLY AS GOOD AS THE PARSER, AND A PARSER I WROTE
 TEN MINUTES AGO HAS NOT BEEN FALSIFIED.** Ship the fact where a reader will hit it; ship the enforcer
 when its own failure modes are known.
+
+---
+
+## F394 — THE INVARIANT SHIPPED, BECAUSE THE INVARIANT GOT SIMPLER
+
+F393 refused to ship the test: its parser had three known failure shapes and I had not falsified it.
+The fix was not a better parser — it was **a weaker question**.
+
+The test no longer asks *"does this doc contradict its default?"* (which needs phrase analysis, and
+broke on a claim split across two lines, a claim in `//` not `///`, and an off-by-default phrase
+sitting inside an argument). It asks **"does every bool lever the bake ships ON carry a `BAKED ON`
+marker?"** — presence of a string. None of the three failure shapes can touch that.
+
+Cost of the simpler question: the other **18** baked-ON bools had to be marked too (`split`, `smoke`,
+`contracts`, `complete`, `fan_e2e`, `dynamic_replan`, `parallel_tests`, `act_now_nudge`, …), with a
+NEUTRAL marker — the 25 from F393 say "any off-by-default wording below is pre-bake", which would be a
+lie on `verify_commands`, whose doc correctly says "default on". **43 markers for 43 baked-ON levers.**
+
+### ✅ FALSIFIED IN BOTH DIRECTIONS BEFORE BEING BELIEVED
+
+A green test is a claim. Both controls were run against the real file and then reverted:
+
+| control | result |
+|---|---|
+| delete one marker (`stream_decode_retry`) | **FAILED**, naming exactly that field |
+| sabotage the parser's type filter so it matches nothing | **FAILED** with *"parser found only 0 … the PARSER is broken, not the docs"* |
+
+The second control is the one that matters. Without the `checked >= 40` floor, a parser that quietly
+matches nothing yields an empty `missing` and the test passes **having verified nothing** — `all([])`
+is true, the trap this project has hit before. The floor converts the parser's own breakage into a
+loud failure, and it is the only reason the green is worth anything.
+
+### One more thing the controls found
+
+Clippy `-D warnings` rejected the first version: `&SRC[SRC.find(..)..]` trips `string_slice`, because
+this file carries multi-byte characters — **the marker's own ⚠️ among them** — and byte-indexing a
+`&str` is a panic waiting for a boundary to move. Rewritten with `split_once`, which is both safe and
+shorter. A lint caught a hazard my own new text had introduced.
+
+⇒ **L229. WHEN A CHECK NEEDS A PARSER YOU CANNOT TRUST, ASK A WEAKER QUESTION INSTEAD OF BUILDING A
+BETTER PARSER.** "Does the doc contradict the default" is unanswerable without semantics; "is the
+marker present" is answerable with `contains`, and enforces the same outcome — the next reader cannot
+be misled about what ships.

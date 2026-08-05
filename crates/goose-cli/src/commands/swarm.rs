@@ -158,6 +158,7 @@ pub struct SwarmConfig {
     /// Max dispatch attempts per task before it fails (knob: raise for flaky LM Link).
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// #121: when a fleet node drops the HTTP body mid-stream, the provider surfaces a "Stream decode
     /// error" that the agent loop swallows into the task's TEXT (not an Err) — so a truncated/false
     /// verdict would be accepted as done (a silent false-green). When set, the dispatcher detects that
@@ -204,16 +205,19 @@ pub struct SwarmConfig {
     /// Hard cap on parallel research workers (bounds latency + curbs make-work).
     #[serde(default = "default_max_research")]
     pub max_research_questions: u32,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// When workers idle mid-run, let the planner inject more parallel work to fill the tail.
     #[serde(default = "default_dynamic_replan")]
     pub dynamic_replan: bool,
     /// Max dynamic-replan rounds per run (bounds latency + make-work).
     #[serde(default = "default_max_replans")]
     pub max_replans: u32,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Use parallel fixed-lens SCOUTS for research (no serial scoping call) instead of the planner
     /// scoping questions first. On by default — maximizes parallelism during the research phase.
     #[serde(default = "default_research_scouts")]
     pub research_scouts: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Parallel planning: the 27B drafts a skeleton, then the fleet details every subtask in parallel
     /// (vs the 27B writing the whole plan alone). On by default — maximizes parallelism in the PLAN phase.
     #[serde(default = "default_parallel_planning")]
@@ -430,6 +434,7 @@ pub struct SwarmConfig {
     /// env still overrides.
     #[serde(default)]
     pub ask_floor: Option<u8>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Convergence molding (the proven agreement raiser). ON by default. GOOSE_SWARM_CONVERGE env overrides.
     #[serde(default = "default_converge")]
     pub converge: bool,
@@ -484,6 +489,7 @@ pub struct SwarmConfig {
     /// successful-probe run report conf 30 and ask 5.
     #[serde(default)]
     pub clarity_probe_secs: Option<u64>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Fail-CLOSED the spec-clarity probe: when it DIES for a reason that taught us nothing (timeout /
     /// agent_error / no_final_output), clamp spec-clarity to CLARITY_FAILCLOSED so the MIN drops plan
     /// confidence below the ask floor and the run ASKS instead of proceeding on cross-draft agreement ALONE
@@ -569,6 +575,7 @@ pub struct SwarmConfig {
     #[serde(default)]
     pub retarget_stall_guard: bool,
 
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// #129: when the user answers the clarify ask and the DETERMINISTIC rescore lifts the plan to/above
     /// `ask_floor`, KEEP that answered plan instead of letting a NON-structural `ask_replan` re-draft it from
     /// scratch (a fresh weak-fleet draft re-runs the spec-clarity probe, which re-lists the already-answered
@@ -606,11 +613,13 @@ pub struct SwarmConfig {
     /// Was env-only (GOOSE_SWARM_ASK_MAXQ) and therefore unreachable from the desktop app.
     #[serde(default)]
     pub ask_max_q: Option<usize>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
     /// MEASURED live: a 4-file api task split into `routes` + `app-entry` and BOTH delivered, where the
     /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). None = off.
     #[serde(default)]
     pub split: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// ELECTRON PARITY (2026-07-22). These four were force-set as ENV by the desktop provider and had no
     /// config field at all, so `smoke`/`contracts`/`complete` resolved TRUE on every desktop run and FALSE
     /// on every headless CLI run — the same spec could not be reproduced across the two surfaces. They now
@@ -618,8 +627,10 @@ pub struct SwarmConfig {
     /// has always done, so desktop behaviour is unchanged and headless finally matches it.
     #[serde(default = "default_true")]
     pub smoke: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     #[serde(default = "default_true")]
     pub contracts: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     #[serde(default = "default_true")]
     pub complete: bool,
     /// Seconds a task must run before the judge may SPLIT it. The provider forced 300 on every desktop run
@@ -632,6 +643,7 @@ pub struct SwarmConfig {
     /// forced 1200; with no env and no field the cap was NONE (unbounded), which is why this is not optional.
     #[serde(default = "default_complete_cap_secs")]
     pub complete_cap_secs: u64,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Actually INVOKE the commands the produced app advertises, and fail the gate when one prints an error
     /// while exiting 0. The smoke gate otherwise only ever runs `--help`, which is the single path that
     /// still works on an app whose every real command is broken.
@@ -641,6 +653,7 @@ pub struct SwarmConfig {
     /// NOTHING worked. Default ON: a false-green detector that is off by default protects nobody.
     #[serde(default = "default_true")]
     pub verify_commands: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Shard the whole-program END-TO-END check across the fleet by COMMAND, instead of running every
     /// advertised command in the single integrate-verify task. fan_verify shards by MODULE, which leaves
     /// the end-to-end run monolithic — MEASURED h1-treat-4: 26.5 min, 47% of ALL node-busy time, on one
@@ -722,6 +735,7 @@ pub struct SwarmConfig {
     /// overrides.
     #[serde(default)]
     pub delivery: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Give the integrate-verify sink the BUILT entry's REAL `--help` before it authors its golden checks,
     /// so it writes them against the interface the app ACTUALLY has instead of the one the spec describes.
     /// Closes the engine's one measured regression (a spec-distilled check used `--db` after the subcommand
@@ -743,6 +757,7 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_PERSONA env overrides.
     #[serde(default)]
     pub persona: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Let the user add background notes WHILE a build runs (the run is 2+ hours; today the only input is the
     /// one-shot clarify ask). Notes land in .swarm/inbox/ and are folded into EVERY worker dispatched from
     /// then until the run ends — never into one already in flight, so a live worker is never disturbed.
@@ -916,6 +931,7 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_DOC_FETCH env overrides.
     #[serde(default)]
     pub doc_fetch: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// SWARM-COHERENCE Phase-1 (Tier-A, deterministic — no model). When injecting an already-built
     /// dependency's source into a consumer's prompt, inject only its DETERMINISTICALLY-EXTRACTED exported
     /// SIGNATURES (function/method signatures with bodies removed; type/const/var declarations kept) instead
@@ -934,6 +950,7 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_FORCE_WRITE overrides.
     #[serde(default)]
     pub force_write_tool: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Append a one-line ACT-NOW directive as the LAST thing a worker reads, when it owns files and has
     /// written none. Default ON. GOOSE_SWARM_ACT_NOW overrides.
     #[serde(default)]
@@ -978,6 +995,7 @@ pub struct SwarmConfig {
     #[serde(default)]
     pub require_tests: bool,
 
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Emit ONE unit-test subtask PER MODULE (`test-<module>`, depending only on that module) instead of a
     /// single monolithic `tests` task, so tests become ready early and run in parallel with the rest of the
     /// build rather than serialized behind the cli.
@@ -5063,6 +5081,84 @@ mod tests {
         assert!(
             !client.contains("CRON day-of-week"),
             "cron trivia must not ride along with the network fact"
+        );
+    }
+
+    /// Every bool lever the golden bake ships ON must SAY so in its own doc block.
+    ///
+    /// The v1.41.94 bake flipped ~40 levers ON in `Default for SwarmConfig` and updated none of their
+    /// prose, leaving 25 docs asserting "OFF by default" about behaviour that is now what ships (F392).
+    /// That is not cosmetic: it made me publish a false claim about `sink_lean_prefill` — documented
+    /// "None => OFF", actually `Some(true)` and ON in every archived run — and design an arm to enable
+    /// something already enabled.
+    ///
+    /// The invariant is deliberately the SIMPLE one: presence of a marker, never "does the prose
+    /// contradict the default". Phrase-matching was tried and failed three different ways (F393) — a
+    /// claim split across two doc lines, a claim in `//` rather than `///`, and an off-by-default
+    /// phrase sitting inside an ARGUMENT rather than an assertion. A marker has none of those shapes.
+    #[test]
+    fn every_baked_on_lever_declares_itself_baked_on() {
+        const SRC: &str = include_str!("swarm.rs");
+
+        // `split_once` rather than byte-slicing: this file contains multi-byte characters (the marker's
+        // own ⚠️ among them), and indexing a &str by byte offset is a panic waiting for the day a
+        // boundary moves.
+        let d = SRC
+            .split_once("impl Default for SwarmConfig {")
+            .expect("Default impl")
+            .1;
+        let d = d.split_once("\n    }\n}").expect("end of Default impl").0;
+        let on: std::collections::HashSet<&str> = d
+            .lines()
+            .filter_map(|l| l.trim().split_once(':'))
+            .filter(|(_, v)| matches!(v.trim().trim_end_matches(','), "true" | "Some(true)"))
+            .map(|(n, _)| n.trim())
+            .collect();
+
+        let s = SRC
+            .split_once("pub struct SwarmConfig {")
+            .expect("SwarmConfig struct")
+            .1;
+        let s = s.split_once("\n}").expect("end of struct").0;
+
+        let mut doc = String::new();
+        let mut checked = 0usize;
+        let mut missing: Vec<&str> = Vec::new();
+        for line in s.lines() {
+            let t = line.trim();
+            if t.starts_with("//") || t.starts_with("#[") {
+                doc.push_str(t);
+                doc.push('\n');
+                continue;
+            }
+            if let Some((name, ty)) = t.strip_prefix("pub ").and_then(|r| r.split_once(':')) {
+                if matches!(ty.trim().trim_end_matches(','), "bool" | "Option<bool>")
+                    && on.contains(name.trim())
+                {
+                    checked += 1;
+                    if !doc.contains("BAKED ON") {
+                        missing.push(name.trim());
+                    }
+                }
+            }
+            doc.clear();
+        }
+
+        // ANTI-VACUITY. If the struct is renamed or the layout changes, this parser quietly matches
+        // nothing and an empty `missing` would read as a pass — `all([])` is true. A floor makes the
+        // parser's own failure loud instead, and it is the only reason this test can be trusted.
+        assert!(
+            checked >= 40,
+            "parser found only {checked} baked-on bool levers (expected 40+) — the PARSER is broken, \
+             not the docs; fix it before trusting an empty failure list"
+        );
+        assert!(
+            missing.is_empty(),
+            "{} lever(s) are ON in `Default for SwarmConfig` but their doc block never says so: {:?}. \
+             Add a `BAKED ON` line to each, or the next reader will believe the stale default and act \
+             on it (F392).",
+            missing.len(),
+            missing
         );
     }
 
