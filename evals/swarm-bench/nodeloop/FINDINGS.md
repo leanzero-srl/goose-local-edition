@@ -15755,3 +15755,50 @@ would not have distinguished "rebuilt" from "was already fine"** (L123, applied 
 **⇒ ALL SEVEN OF TODAY'S PREDICTIONS ARE NOW SETTLEABLE THE MOMENT A RUN HAPPENS.** The arm is armed,
 proven rather than assumed: predictions registered in the file the instrument reads, markers verified
 present, the artefact verified to be the one carrying them, and the stale literal verified gone.
+
+## F379 — the e2e shards wait on a READ-ONLY layer that cannot change their input. The edge is real and undocumented; the COST I first attributed to it is NOT.
+
+`fan_e2e_split` wires **`"depends_on": verify_ids`** (`swarm.rs:3430`) — every e2e shard waits for
+**every** `verify::<module>` task. And `fan_verify`'s own doc says what those are: *"one scoped,
+**read-only** `verify::<module>` task per file-owning module (each depends only on its module, **owns
+no files**…)"*. **A task that owns no files cannot change the tree the e2e shard assembles and runs.**
+`verify_ids` appears at exactly three lines (`:3416`, `:3422`, `:3430`) with **no comment anywhere
+justifying the dependency** — unusual in this file, where load-bearing choices are normally argued at
+the site.
+
+**MEASURED, against the TRUE transitive upstream** (each shard's deps, then THEIR deps — the first
+attempt used a crude "not verify/integrate/test" name filter and produced **−161.4s for r3**, an
+impossible value that indicted the filter, not the engine ⇒ **L47 caught it before it became a
+claim**):
+
+    cell             |verify| |modules|   last-module -> first-e2e-dispatch
+    baseline-n3-r0       5        5              237.3 s
+    baseline-n3-r2       5        5               66.7 s
+    baseline-n3-r3       4        4             1718.8 s   (23.5% of that run's wall)
+    baseline-n1-r0       5        5              162.2 s
+
+🔴 **THEN I KILLED MY OWN HEADLINE.** r3's 1718.8 s looked like the finding — until I opened the four
+verify tasks that were supposedly responsible:
+
+    verify::meridian  done  144.7 s   verify::api  done  139.9 s
+    verify::store     done  106.8 s   verify::cli  done   48.4 s
+
+**All four ran ≤145 s, single-attempt, and they fan in parallel.** So **at most ~145 s of that 1718.8 s
+is verify WORK**; the remaining ~1574 s is a **dispatch/queueing gap** — a task sitting READY and
+undispatched, or waiting on a slot. **My "verify LAYER" label is simply wrong for that cell**, and it
+was the cell doing all the work in the average ⇒ **L56 again: kill your own explanation before
+building on it.**
+
+⚠️ **SO I AM NOT REMOVING THE EDGE, AND THE REASON IS NOT CAUTION — IT IS THAT THE EVIDENCE POINTS
+ELSEWHERE.** The honest cost of the dependency itself is bounded by the verify tasks' own duration
+(**~67-237 s**, consistent with r0/r2/n1), not by 1719. Cutting the edge would buy back that, and no
+more; the ~1574 s in r3 is a **scheduling** phenomenon that removing a DAG edge cannot touch. There is
+also a real unwritten argument FOR the edge — fail fast, do not spend a whole-app build+run when a
+module is already known broken — which the code never states but which is not thereby wrong.
+
+📌 **WHAT THIS ACTUALLY OPENS, and it is better than what I went looking for: a ~1574 s gap between
+READY and DISPATCHED on a fleet whose execute occupancy reads 0.59 in that same cell** (r3 is the
+0.5910 row). **Idle slots and a waiting task at the same moment is a starvation signature (L182), and
+r3 is exactly where to look.** ⚠ n=1, and `position()`-based idle-job selection (the fix I am holding
+back per L202) is a live suspect — which is one more reason that fix must not land before the run
+that would show it.
