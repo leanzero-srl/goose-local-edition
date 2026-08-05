@@ -15936,3 +15936,49 @@ delivers ~2.5× (F366), and the verify-family gap is inside the replicate spread
 is a wall-clock comparison between one run that completed its plan and one that abandoned three tasks
 — and n=1 either way.** ⚠ **The honest next step is REPLICATES, not another mechanism hunt** — which is
 exactly what the fleet is needed for, and exactly what no amount of archive reading can substitute for.
+
+## F384 — TWO MORE REGISTERED BANDS WERE UNSETTLEABLE. One was noise; the other would have false-flagged a value I had already observed.
+
+F383 withdrew F374's cost band because F382 showed it sat inside the replicate spread. **That is a
+class, not an incident**, so I audited the other six. Two failed.
+
+**1. F350's makespan falsifier was noise by a factor of thirteen.** It read *"detail-fan makespan
+drops ≥20% vs 244/204s"*. Measured across the archive:
+
+    cell             detail events   detail makespan
+    baseline-n3-r2         8              146.7 s
+    baseline-n3-r1        10              240.0 s
+    baseline-n3-r0        14             1112.9 s
+    baseline-n3-r3        21             1859.8 s
+    ---- 3-node spread: 12.68x, identical config ----
+
+**A 20% threshold against a 12.68× spread cannot discriminate anything.** And there is a second,
+independent reason it was never comparable: **the detail item count itself varies 8-21**, so the fan is
+not measuring the same work in each cell. **WITHDRAWN.** What survives is the part that is within-run
+and deterministic: **concurrency must REACH 6** (if it caps at 3 the fan is still sized by devices and
+F350 is inert) and **`straggler_aborted` must not rise**.
+
+**2. F357's band would have false-flagged an ALREADY-OBSERVED value.** It read *"1-3 `salvaged: true`
+per 3-node run"*. The archive it was derived from shows **1/19, 4/22, 3/21, 3/17** — **r1's FOUR is
+outside my own band**, and **I had that data in front of me when I registered it** ⇒ **L163 violated by
+its own author.**
+
+✅ **REPLACED WITH SOMETHING STRICTLY BETTER — A WITHIN-RUN IDENTITY.** The flag's purpose is to make
+salvages visible, so the right check is not *how many* but *whether the count is right*: the number of
+`task_completed` carrying **`salvaged: true`** must **EQUAL** the number matching F356's independent
+signature (`status done` + `session_id null` + zero `tool_calls`) **in the same run**. That is immune
+to replicate spread by construction, it is a *stronger* claim than any count band, and it fails loudly
+in both directions — an under-count means the flag misses firings, an over-count means it fires
+without one ⇒ **L224. WHEN A PREDICTION CAN BE PHRASED AS AN IDENTITY BETWEEN TWO SIGNALS IN THE SAME
+RUN, THAT BEATS ANY BAND ON A SINGLE SIGNAL — A BAND FIGHTS THE VARIANCE, AN IDENTITY IGNORES IT.**
+
+**THE OTHER FOUR SURVIVE, and why:** `judge_node` non-empty 40-75% is a proportion over ~100 verdicts
+*within* a run, and "concentrated on one node" is a within-run distribution — both safe. `F351
+pre_review.secs` is a first-observation band on a field that did not exist before today, so it cannot
+be validated against the archive; it is registered as an *observation to characterise*, not a pass/fail
+gate, and that is now stated. `F375` is settled by reading the dispatched prompt, no timing involved.
+`F374`'s surviving half (shard count, clean-with-zero-commands) is deterministic from the plan.
+
+📌 **THREE OF SEVEN REGISTERED BANDS WERE UNSETTLEABLE AS WRITTEN, AND ALL THREE WERE MINE FROM
+TODAY.** Every one was derived from a single cell before F382 quantified the spread. **The variance was
+knowable from the archive the whole time — I simply never asked it before writing the thresholds.**
