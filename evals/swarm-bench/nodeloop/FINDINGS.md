@@ -15007,3 +15007,57 @@ the wrong instrument for this, which is why the engine disarms it and runs `omni
 The question is not what threshold to add, it is **why a judge that reads the text does not call this
 looping.** That needs a spiralling task's actual reasoning text — which is the 19%-dark transcript
 route (F355), so it needs the `session_id` gap closed first.
+
+## F362 — omni_judge did not "miss" the sink. It was DELIBERATELY not asked. The design's own backstop is what cost 3837 s.
+
+F360/F361 ended on *"the reading judge misses this shape of spiral"*. **Wrong framing.** The events:
+
+    baseline-n3-r0 / test-core        observed 15, verdicts 15, skipped 9 {no_idle_device}
+    baseline-n3-r1 / integrate-verify observed  1, verdicts  1, skipped 0
+
+**The sink was judged EXACTLY ONCE across 3837 s of stalling**, and that verdict was
+`ok / observed / deterministic=false / confidence 1.0`.
+
+**AND `scheduler.rs:1152-1157` SAYS SO ON PURPOSE:**
+
+> *"Skip RE-judging an owns-NOTHING task (the integrate-verify sink). Every deterministic judge gate
+> is disarmed for it (over-read/finalize-spin/broken-code all require owned files,
+> judge.rs:292/311/332), and its LLM verdict is always a non-actionable 'ok', so a re-judge catches
+> nothing yet steals an idle node from sink-review. **Judge it ONCE (first pass, for observability)
+> then leave it to `worker_timeout` as the hard-stall backstop.**"*
+
+**Every clause is confirmed by the data.** The sink owns no files (`owns_files: false`, F361), so every
+deterministic gate is disarmed. Its one LLM verdict was exactly the *"non-actionable ok"* the comment
+predicts. And `worker_timeout` did fire as the designed backstop — **three times, at 420 s of idle
+each** (F354). ⇒ **THE ENGINE BEHAVED EXACTLY AS DESIGNED.** ⇒ **L210. "THE MECHANISM MISSED IT" AND
+"THE MECHANISM WAS NOT ASKED" ARE DIFFERENT DIAGNOSES WITH DIFFERENT FIXES — check the gate before
+blaming the verdict.** Fourth time today a comment at the site already held the answer (`:12665`
+draft dedup, `:24155` salvage, `:361` char-cap futility, now `:1152`).
+
+### What is actually open, stated precisely
+
+**An owns-nothing task has NO early stall detection by construction.** Not by oversight — by a
+documented trade (a re-judge would steal an idle node from sink-review and return nothing actionable).
+The accepted cost of that trade, measured on `baseline-n3-r1`: **3837 s, three attempts, task FAILED,
+30% of the run's wall.** The comment justifies skipping the re-judge on the grounds that it *catches
+nothing*; it does not claim the backstop is cheap, and nobody had priced it until now.
+
+⚠ **I AM NOT PROPOSING TO RE-ENABLE THE RE-JUDGE.** The comment's reasoning holds and my own data
+supports it — the one verdict the sink did get was a useless `ok` at confidence 1.0, so fifty more
+would have been fifty more useless `ok`s. **Re-judging is not the fix.** The open question is whether
+a *deterministic* signal exists for an owns-nothing task, since every existing one keys on owned
+files — and `secs_since_last_write` is `null` for it, so even that is unavailable by construction.
+
+### 🔴 A SECOND, SEPARATE FINDING FROM THE SAME EVENTS
+
+**`test-core`: 9 of 24 judge attempts were skipped `no_idle_device` — 37.5%.** The judge only runs on
+a free slot (F348). **So supervision degrades exactly when the fleet is busiest**, which is exactly
+when a worker is most likely to be left spiralling unattended. On a 1-node fleet it would degrade
+further still, and on the n1 arm the judge competes with the only two slots the run has.
+
+📌 **REGISTERED, TESTABLE ON THE NEXT RUN AND IT NEEDS NO NEW INSTRUMENT:** if `judge_skipped
+{no_idle_device}` as a fraction of judge attempts is **higher in cells with more salvages**, then
+supervision starvation and spiralling are linked and the judge's idle-only gating is a real target.
+**If the fractions are flat across cells, they are independent and this is a dead end.** r0 showed 59
+of 103 firings skipped overall (57%) against 1 salvage; r1's per-task numbers are what the next run
+must be compared against.
