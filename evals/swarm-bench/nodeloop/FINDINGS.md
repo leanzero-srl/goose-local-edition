@@ -12727,3 +12727,45 @@ this tick. Good.**
 
 ⇒ **L171. A TASK'S NAME IS NOT ITS EFFECT — read `owned_files` before classifying what a unit of work
 could possibly have changed.**
+
+## F314 — F313's MECHANISM DIES: the UI checks are saturated and cannot explain the tier-B spread
+
+F313 proposed that the two high-B cells are high because the replanner rewrote **graded app files**
+(`api.py`, `web/index.html`). Three of tier B's twelve checks read `index.html` and are **pure regexes**
+— `ui_states`, `ui_currency`, `ui_offline` — so they can be evaluated statically on every tree with no
+app boot, no fixture and no port. Doing that:
+
+    unit                 bonus      B       ui_states           ui_currency   ui_offline
+    baseline-n3-r0       test-only  0.3194  3/3 loading/empty/error   0.5      clean
+    baseline-n3-r1       test-only  0.2083  3/3 loading/empty/error   0.5      clean
+    sink_review-n3-r0    test-only  0.3611  3/3 loading/empty/error   1.0      clean
+    think_off-n3-r0      APP-SIDE   1.0     3/3 loading/empty/error   1.0      clean
+    think_off-n3-r1      APP-SIDE   0.9715  3/3 loading/empty/error   1.0      clean
+    think_off-n3-r2      test-only  0.2083  3/3 loading/empty/error   0.5      clean
+    swarm-3node-r2       test-only  (tbd)   3/3 loading/empty/error   0.5      clean
+
+⇒ **`ui_states` is 3/3 in SEVEN OF SEVEN and `ui_offline` is clean in SEVEN OF SEVEN.** They are
+saturated — they cannot separate a B of 0.208 from a B of 1.000. `ui_currency` splits 1.0/0.5, but
+**one of its three 1.0s is `sink_review-n3-r0`, a test-only cell with B = 0.3611** — so it does not
+track the high/low split either.
+
+🔴 **THIS KILLS F313's CAUSAL STORY FOR AT LEAST ONE OF THE TWO APP-SIDE CELLS.**
+`think_off-n3-r1`'s ONLY app-side bonus task was `frontend`, owning **`web/index.html` and nothing
+else** — and index.html work demonstrably cannot move tier B. **Its B of 0.9715 is therefore NOT
+explained by its bonus task.** The remaining candidate path is `api.py` (via
+`think_off-n3-r0`'s `api-input-validation`), which covers ONE of the two cells, not both.
+
+**What survives:** the raw separation is still perfect and still p = 0.067 — the two app-side cells
+are the two highest-B. **What dies:** the mechanism I offered for it. A correlation whose proposed
+mechanism has been falsified is weaker than it was an hour ago, not stronger, and I am recording it
+that way (L56 — kill your own explanation before building on it).
+
+⭐ **AND IT RE-CENTRES F291.** If three of tier B's twelve checks are saturated, the 0.21↔1.00 spread
+must live almost entirely in the **eight response-gated checks** (`sync_completeness`,
+`resync_idempotent`, `local_pagination`, `payment_row_shape`, `total_field`, `chronological_order`,
+`summary_accuracy`, `summary_bounds_utc`) — i.e. **in whether the app's sync path works at runtime**,
+exactly as F291 argued from the check definitions. The bimodality is a runtime behaviour, not a
+static-artefact difference.
+
+⇒ **L172. A CHECK THAT EVERYTHING PASSES EXPLAINS NOTHING — before attributing a spread to a
+component, verify that component's checks actually VARY across the cells.**
