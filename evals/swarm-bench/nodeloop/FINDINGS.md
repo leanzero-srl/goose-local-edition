@@ -13651,3 +13651,44 @@ observation feel confirmed (L56: kill your own explanation before building on it
 
 ⇒ L188. **A PARENT THAT SPAWNS CHILDREN DOES NOT COMPLETE — any "still running" count built from
 `dispatched − completed` will report every split, fan-out or delegation as a permanent hang.**
+
+## F335 — THE RESTART WAS THE ONLY STATE TRANSITION STILL TIED TO A CONVERSATIONAL TICK
+
+`STOP` is armed, so the supervisor exits cleanly the moment cell 4 records — and **from that instant
+the fleet is IDLE until someone runs `loop.sh start`.** Three committed fixes (F327 `CURVE_REPS=8`,
+F328 `curve_first`, F330 the watchdog silence rule) are invisible to the running process (L23), so
+the restart is not optional; it is the thing that finally lets the n1 arm run.
+
+Binding that transition to a 5-minute tick costs up to 5 minutes of dead fleet on a good day, and an
+UNBOUNDED stall if a tick is missed or a context compaction lands across the boundary. The unattended
+rule is explicit — **the loop must live in a process, not in a conversation** — and this was the one
+remaining place where it did not.
+
+`autorestart.sh` is the smallest process that closes it: poll for the supervisor to exit, then
+`rm STOP && ./loop.sh start`. Launched detached, **ppid 1 confirmed**.
+
+**THE GUARDS ARE THE POINT — an auto-restarter that fires at the wrong moment is worse than none:**
+
+- **only acts while `STOP` is present.** If STOP is gone, a human restarted by hand; stand down.
+- **refuses while any `goose swarm run` is alive** — the supervisor can be down while an engine is
+  still writing a unit, and starting a second sweep on top of that is how a run tree gets clobbered
+  (F224 is the measured precedent).
+- `loop.sh start` independently refuses if a sweep is already running, so a double-fire is a no-op.
+- bounded by `MAX_WAIT` (9000 s, comfortably past the longest observed unit at 8488 s). It is a
+  nudge, not a daemon that outlives the question it was written for.
+
+**BOTH CONTROLS EXERCISED BEFORE LAUNCH, not merely written down (L96/L123):**
+
+    STOP removed        -> "STOP is gone — someone restarted by hand. Standing down."   nothing changed ✅
+    supervisor alive    -> waited the full MAX_WAIT, then stood down                    nothing changed ✅
+
+and `STOP` was restored and the supervisor confirmed still RUNNING afterwards, so the test itself
+left no trace.
+
+⚠ THIS DOES NOT MAKE THE RESTART UNSUPERVISED. The next tick must still confirm the outcome from
+`loop.sh status` — a script that reports its own success is not a status (L92). `autorestart.log`
+records exactly what it did, including the post-start `loop.sh status` line and the engine count.
+
+⇒ L189. **THE LAST MANUAL STEP IN AN UNATTENDED LOOP IS THE ONE THAT WILL BE MISSED — when a
+transition has a deterministic trigger, give it to a process, and make the process prove it can
+decline before you let it act.**
