@@ -14657,3 +14657,45 @@ the review's own snippet would not have compiled.
 **All ten `prereview_off-n3-r*` directories contain no `run.jsonl`** — only `nodeloop-result.json` and
 `verdict.json`. Confirmed by `find`. The one arm that would directly measure pre-review's slot cost
 has never produced a usable log, so the lever it exists to test has never been measurable from it.
+
+## F355 — 19% of completed tasks have no `session_id`, so their transcripts are unreachable. Including the one I needed.
+
+F354's next step was to open the three stalled `integrate-verify` attempts' agent transcripts and find
+what the integrator did during 420 s of silence. **`session_id` is `None` on all four of its events**
+— every dispatch and the completion.
+
+**FIRST I CHECKED THE INSTRUMENT COULD SEE THE THING AT ALL (L4),** because "no session id" and "I am
+reading the wrong field" print identically. It can: **17 of 22 `task_completed` rows in that run DO
+carry one** (e.g. `init-and-readme` → `20260804_870`), and the sessions DB is present at 584 MB.
+
+**MY FIRST HYPOTHESIS — that a stalled/failed task never records a session — IS REFUTED, and by the
+first table I drew:**
+
+    baseline-n3-r0   19 completed,  4 without   api(done) test-core(FAILED) test-api-edge-cases(FAILED) test-sync-idempotency(FAILED)
+    baseline-n3-r1   22 completed,  5 without   api(done) test-meridian(done) test-cli(done) test-cli-error-handling(done) integrate-verify(FAILED)
+    baseline-n3-r2   21 completed,  3 without   test-meridian(done) test-integration::1(done) test-concurrency::1(done)
+    baseline-n3-r3   17 completed,  3 without   frontend-page(done) meridian-client(done) meridian-tests(done)
+
+In r0, 3 of 4 missing are failures. **In r1, 4 of 5 missing are `done`.** So it is not a
+failure-correlated field, and I am not going to invent a rule from four cells — r3's three are all
+split children and r2's two are replan additions, which is suggestive but does not cover r1's `api`
+or `test-cli`. **UNEXPLAINED, and stated as unexplained.**
+
+**WHAT IS SOLID IS THE COUNT: 15 of 79 completed tasks across the four cells — 19% — carry no
+`session_id`.** Roughly one task in five is permanently un-auditable: its tool calls, its reasoning,
+and the reason it took the time it took cannot be recovered from the sessions DB at all. The engine's
+own docs name that DB as the route to a task's full trace, so this is a hole in the primary
+diagnostic path, not a cosmetic gap.
+
+⇒ **L204. AN AUDIT TRAIL WITH A 19% DROPOUT IS NOT AN AUDIT TRAIL — and you discover which fifth is
+missing only when you need it.** The one task I most wanted to read today is in it.
+
+📌 **F354's investigation is BLOCKED on this route.** Remaining options, none as good: the goose CLI
+logs under `~/.local/state/goose/logs/cli/<date>/` and `llm_request.*.jsonl`, which are time-indexed
+rather than task-indexed, so attributing a window to `integrate-verify` means correlating on
+timestamps — doable for a task with a known 4489.2 s → 8326.0 s window, but weaker evidence than a
+session trace and easy to get wrong.
+
+📌 **QUEUED ENGINE FIX, and it is the cheapest real one left:** find why `session_id` is `None` on
+that path and populate it. Until then every stall investigation is one-in-five likely to hit a wall,
+and stalls are exactly the population worth investigating.
