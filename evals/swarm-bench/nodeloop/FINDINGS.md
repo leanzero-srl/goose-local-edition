@@ -17274,3 +17274,46 @@ decide whether reuse *would have been* safe. clippy `-D warnings` RC=0.
 FIX.** Three findings today were plausible changes that measurement killed; this one is a plausible
 change that measurement can neither kill nor confirm, and the difference between those two states is
 worth one field in an event.
+
+---
+
+## F412 — THE FIRST MEASURED 3-NODE ADVANTAGE ALL DAY: NO DEGRADED BRIEFS. WITH A SERIOUS CONFOUND.
+
+`review.py` on the 1-node cell flagged something the 3-node cell never showed:
+
+> **BAD  THIN instructions (<300 chars) on ['store', 'meridian'] — the degraded-brief signature**
+
+Direct comparison of the two plans:
+
+| cell | tasks | min instruction | median | THIN (<300) |
+|---|---|---|---|---|
+| `baseline-n3-r0` | 18 | **1039** | 1236 | **0** |
+| `baseline-n1-r0` | 17 | **166** | 1068 | **2** — `store`, `meridian` |
+
+The 1-node run handed its **store and its vendor client** 166-character briefs — the architect's
+one-line placeholder, which is defect #4 of the original plan: *"a detail that times out silently
+degrades to the architect's one-line brief."* The 3-node run's THINNEST task got 1039 chars.
+
+**This is the shape the goal has been looking for since 07:45**: deterministic, a property of the
+plan rather than of the score, settleable at n=1, and immune to the sync-family flakiness that made
+F405's +0.0007 the honest answer everywhere else.
+
+### ⚠️ AND THE CONFOUND IS SERIOUS ENOUGH THAT I WILL NOT CLAIM THE WIN
+
+The 3-node run reached plan confidence **83 after TWO retarget rounds** and therefore detailed **three
+times** (9 + 8 + 9 = 26 `detail_completed`). The 1-node run hit confidence **100 on its first draft**,
+never retargeted, and detailed **once** (9 events for 17 tasks).
+
+So the 3-node plan may have better briefs **because it re-detailed twice**, not because it had three
+nodes. Those extra rounds are exactly the **1991.6 s of redraft F410 identified as the run's largest
+single waste.** If that is the mechanism, then the fleet's only measured advantage today is bought
+with a third of its wall-clock — and "remove the redraft" and "keep the good briefs" are in direct
+tension.
+
+**The two are separable and the sweep will separate them**, because they predict different things:
+- **node-count mechanism** => a 3-node cell that does NOT retarget still shows zero thin briefs.
+- **redraft mechanism** => a 1-node cell that DOES retarget also shows zero thin briefs, and a 3-node
+  cell without retargeting shows them.
+
+⇒ Registered as an **observation with a discriminating test**, not a result. One pair, one confound,
+and the confound points at the very thing I was about to try to delete.
