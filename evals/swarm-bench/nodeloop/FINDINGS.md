@@ -15220,3 +15220,43 @@ than bloat — a 0.080 score edge for 2.18× the lines is a poor exchange rate, 
 redundant modules" survives as the competing reading. **FALSIFIER, registered now: if the n1 tree
 satisfies the same spec checks as the n3 tree, the extra 724 lines are bloat and the fix is to cap
 the fan, not to scale the join.** `crunch.py` can answer that from the two trees.
+
+## F367 — F366's falsifier ANSWERED: the extra code is NOT bloat. It is 4 capability checks n1 scores ZERO on — and the 3-node arm then LOST the tier-A integration check while its integrator sat cut off at the cap.
+
+F366 registered this falsifier: *"if the n1 tree satisfies the same spec checks as the n3 tree, the
+extra 724 lines are bloat and the fix is to cap the fan, not scale the join."* Both trees are graded
+by the SAME scorer (`sb-3`), same 35 checks. They differ on **9**:
+
+    check                     tier    n3     n1   delta
+    vendor_retry_date           C    1.00   0.00   +1.00
+    vendor_cursor_paging        C    1.00   0.00   +1.00
+    vendor_cursor_expiry        C    1.00   0.00   +1.00
+    vendor_conditional          C    1.00   0.00   +1.00
+    resync_conditional_ratio    D    0.75   0.00   +0.75
+    ui_polish                   D    0.80   1.00   -0.20
+    ui_currency                 B    0.50   1.00   -0.50
+    sync_shape                  A    0.00   1.00   -1.00   ← TIER A. THE INTEGRATION CHECK.
+    client_timeouts             D    0.00   1.00   -1.00
+
+**THE FALSIFIER FAILS TO FIRE: the extra 724 lines bought four tier-C capability checks that the
+1-node tree scores 0.00 on — features it does not have at all, not bloat.** ⇒ **The fix is to SCALE
+THE JOIN, not to cap the fan.**
+
+🔴 **AND THE JOIN IS EXACTLY WHAT BROKE.** The single largest loss on the 3-node arm is **`sync_shape`,
+tier A, 1.00 → 0.00** — a whole-program shape check — on the run whose `integrate-verify` was
+**terminated at 1800.1 s == `sink_cap_secs` EXACTLY** (F366). The arm that built more, verified less,
+and lost the one check that only integration can win. Two independent instruments (the event log's
+cap hit; the grader's tier-A miss) name the same task.
+
+**THE ENGINE DEFECT, STATED PRECISELY:** `sink_cap_secs` is a FIXED wall-clock budget for a task
+whose work scales with the size of the tree the rest of the fleet just produced. Bigger fleet ⇒
+bigger app ⇒ the integrator is MORE certain to be truncated. **The join's budget does not scale with
+the fan, so the swarm gets worse at integrating precisely as it gets better at building.**
+
+⚠️ **MY CONFIDENCE IN THE OBVIOUS FIX IS LOW, AND I AM NOT SHIPPING IT BLIND.** "Raise the cap"
+assumes the integrator is *working* when the cap fires. **F354 measured the opposite on r1: the sink
+STALLED — three 420 s idle timeouts — and FAILED.** F362 then established it has no early stall
+detection *by construction* (`scheduler.rs:1152`), and I recorded DO NOT re-enable the re-judge. So a
+larger budget could buy integration, or could buy a longer stall. **Those are opposite outcomes and
+the r0 log does not distinguish them.** ⇒ next: determine from r0's own trace whether the sink was
+PRODUCING at the moment the cap fired (L203 — a long tail is not necessarily serial work).
