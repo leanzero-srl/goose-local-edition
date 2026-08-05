@@ -13262,3 +13262,62 @@ shape-without-prose) the honest n is 12, and all three rho values fall (+0.306/+
 
 ⇒ L180. **A WITHIN-RUN PAIR IS ONE OBSERVATION, NOT A MECHANISM — before promoting "A beat B here"
 to "the system prefers A", find every other pair the corpus already contains and check the sign.**
+
+## F327 — THE SIGN TEST'S BAR IS A SAWTOOTH IN n, AND 6 OR 7 PAIRS WOULD BE WORSE THAN 5
+
+New instrument `power.py` (self-test passes). L142: check whether the design can reach the bar before
+spending the night on it. Four n3 cells are in and **the n1 arm has never been scored on this binary
+— `sweep.read_results()` returns ZERO rows with `nodes == 1`** — so this is the last moment the
+question is cheap, and the choice below is genuinely blind.
+
+**THE MEASURED 3-NODE REPLICATE SPREAD** (3 scored cells: 0.6595, 0.4780, 0.6030):
+
+    SCORE  mean 0.5802   sd 0.0929   range 31% of the mean
+    WALL   mean 7657 s   sd 870 s    range 23% of the mean
+
+**THE BAR, assuming the n1 arm's spread matches** (stated as an assumption because it is one):
+
+    chance of a clean sweep   per-pair win rate q   score gap needed
+                        50%                 0.871            0.1483   (26% of the 3-node mean)
+                        80%                 0.956            0.2246   (39%)
+                        95%                 0.990            0.3046   (52%)
+
+So a coin-flip chance of merely REACHING significance needs the 1-node arm to score about **0.432
+against the 3-node 0.580**. Whether that is plausible is unknown — no n1 cell has ever been scored.
+
+### THE NON-OBVIOUS PART: MORE PAIRS CAN MAKE THE TEST HARDER
+
+    pairs   min p   losses OK   q for 50% power   gap needed
+        4  0.0625          -1             1.000       1.0508   (cannot pass even at 4-for-4)
+        5  0.0312           0             0.871       0.1483
+        6  0.0156           0             0.891       0.1617   <- HARDER than 5
+        7  0.0078           0             0.906       0.1727   <- HARDER still
+        8  0.0039           1             0.799       0.1100   <- first n that survives a crossing
+       11  0.0005           2             0.764       0.0946
+
+Below n=8 a single crossing kills the result outright (6-of-7 = 0.0625, still above 0.05), so each
+extra pair up to 7 adds another chance to lose while STILL demanding perfection. **n=6 and n=7 are
+strictly worse than n=5 — more fleet time for a harder test.** n=8 is the first genuine improvement:
+the required score gap falls from 0.1483 to 0.1100, a **26% easier bar**, because the test can
+finally absorb one loss. Given a replicate spread that is 31% of the mean, absorbing one crossing is
+worth a great deal.
+
+### THE DECISION, MADE BLIND AND RECORDED BEFORE ANY PAIR EXISTS
+
+**TARGET n = 8 PAIRS.** Registered now, with ZERO n1 cells on disk, precisely so it cannot be chosen
+after seeing which way the pairs fall. Extending the run *because* n=5 came back 4-of-5 would be
+optional stopping and would invalidate the nominal p — so the number is fixed here, in writing,
+while I cannot know anything about the outcome.
+
+⚠ MECHANICS: `MIN_REPS` belongs to the RUNNING supervisor (pid 80288) and a running process does not
+see source edits (L23). The change takes effect only on a supervisor restart, and a restart mid-cell
+would discard cell 4 at ~3400 s of execute. **So it happens at a UNIT BOUNDARY, never now** (L101:
+park before restarting). This is a sweep restart, NOT an engine boundary — the binary is untouched
+and no collected cell is voided (F253 is not in play).
+
+⚠ n = 3 cells. An sd from three points is itself very uncertain, so this sizes the question rather
+than answering it, and the n1 spread is assumed rather than measured. If the 1-node arm is simply
+much worse than 0.432 the bar is met easily and this file cost nothing.
+
+⇒ L181. **POWER IS NOT MONOTONIC IN SAMPLE SIZE FOR A DISCRETE TEST — check the tolerance table
+before buying more samples, because the next one up may buy a harder test.**
