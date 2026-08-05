@@ -15533,3 +15533,55 @@ function at `:19445` records that it does not work. Both were one grep apart.
 and tailored, act-now nudge ON, tool_choice rejected by the server, `"required"` harmful. **That is a
 real dead end, established from the engine's own measurements plus mine — and knowing it is a dead end
 is worth more than another tick spent re-discovering it.**
+
+## F374 — 🔴 A CHANGE I SHIPPED TODAY SILENTLY ADDS A FOURTH WHOLE-APP BUILD TO THE RUN'S SECOND-BIGGEST COST ITEM. Registering the alarm against my own change (L99).
+
+`00563c6ea` — one of the 08:15 boundary commits, titled *"the planner was told how many devices there
+are, not how many tasks the fleet can run"* — replaced `devices.len()` with the sum of device weights
+at three call sites. **That integer is `worker_count`, and `worker_count` is ALSO what
+`fan_e2e_split(&mut v, lang, worker_count, &oracle)` receives** (`swarm.rs:13428`), where
+`shards.clamp(2, 4)` turns it into the e2e shard count.
+
+**DERIVED, THEN CONFIRMED AGAINST THE ARCHIVE:**
+
+    binary        worker_count on n3    clamp(2,4)    shards in the plan
+    pre-boundary  3 (devices)           3             **3** ✅ (verify-e2e::0/1/2)
+    pre-boundary  1 (n1 devices)        2             **2** ✅
+    post-boundary 6 (slots)             4             **4**  ← nobody registered this
+
+Both archived cells match `devices.len()` exactly, so the derivation is not a guess. **On the current
+binary a 3-node fleet will emit FOUR e2e shards where the measured baseline emitted three.**
+
+⚠️ **WHY THAT IS NOT OBVIOUSLY FREE.** Every shard *"BUILD + ACTUALLY RUN the program's advertised
+entry point"* — a **fixed cost that does not shrink as shards multiply**. The e2e family is already
+the run's second-largest line item: **1034 + 624 + 620 = 2278 node-seconds** on n3-r0, behind only the
+1800 s sink. A fourth shard adds a fourth full build+run.
+
+🔴 **AND THE ENGINE HAS ALREADY MEASURED THE MECHANISM THAT MAKES MORE SHARDS WORSE**
+(`swarm.rs:3331-3336`, read before writing this — L206):
+> *"Without it each shard re-derives 'the commands the spec advertises' from whatever spec-shaped
+> artifact is in the tree — and **MEASURED, three shards of one run derived lists of length 1, 1 and
+> 3. A modulo over lists of different lengths is not a partition**, so coverage was neither disjoint
+> nor complete and the shard that enumerated an empty slice reported clean."*
+
+**The archived n3-r0 shard spec confirms the oracle was EMPTY** — its text is the fallback *"number
+them 1,2,3… in the order the spec gives them"*, i.e. each shard derives the list itself. **So on this
+bed, going 3 → 4 shards means a fourth independent derivation of a list the shards already disagree
+about, and a fourth chance for a shard to enumerate nothing and report clean.**
+
+**THE DESIGN DEFECT UNDERNEATH, STATED PLAINLY: one integer answers two unrelated questions.**
+"How wide should the plan be?" is properly a function of fleet capacity. "How many times should the
+app be built and end-to-end checked?" is properly a function of **how many commands there are to
+check** — and the shard spec itself concedes this, instructing a shard to *"say so and stop"* if it
+owns no command. Coupling them means every future fleet-capacity change silently re-sizes the
+verification gate.
+
+📌 **NO CODE CHANGE THIS TICK, DELIBERATELY.** The sign is genuinely unknown: 4 shards also means fewer
+commands each, and 6 slots can run 4 concurrently, so wall-clock may not rise even as node-seconds do.
+**Registering it as a prediction is worth more than a guess I cannot measure** ⇒
+**PRE-REGISTERED, VERBATIM: the next 3-node run must emit `verify-e2e::0..3` (FOUR). If e2e node-seconds
+exceed 2278 s × 4/3 = 3037 s, or any shard reports clean having enumerated zero commands, the
+`worker_count` → `fan_e2e_split` coupling is the cause and the shard count moves to the oracle length
+(falling back to the pre-boundary `devices.len()` when the oracle is empty).**
+⇒ **L218. WHEN ONE VALUE FEEDS TWO CALLERS, CHANGING IT FOR ONE OF THEM IS A CHANGE TO BOTH — GREP THE
+OTHER CALL SITES BEFORE CLAIMING THE BLAST RADIUS.**
