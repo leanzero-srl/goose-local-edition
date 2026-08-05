@@ -12464,3 +12464,35 @@ in flight with `integrate-verify` live right now — it is the next datum either
 
 ⇒ **L166. A STATUS THAT A TIMEOUT CAN WRITE IS NOT A STATUS — find out which of a phase's "successes"
 are the deadline talking before you count any of them.**
+
+## F307 — correcting F306: "a failing sink dies fast" is WRONG. The sink that WORKS is the fast one.
+
+F306 read `elapsed_ms` on `task_completed` as the sink's lifetime. **It is the FINAL ATTEMPT only.**
+The tell was there and I quoted it myself: `baseline-n3-r1` shows `attempts=3, elapsed=781s`, but I had
+already measured its three attempts at 24 + 27 + 13 minutes. 781 s *is* that last 13 minutes.
+
+Recomputed from first dispatch to completion:
+
+    unit                   cap     att  retries  last_attempt   TOTAL SINK
+    baseline-n3-r0         CAPPED   1      0        1800 s       1800 s  (30 min)
+    baseline-n3-r1                  3      2         781 s       3837 s  (64 min)   FAILED
+    sink_review-n3-r0      CAPPED   2      1        1800 s       3594 s  (60 min)
+    think_off-n3-r0                 1      0        1590 s       1590 s  (26 min)   GENUINE
+    think_off-n3-r1                 3      2         647 s       2030 s  (34 min)   FAILED
+    think_off-n3-r2        CAPPED   1      0        1800 s       1800 s  (30 min)
+
+⇒ **THE CORRECTED PICTURE IS THE OPPOSITE OF F306's, AND IT MAKES MORE SENSE.** The single genuine
+completion (`think_off-n3-r0`, **1590 s / 26 min**) is the **FASTEST SINK IN THE CORPUS.** Every other
+run spends **30 to 64 minutes** and ends in a truncation or a death. **The sink that works, works
+quickly; the ones that do not, grind — 64 minutes to produce a `failed`.**
+
+F306's other claims stand unchanged: 1 genuine completion in 6, three caps relabelled `done`, and the
+"capped ⇒ low B" association still at p = 0.20 and still not claimed.
+
+**One more thing the totals expose: the cap is PER ATTEMPT, not per task.** `sink_review-n3-r0` took a
+retry AND then burned a full 1800 s cap — 60 minutes on a capstone that was still truncated at the
+end. Nothing bounds the sink's TOTAL time; `sink_cap_secs` bounds only its current attempt.
+
+⇒ **L167. AN `elapsed` FIELD ON A RETRIED TASK IS ALMOST NEVER THE TASK'S LIFETIME. Derive duration
+from the first dispatch to the terminal event, and check it against a case whose per-attempt timings
+you already measured — I had that check available and did not run it before publishing.**
