@@ -14844,3 +14844,51 @@ must say "flag" or "inferred" appropriately or the test fails.
 ⚠ **THE FOUR NUMBERS ABOVE ARE INFERRED, NOT FLAGGED** — no run has yet been produced by the engine
 that emits `salvaged`. They agree exactly with F356's hand count, which is a consistency check on the
 instrument and **not** independent confirmation of the mechanism.
+
+## F359 — "salvage means degraded output" is REFUTED, and the sign is reversed. The salvage is a real rescue.
+
+F358 left an open question worth more than the salvage count itself: **are salvaged tasks producing
+worse work?** The precedent said they might — `swarm.rs:24155` records `cli-entry` salvaged after
+writing "only a 24-byte go.mod". The app trees are on disk, so this is answerable offline.
+
+**MEASURED — total bytes of each done-task's `plan_loaded.files`, on disk:**
+
+    SALVAGED   n=5   median 7940 bytes   mean 8217   tasks with an empty/missing owned file: 0
+    CLEAN      n=21  median 4947 bytes   mean 4856   tasks with an empty/missing owned file: 1
+
+**KIND-MATCHED, because comparing an API implementation against a test file would prove nothing:**
+
+    test    SALVAGED n=3 median 8939    CLEAN n=4  median 8763
+    source  SALVAGED n=2 median 6699    CLEAN n=17 median 3855
+
+**The hypothesis is refuted and the sign is reversed: salvaged tasks wrote MORE than clean ones, and
+not one of them left an owned file empty or missing — while one CLEAN task did.**
+
+**On reflection this is what the mechanism predicts, and I should have derived it before measuring.**
+The salvage precondition IS "owned files already written". The stall happens AFTER the writing, in a
+thinking-only spiral at the end of the task. **A salvaged task is one that finished its work and then
+failed to stop talking.** The watchdog is cutting off exactly the part that produces nothing.
+
+⇒ **F358's OPEN HYPOTHESIS IS ANSWERED IN THE DIRECTION THAT KILLS IT.** Stall rate does not look
+like a quality signal. **The salvage is exactly the successful rescue it claims to be, and only the
+ACCOUNTING was ever wrong** — which is precisely the alternative F358 registered in advance, and it
+is the one that won.
+
+⚠ **THE HONEST LIMITS, and they matter more than the result:**
+- **n = 5.** Only 5 of the 11 salvages own any files at all; the other 6 own none and are invisible to
+  this test entirely. **The source-kind comparison is n = 2 against n = 17** and I would not defend
+  the 6699-vs-3855 gap on its own.
+- **Bytes are not quality.** A larger file can be worse. This measures "did the work get done", not
+  "was it good", and the tier scores already say the apps vary a lot.
+- **What it DOES establish solidly is the negative:** there is **no sign** of salvaged tasks leaving
+  thin or missing deliverables in this corpus, and the one empty owned file belongs to a clean task.
+  The `mustsolve-test4` precedent is real but is **not** the typical case here.
+
+⇒ **L207. WHEN A MECHANISM'S PRECONDITION ALREADY IMPLIES THE ANSWER, DERIVE IT BEFORE MEASURING —
+"the files were already written" was in the branch condition I had read three times, and I still went
+looking for thin files.**
+
+📌 **THE SALVAGE STAYS, UNCHANGED, AND `salvaged` REMAINS WORTH EMITTING** — not because salvages are
+bad, but because a run that salvages 4 of 22 is telling you the *model* is spiralling ~1 task in 7,
+and that is a prompt/model signal even when the engine handles it correctly. **What I will not now do
+is treat salvage count as a quality proxy.**
