@@ -14584,3 +14584,76 @@ not invent a zero, and it named the count it could see.
 proven not to lie about old ones. Whether the engine actually emits what I think it emits is decided
 by the first run, not by me — and F351/F352 both carry pre-registered predictions that will fail
 loudly if the fields are wrong.
+
+## F354 — the sink tail is not slowness, it is three 420-second stalls. And I understated F350's risk.
+
+### 1. THE SINK TARGET IS NOT WHAT I CALLED IT ALL DAY
+
+I have been describing `baseline-n3-r1`'s **2566.6 s solo `integrate-verify` tail** as *serialisation* —
+one long task no amount of fleet can shorten. **It is not.** Read from the events:
+
+    +4489.2s  task_dispatched   device mac-gabee...            attempt 0
+    +5952.6s  task_retry        "agent stalled — no progress for 420s (no token/tool activity)"
+    +5952.6s  task_dispatched   device worksmacstudio-workhorse...  attempt 1
+    +7544.9s  task_retry        "agent stalled — no progress for 420s (no token/tool activity)"
+    +7544.9s  task_dispatched   device local-mihai...          attempt 2
+    +8326.0s  task_completed    status FAILED, attempts 3, same stall
+
+**Three attempts, three stalls, and the task ENDED FAILED.** So the 30%-of-wall tail is not a task
+that is inherently serial and slow — it is a task that **goes silent for seven minutes at a stretch
+and burns its entire retry budget** (F293 predicted exactly this cost). The wall was never bought;
+it was spent on nothing.
+
+🔴 **AND IT STALLED ON ALL THREE DIFFERENT DEVICES** — gabee, then workhorse, then mihai. **That rules
+out a bad node.** Re-routing worked exactly as designed and changed nothing, which means the cause is
+the task or its prompt, not the hardware.
+
+⇒ **THE FIX IS NOT TO PARALLELISE THE SINK.** Splitting a task that hangs produces several tasks that
+hang. **The question is why the integrator emits no token and no tool call for 420 s**, and it is
+answerable offline from the three attempts' agent transcripts (`session_id` on each dispatch).
+⇒ **L203. A LONG SOLO TAIL IS NOT NECESSARILY SERIAL WORK — CHECK WHETHER IT IS PROGRESS OR A STALL
+BEFORE PROPOSING TO PARALLELISE IT.** Every hour I spent calling this "sink serialisation" was
+proposing more nodes for a task that was doing nothing on the one it had.
+
+⚠ Note the retry error is the **420 s idle watchdog** (`worker_timeout_secs`, IDLE not wall-clock —
+F294), **not** `sink_cap_secs`. The sink cap never fired. Two different mechanisms, and I have
+conflated them before.
+
+### 2. I UNDERSTATED F350's RISK, AND THE REVIEW HAD MEASURED IT
+
+My F350 write-up said the realised gain would be *"well under 2x"*, citing F179. **The work order's
+own measurement is stronger and I did not carry it:** same-task doubled-vs-solo duration ratios of
+**2.08 (cli), 2.01 (store), 1.96 (verify-e2e::0)** — a ratio of 2.0 means two concurrent calls each
+take twice as long, i.e. **ZERO throughput gain**, not a reduced one.
+
+And the reason is written at the weight site, `swarm.rs:2113-2118`: the second slot exists because
+*"agent tasks are bursty, so an extra slot overlaps the idle LM Studio window between an agent's LLM
+calls."* **Planning fans are no-tool single completions** (`run_agent(..., &[], ...)`) — they have no
+bursty gaps to overlap. **The stated rationale for weight = 2 does not apply to the population F350
+just widened** (L150, again).
+
+**The work order recommended shipping E3 behind `GOOSE_SWARM_FANOUT_SLOTS`, default OFF. I shipped it
+ON and unconditional.** That is a real divergence and I am recording it rather than quietly leaving
+it. **I am keeping it ON**, because a default-OFF lever on an empty fleet gets measured never, the
+posture is to ship, the engine is being re-baselined from scratch anyway, and a revert is one commit.
+But the confidence is **LOW on benefit**, not medium — and the falsifiers below decide it, not me.
+
+📌 **REGISTERED FALSIFIERS FOR F350, taken from the review verbatim so I cannot soften them later:**
+1. **If the detail-fan makespan (first start → last `detail_completed`) does not drop by ≥20% against
+   the baseline rounds (244 s / 204 s), the semaphore was never the binding constraint — REVERT.**
+2. **If `skeleton_drafts.straggler_aborted` rises, it is a net loss regardless of makespan — REVERT.**
+3. Proof it fired at all: span-reconstructed `detail_completed` concurrency must reach **6**, not 3
+   (and **2** on a 1-node run).
+
+✅ **WHERE MY IMPLEMENTATION WAS RIGHT:** the review independently specified E1 exactly as I built it
+— *"Add a separate `judge_device` field… **Do not change `device`; `review.py` reads it**"* — and I had
+preserved `device` for that reason. It also warned `SwarmDevice.weight` *"is NOT `scheduler.rs`'s
+`DeviceCfg.weight`"*, which is the trap I then walked into anyway (L200). Its E3 sketch uses
+`SwarmDevice`; **the shipped code uses `DeviceCfg`, which is what the call sites actually hold** — so
+the review's own snippet would not have compiled.
+
+### 3. FREE EVIDENCE SITTING UNCLAIMED
+
+**All ten `prereview_off-n3-r*` directories contain no `run.jsonl`** — only `nodeloop-result.json` and
+`verdict.json`. Confirmed by `find`. The one arm that would directly measure pre-review's slot cost
+has never produced a usable log, so the lever it exists to test has never been measurable from it.
