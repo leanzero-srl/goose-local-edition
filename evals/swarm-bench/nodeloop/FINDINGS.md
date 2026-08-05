@@ -12934,3 +12934,38 @@ trap and I still blamed the data first.**
 
 ⇒ **L174. A GLOB THAT MATCHES NOTHING AND A DATASET THAT CONTAINS NOTHING PRINT THE SAME THING —
 COUNT THE FILES YOU OPENED AND SAY THE NUMBER.**
+
+## F319 — `retarget_discarded` IS the redraft signal, ~500 s of early warning — and it invalidates F318's comparison
+
+Timed the retarget phase across all 12 logs (files opened: 12 — L174):
+
+    baseline-n3-r0   drafts →(+662s)→ confidence_retarget → retarget_discarded (+0s) →(+331s)→ drafts →(+582s)→ retarget →(+123s)→ plan_loaded
+    think_off-n3-r0  drafts →(+523s)→ confidence_retarget → retarget_discarded (+0s) →(+294s)→ drafts →(+435s)→ plan_loaded
+    think_off-n3-r1  drafts →(+451s)→ retarget → DISCARD →(+371s)→ drafts →(+469s)→ retarget → DISCARD →(+284s)→ drafts →(+680s)→ plan_loaded
+    swarm-3node-r3   drafts →(+542s)→ confidence_retarget → retarget_discarded (+0s)   ← LIVE, cell 4
+
+⇒ **The discard is INSTANT (0 s every time). What it costs is the 451-662 s of drafting that preceded
+it** — and `retarget_discarded` count equals `redraft_rounds` exactly (baseline-n3-r0: 1↔1,
+think_off-n3-r1: 2↔2). **`retarget_discarded` IS the redraft, observable roughly 500 s before the
+prefix closes.**
+
+📌 **REGISTERED NOW, WITH THE OUTCOME STILL ~500 s AWAY: cell 4 (`baseline-n3-r3`) emitted
+`retarget_discarded` round=1 at 01:42:33 ⇒ IT IS REDRAFTING ⇒ its prefix must land in [1731, 2839].**
+⚠ **FALSIFIER: a prefix below 1731 despite the discard, or in the empty gap (1330, 1731).**
+
+⚠🔴 **AND THIS KILLS F318's COMPARISON, WHICH I PUBLISHED ONE TICK AGO.** F318 compared
+`plan_loaded.plan_confidence` across runs and found 2-draft runs averaging 91.3 against 3-draft 86.8.
+**But `plan_loaded` reports the confidence of the FINAL, ACCEPTED round.** `think_off-n3-r0` shows it
+plainly: confidence **100** at `plan_loaded`, yet it **discarded a retarget and redrafted** — so its
+round-1 confidence was BELOW the floor and 100 is the post-gate value. **The population I measured
+was selected by the very gate I was trying to measure (L113).** A confidence that cleared the floor
+cannot be compared to one that never had to.
+
+**What survives from F318:** the straggler abort is real (3 of 8 runs, `dead: 0`), the
+`agreement_reason` genuinely names the draft count, and the denominator concern stands on the
+mechanism. **What dies:** "2 drafts score higher than 3" — that number was post-selection and should
+never have been quoted. **The honest version needs the PER-ROUND confidence, which `plan_loaded` does
+not carry.**
+
+⇒ **L175. A FINAL-STATE FIELD IS A SURVIVOR, NOT A SAMPLE — if a value is only written once a gate
+has been passed, it cannot be used to study the gate.**
