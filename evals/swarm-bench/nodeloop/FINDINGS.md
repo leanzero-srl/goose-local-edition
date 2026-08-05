@@ -13692,3 +13692,46 @@ records exactly what it did, including the post-start `loop.sh status` line and 
 ⇒ L189. **THE LAST MANUAL STEP IN AN UNATTENDED LOOP IS THE ONE THAT WILL BE MISSED — when a
 transition has a deterministic trigger, give it to a process, and make the process prove it can
 decline before you let it act.**
+
+## F336 — THE SPLITTER FIRED ON 13 CHILDREN ACROSS 5 RUNS, EVERY ONE ON THE THIN-SPEC PATH
+
+Cell 4's `levers_resolved` carries `split: True` alongside **`split_inherit_spec: False`**. That is
+the plan's Part 3 defect #1 — a split child whose entire task statement is
+`"(split of <parent>) <child-id>"`, measured once at **43 characters** against a spec the run had
+just spent ~40% of its wall-clock producing.
+
+**IT IS NOT RARE. `task_split` fired on 5 of 12 runs and produced 13 children:**
+
+    baseline-n3-r0     test-api-web -> tests-test-api, tests-test-web
+    sink_review-n3-r0  store -> store-impl, store-tests
+    sink_review-n3-r0  api -> api-implementation, api-tests
+    think_off-n3-r0    store -> module-init, sqlite-store
+    swarm-3node-r3     api -> http-api-server, frontend-page, api-tests      ← cell 4, live
+    swarm-3node-r3     meridian -> meridian-client, meridian-tests           ← cell 4, live
+
+`scheduler.rs:76-99` confirms the two branches exactly: with `inherit_spec` false it returns
+`format!("(split of {parent_id}) {}", child.id)` and nothing else; with it true the child gets a
+hard file-scope header plus the parent's FULL spec. **The lever is OFF in every one of these runs, so
+all 13 children got the one-line form.**
+
+⚠ **AND I CANNOT MEASURE THE 43 CHARACTERS FROM THE EVENT LOG.** `task_dispatched` carries no
+description field — 13 split children, **0 with a measurable length**. The number in the source
+comment came from somewhere else (a session trace), and the run's own record cannot confirm or refute
+it. That is L121 again: **a behaviour with no line in the event log is unverifiable by construction**,
+and I only found out by trying to check rather than by quoting the comment.
+
+What IS verifiable from the log: the split FIRED, on these 13 children, with the lever OFF. What is
+not: the resulting instruction length on this build. The honest claim stops there.
+
+⚠ ALSO ABSENT FROM `levers_resolved`: **`complete_cap_secs`**. I went looking for it to bound when
+cell 4's `complete-fix` must end and it simply is not there, so the 1200 s figure in the knob docs is
+undocumented on the wire.
+
+⚠ AND THE READ I DID NOT MAKE: cell 4 has been SILENT in `run.jsonl` for 927 s since `complete-fix`
+was dispatched. **jsonl silence is not worker idleness** — a worker emitting tokens writes no events
+until it finishes, so the absence of events says nothing about liveness. I was one step from building
+a stall prediction on it, which is precisely the F334 error (inferring worker state from event
+absence) that I had corrected forty minutes earlier.
+
+⇒ L190. **A DEFECT DESCRIBED IN A SOURCE COMMENT IS NOT THEREBY MEASURABLE — check that the event
+log can carry the quantity before planning any measurement of it, and say plainly when it cannot.**
