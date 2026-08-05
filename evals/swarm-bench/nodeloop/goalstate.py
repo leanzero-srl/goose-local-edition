@@ -89,15 +89,40 @@ def measured_metric() -> dict:
     """
     by_kind: dict[str, list[int]] = {}
     per_run: list[tuple[int, int]] = []               # (test-author attempted, failed) PER RUN — L114
+    seen_runs: set[str] = set()
     for path in sorted(ALL_RUNS.glob("**/run.jsonl")):
         name = str(path)
         if "1node" in name or "2node" in name:
             continue                                  # a different question (the node curve)
-        if path.stat().st_mtime < binary_mtime():
-            continue                                  # produced by a DIFFERENT engine — see below
         ev = failures.load(name)
         if not any(e.get("event") == "run_finished" for e in ev):
             continue                                  # unfinished runs cannot contribute a row
+
+        # ⚠⚠ FILE MTIME IS NOT PROVENANCE ONCE THE TREE HAS BEEN COPIED, AND IT IS COPIED ON EVERY
+        # START. `loop.sh start` parks the run tree with `cp -R`, which stamps the copies with a
+        # FRESH mtime — so a run produced by an OLD engine passes the very scope check that exists to
+        # exclude it, while its original (untouched, older mtime) is correctly excluded. MEASURED:
+        # four `nodeloop-parked-*` directories all carried `run_id=swarm-20260804-163317049`, i.e.
+        # FOUR COPIES OF `think_off-n3-r2`, and F325 counted them as four independent runs. That
+        # inflated the sample from 3 distinct runs to 7 and the run-clustered p from 0.0343 to
+        # 3.7e-05.
+        #
+        # `run_started.ts` is written by the ENGINE at the moment the run began and no amount of
+        # copying can alter it, so it is the provenance signal; `run_id` is the identity. Both come
+        # from inside the log rather than from the filesystem around it.
+        started = next((e.get("ts") for e in ev if e.get("event") == "run_started"), None)
+        run_id = next((e.get("run_id") for e in ev if e.get("run_id")), None)
+        if started is None or run_id is None:
+            continue
+        try:
+            when = datetime.datetime.fromisoformat(str(started).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if when < binary_mtime():
+            continue                                  # produced by a DIFFERENT engine — see below
+        if run_id in seen_runs:
+            continue                                  # a parked COPY of a run already counted
+        seen_runs.add(run_id)
         owned = {e["task_id"]: e.get("owned_files") or []
                  for e in ev if e.get("event") == "task_dispatched"}
         run_a = run_f = 0
