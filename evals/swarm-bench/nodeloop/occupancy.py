@@ -31,12 +31,17 @@ import pathlib
 import sys
 from datetime import datetime
 
+# occ-4: the plan ceiling no longer roots what it does not recognise. Split children inherit their
+# parent's deps and take its place in the graph; replan additions stay rooted because the replanner
+# injects them precisely for being independent; anything still unknown is COUNTED and printed beside
+# the ratio. Rooting the unknown defaults in the flattering direction and read 3.0 where the truth
+# was 1.5 (L197). Every occ-3 max_useful_nodes on a run with a split is overstated and must be re-run.
 # occ-3: adds the CONCURRENT-TASKS histogram, computed in the same exact interval sweep that
 # already produced solo time — off the CORRECTED spans, because a hand-rolled version read 9
 # concurrent tasks on a 6-slot fleet (F266). Above pool_size x 2 is impossible and is flagged.
 # occ-2: the prefix is no longer one lump — it reports its phases, draft rounds, plan_confidence
 # and the redraft cost, because that is where the arms differ in KIND and not merely in speed.
-OCCUPANCY_VERSION = "occ-3"
+OCCUPANCY_VERSION = "occ-4"
 
 # THE ENGINE'S OWN EVENT NAMES. Four of the eight keys here used to be names the engine has never
 # emitted — `prereview` for `pre_review`, `speculation`/`speculative_promoted` for `speculated`,
@@ -287,8 +292,58 @@ def analyse(path) -> dict:
         if e.get("event") == "plan_loaded":
             for t in e.get("tasks") or []:
                 plan_deps[t.get("id")] = list(t.get("depends_on") or t.get("deps") or [])
-    for tid, ds in disp.items():
+
+    # A TASK THE PLAN NEVER DECLARED USED TO BECOME A DEPENDENCY-FREE ROOT, and that defaults in the
+    # direction that FLATTERS parallelism (L197): unknown tasks look perfectly independent, the
+    # critical path stays short, and max_useful_nodes reads high. On baseline-n3-r3 that was 7 of 19
+    # dispatched tasks, and its published 4.76 was the least trustworthy number in the table.
+    #
+    # The two kinds of unknown are NOT the same and must not be defaulted the same way:
+    #
+    #   SPLIT CHILDREN (`task_split` {task_id, children}) REPLACE their parent. They inherit the
+    #   parent's dependencies, and every task that depended on the parent really depends on all of
+    #   the children. Rooting them is simply wrong. Worse, the parent survives in the graph with a
+    #   duration of 0 (a split parent never completes — F334), so a dependent's chain through it
+    #   loses the children's time too. Both errors shorten the critical path.
+    #
+    #   REPLAN ADDITIONS (`replanned` {added}) are injected precisely BECAUSE they are independent of
+    #   everything in flight, so rooting them is correct by construction — not a default.
+    #
+    # Anything still unknown after both is counted and reported rather than silently rooted, because
+    # a ratio computed over unknowns is a ratio nobody can audit.
+    split_children: dict[str, str] = {}
+    replan_added: set[str] = set()
+    for e in events:
+        ev = e.get("event")
+        if ev == "task_split":
+            for c in e.get("children") or []:
+                cid = c if isinstance(c, str) else c.get("id")
+                if cid:
+                    split_children[cid] = e.get("task_id")
+        elif ev == "replanned":
+            replan_added.update(a for a in (e.get("added") or []) if a)
+
+    for child, parent in split_children.items():
+        plan_deps[child] = list(plan_deps.get(parent, []))
+    if split_children:
+        parents = set(split_children.values())
+        for tid, ds in plan_deps.items():
+            if tid in split_children:
+                continue
+            plan_deps[tid] = [d for d in ds if d not in parents] + sorted(
+                c for c, p in split_children.items() if p in ds)
+        for p in parents:
+            plan_deps.pop(p, None)
+
+    # A split PARENT is dispatched and then deliberately removed from the graph above, so it is not
+    # an "unknown" — it is a task the instrument understands well enough to delete.
+    unknown = sorted(t for t in disp
+                     if t not in plan_deps and t not in replan_added
+                     and t not in set(split_children.values()))
+    for tid in disp:
         plan_deps.setdefault(tid, [])
+    for p in set(split_children.values()):
+        plan_deps.pop(p, None)
 
     def longest_path() -> float:
         memo: dict[str, float] = {}
@@ -350,6 +405,9 @@ def analyse(path) -> dict:
         "total_task_secs": round(total_work, 1),
         "critical_path_secs": round(critical, 1),
         "max_useful_nodes": round(max_useful, 2) if max_useful else None,
+        "dag_split_children": len(split_children),
+        "dag_replan_added": len(replan_added),
+        "dag_unknown_rooted": unknown,
         "ceiling_occupancy_at_pool": round(ceiling_occ, 4) if ceiling_occ is not None else None,
         "phantom_tail_tasks": phantom_tail,
         # Parents whose span was correctly ENDED AT THEIR SPLIT rather than run to t_end. Reported so
@@ -509,6 +567,19 @@ def render(a: dict) -> str:
         out.append(f"    MAX USEFUL NODES = {mu}   (pool is {a['pool_size']}) — {verdict}")
         out.append(f"    best occupancy any scheduler could reach on this plan at this pool: {ceil}"
                    f"   (actual {a['occupancy']})")
+        # Print the DAG's provenance beside the ratio, always. The ratio is only as trustworthy as
+        # the share of the graph the plan actually declared, and an unknown task defaults in the
+        # direction that flatters parallelism (L197) — so a reader must never see the number without
+        # seeing how much of it was reconstructed.
+        unk = a.get("dag_unknown_rooted") or []
+        out.append(f"    DAG provenance: {a.get('dag_split_children', 0)} split child(ren) inherited "
+                   f"their parent's deps, {a.get('dag_replan_added', 0)} replan addition(s) rooted "
+                   f"by design"
+                   + (f", {len(unk)} UNKNOWN task(s) rooted BLIND: {unk}" if unk
+                      else ", 0 unknown"))
+        if unk:
+            out.append(f"    ⚠ {len(unk)} task(s) are in NEITHER the plan, a split, nor a replan — "
+                       f"MAX USEFUL NODES is biased HIGH and must not be quoted as a magnitude")
     out.append(f"  idle-node jobs (the 'smarter with more nodes' half): {a['idle_node_jobs'] or 'none'}")
     if a["unfinished_tasks"]:
         if a["finished"]:
@@ -700,6 +771,62 @@ def self_test() -> int:
     a = analyse(write(ev))
     check("serial plan: only 1 node useful", a["max_useful_nodes"], 1.0)
     check("serial plan: ceiling is 1/3 on a 3-pool", a["ceiling_occupancy_at_pool"], 1 / 3)
+
+    # SPLIT INHERITANCE. Plan a->b, where `a` is split into two children. The children inherit a's
+    # (empty) deps, so they are genuinely parallel with each other — splitting DOES create real
+    # parallelism and this test must not pretend otherwise. What it must NOT do is let `b` reach the
+    # roots for free: b depended on a, so it now depends on BOTH children.
+    #
+    # 90s of work over a 60s critical path (30 for the child pair, 30 for b) = 1.5.
+    #
+    # Under the OLD rooting the same log read 3.0: the children were free roots, and b's chain ran
+    # through a parent with a duration of 0 (a split parent never completes — F334), making b itself
+    # look like a root. That is a 2x overstatement of the fleet a plan can use, in the flattering
+    # direction, and it is the exact bias L197 names. The gap between 1.5 and 3.0 is what this
+    # asserts; if the transform is ever removed, this fails loudly rather than drifting.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "plan_loaded", "tasks": [{"id": "a", "depends_on": []},
+                                             {"id": "b", "depends_on": ["a"]}], "ts": ts(0)},
+          {"event": "task_dispatched", "task_id": "a", "device": "d0", "ts": ts(0)},
+          {"event": "task_split", "task_id": "a", "children": ["a1", "a2"], "ts": ts(0)},
+          {"event": "task_dispatched", "task_id": "a1", "device": "d0", "ts": ts(0)},
+          {"event": "task_dispatched", "task_id": "a2", "device": "d1", "ts": ts(0)},
+          {"event": "task_completed", "task_id": "a1", "device": "d0", "ts": ts(30)},
+          {"event": "task_completed", "task_id": "a2", "device": "d1", "ts": ts(30)},
+          {"event": "task_dispatched", "task_id": "b", "device": "d0", "ts": ts(30)},
+          {"event": "task_completed", "task_id": "b", "device": "d0", "ts": ts(60)},
+          {"event": "run_finished", "ts": ts(60)}]
+    a = analyse(write(ev))
+    check("a dependent of a split parent waits for the CHILDREN", a["max_useful_nodes"], 1.5)
+    check("split children are counted", a["dag_split_children"], 2)
+    check("a split parent is not an unknown", a["dag_unknown_rooted"], [])
+
+    # And the OTHER direction, or the check above would pass on an instrument that simply rooted
+    # nothing: a replan addition is genuinely independent and MUST still read as parallel work.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "plan_loaded", "tasks": [{"id": "a", "depends_on": []}], "ts": ts(0)},
+          {"event": "replanned", "round": 0, "added": ["r1"], "ts": ts(1)},
+          {"event": "task_dispatched", "task_id": "a", "device": "d0", "ts": ts(0)},
+          {"event": "task_completed", "task_id": "a", "device": "d0", "ts": ts(30)},
+          {"event": "task_dispatched", "task_id": "r1", "device": "d1", "ts": ts(0)},
+          {"event": "task_completed", "task_id": "r1", "device": "d1", "ts": ts(30)},
+          {"event": "run_finished", "ts": ts(30)}]
+    a = analyse(write(ev))
+    check("a replan addition stays independent", a["max_useful_nodes"], 2.0)
+    check("replan additions are counted", a["dag_replan_added"], 1)
+    check("a replan addition is not an unknown", a["dag_unknown_rooted"], [])
+
+    # A task in NEITHER the plan, a split, nor a replan must be REPORTED, not silently rooted —
+    # otherwise the ratio is unauditable and reads exactly like a clean one (L174).
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "plan_loaded", "tasks": [{"id": "a", "depends_on": []}], "ts": ts(0)},
+          {"event": "task_dispatched", "task_id": "a", "device": "d0", "ts": ts(0)},
+          {"event": "task_completed", "task_id": "a", "device": "d0", "ts": ts(30)},
+          {"event": "task_dispatched", "task_id": "mystery", "device": "d1", "ts": ts(0)},
+          {"event": "task_completed", "task_id": "mystery", "device": "d1", "ts": ts(30)},
+          {"event": "run_finished", "ts": ts(30)}]
+    a = analyse(write(ev))
+    check("an undeclared task is named, not swallowed", a["dag_unknown_rooted"], ["mystery"])
 
     if fails:
         print("SELF-TEST FAILED:")

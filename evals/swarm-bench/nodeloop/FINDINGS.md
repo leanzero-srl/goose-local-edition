@@ -14223,3 +14223,57 @@ before it is quoted as a magnitude.
 
 ⇒ **L197. WHEN A DAG METRIC DEFAULTS AN UNKNOWN NODE TO "NO DEPENDENCIES", IT DEFAULTS IN THE
 DIRECTION THAT FLATTERS PARALLELISM — count the unknowns before quoting the ratio.**
+
+## F347 — the L197 bias is measured, removed, and F346's headline SURVIVES it
+
+F346 published `max_useful_nodes` while stating that `longest_path()` rooted every task absent from
+`plan_loaded`, and named r3's 4.76 as the least trustworthy number in the table. That bias is now
+eliminated rather than annotated. `occupancy.py` is **occ-4**.
+
+**What the unknowns actually were.** All 7 of r3's "not in plan" tasks are fully explained, and the
+same holds for every other cell — **there are ZERO blind-rooted tasks left in the corpus**:
+
+    cell   split children   replan additions   STILL UNKNOWN
+    r0           2                 2                **0**
+    r1           0                 2                **0**
+    r2           0                 4                **0**
+    r3           5                 2                **0**
+
+The two kinds are not the same and must not default the same way. **Split children REPLACE their
+parent**: they inherit its dependencies, and every task that depended on the parent depends on all
+of the children. Rooting them was wrong twice over — the children looked free, *and* a dependent's
+chain ran through a parent whose duration is 0 (a split parent never completes, F334), so the
+dependent looked like a root too. **Replan additions are injected precisely because they are
+independent** (F311), so rooting them is correct by construction, not a default.
+
+**The corrected table:**
+
+    cell   critical path        MAX USEFUL          attainable occ   ACTUAL occ
+    r0     3827.4s (unchanged)  5.05 (unchanged)    1.0              0.5645
+    r1     6906.0s (unchanged)  2.64 (unchanged)    0.8787           0.4737
+    r2     3353.2s (unchanged)  4.77 (unchanged)    1.0              0.6499
+    r3     1767.8 -> **2216.0**  4.76 -> **3.79**    1.0              0.2582
+
+**The cell I flagged moved, and only the cell I flagged moved.** r3 fell 20%, the direction stated in
+advance. r0 has 2 split children and did NOT move, because its split parent had no dependents whose
+chain the correction could lengthen — a split only distorts the ceiling when something waits on it.
+
+✅ **F346's HEADLINE SURVIVES THE CORRECTION.** Three of four plans still afford more nodes than the
+pool has (5.05 · 4.77 · 3.79 against 3), and `baseline-n3-r1` remains the only plan-limited cell at
+2.64 — still the worst app, longest wall, zero redrafts, shortest prefix. **The gap between attainable
+and actual occupancy is unchanged in every cell, because it was never a function of this bias.**
+
+⚠ **THIS DOES NOT CLEAR THE OTHER FALSIFIER.** The judge/pre_review question — whether the "idle"
+fleet was actually busy on work `occupancy.py` cannot see — is untouched by this fix and remains the
+thing that must clear before any scheduler change ships.
+
+**The instrument now prints its own provenance beside the ratio, always**, including a loud line when
+anything is rooted blind. A ratio whose reconstruction is invisible is unauditable, and reads exactly
+like a clean one (L174).
+
+**The self-test asserts the transform in both directions** — a dependent of a split parent waits for
+the children (1.5, where the old rooting read 3.0), a replan addition still reads as parallel work
+(2.0), and an undeclared task is named rather than swallowed. The first version of that test asserted
+1.0 and was WRONG: splitting a task into two siblings genuinely creates parallelism, and an
+instrument test that denies real parallelism would have been a worse bug than the one it was written
+to catch.
