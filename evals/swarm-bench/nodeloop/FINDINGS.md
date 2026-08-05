@@ -12299,3 +12299,44 @@ the prediction must be read from `run.jsonl`, not from the result row.
 ⇒ **L162. A BAND BUILT FROM "THE CELLS I HAPPEN TO QUOTE" IS NOT A BAND. Re-derive the range from
 every stored row at the moment you register the prediction — a summary written three findings ago is
 already stale, and a too-narrow band manufactures falsifications out of your own arithmetic.**
+
+## F303 — the registered prediction PASSED, and the amendment was the difference between a pass and a fabricated refutation
+
+`baseline-n3-r2` dispatched its first task at 23:54:27 UTC, 1316.0 s after `run_started`.
+
+    plan_confidence            88          (ask_floor = 85)
+    plan_confidence_breakdown  final 88 · agreement 88 · spec_clarity 100
+                               "3 drafts agree: count spread 1, file-overlap 100% (role-normalized)"
+                               "product is pinned and only routine defaults remain"
+    redraft events             0
+    PREFIX                     1316.0 s
+
+**Both halves of F302's amended prediction hold.** Confidence 88 ≥ 85 ⇒ predicted NO redraft ⇒
+observed 0 redrafts. Predicted prefix ∈ [1091, 1330] ⇒ **observed 1316.0**, inside the band and 14 s
+from its upper edge.
+
+🔴 **F301's ORIGINAL band was ~[1050, 1200]. 1316.0 falls in the gap I had originally declared a
+FALSIFIER (1200-1700).** Had I not re-derived the range from every stored row before the outcome
+landed, I would now be recording that the discrete-branch model was refuted — **by my own arithmetic,
+on a cell that in fact confirms it.** F302 was not a cosmetic correction; it was the difference
+between a correct pass and a fabricated refutation, and it only counts because it was made BEFORE the
+number existed.
+
+**THE ZERO-OVERLAP SPLIT NOW HOLDS ACROSS SEVEN CELLS:**
+
+    no redraft   1091.3 · 1148.9 · 1316.0 · 1330.0     (n=4, max 1330.0)
+    redraft      1730.9 · 2218.7 · 2839.0              (n=3, min 1730.9)
+    THE GAP      (1330.0, 1730.9) — 401 s wide, STILL EMPTY
+
+**And the mechanism is now observed end to end rather than inferred.** Every previous cell's
+confidence came from reconstructing which side of `ask_floor` it must have been on. This is the first
+time the campaign has seen `plan_confidence` and the redraft decision in the same event, with the
+engine's own reasoning attached: three drafts agreeing on task count to within 1 and overlapping 100%
+on files produced agreement 88, and 88 cleared the floor of 85 without a redraft.
+
+⚠ **What this does NOT show:** that confidence is well calibrated, that 85 is the right floor, or
+that a redraft is worth its ~500-1500 s. It shows the BRANCH behaves as modelled. n=7 on one spec.
+
+⇒ **L163. A PREDICTION IS ONLY WORTH MAKING IF THE BAND IS DERIVED FROM EVERYTHING KNOWN AT
+REGISTRATION TIME — this one passed at 1316 s against a corrected [1091, 1330] and would have "failed"
+against the [1050, 1200] I wrote from memory an hour earlier.**
