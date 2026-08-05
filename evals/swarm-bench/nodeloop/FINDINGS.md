@@ -13522,3 +13522,40 @@ engine is missing the levers the curve depends on"**, sending me to fix a defect
 ⇒ L185. **A MARKER CHECK THAT REPORTS EVERYTHING ABSENT IS REPORTING ON ITSELF — before believing
 any zero from a search, run it against a string you KNOW is there, in the same invocation. An
 instrument that cannot find `swarm` in the swarm binary has not made a discovery.**
+
+## F332 — THE VERDICT INSTRUMENT DID NOT PRINT THE DESIGN'S OWN CONFOUND, AFTER I FLAGGED IT TWICE
+
+`curve.py` rendered wall, score, ratio and the two sign-test p-values — and nothing about the replan
+bonus. My own notes carry *"📌 report bonus COUNT AND CLASS beside the verdict (L124 · L170)"* as a
+standing obligation, restated at every tick for days, and the instrument that will actually publish
+the verdict never learned it. A reminder repeated in prose is not a fix; only the code is.
+
+**WHY IT MATTERS, and it is the sharpest confound in the whole design.** F312: the 1-node arm
+**cannot replan, by construction** — `dynamic_replan` requires `idle_capacity() >= 2` plus a task in
+flight, which a single device never reaches. Every n3 cell so far carries **2 to 4 extra tasks** its
+n1 partner was structurally incapable of doing.
+
+    WALL   n3 does more work -> takes longer -> biases AGAINST the claim    (safe)
+    SCORE  n3 ships more     -> may score higher -> biases TOWARD the claim (NOT safe)
+
+So a score win printed bare invites exactly the reading it cannot support: *"3 nodes build better
+apps"*, when part of the gap is *"3 nodes were allowed to build more of the app"*.
+
+`curve.py` now carries `bonus_of()` (reusing `bonusclass.bonus_class`, L2) and prints per pair plus a
+standing footer under the verdict. Positive control, injecting a synthetic n1 cell so a pair forms:
+
+    r0  n3 7729s/0.6595  n1 11594s/0.4300  3n FASTER  3n BETTER
+        bonus  n3 +2 [TEST-ONLY]   n1 +0 [NO-LOG]
+
+The footer fires whenever `n1_bonus == 0 and n3_bonus > 0` — the asymmetry that F312 predicts will
+hold in **every** pair — and says in the output, not in a note I have to remember, that a score win
+is part node-count and part extra permission.
+
+⚠ THE SELF-TEST WAS NOT HERMETIC AND THE ASSERTION CAUGHT IT. I asserted a synthetic pair reads
+`NO-LOG`; it failed, because the synthetic cells used rep 0 and `baseline-n3-r0` is a real directory
+on disk — the test was reading live data. Moved to rep 99, and it now asserts BOTH halves read
+NO-LOG **and** that a unit which IS on disk classifies rather than falling through to NO-LOG. A
+missing log must say so; it must never read as a silent zero (L24).
+
+⇒ L186. **A STANDING NOTE IS NOT AN IMPLEMENTATION — if a caveat must appear beside a number, put it
+in the code that prints the number, on the day you first write the caveat.**
