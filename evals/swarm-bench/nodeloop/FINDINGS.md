@@ -14029,3 +14029,51 @@ result is not narrated as a surprise either way.
 
 ⚠ n1's round-2 count is not final. It is checked again when `plan_loaded` lands, and if the round
 ends much larger than 10 the comparison is withdrawn rather than reported.
+
+## F343 — H2 CONFIRMED: THE REDRAFT LADDER COSTS ~1.36x MORE ON ONE NODE THAN ON THREE
+
+`baseline-n1-r0`'s `plan_loaded` landed at **2925.8 s** — **inside H2 [2804, 3276], outside H1
+[2414, 2722]**. The bands were registered disjoint above 2722 s precisely so one measurement would
+separate them, and it did.
+
+    discard          1684.9 s
+    plan_loaded      2925.8 s        disc->plan gap  1240.9 s
+    n3 gaps          729.1 · 964.0 · 1036.6   mean 909.9
+    measured ratio   1240.9 / 909.9 = 1.364
+
+⇒ **THE REDRAFT IS DOMINATED BY THE DETAIL FAN, WHICH PARALLELISES — NOT BY THE SERIAL SKELETON.**
+The ladder is therefore MORE expensive on fewer nodes, which is a mechanism-level datum on goal one's
+wall-clock arm that does not depend on the noisy end-to-end score.
+
+**THE CONFOUND CHECK REGISTERED IN ADVANCE HOLDS.** Detail counts per round came out **[9, 8]** — the
+redraft round detailed 8 against n3's 7 and 4, comfortably under the "much above 10 ⇒ withdraw"
+threshold set before the number landed. The gap is not a bigger plan.
+
+**AND THE MECHANISM WAS NAMED BEFORE THE RESULT:** the detail fan sees SLOTS, not nodes — n1 has one
+device at `weight 2` = 2 slots, n3 has 6. ~8 details is ~2 waves on n3 and ~4 on n1. That is what
+1.364 looks like.
+
+⚠ **THE MEASURED 1.364 IS BELOW THE 1.535 THE BAND WAS BUILT FROM.** H2 is supported as a DIRECTION —
+the cost scales — but the magnitude is smaller than the prefix ratio that generated the hypothesis.
+Reporting 1.535 now would be quoting my own prior back as a result.
+
+⚠ **n = 1 PER SIDE.** One n1 redraft against three n3 redrafts. A direction, never a magnitude
+(L10/L147).
+
+### ⚠ THIS IS IN TENSION WITH F285 AND I AM NOT PAPERING OVER IT
+
+F285 reads *"planning is ~87-91% of the prefix and does NOT scale; research scales 3.3x."* The
+redraft is planning, and it just scaled at 1.364. Either F285's "planning does not scale" was
+measured on the INITIAL plan only (whose skeleton is genuinely serial) and does not extend to the
+redraft's detail fan, or one of the two measurements is wrong. **Both are on the record; the
+reconciliation is not done, and I am not quoting either as settled until it is.**
+
+### ALSO BANKED FROM THE SAME EVENT
+
+- **THE REDRAFT WORKED, AND SPECTACULARLY.** `plan_confidence` went **60 → 100** against a floor of
+  85 — the largest confidence gain observed (previous best 41 → 68 → 88). The ladder that F324 showed
+  reverting in 2 of 4 n3 runs paid off completely here.
+- **F323 HOLDS AGAIN:** `plan_loaded` 2925.8 s and prefix closed 2925.8 s — 0.0 s to first dispatch,
+  now **8 of 8**.
+- **LIKE-FOR-LIKE PREFIX, one discard each:** n1 **2925.8** vs n3-r0 **2218.7** ⇒ ratio **1.32**,
+  independently consistent with the 1.364 gap ratio.
