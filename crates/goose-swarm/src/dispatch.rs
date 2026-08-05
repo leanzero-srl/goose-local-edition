@@ -35,6 +35,20 @@ pub struct TaskRunOutput {
     pub output: String,
     pub session_id: Option<String>,
     pub tool_calls: Vec<ToolCallRecord>,
+    /// The task did NOT finish — it stalled in a thinking-only spiral and was accepted because its
+    /// owned files were already on disk.
+    ///
+    /// The salvage itself is right: files written is files written, and re-dispatching would spend a
+    /// slot redoing finished work. What was wrong is that it was INVISIBLE. MEASURED across the four
+    /// archived 3-node cells: 11 of 79 completed tasks — 14% — took this path and were recorded as
+    /// plain `done`, indistinguishable in the log from a task that ran to completion. Every score and
+    /// every occupancy figure the campaign has produced silently mixes the two populations, and the
+    /// only reason the split was found at all is that this path also blanks `session_id` and
+    /// `tool_calls`, which showed up while chasing an unrelated missing transcript.
+    ///
+    /// A stalled task that happens to have written its files is not the same event as a task that
+    /// worked, and an engine that cannot tell them apart cannot be tuned on either.
+    pub salvaged: bool,
 }
 
 impl From<String> for TaskRunOutput {
@@ -43,6 +57,7 @@ impl From<String> for TaskRunOutput {
             output,
             session_id: None,
             tool_calls: Vec::new(),
+            salvaged: false,
         }
     }
 }
