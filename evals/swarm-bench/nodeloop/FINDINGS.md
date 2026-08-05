@@ -12969,3 +12969,47 @@ not carry.**
 
 ⇒ **L175. A FINAL-STATE FIELD IS A SURVIVOR, NOT A SAMPLE — if a value is only written once a gate
 has been passed, it cannot be used to study the gate.**
+
+## F320 — the per-round confidence EXISTS, and the straggler abort DEPRESSES it (opposite to F318)
+
+F319 asserted *"the honest version needs PER-ROUND confidence, which `plan_loaded` does not carry"*
+and stopped there. **`plan_loaded` does not carry it — `confidence_retarget` does.** I had read that
+event's NAME and never opened its payload (L169, the same mistake as F311, one tick apart):
+
+    {"round": 1, "binding_signal": "agreement", "action": "redraft",
+     "conf_before": 83, "conf_after": null, "detail": "best_of_n 3→4"}
+
+Pairing each round's `conf_before` with **that same round's** draft count (files opened: 12):
+
+    unit               round  drafts  straggler  conf_before  action
+    baseline-n3-r0       1      3        0          83        redraft
+    baseline-n3-r0       1      2        1          81        stall_stop
+    swarm-3node-r3       1      2        1          52        redraft   ← cell 4, live
+    think_off-n3-r0      1      3        0          79        redraft
+    think_off-n3-r1      1      2        1          41        redraft
+    think_off-n3-r1      2      3        0          68        redraft
+
+    3 drafts, 0 aborted → 83 · 79 · 68     mean 76.7
+    2 drafts, 1 aborted → 81 · 52 · 41     mean 58.0
+
+⇒ **THE ABORTED ROUNDS SCORE LOWER, NOT HIGHER — the exact opposite of F318's (already dead) claim,
+now on correctly-paired per-round data.** Losing a draft does not make agreement easier; it makes the
+agreement score WORSE, which pushes the round below `ask_floor` and **forces a redraft costing
+450-680 s of drafting.** ⚠ **Ranges OVERLAP (81 sits above two of the three 3-draft values) and n=3
+vs 3 — the DIRECTION is now consistent with the mechanism, the magnitude is not established.**
+
+⚠🔴 **AND THIS POPULATION IS STILL SELECTED (L113).** `confidence_retarget` fires **only when
+confidence is below the floor** — cells 2 and 3 reached 88 with no such event at all. So this
+measures *how badly a failing round failed*, **not** whether aborting causes failure. **The clean
+test needs the confidence of rounds that PASSED, and the engine does not emit it.**
+
+⭐ **ONE THING IS CLEAN AND UNSELECTED WITHIN THIS STRATUM: `binding_signal` is `"agreement"` in
+6 of 6.** Whenever the gate bites, it is agreement that binds — never `spec_clarity`, which was 100
+in every breakdown I have read. ⇒ **the redraft cost is entirely governed by cross-draft agreement,
+which is precisely the quantity the straggler abort shrinks the denominator of.**
+
+📌 Also new: `action` is not always `redraft` — `baseline-n3-r0` shows **`stall_stop`** at conf 81,
+and every redraft carries `detail: "best_of_n 3→4"`, so a redraft **raises** the draft target.
+
+⇒ **L176. WHEN YOU DECLARE A MEASUREMENT IMPOSSIBLE, GREP THE EVENT PAYLOADS ONCE MORE BEFORE SAYING
+SO — I announced a missing field twice in two ticks and it was present both times.**
