@@ -17017,3 +17017,49 @@ So the target sharpens rather than dissolves: **not "widen the gap", but "make t
 reproduce."** A 3-node run that reliably syncs where a 1-node run does not would be a real effect in
 the only place an effect can currently show up. A 3-node run that syncs *variably* produces exactly
 the +0.0593 mirage measured here.
+
+---
+
+## F406 — THE VERIFY LAYER IS A FULL BARRIER, AND IT IS IDLING THE FLEET RIGHT NOW
+
+Observed live in `swarm-3node-r0`, from `plan_loaded`'s own dependency table:
+
+```
+5 x verify::<module>  ->  BARRIER  ->  4 x verify-e2e::0..3  ->  BARRIER  ->  integrate-verify
+```
+
+Every one of the four e2e shards declares
+`deps = [verify::meridian, verify::store, verify::api, verify::web, verify::entry]` — **all five**. And
+`integrate-verify` declares all four shards. So the tail of the DAG is strictly layered, and the whole
+layer waits on its slowest member.
+
+**Measured live:** `verify::web` has been running **54 minutes** on one node. `lms ps` shows the other
+two nodes **IDLE**. Five tasks (four shards + the sink) are ready in every sense except the barrier.
+Six slots, one in use.
+
+**This is a node-scaling ceiling in the purest form: more nodes cannot help a barrier.** Adding a
+fourth device would leave three idle instead of two.
+
+### ⚠️ THIS IS NOT THE EDGE F380 CLOSED — different quantity, and I nearly conflated them
+
+RESUME lists *"the `verify::`→`verify-e2e::` edge"* as a CLOSED dead end, on the evidence that
+**dispatch latency is 0.0 s in all four archived cells**. That measurement is correct and it does not
+touch this. **Dispatch latency is the time from READY to DISPATCHED. The barrier cost is the time to
+BECOME ready.** A task can be dispatched instantly and still have waited an hour to be dispatchable.
+F380 proved the scheduler is not starving anyone; it says nothing about a DAG that makes five tasks
+wait on one.
+
+### Is the edge even necessary?
+
+A `verify::<module>` task **owns no files** — it produces findings, not artifacts. An e2e shard runs
+commands against the built app, which exists as soon as the *module* tasks are done. So it is not
+obvious what a shard consumes from a read-only review, and the barrier may be ordering-for-tidiness
+rather than a real data dependency.
+
+⚠️ **NOT PROPOSING THE CHANGE YET, and deliberately so.** The reviews may exist to gate the shards
+against reviewing a tree known-broken, and F398/F399/F402 have each shown that a change which looks
+obviously right can be wrong on measurement. **The number to get first is the barrier's cost** — total
+node-seconds idle while a verify layer drains — which `occupancy.py` can compute once this run
+finishes, and which is a within-run quantity immune to the replicate spread that has invalidated so
+much today. Registering the observation now, before that number exists, so the prediction precedes
+the outcome.
