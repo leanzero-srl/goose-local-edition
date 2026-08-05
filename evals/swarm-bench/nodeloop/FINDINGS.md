@@ -12496,3 +12496,33 @@ end. Nothing bounds the sink's TOTAL time; `sink_cap_secs` bounds only its curre
 ⇒ **L167. AN `elapsed` FIELD ON A RETRIED TASK IS ALMOST NEVER THE TASK'S LIFETIME. Derive duration
 from the first dispatch to the terminal event, and check it against a case whose per-attempt timings
 you already measured — I had that check available and did not run it before publishing.**
+
+## F308 — pre-flighting the verdict instrument on REAL data, with a positive control
+
+`curve.py` was written before any pair existed (F278/F279) and has been carrying this session's
+verdict ever since — **but it had only ever been executed against its own synthetic self-test.** Ran
+it on the live stored rows:
+
+    self-test                    OK (curve-1), exit 0
+    against the real results     matched pairs: 0 · "NOT YET — no matched pair" · exit 0
+
+**"0 pairs" is exactly what a BLIND instrument would print** (L24 — a gate that prints neither
+verdict reads as a pass), so the number is worthless without showing it could have been non-zero:
+
+    cells() sees 3 baseline cells: (3,0) (3,1) (3,2)
+      n3 present: [(3,0), (3,1), (3,2)]      n1 present: []
+      inject a synthetic n1-r0 -> pairs: 1, dropped: 0
+         {rep 0, wall_ratio 1.5, faster_with_3 True, better_with_3 True}
+
+⇒ **The reader finds all three n3 cells, correctly finds no n1 cell, and forms a pair the instant one
+appears.** The "NOT YET" is a real state, not a silent failure — and the pairing arithmetic
+(`wall_ratio`, both win flags) works on genuine stored rows rather than only on fixtures.
+
+This is the cheap version of L96 applied to the ONE instrument whose output will decide the session:
+**do not discover on the night the tenth cell lands that the verdict script cannot read the results
+file.** It costs one command and it is now on record that it can.
+
+⚠ **Still unexercised on real data:** the four falsifiers (void cell, mixed `engine_build`, wall-
+without-score, dropped-pair caveat). They are asserted in `self_test()` against synthetic rows, which
+is adequate — they are pure predicates over fields I have now confirmed are present and correctly
+typed in the live rows.
