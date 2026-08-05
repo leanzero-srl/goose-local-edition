@@ -13924,3 +13924,44 @@ scale, while research scales 3.3x. If the n1 prefix lands ~1.5x the n3 prefix, t
 node count actually buys something — and since F323 showed the prefix IS the plan (0.0 s to first
 dispatch in 7 of 7), that is a clean, mechanism-level datum on the wall-clock arm, independent of
 the noisy end-to-end score.
+
+## F341 — F340 IS CANCELLED, NOT FALSIFIED — AND THE REPLACEMENT IS A BETTER EXPERIMENT
+
+`baseline-n1-r0` emitted `confidence_retarget` + `retarget_discarded` at **1684.9 s**. F340's band
+[1900, 2200] was registered explicitly conditional on no redraft, with the wording *"a
+`confidence_retarget` before `plan_loaded` CANCELS the prediction rather than failing it, and I will
+say cancelled, not quietly widen the band."*
+
+**So: CANCELLED.** The band assumed a no-redraft prefix and the run took the other branch. Reporting
+this as a near-miss, or stretching the band to cover the redraft, would be exactly the move the
+registration existed to forbid.
+
+### THE REPLACEMENT DISCRIMINATES TWO HYPOTHESES INSTEAD OF ESTIMATING ONE NUMBER
+
+The redraft re-runs the skeleton drafts AND the whole detail fan. F285 measured that **planning does
+not scale with node count while research scales 3.3x** — so whether the REDRAFT cost scales is a
+direct test of which half dominates it. The n3 disc→plan gaps are known: **729.1 · 964.0 · 1036.6**
+(mean 909.9).
+
+    H1  the redraft cost does NOT scale with nodes  ->  plan_loaded in [2414, 2722]   centre 2595
+    H2  the redraft cost scales by 1.535 (the n1/n3 prefix ratio) -> [2804, 3276]     centre 3082
+
+**The two bands are DISJOINT above 2722 s.** One measurement separates them:
+
+- **lands in [2414, 2722]** ⇒ the redraft is dominated by work a single node does no slower — i.e.
+  the serial skeleton, consistent with F285's "planning does not scale"
+- **lands in [2804, 3276]** ⇒ the redraft is dominated by the detail fan, which parallelises, and the
+  ladder is therefore MORE expensive on fewer nodes
+- **lands between 2722 and 2804, or outside both** ⇒ neither hypothesis is supported and I say so
+
+⚠ FALSIFIER FOR BOTH: a `plan_loaded` outside [2414, 3276] entirely, or a SECOND discard (which
+restarts the clock and voids this the same way F340 was voided).
+
+⚠ n = 1 on each side. This discriminates a direction, never a magnitude (L10/L147) — and the H2 ratio
+1.535 is itself derived from a single old n1 point whose log no longer exists (F338).
+
+**A SIDE OBSERVATION ALREADY WORTH RECORDING:** the n1 arm redrafts. F312 established that the
+1-node arm cannot REPLAN (`dynamic_replan` needs `idle_capacity() >= 2`), and I had not checked
+whether the same was true of the REDRAFT ladder. It is not — the ladder runs on one node, so both
+arms can enter it, and the prefix comparison is not confounded by one arm being structurally unable
+to redraft. That is a genuine relief for the curve: the redraft branch is available to both.
