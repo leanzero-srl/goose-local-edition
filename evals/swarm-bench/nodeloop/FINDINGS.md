@@ -15732,3 +15732,26 @@ NOT THE SOURCE YOU COMMITTED — A SHIPPED FIX IS INERT UNTIL THE BINARY THE HAR
 REBUILT, AND NOTHING IN A GREEN TEST SUITE SAYS OTHERWISE.** This is L53 ("prove the arm is armed")
 pointed at my own build, and L189's shape: **the last manual step in an unattended loop is the one
 that gets missed** — here it would have been missed at exactly the moment it was most expensive.
+
+### F378 CLOSED — the rebuild is verified in BOTH directions, not merely launched.
+
+An unverified rebuild would have been the same mistake one layer up, so the build was checked the way
+`review.py` will check it — by `strings` on the artefact, not by trusting the command exited 0.
+
+    target/release/goose   built  Aug 5 13:17   (after F375's 12:54, the last commit of the day)
+    1,216,018 strings extracted
+
+    judge_node             ✅ PRESENT   ⇒ F350, F351, F352 settleable
+    salvaged               ✅ PRESENT   ⇒ F357 settleable
+    -byte tree             ✅ PRESENT   ⇒ F369 settleable
+    for this fleet         ✅ PRESENT   ⇒ F375 settleable
+    PARALLEL WORKER SLOTS  ✅ PRESENT   ⇒ F374 settleable
+
+✅ **NEGATIVE CONTROL, and it is the half that actually proves the rebuild happened:** the literal
+`"for a 3-device fleet"` — the stale worked example F375 deleted — is **ABSENT**. A binary that merely
+had its mtime touched, or one built from a stale tree, would still carry it. **Positive markers alone
+would not have distinguished "rebuilt" from "was already fine"** (L123, applied to my own build step).
+
+**⇒ ALL SEVEN OF TODAY'S PREDICTIONS ARE NOW SETTLEABLE THE MOMENT A RUN HAPPENS.** The arm is armed,
+proven rather than assumed: predictions registered in the file the instrument reads, markers verified
+present, the artefact verified to be the one carrying them, and the stale literal verified gone.
