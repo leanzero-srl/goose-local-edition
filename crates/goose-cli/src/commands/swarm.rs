@@ -165,6 +165,8 @@ pub struct SwarmConfig {
     /// re-runs and produces a real result. None => default ON (env GOOSE_SWARM_STREAM_RETRY overrides).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_decode_retry: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #135 straggler-stop: during plan drafting, once all-but-one drafts have returned a VALID skeleton,
     /// wait only `straggler_grace_secs` for the lone lagging draft, then abort it and proceed on the quorum
     /// (rather than blocking the whole run on one slow node up to the full draft timeout). None => OFF
@@ -317,6 +319,8 @@ pub struct SwarmConfig {
     /// cannot ship a truncated deliverable. env overrides; 0 disables.
     #[serde(default = "default_progress_watchdog_secs")]
     pub progress_watchdog_secs: u64,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #median-slash: drop the frozen contract bundle (all modules' signature stubs) from the integrate-verify
     /// SINK's prompt. The sink RUNS the built app end-to-end via the developer extension (reads the real files);
     /// it does NOT build against the stubs, so the O(N-modules) bundle is dead context that only slows its
@@ -334,6 +338,8 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_E2E_ORACLE overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub e2e_oracle: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #122 planning-slash: SKIP the backbone-lock round-2 re-draft when round-1 cross-draft agreement is
     /// already high (>= BACKBONE_SKIP_CONF_FLOOR). The backbone lock re-drafts the whole fleet a SECOND time
     /// (a full ~250s planner round) to pin the consensus module set, adopting round 2 only if it scores
@@ -345,6 +351,8 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backbone_skip_confident: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #122 planning-slash: MEMOIZE subtask details across retarget/replan rounds. Each retarget/replan round
     /// re-invokes parallel_plan, which re-details EVERY subtask (~75s LLM call each) even when the subtask is
     /// byte-identical to the previous round (measured: cov-logfold detailed 14x for a 4-subtask plan over 3
@@ -355,6 +363,8 @@ pub struct SwarmConfig {
     /// None => OFF (byte-identical). env GOOSE_SWARM_DETAIL_MEMO overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail_memo: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #136 REPEAT BREAKER: stop a WORKER that issues the SAME tool call returning the SAME result
     /// REPEAT_BREAK_N times CONSECUTIVELY over at least REPEAT_BREAK_MIN_SECS. MEASURED live
     /// (val-lean-02/verify::cli-module): 31 identical `cat deals/__main__.py` calls, errors:0, malformed:0 —
@@ -381,6 +391,8 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiral_break_chars: Option<usize>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #135 OMNI-JUDGE — the JUDGE, active in EVERY phase, not just build.
     /// Mihai: "the judge should be active THROUGHOUT, not only in build!!! ... the judge can see signs of
     /// looping." He is right in a way the data proves: a CHAR CAP cannot police plan drafts, because healthy
@@ -393,6 +405,8 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_OMNI_JUDGE overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omni_judge: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #136: a decision the spec explicitly DELEGATES ("your call", "make it and defend it in a comment")
     /// no longer counts as spec unclarity and no longer becomes a blocking question. It is still emitted, so
     /// the workers must make the call and document it and the operator can audit what was chosen.
@@ -429,11 +443,15 @@ pub struct SwarmConfig {
     /// #133 structural-convergence threshold for the diverse-plan early-stop (0-100). Default 80.
     #[serde(default = "default_struct_stop")]
     pub struct_stop: u8,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Dynamic confidence retarget loop: when plan confidence is below `ask_floor`, re-draft toward consensus
     /// or research the open decisions BEFORE the one-shot ask. Bounded + monotonic. OFF by default (needs a
     /// floor). GOOSE_SWARM_RETARGET env overrides.
     #[serde(default)]
     pub retarget: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Bind the clarify ask's OPTIONS to the spec: every offered option must satisfy what the task already
     /// fixes, and a fixed choice is not asked about at all. OFF by default.
     /// GOOSE_SWARM_CLARIFY_SPEC_BOUND env overrides.
@@ -444,6 +462,8 @@ pub struct SwarmConfig {
     /// [SQLite file, JSON file, plain-text lines]") plus two separate "most-common default FIRST" nudges.
     #[serde(default)]
     pub clarify_spec_bound: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// The user's spec OUTRANKS any default a research pass chose for it, and each appended default names the
     /// decision it settles. OFF by default. GOOSE_SWARM_SPEC_WINS env overrides.
     ///
@@ -473,6 +493,8 @@ pub struct SwarmConfig {
     /// agreement alone and built without asking. GOOSE_SWARM_CLARITY_FAIL_CLOSED=off restores the old fail-open.
     #[serde(default = "default_true")]
     pub clarity_fail_closed: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Spec-contract verify (#120): after the smoke gate, run the spec's advertised `python3 -m PKG` entry and
     /// curl each concrete advertised GET endpoint. A 5xx (uninitialised DB) or 404/405 (endpoint never built)
     /// on an advertised path is a HARD finding → the green verdict is demoted and the fix loop runs; an entry
@@ -529,6 +551,8 @@ pub struct SwarmConfig {
     /// actually reaches the engine, and it is the one the desktop settings UI writes.
     #[serde(default)]
     pub retarget_rounds: Option<u32>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Stop the retarget redraft ladder once a round fails to beat the best confidence already measured,
     /// rather than climbing to RETARGET_MAX_N on faith. MEASURED: a py-splitwise run went 84 → 70 → 70 → 52
     /// over three redraft rounds (~60 min of a 3-node fleet), and `plan_loaded` then shipped **52**.
@@ -562,6 +586,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_ANSWERS_WIN_FLOOR env overrides (`0`/`off` to restore the legacy re-plan for A/B or rollback).
     #[serde(default)]
     pub answers_win_floor: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// After the build, statically check that no module reads a field off a sibling's class that the class
     /// does not define. THE check for the drift CONTRACTS cannot stop: a real run shipped api.py reading
     /// `body.group_id` while models.py's ExpenseCreate never declared it — a 500 on every POST, reported as
@@ -623,6 +649,8 @@ pub struct SwarmConfig {
     /// Only ever consulted inside the fan_verify branch, so fan_verify OFF stays byte-identical.
     #[serde(default = "default_true")]
     pub fan_e2e: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// When the run has NO lookup tools, route an open decision to the USER instead of to a research round
     /// that cannot look anything up. MEASURED: with available=[] the engine still sent 5 decisions to
     /// research as kind:"web" ("Use the web-search tool.") and counted all 5 guesses as settled — silencing
@@ -630,6 +658,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_NO_TOOLS_MEANS_ASK env overrides.
     #[serde(default)]
     pub no_tools_means_ask: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Two-stage backbone-lock: extract the majority-consensus module set across drafts, lock it as a hard
     /// constraint, and re-draft so the weak fleet's independent plans genuinely converge. OFF by default.
     /// GOOSE_SWARM_BACKBONE env overrides.
@@ -639,6 +669,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_DRAFT_TEMP env overrides.
     #[serde(default)]
     pub draft_temp: Option<f32>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Inject the DOMAIN_PITFALLS facts relevant to a subtask into the WORKER's prompt, so the author is
     /// told the convention BEFORE writing rather than only being reviewed against it afterwards. Retrieval
     /// is deterministic keyword matching against the subtask's spec + owned files. OFF by default.
@@ -650,23 +682,31 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_REVIEW env overrides.
     #[serde(default)]
     pub review: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// A NEWLY-unwired PURE-LIBRARY module the wire-fix did not resolve demotes the run's `verified`
     /// claim. Never flips `passed` red. Requires `review`. OFF by default.
     /// GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED env overrides.
     #[serde(default)]
     pub unwired_demotes_verified: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Only a GROUNDED research finding (the agent actually called web-search/context7/shell) may mark an
     /// open decision "settled, do not re-ask". An INVENTED finding (pure model reasoning) stays as planning
     /// context but no longer suppresses the clarifying ASK — so a product decision the fleet merely GUESSED
     /// still gets put to the user. OFF by default. GOOSE_SWARM_GROUNDED_RESEARCH_ONLY env overrides.
     #[serde(default)]
     pub grounded_research_only: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Run the project's OWN declared `npm test` in the TypeScript smoke gate. The Python arm already runs
     /// pytest; TS was gated on `npm run build` alone, so a TS app with a failing suite shipped as verified
     /// (measured: loop-05 said verified:true with 2 failing tests and a broken first-click-safety engine).
     /// OFF by default. GOOSE_SWARM_TS_SMOKE_TESTS env overrides.
     #[serde(default)]
     pub ts_smoke_tests: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// A FAILED planned task blocks the run's green claim and drives the completion fix loop. The loop's only
     /// input is the smoke gate today, so a task can burn all its attempts and fail while the run still reports
     /// verified (measured: loop-05 failed engine-tests + react-tests and shipped verified:true after ZERO fix
@@ -692,6 +732,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_SINK_PREBUILD env overrides.
     #[serde(default)]
     pub sink_prebuild: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// LEARN & REFLECT: after a build that PROVABLY worked (built AND verified), goose reflects on what it
     /// did and writes a reusable per-STACK skill, then injects it at planning on the next build of that same
     /// stack — so it stops re-deriving the same knowledge from zero every time. Measured waste: two Swift
@@ -712,6 +754,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_USER_NOTES env overrides.
     #[serde(default)]
     pub user_notes: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// Parse the frozen contract stubs and record WHAT was frozen in the contracts event. Today the bundle is
     /// accepted raw on a non-empty check and its text is never persisted, so the interface every worker is
     /// told to honour cannot be audited afterwards. Observability only — it gates nothing. OFF by default.
@@ -780,6 +824,8 @@ pub struct SwarmConfig {
     // fallback at the `unwrap_or_else` is a DIRECT typed read that would fail the same way and
     // silently discard the user's whole `swarm:` block. bool::default() is false, which is this
     // lever's documented default, so this is byte-identical.
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording above describes the PRE-BAKE world and is kept for its reasoning (F392).
     #[serde(default = "default_true")]
     pub kind_prompt: bool,
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
@@ -900,6 +946,8 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_SCOPED_CONTRACTS env overrides.
     #[serde(default)]
     pub scoped_contracts: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// SINK DECOMPOSITION (Phase-1). The planner emits ONE terminal `integrate-verify` sink that depends on
     /// EVERY module and does ALL verification — run every module's tests, build, run the entry, golden-check
     /// every command, probe robustness, fix at root cause — in ONE model turn-loop on ONE node. Because it
@@ -915,6 +963,8 @@ pub struct SwarmConfig {
     #[serde(default)]
     pub fan_verify: bool,
 
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// An app that ships NO EXECUTABLE TESTS currently claims GREEN. `run_smoke_gate` maps pytest's exit 5
     /// ("no tests ran") to `CollectVerdict::Ok` and `TestRunVerdict::NoTests`, and ONLY `Failures` pushes a
     /// finding — so an empty suite is indistinguishable from a passing one, and the complete loop (which

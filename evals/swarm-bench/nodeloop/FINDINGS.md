@@ -16403,3 +16403,52 @@ gap is narrower: r1's `integrate-verify` failed with *"agent stalled — no prog
 is the engine's own watchdog, **not** a model opinion. But across all 28 archived runs there are only
 **2** failed owns-nothing tasks, one predating the `error` field — **n=1 classified.** Nowhere near
 enough to change a green gate on, and recorded here so it is not mistaken for one.
+
+---
+
+## F393 — THE 25 STALE DOCS NOW SAY SO IN THE FIRST LINE. THE TEST IS STILL NOT SHIPPED, AND WHY.
+
+F392 counted 25 bool fields whose docs claim "OFF by default" for levers the golden bake ships ON, and
+named an invariant test as the fix that makes it impossible to recur. Landing that test honestly
+requires the 25 docs to be correct first. This turn did the docs.
+
+Each of the 25 now opens with, BEFORE any of its original prose:
+
+> ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any "off by default"
+> wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
+
+**Prepended rather than rewritten, deliberately.** My first two attempts tried to replace the offending
+phrase in place and both failed in ways worth recording: the buffer flushed on `#[serde(default)]`
+before ever reaching the field (0 rewrites), and then `sink_lean_prefill`'s claim turned out to SPAN
+TWO doc lines — `None =>` ends one, `OFF (byte-identical)` begins the next — so no single-line
+replacement could ever match it. The original reasoning in those docs is worth keeping; only the
+default it asserts is wrong. A marker fixes the fact without destroying the argument.
+
+### The mechanical pass was WRONG THREE TIMES and each error was a different shape
+
+It marked **26**, not 25:
+
+- **`verify_commands` — false positive.** Its doc reads *"default on: a false-green detector that is
+  off by default protects nobody."* The off-by-default phrase is inside an ARGUMENT, not a claim about
+  its own default. The doc is correct; I dropped the "already says default on" guard in that pass.
+- **`answers_win_floor` — false positive.** Its doc already explains *"the Option resolves to true when
+  omitted and only an explicit `=0` opts out"* — self-aware, and more precise than my marker.
+- **`kind_prompt` — MISSED.** Its stale claim sits in a `//` comment, not a `///` doc comment, so a
+  doc-comment parser cannot see it at all. It is marked now via its `///` block.
+
+All three corrected; exactly **25** markers, `sink_lean_prefill`, `failed_tasks_block_green`,
+`kind_prompt` and `fan_verify` spot-checked. `cargo fmt`, clippy `-D warnings` RC=0, +50 lines, docs
+only — no behaviour change.
+
+### ⛔ THE TEST IS STILL NOT SHIPPED, AND THAT IS A DECISION
+
+A source-parsing invariant test would have to survive exactly the three shapes above: a claim split
+across two doc lines, a claim in `//` rather than `///`, and a phrase that appears inside an argument
+rather than as an assertion. **My own parser got all three wrong on the first pass.** A test whose
+parser is subtly wrong is worse than no test — it fails on innocent edits and passes real ones, and
+nobody trusts it enough to keep it. The markers are the durable half and they ship now; the test needs
+a parser I have actually falsified, not one that merely agrees with me today.
+
+⇒ **L228. A CORRECTNESS TEST BUILT ON A PARSER IS ONLY AS GOOD AS THE PARSER, AND A PARSER I WROTE
+TEN MINUTES AGO HAS NOT BEEN FALSIFIED.** Ship the fact where a reader will hit it; ship the enforcer
+when its own failure modes are known.
