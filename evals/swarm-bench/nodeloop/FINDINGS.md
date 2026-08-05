@@ -15802,3 +15802,52 @@ READY and DISPATCHED on a fleet whose execute occupancy reads 0.59 in that same 
 r3 is exactly where to look.** ⚠ n=1, and `position()`-based idle-job selection (the fix I am holding
 back per L202) is a live suspect — which is one more reason that fix must not land before the run
 that would show it.
+
+## F380 — 🔴 F379'S NUMBER IS ALSO DEAD, AND SO IS THE LEAD IT OPENED. Both killed by the same trap I carry a standing warning about.
+
+F379 ended with a live lead: *"a ~1574 s gap between READY and DISPATCHED on a fleet whose execute
+occupancy reads 0.5910 — idle slots and a waiting task at the same moment is a starvation signature."*
+**Both halves are now refuted, by measurement, in one tick.**
+
+**1. THERE IS NO READY→DISPATCHED GAP AT ALL.** Reconstructed r3's timeline importing
+`occupancy._spans` rather than re-pairing by hand (L2), computing each task's `ready_at` as the max of
+its deps' completions:
+
+    task              ready_at   disp_at    WAIT   busy@ready
+    verify-e2e::0/1/2     4958      4958     0.0        2/6
+    integrate-verify      5574      5574     0.0        0/6
+    verify::cli           3240      3240     0.0        2/6
+    verify::store         3052      3052     0.0        3/6
+
+**Every wait is 0.0 s.** The scheduler dispatches the instant a task becomes ready. **There is no
+starvation, and `position()` is exonerated on this evidence** — which matters, because I had just
+named it prime suspect.
+
+**2. AND THE 1718.8 s ITSELF WAS SURVIVOR BIAS.** r3 emitted `task_split` on **`api` and `meridian`**,
+and **a split parent NEVER emits `task_completed` (F334)**. So `max(last module completion)` silently
+ranged over the SURVIVORS ONLY — `cli` at 3240 and `store` at 3052 — while `verify::meridian`
+completed at **4958** because it was correctly waiting on meridian's CHILDREN. The true last-module
+time is ~4900, and the honest gap is **~58 s, not 1718.8 s**.
+
+**THE CLEAN MEASUREMENT, taken the way that cannot be fooled** — last `verify::` completion to first
+e2e dispatch, which needs no module set at all:
+
+    baseline-n3-r0   splits=[test-api-web]     modules-with-no-completion=0   0.0 s
+    baseline-n3-r2   splits=none               modules-with-no-completion=0   0.0 s
+    baseline-n3-r3   splits=[api, meridian]    modules-with-no-completion=2   0.0 s
+    baseline-n1-r0   splits=none               modules-with-no-completion=0   0.0 s
+
+**0.0 s in all four.** ⇒ **THE `verify::` → `verify-e2e::` EDGE COSTS NOTHING IN DISPATCH LATENCY.**
+Its whole cost is the verify tasks' own runtime, which is real work the run would do anyway.
+**F379's premise — that the edge delays the tail — is dead, and the edge is now positively justified
+rather than merely tolerated.**
+
+🔴 **THE LESSON, AND IT IS THE SHARP ONE.** I carry `NEVER compute in-flight as dispatched − completed
+(F334)` as a standing warning, and I still walked into the same mechanism wearing a different hat: a
+**max over `task_completed`**. F334 is not a rule about one formula; it is a rule about **every
+statistic taken over completions**, because the population is missing exactly the tasks that were
+interesting enough to split ⇒ **L221. F334 IS NOT A FORMULA TO AVOID, IT IS A POPULATION DEFECT —
+ANY max/last/mean OVER `task_completed` SILENTLY EXCLUDES SPLIT PARENTS, AND THE SPLIT ONES ARE
+NEVER A RANDOM SAMPLE.** ⚠ Also note F379 was ALREADY a self-correction of a first bad filter
+(−161.4 s). **Three passes on the same quantity, three different wrong answers, one right one — the
+value of the archive is that this cost a tick instead of a run.**
