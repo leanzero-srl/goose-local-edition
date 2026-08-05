@@ -16035,3 +16035,53 @@ decisively better.** Mihai's 07:45 directive (*"fixes and improvements in the en
 "MEASURING IS SUBORDINATE TO SHIPPING" are not merely a preference here; **engine work is the only
 path that brings goal one inside the measurable range.** A day spent widening the gap is worth more
 than a week spent narrowing the error bars.
+
+---
+
+## F386 — THE EVENT THAT RECORDS A TRUNCATED SINK NAMED A THRESHOLD THE RUN NEVER USED
+
+F385 ended with "engine work is the only affordable route." So: **which** engine defect moves the gap
+most? The arithmetic picks the target without a judgement call — the n3 arm's mean is dragged down by
+one cell, `baseline-n3-r1` at 0.4780, the run whose `integrate-verify` was cut off at 1800.1 s
+== `sink_cap_secs` exactly, mid-repair, with zero final output after 1705 s of real work.
+
+| n3 arm | mean | sd | gap vs n1 | pairs @50% |
+|---|---|---|---|---|
+| as measured (4 cells) | 0.6391 | 0.1401 | +0.0593 | **51** |
+| with the sink-stall cell fixed | 0.6927 | 0.1102 | +0.1129 | **11** |
+
+**Killing ONE failure mode takes the design from 51 pairs to 11 — a 4.6× swing.** ⚠️ This is a
+counterfactual and it flatters itself: removing the worst cell raises the mean *and* shrinks the sd,
+so it assumes a fix that works perfectly. It is a direction, not a promise. But nothing else on the
+board is within an order of magnitude of it.
+
+**A HYPOTHESIS I FORMED AND DISPROVED BEFORE PUBLISHING IT.** `sink_deadline` (`swarm.rs:11662`)
+reads **only** `GOOSE_SWARM_SINK_CAP_SECS`, with no `load_config()` fallback — while
+`sink_cap_ref_bytes`, two lines below it, *does* fall back. Since levers reach a desktop run through
+config and never through env, that read like the baked `sink_cap_secs: 1800` could never apply and
+F369 rode on a deadline of `None`. **It is false**: `:22047` bridges config into the env var before
+dispatch. I went looking for the bridge specifically because a negative that authorises a claim has
+to be *proven*, not observed — and this one died on contact.
+
+**THE REAL DEFECT, and it is the instrument again.** Both cap sites emitted
+`"cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS").ok()` — **the BASE, as a string.** Since F369
+the effective ceiling is `scaled_sink_cap(base, tree_bytes, ref)`, up to **2× base**. So the one event
+that exists to record "this sink was cut off, not finished" reported a threshold the run **never
+used**, and F369 — the fix for the single highest-leverage failure mode on the board — **was
+unreadable from any run log**: every capped sink said `"1800"` whatever ceiling it actually got.
+Both sites now emit `cap_secs` (effective, numeric), `cap_base_secs` and `tree_bytes`.
+
+😐 **The code carried a comment at the second site explaining why BOTH sites must be instrumented, or
+"the gap would read as this sink finished normally" — and both were then instrumented identically
+WRONG.** Knowing to instrument both places is not the same as checking what either one records.
+
+**AND A THIRD, in the bridge itself.** Both bridge comments claim the config value defaults to
+`0 = OFF` and that "the default path is byte-identical". The golden bake made them **1800** and
+**900**. Read as written, the comment on the only mechanism that carries a sink ceiling to a desktop
+run said the shipping default has **no ceiling at all**. Fixed as a pair so they cannot drift apart
+again — same stale claim, same cause: written when every lever defaulted off, never revisited when
+`Default for SwarmConfig` was baked.
+
+📌 **F386 registered as a WITHIN-ROW IDENTITY (L224):** `cap_secs` must equal
+`scaled_sink_cap(cap_base_secs, tree_bytes, 30000)` from the row's own fields. No replicate spread can
+touch it. `cap_secs == cap_base_secs` on a materially larger tree means F369 is INERT.
