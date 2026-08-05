@@ -17317,3 +17317,62 @@ tension.
 
 ⇒ Registered as an **observation with a discriminating test**, not a result. One pair, one confound,
 and the confound points at the very thing I was about to try to delete.
+
+---
+
+## F413 — ⚠️ MY PRE-REGISTERED PREDICTION IS FALSIFIED. THE 3-NODE ARM WINS THE STABLE SET BY +0.1473.
+
+F409 was registered **while `baseline-n1-r0` was still executing**, declaring the 24-check stable set
+and predicting `abs(gap) < 0.05` with a falsifier of 0.05 either way. The pair is now scored:
+
+| cell | FULL | **STABLE-24** | server_runs | client_timeouts |
+|---|---|---|---|---|
+| `baseline-n3-r0` | 0.3895 | **0.5871** | 0.00 | 1.00 |
+| `baseline-n1-r0` | 0.3313 | **0.4399** | 1.00 | 1.00 |
+
+**STABLE-24 gap = +0.1473. My prediction is FALSIFIED**, three times past its own threshold, in the
+direction of three nodes being better. Reported as falsified rather than reframed, because the whole
+point of registering it before the cell scored was to make that impossible to do quietly.
+
+### The 3-node arm built a RICHER APP THAT DOES NOT START
+
+n3 wins **8** stable checks and loses **4**:
+
+| n3 WINS | n3 LOSES |
+|---|---|
+| `ui_states` +1.00 · `ui_currency` +1.00 | `server_runs` -1.00 |
+| `vendor_retry_secs` +1.00 · `vendor_conditional` +1.00 | `serves_page` -1.00 |
+| `request_efficiency` +1.00 · `ui_polish` +0.80 | `api_content_type` -1.00 |
+| `store_atomic_upsert` +0.50 · `ui_error_actionable` +0.40 | `health_shape` -0.33 |
+
+**Every one of the four losses is downstream of a single defect** — `serve()` starting
+`serve_forever` on a daemon thread and returning, so the process exits. The app cannot be reached, so
+everything that requires reaching it is zero. The eight wins are features and craft the 1-node app
+never had at all: UI states, currency handling, vendor retry, conditional requests, atomic upsert.
+
+### 🎯 THE CHAIN CLOSES ON TODAY'S OWN WORK
+
+1. Three nodes builds the richer app — **+0.1473 on a pre-registered stable set**.
+2. One startup bug zeroes four checks and masks it.
+3. **F408, shipped today, turns exactly that bug into a FINDING** (spec_contract's "never bound" under
+   the spec's own advertised invocation) instead of the `inconclusive` that blocked nothing.
+4. **F398 proved this run's fix loop repairs what it is told about** — it found `urlopen` with no
+   timeout, blocked green, and the defect was gone by round 1.
+
+So the single change most likely to convert this into a clean 3-node win is already committed and is
+**not yet in the running binary.**
+
+### ⚠️ WHAT I AM NOT CLAIMING
+
+- **n = 1 pair.** F405's +0.0007 came from four n3 cells against one n1 cell in the parked archive.
+  **These conflict**, and one pair does not overturn four — it overturns my *prediction*, which is a
+  smaller thing.
+- The n1 cell took a **terminal failure** on `test-api`, which depresses its score for a reason that
+  is a planner shape (60% retry on hard test tasks), not a node-count effect.
+- Both apps are poor in absolute terms (0.33 and 0.39 full-set).
+- F412's confound stands: the 3-node run also retargeted twice, so richness may follow re-detailing
+  rather than node count.
+
+**The honest headline: the first pre-registered comparison of the day says three nodes is better, by a
+margin that clears its own falsifier, on the checks that reproduce — and the reason it did not show up
+in the FULL score is a bug today's unshipped binary already knows how to catch.**
