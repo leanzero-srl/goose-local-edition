@@ -13200,3 +13200,65 @@ selection-biased toward success (L110), which is a bias TOWARD the result — so
 
 ⇒ L179. **A SIGNIFICANCE TEST WITH AN EARLY RETURN HAS A REGION IT CANNOT EVALUATE — find that
 region before trusting any verdict it gives, because it will read exactly like a negative result.**
+
+## F326 — BOTH REGISTERED PREDICTIONS SETTLE, AND THE CONCLUSION I WAS ABOUT TO DRAW IS BACKWARDS
+
+Cell 4 `baseline-n3-r3` reached `plan_loaded`. Two predictions registered before it existed:
+
+**1. THE PREFIX BAND — the refined one wins, the original is FALSIFIED.** Measured **2882.7 s**.
+
+    original [1731, 2839]  — "quote the observed redraft prefixes"                    OUT  🔴 FALSIFIED
+    refined  [2652, 2959]  — this run's OWN last-discard (1922.5 s) + the observed
+                             disc->plan spread [729.1, 964.0, 1036.6]                 IN   ✅ CONFIRMED
+
+The two bands were registered together precisely so one could kill the other, and the one derived
+from the run's own timestamps beat the one derived from cells I happened to quote. That is L162/L163
+paying for itself: a band assembled from a convenient subset is not a band.
+
+**2. `test_files <= 3` — HIT, at exactly 3.** And a stronger form than registered: the accepted plan
+is `discard r2` (12 tasks / 4 roots / 0 sep-test / 3 folded), prose delta -110 chars over 12 tasks
+≈ the -9/task serialisation artifact. **CELL 4 IS A SECOND REVERT.**
+
+    round 1  conf 52   19 tasks / 6 roots / 3 separate test tasks   -> redraft (best_of_n 3->4)
+    round 2  conf 61   12 tasks / 4 roots / 0 sep-test, 3 folded    -> redraft (best_of_n 4->5)
+    round 2  conf 54   stall_stop: "1 round(s) failed to beat the best confidence (61)"
+    ACCEPTED conf 61 against ask_floor 85 — the LOWEST accepted confidence of any cell
+
+**2 of 8 cells now ship BELOW the floor, and both are stall_stops.** The floor is advisory at the
+end of the ladder, by design (`best_plan`), not a gate that can refuse.
+
+### THE CLAIM I ALMOST WROTE, AND WHY IT IS WRONG
+
+Cell 4 discarded a 19-task / 6-root plan scoring 52 and shipped a 12-task / 4-root plan scoring 61.
+The fleet has SIX slots; a 4-root plan can fill four of them at t=0. That reads as
+*"the confidence gate selects against fleet utilisation"* — a mechanism aimed straight at GOAL ONE,
+and I had it half-written.
+
+**`think_off-n3-r1` does the exact opposite**: 4 roots scoring 41, then 5 roots scoring 68. Two
+within-run pairs, opposite directions. So I checked every scored plan instead of the one in front of
+me (`planshape.py` now pairs `confidence_retarget{round k}.conf_before` with
+`retarget_discarded{round k}`'s shape — the same plan, by construction — and `plan_loaded` with its
+own tasks):
+
+    12 points, 12 logs      rho(confidence, roots)          = +0.217
+                            rho(confidence, n_tasks)        = +0.192
+                            rho(confidence, sep_test_tasks) = +0.263
+
+**All three point the OTHER WAY.** Wider plans, bigger plans and plans with MORE separate test tasks
+score HIGHER confidence, weakly. The "gate prefers narrow" story is dead, and so is F324's surviving
+"confidence rises as coverage falls" — `sep_test_tasks` is the coverage proxy and it correlates
+POSITIVELY. Cell 4 was one instance, and I was about to promote it to a mechanism (L10, again).
+
+⚠ NOTHING IS ESTABLISHED IN EITHER DIRECTION. rho ~0.2-0.3 on 12 points that are NOT independent
+(several share a run) and are SELECTED (a plan is only scored when the gate looks at it — L113).
+This ranks a hypothesis and settles nothing; the script prints that caveat itself.
+
+⚠ INSTRUMENT BUG CAUGHT BEFORE IT WAS QUOTED: the raw pairing produced **14** points because a
+REVERT scores the same plan twice — once as the round-k discard, once as `plan_loaded` when
+`best_plan` ships it back. Both duplicates sat at the exact confidence the stall guard settled on,
+so they biased every correlation toward whatever the reverts look like. Deduped on (confidence,
+shape-without-prose) the honest n is 12, and all three rho values fall (+0.306/+0.317/+0.356 ->
++0.217/+0.192/+0.263). A double-counted point is an instrument defect and gets no exemption (L157).
+
+⇒ L180. **A WITHIN-RUN PAIR IS ONE OBSERVATION, NOT A MECHANISM — before promoting "A beat B here"
+to "the system prefers A", find every other pair the corpus already contains and check the sign.**
