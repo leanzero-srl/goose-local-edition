@@ -59,7 +59,24 @@ after the run, which is also how the estimator gets validated instead of trusted
 
 ---
 
-## ARM: `sink_lean_prefill=1` — the two-sided lever aimed at the highest-leverage cell
+## ARM: `sink_lean_prefill=0` — 🔴 DIRECTION REVERSED BY F392
+
+⚠️ **THE ENTRY BELOW WAS WRITTEN ON A FALSE PREMISE AND IS CORRECTED HERE, NOT DELETED.** It says the
+lever is "default OFF, never measured" and proposes turning it ON. **It is baked `Some(true)` —
+ON — and has been ON in every archived cell.** The field doc still says "None => OFF
+(byte-identical)", which the golden bake made false; I read the doc instead of the Default impl.
+
+**So the experiment inverts.** The PRO ("the sink finishes before the cap") is already the shipping
+behaviour, and the CON is the untested half: every archived sink ran WITHOUT the frozen contract
+bundle, and `sync_shape` fails in three of four 3-node cells. The arm to run is **`=0`** — restore the
+bundle to the only task that reconciles cross-module interfaces and see whether the integration checks
+come back. The falsifier table below still applies, with the two columns swapped: this arm WINS if a
+tier-A integration check recovers, and LOSES if the sink starts hitting its cap.
+
+⚠️ The `sync_shape` association is five runs with nothing varied — a reason to run the arm, not a
+result (L223).
+
+## ORIGINAL ENTRY (premise false, kept for the reasoning)
 
 **Why this arm and not another.** F385 showed the pre-registered design needs 51 matched pairs at the
 observed gap, and F386 showed that removing the single sink-stall cell moves that to 11. The sink
