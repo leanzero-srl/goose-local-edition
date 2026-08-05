@@ -13965,3 +13965,44 @@ restarts the clock and voids this the same way F340 was voided).
 whether the same was true of the REDRAFT ladder. It is not — the ladder runs on one node, so both
 arms can enter it, and the prefix comparison is not confounded by one arm being structurally unable
 to redraft. That is a genuine relief for the curve: the redraft branch is available to both.
+
+## F342 — n1-r0's REDRAFT WAS CAUSED BY A DEAD DRAFT, NOT BY DISAGREEMENT
+
+Opening `skeleton_drafts` on the live 1-node run, beside a 3-node run for contrast:
+
+    n1-r0   round 1  requested 2  returned 1  dead 1  straggler_aborted 0  chars [5556]
+            confidence_retarget  binding_signal agreement  conf_before 60  detail "best_of_n 2→3"
+    n1-r0   round 2  requested 2  returned 2  dead 0  straggler_aborted 0  chars [4952, 3942]
+
+    n3-r3   round 1  requested 3  returned 2  dead 0  straggler_aborted 1  chars [5143, 4583]
+    n3-r3   round 2  requested 3  returned 3  dead 0  straggler_aborted 0
+    n3-r3   round 3  requested 3  returned 3  dead 0  straggler_aborted 0
+
+**ONE DRAFT CAME BACK.** With a single draft there is no cross-draft agreement to compute, and
+`binding_signal` is `agreement` in 6 of 6 (F320) — so confidence read **60** and the ladder fired.
+**The n1 redraft was forced by a LOST draft, not by the drafts genuinely disagreeing.**
+
+**AND `requested` IS NOT `worker_count`.** n1 asked for 2 on 1 worker; n3 asked for 3 on 3. With
+`best_of_n_skeletons: 2` in the config, the request looks like `max(config, worker_count)` — so the
+1-node arm still runs a 2-draft vote, serially, on one device. It is not reduced to a single draft by
+construction; it lost one to `dead: 1`.
+
+⚠ **`dead` AND `straggler_aborted` ARE DIFFERENT FIELDS AND I NOW HAVE ONE OF EACH.** F320 read the
+straggler abort as *"3 of 8 runs, `dead: 0`, deliberate"* — deliberate truncation of a slow draft.
+`dead: 1` is a draft that FAILED. Reading them as the same thing would attribute a stochastic failure
+to a designed optimisation.
+
+### WHAT THIS DOES TO THE OPEN PREDICTION
+
+**F341's H1/H2 discriminator SURVIVES** — it asks whether the redraft's COST scales with node count,
+and the redraft re-runs the same skeleton+detail machinery regardless of what triggered it.
+
+**BUT THE PREFIX COMPARISON IS NOW CONFOUNDED, and I would rather say so now than after the number
+lands.** n1-r0's long prefix is partly a lost draft — a stochastic failure that could equally have
+hit a 3-node run (and did hit `baseline-n3-r3` as a straggler abort). Attributing the whole n1/n3
+prefix gap to node count would be wrong. **The clean comparison needs n1 replicates, which the
+`CURVE_REPS = 8` target now provides.**
+
+⇒ L194. **WHEN A RUN TAKES AN UNEXPECTED BRANCH, OPEN THE EVENT THAT DECIDED IT BEFORE MODELLING THE
+COST — the branch I was about to price as "the 1-node redraft" was really "the run that lost a
+draft", and those are different populations.**
