@@ -7893,6 +7893,84 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(dedup(&slots), 4, "planner + 3 distinct models");
     }
 
+    /// THE CONTRACT F350 ACTUALLY SHIPPED, which nothing was checking.
+    ///
+    /// `fanout_caps_one_call_per_device` above still passes, and that is the problem: its fixture is three
+    /// UNIQUE device strings, while every production caller now passes `fleet_slot_models()` — each model_id
+    /// repeated `weight` times. So the guard that exists asserts one-call-per-device on a shape the engine no
+    /// longer sends, and the shape it does send (six entries, three models) was asserted nowhere. F350 tested
+    /// that the LIST is six long; the list length is the shape, and running six at once is the contract.
+    #[tokio::test]
+    async fn fanout_runs_one_call_per_slot_so_a_weight_two_device_takes_two() {
+        use std::sync::atomic::AtomicUsize;
+        // Exactly what fleet_slot_models() yields for the bed: 3 devices x weight 2.
+        let slots = fleet_slot_models(&[
+            cfg_w("a", "m-a", 2),
+            cfg_w("b", "m-b", 2),
+            cfg_w("c", "m-c", 2),
+        ]);
+        assert_eq!(slots.len(), 6);
+        let max_per_device = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let inflight = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+        let total = Arc::new(AtomicUsize::new(0));
+        let max_total = Arc::new(AtomicUsize::new(0));
+        let items: Vec<usize> = (0..18).collect();
+        let (mpd, inf, tot, mtot) = (
+            max_per_device.clone(),
+            inflight.clone(),
+            total.clone(),
+            max_total.clone(),
+        );
+        let results = fanout_over_fleet(slots, items, move |i, dev| {
+            let (mpd, inf, tot, mtot) = (mpd.clone(), inf.clone(), tot.clone(), mtot.clone());
+            async move {
+                let cur = {
+                    let mut g = inf.lock().unwrap();
+                    let e = g.entry(dev.clone()).or_insert(0);
+                    *e += 1;
+                    *e
+                };
+                {
+                    let mut m = mpd.lock().unwrap();
+                    let e = m.entry(dev.clone()).or_insert(0);
+                    if cur > *e {
+                        *e = cur;
+                    }
+                }
+                let t = tot.fetch_add(1, Ordering::SeqCst) + 1;
+                mtot.fetch_max(t, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                tot.fetch_sub(1, Ordering::SeqCst);
+                *inf.lock().unwrap().get_mut(&dev).unwrap() -= 1;
+                i
+            }
+        })
+        .await;
+        assert_eq!(results.len(), 18, "every item returns a result");
+        // Three DISTINCT models, six slots: the duplicates must not collapse the pool.
+        assert_eq!(
+            max_per_device.lock().unwrap().len(),
+            3,
+            "work-stealing should still touch every device"
+        );
+        // The whole point of the change: a weight-2 device runs TWO at once, and the fleet reaches SIX.
+        for (dev, &m) in max_per_device.lock().unwrap().iter() {
+            assert!(
+                m <= 2,
+                "device {dev} exceeded its weight with {m} concurrent"
+            );
+        }
+        assert!(
+            max_total.load(Ordering::SeqCst) <= 6,
+            "never more than the slot count"
+        );
+        assert!(
+            max_total.load(Ordering::SeqCst) > 3,
+            "if this caps at 3 the fan is still sized by DEVICES and F350 is inert: got {}",
+            max_total.load(Ordering::SeqCst)
+        );
+    }
+
     #[tokio::test]
     async fn fanout_caps_one_call_per_device() {
         use std::sync::atomic::AtomicUsize;
