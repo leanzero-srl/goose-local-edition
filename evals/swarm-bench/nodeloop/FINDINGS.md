@@ -16932,3 +16932,34 @@ not devices. That is F350/F374's boundary change confirming itself in a real run
 Planning also converged rather than looping — confidence **68 → 83** over two retarget rounds against
 an 85 floor, drafts 334s → 250s → 219s, zero dead or aborted. The 50-minute pre-dispatch cost is real
 and is what the `detail_budget` arm exists to attack, but it is not the F50 pathology.
+
+---
+
+## F404 — ✅ F374 SETTLED BY A LIVE RUN: FOUR e2e SHARDS, EXACTLY AS REGISTERED
+
+The registered band, verbatim: *"`worker_count` became SLOTS, and it also feeds fan_e2e_split, so a
+3-node run must now emit FOUR e2e shards (verify-e2e::0..3) where the archive shows three. SETTLEABLE
+AT n=1: the shard COUNT (deterministic from the plan)."*
+
+`plan_loaded` on `swarm-3node-r0`: **18 tasks, e2e shards = 4 — `verify-e2e::0`, `::1`, `::2`, `::3`.**
+The archive's 3-node cells emit three. **CONFIRMED**, at n=1, from a deterministic plan property, with
+the prediction registered hours before the run existed.
+
+This is the first prediction settled by a live run today, and it closes the chain the boundary commit
+opened: `worker_count` became the sum of device weights, `pool_resolved`/`skeleton_drafts` now report
+**6** on a 3-device fleet (F403), and the shard count follows from it. F374 was registered
+*deliberately unfixed* — the point was to find out the sign of a change I could not predict, and the
+mechanism half has now landed on the side it was supposed to.
+
+⚠️ **The other half is NOT settled and must not be reported as if it were.** "Any shard reporting
+clean having enumerated ZERO commands" needs the shards to finish. And the COST half was **withdrawn**
+(F382/F383): e2e ran 2277.5/425.7/1391.6s across three cells of an identical config, so no single run
+can say whether four shards cost more than three. Four shards each building the whole app could be
+strictly worse; that question is untouched by this confirmation.
+
+### The fleet is being used evenly, which is the thing the goal is about
+
+Mid-EXECUTE dispatch counts: **worksmacstudio 5 · local-mihai 5 · mac-gabee 4**, zero failures, and no
+context overflow on gabee despite its 65536 ceiling against the other two nodes' 200192. The 6-slot
+pool is genuinely spreading work across three distinct devices — the precondition for any node-scaling
+claim, holding in a live run rather than assumed.
