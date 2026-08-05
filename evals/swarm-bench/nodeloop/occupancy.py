@@ -31,6 +31,9 @@ import pathlib
 import sys
 from datetime import datetime
 
+# occ-5: idle-job SLOT-TIME, from the fields F351/F352 added to the engine today — judge slot-seconds
+# paired judge_observed->judge_verdict (claimed calls only), pre_review secs summed, and WHICH NODE
+# judged. A log without those fields reports UNAVAILABLE, never 0.
 # occ-4: the plan ceiling no longer roots what it does not recognise. Split children inherit their
 # parent's deps and take its place in the graph; replan additions stay rooted because the replanner
 # injects them precisely for being independent; anything still unknown is COUNTED and printed beside
@@ -41,7 +44,7 @@ from datetime import datetime
 # concurrent tasks on a 6-slot fleet (F266). Above pool_size x 2 is impossible and is flagged.
 # occ-2: the prefix is no longer one lump — it reports its phases, draft rounds, plan_confidence
 # and the redraft cost, because that is where the arms differ in KIND and not merely in speed.
-OCCUPANCY_VERSION = "occ-4"
+OCCUPANCY_VERSION = "occ-5"
 
 # THE ENGINE'S OWN EVENT NAMES. Four of the eight keys here used to be names the engine has never
 # emitted — `prereview` for `pre_review`, `speculation`/`speculative_promoted` for `speculated`,
@@ -415,6 +418,7 @@ def analyse(path) -> dict:
         # already published would be worse than the bug.
         "split_superseded_tasks": sorted(split_at),
         "idle_node_jobs": idle_jobs,
+        "idle_slots": idle_slot_accounting(events),
         "_spans": attempt_spans,
         "_t0": t0,
         "_t_end": t_end,
@@ -440,6 +444,81 @@ PREFIX_MILESTONES = (
     "research_completed", "skeleton_drafts", "confidence_retarget", "retarget_discarded",
     "low_confidence_ask", "low_confidence_ask_timeout", "contracts", "plan_loaded",
 )
+
+
+def idle_slot_accounting(events: list[dict]) -> dict:
+    """How much fleet SLOT-TIME the idle-node jobs actually consumed, and WHICH NODE ran them.
+
+    Written BEFORE the data exists (L151), against fields the engine only started emitting today, so
+    that the pre-registered predictions in F351/F352 are checked by an instrument rather than by me
+    reading a log and deciding what I see.
+
+    WHY THIS IS NOT A FOOTNOTE. F346 claimed the scheduler left the fleet idle, and its falsifier
+    killed it by showing that judge and pre_review hold the SAME `in_flight` permit a task dispatch
+    does. That falsifier could measure the judge exactly (`judge_observed` opens, `judge_verdict`
+    closes, single-flight so they never interleave) but had to ESTIMATE pre_review from same-device
+    inter-arrival gaps, and it flagged that estimate as the weak half of its own ~0.30 figure. This
+    replaces the estimate with the engine's own number.
+
+    THREE QUANTITIES, and the third is the one that decides an engine change:
+      judge_slot_secs    — paired judge_observed -> judge_verdict, counting ONLY calls that claimed a
+                           device. An empty `judge_node` means the deterministic-only path fired with
+                           no device and no inference; including it would inflate the total by the
+                           very population that costs nothing.
+      prereview_slot_secs— summed from `pre_review.secs`. One call can hold a slot for 900s.
+      judge_node_spread  — how the judging landed across nodes. `scheduler.rs:1099` selects with
+                           `position()` (FIRST device with a free slot) while `pick_device` sorts by
+                           `in_flight`, so a SKEWED spread confirms from the log what has so far only
+                           been simulated. Even spread refutes it.
+
+    ⚠ OLD LOGS DO NOT CARRY THESE FIELDS, and a missing field must never read as a measured zero
+    (L174). `judge_node_attributed` counts how many verdicts actually carried the key, so a caller can
+    always tell "the judging was spread evenly" from "this log predates the field".
+    """
+    obs: dict[str, float] = {}
+    judge_spans: list[tuple[float, str]] = []
+    judge_unclaimed = 0
+    judge_seen = 0
+    judge_attributed = 0
+    pre_secs: list[float] = []
+    pre_missing = 0
+
+    for e in events:
+        ev, ts = e.get("event"), parse_ts(e.get("ts"))
+        if ev == "judge_observed" and ts is not None:
+            obs[e.get("task_id")] = ts
+        elif ev == "judge_verdict":
+            judge_seen += 1
+            node = e.get("judge_node")
+            if node is None:
+                continue                      # a log written before the field existed
+            judge_attributed += 1
+            if not node:
+                judge_unclaimed += 1          # deterministic-only: no device, no inference, no slot
+                continue
+            start = obs.get(e.get("task_id"))
+            if start is not None and ts is not None and ts >= start:
+                judge_spans.append((ts - start, node))
+        elif ev == "pre_review":
+            if "secs" in e:
+                pre_secs.append(float(e.get("secs") or 0.0))
+            else:
+                pre_missing += 1
+
+    spread: dict[str, float] = {}
+    for secs, node in judge_spans:
+        spread[node] = round(spread.get(node, 0.0) + secs, 1)
+    return {
+        "judge_slot_secs": round(sum(s for s, _ in judge_spans), 1),
+        "judge_calls_costing_a_slot": len(judge_spans),
+        "judge_calls_deterministic_only": judge_unclaimed,
+        "judge_verdicts_total": judge_seen,
+        "judge_node_attributed": judge_attributed,
+        "judge_node_spread": spread,
+        "prereview_slot_secs": round(sum(pre_secs), 1) if pre_secs else None,
+        "prereview_calls_timed": len(pre_secs),
+        "prereview_calls_untimed": pre_missing,
+    }
 
 
 def prefix_breakdown(events: list[dict], t0: float | None) -> dict:
@@ -581,6 +660,35 @@ def render(a: dict) -> str:
             out.append(f"    ⚠ {len(unk)} task(s) are in NEITHER the plan, a split, nor a replan — "
                        f"MAX USEFUL NODES is biased HIGH and must not be quoted as a magnitude")
     out.append(f"  idle-node jobs (the 'smarter with more nodes' half): {a['idle_node_jobs'] or 'none'}")
+    isl = a.get("idle_slots") or {}
+    if isl.get("judge_node_attributed"):
+        det = isl["judge_calls_deterministic_only"]
+        out.append(f"    judge held a slot on {isl['judge_calls_costing_a_slot']} call(s) for "
+                   f"{isl['judge_slot_secs']}s; {det} more ran deterministic-only (no device, no "
+                   f"inference, no slot)")
+        spread = isl["judge_node_spread"]
+        if spread:
+            tot = sum(spread.values()) or 1.0
+            shares = ", ".join(f"{k}={v}s ({v / tot:.0%})" for k, v in sorted(spread.items()))
+            out.append(f"    WHICH NODE JUDGED: {shares}")
+            # scheduler.rs:1099 picks with position() — FIRST free device — while pick_device sorts
+            # by in_flight. A skew here is that defect, measured rather than simulated.
+            if len(spread) > 1 and max(spread.values()) / tot > 0.55:
+                out.append("    ⚠ JUDGING IS SKEWED toward one node — consistent with the position() "
+                           "selection defect (scheduler.rs:1099/:1220 take the FIRST free device, "
+                           "not the least-loaded one)")
+            elif len(spread) > 1:
+                out.append("    judging is spread evenly — the position() selection defect does NOT "
+                           "show up in this run")
+    elif isl.get("judge_verdicts_total"):
+        out.append(f"    judge node attribution UNAVAILABLE — {isl['judge_verdicts_total']} verdict(s) "
+                   f"carry no `judge_node` (log predates the field, not a measured zero)")
+    if isl.get("prereview_calls_timed"):
+        out.append(f"    pre_review held a slot for {isl['prereview_slot_secs']}s across "
+                   f"{isl['prereview_calls_timed']} call(s)")
+    elif isl.get("prereview_calls_untimed"):
+        out.append(f"    pre_review slot time UNAVAILABLE — {isl['prereview_calls_untimed']} call(s) "
+                   f"carry no `secs` (log predates the field, not a measured zero)")
     if a["unfinished_tasks"]:
         if a["finished"]:
             out.append(f"  NOTE: {a['unfinished_tasks']} task(s) were dispatched and NEVER completed "
@@ -827,6 +935,43 @@ def self_test() -> int:
           {"event": "run_finished", "ts": ts(30)}]
     a = analyse(write(ev))
     check("an undeclared task is named, not swallowed", a["dag_unknown_rooted"], ["mystery"])
+
+    # IDLE-SLOT ACCOUNTING. Written before any log carries these fields, so these controls are the
+    # only thing standing between "the instrument works" and "the instrument prints zeros".
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          # a judge that CLAIMED a device: 40s of real slot time on node-a
+          {"event": "judge_observed", "task_id": "t1", "ts": ts(0)},
+          {"event": "judge_verdict", "task_id": "t1", "judge_node": "m-a", "ts": ts(40)},
+          # a judge that ran DETERMINISTIC-ONLY: empty node, no device, must NOT be counted as slot time
+          {"event": "judge_observed", "task_id": "t2", "ts": ts(50)},
+          {"event": "judge_verdict", "task_id": "t2", "judge_node": "", "ts": ts(51)},
+          # a second claimed judge, on a DIFFERENT node
+          {"event": "judge_observed", "task_id": "t3", "ts": ts(60)},
+          {"event": "judge_verdict", "task_id": "t3", "judge_node": "m-b", "ts": ts(80)},
+          {"event": "pre_review", "task_id": "t1", "device": "m-a", "had_findings": False,
+           "secs": 120.0, "ts": ts(90)},
+          {"event": "run_finished", "ts": ts(100)}]
+    a = analyse(write(ev))["idle_slots"]
+    check("judge slot-seconds exclude the deterministic path", a["judge_slot_secs"], 60.0)
+    check("deterministic-only judges are counted separately", a["judge_calls_deterministic_only"], 1)
+    check("claimed judges counted", a["judge_calls_costing_a_slot"], 2)
+    check("judging attributed per node", a["judge_node_spread"]["m-a"], 40.0)
+    check("pre_review slot time summed", a["prereview_slot_secs"], 120.0)
+
+    # THE OTHER DIRECTION, and it is the one that matters most: an OLD log has none of these fields,
+    # and a missing field must never read as a measured zero (L174). This is exactly the shape that
+    # made F349 possible — an absent signal looking identical to a clean one.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "judge_observed", "task_id": "t1", "ts": ts(0)},
+          {"event": "judge_verdict", "task_id": "t1", "device": "m-a", "ts": ts(40)},
+          {"event": "pre_review", "task_id": "t1", "device": "m-a", "had_findings": False, "ts": ts(50)},
+          {"event": "run_finished", "ts": ts(100)}]
+    a = analyse(write(ev))["idle_slots"]
+    check("an old log attributes NOTHING rather than zero", a["judge_node_attributed"], 0)
+    check("an old log still counts the verdicts it has", a["judge_verdicts_total"], 1)
+    check("an untimed pre_review is reported as untimed", a["prereview_calls_untimed"], 1)
+    if a["prereview_slot_secs"] is not None:
+        fails.append("an old log must report pre_review slot time as None, never 0.0")
 
     if fails:
         print("SELF-TEST FAILED:")
