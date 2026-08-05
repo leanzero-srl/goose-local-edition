@@ -13291,7 +13291,13 @@ impl GooseAgentDispatcher {
                  is ALREADY checked by integrate-verify, so you never need a separate integration-test \
                  subtask. Scale the number of per-module test subtasks to the fleet ({worker_count} units): \
                  more independent module-tests keep a larger fleet busy; a tiny 1-module app just keeps \
-                 tests in ONE subtask (nothing to parallelize). Make each per-module test THOROUGH: because \
+                 tests in ONE subtask (nothing to parallelize). KEEP EACH TEST SUBTASK SMALL ENOUGH TO \
+                 DESCRIBE IN A FEW LINES: if one module's coverage would need a long brief, SPLIT it into \
+                 focused sibling subtasks (`test-<module>-happy`, `test-<module>-edges`, \
+                 `test-<module>-errors`), each owning its OWN test file and depending on the same single \
+                 module. That is strictly better for the fleet — the siblings are independent, so they run \
+                 CONCURRENTLY instead of one worker grinding through every case serially. \
+                 Make each per-module test THOROUGH: because \
                  these tests run for FREE in parallel with the rest of the build, spend that capacity on \
                  QUALITY — cover the module's happy path AND its edge cases, invalid/error inputs and \
                  boundary conditions, each asserting the concrete expected value (never shape-only), so the \
