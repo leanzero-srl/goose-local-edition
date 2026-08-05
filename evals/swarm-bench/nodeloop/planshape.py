@@ -135,6 +135,44 @@ def plans(run_log: Path) -> list[tuple[str, dict, list[dict]]]:
 COLS = ["n_tasks", "roots", "depth", "sep_test_tasks", "folded_test_tasks",
         "app_files", "test_files", "desc_chars"]
 
+# `retarget_discarded` measures `description.trim().len()`; `plan_loaded` serialises the untrimmed
+# description. On `baseline-n3-r0` the engine PROVABLY shipped the discarded plan unchanged (the
+# stall guard reverted to `best_plan`, swarm.rs:22885), and there every task read 0 or -8. So -8 is
+# the serialisation artifact, measured on the one case whose answer is known (L96) — not a tolerance
+# chosen to make a hit rate look better. Exact matches are reported separately for that reason.
+SERIALISATION_SLACK = 8
+
+
+def reuse(discarded: list[dict], accepted: list[dict]) -> dict:
+    """How much of the ACCEPTED plan's detailing was already written in a DISCARDED round.
+
+    This is the number `swarm.rs:22967-22980` asks for by name: the event is emitted as a
+    MEASUREMENT, not a cache, and a reuse path is to be built only if the hit rate justifies one.
+    A task counts as reusable when the scheduler-visible fields match AND the description length
+    matches — same owned files, same deps, same size of spec.
+    """
+    fd = fingerprint(discarded)
+    fa = fingerprint(accepted)
+    dchars = {t.get("id"): t.get("desc_chars") for t in discarded}
+    achars = {t.get("id"): (t.get("desc_chars") if t.get("desc_chars") is not None
+                            else len((t.get("description") or "").strip())) for t in accepted}
+    exact = near = struct_only = 0
+    for tid, sig in fa.items():
+        if fd.get(tid) != sig:
+            continue
+        struct_only += 1
+        d, a = dchars.get(tid), achars.get(tid)
+        if d is None or a is None:
+            continue
+        if d == a:
+            exact += 1
+        if abs(a - d) <= SERIALISATION_SLACK:
+            near += 1
+    n = len(fa)
+    return {"accepted_tasks": n, "same_structure": struct_only, "same_len_exact": exact,
+            "same_len_within_slack": near,
+            "hit_rate": round(near / n, 3) if n else 0.0}
+
 
 def report() -> int:
     logs = sorted(RUNS.glob("*/run.jsonl"))
@@ -163,6 +201,12 @@ def report() -> int:
         for k in ("added", "removed", "changed"):
             if d[k]:
                 print(f"      {k}: {d[k]}")
+        r = reuse(prev_t, acc_t)
+        verdicts[-1]["reuse"] = r
+        print(f"      REUSE (the number swarm.rs:22967 asks for): {r['same_len_within_slack']}"
+              f"/{r['accepted_tasks']} accepted tasks were ALREADY detailed identically in the"
+              f" discarded round  = {r['hit_rate']:.1%}"
+              f"   (exact-length {r['same_len_exact']}, same-structure {r['same_structure']})")
         print()
 
     if not verdicts:
@@ -183,6 +227,34 @@ def report() -> int:
               f"{'NARROWED' if narrowed else 'widened/mixed'}")
     print(f"  runs where the accepted plan is NOT narrower on either count: {len(kills)} {kills or ''}")
     print(f"  n = {len(verdicts)} runs. A direction at n=3 is a direction, never a magnitude (L10/L133).")
+
+    rs = [v["reuse"] for v in verdicts if v.get("reuse")]
+    if rs:
+        tot_n = sum(r["accepted_tasks"] for r in rs)
+        tot_h = sum(r["same_len_within_slack"] for r in rs)
+        print(f"\n  POOLED REUSE across {len(rs)} redrafting runs: {tot_h}/{tot_n} = {tot_h/tot_n:.1%}"
+              " of accepted tasks were already written in the round that was discarded.")
+        print("  ⚠ A REVERT INFLATES THIS. Where the stall guard shipped `best_plan` unchanged the hit")
+        print("    rate is 100% BY CONSTRUCTION and says nothing about caching a genuine redraft.")
+        genuine = []
+        for v in verdicts:
+            r = v.get("reuse")
+            if not r:
+                continue
+            # A REVERT is identified by the DIFF, never by the hit rate. baseline-n3-r0 reverts and
+            # still reads 87.5%, because two tasks fall outside the serialisation slack — keying the
+            # flag on the rate would have mislabelled the one case whose answer is known (L96).
+            reverted = v["last_diff"]["identical"]
+            print(f"      {v['run']:22s} {r['hit_rate']:.1%}"
+                  + ("  <- REVERT (stall guard shipped best_plan), not a redraft" if reverted else ""))
+            if not reverted:
+                genuine.append(r)
+        if genuine:
+            gn = sum(r["accepted_tasks"] for r in genuine)
+            gh = sum(r["same_len_within_slack"] for r in genuine)
+            print(f"\n  ⇒ ON GENUINE REDRAFTS ONLY: {gh}/{gn} = {gh/gn:.1%} reusable.")
+            print("    swarm.rs:22967 says to build a reuse path ONLY if the hit rate justifies one.")
+            print(f"    At {gh/gn:.1%} it does not — the redraft rewrites the specs it keeps.")
     return 0
 
 
