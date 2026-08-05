@@ -17176,3 +17176,56 @@ inconclusive and says why. clippy `-D warnings` RC=0, spec_ family 8/8.
 never been given. F398 proved the loop CAN repair what it is told about — that is the reason to
 expect something here, and it is not evidence. ⚠️ Also note `complete_result` reported
 **`passed: true`** on this 0.3895 app, which is the `passed` over-claim F395 measured and did not fix.
+
+---
+
+## F410 — THE BARRIER COST, MEASURED. IT CORRECTS F406, AND THE REAL WASTE IS ELSEWHERE.
+
+F406 registered an observation and refused to act on it until the number existed. `baseline-n3-r0`
+finished, so here is the number, from `occupancy.py` (occ-5) rather than from my eyes:
+
+| quantity | value |
+|---|---|
+| **OCCUPANCY** | **0.4265** — one-node-only would be 0.333 |
+| best any scheduler could reach **on this plan at this pool** | **0.9936** |
+| EXECUTE occupancy (scheduler-owned window) | 0.6571 |
+| **pre-dispatch prefix** | **3412.2 s = 33% of wall**, before a single task dispatched |
+| ...of which REDRAFT | **1991.6 s** (2 retarget rounds, confidence 68->83, never reached the 85 floor) |
+| **time with only ONE node working** | **2637.8 s = 26% of wall** |
+| MAX USEFUL NODES | 2.98 (pool 3) |
+| device split | 37.6% / 35.1% / 27.3% — genuinely even |
+
+### 🔴 I WAS WRONG ABOUT WHICH TASK COSTS THE FLEET
+
+F406 watched `verify::web` run 54 minutes with two nodes idle and inferred the verify barrier was the
+ceiling. Measured over the whole run, **`verify::web` accounts for 141.7 s of solo time — 5% of the
+solo total.** It is 24.4% of node-BUSY, but other tasks ran alongside it for nearly all of it. **A
+snapshot of two idle nodes is not a measurement of idleness**, and I turned one into the other. ⇒
+**L234. "I SAW THE FLEET IDLE" IS AN ANECDOTE UNTIL IT IS INTEGRATED OVER THE RUN** — the eye samples
+the worst instant and the instrument sums every instant.
+
+The solo time is almost entirely the **tail**, not the barrier:
+
+- `verify-e2e::0` — **1480.6 s alone** (the shard that spiralled at 60003 thinking chars and was retried)
+- `integrate-verify` — **1015.6 s alone** (the sink; replan is deliberately suppressed there)
+- `verify::web` — 141.7 s
+
+So F406's mechanism is real but its magnitude was mine, not the data's. The barrier does serialise the
+tail; what actually costs the fleet is **one straggler shard plus the sink**, 2496 s between them.
+
+### 🎯 AND THE BIGGEST SINGLE LOSS IS NOT IN EXECUTE AT ALL
+
+**3412 s — a third of the run — elapses before the first dispatch**, and **1991.6 s of that is
+redrafting** to chase a confidence floor of 85 that the run never reached (68 -> 83, then it gave up
+and proceeded at 83). That is 33 minutes of the whole fleet re-drafting skeletons.
+
+The plan that emerged has `MAX USEFUL NODES = 2.98` and admits an occupancy of **0.9936**. So the
+decomposition is not the ceiling — **the run spent a third of itself deciding on a plan that was
+already good enough after the first draft**, then executed it at 0.4265 against a 0.9936 possible.
+
+⇒ **The ranked targets are now measured, not guessed:** (1) the 1991.6 s redraft prefix, (2) the
+2496 s straggler-shard + sink tail, (3) the verify barrier at 141.7 s — an order of magnitude below
+where I put it this afternoon.
+
+⚠️ n=1, and this cell is the one whose app never bound its port, so its EXECUTE profile may not be
+typical. The prefix cost, however, is decided before any of that and is unaffected.
