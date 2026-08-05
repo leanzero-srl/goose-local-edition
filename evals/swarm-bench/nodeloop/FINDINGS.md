@@ -15434,3 +15434,57 @@ detects the failure perfectly and then re-asks the same model the same way three
 the engine's own events). The FIX is NOT designed yet, and with no fleet I cannot measure one — so the
 next step is to read the retry/dispatch path and find what the engine can do DIFFERENTLY on attempt 2,
 not to re-word a prompt I cannot test.**
+
+## F372 — 🔴 THE BEST FIX FOR F371 IS ALREADY SHIPPED AND WAS ON. And a shipped lever aimed at the same defect returns HTTP 400 on 27 of 27 samples.
+
+F371 said "read the retry path for what the engine can do differently on attempt 2". Before writing
+anything I grepped the engine's own comments (L206) and found **three levers already built for this
+exact failure** — `write_first` (OFF), `force_write_tool` (OFF, and its doc names the failure
+verbatim: *"the exact state the engine re-dispatches with 'You finished WITHOUT writing your owned
+file(s)'"*), and `act_now_nudge` (**default ON**).
+
+🔴 **THEN I FOUND I HAD ALREADY BENCHMARKED ALL OF THEM ON AUG 3-4 AND NEVER READ THE RESULT** —
+`nodeloop/bench/{baseline,nudge,toolchoice,declared,forcewrite}.jsonl`, sitting on disk for two days
+while I theorised. ⇒ **L198 AGAIN, and this is the second time today.**
+
+**MATCHED ON THE 9 CASES ALL FOUR ARMS SHARE** (pooled rates across different case sets would have
+been the L132 trap — baseline covers 22 cases, toolchoice only 9):
+
+    variant       n   wrote    rate    no_tool_call
+    baseline     42     10    23.8%      10  (24%)
+    nudge        25     12    48.0%       1  ( 4%)   ← doubles writes, near-eliminates the failure
+    toolchoice   26      9    34.6%       6  (23%)
+    declared     59     18    30.5%      10  (17%)
+
+`no_tool_call` is **exactly F371's signature** — the model answering in prose and never calling
+`write`. **The nudge takes it from 24% to 4%.**
+
+🔴 **BUT `nudge` IS `act_now_nudge`, AND IT WAS ALREADY ON.** The bench variant appends *"Your next
+message must be a tool call, not prose. If your owned file is not written yet, write it now."* The
+shipped lever (`swarm.rs:20548`) appends *"Your next message must be a TOOL CALL, not prose. `<file>`
+does not exist yet — write it now"* — near-verbatim and **strictly stronger** (it names the file),
+gated on the filesystem, applied on the FIRST attempt too. It shipped in **`d9394ebda`, 08-03 18:17**.
+The baseline runs started **08-04 18:45** and **08-05 03:27**. ⇒ **THE 29% TEST-TASK FAILURE RATE IS
+MEASURED WITH THE BEST KNOWN INTERVENTION ALREADY ACTIVE.** The easy win is spent.
+
+⚠ **AND IT IS UNVERIFIABLE FROM THOSE RUNS' OWN LOGS.** Their `levers_resolved` carries only
+`kind_prompt`/`scoped_contracts`/`split_inherit_spec` — **not** `act_now_nudge`, `write_first` or
+`force_write_tool`. `2f2558bac` (08-04 16:00, *"two shipped levers were absent from levers_resolved —
+the log could not say if either was on"*) added that emission, but these runs predate its effect. So
+the claim above rests on **commit timestamps vs run timestamps**, not on the run's own record ⇒ **L121
+holds, and the dating is the weaker evidence; say so.**
+
+🔴🔴 **THE REAL PRIZE: `force_write_tool` IS A SHIPPED LEVER THAT CANNOT WORK ON THIS FLEET.** The
+`forcewrite` bench arm sends **exactly** what the lever puts on the wire —
+`tool_choice: {"type":"function","function":{"name":"write"}}` — and the result is:
+
+    27 of 27 samples:  HTTPError: HTTP Error 400: Bad Request
+
+**Not a weak effect. A total transport failure.** Every dispatch that lever touches would 400. It is
+`Option<bool>` defaulting None so nobody has been bitten, but it is a **live landmine**: the doc sells
+it as the precise remedy for the most expensive failure mode in the run, and turning it on breaks
+every affected worker. ⚠ Its own doc even records the near-miss — *"`tool_choice` was measured absent
+from all 519 archived requests"* — i.e. it was known never to have been exercised in production, and
+shipped anyway ⇒ **L217.**
+📌 **NEXT: make `force_write_tool` fail safe rather than fail 400** — it is a real engine defect, it is
+fleet-independent, and unlike a prompt change I can fix it without a fleet.
