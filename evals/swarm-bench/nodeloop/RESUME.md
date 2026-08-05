@@ -90,7 +90,12 @@ only half that distinguishes "rebuilt" from "was already fine".
 
 > **AFTER ANY FURTHER ENGINE COMMIT: `cargo build --release -p goose-cli` before starting the sweep.**
 
-## 📌 Seven predictions are registered in `PREDICTIONS`, not just in prose
+## 📌 22 predictions are registered in `PREDICTIONS`, not just in prose
+
+⚠️ **This section said "seven" and was written when there were seven.** The file now holds **22**
+well-formed lines; today added **F386** (`sink_capped` reports the EFFECTIVE ceiling — a WITHIN-ROW
+identity, immune to replicate spread) and **F388** (the HTTP-timeout pitfall, with DELIVERY and
+OUTCOME registered as separate halves because FIRED ≠ CORRECT).
 
 ⚠️ **THREE OF THE SEVEN BANDS WERE UNSETTLEABLE AS WRITTEN AND HAVE BEEN CORRECTED (F383/F384). ALL
 THREE WERE MINE, ALL FROM TODAY, ALL DERIVED FROM A SINGLE CELL BEFORE F382 QUANTIFIED THE SPREAD.**
@@ -110,6 +115,20 @@ F374, F375. F350/F351 added struct fields and no literal, so they take `judge_no
 after both) as a **build-boundary proxy**, and that reasoning is written into the file rather than
 silently conflated.
 
+## ✅ SHIPPED AFTER THE 13:50 BASE TEXT (F386-F394)
+
+| # | change | verified by |
+|---|---|---|
+| F386 | `sink_capped` reports the EFFECTIVE tree-scaled ceiling, not the base env string — F369 was unreadable from any log | clippy RC=0 |
+| F388 | the pitfalls library had **no network fact at all**; added HTTP timeouts + a trigger row MEASURED against the archive (`vendor` hits 11/16 specs, the library-name row 4/16 incl. the client module) | new test, both directions |
+| F390 | `doc_fetch` wiring audited end-to-end (no `sink_review`-class bug), the doc MEASURED at 4769 B vs a 24000 B cap; **re-promoted reps 1→3**, readout repointed off a signal that would fire with the lever doing nothing | — |
+| F391 | `spec_contract` silently dropped every non-GET advertised endpoint — incl. `POST /api/sync`, the one 4 of 5 cells break. Now disclosed via `inconclusive` | new test, 4 directions |
+| F392-F394 | **43 baked-ON levers now declare themselves and the BUILD FAILS if one does not** — falsified both ways, incl. an anti-vacuity floor that turns parser breakage into a loud failure | clippy RC=0, controls |
+
+⇒ **L227** after a bake, prose about defaults is a claim about the PAST — only the `Default` impl
+knows. ⇒ **L228** a test built on a parser is only as good as the parser. ⇒ **L229** when a check needs
+a parser you cannot trust, **ask a weaker question**.
+
 ## 🔴 What today disproved — including four of my own headlines
 
 | claim | verdict |
@@ -122,6 +141,10 @@ silently conflated.
 | "`force_write_tool` is an unverified landmine" | **DEAD** — measured, documented, test-pinned OFF (F373) |
 | "the verify layer costs 1718 s" | **DEAD** — survivor bias; true gap ~58 s (F380) |
 | "there is a ready→dispatched starvation gap" | **DEAD** — every wait is **0.0 s** (F380) |
+| "the split loses the documented API contract" | **DEAD** — the `api` task receives all three keys in EVERY cell of BOTH arms (F389) |
+| "the split loses the timeout requirement" | **DEAD** — the spec never mentions timeouts at all; it is craft, not dilution (F387) |
+| "`/v1` is the coin flip" | **DEAD on this archive** — all five plans carry it 6-14× and every built client uses it (F389) |
+| "the scorer passes vacuously on empty data" | **DEAD** — it returns 0.0 on `no rows` / `too few rows` (F389) |
 | "test tasks fail ~29× more" | **NARROWED** — the honest range is **8× to 21×** (F381) |
 
 ## ✅ What stands
