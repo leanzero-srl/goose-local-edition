@@ -2457,6 +2457,7 @@ impl Scheduler {
                         };
                         let tid = req.task_id.clone();
                         let dev = req.reviewer_model_id.clone();
+                        let started = std::time::Instant::now();
                         let out = pr.pre_review(req).await;
                         // Emit so idle-node utilization is OBSERVABLE in the jsonl (it was previously invisible
                         // — a pre-review only left a file when it found ISSUES, so "ran + OK" looked like "never
@@ -2465,6 +2466,7 @@ impl Scheduler {
                             task_id: tid,
                             device: dev,
                             had_findings: out.had_findings,
+                            secs: started.elapsed().as_secs_f64(),
                         });
                     });
                 }
