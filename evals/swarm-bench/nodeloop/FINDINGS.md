@@ -15625,3 +15625,35 @@ the string as code and let a test hold it.**
 F374, this sentence here). Both were invisible in the diff, which touched only `devices.len()` →
 `sum(weight)`. **The blast radius of a value change is the set of its READERS, and the diff never shows
 that set.**
+
+## F376 — ✅ THE CONTRACT F350 SHIPPED WAS NEVER TESTED. Its guard test still passes because its fixture is the OLD shape.
+
+Finishing F374's literal audit turned up only one remaining hardcoded fleet number — `"no more than 3
+concurrent across a 3-device fleet"` — and it is a **test assertion**, not a prompt. But reading it
+found something worse than a stale literal.
+
+**`fanout_caps_one_call_per_device` builds `["d0","d1","d2"]` — three UNIQUE strings.** Every production
+caller now passes **`fleet_slot_models()`**, which repeats each `model_id` `weight` times: for this bed
+**six entries over three models**. `fanout_over_fleet` does **no dedupe** — `permits =
+Semaphore::new(devices.len())` over a `VecDeque` of the list as given — so two concurrent calls really do
+draw the same model_id.
+
+🔴 **SO THE GUARD ASSERTS `m <= 1` PER DEVICE ON A SHAPE THE ENGINE NO LONGER SENDS, AND THE SHAPE IT DOES
+SEND WAS ASSERTED NOWHERE.** F350 tested that `fleet_slot_models()` returns **6 entries** — that is the
+SHAPE. **Running six at once is the CONTRACT**, and nothing checked it ⇒ **L82 applies to my own change:
+the list length is the first half of the result.**
+
+✅ **ADDED `fanout_runs_one_call_per_slot_so_a_weight_two_device_takes_two`**, driving the real
+`fleet_slot_models()` output through the real `fanout_over_fleet` with 18 items:
+- **three distinct device keys** — the duplicates must not collapse the pool;
+- **≤ 2 concurrent per device** — a weight-2 device may not exceed its weight;
+- **≤ 6 total** — never more than the slot count;
+- 🔴 **> 3 total, with the failure message spelling out the diagnosis**: *"if this caps at 3 the fan is
+  still sized by DEVICES and F350 is inert"*. **That is the assertion that would have caught F350 shipping
+  as a no-op**, which nothing did at the time.
+
+⚠ **THE OLD TEST IS KEPT, NOT EDITED.** It is still a valid statement about a unique-entry list, and
+rewriting it to match the new shape would destroy the only check that the pool never over-subscribes a
+device it was given once. Two fixtures, two contracts.
+⇒ **L219. WHEN A CHANGE ALTERS WHAT CALLERS PASS, THE OLD GUARD KEEPS PASSING ON THE OLD FIXTURE — A
+GREEN SUITE AFTER AN INPUT-SHAPE CHANGE IS EVIDENCE ABOUT THE FIXTURE, NOT THE ENGINE.**
