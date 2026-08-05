@@ -1,7 +1,7 @@
-# RESUME — live state, rewritten 2026-08-05 ~10:30 local
+# RESUME — live state, rewritten 2026-08-05 ~12:15 local
 
-Fourth rewrite today. The first three were because the engine target kept moving; this one is because
-the investigation **closed**. 27 commits since 07:00.
+Fifth rewrite today. The previous one (10:30) is not merely stale — **it states things this session has
+since disproved**, which is worse, so this replaces it wholesale. 38 commits since 07:00.
 
 ## 🛑 THE ONE BLOCKER: the fleet is empty
 
@@ -16,7 +16,7 @@ his call. The sweep is stopped (`STOP` armed 08:07).
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
 ~/.lmstudio/bin/lms ps          # must list models before anything below
 rm -f STOP && ./loop.sh start   # BARE, never piped (F298)
-./loop.sh check                 # now BAD-fails on units that never started (F349)
+./loop.sh check                 # BAD-fails on units that never started (F349)
 ```
 
 ## 🔴 The posture (Mihai, 07:45)
@@ -24,125 +24,134 @@ rm -f STOP && ./loop.sh start   # BARE, never piped (F298)
 > *"the main goal is to make the 3 node swarm actually work better than a 1 node, which means you
 > need to make **fixes and improvements in the engine**."*
 
-Measuring is subordinate to shipping. The F253 freeze is superseded; the pre-registered n = 8 (F327)
-is **superseded, not fudged**.
+Measuring is subordinate to shipping. The F253 freeze and the pre-registered n = 8 are **superseded,
+not fudged**.
+
+## 🔴 READ THIS FIRST: what today disproved, including my own headlines
+
+Seven findings landed (F366-F373) and **four of them killed an earlier one of mine**. If you carry
+only one thing forward, carry this list — every entry cost a tick to establish.
+
+| claim | verdict |
+|---|---|
+| "the fleet is bottlenecked (LM Link funnels every node through localhost)" | **DEAD** — 2.98× concurrency costs 1.19× per task (F366) |
+| "3 nodes bought 2.18× the code" | **DEAD** — non-test source is 27087 B vs 27103 B, **equal to 0.06%** (F370) |
+| "more slots ⇒ more modules" | **DEAD** — n3 has **7** file-owning tasks, n1 has **8** (F369) |
+| "the tasks each wrote more" | **DEAD** — they wrote the same; three n1 tasks wrote **nothing** (F370) |
+| "the test spec is thin" | **DEAD** — test specs are the **LONGEST**, median 2160 vs 1236 (F371) |
+| "the retry burst is a 1-node story" | **DEAD** — n3-r0 failed 3 of its 5 test tasks (F371) |
+| "`force_write_tool` is a live landmine shipped unverified" | **DEAD** — the engine measured it, documented it, and **test-pins it OFF** (F373) |
+| "make the sink budget progress-shaped" | **DEAD** — a loop emits tool calls, so no progress rule separates repair from loop (F368) |
+
+## ✅ What actually stands
+
+1. **The parallelism WORKS.** Execute occupancy 0.86 on the 3-node arm; matched by task id (n=11) the
+   median duration ratio is **1.19 at a median concurrency ratio of 2.98** ⇒ ~2.5× real throughput.
+   The fleet is neither idle nor bottlenecked. **(F366)**
+2. **The deficit is three whole-app readers**, and they have the *lowest* concurrency ratios, so
+   contention does not explain them either: `integrate-verify` 7.85×, `verify-e2e::0` 3.65×,
+   `verify-e2e::1` 4.04× — against 0.21-1.51× for every other matched task. Critical path 3827 s vs
+   2036 s. **(F366)**
+3. **The 3-node arm lost the tier-A integration check while its integrator was cut off.** `sync_shape`
+   1.00 → 0.00 on the run whose `integrate-verify` was terminated at **1800.1 s == `sink_cap_secs`
+   exactly**, having made 10 shell + 9 write + 1 edit calls with 56 messages continuous over 1705 s and
+   **zero final output** — cut mid-repair, not looping. **(F367, F368)**
+4. **Test-authoring tasks fail at 29% against 1% for every other kind** (n=21 vs 74), at twice the
+   attempts, on BOTH fleet sizes. **(F371)**
+5. **A failed task does not imply a missing file.** n3-r0's `test-core` FAILED yet left 3035 B + 2566 B;
+   n1-r0's three failed owners left nothing. **(F371)**
+6. **~14% of completed tasks are watchdog salvages** and the salvage is a genuine rescue — salvaged
+   median 7940 B vs 4947 B clean, and **zero salvaged tasks left a file empty while one CLEAN task did**.
+   **(F356, F359)**
+
+## 🏁 The test-task failure is a CONFIRMED DEAD END for cheap fixes
+
+Do not re-open this without new data. The whole space is enumerated and every option is spent:
+
+- `kind_prompt` — **ON** (baked default, test-asserted), and `rules_delivered` shows `tailored: true`
+  on test tasks. The 29% is what it does *with the fix working*. FIRED ≠ CORRECT.
+- `act_now_nudge` — **ON**, and it is the best intervention I have measured: on the 9 shared bench
+  cases it takes writes from 23.8% → **48.0%** and no-tool-call from 24% → **4%**. It shipped
+  `d9394ebda` 08-03 18:17, **before both baseline runs**, so the 29% already includes it.
+- `force_write_tool` — the named `tool_choice` form is **rejected by the server** (`Invalid tool_choice
+  type: 'object'`), 27 of 27 samples 400'd. `"required"` is not enforced and biases to `shell`.
+- The engine's own summary, at `swarm.rs:19457`: *"every alternative aimed at the same failure is
+  either harmful or rejected by the server."*
 
 ## ✅ Shipped today — all clippy-green, all UNMEASURED
 
 | commit | what |
 |---|---|
-| *(boundary 08:15)* | `f1a20c99b`, `95b36748f`, `00563c6ea` finally compiled. **`engine_build` changed.** |
+| *(boundary 08:15)* | `f1a20c99b`, `95b36748f`, `00563c6ea`. **`engine_build` changed.** |
 | `e26f26869` | **F350** planning fan-outs count SLOTS, not devices |
-| `ec32f9e2f` | **F351** `pre_review` emits `secs` (it can hold a slot 900 s and reported nothing) |
-| `23813603e` | **F352** `judge_verdict` carries `judge_node` (it named the *judged* worker) |
-| `d09eaa39e` | **F353** `occupancy.py` occ-5: idle-slot accounting |
+| `ec32f9e2f` | **F351** `pre_review` emits `secs` |
+| `23813603e` | **F352** `judge_verdict` carries `judge_node` |
+| `d09eaa39e` | **F353** `occupancy.py` occ-5 |
 | `d6c8150c5` | **F357** `TaskCompleted` carries `salvaged: bool` |
-| `0dd19f949` | **F358** salvage counting, two routes, states which it used |
+| `0dd19f949` | **F358** salvage counting, two routes |
+| `f7cd8d94a` | **F365** all six verified together: 534 tests, 0 failures |
+| `816d2abcd` | **F369** sink ceiling scales with the tree it must integrate |
 
-## 🏁 The F354 → F363 investigation is CLOSED. Six of my own hypotheses died.
+**F369 in one line:** `sink_cap_secs` was a constant while the join's work tracks the tree on disk.
+Now sized **at sink dispatch** from a **frozen list of the run's own declared files** (never a
+directory walk), `sink_cap_ref_bytes` = 30000, clamped to [1×, 2×]. The 43328 B tree gets 2600 s; the
+2× clamp (3600 s) still cuts the 4326 s join measured to loop. ⚠ **Magnitude confidence LOW** — the
+reference is fitted to n=1 and nothing says 2600 s is enough. **Falsifier: any join > 4326 s, or
+`sync_shape` still failing on a 3-node run ⇒ REVERT.**
 
-    "the sink tail is serialisation"        → three 420 s stalls, and it FAILED          (F354)
-    "salvage means degraded output"         → refuted, SIGN REVERSED                     (F359)
-    "flip the existing spiral switch"       → the switches were ALREADY ON               (F360)
-    "derive the threshold"                  → derived it; n=11 was ONE task, and the
-                                              gate cannot reach the sink                 (F361)
-    "the reading judge missed it"           → it was DELIBERATELY NEVER ASKED            (F362)
-    "judge starvation explains the spirals" → FLAT, wrong sign                           (F363)
+## 📌 Four predictions registered in advance. The next real run tests them.
 
-**Do not restart this line without new data.** Each death is recorded with its evidence in
-`FINDINGS.md`; re-deriving any of them costs a tick and ends in the same place.
-
-## ✅ What SURVIVED, and it is worth more than the dead hypotheses
-
-1. **~14% of completed tasks are watchdog salvages.** `swarm.rs:20705` — a task that trips the
-   thinking-only watchdog **with its owned files already written** is accepted as `done` with
-   `session_id: None, tool_calls: []`. r0 1/19 · r1 4/22 · r2 3/21 · r3 3/17 ⇒ **11 of 79 = 13.9%**.
-   11 salvages + 4 failures account for **all 15** missing-session rows. Now flagged by the engine
-   and counted by the harness.
-2. **The salvage is a genuine rescue.** Salvaged owned-files median **7940 B vs 4947 B** clean;
-   kind-matched test 8939 vs 8763, source 6699 vs 3855; **zero salvaged tasks left a file empty — one
-   CLEAN task did.** The precondition *is* "files already written", so a salvaged task **finished its
-   work and then failed to stop talking**. **Not a quality proxy.**
-3. **An owns-nothing task has no early stall detection by construction** — a documented trade
-   (`scheduler.rs:1152`), not an oversight. Cost now priced: **3837 s, three attempts, FAILED, 30% of
-   r1's wall.** ⚠ Do NOT re-enable the re-judge; the one verdict the sink got was a useless `ok` at
-   confidence 1.0.
-4. **A char threshold provably cannot separate spiral from healthy work** on this corpus — clean
-   reaches 1781 while spiralling starts at 1059, and one clean observation sits **above four**
-   spiralling ones. `swarm.rs:361` asserted it; this confirms it with data.
-
-## 📌 Four predictions registered in advance. The next run tests them.
-
-- **`pre_review.secs`** — 7-12 events, **100-250 s**. Under ~20 s ⇒ F348's ~0.30 idle-slot estimate
-  is too high, and that figure is what retired F346.
-- **`judge_node`** — non-empty on **40-75%** of verdicts. All-empty ⇒ not wired. All-non-empty ⇒ the
-  deterministic-only path isn't distinguished. **Concentrated on one node ⇒ the `position()`
+- **`pre_review.secs`** — 7-12 events, **100-250 s**.
+- **`judge_node`** — non-empty on **40-75%** of verdicts. **Concentrated on one node ⇒ the `position()`
   selection defect confirmed from the log rather than simulation.**
-- **`salvaged: true`** — **1-3 per 3-node run**. Zero on *every* run ⇒ the flag isn't wired to the
-  firing path, not that stalls stopped.
-- **F350's three falsifiers, verbatim:** detail-fan makespan must drop **≥20%** vs 244/204 s else
-  **REVERT**; `skeleton_drafts.straggler_aborted` must **not rise** else **REVERT**; reconstructed
-  `detail_completed` concurrency must reach **6** (2 on a 1-node run).
+- **`salvaged: true`** — **1-3 per 3-node run**. Zero on *every* run ⇒ the flag isn't wired.
+- **F350's three falsifiers:** detail-fan makespan **−≥20%** vs 244/204 s else **REVERT**;
+  `straggler_aborted` must **not rise** else **REVERT**; reconstructed concurrency must reach **6**.
 
-⚠ **F350's benefit confidence is LOW.** Measured doubled/solo ratios 2.08/2.01/1.96 = **zero
-throughput gain**, and `swarm.rs:2113` says the second slot exists for *bursty agent* tasks while
-planning fans are no-tool single completions. **The review said ship it behind a lever default OFF; I
-shipped it ON**, and that is recorded rather than hidden.
+⛔ **Do NOT ship the selection fix yet** (`scheduler.rs:1099`/`:1220` use `position()` while
+`pick_device` sorts by `in_flight`). Fixing it before a run carries `judge_node` destroys the only
+chance to confirm it from evidence (L202).
 
-## ⛔ Do NOT ship the selection fix yet
+## The baseline — ⚠ the n3/n1 wall ratio is NOT like-for-like
 
-`scheduler.rs:1099`/`:1220` select the idle-job device with `position(...)` — the first with any free
-slot — while `pick_device` at `:592-600` deliberately sorts by `in_flight`. Simulated cost
-+0.062/+0.064/+0.069/+0.110 against +0.143/+0.156/+0.186/+0.198 with correct placement. **Fixing it
-before a run carries `judge_node` destroys the only chance to confirm it from evidence** (L202).
+| cell | unit | wall | score | EXEC occ | tree |
+|---|---|---|---|---|---|
+| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 0.8568 | 43328 B (27087 src + 16241 test) |
+| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 0.5746 | sink stalled, FAILED |
+| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 0.8139 | |
+| 4 | `baseline-n3-r3` | 7302.6 | **0.8157** | 0.5910 | |
+| 5 | `baseline-n1-r0` | 5842.9 | 0.5798 | **1.0** | 27103 B (**0 test — 3 MISSING**) |
 
-## Always use the EXECUTE occupancy column
+**"3 nodes is 1.32× slower" compares a run that completed its plan against one that abandoned three
+tasks in 22 seconds and shipped no tests.** n1's 5843 s is cheap partly because it did less, and its
+0.5798 is low partly because it shipped no suite. Neither number measures the other arm (L215).
+⚠ Pre-boundary binary (L137); every score mixes clean and salvaged tasks.
 
-Whole-run (0.5645/0.4737/0.6499/0.2582) includes a planning prefix of 16-39% of wall crediting zero
-busy **by construction** — reading it as idleness is what produced F346. Scheduler-owned window:
-**0.8568 / 0.5746 / 0.8139 / 0.5910**. The independent `lms ps` sampler agrees (0.753/0.857/0.909/
-0.716) ⚠ but it is a **sanity check, not a decomposition**.
-
-## The baseline to beat (5 real cells)
-
-| cell | unit | wall | score | EXEC occ | salvaged | prefix (redraft) |
-|---|---|---|---|---|---|---|
-| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 0.8568 | 1/19 | 2218.7 (1) |
-| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 0.5746 | 4/22 | 1330.0 (0) ← sink stalled, FAILED |
-| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 0.8139 | 3/21 | 1316.0 (0) |
-| 4 | `baseline-n3-r3` | 7302.6 | **0.8157** | 0.5910 | 3/17 | 2882.7 (2, REVERT, conf 61) |
-| 5 | `baseline-n1-r0` | 5842.9 | 0.5798 | **1.0** | — | 2925.8 (1, conf 60→100) |
-
-**The one closed matched pair: n3 7729 s / 0.6595 against n1 5843 s / 0.5798 — three nodes 1.32×
-SLOWER and 0.080 BETTER**, with the score edge confounded (+2 replan tasks the 1-node arm cannot
-receive, F312). `curve.py` states outright that p can never beat 0.5 at n=1, so **there is no
-verdict**.
-
-⚠ **Pre-boundary binary — historical, not matched cells (L137). Every score mixes clean and salvaged
-tasks.**
-
-## Five things a reader arriving cold gets wrong
+## Six things a reader arriving cold gets wrong
 
 1. **A unit that never started is FAST, not failed** (F349) — 113 such rows entered the corpus in
    twenty minutes while `loop.sh check` printed OK, and `curve.py` published a p-value off seven
    fabricated pairs. Both now guard on `harness_ok is False` **and** a 60 s floor.
 2. **`session_id` is null on ~1 in 5 tasks** (F355/F356) — never assume a transcript is reachable.
 3. **A split parent never completes** (F334). Never compute in-flight as `dispatched − completed`.
-4. **`worker_timeout_secs` = 420 is IDLE time, not wall-clock** (F294), and it is a different
-   mechanism from `sink_cap_secs`.
-5. **The engine records its own measured defects in comments at the site.** Four times today a
-   comment I had not yet read already held the answer: `:12665` draft dedup, `:24155` salvage,
-   `:361` char-cap futility, `:1152` the sink re-judge skip. **Grep the comments first (L206).**
+4. **`worker_timeout_secs` = 420 is IDLE time, not wall-clock** (F294); different from `sink_cap_secs`.
+5. **`verdict.json` checks carry `score`, not a boolean** — a bool reader returns 0/35 for every cell.
+6. **Read the GATE FUNCTION, not the field doc.** They routinely say opposite things: the field doc
+   sells the mechanism, `fn <lever>()` records whether it works. This cost a whole tick and a published
+   retraction today (F373), and four times a comment at the site already held the answer
+   (`:12665`, `:1152`, `:267`, `:19445`).
 
 ## Instruments (never re-implement one — L2)
 
-`curve.py` · `occupancy.py` (occ-5: node-seconds, plan ceiling, idle-slot accounting, salvage count) ·
-`power.py` · `planshape.py` · `bonusclass.py` · `dispatch_audit.py` · `reaudit.py` ·
-`goalstate.py --tick` · `sweep.py` · `loop.sh {status,stop,start,boundary,check,selftest}` ·
-`autorestart.sh` · **`fleetsample.sh` — the independent `lms ps` sampler; READ IT (L198)**.
+`curve.py` · `occupancy.py` (occ-5) · `phases.py` · `power.py` · `planshape.py` · `bonusclass.py` ·
+`dispatch_audit.py` · `reaudit.py` · `goalstate.py --tick` · `sweep.py` ·
+`loop.sh {status,stop,start,boundary,check,selftest}` · `autorestart.sh` · `fleetsample.sh` ·
+**`promptbench.py` + `bench/*.jsonl` — a real prompt-bench corpus with archived payloads. CONSULT IT.**
 
-⚠ absolute paths for `occupancy.py`/`curve.py`. ⚠ `git add` from the **repo root**. ⚠ `grep -c` exits
-1 on zero matches. ⚠ a pipe hides the exit code. ⚠ `cargo` needs `source bin/activate-hermit`.
+⚠ absolute paths for `occupancy.py`/`curve.py`. ⚠ **`git add` from the repo root — `cd
+/Users/mihaiperdum/Projects/goose` first** (violated 6× today). ⚠ `grep -c` exits 1 on zero matches.
+⚠ a pipe hides the exit code. ⚠ `cargo` needs `source bin/activate-hermit`. ⚠ `cargo fmt` rewrites
+your edits — re-Read before the next Edit.
 
 ## Fleet
 
