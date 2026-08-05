@@ -17376,3 +17376,35 @@ So the single change most likely to convert this into a clean 3-node win is alre
 **The honest headline: the first pre-registered comparison of the day says three nodes is better, by a
 margin that clears its own falsifier, on the checks that reproduce — and the reason it did not show up
 in the FULL score is a bug today's unshipped binary already knows how to catch.**
+
+---
+
+## F414 — STOPPING THE SWEEP AT A UNIT BOUNDARY TO PUT F408 IN THE BINARY
+
+**Decision, and the reasoning, because this spends fleet time.**
+
+`baseline-n3-r1` is in flight and **71 units are queued behind it — ETA Thu ~18:50, roughly two days
+of fleet.** Every one of them would run on the 17:25 binary, which does NOT contain F400, F408 or
+F411.
+
+F413 is what forces the issue: the 3-node arm won its pre-registered stable set by **+0.1473** while
+losing **four checks to a single startup bug** — an app that builds its server on a daemon thread and
+exits. **F408 turns exactly that into a finding** instead of an `inconclusive` that blocks nothing, and
+**F398 proved in this very run that the fix loop repairs what it is handed.** So two days of fleet
+would measure every remaining arm through a fog that one committed, unshipped change partially lifts.
+
+**Cost of rebuilding: cells before and after the swap are not strictly comparable.** That cost is
+small right now and grows with every unit — only two cells exist (`baseline-n3-r0`, `baseline-n1-r0`),
+both already analysed, and their evidence is recorded in F410-F413 rather than pending.
+
+**`./loop.sh stop` is graceful** — *"the loop exits after the current unit (results are kept)"* — so
+the in-flight cell is not wasted. STOP written 00:04.
+
+**Plan:** let `baseline-n3-r1` finish, rebuild `target/release/goose`, verify with ASCII-only `strings`
+probes plus a negative control, restart bare (`rm -f STOP && ./loop.sh start`), and record the binary
+boundary so no later analysis compares across it.
+
+⚠️ **This deploys F400/F408/F411 UNMEASURED.** That is the trade being made deliberately: they cannot
+be measured at all without being in the binary, and the alternative is two days of cells that
+structurally cannot show the effect. F398 is the precedent — validated offline 5/5, and only a live
+run proved it worked end to end.
