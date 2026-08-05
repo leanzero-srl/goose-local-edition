@@ -17110,3 +17110,69 @@ long briefs, which is the run's measured waste region on BOTH fleet sizes.
 ⚠️ Note what this does NOT license: charging the test-task failure to the 3-node arm. It is a planner
 shape, identical on n1, and F405 already showed the arms are indistinguishable on everything that
 reproduces.
+
+---
+
+## F408 — ✅ F398 WORKED END TO END IN A LIVE RUN. AND THE ENGINE WATCHED A BIGGER DEFECT GO BY.
+
+First cell of the new sweep, `baseline-n3-r0`, 169 min, zero permanent task failures.
+
+### ✅ THE ONE UNAMBIGUOUS WIN OF THE DAY
+
+```
+round 0  http_timeout_scan  checked 11, findings 2   "an outbound HTTP call has no timeout"
+         -> "vendorsync/meridian.py:151 calls urlopen with NO timeout ... blocking FOREVER"
+         complete_verify    passed: FALSE, findings 2      <- the finding BLOCKED green
+round 1  http_timeout_scan  checked 11, findings 0   "every outbound call ... passes a timeout"
+         complete_verify    passed: TRUE, findings 0       <- the fix loop REPAIRED it
+```
+
+And the scorer agrees, independently: **`client_timeouts: 1.00 "timeout set"`** — the check that
+**all four archived 3-node cells failed 0.00**. Detector shipped today, validated 5/5 offline, fired
+live on a real defect, blocked the green claim, drove the fix loop, and the defect was gone by round 1.
+**FIRED, CORRECT, AND ACTED UPON** — which is more than any mechanism managed all day.
+
+### ✅ F395 CONFIRMED LIVE
+
+`spec_contract` reported **"CHECKED NOTHING — not one advertised endpoint returned a 2xx"**, in both
+rounds. The pre-F395 code would have said *"every advertised check that bound was satisfied"* on
+exactly this data. The vacuous pass is dead in a live run.
+
+### 🔴 BUT THE RUN SCORED 0.3895, AND ONE APP BUG CAUSED IT
+
+`server_runs: 0.00 — "never bound (Serving on 127.0.0.1:63410 …)"`. The app printed its startup line
+and **exited**:
+
+```python
+def serve(port, store, client) -> HTTPServer:
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return server        # returns; __main__ exits; the daemon thread dies with it
+```
+
+It honours `--port`, imports cleanly, ships 5/5 named modules, and **passes the smoke gate** — while
+being completely non-functional. That single defect zeroes `serves_page`, `health_shape`,
+`sync_shape`, `sync_completeness`, `total_field` and the rest of the sync family.
+
+### 🎯 THE ENGINE HAD THE EVIDENCE AND FILED IT AS "INCONCLUSIVE"
+
+`spec_contract` spawned the app exactly as its spec documents, watched it fail to bind, and recorded
+*"the advertised entrypoint did not start a server"* — as **inconclusive**. So nothing blocked green
+and the fix loop never saw it, **in the same run where the timeout finding blocked green and was
+repaired.** The machinery works; this defect was simply never handed to it.
+
+**That fail-open was correct until today.** Before F400 the port came from `spec_port` — the first
+literal in the spec, which here is the VENDOR's 8930 — so "never bound" might have been our own bad
+guess, and blaming the app would have been the phantom the code comments already warn about. **F400
+removed precisely that ambiguity:** we now spawn the spec's own documented invocation on a port we
+chose and verified free. A non-bind under those conditions has nothing left to be unsure about.
+
+**SHIPPED:** when an advertised invocation was used, "never bound" is now a **FINDING** naming the
+exact command and pointing at the daemon-thread trap; with no advertised invocation it stays
+inconclusive and says why. clippy `-D warnings` RC=0, spec_ family 8/8.
+
+⚠️ **UNMEASURED, and the honest expectation is specific:** this hands the fix loop a defect it has
+never been given. F398 proved the loop CAN repair what it is told about — that is the reason to
+expect something here, and it is not evidence. ⚠️ Also note `complete_result` reported
+**`passed: true`** on this 0.3895 app, which is the `passed` over-claim F395 measured and did not fix.

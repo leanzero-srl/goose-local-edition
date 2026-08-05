@@ -16685,9 +16685,38 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     }
     if !up {
         let _ = child.kill().await;
-        inconclusive.push(format!(
-            "spec-contract: `python3 -m {pkg}` never bound port {port} within 4s — the advertised entrypoint did not start a server"
-        ));
+        // WHEN WE USED THE SPEC'S OWN INVOCATION, "IT NEVER BOUND" IS A FINDING, NOT AMBIGUITY.
+        //
+        // This was unconditionally `inconclusive`, and that was RIGHT before the advertised-argv path
+        // existed: the port came from `spec_port`, i.e. the first port literal in the spec, which on
+        // this bench is the VENDOR's — so a non-bind could easily have been our own bad guess, and
+        // blaming the app would have been the phantom the comment above this block documents.
+        //
+        // With an advertised invocation we spawn `python3 -m PKG <exactly what the spec documents>` on
+        // a port WE chose and verified free. If it still does not bind, there is nothing left to be
+        // unsure about: the app does not do the one thing its spec says it does.
+        //
+        // MEASURED, and this is why it is not a hypothetical: a 3-node run scored 0.3895 with
+        // `server_runs: 0.00 "never bound (Serving on 127.0.0.1:63410 …)"`. The app printed its
+        // startup line and EXITED — `serve()` launched `serve_forever` on a DAEMON thread and
+        // returned, so the process ended and took the thread with it. It passed the smoke gate
+        // (`--help` works, 5/5 modules present) and was completely non-functional, zeroing
+        // `serves_page`, `health_shape` and the whole sync family. The engine HAD this evidence and
+        // filed it as inconclusive, so nothing blocked green and the fix loop never saw it — in the
+        // same run where `http_timeout_scan`'s finding blocked green and WAS repaired by round 1.
+        if advertised.is_empty() {
+            inconclusive.push(format!(
+                "spec-contract: `python3 -m {pkg}` never bound port {port} within 4s — the advertised entrypoint did not start a server (the port was inferred from the spec, so this may be a bad guess rather than an app defect)"
+            ));
+        } else {
+            findings.push(format!(
+                "the app never bound port {port} when started EXACTLY as its spec documents \
+                 (`python3 -m {pkg} {}`), so it does not run at all. Check that the entrypoint BLOCKS \
+                 while serving — a server started on a daemon thread dies the moment main() returns. \
+                 Do not change the advertised command or the port to make this pass.",
+                advertised.join(" ")
+            ));
+        }
         return SpecContractResult {
             findings,
             inconclusive,
