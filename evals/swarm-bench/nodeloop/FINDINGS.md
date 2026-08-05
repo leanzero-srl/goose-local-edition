@@ -12587,3 +12587,44 @@ finishes (L158: a results row is not readable while its writer is alive).**
 
 ⇒ **L168. A DEADLINE THAT IS POLLED IS NOT A DEADLINE THAT IS ENFORCED — before treating a cap as a
 bound, find WHERE it is checked, because whatever finishes between checks escapes it.**
+
+## F311 — the replanner fires in EVERY run and adds exactly 2 tasks in 6 of 6 — until cell 3 added 4
+
+Chasing four `test-*::1` tasks that appeared in cell 3 after its sink completed. The engine names
+them itself:
+
+    replanned {round: 0, added: [test-integration::1, test-api-edge::1,
+                                 test-concurrency::1, test-store-updates::1], stopped: false}
+
+**My first read of this was too coarse and I corrected it in the same tick.** I tallied `replanned`
+EVENT COUNTS, got `1` in every run, and concluded the replanner was not a between-cell variance
+source. **The event count is universal; the PAYLOAD is not** (L141 — an event field is a summary, and
+a summary can be narrower than the behaviour). Counting `added`:
+
+    baseline-n3-r0      2   [test-sync-idempotency, test-api-edge-cases]        wall 7729.3  score 0.6595
+    baseline-n3-r1      2   [test-store-edgecases, test-cli-error-handling]     wall 8488.0  score 0.478
+    sink_review-n3-r0   2   [store-edge-tests, main-cli-tests]                  wall 8728.9  score 0.7326
+    think_off-n3-r0     2   [api-input-validation, web-error-handling]          wall 6376.1  score 0.9143
+    think_off-n3-r1     2   [frontend, test-meridian-edge-cases]                wall 7236.9  score 0.9057
+    think_off-n3-r2     2   [test-meridian-resilience, test-api-edge...]        wall 6524.2  score 0.3273
+    baseline-n3-r2      4   [test-integration::1, test-api-edge::1,             (in flight)
+                             test-concurrency::1, test-store-updates::1]
+
+⇒ **EXACTLY 2, six times out of six — then 4.** The one run that doubled its injection is also the
+one whose sink completed genuinely rather than being capped or killed (F310), which is consistent
+with `dynamic_replan` firing on idle capacity: a sink that finishes frees the fleet, and more free
+slots means more injected work. **Consistent with, not demonstrated by — n=1 on the deviation.**
+
+⚠ **`round: 0` and `stopped: false` on every one of them.** `max_replans` is 2, so a SECOND replan
+round is available in every run and has never once happened. Another mechanism that exists and is
+half-used.
+
+📌 **REGISTERED CAVEAT FOR THE CURVE, because it is a wall-clock term I had not accounted for:
+bonus-task count is per-cell and now varies (2 vs 4).** Cell 3's `wall_secs` will carry four extra
+tasks where cells 1 and 2 carried two. **The matched-pair sign test is on n3-vs-n1 within a rep, so
+this only bites if the arms replan differently — which is exactly what to check when the first n1
+cell lands.** ⚠ **FALSIFIER for treating replan as balanced: if n1 cells systematically add fewer
+bonus tasks than n3 cells, then part of any measured wall-clock gap is injected work, not speed.**
+
+⇒ **L169. COUNTING HOW OFTEN A MECHANISM FIRED IS NOT MEASURING WHAT IT DID — open the payload
+before concluding a universal event is a constant.**
