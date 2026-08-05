@@ -15114,3 +15114,36 @@ engine's own record**:
 
 **Nothing here needed the fleet, and nothing here is a guess.** The next real run tests the four
 registered predictions; it does not need another hypothesis from me first.
+
+## F364 — "free evidence unclaimed" was my own stale note. The prereview_off arm never ran; it died in the outage.
+
+I carried a standing line for six ticks: *"All ten `prereview_off-n3-r*` dirs contain NO `run.jsonl` —
+the arm that would directly measure pre-review's slot cost has never produced a usable log. This is
+free evidence sitting unclaimed."* **It is wrong, and checking it took one command:**
+
+    prereview_off-n3-r0   wall=0.2  score=0.0  harness_ok=False  finished 2026-08-05T08:04:54
+    prereview_off-n3-r1   wall=0.2  score=0.0  harness_ok=False  finished 2026-08-05T08:05:13
+    …
+    prereview_off-n3-r9   wall=0.2  score=0.0  harness_ok=False  finished 2026-08-05T08:06:38
+
+**All ten: sub-second walls, `harness_ok: False`, and finish timestamps from 08:04:54 to 08:06:38 —
+squarely inside the outage window** (fleet emptied 08:03:59, `STOP` armed 08:07). **They are ten of
+the 113 rows the dead fleet burned (F349), not an arm that mysteriously never logged.** There is
+nothing unclaimed. The note is deleted rather than carried.
+
+**The origin of the error is worth naming.** The claim came from the workflow's work order, which
+observed the missing logs and inferred a standing gap — **written at ~08:40, before F349 existed to
+explain them.** It was true as an observation and wrong as an inference, and I propagated the
+inference through six prompt revisions without once running the check that kills it. ⇒ **L211. A NOTE
+INHERITED FROM A REPORT IS STILL YOUR CLAIM ONCE YOU REPEAT IT — the fastest thing to verify is
+usually the thing you have repeated most often without checking.**
+
+✅ **THE UNDERLYING QUESTION IS ALREADY SOLVED ANYWAY, and better than the arm would have solved it.**
+The `prereview_off` arm would have measured pre-review's cost by *removing* it and diffing two noisy
+run-level scores. **F351 measures it directly**: `pre_review.secs` now reports the slot time each call
+holds, from the engine, per call. **An arm that infers a cost from an A/B is strictly worse than an
+event that reports it.** Nothing is lost by these ten units dying.
+
+⇒ Standing note deleted. **The archive now has no unexamined corner I know of** — the four cells have
+been read for occupancy, plan shape, salvage, judge behaviour, spiral thresholds and starvation, and
+every one of those lines is either shipped, registered, or recorded dead.
