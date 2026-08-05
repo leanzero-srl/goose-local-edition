@@ -57,7 +57,7 @@ his call. The sweep is stopped (`STOP` armed 08:07).
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
 ~/.lmstudio/bin/lms ps                       # must list models before anything below
-ls -la ~/Projects/goose/target/release/goose  # MUST be >= 13:17 — see "the binary" below
+ls -la ~/Projects/goose/target/release/goose  # MUST be >= 15:07 — see "the binary" below
 rm -f STOP && ./loop.sh start                # BARE, never piped (F298)
 ```
 
@@ -67,6 +67,14 @@ rm -f STOP && ./loop.sh start                # BARE, never piped (F298)
 and F375 (12:54) had all landed. **The sweep runs the RELEASE binary**, so a restart would have spent
 a full ~2 h cell on an engine carrying none of them, and `review.py` would have reported every
 prediction unsettleable *after* the fleet time was gone.
+
+🔁 **REBUILT AGAIN 15:07** after the F386 (`sink_capped` effective ceiling) and F388 (HTTP-timeout
+pitfall) engine commits. Verified `strings`-wise with controls BOTH ways: `cap_base_secs` ×5,
+`outbound HTTP call needs an EXPLICIT timeout` ×1, `urlopen` ×2, `judge_node`, `salvaged` all present;
+negative controls `for a 3-device fleet` and a deliberate nonsense literal both return **0**, which is
+what proves the grep can detect absence rather than always saying yes.
+
+The 13:17 build below is superseded; its reasoning is kept because it is the general rule:
 
 Rebuilt **13:17** and verified the way `review.py` verifies — `strings`, not cargo's exit code:
 `judge_node`, `salvaged`, `-byte tree`, `for this fleet`, `PARALLEL WORKER SLOTS` all present, and the
