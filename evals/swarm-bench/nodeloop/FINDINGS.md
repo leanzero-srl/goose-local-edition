@@ -16306,3 +16306,46 @@ is the tell**, and it is now written into the arm so it cannot be read as noise.
 **Shipped:** re-promoted to **reps=3** (mechanism settles at n=1, score cannot — F382), with the
 mechanism readout repointed off the `/v1` count F389 showed would fire with the lever doing nothing,
 onto `doc_fetched{ok:true,status:200}` + `vendor_cursor_paging`/`vendor_all_pages` on a non-r3 cell.
+
+---
+
+## F391 — THE FALSE-GREEN GATE WAS BLIND TO THE ONE ADVERTISED ENDPOINT THAT WAS BROKEN
+
+F389 concluded the bottleneck is COMPLIANCE, not delivery — workers receive the facts and miss them
+anyway. The knob-turning doctrine's answer to compliance is a **deterministic corrector**: fix or
+catch the model's output regardless of whether it followed instructions. So: what does the engine
+already extract deterministically, and who gets it?
+
+`spec_advertised_surface` (`swarm.rs:3317`) parses the spec's endpoint table into `METHOD PATH ->
+EXPECTED` triples. It has two consumers — the e2e oracle and `spec_contract` — and **both are
+verifiers; the author never sees it.** That is not a defect on its own (F389 showed the author DOES
+receive the shape, via the planner). But it led to the one that is.
+
+**`spec_contract` is the check that gates green on "does the app implement what the spec advertises".
+It filters the advertised surface to bare GETs and drops the rest SILENTLY.** The filter is correct —
+a gate that fires POST/DELETE at an app to see what happens is a gate with side effects. The silence
+is not.
+
+On the real bench spec the table holds four endpoints: `GET /api/health`, `GET /api/payments`,
+`GET /api/summary` and **`POST /api/sync`**. The check probes three, reports `verified: 3`, and never
+says a fourth exists. **And the dropped one is precisely the endpoint whose documented response shape
+four of five archived cells get wrong** (`sync_shape` 0.00) — the gate built to close false greens was
+blind to the only advertised endpoint that was actually broken.
+
+⇒ This is my own workflow law turned on the engine: *if a check bounds its coverage, say what it
+dropped — silent truncation reads as "covered everything" when it did not.* `verified: 3` reads as
+coverage of the advertised surface. It is coverage of the GETs.
+
+**SHIPPED:** `spec_unprobed_advertised()` names the endpoints the check cannot probe, and
+`run_spec_contract` now discloses them through the existing `inconclusive` channel — at the single
+exit where the check actually ran, since that is the only path producing a `verified` anyone reads as
+coverage. It **names, never probes**: no new requests, no side effects, and it is `inconclusive`
+rather than a `finding` because not probing an endpoint is an admission about the CHECK, not a defect
+in the app.
+
+The test pins all four directions: the POST is named; a probed GET is **not** double-counted as both
+verified and unprobed; a GET-only spec discloses nothing so the message cannot fire on every run; and
+prose with no table invents no omission. clippy `-D warnings` RC=0, spec_* family 7/7.
+
+⚠️ **This closes a reporting hole, not the app defect.** Nothing here makes a single cell implement
+`POST /api/sync` correctly — it makes the gate stop implying it checked.

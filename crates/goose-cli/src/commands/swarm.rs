@@ -7184,6 +7184,37 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     /// OFF must be byte-identical, and ON must give every shard the SAME list. Those two together
     /// are the whole fix: the defect was three shards partitioning three different lists.
+    /// The contract check probes only bare GETs, so what it SKIPS has to be nameable.
+    ///
+    /// On the real bench spec the skipped row is `POST /api/sync` — the endpoint whose documented
+    /// response shape four of five archived cells get wrong. A gate that exists to close false greens
+    /// was silently blind to the only advertised endpoint that was actually broken.
+    #[test]
+    fn the_contract_check_can_name_the_endpoints_it_never_probes() {
+        let spec = "\
+| Method | Path | Response |\n\
+|---|---|---|\n\
+| `GET` | `/api/health` | `{\"status\": \"ok\"}` |\n\
+| `POST` | `/api/sync` | `{\"fetched\": <int>, \"inserted\": <int>}` |\n";
+        let unprobed = spec_unprobed_advertised(spec);
+        assert_eq!(unprobed, vec!["POST /api/sync".to_string()], "{unprobed:?}");
+
+        // The GET is PROBED, so it must not also be reported as skipped — double-counting an endpoint
+        // as both verified and unprobed would make the disclosure worse than silence.
+        assert!(
+            !unprobed.iter().any(|u| u.contains("/api/health")),
+            "a probed GET must never appear in the unprobed list: {unprobed:?}"
+        );
+
+        // A spec with nothing but GETs discloses nothing — the message must not fire on every run.
+        assert!(spec_unprobed_advertised(
+            "| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{}` |\n"
+        )
+        .is_empty());
+        // And prose with no table stays empty rather than inventing an omission.
+        assert!(spec_unprobed_advertised("Build a CLI. It should be fast.").is_empty());
+    }
+
     #[test]
     fn the_e2e_oracle_is_inert_when_empty_and_identical_across_shards() {
         let off_0 = e2e_shard_spec(TargetLang::Python, 0, 3, &[]);
@@ -16154,6 +16185,39 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
     out
 }
 
+/// Advertised endpoints this check CANNOT probe, as `METHOD /path`, deduped and order-preserving.
+///
+/// `spec_get_endpoints` filters the advertised surface down to bare GETs, for a good reason: a check
+/// that fires POST/DELETE at an app to see what happens is a check with side effects. But the rows it
+/// drops were dropped SILENTLY, and `verified` counts only what was probed — so a spec advertising
+/// four endpoints of which one is a POST produced `verified: 3` and nothing anywhere said the fourth
+/// was never looked at. A green that means "3 of 3 GETs" reads as "the app honors its contract".
+///
+/// MEASURED on the real bench spec: the table holds GET /api/health, GET /api/payments,
+/// GET /api/summary and **POST /api/sync** — and the POST is exactly the endpoint whose documented
+/// response shape four of five archived cells get wrong. The gate that exists to close false greens
+/// was blind to the one endpoint that was actually broken.
+///
+/// This does NOT probe them — it names them, so the omission is reported instead of assumed.
+fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for adv in spec_advertised_surface(spec) {
+        let mut it = adv.split_whitespace();
+        let (Some(method), Some(path)) = (it.next(), it.next()) else {
+            continue;
+        };
+        if method.eq_ignore_ascii_case("GET") {
+            continue;
+        }
+        let entry = format!("{} {}", method.to_uppercase(), path.trim_matches('`'));
+        if seen.insert(entry.clone()) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
 /// The advertised server port, else 8000 (the uvicorn/FastAPI default the beds use). Pure/testable.
 fn spec_port(spec: &str) -> u16 {
     regex::Regex::new(r"(?:127\.0\.0\.1:|localhost:|port\s+)(\d{4,5})")
@@ -16320,6 +16384,20 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         // 3xx / other 4xx (a route that needs a body/auth) -> neither a finding nor verified (fail-open)
     }
     let _ = child.kill().await;
+    // NO SILENT CAPS. Reported here, at the one exit where the check actually ran, because this is the
+    // only path that produces a `verified` a consumer will read as coverage. It is `inconclusive`, never
+    // a `finding`: not probing an endpoint is an admission about the CHECK, not a defect in the app.
+    let unprobed = spec_unprobed_advertised(spec);
+    if !unprobed.is_empty() {
+        inconclusive.push(format!(
+            "spec-contract: probed {} advertised GET endpoint(s); {} advertised endpoint(s) were NOT \
+             probed because this check only issues bare GETs: {}. `verified` counts ONLY what was \
+             probed, so it is not coverage of the advertised surface.",
+            verified,
+            unprobed.len(),
+            unprobed.join(", ")
+        ));
+    }
     SpecContractResult {
         findings,
         inconclusive,
