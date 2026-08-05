@@ -16652,3 +16652,56 @@ have not opened and will not claim either way.
 ⚠️ **No engine change this turn, deliberately.** Making `review` sensitive is a molding problem on a
 weak local model, not a code path, and the honest next step is the same as F396's: characterise, do
 not invent an unmeasured mechanism.
+
+---
+
+## F398 — A DETERMINISTIC NO-TIMEOUT DETECTOR, VALIDATED 5/5 AGAINST THE SCORER BEFORE SHIPPING
+
+F397 measured that the engine's quality layers detect nothing: `review` returned `findings: []` in 5
+of 5 runs while the same trees ship the defects the scorer finds reliably. F389 had already killed the
+instruction theory — workers RECEIVE the facts they miss. **So the lever is detection, which does not
+depend on compliance the way a prompt does.**
+
+`client_timeouts` is the only check of 35 where all four 3-node cells score below the 1-node cell.
+F388 added the fact to the pitfalls library; this adds a check that fires whether or not anyone read
+it.
+
+### ✅ VALIDATED ON REAL DATA, BOTH DIRECTIONS, BEFORE THE COMMIT
+
+Extracted the script and ran it over the five archived app trees against an INDEPENDENT grader:
+
+| cell | scorer `client_timeouts` | files parsed | findings |
+|---|---|---|---|
+| n1-r0 | **1.00** | 5 | **0** |
+| n3-r0 | 0.00 | 11 | 4 — incl. `vendorsync/meridian.py:55` |
+| n3-r1 | 0.00 | 11 | 15 |
+| n3-r2 | 0.00 | 12 | 7 |
+| n3-r3 | 0.00 | 9 | 3 — incl. `vendorsync/meridian.py:158` |
+
+**5 of 5 agreement**: zero findings exactly where the scorer says the timeout is set, findings
+everywhere it does not — and the production client is among them in two cells. A detector that cannot
+see a defect known to be there is a broken instrument; this one was shown to see it before it shipped.
+
+### The narrowness is the design
+
+Only calls whose library default is genuinely *block forever* are flagged: `requests.<verb>`, a name
+bound to `requests.Session()`, and `urlopen`. **`httpx` is deliberately NOT flagged — it defaults to
+5 s**, so flagging it would be a fabricated finding. Findings drive the fix loop, so a false one
+spends a weak model's turn "repairing" correct code; a miss costs one check.
+
+⚠️ **Honest limit:** most findings land in TEST files (r1's 15 are largely tests). Not special-cased —
+a test that hangs forever is a real hang, and carving out an exception is a rule I would have to
+justify with evidence I do not have. It does mean the fix loop sees more than the minimum.
+
+### Wiring, and the two traps avoided
+
+It rides the SAME scope, cap and fix loop as `cross_module_drift` (`run_scoped_py_check`, 60 s,
+`partial` when files were dropped) rather than inventing a path — F390's audit exists because
+`sink_review` was built, reported enabled, and never ran. And the event applies **L230**: `checked` is
+reported beside the verdict, `checked == 0` says CHECKED NOTHING, and unparseable output leaves
+`ran: false` so it can never be mistaken for a scan that looked and found nothing. The test asserts
+that last case explicitly.
+
+⚠️ **What this does NOT do:** it does not make the app better by itself. It hands the fix loop a
+finding; whether a weak model then acts on it is exactly the compliance question this whole thread has
+been chasing, and it is unmeasured until the fleet returns.

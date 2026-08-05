@@ -5131,6 +5131,43 @@ mod tests {
         }
     }
 
+    /// VALIDATED AGAINST THE ARCHIVE BEFORE SHIPPING, in both directions: run over the five archived
+    /// app trees, the script finds 0 findings in the one cell the scorer marks `client_timeouts` 1.00
+    /// and 4/15/7/3 in the four it marks 0.00 — 5 of 5 agreement with an independent grader, including
+    /// the production client (`vendorsync/meridian.py`) in two of them.
+    ///
+    /// This test covers the PARSER half, which is what runs without python.
+    #[test]
+    fn the_no_timeout_scan_turns_its_json_into_actionable_findings() {
+        let d = parse_http_timeout(
+            r#"{"checked": 3, "findings": [{"file": "vendorsync/meridian.py", "line": 55, "call": "urlopen"}]}"#,
+        );
+        assert!(d.ran);
+        assert_eq!(d.checked, 3);
+        assert_eq!(d.findings.len(), 1);
+        assert!(d.findings[0].contains("vendorsync/meridian.py:55"));
+        assert!(d.findings[0].contains("urlopen"));
+        // The finding must forbid the cheap escapes, or a weak model deletes the call to clear it.
+        assert!(d.findings[0].contains("Do not remove the call"));
+
+        // A clean tree: ran, checked>0, no findings — distinguishable from "did not run".
+        let clean = parse_http_timeout(r#"{"checked": 5, "findings": []}"#);
+        assert!(clean.ran && clean.checked == 5 && clean.findings.is_empty());
+
+        // Python is free to print a warning first; the last JSON line still wins.
+        let noisy =
+            parse_http_timeout("DeprecationWarning: whatever\n{\"checked\": 1, \"findings\": []}");
+        assert!(noisy.ran && noisy.checked == 1);
+
+        // Garbage must NOT read as a clean tree: `ran` stays false so `checked == 0` cannot be mistaken
+        // for a scan that looked and found nothing (L230).
+        let broken = parse_http_timeout("not json at all");
+        assert!(
+            !broken.ran,
+            "unparseable output must not report a completed scan"
+        );
+    }
+
     #[test]
     fn every_baked_on_lever_declares_itself_baked_on() {
         const SRC: &str = include_str!("swarm.rs");
@@ -18608,6 +18645,117 @@ struct DriftResult {
 /// Run the cross-module drift check over THE APP THIS RUN BUILT (see AppScope). Python-only today: the
 /// script is an `ast` pass, and Python is also the one stack with a real smoke oracle, so it is where a
 /// false green is provable.
+/// Model-free AST scan for an outbound HTTP call with no timeout.
+///
+/// DELIBERATELY NARROW, and the narrowness is the design. Only calls whose library default is
+/// genuinely "block forever" are flagged: `requests.<verb>(...)`, a name bound to `requests.Session()`,
+/// and `urlopen(...)`. **`httpx` is NOT flagged** — it defaults to 5s, so flagging it would be a
+/// fabricated finding. A false positive here is worse than a miss: findings drive the fix loop, so a
+/// wrong one spends a weak model's turn "repairing" correct code.
+const HTTP_TIMEOUT_SCRIPT: &str = r#"
+import ast, json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = [f for f in sys.stdin.read().splitlines() if f.strip()]
+VERBS = {"get","post","put","patch","delete","head","options","request"}
+findings, checked = [], 0
+for rel in files:
+    p = root / rel
+    try:
+        src = p.read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(src)
+    except Exception:
+        continue
+    checked += 1
+    sessions = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            f = n.value.func
+            if isinstance(f, ast.Attribute) and f.attr == "Session" and isinstance(f.value, ast.Name) \
+               and f.value.id == "requests":
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        sessions.add(t.id)
+                    elif isinstance(t, ast.Attribute):
+                        sessions.add(t.attr)
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        if any(k.arg == "timeout" for k in n.keywords):
+            continue
+        f, what = n.func, None
+        if isinstance(f, ast.Attribute) and f.attr in VERBS and isinstance(f.value, ast.Name):
+            if f.value.id == "requests":
+                what = "requests.%s" % f.attr
+            elif f.value.id in sessions:
+                what = "%s.%s (a requests.Session)" % (f.value.id, f.attr)
+        elif isinstance(f, ast.Attribute) and f.attr == "urlopen":
+            what = "urlopen"
+        elif isinstance(f, ast.Name) and f.id == "urlopen":
+            what = "urlopen"
+        if what:
+            findings.append({"file": rel, "line": getattr(n, "lineno", 0), "call": what})
+print(json.dumps({"checked": checked, "findings": findings}))
+"#;
+
+/// Turn the timeout script's JSON into fix-loop findings. Pure, so it is testable without python.
+fn parse_http_timeout(stdout: &str) -> DriftResult {
+    let Some(v) = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .or_else(|| {
+            stdout
+                .lines()
+                .rev()
+                .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        })
+    else {
+        return DriftResult::default();
+    };
+    let checked = v.get("checked").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let findings = v
+        .get("findings")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
+                    let line = f.get("line").and_then(|x| x.as_u64()).unwrap_or(0);
+                    format!(
+                        "{}:{} calls `{}` with NO timeout — this library defaults to blocking FOREVER, \
+                         so one unresponsive server hangs the caller with no recovery. Pass an explicit \
+                         timeout (connect AND read). Do not remove the call or widen an except to hide it.",
+                        g("file"),
+                        line,
+                        g("call")
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    DriftResult {
+        ran: true,
+        checked,
+        findings,
+        partial: false,
+    }
+}
+
+/// Runs `HTTP_TIMEOUT_SCRIPT` over the run's own files. Same contract as `cross_module_drift`.
+async fn http_timeout_scan(
+    root: &std::path::Path,
+    lang: TargetLang,
+    scope: &AppScope,
+) -> DriftResult {
+    if lang != TargetLang::Python || scope.files.is_empty() {
+        return DriftResult::default();
+    }
+    let Some(out) = run_scoped_py_check(HTTP_TIMEOUT_SCRIPT, root, &scope.files).await else {
+        return DriftResult::default();
+    };
+    let mut d = parse_http_timeout(&out);
+    d.partial = !scope.dropped.is_empty();
+    d
+}
+
 async fn cross_module_drift(
     root: &std::path::Path,
     lang: TargetLang,
@@ -24943,6 +25091,37 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // the AttributeError only happens at request time), so without this the loop breaks green at
             // round 0 on an app whose main endpoint 500s.
             verdict.findings.extend(drift.findings.iter().cloned());
+            // NO-TIMEOUT SCAN. Rides the same scope and the same fix loop as the drift check, because it
+            // is the same KIND of defect: invisible to the smoke gate (the module imports fine and the
+            // call is correct Python) and fatal at request time.
+            //
+            // WHY DETECTION AND NOT MORE INSTRUCTION: `client_timeouts` is the only check of 35 where all
+            // four archived 3-node cells score below the 1-node cell — every one shipped "no request
+            // timeout". F388 already added the fact to the pitfalls library, and F389 measured that
+            // workers RECEIVE the facts they miss, so another sentence in a prompt is not the lever. A
+            // deterministic finding fires whether or not anyone read anything.
+            let no_timeout =
+                http_timeout_scan(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await;
+            if no_timeout.ran {
+                sink.write_value(serde_json::json!({
+                    "event": "http_timeout_scan",
+                    "round": round,
+                    "checked": no_timeout.checked,
+                    "findings": no_timeout.findings.len(),
+                    "partial": no_timeout.partial,
+                    // L230: the affirmative signal decides it. `checked` is reported alongside the
+                    // verdict so "0 findings" can never be read without knowing how many files were
+                    // actually parsed.
+                    "detail": if no_timeout.checked == 0 {
+                        "CHECKED NOTHING — no file parsed, so a clean result here is silence, not evidence"
+                    } else if no_timeout.findings.is_empty() {
+                        "every outbound call whose library blocks forever by default passes a timeout"
+                    } else {
+                        "an outbound HTTP call has no timeout — driving the fix loop"
+                    },
+                }));
+            }
+            verdict.findings.extend(no_timeout.findings.iter().cloned());
             // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
             // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
             // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
