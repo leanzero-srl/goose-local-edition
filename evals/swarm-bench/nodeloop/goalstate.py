@@ -36,6 +36,7 @@ import datetime
 import json
 import pathlib
 import sys
+from math import comb
 
 import failures  # NEVER re-implement the metric — Lesson 2
 
@@ -87,6 +88,7 @@ def measured_metric() -> dict:
     test, same 1node/2node exclusion — so this can never drift from the metric it claims to track.
     """
     by_kind: dict[str, list[int]] = {}
+    per_run: list[tuple[int, int]] = []               # (test-author attempted, failed) PER RUN — L114
     for path in sorted(ALL_RUNS.glob("**/run.jsonl")):
         name = str(path)
         if "1node" in name or "2node" in name:
@@ -98,6 +100,7 @@ def measured_metric() -> dict:
             continue                                  # unfinished runs cannot contribute a row
         owned = {e["task_id"]: e.get("owned_files") or []
                  for e in ev if e.get("event") == "task_dispatched"}
+        run_a = run_f = 0
         for e in ev:
             if e.get("event") != "task_completed":
                 continue
@@ -106,6 +109,11 @@ def measured_metric() -> dict:
             slot[0] += 1
             if e.get("status") != "done":
                 slot[1] += 1
+            if k == "test-author":
+                run_a += 1
+                run_f += e.get("status") != "done"
+        if run_a:
+            per_run.append((run_a, run_f))
     # slot[0] is incremented for EVERY task_completed event and slot[1] only for the failures, so
     # slot[0] is ATTEMPTED, not "completed", and the two overlap. Reporting `n = completed + failed`
     # therefore counts every failure TWICE. It has never shown because every sample until now had
@@ -118,6 +126,10 @@ def measured_metric() -> dict:
         "test_author_failed": ta[1],
         "all_failed": total_failed,
         "test_author_share_of_failures": (ta[1] / total_failed) if total_failed else 0.0,
+        # The RUN is the independent unit; the task is not. Recorded so the significance test can
+        # cluster, and so a row on disk carries the evidence for its own verdict.
+        "runs_task_counts": [a for a, _ in per_run],
+        "runs_clean": sum(1 for _, f in per_run if f == 0),
     }
 
 
@@ -151,18 +163,51 @@ def moved_significantly(m: dict) -> tuple[bool, float]:
     unchanged. A detector built to force a shake-up after 10 quiet ticks that can be reset by noise
     is a detector that never fires. The loophole was in MY OWN instrument, written one hour earlier,
     to police exactly this.
+
+    ⚠⚠ AND THEN IT FLATTERED ME THE OTHER WAY, FOR FIFTY TICKS. The version above computed a p ONLY
+    in the `failed == 0` branch and returned `(False, 1.0)` unconditionally otherwise — so the moment
+    a single failure was recorded the test became UNREACHABLE and no amount of subsequent success
+    could ever move it. The detector printed "NOT SIGNIFICANT — this could be luck" against
+    3 failures in 38 attempts where the null predicts 11.76 (task-level p = 0.00071), and against
+    6 of 7 runs entirely clean where the null predicts 0.97 clean runs (run-clustered p = 3.7e-05).
+    A counter that can only read one way is as broken as one that reads the wrong number (L153), and
+    this one suppressed a real result while I looked elsewhere for fifty ticks.
+
+    THE UNIT IS THE RUN, NOT THE TASK (L114). All three failures land in ONE run and six of seven are
+    clean, so 38 task attempts are nowhere near 38 independent trials. When the metric carries a
+    run-level breakdown this uses the exact Poisson-binomial over runs; the task-level test is the
+    fallback for the rows already on disk, which predate those fields.
+
+    ⚠ THIS FIX SILENCES MY OWN STALL ALARM. That is exactly the shape of change to distrust (L90), so
+    the self-test asserts the detector can still say NO: a metric sitting AT the null must read
+    not-significant on both paths, and `failed == 0, n == 5` — the noise sample that reset a 5-tick
+    streak and prompted this whole guard — must still read not-significant.
     """
+    runs = m.get("runs_task_counts")
+    clean = m.get("runs_clean")
+    if runs and clean is not None:
+        # P(at least `clean` of these runs see ZERO failures | per-task rate unchanged).
+        p_zero = [(1 - BASELINE_RATE) ** k for k in runs]
+        dist = [1.0]
+        for q in p_zero:
+            nd = [0.0] * (len(dist) + 1)
+            for i, v in enumerate(dist):
+                nd[i] += v * (1 - q)
+                nd[i + 1] += v * q
+            dist = nd
+        p = sum(dist[clean:])
+        return p < SIGNIFICANCE, p
+
     completed = m.get("test_author_completed", 0)
     failed = m.get("test_author_failed", 0)
     n = completed          # ATTEMPTED — `completed` already includes the failures (see the note above)
     if n == 0:
         return False, 1.0
-    if failed == 0:
-        p = (1 - BASELINE_RATE) ** n
-        return p < SIGNIFICANCE, p
-    # Any failures at all means the rate has not obviously collapsed; treat as unmoved and let the
-    # observed rate speak for itself in the printout.
-    return False, 1.0
+    # One-sided: P(X <= failed | X ~ Binomial(n, BASELINE_RATE)) — "this engine fails LESS often".
+    # At failed == 0 this reduces to (1 - rate)**n, so the old correct branch is subsumed, not lost.
+    p = sum(comb(n, k) * BASELINE_RATE ** k * (1 - BASELINE_RATE) ** (n - k)
+            for k in range(0, min(failed, n) + 1))
+    return p < SIGNIFICANCE, p
 
 
 def normalise(hist: list[dict]) -> list[dict]:
@@ -225,7 +270,37 @@ def self_test() -> int:
     assert streak(rows + [{"mini_goal": "G", "resolved": ["F207"], "metric": m_moved}]) == 1, \
         "a SIGNIFICANT metric move MUST reset the clock"
     assert streak([]) == 0, "no history must score nothing, never a pass"
-    print("self-test OK — omitted flags carry forward; goal/resolved/metric changes still reset")
+
+    # ── THE FIFTY-TICK BUG, ASSERTED SO IT CANNOT COME BACK ──────────────────────────────────────
+    # The old code computed a p ONLY when failed == 0 and returned (False, 1.0) otherwise, so one
+    # failure made the test unreachable forever. These are the real numbers it suppressed.
+    sig, p = moved_significantly({"test_author_completed": 38, "test_author_failed": 3})
+    assert sig and p < 0.01, f"3 failures in 38 against a null of 13/42 must READ significant (p={p})"
+    # ...and the detector must still be ABLE to say NO. A metric sitting AT the null is the control.
+    sig, p = moved_significantly({"test_author_completed": 38, "test_author_failed": 12})
+    assert not sig, f"a metric AT the null (12 of 38, expected 11.8) must NOT read significant (p={p})"
+    # The exact noise sample that reset a 5-tick streak and prompted the original guard. Still no.
+    sig, p = moved_significantly({"test_author_completed": 5, "test_author_failed": 0})
+    assert not sig and abs(p - (1 - BASELINE_RATE) ** 5) < 1e-12, \
+        "failed == 0 must still reduce to (1-rate)**n — the old correct branch is subsumed, not lost"
+    assert not moved_significantly({})[0], "an EMPTY metric must score nothing (all([]) is the trap)"
+    assert not moved_significantly({"test_author_completed": 0, "test_author_failed": 0})[0], \
+        "zero attempts cannot be evidence of anything"
+
+    # ── RUN-CLUSTERED PATH (L114: the run is the independent unit, the task is not) ──────────────
+    clustered = {"runs_task_counts": [5, 6, 7, 5, 5, 5, 5], "runs_clean": 6}
+    sig, p = moved_significantly(clustered)
+    assert sig and p < 0.001, f"6 of 7 runs clean where the null predicts ~1 must read significant (p={p})"
+    assert not moved_significantly({**clustered, "runs_clean": 2})[0], \
+        "2 of 7 clean is ordinary under the null and must NOT read significant"
+    assert not moved_significantly({**clustered, "runs_clean": 0})[0], "zero clean runs is not a win"
+    # The clustered path must WIN over the task-level fields when both are present, or the stricter
+    # unit is decorative. Same dict, contradictory answers, clustered one takes it.
+    both = {**clustered, "runs_clean": 2, "test_author_completed": 38, "test_author_failed": 3}
+    assert not moved_significantly(both)[0], "run-level evidence must OVERRIDE the task-level fallback"
+
+    print("self-test OK — omitted flags carry forward; goal/resolved/metric changes still reset; "
+          "the significance test now reads BOTH ways and clusters by run")
     return 0
 
 
