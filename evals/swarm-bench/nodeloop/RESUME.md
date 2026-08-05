@@ -3,6 +3,25 @@
 Sixth rewrite today. The 12:15 version predates **eight findings (F374-F381)** and still states a
 number F381 has since narrowed, so it is replaced rather than patched. 48 commits since 07:00.
 
+> **PATCHED IN PLACE for F382-F385** (the body below is 13:50 text). A rewrite is the wrong tool when
+> only three claims moved — but a summary is a claim and decays like one (L195), so read the two
+> boxes below BEFORE the body.
+
+## 🚨 F385 — THE PRE-REGISTERED DESIGN CANNOT SETTLE GOAL ONE
+
+`PREREGISTERED.md` budgets **5 matched pairs**. At the observed gap (**+0.0593**: n3 mean 0.6391 over
+four cells vs the single n1 cell 0.5798) a sign test needs **51 pairs** for a coin-flip chance of
+clearing p<0.05, and **115** for 80% — about **204 h of fleet**. Extended from `power.py`'s own
+`q_for_power`/`gap_for_q`, not re-derived (L2).
+
+Not a sign-test artefact: ARE 2/π leaves the best available test at ~33 pairs, still **6.6×** the
+registration. It does **not** say 3 nodes is no better — it says **this design cannot tell**.
+
+🎯 **Read the table upward and it validates the standing directive:** a gap of **0.30 settles at
+exactly the 5 pairs already registered.** Collecting 102 cells or widening the gap are the only two
+routes, and **only engine work is affordable.** *"MEASURING IS SUBORDINATE TO SHIPPING"* is, here, the
+arithmetic — not a preference.
+
 ## 🛑 THE ONE BLOCKER: the fleet is empty
 
 At **08:03:59** all three LM Studio nodes went from GENERATING to **no models loaded**
@@ -34,6 +53,18 @@ only half that distinguishes "rebuilt" from "was already fine".
 > **AFTER ANY FURTHER ENGINE COMMIT: `cargo build --release -p goose-cli` before starting the sweep.**
 
 ## 📌 Seven predictions are registered in `PREDICTIONS`, not just in prose
+
+⚠️ **THREE OF THE SEVEN BANDS WERE UNSETTLEABLE AS WRITTEN AND HAVE BEEN CORRECTED (F383/F384). ALL
+THREE WERE MINE, ALL FROM TODAY, ALL DERIVED FROM A SINGLE CELL BEFORE F382 QUANTIFIED THE SPREAD.**
+- **F374** ">3037 s" — **WITHDRAWN** (e2e is 2277.5/425.7/1391.6 across identical cells).
+- **F350** "detail-fan makespan drops ≥20%" — **WITHDRAWN**: measured 146.7/240.0/1112.9/1859.8 s, a
+  **12.68× spread**, and the detail item count itself varies 8-21, so the fan is not even measuring
+  the same work. Surviving half is within-run: concurrency must reach 6, `straggler_aborted` must not rise.
+- **F357** "1-3 salvaged per run" — **REPLACED**: the archive it came from shows 1/19, 4/22, 3/21,
+  3/17, so r1 already sat outside my own band. Now a within-run **identity** — the count of
+  `task_completed` with `salvaged: true` must EQUAL the count matching F356's signature (`status done`
+  + null `session_id` + zero `tool_calls`) in the same run. ⇒ **L224: an identity beats a band,
+  because a band fights the variance and an identity ignores it.**
 
 `review.py:236-273` settles predictions by `strings`-matching the running binary, and today's were
 living only in FINDINGS.md — prose, not implementation. Now seven lines: F350, F351, F352, F357, F369,

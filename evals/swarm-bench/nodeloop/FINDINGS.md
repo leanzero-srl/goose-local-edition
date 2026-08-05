@@ -16013,7 +16013,11 @@ against the single n1 cell at 0.5798.
 ⚠️ **I CAUGHT MYSELF PUBLISHING THE FLATTERING SD.** My first pass used `pstdev` (n) = 0.1213 and
 printed **37** pairs. `power.py`'s own report says **0.1401** — the sample sd (n−1). Same four
 numbers, two divisors, and the one I reached for first was the one that made the design look 27%
-more feasible. The table above uses the instrument's sd, not mine. ⇒ **L225.**
+more feasible. The table above uses the instrument's sd, not mine. ⇒ **L225. WHEN A STATISTIC HAS TWO
+DEFENSIBLE FORMS AND ONE OF THEM FLATTERS THE DESIGN I AM ABOUT TO RUN, THE INSTRUMENT'S EXISTING
+CHOICE WINS — AND THE DISCREPANCY GETS PUBLISHED, NOT SILENTLY RESOLVED.** The tell is that I never
+noticed the ambiguity until the two numbers disagreed; had `power.py` printed no sd of its own I would
+have shipped 37 pairs and never known there was a choice to make.
 
 **THIS IS NOT AN ARTEFACT OF THE SIGN TEST.** Its asymptotic efficiency against a magnitude-using
 test is 2/π ≈ 0.64, so even the most efficient test available still needs ~33 pairs — **6.6× the
