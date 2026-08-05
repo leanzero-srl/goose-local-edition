@@ -14006,3 +14006,26 @@ prefix gap to node count would be wrong. **The clean comparison needs n1 replica
 ⇒ L194. **WHEN A RUN TAKES AN UNEXPECTED BRANCH, OPEN THE EVENT THAT DECIDED IT BEFORE MODELLING THE
 COST — the branch I was about to price as "the 1-node redraft" was really "the run that lost a
 draft", and those are different populations.**
+
+### F341 addendum — the disc→plan comparison is NOT confounded by plan size
+
+Before the number lands, the obvious way F341 could be measuring the wrong thing: if the n1 run's
+redraft round has more tasks to detail than the n3 rounds did, a longer gap would be plan size, not
+node speed. Detail counts per round, split at each `skeleton_drafts`:
+
+    baseline-n3-r0   [7, 7]        disc->plan 1036.6 s on the 7-task second round
+    baseline-n3-r1   [10]          no redraft
+    baseline-n3-r2   [8]           no redraft
+    baseline-n3-r3   [9, 4, 8]
+    swarm-1node-r0   [9, 6+]       round 2 still running
+
+**Comparable magnitudes — 7 to 10 details per round on both arms.** n1's redraft round is detailing
+6 and climbing against n3's 7 and 4, so the gap being measured is not a bigger plan.
+
+⚠ SLOT COUNT, not node count, is what the detail fan actually sees: n1 has one device at
+`weight: 2` = **2 concurrent slots**; n3 has three devices = **6 slots**. So ~7 details take ~2 waves
+on n3 and ~4 waves on n1. **That is the mechanism H2 predicts**, and it is worth stating now so the
+result is not narrated as a surprise either way.
+
+⚠ n1's round-2 count is not final. It is checked again when `plan_loaded` lands, and if the round
+ends much larger than 10 the comparison is withdrawn rather than reported.
