@@ -14533,3 +14533,54 @@ being distinguished — and either way the number is worthless.** And the payloa
 correct placement the distribution of `judge_node` across the three model-ids should be roughly even.
 **If it is concentrated on one node, the `position()` defect is confirmed from the log rather than
 from a simulation.**
+
+## F353 — the instrument that checks F351/F352 exists BEFORE the data does. And the selection fix is deliberately NOT shipped.
+
+### The ordering decision, which is the important half of this entry
+
+The `position()` selection defect is written up, understood, and **could be fixed in ten minutes**:
+`scheduler.rs:1099`/`:1220` take the FIRST device with a free slot while `pick_device` at `:592-600`
+deliberately sorts by `in_flight`. **I am not shipping it, and the reason is that shipping it now
+would destroy the only chance to confirm it from evidence.**
+
+F352 exists precisely so the log can answer "which node ran the judge". If I correct `position()`
+before a single run carries `judge_node`, then the first post-fix run shows an even distribution, and
+the defect is never anything but **my own simulation** — a complete causal chain with no behavioural
+evidence, which is an explanation and not a result (L91). The skew has to be observed on the OLD
+placement, once, and then fixed.
+
+⇒ **L202. WHEN A FIX AND ITS EVIDENCE BOTH DEPEND ON THE SAME RUN, THE FIX GOES SECOND. Shipping a
+correction before its defect has been observed converts a measurable claim into a permanent
+assumption.**
+
+### The instrument (`occupancy.py` → occ-5)
+
+`idle_slot_accounting()` turns the two new engine fields into the three numbers that decide the next
+engine change:
+
+- **`judge_slot_secs`** — paired `judge_observed` → `judge_verdict`, valid because the judge is
+  single-flight. **Counts only calls that CLAIMED a device**: an empty `judge_node` is the
+  deterministic-only path (no device, no inference, no slot), and including it would inflate the
+  total with exactly the population that costs nothing — 59/26/15/11 firings per cell.
+- **`prereview_slot_secs`** — summed from `pre_review.secs`, replacing the inter-arrival estimate
+  that F348 itself flagged as the weak half of the ~0.30 figure that killed F346.
+- **`judge_node_spread`** — the payload. The renderer prints the per-node share and states a verdict
+  either way: **skew above 55% on one node reads as consistent with the `position()` defect; an even
+  spread says plainly that the defect does not show up in this run.** A check that can only confirm
+  is not a check (L172).
+
+**BOTH DIRECTIONS ARE ASSERTED IN THE SELF-TEST**, and the second direction is the one that matters:
+a log written before these fields existed must report **UNAVAILABLE, never 0.0**. That is the exact
+shape that made F349 possible — an absent signal looking identical to a clean one — so
+`prereview_slot_secs` is `None` rather than `0.0` on an old log, and `judge_node_attributed` counts
+how many verdicts actually carried the key.
+
+✅ **POSITIVE CONTROL ON A CASE WHOSE ANSWER I ALREADY KNEW (L96):** run against `baseline-n3-r0`,
+which predates both fields, it prints *"judge node attribution UNAVAILABLE — 103 verdict(s) carry no
+`judge_node` (log predates the field, not a measured zero)"* and the same for 7 pre-reviews. It did
+not invent a zero, and it named the count it could see.
+
+⚠ **THE INSTRUMENT IS UNVALIDATED AGAINST REAL NEW DATA.** It is proven against synthetic events and
+proven not to lie about old ones. Whether the engine actually emits what I think it emits is decided
+by the first run, not by me — and F351/F352 both carry pre-registered predictions that will fail
+loudly if the fields are wrong.
