@@ -16793,3 +16793,47 @@ calibration of the checker, not as a verdict on the app.**
 ⚠️ It also cannot fix the deeper thing: even a conclusive `spec_contract` only probes bare GETs
 (F391), so `POST /api/sync` — the endpoint whose shape 4 of 5 cells break — is still disclosed as
 unprobed rather than checked.
+
+---
+
+## F401 — F400 MEASURED: THE CHECK THAT NEVER CONCLUDED NOW CONCLUDES ON ALL FIVE CELLS
+
+F400 shipped a plausible fix and I flagged it unmeasured. Measured now, the same way F398 was and the
+same way the static sync detector was killed — by running it against the real artefacts.
+
+Spawned each archived app exactly as the new code will (`python3 -m vendorsync --db <scratch>
+--port <free>`, cwd = the app tree) and curled the three advertised GETs:
+
+| cell | bound the chosen port | /api/health | /api/payments | /api/summary | `verified` |
+|---|---|---|---|---|---|
+| n1-r0 | ✅ | 200 | 200 | 200 | **3** |
+| n3-r0 | ✅ | 200 | 200 | 200 | **3** |
+| n3-r1 | ✅ | 200 | 200 | 200 | **3** |
+| n3-r2 | ✅ | 200 | 200 | 200 | **3** |
+| n3-r3 | ✅ | 200 | 200 | 200 | **3** |
+
+**5 of 5. `verified: 0, inconclusive: 1` becomes `verified: 3, findings: 0`.** The deterministic
+contract check, inert in every archived event, concludes on every cell.
+
+### The two fixes compose exactly as intended
+
+F395 made a pass MEANINGFUL — `verified == 0` can no longer read as "every advertised check was
+satisfied", whatever else is recorded. F400 made a pass ACHIEVABLE — the app is spawned the way its
+spec says to, on a port nobody else holds. Either alone would have been half a mechanism: F395 without
+F400 leaves an honest checker that can never conclude; F400 without F395 makes a checker conclude into
+a summary that was already lying. Together the string "every advertised check that bound was
+satisfied" now appears **only** when three endpoints really answered 2xx.
+
+### ✅ AND THE CALIBRATION WORRY IS ANSWERED
+
+F400's own caveat was that a check which has never fired was about to start firing into the fix loop
+with findings never validated against the scorer. **Measured: zero findings on all five cells.** The
+advertised GETs genuinely work in every archived app, so this adds no noise — it adds an affirmative
+signal where there was silence. That was the outcome I could not assume and did not.
+
+⚠️ **What it still does not reach.** `spec_contract` probes only bare GETs (F391), so `POST /api/sync`
+— the endpoint whose response shape 4 of 5 cells break, and the reason the sync family is worth
+51 → 5 pairs — remains **disclosed as unprobed, not checked**. This turn moved the checker from
+useless to working; it did not move it onto the defect that matters most. That gap is now the sharpest
+remaining engine target, and unlike everything else today it is a DESIGN question (probing a POST has
+side effects) rather than a bug.
