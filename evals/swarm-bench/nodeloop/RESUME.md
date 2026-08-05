@@ -1,55 +1,68 @@
-# RESUME — live state, rewritten 2026-08-05 ~07:50 local
+# RESUME — live state, rewritten 2026-08-05 ~08:02 local
 
-**The previous version led with the measurement campaign and told the reader to protect the engine
-freeze. Mihai corrected that posture directly, and this file is rewritten rather than appended to,
-because a resume file that states a superseded priority sends the next reader the wrong way.**
+**The previous version (07:50) named F346 — "the scheduler leaves plan-available work unscheduled" —
+as the engine target. That finding is DEAD (F348).** Rewritten rather than appended to, because a
+resume file carrying a retracted target sends the next reader to build the wrong thing. This is the
+second rewrite today and the reason is L195: a summary is a claim and decays like one.
 
-## 🔴 THE POSTURE CHANGED. READ THIS BEFORE ANYTHING ELSE.
+## 🔴 THE POSTURE (unchanged — Mihai, 07:45)
 
-> *"in the end the main goal is to make the 3 node swarm or rather swarm actually work better than a
-> 1 node, which means you need to make **fixes and improvements in the engine**."* — Mihai, 07:45
+> *"the main goal is to make the 3 node swarm actually work better than a 1 node, which means you
+> need to make **fixes and improvements in the engine**."*
 
-I had been protecting a measurement at the cost of the goal. The 8-pair curve answers *whether*
-three nodes win. The job is to **make** them win.
+Measuring is subordinate to shipping engine fixes. **The F253 freeze is superseded**: finish the
+in-flight cell, take the boundary, ship, re-baseline. **n = 8 (F327) is superseded, not fudged.**
+The boundary MUST run `cargo clippy --all-targets -- -D warnings` first (L108/L119). Three patches
+are queued and uncompiled: `f1a20c99b`, `95b36748f`, `00563c6ea`.
 
-- **The F253 engine freeze is SUPERSEDED.** It existed so cells stay comparable. Comparability is
-  worth less than a working swarm. **Finish the in-flight cell** (never waste a live 2h build),
-  **then take the boundary, ship engine fixes, re-baseline.** A voided curve is an acceptable price.
-- **n = 8 (F327) is SUPERSEDED, not fudged.** It was registered blind for a *verdict* experiment
-  that is no longer the priority. Say that plainly; never quietly shrink a pre-registered n.
-- **The boundary MUST run `cargo clippy --all-targets -- -D warnings` FIRST** (L108/L119). Three
-  patches are queued and uncompiled: `f1a20c99b`, `95b36748f`, `00563c6ea`.
+## ☠️ F348 — the fleet was never idle. Read this before trusting any occupancy number.
 
-## 🎯 The target the measuring bought
+The pre-registered falsifier returned **`yes_they_consume_a_slot` / `premise_survives: FALSE`**, and
+I verified its three load-bearing claims myself before accepting it.
 
-`occupancy.py`'s plan ceiling, `max_useful_nodes = total_work / critical_path`:
+1. **Judge and pre_review acquire the same slot a task dispatch does.** `scheduler.rs:1205-1207`
+   (`self.devices[i].in_flight += 1`), `:1238` for pre_review, released by `IdleSlotGuard::drop` at
+   `:330-335`. While a judge runs, a real task cannot enter that slot. Judge slot-seconds
+   3510 / 3263 / 4183 / 1896 = **14-31% of each cell's idle slot-time**.
+2. **Unit mismatch, mine.** `occupancy.py` divides by `n = len(pool)` = **3 DEVICES**, and `busy` is
+   the per-device union of spans, so a device running two tasks scores 1. I compared that against the
+   six-SLOT concurrency histogram and called the difference waste.
+3. **Wrong denominator, mine — and I had already quoted the right one.** The 0.5645 / 0.4737 /
+   0.6499 / 0.2582 figures are whole-run, including a planning prefix of 16-39% of wall that credits
+   zero busy by construction. `occupancy.py` prints that caveat itself and already publishes
+   **EXECUTE OCCUPANCY 0.8568 / 0.5746 / 0.8139 / 0.5910** (~0.92/0.64/0.88/0.70 with judge at device
+   level). **Always use the execute column.**
 
-| cell | critical path | total work | max useful | attainable occ | ACTUAL occ |
-|---|---|---|---|---|---|
-| `baseline-n3-r0` | 3827.4s | 19314.6s | **5.05** | 1.0 | 0.5645 |
-| `baseline-n3-r1` | 6906.0s | 18203.9s | 2.64 | 0.8787 | 0.4737 |
-| `baseline-n3-r2` | 3353.2s | 16006.3s | **4.77** | 1.0 | 0.6499 |
-| `baseline-n3-r3` | 1767.8s | 8406.6s | **4.76** | 1.0 | 0.2582 |
+**And the part worth remembering:** `nodeloop/fleetsample.sh` — written 2026-08-02, polling `lms ps`
+every 30 s, 4451 rows, still sampling — says the fleet was busy **0.753 / 0.857 / 0.909 / 0.716** of
+node-time. A 19-46 point gap against what I reasoned from, on disk, unread for three days (**L198**).
 
-Three of four plans afford ~4.8-5 nodes against a pool of 3. Time-at-six-concurrent is
-13.8% / 6.4% / 0.8%. A **one**-node run of the same spec reaches EXECUTE occupancy **1.0**.
+⚠ `lms` is a device-level **sanity check, not a decomposition**: in n3-r0's execute window the
+event-log task busy (13082.6 device-s) EXCEEDS lms busy (~11422), because a task span includes local
+tool execution while the GPU idles.
 
-**⚠ THE PREMISE IS NOT YET CLEARED.** These runs also fired judge 103 / 72 / 64 / 43 and pre_review
-7 / 12 / 12 / 9. `occupancy.py` counts busy node-seconds from `task_dispatched`/`task_completed`
-**only**. If judge and pre_review occupy a device, the fleet was working and the number is measuring
-my own blind spot (L4). **A scheduler fix built on an uncorrected occupancy figure is a fix for a bug
-that may not exist.** Workflow `wf_94b83a28-e0e` runs this falsifier FIRST, before any finder.
+## 🎯 The re-aimed target
 
-**⚠ AND THE RATIO IS BIASED UPWARD.** `longest_path()` does `plan_deps.setdefault(tid, [])`, so any
-task absent from `plan_loaded` becomes a dependency-free root. r0 4/20 · r1 2/22 · r2 4/21 · **r3
-7/19, including `http-api-server`, `meridian-client`, `frontend-page` — not test tasks.** r3's 4.76
-is the least trustworthy number in the table. **Instrument fix queued: read the accepted `best_plan`,
-not the last `plan_loaded`.** (L197)
+**Sink serialisation.** Counting judge and pre_review at slot level, r1 and r3 still sit near
+0.55-0.61 of six slots, and **r1 carries a 2566.6 s solo `integrate-verify` tail — 30% of its wall**
+— which no measurement artifact explains. This lines up with the long-standing 36-47%-of-node-busy
+observation for integrate-verify.
 
-**What survives both caveats:** `baseline-n3-r1` has only 2 extras, is the one number *below* the
-pool (2.64), and is the **worst cell** — score 0.4780, longest wall 8488.0s, zero redrafts, shortest
-prefix 1330.0s. Cheapest planning, narrowest DAG, worst app. And its own attainable 0.8787 against an
-actual 0.4737 is a gap plan width does not explain.
+**Plus one real defect the falsifier surfaced on its own:** `scheduler.rs:1099` and `:1220` select the
+idle-job device with `position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)` — the FIRST device
+with any free slot, in pool order — while `pick_device` at `:592-600` deliberately sorts by
+`in_flight`. **The mechanism built to fill idle nodes does not target idle nodes.** Judge work
+currently adds +0.062/+0.064/+0.069/+0.110 to device occupancy; landing on genuinely idle devices it
+would add +0.143/+0.156/+0.186/+0.198 — roughly double.
+
+**Queued engine fixes, observability FIRST** (fixing selection before measurement is how the F346
+detour started):
+
+1. `judge_verdict.device` reports the **judged worker's** device (`task_final_device`,
+   `scheduler.rs:1439-1442`), not the node that ran the judge ⇒ judge load is unattributable.
+2. `pre_review` emits only a completion event — no start, no duration (`scheduler.rs:2459-2468`) —
+   while one call can hold a slot for up to 900 s ⇒ pre-review slot time is unmeasurable.
+3. Then `position()` → least-loaded selection for idle jobs.
 
 ## What is running right now
 
@@ -58,73 +71,61 @@ cd ~/Projects/goose/evals/swarm-bench/nodeloop
 ./loop.sh check           # expect OK, loop pid 91810, engine pid 91813
 ```
 
-`baseline-n1-r0` is in EXECUTE (prefix closed 2925.8s). It is the campaign's first 1-node cell and
-closes the first matched pair — **let it finish**, then take the boundary. If the loop stops:
+`baseline-n1-r0` is in EXECUTE and has reached `integrate-verify` — 14 dispatched, 12 done of a
+16-task plan. **Let it finish**, then take the boundary. If the loop stops:
 `rm -f STOP && ./loop.sh start` — bare, never piped (F298).
 
-Workflow `wf_94b83a28-e0e` (`/workflows` to watch) is doing a read-only scheduler investigation:
-premise falsifier → 4 finder lenses (capacity accounting, ready-task loop, forced serialisation,
-artificial dependencies) → adversarial refutation of every finding → a work order ranked by
-confidence-that-it-is-correct.
+Workflow `wf_94b83a28-e0e`: falsifier DONE (above); four finder lenses still running. ⚠ **They were
+briefed on the now-dead premise** — read every finding against F348, and anything motivated by "the
+scheduler leaves slots unfilled" is already answered. A workflow result is a claim; read the
+`file:line` yourself (L130).
 
-## Cells collected (baseline arm, frozen engine)
+## Cells collected — the baseline to beat
 
-| cell | unit | wall | score | occ | tier B | prefix (redraft) | replan bonus |
+| cell | unit | wall | score | EXEC occ | tier B | prefix (redraft) | replan |
 |---|---|---|---|---|---|---|---|
-| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 0.5645 | .3194 | 2218.7 (1) | +2 TEST-ONLY |
-| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 0.4737 | .2083 | 1330.0 (0) | +2 TEST-ONLY |
-| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 0.6499 | .3194 | 1316.0 (0) | +4 TEST-ONLY |
-| 4 | `baseline-n3-r3` | 7302.6 | **0.8157** | 0.2582 | **.875** | 2882.7 (2, REVERT, conf 61) | +2 APP-SIDE |
-| — | `baseline-n1-r0` | running | — | exec **1.0** | — | 2925.8 (1, conf 60→100) | cannot replan |
+| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 0.8568 | .3194 | 2218.7 (1) | +2 TEST-ONLY |
+| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 0.5746 | .2083 | 1330.0 (0) | +2 TEST-ONLY |
+| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 0.8139 | .3194 | 1316.0 (0) | +4 TEST-ONLY |
+| 4 | `baseline-n3-r3` | 7302.6 | **0.8157** | 0.5910 | **.875** | 2882.7 (2, REVERT, conf 61) | +2 APP-SIDE |
+| — | `baseline-n1-r0` | running | — | **1.0** | — | 2925.8 (1, conf 60→100) | cannot replan |
 
-n3 score mean **0.6641**, sd **0.1401**. These stay valid as a *baseline to beat* even though the
-curve will not reach n=8 — that is the point of re-baselining after the fixes land.
+n3 score mean **0.6641**, sd **0.1401**.
 
-## The mechanism results worth keeping (they are why the fixes have a target)
+## Mechanism results that still stand
 
-- **Planning scales with the fleet, measured twice (F343/F345).** Detailing costs 112.4 s/task on one
-  node vs 60.2 on three in the discarded round, and 50.9 vs 27.2 in the accepted round — **the same
-  1.87 from two independent windows in the same runs.** The skeleton vote does NOT scale and does not
-  need to (232/214 vs 222/331 vs 226/296/238, flat), because a 2-3 draft vote clears in one wave on
-  2 slots or 6. **The one-node arm serialises the fan, not the vote.**
+- **Planning scales with the fleet (F343/F345).** Detailing costs 112.4 s/task on one node vs 60.2 on
+  three in the discarded round, and 50.9 vs 27.2 in the accepted round — **the same 1.87 from two
+  independent windows in the same runs**. The skeleton vote does NOT scale and does not need to
+  (232/214, 222/331, 226/296/238, flat) because a 2-3 draft vote clears in one wave on 2 slots or 6.
+  **The one-node arm serialises the fan, not the vote.** Honest n for the 1.87 is 2 — n3-r0 does not fit.
+- **The DAG bias is fixed (F347, occ-4).** Split children inherit their parent's deps and replace it;
+  replan additions stay rooted because the replanner injects them for being independent. Zero
+  blind-rooted tasks remain in the corpus. `max_useful_nodes` is a **plan-shape** number and never
+  showed the fleet was idle — F348 kills the conclusion, not the ratio.
 - **A reuse cache is not worth building (F321/F324).** Genuine redrafts reuse 15.2% of accepted tasks.
-  The measurement `swarm.rs:22967-22980` asks for by name is taken; the answer is no.
-- **`retarget_discarded` means SET ASIDE, not thrown away** — `best_plan` ships it back, and 2 of 4
-  redrafting runs end in a REVERT.
-- **The prefix IS the plan (F323).** `plan_loaded` → first `task_dispatched` is 0.0s in 8 of 8.
+- **The prefix IS the plan (F323).** `plan_loaded` → first `task_dispatched` is 0.0 s in 8 of 8.
 
-## The four things a reader arriving cold is most likely to get wrong
+## Four things a reader arriving cold gets wrong
 
-**1. THE PARK USED TO DESTROY EVIDENCE (F338).** `cp -R "$RUNDIR"/*/ "$PARK/"` copies directory
-*contents*, so twelve unit dirs collapsed into one park and `swarm-1node-r0`'s original log is gone.
-Fixed to `cp -R "$RUNDIR" "$PARK"`. This was also F329's root cause — I fixed the metric that noticed
-the duplicates and never asked why they existed.
+1. **The park used to destroy evidence (F338).** `cp -R "$RUNDIR"/*/ "$PARK/"` copies directory
+   *contents*; twelve unit dirs collapsed into one and `swarm-1node-r0`'s original log is gone. Fixed.
+2. **Two events spell the same field differently.** `plan_loaded.tasks[].files` vs
+   `retarget_discarded.tasks[].owned_files`.
+3. **A split parent never completes (F334).** Never compute in-flight as `dispatched − completed`.
+4. **`run.jsonl` silence is not worker idleness (F336).**
 
-**2. TWO EVENTS SPELL THE SAME FIELD DIFFERENTLY.** `plan_loaded.tasks[].files` vs
-`retarget_discarded.tasks[].owned_files`. `planshape.owned()` is the only place either is read.
+## Instruments (never re-implement one — L2)
 
-**3. A SPLIT PARENT NEVER COMPLETES (F334).** Any in-flight count built from `dispatched − completed`
-reports every split as a permanent hang. `occupancy.py` models this correctly — use it.
+`curve.py` · `power.py` · `planshape.py` · `bonusclass.py` · `occupancy.py` (occ-4) ·
+`dispatch_audit.py` · `reaudit.py` · `goalstate.py --tick` · `review.py` · `failures.py` · `sweep.py`
+· `loop.sh {status,stop,start,boundary,check,selftest}` · `autorestart.sh` · `promptbench.py` ·
+**`fleetsample.sh` — the independent `lms ps` sampler. READ IT (L198).**
 
-**4. `run.jsonl` SILENCE IS NOT WORKER IDLENESS (F336).** A worker emitting tokens writes no events
-until it finishes. Never infer a stall from event absence.
-
-## Instruments (never re-implement one — L2, violated three times this session)
-
-`curve.py` verdict · `power.py` feasibility · `planshape.py` plan shape + reuse · `bonusclass.py`
-replan bonus class · `occupancy.py` node-seconds + plan ceiling · `dispatch_audit.py` · `reaudit.py`
-· `goalstate.py --tick` · `review.py` · `failures.py` · `sweep.py` ·
-`loop.sh {status,stop,start,boundary,check,selftest}` · `autorestart.sh` · `promptbench.py`.
-
-⚠ `occupancy.py` / `dispatch_audit.py` / `curve.py` need an **ABSOLUTE** path.
-⚠ `git add` must run from the **repo root**.
-⚠ `cd` drifts between Bash calls — re-`cd` every command, and make every glob print how many files it
-opened (L174).
-⚠ `<(...)` process substitution is unreliable in this Bash tool — materialise to a file (F331).
-⚠ `grep -c` exits 1 on zero matches.
+⚠ absolute paths for `occupancy.py`/`dispatch_audit.py`/`curve.py`. ⚠ `git add` from the **repo root**
+— violated again at 07:56. ⚠ `grep -c` exits 1 on zero matches. ⚠ `<(...)` is unreliable here (F331).
 
 ## Fleet
 
 3 LM Studio nodes, `PARALLEL 2` ⇒ **6 slots**. **NEVER load, unload or re-alias anything in LM
-Studio.** If the engine cannot use three identical nodes, that is a `swarm.rs` bug, not a fleet
-question — and per the pivot above, fixing that bug is now the whole job.
+Studio.**
