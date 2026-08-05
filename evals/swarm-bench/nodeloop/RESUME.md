@@ -1,85 +1,103 @@
-# RESUME — live state, rewritten 2026-08-05 ~01:05 local
+# RESUME — live state, rewritten 2026-08-05 ~03:20 local
 
-The previous version of this file described a park from 2026-08-03 and said *"seven engine changes
-committed, NONE yet verified"*. **All seven are now verified on the wire (F277), the node curve is
-running, and there is a live obligation below.** A stale resume file is worse than none: it tells the
-next reader to redo work that is done and hides the one thing that is not.
+The previous version led with *"THE ONE THING THAT MUST HAPPEN NEXT — CLEAR `STOP` AND RESTART"*.
+**That is DONE.** It also carried an open contradiction that has since been resolved against me. A
+stale resume file tells the next reader to redo finished work and hides the thing that is actually
+open — so this file is rewritten, not appended to.
 
-## 🔔 THE ONE THING THAT MUST HAPPEN NEXT — CLEAR `STOP` AND RESTART
+## ✅ There is no outstanding obligation. The sweep is running.
 
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
-./loop.sh status                 # while it says RUNNING, wait — the current cell is being kept
-rm STOP && ./loop.sh start       # the MOMENT it is no longer RUNNING
+./loop.sh status          # expect: RUNNING pid=80288
 ```
 
-`./loop.sh stop` was issued deliberately (F280). `sweep.py:1421` checks the sentinel at the **top of
-the unit loop**, so `baseline-n3-r1` runs to completion and its result is kept; the supervisor then
-exits cleanly. The restart reloads **`MIN_REPS=5`** and the F254 watchdog fix.
+Restarted 02:32:31 with **`MIN_REPS=5`** loaded, `STOP` cleared. If it is ever NOT running, start it:
+`./loop.sh start` — **bare, never piped.** A pipeline's exit code is not the command's, and
+`start | tail` once returned 1 while having started successfully (F298).
 
-**Why it cannot be skipped:** the running supervisor (pid 22764) holds `MIN_REPS=3` in memory (L23).
-Backlog positions 1-6 are identical under either target, but **from position 7 a target-3 supervisor
-walks off to other arms and the curve stops at n=3 — and F260 proved n=3 can never clear 0.05 (smallest
-attainable p = 0.125).** ⚠ **A STOP sentinel nobody clears is a stopped campaign, which is exactly the
-state the previous resume was written from.**
+⚠ **A `>>>` line is written ONCE PER UNIT and a unit runs ~2 hours. A quiet `loop.log` is normal**
+— treating that silence as a failed restart cost a whole tick (F299/L161).
 
-## 🧊 THE ENGINE IS FROZEN (F253)
+## 🧊 The engine is still frozen (F253)
 
-`complete()` keys on `engine_build`, so **any boundary mid-curve voids every cell already collected.**
-Do not rebuild, do not `cargo check` (it also steals CPU from `local-mihai`). Reading source is free.
-Instrument fixes ship freely — `reaudit.py` means an `AUDIT_VERSION` bump costs **zero** unit re-runs.
+`complete()` keys on `engine_build`, so any boundary mid-curve voids every cell collected. Do not
+rebuild, do not `cargo check`. **Reading source is free. Instrument fixes ship freely.**
 
-**THREE ENGINE PATCHES ARE QUEUED AND UNCOMPILED.** `cargo fmt` is clean; nothing has type-checked.
-**The next boundary MUST run `cargo clippy --all-targets -- -D warnings` BEFORE deploying** (L108:
-`cargo build` skips `#[cfg(test)]` — that is how 45 lib tests went dark for sessions).
+**THREE ENGINE PATCHES REMAIN QUEUED AND UNCOMPILED.** The next boundary MUST run
+`cargo clippy --all-targets -- -D warnings` BEFORE deploying (L108: `cargo build` skips
+`#[cfg(test)]`).
 
-| commit | what | expected effect |
+| commit | what | status |
 |---|---|---|
-| `f1a20c99b` | scouts gated on `straggler_stop_degrade`, not `straggler_stop` | stop discarding 1 of 3 research lenses (F256) |
-| `95b36748f` | `rules_delivered` also emits `rules_sections` | makes kind-mismatch measurable again (F259) |
-| `00563c6ea` | planner gets Σ device weights, not `devices.len()` | plan width targets **6 slots**, not 3 devices (F269-F271) |
+| `f1a20c99b` | scouts gated on `straggler_stop_degrade`, not `straggler_stop` | F256, unverified |
+| `95b36748f` | `rules_delivered` also emits `rules_sections` | F259, unverified |
+| `00563c6ea` | planner gets Σ device weights, not `devices.len()` | **premise now CONFIRMED on the wire** — `skeleton_drafts` carries `worker_count: 3` while the fleet has SIX slots |
+
+F276's proposed patch at `judge.rs:459-470` is **WITHDRAWN, not deferred** — F292 showed the backstop
+it would have added already exists and already fires.
 
 ## 🎯 GOAL ONE — the node curve
 
-**Claim:** a 3-node run beats a 1-node run on **BOTH** wall-clock **AND** shipped quality.
-**Protocol is frozen in `PREREGISTERED.md`; the verdict is mechanical — run `python3 curve.py`, never
-compute p by hand.**
+**Protocol frozen in `PREREGISTERED.md`. The verdict is mechanical: `python3 curve.py` with an
+ABSOLUTE path. NEVER compute p by hand.**
 
-    CELL 1 (finished, clean)  baseline-n3-r0
-      wall 7725.4 s · score 0.6595 · 3/3 nodes · prefix 2218.7 s · EXECUTE 5089.6 s @ 0.8568
-      mean concurrency 3.792 vs plan ceiling 5.046 · total_task_secs 19314.6 · critical path 3827.4 s
-    NOW   baseline-n3-r1     NEXT  baseline-n1-r0  <- the first matched pair
+    CELL 1  baseline-n3-r0   wall 7725.4 s · score 0.6595 · A .8333 B .3194 C .8571 D .705
+                             prefix 2218.7 (redraft 1) · 2 tasks failed
+    CELL 2  baseline-n3-r1   wall 8488.0 s · score 0.478  · A .8333
+                             prefix 1330.0 (redraft 0) · 21 done / 1 failed (integrate-verify, 3 attempts)
+    CELL 3  baseline-n3-r2   IN FLIGHT · prefix 1316.0 (redraft 0, plan_confidence 88)
 
-**Two predictions are on record and they DISAGREE (F281). Do not widen either.**
-`F261` registered `n1_wall / n3_wall ∈ [1.6, 2.4]` from a partial read that F273 later proved biased;
-the finished-cell decomposition gives **1.51**. ≈1.5 ⇒ the band was wrong · 1.6-2.4 ⇒ the decomposition
-is missing something · outside 1.4-2.4 ⇒ both wrong.
+`complete()` reads **True / True / False / False / False** for (3,0)/(3,1)/(3,2)/(3,3)/(1,0).
+`baseline-n3-r2`'s OLD stored row was a void 2-node refusal, which is why the curve re-runs it before
+reaching the n1 arm — that is correct, not a bug (F299).
+
+## 🔴 The two things a new reader is most likely to get wrong
+
+**1. THE F296 CONTRADICTION IS RESOLVED, AND IT WAS MY INSTRUMENT.** For several ticks this file's
+predecessor implied the sweep's scores might be untrustworthy. They are fine.
+**8 of 8 built apps hardcode `http://127.0.0.1:89xx`; 0 of 8 read `MERIDIAN_BASE_URL`.** Those env
+vars exist in exactly one place in the bench (`score_build.py:507-508`) and **nothing reads them** —
+dead code. My rescore bound a fixture on 8500/8501 and the apps never spoke to it. Every number from
+it is void. **F289's bimodal tier B is NOT a scorer artifact** (F304/F305).
+
+**2. OFFLINE RE-SCORING CONFLICTS WITH A RUNNING SWEEP, STRUCTURALLY.** `sweep.py:59` sets
+`PORT_BASE = 8930` and assigns vendor ports upward per unit, and each app bakes in the port it was
+built against. So an archived tree can only be re-scored on **its own** port, inside the range the
+live sweep uses. **Re-score only BETWEEN units**, and check the specific port:
+`lsof -nP -iTCP:8931 -sTCP:LISTEN`. `sweep.py:1025-1030` records a leftover listener that held 8931
+for eighty-two minutes and failed the next unit outright.
 
 ## The findings a new reader most needs
 
-- **F273** — the partial read of a run is **biased, not just noisy**: unfinished said "no scheduling
-  slack", finished says **24.9% below the plan ceiling**. Tails and failures land at the END.
-- **F274** — the biggest task and the entire serial tail were the **same task, and it FAILED**
-  (24.6% of all node-busy, 3 dispatches, nothing produced).
-- **F276** — a repeat `over_reading` cannot escalate, but **the fix I proposed was banned by a comment
-  at the fix site**. The real gap: "did nothing" has a deterministic backstop, "acted a lot and
-  produced nothing" does not.
-- **F262** — the 1-node arm's `plan_confidence` is **`null`**, so it skips a quality gate it cannot
-  compute. An arm that cannot compute a check is not passing it.
-- **F272** — mini-goal 2 was **revoked by its own pre-registered rule** (10 attempted / 3 failed,
-  p = 1.000). **RESOLVED = ONE: F207, weights routing.**
+- **F303** — the redraft is a DISCRETE branch on `plan_confidence` vs `ask_floor` 85, and the split is
+  clean across **seven** cells: no-redraft `1091.3 · 1148.9 · 1316.0 · 1330.0`, redraft
+  `1730.9 · 2218.7 · 2839.0`, **gap (1330.0, 1730.9) still empty**. Confidence lives in `plan_loaded`
+  in `run.jsonl`, **not** in the stored `prefix` blob (every row reads `None`).
+- **F300** — the sink is **deliberately exempt** from `over_reading` (`judge.rs:373-378`) and left to
+  the idle `worker_timeout`, because applying the check *"GUARANTEES it is killed"*. That comment
+  names a past run that *"reported FAILED though the app works"*, and cell 2 has the same signature.
+- **F294** — `worker_timeout_secs` = **420** is an **IDLE-gap** timer, not a wall-clock cap
+  (`swarm.rs:11321`). The knob documentation calls it a wall-clock cap with default 900; both halves
+  are wrong.
+- **F295** — `task_completed` has **no `ok` field**, it has `status`. Use `run_finished.report`, never
+  a hand-rolled tally; `.get('ok', True)` on an absent field reads every run as clean.
+- **F290** — the stall detector was disarmed by omitting a flag; state now carries forward.
 
-## Instruments (never re-implement one — L2, violated this session in F266)
+## Instruments (never re-implement one — L2, violated three times this session)
 
-`curve.py` verdict · `occupancy.py` occ-3 (concurrency histogram + prefix phases) · `dispatch_audit.py`
-da-3 · `reaudit.py` in-place row migration · `goalstate.py --tick` · `review.py` · `failures.py` ·
-`sweep.py` · `loop.sh {status,stop,start,boundary}` · `promptbench.py` (needs the fleet — **never run it
-during a measured cell**).
+`curve.py` verdict · `occupancy.py` occ-3 · `dispatch_audit.py` da-3 · `reaudit.py` in-place row
+migration (**use it whenever `audit_version` goes stale — it saved ~2h15m of re-runs**) ·
+`goalstate.py --tick` (carries state forward; `--self-test`) · `review.py` · `failures.py` ·
+`sweep.py` · `loop.sh {status,stop,start,boundary}` · `promptbench.py` (needs the fleet — never during
+a measured cell).
 
-⚠ `occupancy.py` / `dispatch_audit.py` / `curve.py` need an **ABSOLUTE** path; a relative one throws and
-`| head` swallows the exit code.
+⚠ `occupancy.py` / `dispatch_audit.py` / `curve.py` need an **ABSOLUTE** path.
+⚠ `git add` must run from the **repo root**; from `nodeloop/` it fails on a doubled path.
+⚠ `cd` drifts between Bash calls — re-`cd` at the start of every command.
 
 ## Fleet
 
-3 LM Studio nodes, `PARALLEL 2` ⇒ **6 slots**. **NEVER load, unload or re-alias anything in LM Studio.**
-If the engine cannot use three identical nodes, that is a `swarm.rs` bug, not a fleet question.
+3 LM Studio nodes, `PARALLEL 2` ⇒ **6 slots**. **NEVER load, unload or re-alias anything in LM
+Studio.** If the engine cannot use three identical nodes, that is a `swarm.rs` bug, not a fleet
+question.
