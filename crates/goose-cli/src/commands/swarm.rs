@@ -2454,8 +2454,14 @@ fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
 
 /// #median-slash sink-lean-prefill gate: env GOOSE_SWARM_SINK_LEAN_PREFILL wins, else config, else default OFF.
 ///
-/// ⚠️ THIS LEVER IS TWO-SIDED AND UNMEASURED — do not flip the default on the field doc alone, which
-/// records only the upside ("dead context that only slows its prefill").
+/// ⚠️ IT IS ALREADY ON. `Default for SwarmConfig` sets `sink_lean_prefill: Some(true)`, so the sink
+/// has been running WITHOUT the frozen contract bundle in every archived run. The field doc above
+/// still says "None => OFF (byte-identical)", which was true before the golden bake and has been
+/// false since — and it misled me for a full turn (F392). Read this resolver and the Default impl,
+/// never the field doc.
+///
+/// ⚠️ THIS LEVER IS TWO-SIDED — do not treat the field doc as the case for it; it records only the
+/// upside ("dead context that only slows its prefill").
 ///
 /// PRO, and it targets a real failure: the sink is the slowest task and the one that runs to the cap.
 /// A capped sink is the single highest-leverage defect on the board — the arm's worst cell (0.4780)
@@ -2471,8 +2477,12 @@ fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
 /// still detect the break and then repair the wrong end of it, and "cut off mid-repair after 9 writes"
 /// is precisely the state the worst cell died in.
 ///
-/// So the two sides pull on the SAME metric in opposite directions and neither is measured. It stays
-/// OFF, and it stays a toggle rather than being folded into the bake, until a run separates them.
+/// So the two sides pull on the SAME metric in opposite directions — and the ON side is what has
+/// been shipping. The archive is weak circumstantial support for the CON: with the bundle already
+/// absent from every sink, `sync_shape` fails in three of four 3-node cells. That is an association
+/// across five runs with nothing varied, not a finding. The arm to run is therefore
+/// `sink_lean_prefill=0` — turn it OFF and see whether restoring the contract to the one
+/// cross-module reconciler recovers the integration checks.
 fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
 }

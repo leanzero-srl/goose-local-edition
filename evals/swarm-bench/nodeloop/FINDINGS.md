@@ -16349,3 +16349,57 @@ prose with no table invents no omission. clippy `-D warnings` RC=0, spec_* famil
 
 ⚠️ **This closes a reporting hole, not the app defect.** Nothing here makes a single cell implement
 `POST /api/sync` correctly — it makes the gate stop implying it checked.
+
+---
+
+## F392 — 25 FIELD DOCS SAY "OFF BY DEFAULT". THE BAKE SETS THEM ON. ONE OF THEM COST ME A TURN.
+
+Chasing `green_blocking_failed` (RESUME's standing "integrate-verify cannot block a green claim"), I
+checked whether the gate it feeds is even live. `failed_tasks_block_green` — field doc: **"OFF by
+default."** `Default for SwarmConfig` line 1145: **`true`**. So the mechanism IS live and its own doc
+denies it.
+
+That is the third instance today of one pattern (after the two config→env bridge comments in F386), so
+I stopped fixing instances and counted them. Parsing the struct's doc blocks against the Default impl:
+**of 69 bool fields, 25 have a doc claiming "OFF by default" / "None => OFF (byte-identical)" while
+the bake sets them ON.** Among them: `fan_verify`, `require_tests`, `author_pitfalls`,
+`cross_module_check`, `spec_contract`, `contract_validate`, `backbone`, `omni_judge`, `kind_prompt`,
+`grounded_research_only`, `failed_tasks_block_green`, `sink_lean_prefill`.
+
+The v1.41.94 golden bake flipped ~40 levers ON in the `Default` impl and updated **none** of their
+prose. Every one of those docs still ends with some form of *"byte-identical"* — "this changes
+nothing" — about behaviour that is now what ships.
+
+### 🔴 IT COST ME A TURN TODAY, AND I PUBLISHED THE ERROR
+
+Two turns ago I read `sink_lean_prefill`'s doc — *"None => OFF (byte-identical)"* — and wrote, into
+the gate function and into BACKLOG.md, that it is **"default OFF, never measured"**, then designed an
+arm to turn it **ON**. It is `Some(true)`. **It has been ON in every archived cell**, and the sink has
+been running without the frozen contract bundle the whole time.
+
+**The experiment inverts.** The PRO I was proposing to test is already the shipping behaviour; the
+untested half is the CON. And the archive leans the CON's way: with the bundle absent from every sink,
+`sync_shape` fails in **three of four** 3-node cells. That is an association over five runs with
+nothing varied — a reason to run `sink_lean_prefill=0`, not a result (L223). Both the gate-fn comment
+and the BACKLOG arm are corrected in place, marked, not deleted.
+
+⇒ **L227. AFTER A BAKE, EVERY "DEFAULT OFF" IN PROSE IS A CLAIM ABOUT THE PAST.** The `Default` impl
+is the only statement of what ships. My existing rule said *read the gate function, not the field
+doc*; the gate function was not enough here — `sink_lean_prefill_enabled` faithfully resolves
+`env > cfg > false` and looks like a default-off lever. **Only the `Default` impl knows.**
+
+### The mechanism that makes it impossible to recur — named, not yet built
+
+An invariant test in the shape this codebase already uses (`pitfall_items_match_triggers`): read the
+source via `include_str!`, parse each bool field's doc block against the `Default` impl, and fail the
+build when a doc claims off-by-default for a field the bake sets on. **Not shipped this turn** — it
+fails on 25 existing docs, so landing it honestly means correcting all 25 in the same commit, and I
+will not half-land a green-by-exclusion-list version of a test whose whole value is that it cannot be
+ignored.
+
+⚠️ Also settled in passing: **`green_blocking_failed`'s exclusion is not the defect RESUME implies.**
+Its rationale — a failure that is a MODEL self-report must never veto green — is correct doctrine. The
+gap is narrower: r1's `integrate-verify` failed with *"agent stalled — no progress for 420s"*, which
+is the engine's own watchdog, **not** a model opinion. But across all 28 archived runs there are only
+**2** failed owns-nothing tasks, one predating the `error` field — **n=1 classified.** Nowhere near
+enough to change a green gate on, and recorded here so it is not mistaken for one.
