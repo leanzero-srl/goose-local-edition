@@ -16190,3 +16190,53 @@ so a future reader cannot collapse the two.
 
 ⚠️ **Honest bound on the value:** closing this check moves the design 51 → 30 pairs, and "the 1-node
 arm passes it" rests on ONE cell. The solid half is that the 3-node arm omits it 4 of 4.
+
+---
+
+## F389 — FOUR HYPOTHESES ABOUT `sync_shape`, ALL FOUR DEAD, AND A QUEUED ARM'S PREMISE IS OVERTAKEN
+
+`sync_shape` is tier A, worth +0.031 to the n3 mean — more than `client_timeouts` — and the 1-node
+cell scores 1.00 against 0.00 in three of four 3-node cells. I went after it and killed four
+explanations, three of them mine.
+
+**1. INSTRUCTION DILUTION — DEAD, and this is the SECOND time today.** The spec documents the shape
+explicitly as an API table row: `POST /api/sync → {"fetched": <int>, "inserted": <int>, "total":
+<int>}`. So unlike `client_timeouts` there WAS something to lose. But the `api` task — the one that
+implements the endpoint — receives all three key names in **every cell of both arms** (n1-r0, n3-r0,
+n3-r2, n3-r3). **The instruction is delivered identically and the outcome differs**, so this is
+compliance, not delivery. ⇒ The plan's Part 3 hypothesis has now failed on direct measurement twice in
+one afternoon; both times the worker HAD the fact.
+
+**2. "n1 wraps the fallible fetch in try/except and still returns the documented keys" — DEAD.** It
+looked airtight: n1's handler catches, returns 502 carrying `fetched`/`inserted`/`total`; n3-r0 has no
+handler at all. Then I checked the other three cells — **r1 and r3 both HAVE try/except and both score
+0.00**, while r2 scores 1.00. A two-cell comparison produced a clean story that four cells destroyed.
+
+**3. "the checks pass vacuously on an empty database" — DEAD, and the scorer deserves the credit.**
+`payment_row_shape` returns `g(0.0, "no rows")`, `chronological_order` returns `g(0.0, "too few
+rows")`, `total_field` demands `== 247`. Empty input scores zero, which is exactly the `all([]) is
+True` trap the loop doctrine warns about, and this scorer does not fall into it.
+
+**4. THE `/v1` COIN FLIP NO LONGER DISCRIMINATES — and this one is not mine, it is a QUEUED ARM's
+stated premise.** The `doc_fetch` gate (`sweep.py:445`) reads: *"the one whose plan_loaded carried the
+vendor's /v1 prefix scored 88.7% and the two that did not scored 50.0% and 42.7% with every vendor
+call returning 404. The prefix appears six times in the document the spec points at and **zero times
+in the spec**."* Measured on the current archive:
+
+| | n1-r0 | n3-r0 | n3-r1 | n3-r2 | n3-r3 |
+|---|---|---|---|---|---|
+| `/v1` in `plan_loaded` | 6 | 14 | 12 | 14 | 6 |
+| `/v1` in the built client | YES | YES | YES | YES | YES |
+
+**All five. The prefix propagates everywhere now**, and `/v1` does appear in the spec — once, inside
+the docs URL `http://127.0.0.1:8930/v1/docs` — which is evidently enough for the planner to pick it
+up. The arm's premise describes a condition that no longer occurs, so a score change under that arm
+would be attributed to a mechanism that was not binding.
+
+### 🎯 WHERE THE DISCRIMINATOR ACTUALLY MOVED TO
+
+Only **r3** ever reaches 247 payments (`total_field` 1.00; every other cell 0.00). It is also the only
+cell scoring 1.00 on **both** `vendor_cursor_paging` and `vendor_all_pages`. The undocumented-to-the-
+fleet contract that decides whether the app works is no longer the path prefix — it is the vendor's
+**cursor/pagination protocol**, which lives in the same unopenable document. **`doc_fetch` is still
+the right arm; its prediction is not.** Stated as a hypothesis, not a result: one cell separates it.
