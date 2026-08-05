@@ -133,6 +133,37 @@ def main() -> int:
                         + ("failed" if r.get("failed") else "timed_out") for r in recent)
         rep.add("BAD", f"the last {RECENT_FAILS_BAD} units all died the same way ({how})")
 
+    # 5b. A UNIT THAT DIES BEFORE IT STARTS SETS NEITHER `failed` NOR `timed_out`, so check 5 above
+    #     cannot see it — and that blindness let a dead fleet consume most of a backlog while this
+    #     script printed OK.
+    #
+    #     MEASURED 2026-08-05: at 08:03:59 all three LM Studio nodes went from GENERATING to no
+    #     models loaded (fleet-samples.tsv), LM Link still connected. Every unit after that returned
+    #     in ~0.2s with score 0.0, `actual_pool: None`, no run log at all. In twenty minutes the
+    #     sweep burned through 79 units of backlog — reps 8, 9, 10, 11 across every lever arm —
+    #     recording a confident 0.0 for each. `./loop.sh check` said OK the whole time, because
+    #     "process alive + a unit finished recently" is exactly what a fleet outage looks like from
+    #     here: units finish FASTER than ever.
+    #
+    #     The scorer already knew. Every one of those rows carries `harness_ok: False` and the loop
+    #     log says verbatim "the numbers from this unit are NOT evidence". The verdict existed and
+    #     this check simply did not read it. That is the third alarm defect today — F330 rang above
+    #     the line it guarded, F339 could never clear, and this one could never fire.
+    recent_dead = [r for r in rs[-8:] if r.get("harness_ok") is False]
+    if recent_dead:
+        rep.add("BAD", f"{len(recent_dead)} of the last {min(len(rs), 8)} unit(s) recorded "
+                       f"harness_ok=False — the scorer says their numbers are NOT evidence: "
+                       + "; ".join(f"{r.get('arm')}-n{r.get('nodes')}-r{r.get('rep')}"
+                                   for r in recent_dead[:5]))
+
+    #     And the shape that produced it, stated independently of the flag: a unit is a full build
+    #     measured in HOURS. Anything returning in under a minute did not run, whatever it recorded.
+    instant = [r for r in rs[-8:] if (r.get("wall_secs") or 0) < 60 and not r.get("aborted")]
+    if len(instant) >= 2:
+        rep.add("BAD", f"{len(instant)} of the last {min(len(rs), 8)} unit(s) finished in under 60s "
+                       f"(a unit takes ~2h) — they never ran; check the fleet has models loaded "
+                       f"(`lms ps`) before anything else")
+
     # 6. A flat timeout measures the timeout, never the entrant. Any timeout is a WARN because the
     #    score it produced says nothing about the swarm and must not be averaged in.
     tos = [r for r in rs if r.get("timed_out")]
