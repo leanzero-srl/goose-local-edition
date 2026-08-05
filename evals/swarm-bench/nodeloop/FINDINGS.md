@@ -16705,3 +16705,53 @@ that last case explicitly.
 ⚠️ **What this does NOT do:** it does not make the app better by itself. It hands the fix loop a
 finding; whether a weak model then acts on it is exactly the compliance question this whole thread has
 been chasing, and it is unmeasured until the fleet returns.
+
+---
+
+## F399 — WHY F398's DETECTOR WORKS AND THE SAME IDEA CANNOT TOUCH THE SYNC FAMILY
+
+Two leads left after F398. Both are closed, one cheaply and one usefully.
+
+### `run_command_verified: false` in 5/5 is CORRECT, not a plumbing gap
+
+I suspected the smoke gate already runs `python3 -m PKG --help` and the flag simply never got set from
+a verification that had happened. It traces cleanly:
+`run_cmd_verified = ov_verified && run_cmd.is_some()`, `run_cmd` IS present, and `ov_verified` comes
+straight from `complete_result.verified` — honestly false in all five cells. The engine is not failing
+to record a verification; there was none. **Closed, no change.**
+
+### 🔴 A STATIC sync_shape DETECTOR HAS ZERO DISCRIMINATING POWER — measured BEFORE building it
+
+The sync family is the biggest prize on the board (F390: 51 → 5 pairs) and `sync_shape` fails 3 of 4.
+`spec_advertised_surface` already extracts `POST /api/sync -> EXPECT {"fetched","inserted","total"}`,
+so a static check that the app returns those keys is the same shape as F398. I ran the feasibility
+test first — AST-walk every archived tree for dict literals carrying the documented keys:
+
+| cell | `sync_shape` | documented keys present in source |
+|---|---|---|
+| n1-r0 | **1.00** | fetched, inserted, total |
+| n3-r0 | **0.00** | fetched, inserted, total |
+| n3-r1 | **0.00** | fetched, inserted, total |
+| n3-r2 | **1.00** | fetched, inserted, total |
+| n3-r3 | **0.00** | fetched, inserted, total |
+
+**Identical on all five. The check would fire the same way on every cell, passing and failing alike** —
+a detector with no power to distinguish anything, shipped into the fix loop where it would produce
+either constant noise or constant silence. Compare F398, where the same style of test gave 5/5
+agreement. **The test that validated one killed the other.**
+
+### ⇒ L231. A DETERMINISTIC DETECTOR CAN ONLY TARGET A DEFECT WHOSE GROUND TRUTH IS STATIC.
+
+`client_timeouts` asks *"is a timeout argument passed at this call site?"* — decidable from the source,
+which is why F398 agrees with the scorer 5/5. `sync_shape` asks *"what did the endpoint actually
+return?"* — and the keys are right there in the source of cells that score 0.00, because the handler
+fails **before** it ever returns them. **Static analysis cannot see a runtime failure**, and no amount
+of cleverness in the AST script changes that.
+
+**The corollary is uncomfortable and worth stating plainly:** the only deterministic way to reach the
+sync family is to RUN the app — which is precisely what `spec_contract` does, and which F395 measured
+as structurally inert on this bench (the spec's only port literal is the vendor's 8930, so the
+already-bound guard correctly refuses every time). So the largest block of score on the board is
+**unreachable by static analysis and unreachable by the runtime checker as currently configured.**
+That is not a defect to fix in an afternoon; it is the shape of the problem, and it is now written
+down instead of being rediscovered by building the wrong detector.
