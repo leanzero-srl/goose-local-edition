@@ -16605,3 +16605,50 @@ the one stub that failed, or a deterministic fallback that extracts signatures f
 spec, rather than anything to fix in the contract plumbing. Registering it as characterised, not
 fixed: I have no evidence that a re-ask succeeds more often than the first attempt, and inventing one
 would be exactly the unmeasured mechanism this log exists to avoid.
+
+---
+
+## F397 — THE L230 SWEEP IS CLOSED. NO MORE VACUOUS PASSES; A DETECTION PROBLEM INSTEAD.
+
+Finished the sweep across `complete_verify`, `review` and `run_overview`. **No further instance of the
+F395 pattern exists** — and that is worth stating plainly, because the point of a sweep is to be able
+to say where the defect ISN'T.
+
+| event | across all 5 cells | verdict |
+|---|---|---|
+| `complete_verify` (9 rounds) | `ran = true` in **every** round; `passed = true` only where `findings = 0` | ✅ not vacuous |
+| `review` | `ran = true`, 5–11 modules examined each time | ✅ not vacuous |
+| `cross_module_drift` (F396) | `checked` = 5/11/11/8/9, never 0 | ✅ not vacuous |
+
+`spec_contract` was the only one that reported a pass without an affirmative signal, and it is fixed.
+
+### 🔴 WHAT THE SWEEP FOUND INSTEAD: THE QUALITY LAYERS DETECT NOTHING
+
+- **`review` returned `findings: []` in 5 of 5 runs**, having examined 5–11 modules each time.
+- **`complete_verify` reported `passed: true` with zero findings in 3 of 5 cells — including n3-r1,
+  the WORST cell (0.4780)**, whose `integrate-verify` had died on a 420 s stall.
+
+Meanwhile the external scorer finds, in those same trees: no request timeout in 4 of 4 three-node
+runs, a wrong sync response shape in 3 of 4, and a sync that never retrieves the 247 payments in 4 of
+5. **The defects are real, deterministic and reproducible — and the engine's own review layer found
+zero of them, every time.**
+
+This is NOT the L230 bug. These layers genuinely RAN and genuinely examined modules; they are not
+claiming a pass they did not earn. They are simply **not sensitive to the defects that decide the
+score.** ⇒ FIRED ≠ CORRECT, measured at the layer level rather than the lever level.
+
+**The consequence for how this project reads a run:** `review.findings == []` is currently worth
+nothing as evidence of quality — measured detection rate 0 of 5 against an app with known, scorer-
+confirmed defects. Anywhere downstream treats that emptiness as a green, it is treating silence as
+evidence, which is the same error in a different costume.
+
+### One more, recorded without a fix
+
+`run_overview.run_command_verified` is **false in 5 of 5** — the engine publishes "how to run this
+app" (`python3 -m vendorsync --help`) having never confirmed the command works. The event is HONEST
+about it, carrying the flag; whether the user-facing surface shows that flag is a desktop question I
+have not opened and will not claim either way.
+
+⚠️ **No engine change this turn, deliberately.** Making `review` sensitive is a molding problem on a
+weak local model, not a code path, and the honest next step is the same as F396's: characterise, do
+not invent an unmeasured mechanism.
