@@ -12526,3 +12526,32 @@ file.** It costs one command and it is now on record that it can.
 without-score, dropped-pair caveat). They are asserted in `self_test()` against synthetic rows, which
 is adequate — they are pure predicates over fields I have now confirmed are present and correctly
 typed in the live rows.
+
+## F309 — the sink cap is PER ATTEMPT, confirmed to the second; and cell 3 is currently past its deadline
+
+Measuring first-sink-dispatch → `sink_capped` on the three capped runs:
+
+    baseline-n3-r0     1 attempt,  0 retries   ->  1800 s   (exactly sink_cap_secs)
+    think_off-n3-r2    1 attempt,  0 retries   ->  1800 s   (exactly sink_cap_secs)
+    sink_review-n3-r0  2 attempts, 1 retry     ->  3594 s   (its LAST attempt capped 1800 s after restarting)
+
+⇒ **F307's "the cap bounds an ATTEMPT, not the task" is now confirmed numerically, not inferred.**
+The deadline is reset by a retry, so a sink with one retry can legitimately consume ~2 x 1800 s. The
+two single-attempt caps fired **to the second**, which makes the deadline's origin unambiguous: the
+attempt's dispatch.
+
+**AND THAT MAKES CELL 3 CURRENTLY ANOMALOUS.** `baseline-n3-r2`'s sink: `retries=0`, `sink_capped=0`,
+**1869 s** since dispatch — **69 s past a deadline that fired exactly on time in both prior
+single-attempt cases**, with `sink_cap_secs: 1800` confirmed in its own `levers_resolved`.
+
+⚠ **NOT HEADLINING THIS YET, AND THE REASON IS SPECIFIC (L148).** The run's last written event is
+`judge_observed` at 00:40:43 UTC while my elapsed figure is computed against wall-clock ~00:43:54. So
+1869 s measures dispatch→NOW, not dispatch→last-engine-activity, and the engine may simply not have
+reached its next cap check. **Three readings are still open: the sink completed at the wire, the cap
+is a few seconds out, or the cap genuinely did not fire.** Only the next tick's log distinguishes
+them, and I have been caught before by treating a gap in a live log as a fact about the engine (F299).
+
+📌 **THE CHECK: next tick, read `sink_capped` count and the terminal `task_completed` for
+`integrate-verify`, and compare dispatch→terminal against 1800.** ⚠ **If it ends `done` with
+`sink_capped = 0` and total < 1800, cell 3 is the SECOND genuine capstone completion in the corpus —
+which would double the sample of the only outcome that has ever coincided with B = 1.0.**
