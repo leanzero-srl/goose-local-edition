@@ -2453,6 +2453,26 @@ fn straggler_stop_degrade_enabled(cfg: Option<bool>) -> bool {
 }
 
 /// #median-slash sink-lean-prefill gate: env GOOSE_SWARM_SINK_LEAN_PREFILL wins, else config, else default OFF.
+///
+/// ⚠️ THIS LEVER IS TWO-SIDED AND UNMEASURED — do not flip the default on the field doc alone, which
+/// records only the upside ("dead context that only slows its prefill").
+///
+/// PRO, and it targets a real failure: the sink is the slowest task and the one that runs to the cap.
+/// A capped sink is the single highest-leverage defect on the board — the arm's worst cell (0.4780)
+/// is the run whose integrate-verify was cut off at 1800.1s mid-repair, and removing that one cell
+/// from the arm moves the node-scaling design from 51 matched pairs to 11. Shrinking the slowest
+/// task's prefill is a direct attack on it.
+///
+/// CON, which the field doc does not state: this deletes the frozen-contract bundle from the ONE task
+/// whose job is reconciling cross-module interfaces. `frozen_interfaces_block` describes itself as the
+/// reference for "the #1 cause of passing-unit-tests but a broken end-to-end integration" — and a
+/// SHAPE check is exactly what the capped run lost (sync_shape 1.00 -> 0.00). Running the app finds
+/// that a mismatch EXISTS; the frozen bundle is what says which side is wrong. Without it the sink can
+/// still detect the break and then repair the wrong end of it, and "cut off mid-repair after 9 writes"
+/// is precisely the state the worst cell died in.
+///
+/// So the two sides pull on the SAME metric in opposite directions and neither is measured. It stays
+/// OFF, and it stays a toggle rather than being folded into the bake, until a run separates them.
 fn sink_lean_prefill_enabled(cfg: Option<bool>) -> bool {
     straggler_stop_resolved(std::env::var("GOOSE_SWARM_SINK_LEAN_PREFILL").ok(), cfg)
 }
@@ -11659,7 +11679,11 @@ impl GooseAgentDispatcher {
         // sink as DONE on expiry (NOT an error/re-route) so the run terminates cleanly and the
         // deterministic smoke gate backstops correctness. Unset/0 = OFF ⇒ byte-identical default path;
         // only the sink task is ever affected.
-        let sink_deadline = if activity_key == Some("integrate-verify") {
+        // (base, effective, tree_bytes) — kept, not collapsed into the deadline, because the EFFECTIVE
+        // ceiling is what `sink_capped` must report. The base is a fixed env/config value any reader
+        // already has; the effective one is computed per run from the tree and is the only number that
+        // says what this sink was actually cut off at.
+        let sink_cap_plan = if activity_key == Some("integrate-verify") {
             std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
@@ -11676,11 +11700,13 @@ impl GooseAgentDispatcher {
                     if secs != base {
                         eprintln!("  sink ceiling {base}s -> {secs}s for a {bytes}-byte tree");
                     }
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(secs)
+                    (base, secs, bytes)
                 })
         } else {
             None
         };
+        let sink_deadline = sink_cap_plan
+            .map(|(_, secs, _)| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -11904,7 +11930,17 @@ impl GooseAgentDispatcher {
                 self.events.write_value(serde_json::json!({
                     "event": "sink_capped",
                     "task_id": "integrate-verify",
-                    "cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS").ok(),
+                    // THE EFFECTIVE CEILING, not the base. It reported the raw env var, which since the
+                    // tree-scaling landed is no longer the number the sink was cut off at — the ceiling
+                    // is `scaled_sink_cap(base, tree_bytes, ref)` and runs up to 2x base. So the one
+                    // event that exists to record the truncation named a threshold the run never used,
+                    // and the scaling itself was unreadable from a log: every capped sink said "1800"
+                    // whatever it actually got. All three are emitted because the interesting quantity
+                    // is the RATIO — a cap that did not scale and a cap that scaled to its 2x clamp are
+                    // different failures and were indistinguishable.
+                    "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
+                    "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
+                    "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
                     "detail": "the sink was CUT OFF at its wall-clock cap, not finished — it is \
                                finalized as done so the run can terminate, and the deterministic smoke \
                                gate is what actually backstops correctness here",
@@ -11935,7 +11971,13 @@ impl GooseAgentDispatcher {
                         self.events.write_value(serde_json::json!({
                             "event": "sink_capped",
                             "task_id": "integrate-verify",
-                            "cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS").ok(),
+                            // Same three fields as the top-of-loop site, for the same reason. The two
+                            // sites must stay field-identical or a reader has to know WHICH branch fired
+                            // before it can parse the row — which is exactly the asymmetry the comment
+                            // above this emit was added to prevent.
+                            "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
+                            "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
+                            "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
                             "detail": "the sink was CUT OFF at its wall-clock cap on an event gap, not \
                                        finished — finalized as done so the run can terminate",
                         }));
@@ -22015,14 +22057,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let tcap = cfg.max_tool_response_chars.unwrap_or(30000);
         std::env::set_var("GOOSE_MAX_TOOL_RESPONSE_SIZE", tcap.to_string());
     }
-    // Bridge the sink-cap tunable to the env var the worker watchdog reads (swarm.rs sink_deadline). Env wins;
-    // else the config value (default 0 = OFF). The read site's `.filter(|&s| s > 0)` turns 0 back into OFF, so
-    // the default path is byte-identical.
+    // Bridge the sink-cap tunable to the env var the read site uses (`sink_deadline` in run_agent_in). Env wins;
+    // else the config value, which the golden bake made **1800, not 0** — so the default path is ON, and the
+    // sink HAS a ceiling on a config-only run. This comment used to say "default 0 = OFF … byte-identical",
+    // which was true before the bake and has been false since: the `.filter(|&s| s > 0)` OFF path is now only
+    // reachable by setting it to 0 explicitly. It matters here more than anywhere else, because this bridge is
+    // the ONLY thing that carries the baked ceiling to a desktop run (levers reach the engine via config, never
+    // via env) — read as written, it said the shipping default had no sink ceiling at all.
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
     // Same bridge for the progress watchdog (the read site in run_agent_in reads this env). Env wins; else the
-    // config value (default 0 = OFF, filtered back to OFF by `.filter(|&s| s > 0)` → byte-identical default).
+    // config value — which the bake made **900, not 0**, so this default is ON too. Carried the identical stale
+    // "default 0 = OFF … byte-identical" claim as the sink bridge above, and for the identical reason: both
+    // comments were written when every lever defaulted off, and neither was revisited when the golden formula
+    // was baked into `Default for SwarmConfig`. Fixed together so the pair cannot disagree with reality again.
     if std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS").is_err() {
         std::env::set_var(
             "GOOSE_SWARM_PROGRESS_WATCHDOG_SECS",
