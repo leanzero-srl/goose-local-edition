@@ -16495,3 +16495,63 @@ shorter. A lint caught a hazard my own new text had introduced.
 BETTER PARSER.** "Does the doc contradict the default" is unanswerable without semantics; "is the
 marker present" is answerable with `contains`, and enforces the same outcome — the next reader cannot
 be misled about what ships.
+
+---
+
+## F395 — THE FALSE-GREEN DETECTOR REPORTED SUCCESS BEST WHEN IT WAS MOST HONEST
+
+Hunting the next false green with data rather than by reading. Two measurements, both from the five
+archived cells.
+
+### 1. `passed` is ANTI-CORRELATED with the score
+
+| cell | score | `complete_result.passed` | `verified` |
+|---|---|---|---|
+| n3-r1 | **0.4780 — worst** | **true** | false |
+| n3-r2 | 0.6030 | true | false |
+| n3-r0 | 0.6595 | true | false |
+| n1-r0 | 0.5798 | false | false |
+| n3-r3 | **0.8157 — best** | **false** | false |
+
+The worst cell claims `passed: true` — and it is the cell whose `integrate-verify` died on a 420 s
+stall (F387). The best cell claims `passed: false`. ✅ **`verified` is false in 5 of 5**, so the engine
+is not over-claiming *verification* anywhere; the over-claim is confined to `passed`.
+
+### 2. 🔴 THE `spec_contract` SUMMARY SAID SUCCESS AFTER CHECKING NOTHING — 9 TIMES OUT OF 9
+
+Every `spec_contract` event in the archive:
+
+> `verified: 0, findings: 0, inconclusive: 1, detail: "every advertised check that bound was satisfied"`
+
+**Zero endpoints bound. Zero satisfied. And the summary reads as a pass.** `all([])` is true — the
+vacuous-truth trap, sitting inside the engine's own deterministic false-green detector.
+
+**The guard existed and the honesty defeated it.** The author had written a `CHECKED NOTHING` arm for
+precisely this, its comment citing `verified`'s own doc: *"so that findings.is_empty() &&
+inconclusive.is_empty() because it CHECKED NOTHING is never mistaken for a real pass"*. But the
+condition required **all three** counters to be zero — including `inconclusive`. Recording WHY a check
+could not conclude is exactly what puts a message there. So:
+
+⇒ **THE MORE CANDIDLY THE CHECK EXPLAINED ITSELF, THE MORE CERTAINLY IT REPORTED SUCCESS.**
+
+**And my own F391 would have entrenched it.** That change adds an inconclusive line disclosing the
+unprobed non-GET endpoints — guaranteeing `inconclusive >= 1` on every future run, permanently
+locking out the `CHECKED NOTHING` arm. A disclosure I shipped to close one false green would have
+nailed a bigger one shut.
+
+**Why it never concludes on this bench** (the engine is behaving CORRECTLY here): `spec_port` picks
+the first port literal in the spec, and the only one present is **8930 — the vendor's**, twice, both
+inside the Meridian URL. The bench's vendor service already holds it, and the already-bound guard
+refuses to blame the app for a port a dependency opened. That refusal is right. The consequence is
+that `spec_contract`, baked `Some(true)`, has bought **zero** false-green protection on this bench,
+100% of the time — INERT, which proves nothing.
+
+**SHIPPED:** the decision is now a pure `spec_contract_detail(verified, found)` and `inconclusive` is
+**not a parameter** — it cannot influence the verdict again. Order fixed: a finding outranks all; else
+`verified == 0` is CHECKED NOTHING regardless of what else was recorded; only an affirmative 2xx
+yields a pass. The test pins all four cases plus a loop asserting the pass string appears **iff**
+`verified > 0`. clippy `-D warnings` RC=0.
+
+⇒ **L230. A "NOTHING HAPPENED" GUARD MUST KEY ONLY ON THE AFFIRMATIVE SIGNAL, NEVER ON THE ABSENCE OF
+EVERY OTHER SIGNAL** — because diagnostics are signals, and a guard that counts them will be switched
+off by the very act of explaining itself.
