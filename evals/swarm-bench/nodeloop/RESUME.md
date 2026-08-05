@@ -57,7 +57,7 @@ his call. The sweep is stopped (`STOP` armed 08:07).
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
 ~/.lmstudio/bin/lms ps                       # must list models before anything below
-ls -la ~/Projects/goose/target/release/goose  # MUST be >= 15:07 — see "the binary" below
+ls -la ~/Projects/goose/target/release/goose  # MUST be >= 15:58 — see "the binary" below
 rm -f STOP && ./loop.sh start                # BARE, never piped (F298)
 ```
 
@@ -68,7 +68,14 @@ and F375 (12:54) had all landed. **The sweep runs the RELEASE binary**, so a res
 a full ~2 h cell on an engine carrying none of them, and `review.py` would have reported every
 prediction unsettleable *after* the fleet time was gone.
 
-🔁 **REBUILT AGAIN 15:07** after the F386 (`sink_capped` effective ceiling) and F388 (HTTP-timeout
+🔁 **REBUILT AGAIN 15:58** after F391 (spec_contract discloses unprobed non-GET endpoints) and
+F392-F394 (43 baked-ON levers declare themselves; the build now fails if one does not). Verified with
+controls BOTH ways: `cap_base_secs` x5, the HTTP-timeout pitfall, `advertised endpoint(s) were NOT`,
+`judge_node`, `urlopen` all present; `for a 3-device fleet` and a nonsense literal both **0**.
+⚠️ `BAKED ON` is **0** in the binary and that is CORRECT — it is a doc comment, and `strings` can only
+ever verify literals that reach code. A doc-only change is unverifiable this way by construction.
+
+🔁 **REBUILT 15:07** after the F386 (`sink_capped` effective ceiling) and F388 (HTTP-timeout
 pitfall) engine commits. Verified `strings`-wise with controls BOTH ways: `cap_base_secs` ×5,
 `outbound HTTP call needs an EXPLICIT timeout` ×1, `urlopen` ×2, `judge_node`, `salvaged` all present;
 negative controls `for a 3-device fleet` and a deliberate nonsense literal both return **0**, which is
