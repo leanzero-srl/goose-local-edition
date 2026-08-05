@@ -13892,3 +13892,35 @@ running pid 91813, heartbeat 1 s old, last unit finished 20 min ago, 194 GB free
 ⇒ L193. **AN ALARM THAT CANNOT CLEAR IS A BUG IN THE ALARM — if a condition is permanent by
 construction, scope it to what is still actionable, or it will train its reader to ignore the one
 time it matters.**
+
+## F340 — REGISTERED BEFORE IT CLOSES: n1-r0's PREFIX LANDS IN [1900, 2200] s
+
+`baseline-n1-r0` is at **1489.3 s**, in the detail fan (7 `detail_completed`), with **one
+`skeleton_drafts` and ZERO `confidence_retarget`** — so it has not entered the redraft ladder and,
+unless the gate fires when detailing ends, will not.
+
+**THE BAND, derived from everything known at registration time (L163):**
+
+    n3 no-redraft prefixes    1316.0 · 1330.0     mean 1323.0, spread 14 s (1.1%)
+    old-binary n1 (F322)      2031.3              ratio to that mean = 1.535
+    F281's derived ratio      1.51        ->      1.51 x 1323.0 = 1997.7 s
+    observed ratio 1.535      ->                  1.535 x 1323.0 = 2030.8 s
+
+Two independent routes land within 33 s of each other, and the n3 no-redraft prefix is the most
+stable quantity in this campaign — two cells 14 s apart. **PREDICTION: [1900, 2200] s.**
+
+⚠ **FALSIFIER: a prefix outside [1900, 2200] with no redraft.** ⚠ **VOID IF A REDRAFT FIRES** — the
+ladder adds 700-1000 s per round (F319) and the band assumes none; a `confidence_retarget` before
+`plan_loaded` cancels the prediction rather than failing it, and I will say so rather than quietly
+widening.
+
+⚠ **THIS IS A FRESH MEASUREMENT, NOT A RE-CHECK.** The 2031.3 s figure comes from a run whose log
+`loop.sh start`'s park destroyed (F338), so the number survives only as a recorded finding. If the
+new prefix lands near it, that is one measurement agreeing with a remembered one — not two logs
+agreeing.
+
+**WHY IT MATTERS FOR GOAL ONE.** F285 put planning at 87-91% of the prefix and found it does not
+scale, while research scales 3.3x. If the n1 prefix lands ~1.5x the n3 prefix, the prefix is where
+node count actually buys something — and since F323 showed the prefix IS the plan (0.0 s to first
+dispatch in 7 of 7), that is a clean, mechanism-level datum on the wall-clock arm, independent of
+the noisy end-to-end score.
