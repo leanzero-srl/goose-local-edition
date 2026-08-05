@@ -16147,3 +16147,46 @@ it" rests on ONE cell.** What is solid is the other half: **the 3-node arm omits
   but with zero variance it contributes nothing to the node question while costing every run 0.02.
 - **Of 35 checks, 24 vary; 10 are always 1.0 and 1 always 0.0.** The measurable surface is wider than
   I assumed when I went looking for a narrow one — that hypothesis died too.
+
+---
+
+## F388 — THE CURATED PITFALLS LIBRARY HAD NO NETWORK FACT AT ALL
+
+F387 left one actionable target: `client_timeouts`, the only check of 35 where **all four** 3-node
+cells score below the 1-node cell, every one of them shipping `"no request timeout"`. Its stated harm
+is real — *"one unresponsive vendor call hangs the sync with no recovery."*
+
+`DOMAIN_PITFALLS` (`swarm.rs:9712`) is the engine's curated craft library, injected into a worker's
+prompt when a trigger matches its task. Its eleven items cover cron, timezones, 0-vs-1 indexing, range
+inclusivity, money-as-float, off-by-one, leap years, Unicode length, integer division, mutable
+defaults and week-start. **Every one is a computation trap. Not one concerns I/O, the network, or a
+call that never returns.** The 1-node agent set a timeout as craft; four split runs did not; and the
+engine had nothing to say about it either way.
+
+**THE TRIGGER ROW WAS MEASURED, NOT GUESSED — and that is the whole difference between a fact and a
+delivered fact.** The library's own note warns that a false trigger "spends the author's attention on
+cron facts during a CSS task." Tested against the four archived plans:
+
+| candidate | tasks hit (n3-r0) | verdict |
+|---|---|---|
+| `vendor` | **11 of 16** | the domain word — crying wolf, rejected |
+| `api` | 6 of 16 | still far too broad, rejected |
+| `http://` `urllib` `urlopen` `httpx` `fetch(` … | **4 of 16, incl. `meridian`** | reaches the module that owns the client, in EVERY cell tested |
+
+**A NEW TEST PINS REACHABILITY IN BOTH DIRECTIONS.** The pre-existing `pitfall_items_match_triggers`
+passes on this change and proves **nothing** about it — it only checks that a trigger ROW EXISTS and
+is non-empty, never that any real spec text matches it. A fact nobody can retrieve is worth exactly
+zero, and that failure is invisible to the invariant test. The new test asserts an HTTP task retrieves
+it, a "vendor payment rows in the api schema" task does **not**, and that cron trivia does not ride
+along.
+
+📌 **F388 REGISTERS DELIVERY AND OUTCOME AS SEPARATE HALVES.** Delivery is deterministic and settleable
+at n=1 by reading the dispatched prompt (the F375 shape). The check rising off 0.00 is **not**
+settleable at n=1 and is not promised: **FIRED ≠ CORRECT**, and today's own evidence is that
+test-authoring tasks receive correct, tailored, kind-matched rules and still fail 8–21× more than any
+other kind. **Delivery landing while `client_timeouts` stays 0.00 is a real and expected outcome** —
+it would indict compliance, not the trigger row, and that distinction is written into the prediction
+so a future reader cannot collapse the two.
+
+⚠️ **Honest bound on the value:** closing this check moves the design 51 → 30 pairs, and "the 1-node
+arm passes it" rests on ONE cell. The solid half is that the 3-node arm omits it 4 of 4.
