@@ -7577,6 +7577,41 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(cfg.persona);
     }
 
+    /// The architect's subtask-count ask must AGREE WITH ITSELF at every fleet size. It did not: the worked
+    /// example stayed at a 3-device fleet's numbers after the argument became slots.
+    #[test]
+    fn the_skeleton_count_ask_never_contradicts_its_own_worked_example() {
+        // A 3-device weight-2 fleet — the bed this was measured on — is SIX slots.
+        let six = skeleton_count_clause(6, false);
+        assert!(
+            six.contains("2x to 3x 6"),
+            "formula must quote the fleet: {six}"
+        );
+        assert!(
+            six.contains("about 12-18"),
+            "example must equal the formula: {six}"
+        );
+        // ⚠ THE REGRESSION ITSELF. This literal was correct for devices and wrong for slots, and it survived
+        // the change that made it wrong because nothing checked the sentence against itself.
+        assert!(
+            !six.contains("6-9"),
+            "the stale device-era example is back: {six}"
+        );
+        assert!(!six.contains("3-device"), "no hardcoded fleet size: {six}");
+
+        // Fleet-relative at both extremes — a swarm is 2 units or 100.
+        assert!(skeleton_count_clause(2, false).contains("about 4-6"));
+        assert!(skeleton_count_clause(100, false).contains("about 200-300"));
+
+        // The convergent clause states a single target and carries no worked example to drift.
+        let conv = skeleton_count_clause(6, true);
+        assert!(conv.contains("usually 6 to 2x 6"));
+        assert!(
+            !conv.contains("about"),
+            "converge must stay a single anchor: {conv}"
+        );
+    }
+
     /// The sink ceiling scales with the TREE, and — the half that actually protects the run — STOPS scaling
     /// before it reaches the one join measured to loop.
     #[test]
@@ -10771,6 +10806,35 @@ fn plan_json_from_specs(specs: &[goose_swarm::TaskSpec]) -> String {
 /// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
 /// rewards independent (zero-dep) parallel subtasks + adequate count, penalizes deep dependency chains,
 /// overlapping files, and chokepoints (one task most others depend on).
+/// How many subtasks the architect is asked for, as a function of the fleet.
+///
+/// ⚠ EVERY COUNT IN HERE IS DERIVED FROM `worker_count`. NONE IS A LITERAL. The non-convergent clause used
+/// to read "(e.g. ~6-9 for a 3-device fleet)", which was exactly 2x-3x while `worker_count` was
+/// `devices.len()`. `00563c6ea` changed that argument to SLOTS — a 3-device weight-2 fleet is 6 — and left
+/// the worked example behind, so the one sentence then asked for 12-18 and offered ~6-9 as the example of
+/// it. A weak model anchors on the concrete number, and this fork's standing rule is that a directive scales
+/// to the fleet because a swarm is 2 units or 100.
+///
+/// `converge` (retarget) uses a SINGLE target rather than a range so independent drafts cluster on the same
+/// module count; scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
+fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
+    if converge {
+        format!(
+            "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
+             distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
+             business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
+             subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
+             independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
+        )
+    } else {
+        format!(
+            "aim for about 2x to 3x {worker_count} total (about {lo}-{hi} for this fleet), NOT one per command/function",
+            lo = 2 * worker_count,
+            hi = 3 * worker_count
+        )
+    }
+}
+
 fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
     goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
     let wc = worker_count.max(1) as i64;
@@ -12714,21 +12778,7 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
-        // Convergent count anchor: a SINGLE target (not a 2x-3x range) so drafts cluster on the same module
-        // count. Scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
-        let count_clause = if converge {
-            format!(
-                "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
-                 distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
-                 business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
-                 subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
-                 independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
-            )
-        } else {
-            format!(
-                "aim for about 2x to 3x {worker_count} total (e.g. ~6-9 for a 3-device fleet), NOT one per command/function"
-            )
-        };
+        let count_clause = skeleton_count_clause(worker_count, converge);
         let research_block = if research_findings.is_empty() {
             String::new()
         } else {
