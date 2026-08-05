@@ -13090,3 +13090,61 @@ Confirms F285's decomposition from the other side.
 
 ⇒ nothing to fix; it removes a whole class of hypothesis (dispatch setup cost) from the wall-clock
 arm of GOAL ONE.
+
+## F324 — F321's HEADLINE WAS WRONG, AND THE CODE HAD ALREADY ASKED THE QUESTION I WAS ANSWERING
+
+Two corrections to F321, one tick old, both from reading the source I should have read first.
+
+**1. `baseline-n3-r0` did not "produce an identical plan by coincidence" — IT REVERTED.** Its
+`confidence_retarget` events read `[(round 1, conf 83, redraft), (round 1, conf 81, stall_stop)]`.
+The redraft came back WORSE (83 -> 81), `retarget_stall_guard` fired, and `best_plan`
+(`swarm.rs:22885`, *"remember the highest-confidence plan so a re-draft that happens to diverge can
+never ship worse than the best already measured"*) shipped the plan it had set aside. The per-task
+prose delta confirms it: 15 of 16 tasks differ by 0 or -8 characters, a uniform serialisation
+artifact (`retarget_discarded` records `description.trim().len()`; `plan_loaded` serialises
+untrimmed) — not a rewrite.
+
+So the 1036.6 s is still real and still bought no plan change, but the mechanism is a GUARD WORKING
+CORRECTLY, not a coincidence. The cost is the price of discovering the ladder was not climbing. My
+F321 framing implied a defect where the code has a deliberate, documented safeguard.
+
+**And `retarget_discarded` does NOT mean "thrown away".** It means "set aside for a redraft attempt",
+and `best_plan` can restore it. I named the event's semantics from its name — the third time this
+session (F311, F320, and now this).
+
+**2. THE LADDER IS NOT A WASTE MECHANISM. It gained in 2 of 3 runs, and the gains are large.**
+
+    run              rounds  confidence path        cost of the ladder   accepted vs ask_floor 85
+    baseline-n3-r0     1     83 -> 81 -> revert 83       1036.6 s        83  ACCEPTED BELOW FLOOR
+    think_off-n3-r0    1     79 -> 100                    729.1 s        100 ok
+    think_off-n3-r1    2     41 -> 68 -> 88              ~1435 s         88  ok
+
+Exactly one accepted plan in 7 sits below the floor, and it is the one where the ladder stalled.
+
+**3. THE MEASUREMENT `swarm.rs:22967-22980` ASKS FOR BY NAME HAS NOW BEEN TAKEN.** That comment says
+the event is emitted *"deliberately a MEASUREMENT and not a cache: emit what is being discarded,
+intersect it against `plan_loaded` afterwards, and only build a reuse path if the hit rate justifies
+one. Threshold-free on purpose."* `planshape.py --reuse` is that intersection.
+
+    genuine redrafts only:  5 of 33 accepted tasks were already detailed identically  =  15.2%
+    (the revert is EXCLUDED — it reads 87.5% by construction and answers a different question)
+
+⇒ **THE HIT RATE DOES NOT JUSTIFY A REUSE PATH.** The redraft rewrites the specs it keeps: 17 tasks
+match on structure (same owned files, same deps) but ZERO match on description length in either
+genuine redraft. Caching by task id would hit ~15% and serve stale specs for the rest. **The open
+question in the source is answered NO, and that is a result — it removes a queued optimisation
+nobody now has to build.**
+
+⚠ n = 2 genuine redrafts. The tolerance is not fitted: -8 was measured on the REVERT case, where the
+plan is provably identical (L96 — run the instrument on the case whose answer you know first), and
+exact-length matches are reported separately for exactly that reason. The revert flag is keyed on
+the task-level DIFF, never on the hit rate — keyed on the rate it would have mislabelled
+`baseline-n3-r0` at 87.5%.
+
+⚠ WEAKENED FROM F321: "the gate-passing round never adds test coverage" was 3 of 3; the revert case
+is uninformative (same plan), so it is 2 of 2. Both dropped a test file while confidence rose
+(79->100 and 41->88). **Confidence rises as coverage falls** is now the sharper claim, at n=2.
+Cell 4's registered prediction (`test_files` <= 3) is still the out-of-sample test.
+
+⇒ L178. **WHEN A COMMENT AT THE EMISSION SITE STATES THE OPEN QUESTION, THAT COMMENT IS THE
+SPECIFICATION FOR THE INSTRUMENT — read it before designing the measurement, not after.**
