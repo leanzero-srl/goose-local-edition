@@ -13148,3 +13148,55 @@ Cell 4's registered prediction (`test_files` <= 3) is still the out-of-sample te
 
 ⇒ L178. **WHEN A COMMENT AT THE EMISSION SITE STATES THE OPEN QUESTION, THAT COMMENT IS THE
 SPECIFICATION FOR THE INSTRUMENT — read it before designing the measurement, not after.**
+
+## F325 — MY STALL DETECTOR SUPPRESSED A REAL RESULT FOR FIFTY TICKS. THE ENGINE HAS BEATEN THE NULL.
+
+`moved_significantly` computed a p **only in the `failed == 0` branch** and returned `(False, 1.0)`
+unconditionally otherwise:
+
+```python
+if failed == 0:
+    p = (1 - BASELINE_RATE) ** n
+    return p < SIGNIFICANCE, p
+# Any failures at all means the rate has not obviously collapsed; treat as unmoved
+return False, 1.0
+```
+
+That comment was a defensible simplification while the sample had zero failures. The moment the
+campaign's first test-author failure landed it became an **ABSORBING STATE**: no quantity of later
+success could ever reach the test again. A counter that can only read one way is as broken as one
+that reads the wrong number (L153) — and this one was the guardrail I wrote to police exactly this
+class of self-flattery, one hour after writing the guard against the *opposite* bias.
+
+**WHAT IT WAS HIDING.** Current binary, in-scope runs only:
+
+    task-level:      3 failures in 38 attempts, null 13/42 predicts 11.76   p = 0.00071
+    run-clustered:   6 of 7 runs entirely clean, null predicts 0.97 clean   p = 3.7e-05
+
+**THE ENGINE'S TEST-AUTHOR FAILURE RATE HAS DECISIVELY BEATEN THE OLD BUILD.** The detector printed
+*"NOT SIGNIFICANT — this could be luck"* under that number every tick while I hunted elsewhere.
+
+⚠ THE UNIT IS THE RUN, NOT THE TASK (L114). All three failures land in `baseline-n3-r0`; six of seven
+runs are clean. Thirty-eight task attempts are nowhere near thirty-eight independent trials, so the
+task-level p is the WRONG test even though it happens to agree here. `measured_metric` now records
+`runs_task_counts` and `runs_clean`, and the significance test uses the exact Poisson-binomial over
+runs, falling back to the task-level binomial only for the rows already on disk that predate those
+fields. The self-test asserts the clustered path OVERRIDES the fallback when both are present.
+
+⚠ COMPOSITION, stated because it qualifies the number: the 7 in-scope runs are 3 baseline cells and
+4 `nodeloop-parked-*` runs. All 7 pass the `run_finished` gate. A parked run's completed set is
+selection-biased toward success (L110), which is a bias TOWARD the result — so the honest reading is
+"significant, on a sample that includes four runs whose composition flatters it."
+
+⚠⚠ THIS FIX SILENCES MY OWN ALARM — the exact shape of change to distrust (L90). So:
+  · the self-test asserts the detector can still say NO — a metric AT the null (12 of 38) reads
+    not-significant, 2 of 7 clean runs reads not-significant, an empty metric scores nothing, and
+    the `failed == 0, n == 5` noise sample that started this whole guard STILL reads not-significant
+  · `failed == 0` now reduces to `(1 - rate)**n` by the general formula, so the old CORRECT branch is
+    subsumed rather than replaced
+  · **AND IT DID NOT ACTUALLY SILENCE IT.** The streak went 50 -> 25, not 50 -> 1: the metric became
+    significant 25 ticks ago, so the clock restarted then and the alarm STILL fires at 25 > 10. The
+    fix moved the alarm to the right moment instead of switching it off.
+
+⇒ L179. **A SIGNIFICANCE TEST WITH AN EARLY RETURN HAS A REGION IT CANNOT EVALUATE — find that
+region before trusting any verdict it gives, because it will read exactly like a negative result.**
