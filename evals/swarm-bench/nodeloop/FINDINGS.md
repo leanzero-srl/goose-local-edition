@@ -14122,3 +14122,50 @@ the evidence.
 ⇒ L195. **A SUMMARY IS A CLAIM AND DECAYS LIKE ONE — when a finding and a summary disagree, open the
 finding; and check whether the summary's phrasing is one you already retracted, because a withdrawn
 claim re-enters through the note that quotes it.**
+
+## F345 — the detail fan is 1.87x slower per task on one node, measured twice in the same run
+
+F343 said the redraft ladder costs 1.36x more on one node and named the detail fan as the reason.
+That naming was at risk: `occupancy.py`'s prefix breakdown prints ONE `detail x17` line, which reads
+as "the detail fan runs once, after the ladder terminates" — in which case the redraft's extra cost
+would be skeleton drafting, not detailing, and F343's mechanism would be wrong.
+
+It is a display artifact. The summary event fires once; `detail_completed` fires per task, and the
+discarded round has its own fan:
+
+    window between skeleton_drafts and confidence_retarget (the DISCARDED round)
+      swarm-1node-r0   1012s   9 detail_completed   ->  112.4 s/detail
+      baseline-n3-r3    542s   9 detail_completed   ->   60.2 s/detail   ratio 1.87
+      baseline-n3-r0    662s   6 detail_completed   ->  110.3 s/detail   (see caveat)
+
+    accepted round (the `detail xN` line)
+      swarm-1node-r0    865s  17 tasks  ->  50.9 s/task
+      baseline-n3-r0    582s  14 tasks  ->  41.6 s/task
+      baseline-n3-r3    571s  21 tasks  ->  27.2 s/task   ratio to n1 1.87
+
+**The same 1.87 falls out of two independent windows in the same runs.** Detailing is the part of
+the ladder that scales with the fleet, which is what F343 asserted and had not yet shown directly.
+
+⚠ **n3-r0 REFUSES to fit and I am not going to smooth it.** 110.3 s/detail on three nodes is a
+one-node number. It is the cell whose redraft ended in `low_confidence_ask` + `ask_timeout`, so its
+window is polluted by a 72s wait that is not detailing — but that only accounts for 72 of the 662s.
+n=2 clean points is the honest count for the 1.87, not n=3.
+
+**The skeleton vote does NOT scale, and does not need to.** Rounds cost 232/214 (n1), 222/331
+(n3-r0), 226/296/238 (n3-r3) — flat within noise across node counts, because it is a 2-3 draft vote
+and both fleets clear it in ONE wave (n1 has 2 slots, n3 has 6). The one-node arm is not serialising
+the vote; it is serialising the fan that follows it.
+
+⇒ **L196. A SUMMARY EVENT PRINTED ONCE PER RUN CAN HIDE A MECHANISM THAT FIRED ONCE PER ROUND —
+count the per-item events before concluding a phase happened once.**
+
+### Live confirmation of the slot model, from the instrument
+
+`occupancy.py` on the running n1 cell prints `fleet holds 2 at PARALLEL 2` and **100% of the dispatch
+window at 2 concurrent tasks — EXECUTE OCCUPANCY 1.0**. The one-node arm saturates its fleet
+completely. The three-node arm's EXECUTE occupancy is 0.8568 / 0.5746 / 0.8139 / 0.5910.
+
+**The 3-node arm is the one leaving capacity on the floor, not the 1-node arm.** Whatever advantage
+three nodes have, it is not that they are better used — they are worse used, and must win on raw
+throughput despite that. Registered as a falsifier for any later claim that the fleet is the
+bottleneck: it is the plan's parallel width that is.
