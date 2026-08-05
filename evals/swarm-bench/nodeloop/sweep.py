@@ -77,6 +77,8 @@ TIMEOUT = 16200          # 4.5h. A cap that truncates the work measures the cap,
 # BLAST RADIUS: this raises every SCORE cell, not just the curve. Mechanism cells (`reps == 1`) are
 # capped at 1 in `backlog()` and are untouched.
 MIN_REPS = 5
+# The node curve's own replicate target (F327). Scoped to baseline n3/n1 only — see `backlog`.
+CURVE_REPS = 8
 TRANSIENT = ("500", "502", "503", "529", "overloaded", "rate limit", "throttl",
              "connection reset", "stream decode", "temporarily", "unreachable")
 MAX_ATTEMPTS = 3
@@ -1220,6 +1222,82 @@ def arms_now() -> list[dict]:
     return arms
 
 
+def curve_first(units: list[tuple], full: int) -> list[tuple]:
+    """Put the node-curve units at the head, ordered so a MATCHED PAIR closes as early as possible.
+
+    A PURE FUNCTION OF WHAT IS STILL INCOMPLETE, and that is the whole point. `main()` recomputes
+    `backlog()` on every iteration and always takes `todo[0]`, so any ordering that depends on the
+    list being consumed in sequence is silently defeated: the previous `zip_longest(n3, n1)` put
+    `n1-r0` at index 1, and after each n3 unit finished the recomputed backlog zipped a fresh n3 rep
+    into index 0 and pushed `n1-r0` back to index 1. MEASURED: four consecutive n3 cells ran while
+    the log printed "NEXT: baseline-n1-r0" every single time.
+
+    Sorting by (rep, then 3-nodes-before-1-node) gives the same sequence whether the list is consumed
+    once or recomputed at every step, because it is a function of the remaining set alone.
+    """
+    curve = [u for u in units if u[0]["name"] == "baseline" and u[1] in (full, 1)]
+    if not curve:
+        return units
+    picked = {id(u) for u in curve}
+    curve.sort(key=lambda u: (u[2], -u[1]))
+    return curve + [u for u in units if id(u) not in picked]
+
+
+def curve_order_self_test(full: int = 3, reps: int = 5) -> None:
+    """The property that matters is STABILITY UNDER RECOMPUTATION — so simulate exactly that.
+
+    Controls both ways (L96/L123): the new rule must close a pair on unit 2, and the OLD zip_longest
+    rule must FAIL the same simulation. A test the previous implementation also passes proves nothing.
+    """
+    arm = {"name": "baseline"}
+    other = ({"name": "kind_prompt"}, full, 0)
+
+    def sim(order_fn) -> list[str]:
+        done: set[tuple[int, int]] = set()
+        seq = []
+        for _ in range(reps * 2):
+            remaining = [(arm, n, r) for r in range(reps) for n in (full, 1)
+                         if (n, r) not in done] + [other]
+            todo = order_fn(remaining, full)
+            if not todo:
+                break
+            a, n, r = todo[0]
+            if a["name"] != "baseline":
+                break
+            done.add((n, r))
+            seq.append(f"n{n}-r{r}")
+        return seq
+
+    def old_rule(units, full_):
+        n3 = [u for u in units if u[0]["name"] == "baseline" and u[1] == full_]
+        n1 = [u for u in units if u[0]["name"] == "baseline" and u[1] == 1]
+        if not (n3 and n1):
+            return units
+        picked = {id(u) for u in n3} | {id(u) for u in n1}
+        paired = [u for pair in itertools.zip_longest(n3, n1) for u in pair if u is not None]
+        return paired + [u for u in units if id(u) not in picked]
+
+    def first_pair_at(seq: list[str]) -> int:
+        seen = set()
+        for i, u in enumerate(seq, 1):
+            seen.add(u)
+            rep = u.split("-")[1]
+            if f"n{full}-{rep}" in seen and f"n1-{rep}" in seen:
+                return i
+        return 10 ** 6
+
+    new_seq, old_seq = sim(curve_first), sim(old_rule)
+    assert first_pair_at(new_seq) == 2, f"a pair must close on unit 2, got {new_seq}"
+    assert first_pair_at(old_seq) > 2, (
+        f"the OLD rule must FAIL this simulation or the test proves nothing — got {old_seq}")
+    assert len(set(new_seq)) == len(new_seq), f"no unit may be scheduled twice: {new_seq}"
+    assert len(new_seq) == reps * 2, f"every curve unit must still run: {new_seq}"
+    assert curve_first([other], full) == [other], "a backlog with no curve units must pass through"
+    assert curve_first([], full) == [], "an empty backlog must stay empty, never invent work"
+    print(f"curve_order self-test OK — new closes a pair at unit {first_pair_at(new_seq)}, "
+          f"old at {first_pair_at(old_seq)}; sequence {new_seq}")
+
+
 def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     """Units still owed, ordered so the cheapest decisive question comes first.
 
@@ -1230,14 +1308,28 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     cells instead of inventing new ones.
     """
     units = []
-    for rep in range(target_reps):
+    for rep in range(max(target_reps, CURVE_REPS)):
         for c in cells():
             # A MECHANISM cell (reps == 1) is DONE after one unit — "did `/v1` reach the plan" does
             # not get truer with a second run, and re-running it is the "loop for the sake of it"
             # this design exists to stop. A SCORE cell grows with target_reps instead, so a long
             # night deepens the comparisons that have to clear the replicate spread rather than
             # inventing new questions nobody asked.
-            cap = 1 if c.get("reps", 1) == 1 else max(c.get("reps", 1), target_reps)
+            # THE CURVE GETS ITS OWN REPLICATE TARGET, and only the curve.
+            #
+            # F327: the sign test's bar is a SAWTOOTH in n. Below 8 pairs a single crossing kills the
+            # result outright (6-of-7 = 0.0625 > 0.05), so 6 and 7 pairs are a HARDER test than 5 —
+            # more fleet time for a worse question. 8 is the first n that absorbs one loss, dropping
+            # the required score gap from 0.148 to 0.110 against a replicate spread that is 31% of the
+            # mean. Registered BLIND, with zero n1 cells on disk, so it cannot have been chosen after
+            # seeing which way the pairs fell.
+            #
+            # Raising the GLOBAL `target_reps` to 8 would drag every score arm to 8 reps as well —
+            # `cap` reads `max(c.reps, target_reps)` — which is a much larger blast radius than the
+            # decision justifies. So the target is scoped to the two arms the curve actually compares.
+            is_curve = c["arm"]["name"] == "baseline" and c["nodes"] in (NODE_LEVELS[0], 1)
+            floor = CURVE_REPS if is_curve else target_reps
+            cap = 1 if c.get("reps", 1) == 1 else max(c.get("reps", 1), floor)
             if rep >= cap:
                 continue
             if not complete(c["arm"]["name"], c["nodes"], rep):
@@ -1331,12 +1423,21 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     # pair tightens the interval. The same units run; the answer just stops being all-or-nothing.
     #
     # n=2 stays where it was: it shapes the curve, it does not answer "does 3 beat 1".
-    n3 = [u for u in units if u[0]["name"] == "baseline" and u[1] == full]
-    n1 = [u for u in units if u[0]["name"] == "baseline" and u[1] == 1]
-    if n3 and n1:
-        picked = {id(u) for u in n3} | {id(u) for u in n1}
-        paired = [u for pair in itertools.zip_longest(n3, n1) for u in pair if u is not None]
-        units = paired + [u for u in units if id(u) not in picked]
+    # THE INTERLEAVE MUST SURVIVE RECOMPUTATION, AND `zip_longest` DID NOT.
+    #
+    # `main()` recomputes `backlog()` every iteration and always takes `todo[0]`. Zipping the two
+    # LISTS produced [n3_next, n1_r0, n3_..., ...], so `n1_r0` sat at index 1 — and after the n3 unit
+    # finished, the recomputed backlog zipped a fresh n3 rep into index 0 and put n1_r0 back at index
+    # 1. MEASURED: four consecutive n3 cells ran while the log printed "NEXT: baseline-n1-r0" every
+    # single time. The 1-node arm was starved by a scheduler that never advanced past its own head,
+    # and the comment above promising "a MATCHED PAIR exists after every two units" was describing an
+    # intent the code defeated.
+    #
+    # Ordering by (rep, then 3-nodes-before-1-node) is a PURE FUNCTION OF WHAT IS STILL INCOMPLETE, so
+    # it gives the same sequence whether the list is consumed once or recomputed at every step. Once
+    # n3-r0 is done, n1-r0 is the lowest key remaining and becomes the head — the pair closes on the
+    # very next unit instead of after the whole n3 arm.
+    units = curve_first(units, full)
 
     # GOAL ONE GOES FIRST, NOW THAT THE MINI-GOAL IT WAS QUEUED BEHIND HAS RESOLVED.
     #
