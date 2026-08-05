@@ -16085,3 +16085,65 @@ again — same stale claim, same cause: written when every lever defaulted off, 
 📌 **F386 registered as a WITHIN-ROW IDENTITY (L224):** `cap_secs` must equal
 `scaled_sink_cap(cap_base_secs, tree_bytes, 30000)` from the row's own fields. No replicate spread can
 touch it. `cap_secs == cap_base_secs` on a materially larger tree means F369 is INERT.
+
+---
+
+## F387 — I ATTRIBUTED THE ARM'S WORST CELL TO THE WRONG FAILURE. THERE ARE TWO SINK FAILURE MODES.
+
+F386 built its whole target selection on one sentence: *"the n3 arm's mean is dragged down by one
+cell, `baseline-n3-r1` at 0.4780, the run whose integrate-verify was cut off at 1800.1 s."* **Those
+are two different cells.** From the run logs, current archive (`runs/nodeloop/`):
+
+| cell | integrate-verify | `sink_capped` | outcome | score |
+|---|---|---|---|---|
+| n3-**r0** | **1800.1 s** (the cap, to the tenth) | **1** | finalized `done` | **0.6595 — ABOVE the arm mean** |
+| n3-**r1** | 781.1 s | 0 | **FAILED: "agent stalled — no progress for 420 s"** | **0.4780 — the worst cell** |
+| n3-r2 | 1656.4 s | 0 | clean, 0 failures | 0.6030 |
+| n3-r3 | 499.3 s | 0 | clean, 0 failures | 0.8157 |
+
+**THE CAPPED RUN SCORED ABOVE THE ARM MEAN.** So the wall-clock cap — the thing F369 fixes and F386
+called "the single highest-leverage defect on the board" — is **not** what drags the arm down. The
+worst cell died a completely different death: the sink went **totally silent for 420 s** (the IDLE
+watchdog, not the 1800 s wall-clock cap) and was failed outright at 781 s. F369 does nothing for that
+mode. The "51 → 11 pairs" arithmetic was sound as arithmetic — it is just "remove the worst cell" —
+but **the cause I attached to it was wrong.**
+
+⇒ **L226. "THE WORST CELL" AND "THE CELL WITH THE DRAMATIC FAILURE EVENT" ARE DIFFERENT CELLS UNTIL
+PROVEN IDENTICAL.** A vivid mechanism (cut off at 1800.1 s, mid-repair, 56 messages, zero output)
+recruits the worst number to itself, and I never checked they were the same row. One join would have
+caught it — the same join I ran today only *after* committing the claim.
+
+**RESUME's standing claim #3 is also wrong**, and it is not mine: *"the 3-node arm lost the tier-A
+integration check while its integrator was cut off."* `sync_shape` is **0.00 in r0 (capped), r1
+(stalled) AND r3** — and r3's sink finished cleanly in 499 s with zero failures and posted the arm's
+**best** score, 0.8157. Meanwhile r2 ran 1656 s, nearly to the cap, and **kept** it. **The sink's fate
+does not predict `sync_shape` in either direction.**
+
+### ✅ POSITIVE CONTROL FIRST: the tier model reproduces every published score EXACTLY
+
+Weights A .25/6, B .30/12, C .25/7, D .20/10 → **0.5798 / 0.6595 / 0.4780 / 0.6030 / 0.8157**, all
+five, to four decimals. The counterfactuals below therefore run through the *real* scorer, not a
+plausible reconstruction of it.
+
+### 🎯 THE ONE CHECK THAT SEPARATES THE ARMS PERFECTLY
+
+Sweeping all 35 checks for any where **all four** 3-node cells score strictly below the 1-node cell
+returns exactly one: **`client_timeouts`** — n1 `1.00 "timeout set"`, and `0.00 "no request timeout"`
+in **4 of 4** three-node runs. Its stated harm is real: *"one unresponsive vendor call hangs the sync
+with no recovery."* Closing it alone moves the gap **+0.0593 → +0.0793** and the design **51 → 30
+pairs**.
+
+⚠️ **AND IT IS NOT INSTRUCTION DILUTION — I checked, and the hypothesis died.** I expected the spec to
+state a timeout requirement that got lost when work was split. **The spec never mentions timeouts at
+all** (0 real hits in 3943 chars; my first grep's lone "hit" was the regex `hang` matching
+"c*hang*e"). No subtask spec in *either* arm mentions it either. So there was nothing to dilute — one
+agent writing an HTTP client added a timeout as craft, and four split runs did not. ⚠️ **"n1 passes
+it" rests on ONE cell.** What is solid is the other half: **the 3-node arm omits it in 4 of 4.**
+
+### Two more facts worth having
+
+- **`sync_completeness` is `0/247 payments after one sync` in ALL FIVE cells, both arms.** The one
+  check no run has ever passed. It has a working denominator (it sees the 247), so it is not blind —
+  but with zero variance it contributes nothing to the node question while costing every run 0.02.
+- **Of 35 checks, 24 vary; 10 are always 1.0 and 1 always 0.0.** The measurable surface is wider than
+  I assumed when I went looking for a narrow one — that hypothesis died too.
