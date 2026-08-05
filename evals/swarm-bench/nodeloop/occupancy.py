@@ -483,6 +483,26 @@ def idle_slot_accounting(events: list[dict]) -> dict:
     pre_secs: list[float] = []
     pre_missing = 0
 
+    # SALVAGES: tasks the progress watchdog accepted as `done` after a thinking-only stall, because
+    # their owned files were already written. TWO ROUTES ON PURPOSE.
+    #
+    # `salvaged` is the engine's own flag (F357) and is authoritative. Older logs predate it, so they
+    # fall back to the implementation's accidental signature — that path also blanks `session_id` and
+    # empties `tool_calls`. The fallback is REPORTED AS A FALLBACK rather than silently blended,
+    # because it is an inference from two fields that happen to be empty, and it would start lying the
+    # moment either is populated on that path. A number derived two different ways must say which.
+    salvaged_flag = 0
+    salvaged_inferred = 0
+    completions = 0
+    for e in events:
+        if e.get("event") != "task_completed":
+            continue
+        completions += 1
+        if "salvaged" in e:
+            salvaged_flag += 1 if e.get("salvaged") else 0
+        elif e.get("status") == "done" and not e.get("session_id") and not (e.get("tool_calls") or []):
+            salvaged_inferred += 1
+
     for e in events:
         ev, ts = e.get("event"), parse_ts(e.get("ts"))
         if ev == "judge_observed" and ts is not None:
@@ -518,6 +538,12 @@ def idle_slot_accounting(events: list[dict]) -> dict:
         "prereview_slot_secs": round(sum(pre_secs), 1) if pre_secs else None,
         "prereview_calls_timed": len(pre_secs),
         "prereview_calls_untimed": pre_missing,
+        "completions": completions,
+        "salvaged_flagged": salvaged_flag,
+        "salvaged_inferred": salvaged_inferred,
+        "salvage_source": ("engine flag" if any("salvaged" in e for e in events
+                                                if e.get("event") == "task_completed")
+                           else "inferred from the empty-session signature"),
     }
 
 
@@ -683,6 +709,15 @@ def render(a: dict) -> str:
     elif isl.get("judge_verdicts_total"):
         out.append(f"    judge node attribution UNAVAILABLE — {isl['judge_verdicts_total']} verdict(s) "
                    f"carry no `judge_node` (log predates the field, not a measured zero)")
+    n_sal = (isl.get("salvaged_flagged") or 0) + (isl.get("salvaged_inferred") or 0)
+    if isl.get("completions"):
+        if n_sal:
+            out.append(f"    ⚠ {n_sal} of {isl['completions']} completed task(s) were SALVAGED — the "
+                       f"progress watchdog accepted a thinking-only stall because the owned files were "
+                       f"already written ({isl['salvage_source']}). They are NOT clean completions.")
+        else:
+            out.append(f"    0 of {isl['completions']} completions were salvaged "
+                       f"({isl['salvage_source']})")
     if isl.get("prereview_calls_timed"):
         out.append(f"    pre_review held a slot for {isl['prereview_slot_secs']}s across "
                    f"{isl['prereview_calls_timed']} call(s)")
@@ -972,6 +1007,34 @@ def self_test() -> int:
     check("an untimed pre_review is reported as untimed", a["prereview_calls_untimed"], 1)
     if a["prereview_slot_secs"] is not None:
         fails.append("an old log must report pre_review slot time as None, never 0.0")
+
+    # SALVAGE COUNTING, both routes and both directions.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "task_completed", "task_id": "a", "status": "done", "salvaged": True,
+           "session_id": "s1", "tool_calls": [1, 2], "ts": ts(10)},
+          {"event": "task_completed", "task_id": "b", "status": "done", "salvaged": False,
+           "session_id": None, "tool_calls": [], "ts": ts(20)},
+          {"event": "run_finished", "ts": ts(30)}]
+    a = analyse(write(ev))["idle_slots"]
+    check("the engine flag wins over the signature", a["salvaged_flagged"], 1)
+    check("the signature is NOT applied when the flag exists", a["salvaged_inferred"], 0)
+    if "flag" not in a["salvage_source"]:
+        fails.append("a flagged log must say the number came from the engine flag")
+
+    # An OLD log has no flag, so the signature is the only route — and it must say so.
+    ev = [{"event": "run_started", "pool": pool(3), "ts": ts(0)},
+          {"event": "task_completed", "task_id": "a", "status": "done",
+           "session_id": None, "tool_calls": [], "ts": ts(10)},
+          {"event": "task_completed", "task_id": "b", "status": "done",
+           "session_id": "s2", "tool_calls": [1], "ts": ts(20)},
+          {"event": "task_completed", "task_id": "c", "status": "failed",
+           "session_id": None, "tool_calls": [], "ts": ts(25)},
+          {"event": "run_finished", "ts": ts(30)}]
+    a = analyse(write(ev))["idle_slots"]
+    check("the signature finds the salvage on an old log", a["salvaged_inferred"], 1)
+    check("a FAILED task is never counted as a salvage", a["completions"], 3)
+    if "inferred" not in a["salvage_source"]:
+        fails.append("an unflagged log must say the number was inferred, not measured")
 
     if fails:
         print("SELF-TEST FAILED:")

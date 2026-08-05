@@ -14807,3 +14807,40 @@ the moment either field was populated on that path.
 📌 **REGISTERED:** on the next 3-node run I expect **1-3 tasks with `salvaged: true`** (11 across four
 cells ⇒ ~2.75/run). **Zero on every run would mean the flag is not wired to the path that fires**, not
 that stalls stopped.
+
+## F358 — every cell reports its salvage count now, and the rate is 1/19, 4/22, 3/21, 3/17.
+
+`occupancy.py` (occ-5) counts salvages by **two routes, and says which one it used**:
+
+- **`salvaged` — the engine's own flag (F357). Authoritative.**
+- **The empty-session signature — `done` + no `session_id` + no `tool_calls` — for logs written before
+  the flag existed.** Reported explicitly as *"inferred from the empty-session signature"*, never
+  blended with the flag, because it is an inference from two fields that merely happen to be empty on
+  that path and it would start lying the moment either is populated (L174).
+
+**The archive, measured rather than asserted:**
+
+    baseline-n3-r0    1 of 19 salvaged
+    baseline-n3-r1    4 of 22 salvaged      ← also the cell whose sink stalled out entirely
+    baseline-n3-r2    3 of 21 salvaged
+    baseline-n3-r3    3 of 17 salvaged
+
+**11 of 79 — 13.9%.** Every one of these runs was scored as if all its completions were clean.
+
+**The salvage rate is not uniform, and the spread is the interesting part.** r1 salvaged 18.2% of its
+tasks AND lost `integrate-verify` to three consecutive stalls — the worst cell on score (0.4780) is
+also the most stall-afflicted. r0 salvaged 5.3% and scored 0.6595. **That is a suggestive ordering,
+not a result:** four cells, and the two middle cells (14.3% → 0.6030, 17.6% → 0.8157) invert it. **A
+direction at n=4 that two of four points contradict is not a direction** (L191). Registering it as a
+hypothesis to test once the flag produces real data: **if stall rate predicts score, it is a better
+target than anything else found today; if it does not, the salvage is exactly what it claims to be —
+a successful rescue — and only the accounting was wrong.**
+
+✅ **CONTROLS BOTH ROUTES AND BOTH DIRECTIONS:** the flag wins where present and the signature is NOT
+applied alongside it; the signature finds the salvage on an unflagged log; **a FAILED task is never
+counted as a salvage** (it is a different population — F356's four failures); and the source string
+must say "flag" or "inferred" appropriately or the test fails.
+
+⚠ **THE FOUR NUMBERS ABOVE ARE INFERRED, NOT FLAGGED** — no run has yet been produced by the engine
+that emits `salvaged`. They agree exactly with F356's hand count, which is a consistency check on the
+instrument and **not** independent confirmation of the mechanism.
