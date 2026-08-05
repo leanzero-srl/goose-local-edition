@@ -13013,3 +13013,80 @@ and every redraft carries `detail: "best_of_n 3→4"`, so a redraft **raises** t
 
 ⇒ **L176. WHEN YOU DECLARE A MEASUREMENT IMPOSSIBLE, GREP THE EVENT PAYLOADS ONCE MORE BEFORE SAYING
 SO — I announced a missing field twice in two ticks and it was present both times.**
+
+## F321 — `retarget_discarded` CARRIES THE WHOLE DISCARDED PLAN, AND ONE REDRAFT BOUGHT NOTHING
+
+I counted `retarget_discarded` for three ticks (F311, F319, F320) and never opened its payload. It
+carries the ENTIRE plan the engine threw away: every task's `id`, `desc_chars`, `owned_files`,
+`deps`. So a comparison that would cost a 2-hour run is already on disk in logs I have read a dozen
+times. Third repeat of the same mistake — the event NAME is not the event.
+
+New instrument `planshape.py` (self-test passes; reuses `bonusclass.is_test_file`, L2).
+
+⚠ THE KEY TRAP, caught before it produced a number: `plan_loaded.tasks[]` calls the field **`files`**;
+`retarget_discarded.tasks[]` calls it **`owned_files`**. Reading `owned_files` on both — the obvious
+implementation — returns None for every accepted task and reports that the accepted plan owns nothing.
+`owned()` is the only place either key is read, and the self-test asserts the two spellings agree.
+
+The FINAL redraft round, the one that passes `ask_floor` 85, compared task-by-task on what the
+SCHEDULER acts on (owned files + deps; prose deliberately excluded):
+
+    run                last round -> ACCEPTED                        cost of that round
+    baseline-n3-r0     STRUCTURALLY IDENTICAL — same 16 ids,         1036.6 s
+                       same owned files, same deps; prose 0.43%
+    think_off-n3-r0    +4 -5 ~5 tasks, test_files 3 -> 2               729.1 s
+    think_off-n3-r1    +2 -3 ~5 tasks, test_files 4 -> 3               964.0 s
+
+**`baseline-n3-r0` PAID 1036.6 s — 17.3 MINUTES — FOR A PLAN THE SCHEDULER CANNOT TELL APART FROM
+THE ONE IT DISCARDED.** 116 characters of prose out of ~27,000.
+
+MY REGISTERED HYPOTHESIS IS DEAD ON ITS OWN FALSIFIER. I registered "the ladder NARROWS the plan:
+accepted has fewer roots AND fewer separate test tasks than the first discard" and registered the
+falsifier "accepted >= first on BOTH in 2 or more runs". It read 2 of 3. Narrowing is not the story.
+
+WHAT SURVIVES, and it is stronger than what I predicted: **the final round never ADDS test coverage
+— twice it removes a test file, once it changes nothing.** 3 of 3. Coherent with F320: the binding
+signal is `agreement` in 6 of 6, and agreement is cheapest to reach on the plan the drafts converge
+on, which is the one with less in it. Intermediate rounds can widen (`think_off-n3-r1` went 12 -> 18
+tasks between discards); it is the round that PASSES the gate that trims.
+
+📌 REGISTERED OUT-OF-SAMPLE, BEFORE CELL 4's `plan_loaded` EXISTS. Cell 4 `baseline-n3-r3` has two
+discards on disk: r1 = 19 tasks / 6 roots / 3 sep-test / 3 test_files, r2 = 12 tasks / 4 roots /
+0 sep-test / 3 folded / 3 test_files. **PREDICTION: its accepted plan has `test_files` <= 3.**
+⚠ FALSIFIER: an accepted plan with `test_files` >= 4 kills "the final round never adds coverage" on
+the first out-of-sample case.
+
+⚠ n = 3 runs. A direction at n=3 is a direction, never a magnitude (L10/L133). And "identical" is
+one run, not a rate.
+
+⇒ L176. **AN EVENT THAT RECORDS A REJECTION USUALLY CARRIES THE THING REJECTED — the cheapest
+counterfactual in any log is the alternative the system already computed and threw away.**
+
+## F322 — F303's CLEAN REDRAFT/NO-REDRAFT SPLIT IS A 3-NODE PROPERTY, NOT A UNIVERSAL ONE
+
+F303 read "ZERO OVERLAP ACROSS SEVEN CELLS: no-redraft 1091.3 / 1148.9 / 1316.0 / 1330.0, redraft
+1730.9 / 2218.7 / 2839.0, gap empty". There is an EIGHTH cell in the same corpus: `swarm-1node-r0`,
+prefix **2031.3 s with ZERO discards** — sitting squarely inside the "redraft only" band.
+
+It is not a counter-example to the mechanism, because its `skeleton_drafts` carries
+`worker_count: 1` — a 1-node run cannot draft in parallel at all, so its long prefix is serial
+drafting, not a redraft ladder. But F303 as WRITTEN claims a universal split, and the honest
+statement is: **the split is clean among 3-node runs; the 1-node arm reaches redraft-range prefixes
+with no redraft.** I quoted "seven cells" without saying which cell I had left out or why.
+
+Bearing on GOAL ONE: n1 prefix 2031.3 vs n3 no-redraft 1091.3-1330.0 is a ratio of 1.53-1.86,
+straddling the F281 derivation of 1.51. That is a consistency check on the speedup band, not a
+result — one n1 cell.
+
+⇒ L177. **A BAND THAT EXCLUDES A CELL MUST NAME THE CELL AND THE REASON, IN THE SAME BREATH AS THE
+BAND.** "Seven cells" read as "all of them" for four ticks.
+
+## F323 — `plan_loaded` -> FIRST `task_dispatched` IS 0.0 s IN 7 OF 7
+
+The prefix IS `plan_loaded`. There is no gap between the plan being accepted and the first worker
+being dispatched — not 1 s, not 0.5 s, zero in every finished cell. So every second of the prefix is
+research + drafting + the redraft ladder, and any attack on prefix wall-clock must land there.
+Confirms F285's decomposition from the other side.
+
+⇒ nothing to fix; it removes a whole class of hypothesis (dispatch setup cost) from the wall-clock
+arm of GOAL ONE.
