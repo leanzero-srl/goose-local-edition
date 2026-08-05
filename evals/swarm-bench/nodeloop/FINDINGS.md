@@ -15171,3 +15171,52 @@ job survived and the result was one `cat` away, so it cost nothing but a round t
 second time today I have walked into a hazard written in my own notes** (the first was
 `target/debug/goose`). ⇒ **L212. A WARNING YOU WROTE IS ONLY LOAD-BEARING IF YOU READ IT BEFORE
 ACTING, NOT AFTER FAILING.**
+
+## F366 — 🏆 WHY 3 NODES IS SLOWER, MEASURED END TO END: the 3-node arm builds a 2.18× BIGGER APP, and the whole-app VERIFIERS pay superlinearly for it. Parallelism is NOT the problem.
+
+The matched pair `baseline-n3-r0` / `baseline-n1-r0` — same spec, same binary, 16-task plan both
+sides. Everything below is from the two runs' own event logs and the two produced trees.
+
+**1. THE FLEET IS NOT IDLE AND NOT CONTENDED.** `phases.py`: execute is 66% of n3's wall at
+occupancy **0.86**, and 50% of n1's at 1.00. The scheduler owns the phase and keeps it busy.
+
+**2. PER-TASK, THE 3-NODE ARM IS NOT SLOWER.** Matched by task id, n=11:
+
+    MEDIAN duration ratio n3/n1 = 1.19   at   MEDIAN concurrency ratio 2.98
+
+🔴 **THIS KILLS THE FIXED-THROUGHPUT HYPOTHESIS I WAS ABOUT TO BUILD ON.** If the fleet had one
+aggregate bottleneck (LM Link proxying every node through localhost:1234 was my candidate), a 2.98×
+rise in concurrency would cost ~2.98× per task. It costs **1.19×** ⇒ the fleet delivers ~2.5×
+genuine throughput. **The swarm's parallelism WORKS.** ⇒ **L213.**
+
+**3. THE ENTIRE DEFICIT IS THREE WHOLE-APP READERS**, and they are the tasks with the *lowest*
+concurrency ratios, so contention cannot explain them either:
+
+    task              concX   durX
+    integrate-verify   2.00   7.85   ← 1800.1s == sink_cap_secs EXACTLY. CUT OFF, not finished.
+    verify-e2e::0      1.86   3.65
+    verify-e2e::1      1.80   4.04
+    ---- every other matched task ----  0.21 - 1.51
+
+**4. THE CAUSE: THE 3-NODE ARM BUILT A BIGGER APP.**
+
+    n3   11 source files   1337 lines   44594 B
+    n1    5 source files    613 lines   21313 B      ⇒ 2.18× lines, 2.20× files
+
+The chain, and every link is measured: more slots ⇒ the planner is told so (`worker_count` = slots,
+F268/F269) ⇒ it decomposes into more modules ⇒ **2.18× more code** ⇒ the verify family must
+read/build/**run the whole app**, so its cost tracks TOTAL APP SIZE and not the fan ⇒ those readers
+are the terminal join, hence on the critical path (**n3 3827s vs n1 2036s, 1.88×**) ⇒
+`integrate-verify` hits its 1800s cap and the run ships **un-integrated**.
+
+⚠️ **THIS REFRAMES GOAL ONE AND PARTLY INVALIDATES MY OWN BASELINE FRAMING.** "3 nodes is 1.32×
+SLOWER" compares a run that produced 1337 lines against one that produced 613. **The two arms did not
+build the same app**, so the wall-clock ratio was never a like-for-like number (L132). n3 also scored
+HIGHER (0.6595 vs 0.5798). The honest statement is not "more nodes made it slower" but **"more nodes
+bought 2.18× the code for 1.32× the wall-clock, and then the join could not verify it in time."**
+
+⚠️ **WHAT THIS IS NOT.** One matched pair. It does not establish that the extra code is VALUE rather
+than bloat — a 0.080 score edge for 2.18× the lines is a poor exchange rate, and "the fan produces
+redundant modules" survives as the competing reading. **FALSIFIER, registered now: if the n1 tree
+satisfies the same spec checks as the n3 tree, the extra 724 lines are bloat and the fix is to cap
+the fan, not to scale the join.** `crunch.py` can answer that from the two trees.
