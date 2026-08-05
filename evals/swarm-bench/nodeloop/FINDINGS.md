@@ -16240,3 +16240,69 @@ cell scoring 1.00 on **both** `vendor_cursor_paging` and `vendor_all_pages`. The
 fleet contract that decides whether the app works is no longer the path prefix — it is the vendor's
 **cursor/pagination protocol**, which lives in the same unopenable document. **`doc_fetch` is still
 the right arm; its prediction is not.** Stated as a hypothesis, not a result: one cell separates it.
+
+---
+
+## F390 — THE ONE LEVER WORTH THE FLEET'S FIRST HOURS, AND ITS DEMOTION WAS OVER-GENERALISED
+
+F389 left the discriminator at the vendor's cursor/pagination protocol. `doc_fetch` is the engine's
+built-but-never-run answer to exactly that: fetch the document the spec points at and splice it
+verbatim into the planner's channel and every worker's. It sits **last of 18 arms at reps=1, DEMOTED**.
+
+### ✅ THE WIRING AUDIT PASSES — no `sink_review`-class bug
+
+`sink_review` reported enabled for months while its producer defaulted OFF and its queue was never
+filled, so a lever's own claim to be on proves nothing. Traced end to end:
+
+- `swarm_gate_cfg("GOOSE_SWARM_DOC_FETCH", cfg.doc_fetch)` — real gate, config-backed.
+- `spec_doc_urls` extracts the doc URL and **rejects the bare origin**, with a test at `:7053` using
+  the LITERAL spec sentence. It returns `http://127.0.0.1:8930/v1/docs`.
+- The `doc_fetched` event carries `ok = 2xx && non-empty`, so **a 404 cannot read as a fetch that
+  happened** — the INERT-as-pass trap, already guarded in the source.
+- The block is prepended to `research_findings` (planner) **and** `doc_facts` (workers), and
+  `doc_facts_block` splices into the worker prompt at `:20727` with **no second gate**. Nothing
+  downstream can silently swallow it.
+
+### 📏 I SERVED THE DOCUMENT AND MEASURED IT, RATHER THAN ASSUMING
+
+Started `vendor_service.serve()` locally and fetched `/v1/docs` — no fleet needed:
+
+**4769 bytes against `DOC_MAX_BYTES = 24_000`. Nothing is truncated.** It contains `cursor` ×11,
+`next_cursor` ×3, `/v1/payments` ×7, `ETag`, `If-None-Match`, `Retry-After`. Every fact the archive
+shows the fleet failing on is inside the window that would actually be delivered.
+
+### 🎯 WHAT THE DEMOTION GOT RIGHT, AND WHERE IT OVER-REACHED
+
+F53 refuted *"losing `/v1` breaks the build"* — correctly: the 83.4% unit lost the prefix and still
+passed 7/7, **because workers have shell and re-derive a PATH**. F389 confirms that half is dead;
+`/v1` now propagates to all five cells unaided. **But the arm was then demoted on that one refuted
+claim, and the document is not the prefix.** A worker re-derives a path by trying it. It does not
+re-derive a cursor pagination protocol by trial and error — and only **1 of 5** cells ever retrieves
+all 247 payments.
+
+### 💰 THE SIZE OF THE PRIZE, THROUGH THE REAL SCORER
+
+The checks r3 wins over **every** other cell are the sync-dependent family — `payment_row_shape`,
+`total_field`, `chronological_order`, `summary_accuracy`, `summary_bounds_utc`,
+`concurrent_sync_safe`, `local_pagination`, `resync_idempotent` — **seven of the eight in tier B, the
+heaviest tier (0.30 over 12 checks).**
+
+| | n3 mean | gap vs n1 | pairs @50% |
+|---|---|---|---|
+| as measured | 0.6390 | +0.0593 | **51** |
+| if every n3 cell synced like r3 | 0.7717 | **+0.1920** | **5** |
+
+**Five pairs is exactly what `PREREGISTERED.md` already budgets.** F385 asked what could bring goal one
+inside the measurable range; this is the only thing found today that does.
+
+⚠️ **THE COUNTERFACTUAL SIZES THE PRIZE, NOT THE LEVER.** r3 synced **without** `doc_fetch`, by
+guessing the protocol. This arm is the bet that reading beats guessing — it is not evidence that it
+does, and I have not shown that fetching the doc makes a cell behave like r3.
+
+⚠️ **THE RISK IS DILUTION, NOT FAILURE.** 4769 bytes (~1.2k tokens) enters EVERY worker prompt, and
+measured 27B compliance falls 0.588 at 10 rules to 0.094 at 40. **A drop in checks unrelated to sync
+is the tell**, and it is now written into the arm so it cannot be read as noise.
+
+**Shipped:** re-promoted to **reps=3** (mechanism settles at n=1, score cannot — F382), with the
+mechanism readout repointed off the `/v1` count F389 showed would fire with the lever doing nothing,
+onto `doc_fetched{ok:true,status:200}` + `vendor_cursor_paging`/`vendor_all_pages` on a non-r3 cell.
