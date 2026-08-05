@@ -78,7 +78,16 @@ pub enum SwarmEvent {
     /// "re_dispatch" (the worker was killed and its task re-queued with `hint`).
     JudgeVerdict {
         task_id: String,
+        /// The device of the JUDGED WORKER — the node whose output is being judged.
         device: String,
+        /// The node that RAN THE JUDGE, which is a different node and was previously unrecoverable.
+        ///
+        /// `device` above comes from `task_final_device`, so every judge_verdict in the archive
+        /// attributes the judge's inference cost to the worker it was reviewing. A judge holds a real
+        /// fleet slot (`devices[i].in_flight += 1`), so "which node did the judging" is exactly the
+        /// question needed to test whether idle-job placement targets idle nodes — and the log could
+        /// not answer it. Empty when the judge ran deterministic-only with no device claimed.
+        judge_node: String,
         verdict: String,
         confidence: f32,
         hint: String,
