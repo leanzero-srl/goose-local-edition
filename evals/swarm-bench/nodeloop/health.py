@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import sweep          # engine_build() — provenance from the row, never from file mtime (F338)
+
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "runs" / "nodeloop"
 LOG = OUT / "loop.log"
@@ -142,11 +144,32 @@ def main() -> int:
     #    variety is expected and only a mismatch between what a unit asked for and what the engine
     #    actually built is a defect. That mismatch is what made three runs labelled 1/2/3-node all
     #    measure the same 1-device pool, so it is checked per unit, never in aggregate.
-    voids = [r for r in rs if r.get("void")]
+    #    ⚠ SCOPE THE ALARM TO THE CURRENT ENGINE, OR IT BECOMES A STANDING FALSE POSITIVE.
+    #    A void row is PERMANENT: `kind_prompt-n3-r0` and `scoped_contracts-n3-r0` ran on
+    #    2026-08-03 against a binary rebuilt on 2026-08-04, were CORRECTLY voided at the time, and
+    #    then tripped this check on every subsequent tick — printing BAD and
+    #    "-> STOP THE LOOP AND FIX. Do not wait for the current unit." forever, while all four
+    #    curve cells had pool 3/3 and the live 1-node cell had worker_count 1.
+    #
+    #    An unattended alarm that can never clear is worse than no alarm: it orders a halt that is
+    #    always wrong, and the first time it is RIGHT nobody will believe it. Same failure as F325's
+    #    stall detector, which read "not significant" under a real win because its test had an
+    #    unreachable branch.
+    #
+    #    Scoped by `engine_build`, which the row carries and which no file copy can alter — NOT by
+    #    file mtime, which `cp -R` rewrites (F338/L183).
+    cur = sweep.engine_build()
+    voids = [r for r in rs if r.get("void") and r.get("engine_build") == cur]
+    stale_voids = [r for r in rs if r.get("void") and r.get("engine_build") != cur]
     if voids:
         rep.add("BAD", "unit(s) did not get the pool they asked for: "
                        + "; ".join(f"{r['arm']}-n{r.get('nodes')}-r{r.get('rep')} "
                                    f"({r.get('void_reason')})" for r in voids))
+    if stale_voids:
+        rep.add("OK", f"{len(stale_voids)} void row(s) from EARLIER engine builds, correctly "
+                      f"excluded and not actionable: "
+                      + "; ".join(f"{r['arm']}-n{r.get('nodes')}-r{r.get('rep')}"
+                                  for r in stale_voids))
     elif rs:
         # A FAILED unit has no pool at all, so `nodes`/`actual_nodes` are None — and sorting a set
         # containing None against an int raises TypeError, which crashed the whole health check on the
