@@ -56,3 +56,33 @@ after the run, which is also how the estimator gets validated instead of trusted
 - `plan_loaded` — already carries the full DAG (ids, deps, owned_files), which is the estimator's
   entire input.
 - `occupancy.py:216` — the after-the-fact figure the estimate will be graded against.
+
+---
+
+## ARM: `sink_lean_prefill=1` — the two-sided lever aimed at the highest-leverage cell
+
+**Why this arm and not another.** F385 showed the pre-registered design needs 51 matched pairs at the
+observed gap, and F386 showed that removing the single sink-stall cell moves that to 11. The sink
+running to its cap is therefore the one defect worth attacking. `sink_lean_prefill` (`swarm.rs:2456`,
+default OFF, never measured) drops the frozen-contract bundle from the sink's prompt specifically so
+the slowest task finishes before the cap.
+
+**Why it is NOT a default flip.** It deletes the agreed-contract reference from the only task that
+reconciles cross-module interfaces. `frozen_interfaces_block` calls itself the reference for "the #1
+cause of passing-unit-tests but a broken end-to-end integration", and a SHAPE check is exactly what
+the capped run lost (`sync_shape` 1.00 → 0.00). Running the app proves a mismatch EXISTS; the bundle
+is what says which side is wrong. The two sides pull on the same metric in opposite directions.
+
+**The falsifier is two-sided and must be read as a pair — neither half alone decides it:**
+
+| side | signal | verdict |
+|---|---|---|
+| speed | sink wall-clock vs `cap_secs` from `sink_capped` (F386 now reports the EFFECTIVE ceiling) | finishing under the cap where the OFF arm capped ⇒ the PRO is real |
+| correctness | `sync_shape` and the cross-module checks in `verdict.json` | any tier-A integration check dropping vs the OFF arm ⇒ the CON is real, REVERT |
+
+**It wins only if it takes the first without the second.** Faster-and-broken is the outcome this lever
+is most likely to produce, and it is the one a wall-clock-only reading would score as a win.
+
+⚠️ **Cost is NOT settleable at n=1** (F382: e2e varies 2277.5/425.7/1391.6 across identical cells).
+The SPEED half needs ≥3 replicates per arm compared as medians. The CORRECTNESS half is a per-run
+deterministic check and is readable sooner — so read correctness first, and stop if it drops.
