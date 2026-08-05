@@ -174,6 +174,102 @@ def reuse(discarded: list[dict], accepted: list[dict]) -> dict:
             "hit_rate": round(near / n, 3) if n else 0.0}
 
 
+def scored_plans(run_log: Path) -> list[tuple[int, dict]]:
+    """(confidence, shape) for every plan whose score this run actually recorded.
+
+    THE PAIRING, and it is the whole point: `confidence_retarget{round: k, conf_before: C}` means
+    "the plan in hand scored C, so we are starting round k", and `retarget_discarded{round: k}`
+    carries THAT SAME PLAN. So round k's conf_before pairs with round k's discard. `plan_loaded`
+    pairs its own `plan_confidence` with its own tasks. A `stall_stop` reports the confidence of a
+    draft that was never emitted as a plan, so it has no shape and is skipped rather than guessed.
+    """
+    conf_by_round: dict[int, int] = {}
+    shape_by_round: dict[int, dict] = {}
+    out = []
+    for line in run_log.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        t = e.get("event") or e.get("type")
+        if t == "confidence_retarget" and e.get("action") == "redraft":
+            conf_by_round[e.get("round")] = e.get("conf_before")
+        elif t == "retarget_discarded":
+            shape_by_round[e.get("round")] = shape(e.get("tasks") or [])
+        elif t == "plan_loaded" and e.get("plan_confidence") is not None:
+            out.append((e["plan_confidence"], shape(e.get("tasks") or [])))
+    for r, c in sorted(conf_by_round.items()):
+        if r in shape_by_round and c is not None:
+            out.append((c, shape_by_round[r]))
+    # A REVERT SCORES THE SAME PLAN TWICE — once as the round-k discard, once as `plan_loaded` when
+    # `best_plan` ships it back. Counted raw that is a duplicate data point at the exact confidence
+    # the stall guard settled on, and it biases every correlation below toward whatever the reverts
+    # happen to look like. Measured: 14 raw points contained 2 such pairs.
+    seen, uniq = set(), []
+    for conf, s in out:
+        k = (conf, tuple(s[c] for c in COLS[:-1]))     # shape WITHOUT desc_chars — prose differs by ~8/task
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append((conf, s))
+    return uniq
+
+
+def spearman(xs: list[float], ys: list[float]) -> float:
+    """Rank correlation. Ties get average ranks; returns 0.0 when a variable has no spread."""
+    def ranks(v):
+        order = sorted(range(len(v)), key=lambda i: v[i])
+        r = [0.0] * len(v)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            avg = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                r[order[k]] = avg
+            i = j + 1
+        return r
+    rx, ry = ranks(xs), ranks(ys)
+    n = len(xs)
+    mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return round(num / den, 3) if den else 0.0
+
+
+def conf_vs_shape() -> None:
+    """Does the confidence gate PREFER a narrower plan? The fleet has 6 slots; roots is the width.
+
+    ⚠ THE OBVIOUS READ IS WRONG. `swarm-3node-r3` discarded a 19-task/6-root plan scoring 52 for a
+    12-task/4-root plan scoring 61, which looks like "the gate selects against fleet utilisation".
+    `think_off-n3-r1` did the exact opposite — 4 roots scoring 41, then 5 roots scoring 68. Two
+    within-run pairs, opposite directions. This function exists so the claim is checked against every
+    scored plan instead of the one that happens to be in front of me.
+    """
+    logs = sorted(RUNS.glob("*/run.jsonl"))
+    pts = []
+    for p in logs:
+        for conf, s in scored_plans(p):
+            pts.append((p.parent.name, conf, s))
+    if len(pts) < 3:
+        return
+    print(f"\n  CONFIDENCE vs PLAN SHAPE — every scored plan, {len(pts)} points from {len(logs)} logs")
+    print(f"    {'run':22s} {'conf':>5s} {'roots':>6s} {'tasks':>6s} {'sep_test':>9s}")
+    for name, conf, s in sorted(pts, key=lambda x: x[1]):
+        print(f"    {name:22s} {conf:>5} {s['roots']:>6} {s['n_tasks']:>6} {s['sep_test_tasks']:>9}")
+    confs = [c for _, c, _ in pts]
+    for col in ("roots", "n_tasks", "sep_test_tasks"):
+        rho = spearman([s[col] for _, _, s in pts], confs)
+        print(f"    rho(confidence, {col}) = {rho:+.3f}")
+    print("    ⚠ n is small and the points are NOT independent — several come from the same run,")
+    print("      and the population is selected (a plan is only SCORED when the gate looks at it).")
+    print("      This ranks a hypothesis; it settles nothing.")
+
+
 def report() -> int:
     logs = sorted(RUNS.glob("*/run.jsonl"))
     print(f"files opened: {len(logs)}")                      # L174
@@ -226,7 +322,9 @@ def report() -> int:
         print(f"    {v['run']:22s} roots {dr:+d}  sep_test {dt:+d}   "
               f"{'NARROWED' if narrowed else 'widened/mixed'}")
     print(f"  runs where the accepted plan is NOT narrower on either count: {len(kills)} {kills or ''}")
-    print(f"  n = {len(verdicts)} runs. A direction at n=3 is a direction, never a magnitude (L10/L133).")
+    print(f"  n = {len(verdicts)} runs. A direction at n={len(verdicts)} is a direction, never a "
+          "magnitude (L10/L133).")
+    conf_vs_shape()
 
     rs = [v["reuse"] for v in verdicts if v.get("reuse")]
     if rs:
@@ -286,6 +384,12 @@ def self_test() -> int:
     assert diff(p1, p1 + [{"id": "c", "files": [], "deps": []}])["added"] == ["c"]
     assert diff(p1, [{**p1[0], "deps": ["b"]}, p1[1]])["changed"] == ["a"], "a rewired dep must be seen"
     assert diff(p1, [{**p1[0], "files": ["z.py"]}, p1[1]])["changed"] == ["a"], "reassigned file seen"
+
+    # Spearman must read BOTH directions and must refuse when a variable has no spread.
+    assert spearman([1, 2, 3, 4], [1, 2, 3, 4]) == 1.0, "a perfect ascent must read +1"
+    assert spearman([1, 2, 3, 4], [4, 3, 2, 1]) == -1.0, "a perfect descent must read -1"
+    assert spearman([1, 1, 1, 1], [4, 3, 2, 1]) == 0.0, "no spread must score 0, never a correlation"
+    assert abs(spearman([1, 2, 3, 4], [1, 4, 2, 3])) < 1.0, "noise must not read as perfect"
 
     chain = [{"id": "a", "deps": []}, {"id": "b", "deps": ["a"]}, {"id": "c", "deps": ["b"]}]
     assert depth(chain) == 3, "a 3-long chain must read depth 3"
