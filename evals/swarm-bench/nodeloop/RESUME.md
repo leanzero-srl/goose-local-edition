@@ -57,7 +57,7 @@ his call. The sweep is stopped (`STOP` armed 08:07).
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
 ~/.lmstudio/bin/lms ps                       # must list models before anything below
-ls -la ~/Projects/goose/target/release/goose  # MUST be >= 16:32 — see "the binary" below
+ls -la ~/Projects/goose/target/release/goose  # MUST be >= 16:42 — see "the binary" below
 rm -f STOP && ./loop.sh start                # BARE, never piped (F298)
 ```
 
@@ -68,7 +68,12 @@ and F375 (12:54) had all landed. **The sweep runs the RELEASE binary**, so a res
 a full ~2 h cell on an engine carrying none of them, and `review.py` would have reported every
 prediction unsettleable *after* the fleet time was gone.
 
-🔁 **REBUILT AGAIN 16:32** for F395 (the `spec_contract` vacuous pass). Verified present:
+🔁 **REBUILT AGAIN 16:42** for F398 (the deterministic no-timeout AST detector). ASCII-only probes,
+all ×1: `http_timeout_scan`, `blocks forever by default passes a timeout`, `Do not remove the call`,
+plus F395's `not one advertised endpoint returned a 2xx`. Negative control `httpx.get with no timeout`
+returns **0**, which is correct — httpx defaults to 5 s and is deliberately NOT flagged.
+
+🔁 **REBUILT 16:32** for F395 (the `spec_contract` vacuous pass). Verified present:
 `not one advertised endpoint returned a 2xx`, `CHECKED NOTHING`, `do NOT make this a pass`,
 `inconclusive reasons are recorded separately` — all ×1.
 
