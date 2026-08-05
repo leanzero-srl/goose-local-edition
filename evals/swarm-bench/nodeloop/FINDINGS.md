@@ -13842,3 +13842,53 @@ historical cross-check rather than a live one.
 
 ⇒ L192. **A BACKUP THAT DOES NOT COUNT WHAT IT SAVED IS A RITUAL — and when duplicates show up in
 your data, the duplication mechanism is the bug, not the counter that noticed them.**
+
+## F339 — THE HEALTH CHECK ORDERED ME TO HALT THE CURVE, AND IT WAS WRONG
+
+I finally ran `./loop.sh check` — the built-in health surface I had been hand-rolling status checks
+around for hours (L2, again). It returned:
+
+    nodeloop health: BAD
+      [BAD] unit(s) did not get the pool they asked for: kind_prompt-n3-r0 (asked for 3, engine
+            built 2); scoped_contracts-n3-r0 (asked for 3, engine built 2)
+      -> STOP THE LOOP AND FIX. Do not wait for the current unit.
+
+**I did not stop the loop.** L95: when a registered check would destroy the experiment, audit the
+check first.
+
+    unit                    started                       engine_build          current?
+    kind_prompt-n3-r0       2026-08-03T09:56:42Z          1785743501-…          NO
+    scoped_contracts-n3-r0  2026-08-03T10:00:47Z          1785743501-…          NO
+    baseline-n3-r3          2026-08-05T01:25:07Z          1785868965-…          yes  pool 3/3
+    swarm-1node-r0 (live)   2026-08-05T03:27:07Z          current               yes  worker_count 1
+
+**Both flagged units ran against a binary rebuilt on 2026-08-04 18:42.** They were voided correctly
+AT THE TIME — the void detector working exactly as designed — and a void row is PERMANENT, so this
+check has been printing BAD and ordering a halt on every tick since, while all four curve cells got
+`pool 3/3` and the live 1-node cell reads `worker_count 1`.
+
+**AN UNATTENDED ALARM THAT CAN NEVER CLEAR IS WORSE THAN NO ALARM.** It orders a halt that is always
+wrong, and the first time it is RIGHT nobody will believe it. This is F325's stall detector again
+from the opposite side: that one could never fire, this one can never stop.
+
+**FIX:** scope the alarm to `engine_build` — which the result row carries and which no file copy can
+alter. **Not** file mtime: `cp -R` rewrites that, which is exactly how F338's park smuggled
+old-binary runs past `binary_mtime()`. Stale voids now print as an OK line naming them, so the
+information is kept and the halt order is not.
+
+**CONTROLS BOTH WAYS, exercised (L96/L123):**
+
+    current-build voids     0   -> no alarm          ✅
+    older-build voids       2   -> reported as OK, named, not actionable  ✅
+    synthetic CURRENT-build void injected -> 1 caught, still alarms       ✅
+
+`./loop.sh check` now reads **OK**, and the two historical voids appear as
+*"2 void row(s) from EARLIER engine builds, correctly excluded and not actionable"*.
+
+⚠ THE REST OF THE CHECK IS HEALTHY AND WAS ALWAYS TELLING THE TRUTH: loop alive pid 91810, engine
+running pid 91813, heartbeat 1 s old, last unit finished 20 min ago, 194 GB free, and the standing
+`[WARN] 3 engine commit(s) HELD` — which is correct and deliberate (F253's freeze).
+
+⇒ L193. **AN ALARM THAT CANNOT CLEAR IS A BUG IN THE ALARM — if a condition is permanent by
+construction, scope it to what is still actionable, or it will train its reader to ignore the one
+time it matters.**
