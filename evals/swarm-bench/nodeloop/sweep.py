@@ -769,6 +769,12 @@ def intruder_engine_pids() -> list[int]:
     return [p for p in engine_pids() if _ppid(p) != me]
 
 
+# A unit is a full swarm build; measured walls on this fleet are 1.9-2.5h. Sixty seconds is
+# three orders of magnitude below the floor, so it separates "never started" from "fast"
+# without any risk of excluding a real run (F349).
+MIN_REAL_UNIT_SECS = 60
+
+
 def is_real_unit(r: dict) -> bool:
     """Did this unit actually MEASURE something, i.e. may its wall-clock describe a normal unit?
 
@@ -781,7 +787,24 @@ def is_real_unit(r: dict) -> bool:
     `median_unit_secs` excluded timed_out/aborted and let voids through, and the ETA's `durations`
     excluded nothing at all. Two copies of one rule that disagree is the shape of defect this
     campaign keeps paying for.
+
+    ⚠ A UNIT THAT NEVER STARTED PASSES EVERY FLAG ABOVE. It is not void (nothing refused it), not
+    aborted, not timed out — it simply returned in 0.2s with score 0.0 because the fleet had no
+    models loaded. MEASURED 2026-08-05: 113 such rows entered the corpus in twenty minutes, and
+    `curve.py` — the instrument that decides goal one — paired them up and published
+    "score: 4/8 pairs favour 3 nodes, p = 0.6367" off SEVEN pairs that were fabricated from
+    no-log zeros. The one real pair said something quite different.
+
+    `harness_ok` is the scorer's own verdict and it was already False on every one of those rows;
+    nothing read it. The wall floor is deliberately a SECOND, independent condition rather than a
+    tidier single test: a gate that shares its only input with the thing it guards goes silent the
+    moment that input is missing, and `harness_ok` is absent entirely from rows written before it
+    existed (`.get()` returns None, which is not False).
     """
+    if r.get("harness_ok") is False:
+        return False
+    if (r.get("wall_secs") or 0) < MIN_REAL_UNIT_SECS:
+        return False
     return bool(r.get("wall_secs")) and not r.get("timed_out") \
         and not r.get("aborted") and not r.get("void")
 
