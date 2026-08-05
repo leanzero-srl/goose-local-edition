@@ -15585,3 +15585,43 @@ exceed 2278 s × 4/3 = 3037 s, or any shard reports clean having enumerated zero
 (falling back to the pre-boundary `devices.len()` when the oracle is empty).**
 ⇒ **L218. WHEN ONE VALUE FEEDS TWO CALLERS, CHANGING IT FOR ONE OF THEM IS A CHANGE TO BOTH — GREP THE
 OTHER CALL SITES BEFORE CLAIMING THE BLAST RADIUS.**
+
+## F375 — ✅ SHIPPED: the same boundary change left the architect prompt CONTRADICTING ITSELF. Found by auditing the OTHER callers, which F374 said to do.
+
+F374 registered `worker_count`'s second consumer (`fan_e2e_split`) and closed with **L218: grep the other
+call sites.** Doing that found a second, unrelated defect from the same commit — and this one is in the
+**planner prompt**, the highest-leverage string in the run.
+
+**THE SENTENCE, BEFORE (`swarm.rs:12729`):**
+> *"aim for about 2x to 3x {worker_count} total (e.g. **~6-9 for a 3-device fleet**), NOT one per
+> command/function"*
+
+That example was **exactly right** while `worker_count` was `devices.len()`: 2×3 = 6, 3×3 = 9. `00563c6ea`
+changed the argument to **SLOTS** — a 3-device weight-2 fleet is **6** — and left the literal behind. So on
+the current binary the one sentence asks for **12-18** and illustrates it with **~6-9**.
+
+🔴 **A WEAK MODEL ANCHORS ON THE CONCRETE NUMBER, NOT THE FORMULA.** This is the planner's width
+instruction, it is off by exactly 2×, and the fork's own standing rule is that a directive must be
+**fleet-relative** — *"scale to `worker_count`, never a fixed count; a swarm is 2 units or 100."* The
+literal violated that rule the moment the variable's meaning changed.
+
+✅ **FIXED, and made checkable rather than just corrected:** the clause is now the pure function
+`skeleton_count_clause(worker_count, converge)` with **every count derived** (`2*wc`-`3*wc`), and a test
+asserts the sentence agrees with itself — including a negative assertion on the exact stale literal
+(`!contains("6-9")`, `!contains("3-device")`) so the regression cannot come back silently, plus
+fleet-relative checks at wc=2 and wc=100. ⇒ **L173 applied: when a defect is a claim about a string, write
+the string as code and let a test hold it.**
+
+⚠ **WHAT I CHECKED AND LEFT ALONE, so the scope is honest:**
+- `score_skeleton` (`indep_score = independent.min(wc) * 10`) — wc 3→6 raises the width the score stops
+  rewarding. **That is the change's INTENT, not a defect**; the `min(wc)` cap exists precisely to stop
+  rewarding width past fleet capacity, and capacity really did double. Left as is.
+- `:12759`/`:12770` say *"{worker_count} identical, interchangeable worker units"*. With slots the count is
+  right — six concurrent workers **are** six units — so the wording is loose, not wrong. **Rewording it
+  without evidence is churn.** Left as is.
+- The `converge` branch derives everything already and carries no worked example to drift.
+
+📌 **TWO DEFECTS FROM ONE COMMIT, FOUND ONLY BY ENUMERATING CONSUMERS** (`fan_e2e_split`'s shard count in
+F374, this sentence here). Both were invisible in the diff, which touched only `devices.len()` →
+`sum(weight)`. **The blast radius of a value change is the set of its READERS, and the diff never shows
+that set.**
