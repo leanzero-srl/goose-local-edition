@@ -7680,6 +7680,64 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!rust_entry_is_empty_stub(false, ""));
     }
 
+    /// The fan-outs hold `DeviceCfg` (the resolved runtime pool), not the config-file `SwarmDevice`
+    /// that `dev()` above builds. Two structs, both with a `weight` field, and the compiler is the
+    /// only thing that tells them apart.
+    fn cfg_w(id: &str, model: &str, weight: u32) -> DeviceCfg {
+        DeviceCfg {
+            id: id.to_string(),
+            model_id: model.to_string(),
+            weight,
+            enabled: true,
+            speed_weight: 1,
+        }
+    }
+
+    #[test]
+    fn fleet_slot_models_counts_slots_not_devices() {
+        // The defect: three weight-2 devices are SIX slots, and every planning fan was sized at 3.
+        let pool = vec![
+            cfg_w("a", "m-a", 2),
+            cfg_w("b", "m-b", 2),
+            cfg_w("c", "m-c", 2),
+        ];
+        let slots = fleet_slot_models(&pool);
+        assert_eq!(slots.len(), 6, "3 devices x weight 2 must yield 6 slots");
+        assert_eq!(slots.iter().filter(|m| *m == "m-a").count(), 2);
+
+        // THE OTHER DIRECTION, or this would pass on a helper that blindly doubles everything: a
+        // weight-1 node must still get exactly one, which is the property the original docstring
+        // promised and the only reason the cap existed at all.
+        let mixed = vec![cfg_w("a", "m-a", 1), cfg_w("b", "m-b", 3)];
+        let slots = fleet_slot_models(&mixed);
+        assert_eq!(slots.len(), 4);
+        assert_eq!(slots.iter().filter(|m| *m == "m-a").count(), 1);
+
+        // A zero/absent weight must not erase a device from the fleet entirely.
+        assert_eq!(fleet_slot_models(&[cfg_w("a", "m-a", 0)]).len(), 1);
+        assert!(fleet_slot_models(&[]).is_empty());
+    }
+
+    #[test]
+    fn slot_expansion_does_not_widen_the_skeleton_draft_vote() {
+        // The draft path dedups through a HashSet before sizing the vote, so feeding it slots must
+        // change NOTHING. Asserted because the dedup's own comment records duplicates being measured
+        // dead — 6 requested, exactly 3 survived — and a future edit that drops the dedup would
+        // otherwise silently turn a concurrency fix into a doubled, mostly-dead draft fan.
+        let pool = vec![cfg_w("a", "m-a", 2), cfg_w("b", "m-b", 2), cfg_w("c", "m-c", 2)];
+        let distinct: Vec<String> = pool.iter().map(|d| d.model_id.clone()).collect();
+        let slots = fleet_slot_models(&pool);
+        let dedup = |models: &[String]| -> usize {
+            let mut seen = std::collections::HashSet::new();
+            std::iter::once("planner".to_string())
+                .chain(models.iter().cloned())
+                .filter(|m| seen.insert(m.clone()))
+                .count()
+        };
+        assert_eq!(dedup(&slots), dedup(&distinct), "the vote width must be unchanged");
+        assert_eq!(dedup(&slots), 4, "planner + 3 distinct models");
+    }
+
     #[tokio::test]
     async fn fanout_caps_one_call_per_device() {
         use std::sync::atomic::AtomicUsize;
@@ -15975,11 +16033,47 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
     }
 }
 
-/// Run `items` across the fleet with at most ONE call in flight PER DEVICE (work-stealing: each item
-/// grabs the next free device-model and returns it on completion). This bounds the planning-phase
-/// fan-outs (detailing, scouts, best-of-N, research) to the per-device capacity the EXECUTE scheduler
-/// already honors, so a weight-1 node never has a second request queued behind the first. Results come
-/// back in item order. `devices` is the list of distinct worker model-ids (one per node).
+/// One entry per SLOT the fleet can actually run, not one per device.
+///
+/// `fanout_over_fleet` sizes its permits from the list it is given, so a caller that collapses each
+/// device to a single `model_id` silently caps every planning-phase fan at the DEVICE count. On this
+/// fleet that is 3 where EXECUTE runs 6: `pick_device` admits a task while `d.in_flight < d.weight`
+/// (baked default 2), so the plan phase was the only phase forbidden from using half the machine.
+///
+/// MEASURED from `detail_completed` spans in baseline-n3-r0: the detail fan spends its time at
+/// concurrency {1: 34.3s, 2: 95.7s, 3: 112.4s} with a makespan of 244s, and never sustains 4 — the
+/// same ceiling in every 3-node cell. On the 1-node arm it is worse: `swarm-1node-r0` detailed 17
+/// items strictly serially, 1743.1s of a 5842.9s run, on a device whose weight is 2.
+///
+/// This is the same node-vs-slot substitution `00563c6ea` fixed for the planner's width prompt, which
+/// the fan-outs were not fixed with.
+///
+/// ⚠ TAKES `DeviceCfg`, NOT `SwarmDevice`. Both carry a `weight` field and they are DIFFERENT
+/// TYPES: `SwarmDevice` (swarm.rs) is the config-file shape, `DeviceCfg` (scheduler.rs) is what the
+/// resolved runtime pool is built into and what every fan-out site actually holds. Writing this
+/// against the config type compiled fine in isolation and failed at all five call sites.
+///
+/// ⚠ THE SKELETON DRAFT VOTE IS DELIBERATELY NOT AFFECTED, and must stay that way. `draft_models`
+/// (see the dedup at the best-of-N site) folds this list through `HashSet::insert`, so duplicates
+/// collapse back to distinct models and the number of drafts is unchanged. That dedup exists because
+/// duplicate draft slots were MEASURED dying — 6 requested, exactly 3 survived, the duplicates
+/// returning 158B/54B/162B — and its comment says plainly "Dedup is the fix; a length cap can never
+/// be." Widening the vote is a separate experiment that needs the fleet, not a ride-along on a
+/// concurrency change.
+fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
+    devices
+        .iter()
+        .flat_map(|d| {
+            std::iter::repeat_n(d.model_id.clone(), (d.weight as usize).max(1))
+        })
+        .collect()
+}
+
+/// Run `items` across the fleet with at most ONE call in flight PER LIST ENTRY (work-stealing: each
+/// item grabs the next free entry and returns it on completion). Callers pass `fleet_slot_models`, so
+/// that bound is the per-device capacity the EXECUTE scheduler already honors — a weight-1 node still
+/// never has a second request queued behind the first, and a weight-2 node gets the second slot it is
+/// configured for. Results come back in item order.
 async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
 where
     T: Send + 'static,
@@ -22041,7 +22135,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .yellow()
             );
         }
-        let worker_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+        let worker_models: Vec<String> = fleet_slot_models(&devices);
         let findings = if cfg.research_scouts {
             phase_banner(
                 "SCOUT",
@@ -22778,7 +22872,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
                 );
                 eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
-                let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+                let wm: Vec<String> = fleet_slot_models(&devices);
                 match dispatcher
                     .parallel_plan(
                         &cfg.planner_model,
@@ -23026,7 +23120,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         cfg.research_tools,
                                     )));
                                 let worker_models: Vec<String> =
-                                    devices.iter().map(|d| d.model_id.clone()).collect();
+                                    fleet_slot_models(&devices);
                                 let findings = dispatcher
                                     .run_research(questions, research_exts, worker_models)
                                     .await;
@@ -23574,7 +23668,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "freeze signature-only module interfaces across the fleet before EXECUTE",
             );
             let n_modules = modules.len();
-            let wm: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+            let wm: Vec<String> = fleet_slot_models(&devices);
             let cwd = std::env::current_dir().unwrap_or_default();
             let before: std::collections::HashSet<PathBuf> =
                 collect_lang_files(&cwd, contract_lang)
@@ -23836,7 +23930,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let smoke_fix_dispatcher = dispatcher.clone();
     // GOOSE_SWARM_COMPLETE_PARALLEL: the fleet's model ids, captured before the scheduler consumes
     // `devices`, so the completion fix step can fan one fix per failing file across all models.
+    // TWO LISTS ON PURPOSE, and the difference is not cosmetic.
+    //
+    // `fleet_models` stays DISTINCT because it sizes things that are not permits: `spec_repair`
+    // builds one independent fix attempt per entry, so slot-expanding it would quietly double the
+    // best-of-N repair race from 3 attempts to 6 — a token-cost and semantics change riding along on
+    // what is meant to be a concurrency fix. Whether a 6-wide repair race beats a 3-wide one is a
+    // real question and it deserves its own measurement.
+    //
+    // `fleet_slots` is what the fan-outs get, because their permit count IS the list length.
     let fleet_models: Vec<String> = devices.iter().map(|d| d.model_id.clone()).collect();
+    let fleet_slots: Vec<String> = fleet_slot_models(&devices);
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();
@@ -24484,7 +24588,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let decisions = user_decisions.clone();
                     let facts = doc_facts.clone();
                     let summaries =
-                        fanout_over_fleet(fleet_models.clone(), groups, move |g, model| {
+                        fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
                             let dev = dev.clone();
@@ -24849,7 +24953,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let goal = opts.prompt.clone();
             let files = smoke_all_files.clone();
             let verdicts = fanout_over_fleet(
-                fleet_models.clone(),
+                fleet_slots.clone(),
                 prewarmed.clone(),
                 move |finding, model| {
                     let me = me.clone();

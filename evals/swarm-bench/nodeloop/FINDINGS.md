@@ -14363,3 +14363,76 @@ describes, a mechanism whose precondition is unobservable):**
 
 **Fix the observability BEFORE the selection**, or the fix to (3) cannot be measured — which is how
 this whole detour started.
+
+## F350 — the planning phase is the only phase forbidden from using half the fleet. Shipped.
+
+Workflow `wf_94b83a28-e0e` raised 18 findings across four lenses and adversarial refutation killed
+**17 of them**. The one survivor is the one two independent lenses found separately.
+
+**THE DEFECT.** `fanout_over_fleet` sizes its permits `Semaphore::new(devices.len())`, and every
+caller builds that list as `devices.iter().map(|d| d.model_id.clone())` — **one entry per device,
+`weight` discarded**. EXECUTE admits a task while `d.in_flight < d.weight` (baked default 2). So on a
+3-device fleet EXECUTE runs 6 concurrent and every planning fan runs 3. The function's own docstring
+claimed it bounded the fan "to the per-device capacity the EXECUTE scheduler already honors" — and
+that capacity is `weight`, not 1. **The comment described the intent correctly and the code did not
+implement it**, which is the rarer case where a fix at odds with a comment is right (contrast L150).
+
+This is the same node-vs-slot substitution `00563c6ea` fixed for the planner's WIDTH PROMPT earlier
+today. The fan-outs were not fixed with it.
+
+**LOG EVIDENCE, not inference.** Detail-fan span reconstruction from `detail_completed`:
+
+    baseline-n3-r0 round 1   concurrency {1: 34.3s, 2: 95.7s, 3: 112.4s, 4: 1.3s}   makespan 244s
+    baseline-n3-r0 round 2   concurrency {1:  6.1s, 2: 28.0s, 3: 169.2s, 4: 0.6s}   makespan 204s
+
+The slices above 3 are 0.5-1.9s of scheduling jitter. Same ceiling in every 3-node cell. And the
+1-node arm is worse than "capped": **`swarm-1node-r0` detailed 17 items STRICTLY SERIALLY — 1743.1s
+of a 5842.9s run — on a device whose weight is 2.**
+
+**THE FIX.** `fleet_slot_models(&devices)` repeats each `model_id` `weight` times (min 1).
+`fanout_over_fleet` itself needs no change: its permit count IS the list length and its VecDeque
+hands out one entry per permit. Applied to the four pure-fan sites plus the completion group fan and
+sink_review.
+
+### Two scope decisions I made from the code, against the report
+
+**1. THE SKELETON DRAFT VOTE IS NOT TOUCHED.** `swarm.rs:12665` carries a measured comment: *"6 slots
+requested, and EXACTLY 3 survived — exactly the distinct-model count. Every duplicate died"*
+(158B/54B/162B returns), and *"Dedup is the fix; a length cap can never be."* Its `HashSet::insert`
+means the vote is **immune to slot expansion by construction** — duplicates collapse straight back
+out. A test now asserts the vote width stays 4 whether it is fed devices or slots, so a future edit
+that drops the dedup cannot silently turn this into a doubled, mostly-dead draft fan. **Widening the
+vote is a separate experiment that needs the fleet.** (L150 — the comment won its argument.)
+
+**2. `fleet_models` STAYS DISTINCT.** It also sizes `spec_repair`'s attempt list, so expanding it
+would have **doubled the best-of-N repair race from 3 to 6** — a token-cost and semantics change
+riding along on a concurrency fix. A separate `fleet_slots` goes to the fans only.
+
+### What this does NOT do, stated because the verifier said it first
+
+**It will not move EXECUTE occupancy at all.** Those numbers come from `task_dispatched` /
+`task_completed`, which only exist after planning; the plan fans emit `detail_completed` /
+`scouts_planned` / `contracts`. The payoff is pre-execute wall-clock, which is 16-39% of a run.
+Selling this as the fix for occupancy would be repeating F346's whole mistake.
+
+⚠ **F179 measured 301 s/call against 63 s/call when two jobs share one node under PARALLEL 2**, so
+the realised gain will be well under the ideal 2x. It is still the trade EXECUTE already makes on
+every run.
+
+### Two compile failures, both mine, both the same shape
+
+**First:** I wrote a `dev(id, model, weight)` test helper when **`dev(id, model)` already existed
+1,200 lines above** with weight pinned to 1 — L2, violated in the very session that keeps quoting it.
+Now `cfg_w()` builds the struct it actually needs rather than shadowing anything.
+
+**Second, and it was called in advance:** the verifier's own note said *"the fix's `d.weight` is
+`SwarmDevice.weight`; `d.cfg.weight` is the scheduler's separate `DeviceCfg` — they are different
+types, do not assume the helper can be shared."* I wrote it against `SwarmDevice` anyway. The
+resolved runtime pool is `Vec<DeviceCfg>` and all five call sites rejected it. ⇒ **L200. WHEN A
+REVIEW HANDS YOU A NAMED TRAP, THE FIX IS NOT DONE UNTIL YOU HAVE CHECKED THAT EXACT TRAP — a warning
+you read and did not act on costs the same as one nobody gave you.**
+
+✅ `cargo clippy --all-targets -- -D warnings` exit 0. ✅ Three tests pass, including the
+**pre-existing** `fanout_caps_one_call_per_device`, which proves the primitive's contract is intact.
+⚠ **UNMEASURED ON THE FLEET** — the fleet has had no models loaded since 08:03:59, so this is a
+compiled, tested, reasoned change with no live evidence behind it yet.
