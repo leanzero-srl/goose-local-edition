@@ -15693,3 +15693,42 @@ device that can run nothing is not a device, and 0 would make every reading "imp
 ✅ **NO NUMERIC DRIFT ON REAL DATA, verified rather than assumed** — `baseline-n3-r0` still reports
 `slot_count 6`, `execute_occupancy 0.8568`, the exact F348 figure. **The change is a no-op on today's
 fleet and a correction on every other one.**
+
+## F378 — 🔴 THE RELEASE BINARY IS FROM 08:56. Almost nothing I shipped today is in it, and the next run would have tested a binary I have not touched since breakfast.
+
+L151 says build the verdict instrument before the data arrives, so I went to check that today's five
+registered predictions could actually be settled. **They could not — for two independent reasons, and
+the second one is much worse than the first.**
+
+**1. THEY WERE NOT IN THE FILE THE INSTRUMENT READS.** `PREDICTIONS` already exists and `review.py`
+already consumes it (`:236-273`), keyed by a **string literal that must be present in the running
+binary** — with exactly the discipline needed: *"A prediction listed NOT-ON-THIS-BUILD must be left
+OPEN, never marked failed."* I had registered today's five in `FINDINGS.md` and in the loop prompt —
+**prose, not implementation** ⇒ **L186, on my own predictions.** Now registered as seven lines.
+
+**MARKER CHOICE, made honest rather than convenient.** Commit order today is monotone —
+08:52 F350 → 08:59 F351 → 09:06 F352 (`judge_node`) → 09:49 F357 (`salvaged`) → 11:28 F369
+(`-byte tree`) → 12:54 F375 (`for this fleet`). **F350 and F351 added STRUCT FIELDS and no string
+literal**, so neither has a marker of its own; they take `judge_node` as a **build-boundary proxy**,
+sound only because 09:06 is strictly after both. That reasoning is written into the file rather than
+left implicit, because a proxy marker silently conflated with a real one is how a prediction gets
+"settled" by a binary that never contained its fix. All five markers verified present as source
+literals — a marker that never resolves would park every prediction as unsettleable and look like
+caution (L4).
+
+🔴 **2. THE BINARY ITSELF IS STALE, AND THIS IS THE ONE THAT WOULD HAVE COST A RUN.**
+
+    target/release/goose   built  Aug 5 08:56
+
+**That is BEFORE F352 (09:06), F357 (09:49), F369 (11:28) and F375 (12:54).** The sweep runs
+`target/release/goose` (F349 already caught me diagnosing against `target/debug`). So the moment the
+fleet came back, `loop.sh start` would have spent a full ~2-hour cell on a binary carrying **none of
+the salvage flag, none of the judge_node field, none of the scaled sink ceiling and none of the fixed
+architect prompt** — and `review.py` would have correctly reported every prediction NOT SETTLEABLE
+**after** the fleet time was already gone.
+
+✅ **`cargo build --release -p goose-cli` launched detached.** ⇒ **L220. THE ARTEFACT A RUN EXECUTES IS
+NOT THE SOURCE YOU COMMITTED — A SHIPPED FIX IS INERT UNTIL THE BINARY THE HARNESS LAUNCHES IS
+REBUILT, AND NOTHING IN A GREEN TEST SUITE SAYS OTHERWISE.** This is L53 ("prove the arm is armed")
+pointed at my own build, and L189's shape: **the last manual step in an unattended loop is the one
+that gets missed** — here it would have been missed at exactly the moment it was most expensive.

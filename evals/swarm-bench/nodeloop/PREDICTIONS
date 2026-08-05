@@ -38,3 +38,21 @@ F160|-|with scoped_contracts ON, a test-author receives 1 `## API of` block (its
 # kill would have false-killed a productive worker. Predicate withdrawn; see F163 for why the
 # counters cannot see a worker streaming a tool payload, and what observable the fix needs.
 F184|-|baseline r1's sink runs CONCURRENT with 3 sibling tasks; if its s/call is also far above 63 then CONTENTION per se drives F179, not idle-fill specifically, and the lever is partly exonerated; if it stays near 63 despite siblings, the idle-fill is doing something worse than ordinary co-tenancy
+
+# ---- 2026-08-05 boundary + post-boundary work. Registered HERE, not just in FINDINGS.md, because a
+# prediction that only exists in prose is a note and not an implementation (L186) — `review.py` can
+# only settle what this file lists.
+#
+# MARKER CHOICE, and why each is honest. Commit order today is monotone:
+#   08:52 F350 (no literal) -> 08:59 F351 (no literal) -> 09:06 F352 adds `judge_node`
+#   -> 09:49 F357 adds `salvaged` -> 11:28 F369 adds "-byte tree" -> 12:54 F375 adds "for this fleet"
+# F350 and F351 added STRUCT FIELDS and no string literal, so neither has a marker of its own. They
+# take `judge_node` as a BUILD-BOUNDARY proxy: that literal landed at 09:06, strictly after both, so a
+# binary containing it necessarily contains them. Stated rather than silently conflated.
+F350|judge_node|planning fans size to SLOTS: detail-fan makespan drops >=20% vs 244/204s, `straggler_aborted` does NOT rise, reconstructed detail concurrency reaches 6 (2 on 1-node). ANY of the three failing => REVERT. Marker is the 09:06 boundary proxy; F350 itself added no literal
+F351|judge_node|pre_review emits `secs`: 7-12 events at 100-250s total. Under ~20s => F348's ~0.30 idle-slot estimate was too high, and that figure is what retired F346. Marker is the 09:06 boundary proxy; F351 itself added no literal
+F352|judge_node|judge_verdict carries `judge_node`, non-empty on 40-75% of verdicts. All-empty => not wired. All non-empty => the deterministic-only path is not being distinguished. CONCENTRATED ON ONE NODE => the `position()` selection defect confirmed from the log instead of from simulation
+F357|salvaged|1-3 `salvaged: true` per 3-node run (11 of 79 completions were salvages historically). ZERO on EVERY run means the flag is not wired to the firing path — it does NOT mean the stalls stopped
+F369|-byte tree|the sink ceiling scales with the tree it must integrate: a ~43KB tree gets ~2600s, not 1800s. FALSIFIERS: any join exceeding 4326s (the one measured loop), or `sync_shape` still failing on a 3-node run => REVERT. Magnitude confidence LOW — `sink_cap_ref_bytes` is fitted to n=1
+F374|PARALLEL WORKER SLOTS|`worker_count` became SLOTS, and it also feeds fan_e2e_split, so a 3-node run must now emit FOUR e2e shards (verify-e2e::0..3) where the archive shows three. FALSIFIERS: e2e node-seconds > 3037s (2278 x 4/3), or ANY shard reporting clean having enumerated ZERO commands => move the shard count to the ORACLE LENGTH, falling back to devices.len() when the oracle is empty
+F375|for this fleet|the architect's count ask is fleet-relative and self-consistent: a 6-slot run asks for 12-18 and the worked example says 12-18, never "~6-9 for a 3-device fleet". Settled by reading the dispatched prompt, not by an outcome
