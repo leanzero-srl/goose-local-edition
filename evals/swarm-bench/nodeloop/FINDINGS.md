@@ -17229,3 +17229,48 @@ where I put it this afternoon.
 
 ⚠️ n=1, and this cell is the one whose app never bound its port, so its EXECUTE profile may not be
 typical. The prefix cost, however, is decided before any of that and is unaffected.
+
+---
+
+## F411 — THE DETAIL FAN RUNS THREE TIMES TO PRODUCE THE SAME 18 TASKS
+
+F410 ranked the **1991.6 s redraft prefix** as the largest measured loss in the run. `retarget_discarded`
+exists to decide whether that is waste — its own comment says *"emit what is being discarded, intersect
+it against `plan_loaded` afterwards, and only build a reuse path if the hit rate justifies one."* **The
+intersection had never been run.** Running it:
+
+| round | discarded | came back with the SAME id | desc delta |
+|---|---|---|---|
+| 1 | 20 tasks | **16 (80%)** | 8-32 chars |
+| 2 | 18 tasks | **18 (100%)** | 8-10 chars out of 1200-2000 |
+
+And the fan genuinely re-runs — `detail_completed` timestamps against the round markers give **9 + 8 +
+9 = 26 details across three rounds**, for a final plan of 18 tasks. Two full detail fans were generated,
+discarded, and regenerated to arrive at the same task list.
+
+**A 100% id hit rate is the engine's own stated criterion for building the reuse path.**
+
+### ⛔ AND I AM NOT BUILDING IT, BECAUSE THE INSTRUMENT CANNOT SETTLE THE QUESTION IT WAS BUILT FOR
+
+The deltas are **8-10 characters**, uniform across unrelated verify tasks (1244 -> 1236 on three
+different shards, 1982 -> 1972 on `api`). That pattern smells like a shared template, not re-planning —
+but `desc_chars` **cannot distinguish a whitespace tweak from a rewritten sentence of the same length.**
+And `detail_memo` is already ON, keyed on the FULL detailer input, whose doc warns explicitly that *"a
+narrower key would reuse a stale detail that ignores a new user decision."* Loosening that key on a
+hunch is exactly the move that doc forbids.
+
+So the honest state is: **the hit rate says build it, the delta says wait, and the event cannot break
+the tie.**
+
+**SHIPPED instead — the event can now answer its own question.** `retarget_discarded` carries
+`desc_sha` alongside `desc_chars`. An identical digest proves the re-detail was pure rework and the
+reuse path is safe; a differing digest proves something real changed and it is not. Neither requires
+the event to carry kilobytes of prose, and neither bakes in a similarity threshold — which the event's
+own comment says it deliberately avoids. `short_digest` is deliberately separate from
+`detail_memo_key`: that one hashes the detailer's INPUT to decide reuse, this hashes an OUTPUT to
+decide whether reuse *would have been* safe. clippy `-D warnings` RC=0.
+
+⇒ **L235. WHEN AN INSTRUMENT'S OWN VERDICT IS "I CANNOT TELL", THE SHIP IS THE INSTRUMENT, NOT THE
+FIX.** Three findings today were plausible changes that measurement killed; this one is a plausible
+change that measurement can neither kill nor confirm, and the difference between those two states is
+worth one field in an event.
