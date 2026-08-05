@@ -12423,3 +12423,44 @@ but the class of error is one this repo has a scar from).
 ⇒ **L165. WHEN A CONFIG CHANNEL EXISTS BUT NOTHING READS IT, IT IS NOT A CHANNEL — IT IS A COMMENT.
 Before relying on env/args/flags to redirect a subject, grep the SUBJECT for the reader, not the
 harness for the writer.**
+
+## F306 — the capstone genuinely completes in ONE run out of SIX; half its "done" verdicts are truncations
+
+Tallied `integrate-verify` across every run with a recorded outcome, then checked for `sink_capped`:
+
+    unit                   sink     secs   B       score   A       C       D
+    baseline-n3-r0         CAPPED   1800   0.3194  0.6595  0.8333  0.8571  0.705
+    baseline-n3-r1         FAILED    781   0.2083  0.478   0.8333  0.4286  0.5
+    sink_review-n3-r0      CAPPED   1800   0.3611  0.7326  1.0     0.8571  0.8
+    think_off-n3-r0        DONE     1590   1.0     0.9143  1.0     0.8571  0.75
+    think_off-n3-r1        FAILED    647   0.9715  0.9057  1.0     0.8571  0.75
+    think_off-n3-r2        CAPPED   1800   0.2083  0.3273  0.3333  0.2857  0.55
+
+**THE HEADLINE: 1 of 6. `think_off-n3-r0` (1590 s, one attempt, no `sink_capped` event) is the only
+run whose capstone finished on its own merits.** Three were **CUT OFF at `sink_cap_secs` = 1800** and
+finalized as **done** by `swarm.rs:11587-11603` — *"finalizing as done (smoke gate backstops)"* — and
+two died after three attempts.
+
+⇒ **`integrate-verify` status `done` IS NOT EVIDENCE THAT INTEGRATION HAPPENED.** Three of the four
+"done" sinks are truncations wearing a success label. Every analysis that keyed on sink success —
+including my own reading of cell 1 — was reading a cap. This is the same class as F277's
+*"`complete_result{passed:true}` is a CLAIM"*, one layer down and previously unnoticed.
+
+**The elapsed times separate perfectly and in the counter-intuitive direction:** succeed-or-capped
+runs 1590-1800 s, died runs **647-781 s**. **The sink that fails does so FAST**, because a stall
+burns three attempts of ~7 min idle timeout (F293/F294) long before the 30-min cap can arrive.
+
+⚠ **A TEMPTING ASSOCIATION THAT DOES NOT REACH SIGNIFICANCE — stating it as suggestive only.** All
+**3 of 3** capped sinks sit in the low-B group, and the single genuine completion is the single
+B = 1.0. But the low-B group has 4 members of 6, so P(all three capped land there by chance) =
+C(4,3)/C(6,3) = **4/20 = 0.20**. **Not significant, and I am not claiming it.** The clean
+counter-example is in the table: `baseline-n3-r1`'s sink FAILED outright and its B is 0.2083, while
+`think_off-n3-r1`'s sink ALSO failed and its B is 0.9715. **"Not capped ⇒ good app" is false.**
+
+📌 **REGISTERED for the remaining curve cells, and it is cheap because the sweep produces it anyway:
+record `sink ∈ {DONE, CAPPED, FAILED}` for every cell and test the capped-vs-low-B association at
+n=10.** ⚠ **FALSIFIER: a CAPPED sink with B > 0.5, or a genuine DONE sink with B < 0.5.** Cell 3 is
+in flight with `integrate-verify` live right now — it is the next datum either way.
+
+⇒ **L166. A STATUS THAT A TIMEOUT CAN WRITE IS NOT A STATUS — find out which of a phase's "successes"
+are the deadline talking before you count any of them.**
