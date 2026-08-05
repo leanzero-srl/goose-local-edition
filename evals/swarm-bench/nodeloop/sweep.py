@@ -872,13 +872,41 @@ def abandon_decision(unit: Path, arm: dict, nodes: int, elapsed: float) -> tuple
     # 3. PLANNING STUCK. No task has been dispatched well past the point where every observed run had
     #    started dispatching. Not proof of doom, so it is weighted below the kill line on its own.
     if events and not any(e.get("event") == "task_dispatched" for e in events):
-        if elapsed > 3600:
+        # ⚠⚠ MEASURE SILENCE, NOT DURATION. A LONG PREFIX IS NOT A STUCK ONE.
+        #
+        # This rule keyed on total elapsed and would have killed a perfectly healthy run. The redraft
+        # ladder is a DESIGNED branch: `confidence_retarget` -> `retarget_discarded` -> re-plan, and
+        # F303 measured redrafting prefixes of 1730.9 / 2218.7 / 2839.0 / 2882.7 s against no-redraft
+        # prefixes of 1091-1330 s. `baseline-n3-r3` tripped the 2400 s rung at conf 0.50 with two
+        # discards — and a THIRD discard costs another ~700-1000 s, which puts the prefix past 3600 s
+        # and onto a rung of 0.85, ABOVE the 0.8 abandon line. The rule's own comment says it is
+        # "weighted below the kill line on its own"; the 3600 s rung is not, and it would have
+        # abandoned a healthy cell and VOIDED ITS PAIR — the most expensive possible false positive on
+        # goal one, because a dropped pair is worse than a lost one (F327).
+        #
+        # The engine states its own progress. `skeleton_drafts`, `confidence_retarget`,
+        # `retarget_discarded` and `plan_loaded` are deterministic events, and one arriving two
+        # minutes ago proves planning is advancing whatever the total elapsed says. So the question is
+        # not "how long has this run taken" but "how long since the engine last did anything".
+        PLANNING_EVENTS = {"skeleton_drafts", "confidence_retarget", "retarget_discarded",
+                           "plan_loaded", "research_findings", "scout_done", "pool_resolved"}
+        last = None
+        for e in events:
+            if e.get("event") in PLANNING_EVENTS:
+                try:
+                    t = datetime.fromisoformat(str(e.get("ts")).replace("Z", "+00:00")).timestamp()
+                except (ValueError, TypeError):
+                    continue
+                last = t if last is None else max(last, t)
+        quiet = (time.time() - last) if last else elapsed
+        if quiet > 3600:
             conf = max(conf, 0.85)
-            reasons.append(f"{elapsed / 60:.0f} min elapsed with ZERO dispatches — planning has not "
-                           f"produced a single task (observed pre-dispatch is ~25-31 min)")
-        elif elapsed > 2400:
+            reasons.append(f"{quiet / 60:.0f} min since the last planning event and ZERO dispatches — "
+                           f"planning has genuinely stopped (total elapsed {elapsed / 60:.0f} min)")
+        elif quiet > 2400:
             conf = max(conf, 0.5)
-            reasons.append(f"{elapsed / 60:.0f} min with no dispatch yet (observed ~25-31 min)")
+            reasons.append(f"{quiet / 60:.0f} min since the last planning event, no dispatch yet "
+                           f"(total elapsed {elapsed / 60:.0f} min)")
 
     # 4. FAR BEYOND THE MEASURED NORM. Uses the median of units that actually finished, so it adapts
     #    rather than encoding a guess. Alone it is under the line — slow is not doomed — but it

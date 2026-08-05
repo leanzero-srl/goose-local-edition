@@ -13426,3 +13426,47 @@ opening one of the four directories. The caveat was the falsifier and it had an 
 
 ⇒ L183. **A GUARD KEYED ON FILESYSTEM METADATA IS VOID THE MOMENT ANYTHING COPIES THE FILES — take
 provenance and identity from inside the artifact, never from the directory it happens to sit in.**
+
+## F330 — THE WATCHDOG WOULD HAVE KILLED A HEALTHY CELL AND VOIDED ITS PAIR
+
+While `STOP` was armed, the log surfaced a line I had not seen before:
+
+    [watch] baseline-n3-r3: confidence 0.50 this unit is pointless (kill at 0.8)
+            — 40 min with no dispatch yet (observed ~25-31 min)
+
+`abandon_decision` rule 3 keyed on TOTAL ELAPSED with zero dispatches:
+
+    elapsed > 3600  ->  conf 0.85     ← ABOVE the 0.8 abandon line
+    elapsed > 2400  ->  conf 0.50
+
+**The rule's own comment says it is *"weighted below the kill line on its own"*. The 3600 s rung is
+not.** And the redraft ladder is a DESIGNED branch, not a stall — F303 measured redrafting prefixes
+of 1730.9 / 2218.7 / 2839.0 / 2882.7 s against no-redraft prefixes of 1091-1330 s. Cell 4 tripped the
+2400 s rung at 0.50 with two discards, and **a third discard costs another ~700-1000 s, which puts a
+perfectly healthy prefix past 3600 s and onto the 0.85 rung.**
+
+That is the most expensive false positive available on goal one: abandoning a healthy cell **voids
+its PAIR**, and a dropped pair is worse than a lost one (F327 — at n=8 the test can absorb one
+crossing, but a drop removes the pair from the denominator entirely).
+
+The prefix band `[2652, 2959]` I registered for cell 4 and the watchdog's 3600 s kill rung were on a
+collision course, and I had written both without ever putting them side by side.
+
+### THE FIX: MEASURE SILENCE, NOT DURATION
+
+The engine states its own progress. `skeleton_drafts`, `confidence_retarget`, `retarget_discarded`,
+`plan_loaded`, `pool_resolved` are deterministic events, and one that arrived two minutes ago proves
+planning is advancing whatever the total elapsed says. The question is not *"how long has this run
+taken"* but *"how long since the engine last did anything"*.
+
+    CONTROL A  redrafting 70 min, last planning event 3 min ago    conf 0.00   NOT killed  ✅
+    CONTROL B  genuinely stuck, silent for 68 min                  conf 0.85   KILLED      ✅
+
+Both directions, because a fix that only stops the false positive would have disarmed the guard
+entirely (L123). The stuck case still trips the same rung it always did.
+
+⚠ NOT LIVE until the supervisor restarts — same boundary as F327/F328 (L23).
+
+⇒ L184. **A TIMEOUT ON TOTAL ELAPSED CANNOT DISTINGUISH SLOW FROM STOPPED. When the subject emits
+progress events, time them from the LAST ONE — otherwise every legitimate long branch is on a
+collision course with the guard, and the guard wins.**
