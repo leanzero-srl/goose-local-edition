@@ -16755,3 +16755,41 @@ already-bound guard correctly refuses every time). So the largest block of score
 **unreachable by static analysis and unreachable by the runtime checker as currently configured.**
 That is not a defect to fix in an afternoon; it is the shape of the problem, and it is now written
 down instead of being rediscovered by building the wrong detector.
+
+---
+
+## F400 — THE INERT RUNTIME CHECKER NOW SPAWNS THE APP THE WAY THE SPEC SAYS TO
+
+F399 ended on an uncomfortable corollary: the sync family — the largest block of score on the board,
+worth **51 → 5 pairs** (F390) — is unreachable by static analysis (L231, its ground truth is runtime)
+AND unreachable by the runtime checker, which F395 measured as inconclusive in **9 of 9** archived
+events. This closes the second half.
+
+**Why it was inert, precisely.** `spec_port` takes the first port LITERAL in the spec. This bench's
+spec contains exactly one — **8930, the VENDOR's**, inside the Meridian docs URL. The app's own port
+is written `--port N`: a placeholder with no literal to find. So the check spawned `python3 -m pkg`
+bare, waited on the vendor's port, found it already bound, and **correctly refused** to conclude. The
+engine's own comment at the spawn site diagnoses this exactly — it knew, and had no way out.
+
+**The way out was in the spec all along:** ``python -m vendorsync --db PATH --port N``. Parsing that
+lets the engine choose a **free port** and a scratch DB, which removes the ambiguity at its source
+instead of guessing a better port. And it is not speculative that the apps start this way — **the
+scorer already spawns exactly this invocation and gets a healthy server in 5 of 5 cells.**
+
+**SHIPPED:** `spec_run_argv(spec, pkg, db, port)` — pure, and it takes the **backticked span** rather
+than the line, because the spec writes prose after the closing backtick and swallowing it would hand
+the app `starts` and `backend` as arguments. The test asserts exactly that, using the real spec line
+verbatim. Placeholders are ALL-CAPS tokens filled by the preceding flag (`--port N` → the chosen port,
+otherwise the scratch DB); a literal like `serve` is honoured, not overwritten. **Empty result => the
+old bare-spawn path, byte-identical**, so a spec that advertises nothing is unaffected.
+
+⚠️ **UNMEASURED, and the honest expectation is modest.** This makes the check *able* to conclude; it
+does not make any app correct. The most likely first outcome is that `spec_contract` starts emitting
+REAL findings against apps that genuinely 500 — which is the point, but it also means a check that has
+never once fired is about to start firing into the fix loop, and its findings have never been
+validated against the scorer the way F398's were. **The first run with this on should be read as a
+calibration of the checker, not as a verdict on the app.**
+
+⚠️ It also cannot fix the deeper thing: even a conclusive `spec_contract` only probes bare GETs
+(F391), so `POST /api/sync` — the endpoint whose shape 4 of 5 cells break — is still disclosed as
+unprobed rather than checked.

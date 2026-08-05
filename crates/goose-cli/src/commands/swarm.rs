@@ -5137,6 +5137,38 @@ mod tests {
     /// the production client (`vendorsync/meridian.py`) in two of them.
     ///
     /// This test covers the PARSER half, which is what runs without python.
+    /// The advertised invocation is what makes the contract check able to conclude at all.
+    #[test]
+    fn the_advertised_invocation_is_parsed_with_a_chosen_port_and_db() {
+        // The REAL bench spec line, verbatim, prose and all.
+        let spec = "### 5. `vendorsync/__main__.py` — the entry point\n\
+                    `python -m vendorsync --db PATH --port N` starts the backend serving both the \
+                    API and the page.\n";
+        let argv = spec_run_argv(spec, "vendorsync", "/tmp/x.db", 54321);
+        assert_eq!(
+            argv,
+            vec!["--db", "/tmp/x.db", "--port", "54321"],
+            "{argv:?}"
+        );
+
+        // PROSE MUST NOT SURVIVE. Taking the line instead of the backticked span would append
+        // "starts the backend serving both the API and the page." as arguments.
+        assert!(
+            !argv
+                .iter()
+                .any(|a| a.contains("starts") || a.contains("backend")),
+            "{argv:?}"
+        );
+
+        // A literal in the spec is honoured, not treated as a placeholder to overwrite.
+        let lit = spec_run_argv("`python -m app serve --port N`", "app", "/tmp/d", 9);
+        assert_eq!(lit, vec!["serve", "--port", "9"], "{lit:?}");
+
+        // No advertised invocation => empty => the caller keeps its old behaviour byte-for-byte.
+        assert!(spec_run_argv("Build a CLI. It should be fast.", "app", "/tmp/d", 9).is_empty());
+        assert!(spec_run_argv("`python -m other --port N`", "app", "/tmp/d", 9).is_empty());
+    }
+
     #[test]
     fn the_no_timeout_scan_turns_its_json_into_actionable_findings() {
         let d = parse_http_timeout(
@@ -16446,6 +16478,57 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
     out
 }
 
+/// The FULL invocation the spec advertises for `python -m <pkg>`, with its placeholders filled.
+///
+/// `spec_port` takes the first port LITERAL in the spec, and this bench's spec has exactly one — the
+/// VENDOR's 8930, inside the Meridian docs URL. The app's own port is written `--port N`: a
+/// placeholder with no literal to find. So the contract check spawned the app bare, waited on the
+/// vendor's port, found it already bound, and correctly refused to conclude — in 9 of 9 archived
+/// events (F395). The engine's own comment at the spawn site says exactly this.
+///
+/// The spec DOES advertise the real invocation: ``python -m vendorsync --db PATH --port N``. Parsing
+/// it lets the caller choose a FREE port and a scratch DB, which removes the ambiguity at its source
+/// rather than guessing a port and hoping.
+///
+/// Returns the args AFTER the package name; empty when the spec advertises no such invocation, and
+/// the caller then behaves exactly as before. Pure/testable.
+fn spec_run_argv(spec: &str, pkg: &str, db_path: &str, port: u16) -> Vec<String> {
+    let needle = format!("-m {pkg}");
+    // Take the BACKTICKED span, not the line: the spec writes prose after the closing backtick
+    // ("… --port N` starts the backend serving both the API and the page.") and swallowing that
+    // would hand the app "starts" as an argument.
+    let span = spec
+        .split('`')
+        .find(|s| s.contains(&needle))
+        .unwrap_or_default();
+    let mut it = span.split_whitespace().skip_while(|t| *t != pkg);
+    if it.next().is_none() {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut prev_flag = String::new();
+    for tok in it {
+        if tok.starts_with('-') {
+            prev_flag = tok.to_lowercase();
+            out.push(tok.to_string());
+            continue;
+        }
+        // A placeholder is ALL-CAPS (PATH, N, DB_FILE). Anything else is a literal the spec means.
+        let is_placeholder = tok.chars().any(|c| c.is_ascii_alphabetic())
+            && tok
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+        out.push(if !is_placeholder {
+            tok.to_string()
+        } else if prev_flag.contains("port") {
+            port.to_string()
+        } else {
+            db_path.to_string()
+        });
+    }
+    out
+}
+
 /// The advertised server port, else 8000 (the uvicorn/FastAPI default the beds use). Pure/testable.
 fn spec_port(spec: &str) -> u16 {
     regex::Regex::new(r"(?:127\.0\.0\.1:|localhost:|port\s+)(\d{4,5})")
@@ -16517,7 +16600,27 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             verified,
         };
     }
-    let port = spec_port(spec);
+    // PREFER THE INVOCATION THE SPEC ADVERTISES, on a port WE choose.
+    //
+    // The bare spawn below waits on `spec_port`, which is the first port literal in the spec — on this
+    // bench the VENDOR's, because the app's own port is the placeholder `--port N`. That made the check
+    // inconclusive in 9 of 9 archived events: it correctly refused to blame the app for a port a
+    // dependency held. Choosing our own free port and passing the advertised flags removes the
+    // ambiguity at its source instead of guessing better. Empty advertised argv => the old path,
+    // byte-identical.
+    let free_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port());
+    let scratch_db =
+        std::env::temp_dir().join(format!("goose-spec-contract-{}.db", std::process::id()));
+    let advertised = free_port
+        .map(|p| spec_run_argv(spec, &pkg, &scratch_db.to_string_lossy(), p))
+        .unwrap_or_default();
+    let port = match (advertised.is_empty(), free_port) {
+        (false, Some(p)) => p,
+        _ => spec_port(spec),
+    };
     // Read the port's state BEFORE spawning — after the spawn it is unknowable whether we or a
     // squatter opened it, and that ambiguity is exactly what produced two false 404 findings.
     let port_was_free_before_spawn = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -16526,6 +16629,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     let mut server = tokio::process::Command::new("python3");
     server
         .args(["-m", &pkg])
+        .args(&advertised)
         .current_dir(root)
         .env("PYTHONPATH", "src")
         .stdin(std::process::Stdio::null())
