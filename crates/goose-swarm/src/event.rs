@@ -102,6 +102,12 @@ pub enum SwarmEvent {
         task_id: String,
         device: String,
         had_findings: bool,
+        /// How long the job HELD ITS FLEET SLOT. A pre-review claims the same `in_flight` permit a
+        /// task dispatch does and can hold it for up to `planner_timeout_secs` (900s), but the event
+        /// fired only on completion with no start and no duration — so the one idle-node mechanism
+        /// that can block a real dispatch for a quarter of an hour was the one nobody could measure.
+        /// Its slot-time had to be ESTIMATED from same-device inter-arrival gaps, which is a guess.
+        secs: f64,
     },
 }
 

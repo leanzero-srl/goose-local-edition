@@ -14436,3 +14436,45 @@ you read and did not act on costs the same as one nobody gave you.**
 **pre-existing** `fanout_caps_one_call_per_device`, which proves the primitive's contract is intact.
 ⚠ **UNMEASURED ON THE FLEET** — the fleet has had no models loaded since 08:03:59, so this is a
 compiled, tested, reasoned change with no live evidence behind it yet.
+
+## F351 — pre_review's slot time is now measurable. It was the only idle-node job that could block a dispatch for 15 minutes invisibly.
+
+The F348 falsifier could measure the judge exactly (`judge_observed` opens every call, `judge_verdict`
+closes it, single-flight so they never interleave) and had to **estimate** pre_review from same-device
+inter-arrival gaps — a guess it flagged as the weak half of its own number:
+
+> *"Pre-review is NOT directly measurable — it emits only a completion event with no start and no
+> duration (scheduler.rs:2464), capped at 900s per call… Combined, judge+pre_review plausibly account
+> for 35-41% / 17-21% / 30-37% / 23-30% of the apparent idle slot time — call it ~0.30 as a central
+> estimate, **with genuine uncertainty on the pre-review half**."*
+
+That uncertainty is structural, not statistical. **A pre-review claims the same `in_flight` permit a
+task dispatch does** (`scheduler.rs:1235-1238`) and holds it under
+`tokio::time::timeout(planner_timeout_secs.max(90))` where `default_planner_timeout_secs() = 900`. So
+the one idle-node mechanism that can block a real dispatch for a quarter of an hour was the one
+nobody could put a number on.
+
+**FIX:** `SwarmEvent::PreReview` gains `secs`, stamped from an `Instant` taken immediately before
+`pr.pre_review(req).await`. Two lines and a field.
+
+✅ `cargo check --workspace` clean, `cargo clippy --all-targets -- -D warnings` **exit 0**. No
+exhaustive match broke — the sink serialises through serde, so a new field simply appears in the
+jsonl.
+
+**What it does NOT fix, and why I am not fixing it in the same commit:** `judge_verdict.device` still
+reports the JUDGED WORKER's device, taken from `task_final_device.get(tid)`
+(`scheduler.rs:1439-1442`), not the node that ran the judge. That one needs the judge's
+`claimed_device` index threaded from `pick_judge_target` through to the verdict emit, which is a real
+change to the job's payload rather than a stamped duration. Kept separate so that if either regresses
+the bisect names which.
+
+⚠ **NO LIVE EVIDENCE.** The fleet has had no models loaded since 08:03:59, so this is compiled and
+type-checked only. **The first run that fires a pre-review will either carry a plausible `secs` or it
+will not** — and until one does, this is a mechanism that is written, not a mechanism that works
+(L82: a mechanism firing is the first half of a result).
+
+📌 **REGISTERED BEFORE THE DATA:** on the next 3-node run I expect 7-12 `pre_review` events carrying
+`secs` in the **100-250 s** range, from the falsifier's inter-arrival estimate. **If they come back
+under ~20 s, the estimate that put pre_review at roughly half of judge+pre_review slot-time was
+wrong, and F348's ~0.30 central figure is too high** — which would matter, because that number is
+what killed F346.
