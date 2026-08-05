@@ -14277,3 +14277,89 @@ the children (1.5, where the old rooting read 3.0), a replan addition still read
 1.0 and was WRONG: splitting a task into two siblings genuinely creates parallelism, and an
 instrument test that denies real parallelism would have been a worse bug than the one it was written
 to catch.
+
+## F348 — F346 IS DEAD. The fleet was never idle, and I had an instrument on disk saying so for three days.
+
+The registered falsifier fired and killed the premise. **Verdict: `yes_they_consume_a_slot`,
+`premise_survives: False`.** I verified its three load-bearing claims myself before accepting it.
+
+**1. Judge and pre_review acquire the SAME slot a task dispatch does.** Verified at
+`scheduler.rs:1205-1207` (`self.devices[i].in_flight += 1`, comment: *"Claim the idle device's slot
+so a worker dispatch + the next idle-job avoid this node"*), `scheduler.rs:1238` for pre_review, and
+`IdleSlotGuard::drop` at `scheduler.rs:330-335` releasing it. `pick_device`'s free-slot filter
+respects that counter, so **while a judge runs, a real task cannot enter that slot.** Measured judge
+slot-seconds: 3510 / 3263 / 4183 / 1896 — 31.3% / 13.7% / 25.6% / 17.7% of each cell's idle slot-time
+in the execute window.
+
+**2. UNIT MISMATCH — MINE.** `occupancy.py` divides by `n = len(pool)` = **3 DEVICES**, and `busy` is
+the per-device UNION of spans, so a device running two tasks scores 1. **I compared that device-level
+number against the six-SLOT concurrency histogram and called the difference wasted capacity.** They
+are different quantities. At device granularity judge work only adds +0.062 / +0.064 / +0.069 /
++0.110.
+
+**3. WRONG DENOMINATOR — ALSO MINE, AND I HAD ALREADY QUOTED THE RIGHT ONE.** The 0.5645 / 0.4737 /
+0.6499 / 0.2582 figures are WHOLE-RUN and include a planning prefix of 2218.7 / 1330.0 / 1316.0 /
+2882.7s — **16-39% of wall during which the scheduler has dispatched nothing and the log credits zero
+busy by construction.** `occupancy.py` prints that caveat verbatim in its own output and already
+publishes the scheduler-owned window:
+
+    EXECUTE OCCUPANCY   0.8568 / 0.5746 / 0.8139 / 0.5910     — 1.5-2.3x the numbers I built on
+    + judge, device-level   ~0.92 / 0.64 / 0.88 / 0.70
+
+**I quoted those exact execute numbers in F345b and then built F346 on the whole-run column anyway.**
+
+### 🔴🔴🔴 THE WORST PART: I HAD AN INDEPENDENT INSTRUMENT RUNNING THE WHOLE TIME AND NEVER READ IT.
+
+`nodeloop/fleetsample.sh` — **written by me on 2026-08-02**, polling `lms ps` across all three nodes
+every 30 s, **4451 rows, still sampling at 07:53:44 today.** It is not derived from the event log in
+any way. It says the fleet was busy (GENERATING + PROCESSINGPROMPT):
+
+    0.753 / 0.857 / 0.909 / 0.716 of whole-run node-time
+
+against the event-log figures of 0.565 / 0.474 / 0.650 / 0.258 that I spent the morning reasoning
+from. **A gap of 19 / 38 / 26 / 46 percentage points, sitting on disk, unread, for three days.**
+
+⇒ **L198. AN INSTRUMENT YOU BUILT AND LEFT RUNNING IS NOT AN INSTRUMENT YOU CONSULTED. Before
+building a conclusion on one measurement, list every other source already on disk that bears on it —
+the independent one you forgot is the one that would have caught you.**
+
+✅ **The falsifier's own honesty check, which I am keeping:** `lms` is NOT a strict superset of task
+time — in n3-r0's execute window event-log task busy (13082.6 device-s) EXCEEDS lms busy (~11422),
+because a task span includes local tool execution while the GPU idles. So `lms` is a device-level
+sanity check, not a clean decomposition. It cannot be used to compute occupancy either.
+
+### What survives, and it is a different, smaller, differently-shaped target
+
+Counting judge and pre_review at slot level, **r1 and r3 still sit near 0.55-0.61 of six slots**, and
+**r1 carries a 2566.6 s solo `integrate-verify` tail — 30% of its wall** — which no measurement
+artifact explains. That is **SINK SERIALIZATION**, not "the scheduler leaves slots unfilled", and it
+lines up with the long-standing observation that integrate-verify takes 36-47% of node-busy time.
+
+**Any engine change sized against F346's numbers would have been sized against a figure 2-4x too
+pessimistic.** That is exactly the wasted engine work the falsifier was registered to prevent, and it
+is the second time this session that registering a falsifier in advance has paid for itself (F346
+killed F345b within the hour; this kills F346 within two).
+
+### 🎯 A REAL ENGINE DEFECT CAME OUT OF THE FALSIFIER ANYWAY
+
+`scheduler.rs:1099` and `:1220` select the idle-job device with
+`position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)` — **the FIRST device with any free slot,
+in pool order.** `pick_device` at `scheduler.rs:592-600` deliberately sorts by `in_flight` instead.
+⇒ **THE MECHANISM BUILT TO FILL IDLE NODES DOES NOT PREFERENTIALLY TARGET IDLE NODES.** It piles onto
+the lowest-index device that happens to have a slot, so judges land on nodes already working while a
+genuinely idle node sits there. Simulated: judge work currently adds +0.062/+0.064/+0.069/+0.110 to
+device occupancy; **had every judge landed on a fully idle device the same work would have added
++0.143/+0.156/+0.186/+0.198** — roughly double.
+
+📌 **QUEUED ENGINE FIXES (observability first — both are the disease `occupancy.py`'s own header
+describes, a mechanism whose precondition is unobservable):**
+1. `judge_verdict.device` reports the JUDGED WORKER's device (`task_final_device`,
+   `scheduler.rs:1439-1442`), not the node that ran the judge ⇒ **judge load cannot be attributed to
+   a node at all.**
+2. `pre_review` emits only a completion event — no start, no duration (`scheduler.rs:2459-2468`),
+   while a single call can hold a slot for up to 900 s ⇒ **pre-review slot time is structurally
+   unmeasurable.**
+3. `position()` → least-loaded selection for idle jobs.
+
+**Fix the observability BEFORE the selection**, or the fix to (3) cannot be measured — which is how
+this whole detour started.
