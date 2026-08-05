@@ -16889,3 +16889,46 @@ to it more strongly than I wrote.
 ⇒ **L232. BEFORE BUILDING A CHECK FOR A DEFECT, RE-RUN THE DEFECT.** If it does not reproduce under
 the check's own conditions, no checker can catch it and the honest target is the flakiness, not the
 symptom.
+
+---
+
+## F403 — `build_sha` FROZE FOR TWO DAYS: A COMMIT DOES NOT TOUCH `.git/HEAD`
+
+`levers_resolved.build_sha` exists to answer one question — *did this run contain my change?* The first
+live run after the fleet returned answered **`eb8027139-dirty`**, a commit from **2026-08-03 18:40**,
+while executing a release binary built 2026-08-05 17:25 carrying six engine changes committed that
+afternoon. Two days stale.
+
+**The cause is one line and its own comment claimed the opposite.** `build.rs` had
+`cargo:rerun-if-changed=../../.git/HEAD` and asserted *"committing or switching branches re-stamps"*.
+Only the SWITCH half is true: `git commit` on the same branch leaves `.git/HEAD` byte-for-byte
+identical (`ref: refs/heads/local-edition`) and moves **`.git/refs/heads/local-edition`** instead. Cargo
+saw no changed input, reused the object file, and the stamp froze at whenever the script last ran.
+
+**FIXED** by also watching the ref `HEAD` points at, plus `.git/packed-refs` (a `git gc` moves refs
+into that file, after which watching only the loose path would silently re-freeze).
+
+✅ **FALSIFIED PROPERLY, not just observed to work.** Rebuilding after editing `build.rs` proves
+nothing — the edit itself forces a re-run. The real control is: **commit with `build.rs` untouched,
+rebuild, and see the sha move.** It did — `2ff0106b9` → `740ee4cec`, with the previous sha gone from
+the binary.
+
+⚠️ **This is worse than the "dev" it replaced.** A literal `dev` is obviously useless and nobody acts
+on it; a plausible-looking sha from the right repository is *believed*. Same class as F378 — the
+artefact a run executes is not the source you committed — landing in the one field whose entire job is
+to detect that.
+
+⚠️ **The currently-running sweep still reports the stale sha**, because its binary predates this fix
+and I will not rebuild `target/release/goose` mid-sweep (swapping the binary between cells makes them
+incomparable). Verify that binary's contents with `strings`, not its self-report.
+
+### Live confirmation while the sweep planned
+
+`skeleton_drafts` and `pool_resolved` both report **`worker_count: 6`** on a 3-device fleet — slots,
+not devices. That is F350/F374's boundary change confirming itself in a real run for the first time:
+`worker_count` is the sum of device weights, which is exactly why the architect prompt (F375) and
+`fan_e2e_split` (F374) had to be re-derived against it.
+
+Planning also converged rather than looping — confidence **68 → 83** over two retarget rounds against
+an 85 floor, drafts 334s → 250s → 219s, zero dead or aborted. The 50-minute pre-dispatch cost is real
+and is what the `detail_budget` arm exists to attack, but it is not the F50 pathology.
