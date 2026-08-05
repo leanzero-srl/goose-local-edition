@@ -15147,3 +15147,27 @@ event that reports it.** Nothing is lost by these ten units dying.
 ⇒ Standing note deleted. **The archive now has no unexamined corner I know of** — the four cells have
 been read for occupancy, plan shape, salvage, judge behaviour, spiral thresholds and starvation, and
 every one of those lines is either shipped, registered, or recorded dead.
+
+## F365 — all six shipped changes verified TOGETHER: 534 tests, 0 failures.
+
+Each change was clippy-green and tested when it landed, but **incrementally** — F350's slot expansion,
+F351's `pre_review.secs`, F352's `judge_node`, F357's `salvaged` flag and the three boundary patches
+had never been exercised as one tree. An interaction between them would have shown up nowhere.
+
+    goose-swarm    49 + 6 + 31 + 0  =  86 passed, 0 failed
+    goose-cli lib             448      448 passed, 0 failed
+    -----------------------------------------------------
+                                      534 passed, 0 failed
+
+⚠ **THIS IS THE CEILING OF WHAT CAN BE VERIFIED WITHOUT THE FLEET, AND IT IS A LOW CEILING.** Every
+one of these tests asserts a *shape* — a slot list expands, a vote width holds, an event carries a
+field. **Not one of them proves the engine behaves better on a real build** (L117: a green unit test
+proves the shape, not the contract). The four registered predictions remain the actual test, and they
+need models loaded.
+
+🔴 **ALSO: I TRIPPED MY OWN STANDING WARNING.** The prompt says *"Foreground bash caps at 2 min —
+launch detached"*, and I then ran `sleep 150` in the foreground and got killed at 120 s. The detached
+job survived and the result was one `cat` away, so it cost nothing but a round trip — **but it is the
+second time today I have walked into a hazard written in my own notes** (the first was
+`target/debug/goose`). ⇒ **L212. A WARNING YOU WROTE IS ONLY LOAD-BEARING IF YOU READ IT BEFORE
+ACTING, NOT AFTER FAILING.**
