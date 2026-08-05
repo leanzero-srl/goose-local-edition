@@ -12340,3 +12340,53 @@ that a redraft is worth its ~500-1500 s. It shows the BRANCH behaves as modelled
 ⇒ **L163. A PREDICTION IS ONLY WORTH MAKING IF THE BAND IS DERIVED FROM EVERYTHING KNOWN AT
 REGISTRATION TIME — this one passed at 1316 s against a corrected [1091, 1330] and would have "failed"
 against the [1050, 1200] I wrote from memory an hour earlier.**
+
+## F304 — the apps HARDCODE the vendor URL, which invalidates my whole rescore and CLEARS the sweep
+
+Diagnosing why my harness recorded `trace lines recorded: 2` while tier B read 1.00 — a completed
+247-payment sync needs at least three list calls, so two trace lines was impossible (L47).
+
+**The built apps ignore `MERIDIAN_BASE_URL` and hardcode the vendor address:**
+
+    think_off-n3-r0    MeridianClient("http://127.0.0.1:8930", "sk_test_meridian")
+    sink_review-n3-r0  MeridianClient(base_url="http://127.0.0.1:8931", api_key="sk_test_meridian")
+
+`score_build.gather` sets `MERIDIAN_BASE_URL` in the child env and passes `--db` on argv. The apps
+honour `--db` and **ignore the env var entirely.** So when I bound my fixture on 8500/8501, the apps
+never spoke to it — they spoke to whatever was on 8930/8931.
+
+⇒ **EVERY NUMBER FROM MY RESCORE IS VOID.** The harness never controlled the vendor at all. The
+"inverted B", the 0% tier C, the two trace lines — one cause. **F296's headline claim, that "at least
+one scoring ENVIRONMENT is not measuring the app", was TRUE, and the environment that was not
+measuring the app was MINE.** The sweep's stored scores are not impeached, and F289's bimodal tier B
+is NOT a scorer artifact. **The quality half of goal one is back on its feet.**
+
+**AND I HAVE TO REPORT A HAZARD I CREATED.** `lsof` shows **port 8930 held by pid 80288 — the live
+sweep supervisor's own vendor fixture.** My `think_off-n3-r0` rescore therefore ran a full sync,
+a re-sync and two concurrent syncs against **the campaign's live fixture**, whose behaviour is
+STATEFUL (`STATE.list_requests`, the `fired` set, the Nth-request throttle, 410 cursor expiry). Those
+are exactly the counters a measured cell's tier C and D depend on.
+
+**No measured cell was damaged, and I checked rather than assumed:**
+
+    rescore.log written          02:24:44
+    rescore1-control.log written 02:27:26
+    cell 3 run_started           02:32:31
+    run_build.py:121/127         vendor_service.serve(port, trace) ... server.shutdown()  — PER UNIT
+
+Both rescores finished before cell 3 began, and the fixture is created and torn down per unit, so my
+requests hit the fixture belonging to the `baseline-n3-r1` re-run — the unit I killed and discarded
+minutes later. **Cell 3 got a fresh fixture with fresh state.**
+
+⚠ **That was timing, not design.** L131 ("only in a window with no cell being timed") saved me, and I
+had followed it for the WRONG REASON — I believed the risk was CPU contention. The real risk was that
+a scored app reaches out to a hardcoded port that a live measurement owns.
+
+📌 **THE RESCORE CANNOT BE FIXED BY CHOOSING A FREE PORT.** To score `sink_review-n3-r0` honestly the
+fixture must bind **8931, the port that app hardcodes** — so it is only ever safe when NO unit is
+running, and the check must be `lsof` on the app's own hardcoded port, not a general "is the sweep
+busy" glance.
+
+⇒ **L164. A DIAGNOSTIC THAT BOOTS THE SUBJECT INHERITS THE SUBJECT'S HARD-CODED DEPENDENCIES. Before
+running one beside a live system, grep the subject for literal hosts/ports/paths and check who owns
+them — "I gave it its own port" is not isolation if the subject never reads the port you gave it.**
