@@ -1,40 +1,49 @@
-# RESUME — live state, rewritten 2026-08-05 ~05:47 local
+# RESUME — live state, rewritten 2026-08-05 ~06:42 local
 
-The previous version opened with *"There is no outstanding obligation. The sweep is running."*
-**Both halves are now false.** `STOP` is armed and three committed fixes are waiting on a restart. A
-stale resume file sends the next reader to redo finished work and hides the thing that is actually
-open, so this is rewritten rather than appended to.
+The previous version led with *"THE ONE OUTSTANDING ACTION — restart the supervisor"*. **That is
+done, and it was done by a process, not by hand.** This file is rewritten rather than appended to,
+because a resume file that describes a finished obligation sends the next reader to redo it.
 
-## 🔴 THE ONE OUTSTANDING ACTION — RESTART THE SUPERVISOR
-
-`STOP` was written at **05:40:02**. `sweep.py` checks it at the TOP of its while loop, so the unit in
-flight (`baseline-n3-r3`, cell 4) **finishes and records first**, then the loop exits cleanly.
-Nothing is discarded — `loop.sh status` says so itself: *"STOP sentinel present — it will exit after
-the current unit."*
+## ✅ There is no outstanding obligation. The n1 arm is finally running.
 
 ```bash
 cd ~/Projects/goose/evals/swarm-bench/nodeloop
-./loop.sh status                  # wait for NOT RUNNING
-rm STOP && ./loop.sh start        # BARE, never piped (F298: a pipeline's exit code is not the command's)
-./loop.sh status                  # expect RUNNING, a NEW pid, and NOW: baseline-n1-r0
-pgrep -f 'goose swarm run' | wc -l   # must read 1 before and after
+./loop.sh status          # expect: RUNNING pid=91810
 ```
 
-This is a **SWEEP restart, not an engine boundary.** The binary is untouched, no collected cell is
-voided, F253 is not in play.
+`autorestart.sh` fired unattended at **06:27:01** — *"supervisor down, 0 engines — restarting"* — and
+the sweep came back as **pid 91810 (ppid 1)** running **`baseline-n1-r0`**, with `NEXT:
+baseline-n1-r1`. It has since exited; its job is done. If the loop ever stops again, restart by hand:
+`rm -f STOP && ./loop.sh start` — **bare, never piped** (F298).
 
-**Three fixes activate on restart** — all three are invisible to pid 80288, which holds the code as
-it was at launch (L23):
+**Three fixes activated on that restart** and are now live: `curve_first()` (F328), `CURVE_REPS = 8`
+(F327), and the watchdog's silence rule (F330).
 
-| fix | what it does |
-|---|---|
-| `curve_first()` (F328) | the 1-node arm was **STARVED** — `n1-r0` sat at backlog index 1 forever |
-| `CURVE_REPS = 8` (F327) | registered blind; scoped to baseline n3/n1 only |
-| watchdog silence rule (F330) | the old rule would have **killed a healthy 3-discard cell** |
+## 🎯 GOAL ONE — four n3 cells down, the n1 arm live
 
-**After the restart the next three units are `n1-r0`, `n1-r1`, `n1-r2`.** Their n3 partners are
-already complete, so **three matched pairs close in three units.** Then run
-`python3 curve.py` with an ABSOLUTE path — never compute p by hand.
+| cell | unit | wall | score | occupancy | tier B | prefix (redraft) | replan bonus |
+|---|---|---|---|---|---|---|---|
+| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 0.5645 | .3194 | 2218.7 (1) | +2 TEST-ONLY |
+| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 0.4737 | .2083 | 1330.0 (0) | +2 TEST-ONLY |
+| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 0.6499 | .3194 | 1316.0 (0) | +4 TEST-ONLY |
+| 4 | `baseline-n3-r3` | 7302.6 | **0.8157** | 0.2582 | **.875** | 2882.7 (2, REVERT, conf 61 vs floor 85) | +2 APP-SIDE |
+
+n3 score mean **0.6641**, sd **0.1401**. **Cell 4 is the best cell by a wide margin — and it came
+from the run with the longest prefix, two discards, a revert, and the lowest accepted plan
+confidence of any cell.**
+
+**THE MOMENT THE FIRST n1 CELL LANDS:**
+
+```bash
+python3 /Users/mihaiperdum/Projects/goose/evals/swarm-bench/nodeloop/curve.py   # ABSOLUTE path
+```
+
+Never compute p by hand. `curve.py` now prints the replan-bonus confound beside the verdict (F332),
+because the 1-node arm **cannot replan by construction** (F312) and a bare score win would read as
+"3 nodes build better apps" when part of the gap is "3 nodes were allowed to build more of the app".
+
+Also run, per landed cell: `bonusclass.py` · `planshape.py` · `power.py` · `occupancy.py`.
+**All six instruments pass `--self-test`.**
 
 ## 🧊 The engine is still frozen (F253)
 
@@ -42,70 +51,57 @@ already complete, so **three matched pairs close in three units.** Then run
 rebuild, do not `cargo check`. **Reading source is free. Instrument fixes ship freely.**
 
 **THREE ENGINE PATCHES REMAIN QUEUED AND UNCOMPILED** — `f1a20c99b`, `95b36748f`, `00563c6ea`. The
-next boundary MUST run `cargo clippy --all-targets -- -D warnings` BEFORE deploying (L108: `cargo
-build` skips `#[cfg(test)]`).
+next boundary MUST run `cargo clippy --all-targets -- -D warnings` FIRST (L108).
 
-## 🎯 GOAL ONE — the node curve
+## 🔴 The four things a reader arriving cold is most likely to get wrong
 
-| cell | unit | wall | score | prefix (redraft) |
-|---|---|---|---|---|
-| 1 | `baseline-n3-r0` | 7729.3 | 0.6595 | 2218.7 (1, REVERT) |
-| 2 | `baseline-n3-r1` | 8488.0 | 0.4780 | 1330.0 (0) |
-| 3 | `baseline-n3-r2` | 6752.6 | 0.6030 | 1316.0 (0) |
-| 4 | `baseline-n3-r3` | in flight | — | 2882.7 (2, REVERT), accepted conf **61** vs floor 85 |
+**1. THE PARK USED TO DESTROY EVIDENCE, AND IT ATE THE OLD 1-NODE LOG (F338).** `loop.sh start`
+parked with `cp -R "$RUNDIR"/*/ "$PARK/"` — the trailing `/*/` copies directory *contents*, so twelve
+unit dirs collapsed into one park. `swarm-1node-r0`'s original log (`run_id
+swarm-20260803-100147948`) is **gone**. Fixed to `cp -R "$RUNDIR" "$PARK"`, which now also prints
+`(N of M run logs)` and shouts on a mismatch. **This was also F329's root cause** — I fixed the
+metric that noticed the duplicates and never asked why they existed.
 
-**No 1-node cell has ever been scored** — `sweep.read_results()` returns zero rows with `nodes == 1`.
-That is the whole reason the restart matters.
+**2. TWO EVENTS SPELL THE SAME FIELD DIFFERENTLY.** `plan_loaded.tasks[].files` vs
+`retarget_discarded.tasks[].owned_files`. Reading `owned_files` on both reports that every accepted
+plan owns nothing. `planshape.owned()` is the only place either key is read (F321).
 
-`power.py` sizes the question: the 3-node replicate spread is **mean 0.5802, sd 0.0929, range 31% of
-the mean**. For 5 pairs the 1-node arm would have to score about **0.432** against 0.580 for a
-coin-flip chance of significance. Wall-clock is the safe arm; **score is the binding constraint.**
+**3. A SPLIT PARENT NEVER COMPLETES (F334).** `task_split` children emit `task_completed`; the parent
+never does. Any in-flight count built from `dispatched − completed` reports every split as a
+permanent hang. **`occupancy.py` models this correctly — use it rather than hand-rolling.**
 
-## 🔴 The three things a new reader is most likely to get wrong
+**4. `run.jsonl` SILENCE IS NOT WORKER IDLENESS (F336).** A worker emitting tokens writes no events
+until it finishes. Never infer a stall from event absence.
 
-**1. F325's HEADLINE IS WITHDRAWN.** It claimed the engine had "decisively beaten the null" at
-p = 3.7e-05 on 6-of-7 clean runs. **Four of those seven runs are the same run** — `loop.sh start`
-parks the tree with `cp -R` on every start, and the fresh mtimes let the copies pass the
-`binary_mtime()` scope check that correctly excluded the original. On 3 distinct runs: task-level
-**p = 0.1442 (not significant)**, run-clustered **p = 0.0343 (marginal)**. The supportable claim is
-*"appears to have improved, p ≈ 0.03 on three runs"* (F329).
+## What the four n3 cells actually say
 
-**2. THE TWO PLAN EVENTS SPELL THE SAME FIELD DIFFERENTLY.** `plan_loaded.tasks[].files` vs
-`retarget_discarded.tasks[].owned_files`. Reading `owned_files` on both returns None for every
-accepted task and reports that the accepted plan owns nothing. `planshape.owned()` is the only place
-either key is read (F321).
+- **The fleet delivers ~1.7 of its 3 nodes.** `occupancy.py` mean 0.563 against a perfect 1.0 and a
+  one-node floor of 0.333; six concurrent slots exist and time-at-six is 13.8% / 6.4% / 0.8%.
+  ⚠ The overall figure divides by the whole wall while the prefix emits no task events, so it
+  understates — the EXECUTE column (0.8568 / 0.5746 / 0.8139 / 0.5910) is the honest one.
+- **Occupancy does NOT govern wall-clock.** F333 reported a perfect inverse ordering on three cells
+  and labelled it a direction at P(luck) = 0.167; **cell 4 broke it** — lowest occupancy, second
+  shortest wall, best score (F337).
+- **The redraft ladder is not waste.** It gained in 2 of 4 runs (79→100, 41→68→88) and reverted in 2.
+  `retarget_discarded` means *set aside*, not thrown away — `best_plan` ships it back (F324).
+- **A reuse cache is not worth building.** Genuine redrafts reuse 15.2% of accepted tasks; the
+  measurement `swarm.rs:22967-22980` asks for by name is taken and the answer is no (F321/F324).
+- **2 of 8 cells ship below `ask_floor`.** The floor is advisory at the end of the ladder, not a gate
+  that can refuse (F326).
 
-**3. `retarget_discarded` MEANS "SET ASIDE", NOT "THROWN AWAY".** `retarget_stall_guard` +
-`best_plan` (`swarm.rs:22885`) ship it back, and **2 of 4 redrafting runs end in exactly that
-revert**. A revert also scores the same plan twice, which double-counts it in any pairing (F324/F326).
-
-## Findings a new reader most needs
-
-- **F330** — the watchdog's `elapsed > 3600` rung sits at conf 0.85, ABOVE the 0.8 abandon line,
-  despite its own comment claiming otherwise. It now measures **silence since the last planning
-  event**, not total duration. Controls both ways.
-- **F327** — the sign test's bar is a **sawtooth in n**: 6 and 7 pairs are HARDER than 5, because
-  below n=8 a single crossing kills the result outright. n=8 is the first n that absorbs one loss.
-- **F323** — `plan_loaded` → first `task_dispatched` is **0.0 s in 7 of 7**. The prefix IS the plan.
-- **F303/F322** — the redraft/no-redraft prefix split is clean among **3-node** runs only;
-  `swarm-1node-r0` reaches 2031.3 s with zero discards.
-- **F304/F305** — 8 of 8 built apps hardcode `127.0.0.1:89xx` and none read `MERIDIAN_BASE_URL`.
-  Re-score an archived tree only on its OWN baked-in port, only between units.
-
-## Instruments (never re-implement one — L2)
+## Instruments (never re-implement one — L2, violated three times this session)
 
 `curve.py` verdict · `power.py` feasibility · `planshape.py` plan shape + reuse · `bonusclass.py`
-replan bonus class · `occupancy.py` · `dispatch_audit.py` · `reaudit.py` (in-place row migration —
-use whenever `audit_version` goes stale) · `goalstate.py --tick` · `review.py` · `failures.py` ·
-`sweep.py` · `loop.sh {status,stop,start,boundary,check,selftest}` · `promptbench.py` (needs the
-fleet — never during a measured cell).
-
-Every one of them has a `--self-test`. Run it before trusting a number.
+replan bonus class · `occupancy.py` node-seconds · `dispatch_audit.py` · `reaudit.py` (in-place row
+migration — use whenever `audit_version` goes stale) · `goalstate.py --tick` · `review.py` ·
+`failures.py` · `sweep.py` · `loop.sh {status,stop,start,boundary,check,selftest}` ·
+`autorestart.sh` · `promptbench.py` (needs the fleet — never during a measured cell).
 
 ⚠ `occupancy.py` / `dispatch_audit.py` / `curve.py` need an **ABSOLUTE** path.
 ⚠ `git add` must run from the **repo root**.
-⚠ `cd` drifts between Bash calls — re-`cd` at the start of every command, and make every glob print
-how many files it opened (L174).
+⚠ `cd` drifts between Bash calls — re-`cd` every command, and make every glob print how many files it
+opened (L174).
+⚠ `<(...)` process substitution is unreliable in this Bash tool — materialise to a file (F331).
 
 ## Fleet
 
