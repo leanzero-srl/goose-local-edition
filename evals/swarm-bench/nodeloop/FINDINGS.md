@@ -17063,3 +17063,50 @@ node-seconds idle while a verify layer drains — which `occupancy.py` can compu
 finishes, and which is a within-run quantity immune to the replicate spread that has invalidated so
 much today. Registering the observation now, before that number exists, so the prediction precedes
 the outcome.
+
+---
+
+## F407 — I HAD A TICK-REVIEW INSTRUMENT ALL DAY AND WAS HAND-ROLLING STATUS CHECKS INSTEAD
+
+`review.py` exists, and its docstring is Mihai's own instruction: *"before finalizing a tick you start
+a review of what was created last in logs versus the plan and versus your goal and then finally versus
+the overarching goal ... you own the supervision which I am not convinced you do."*
+
+I spent six ticks writing ad-hoc python to count dispatches. The instrument answers all of that and
+four questions I never asked. ⇒ **L233. WHEN A LOOP HAS A REVIEW INSTRUMENT, RUNNING IT *IS* THE TICK
+— an ad-hoc status query is not a cheaper version of it, it is a worse one that omits the questions
+you did not think to ask.** This is L2 (never re-implement an instrument) failing in its most
+embarrassing form: not re-implementing it badly, but never noticing it was there.
+
+### Its verdict on the live run: INTERVENE — the PLAN is wrong
+
+| finding | measured base rate |
+|---|---|
+| 2 HARD TEST tasks (`test-api`, `test-meridian`) | **60% retry (n=30)** vs 12% for hard non-test work |
+| test tasks with >=1800-char briefs (3 of them; `test-meridian` has **3152**) | **64% retry (n=14)** vs 33% for shorter test briefs |
+| `test-meridian` re-dispatched **4x, still in flight** | "not converging, and that is where a run dies" |
+| 5 funnels with >=3 deps | "they serialise the tail" — **F406 found independently** |
+
+These are not opinions; they are base rates over prior runs, held by the instrument, applied to this
+plan's shape **before the outcome is known**.
+
+### The two numbers that matter most for the goal
+
+- **`verify::web` is 26% of all node-busy time.** One read-only reviewer is a quarter of the fleet's
+  work. That is the straggler behind F406's barrier, quantified.
+- **Duration-weighted MAX USEFUL NODES = 3.29 on a pool of 3.** The plan *can* saturate three nodes.
+  The instrument's own conclusion: *"occupancy below 1.0 here is a SCHEDULER question, not a planning
+  one."* So the shape of the DAG is not what caps node scaling on this run — which sharpens F406 from
+  "the barrier idles the fleet" to "the barrier idles the fleet **despite a plan wide enough to avoid
+  it**".
+
+### Decision
+
+The instrument says *"let this unit finish ONLY if it still settles an open prediction, then change
+the planner."* **F398 is listed settleable on this build**, and the sink is running, so the unit
+finishes. Then the target is the architect prompt: it keeps emitting big multi-file test tasks with
+long briefs, which is the run's measured waste region on BOTH fleet sizes.
+
+⚠️ Note what this does NOT license: charging the test-task failure to the 3-node arm. It is a planner
+shape, identical on n1, and F405 already showed the arms are indistinguishable on everything that
+reproduces.
