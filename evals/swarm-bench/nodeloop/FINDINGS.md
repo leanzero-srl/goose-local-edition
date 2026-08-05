@@ -12888,3 +12888,49 @@ out-of-sample. **Any miss falsifies the claim outright and the script says so.**
 
 ⇒ **L173. WHEN A CLASSIFICATION WILL BE REPEATED, WRITE IT DOWN AS CODE THE FIRST TIME YOU GET IT
 WRONG — not the third.**
+
+## F318 — the straggler abort changes the DENOMINATOR of the confidence gate, and 2 drafts can score HIGHER than 3
+
+Cell 4 (`swarm-3node-r3`) emitted `skeleton_drafts` with **`returned: 2, dead: 0,
+straggler_aborted: 1`** — the first time I have caught that live. Across the corpus it is not rare:
+**3 of 8 three-node runs abort one draft** (`sink_review-n3-r0`, `think_off-n3-r1`, cell 4), always
+with `dead: 0`, so these are deliberate aborts, not failures.
+
+`swarm.rs:12844-12852` pre-empts the obvious worry: the abort happens *"once a quorum of valid
+skeletons had landed, which is a healthy outcome, not a loss."* **That is a source line making a
+claim, so I went to the events (L139):**
+
+    unit                 drafts  conf  agreement_reason
+    think_off-n3-r0        2     100   "2 drafts agree: count spread 0, file-overlap 100%"
+    think_off-n3-r1        2      88   "2 drafts agree: count spread 1, file-overlap 100%"
+    sink_review-n3-r0      2      86   "2 drafts agree: count spread 0, file-overlap 70%"
+    baseline-n3-r0         3      83   "3 drafts agree: count spread 1, file-overlap 90%"   -> REDRAFT
+    baseline-n3-r1         3      88   "3 drafts agree: count spread 1, file-overlap 100%"
+    baseline-n3-r2         3      88   "3 drafts agree: count spread 1, file-overlap 100%"
+    think_off-n3-r2        3      88   "3 drafts agree: count spread 1, file-overlap 100%"
+
+⇒ **THE AGREEMENT METRIC IS COMPUTED OVER THE DRAFTS THAT RETURNED.** The reason string names the
+count explicitly, so aborting a straggler does not just save time — **it changes the denominator of
+the gate that decides whether to spend 500-1500 s on a redraft.**
+
+⭐ **AND AGREEMENT OVER TWO IS MECHANICALLY EASIER THAN OVER THREE.** `think_off-n3-r0` — the B=1.0,
+highest-scoring cell in the corpus — reached **confidence 100 from only TWO drafts** at spread 0 and
+100% overlap. Every three-draft run sits at **83-88**. Means: 2-draft **91.3**, 3-draft **86.8**.
+⚠ **n=3 vs n=4 and the ranges overlap (86-100 vs 83-88) — SUGGESTIVE, NOT SIGNIFICANT, not claimed.**
+But the direction is what the mechanism predicts, and this is F140's principle exactly: **an
+optimisation is only safe on a REDUNDANT fanout, and the skeleton fanout is a VOTE. Dropping a voter
+changes the vote.** Queued patch `f1a20c99b` fixes precisely this for SCOUTS; nothing fixes it here.
+
+⚠🔴 **AND MY OWN TWO SCRIPTS DISAGREED ON `returned` FOR `baseline-n3-r0` — 3 in one, 2 in the other.**
+Cause: that cell **redrafted**, so it has **TWO `skeleton_drafts` events**, and one script kept the
+first while the other kept the last. Neither was wrong; both were **under-specified**. Any statement
+about "the draft count" must name WHICH ROUND.
+
+⚠ **A second self-inflicted error this tick:** the first version of that query returned an empty
+table and I began diagnosing a wrong event name — it was the **cwd drift** (a prior `cd` to the repo
+root made `../runs/nodeloop` resolve to nothing), and the script printed a header with zero rows,
+which reads identically to "the data has none". **My own standing note warns about exactly this cd
+trap and I still blamed the data first.**
+
+⇒ **L174. A GLOB THAT MATCHES NOTHING AND A DATASET THAT CONTAINS NOTHING PRINT THE SAME THING —
+COUNT THE FILES YOU OPENED AND SAY THE NUMBER.**
