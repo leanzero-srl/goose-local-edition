@@ -12769,3 +12769,46 @@ static-artefact difference.
 
 ⇒ **L172. A CHECK THAT EVERYTHING PASSES EXPLAINS NOTHING — before attributing a spread to a
 component, verify that component's checks actually VARY across the cells.**
+
+## F315 — the vendor contract does NOT explain the bimodality either. Every static explanation is now dead.
+
+F314 concluded the tier-B spread must live in the eight response-gated checks — the sync path at
+runtime. The obvious static candidate was the vendor contract, since F291 caught `think_off-n3-r2`
+inventing it. Checking `meridian.py` in every tree for the three contract elements
+(`/v1/payments`, rows under `"data"`, timestamp `created_at`):
+
+    think_off-n3-r0     B 1.0000   contract CORRECT
+    think_off-n3-r1     B 0.9715   contract CORRECT  (see the false positive below)
+    sink_review-n3-r0   B 0.3611   contract CORRECT
+    baseline-n3-r0      B 0.3194   contract CORRECT
+    baseline-n3-r1      B 0.2083   contract CORRECT
+    think_off-n3-r2     B 0.2083   contract BROKEN   (/payments · data["payments"] · created_at_utc)
+
+⇒ **FIVE OF SIX WRITE A CORRECT VENDOR CLIENT, AND THEIR TIER B SPANS 0.208 TO 1.000.** The single
+broken client is low-B, but three correct clients are ALSO low-B. **The vendor contract explains
+exactly one cell and cannot explain the bimodality.**
+
+⚠ **MY OWN CLASSIFIER PRODUCED A FALSE POSITIVE AND I CAUGHT IT BY READING (L157 — an ad-hoc
+classifier is an instrument).** The regex flagged `think_off-n3-r1` as a contract break on the string
+`created_at_utc`. Reading `meridian.py:78-82`: it reads `page.get("data", [])` and
+`payment["created_at"]` **correctly**, then ADDS a `created_at_utc` alias because *its own Store*
+expects that name — with a comment saying exactly that. **Fully correct. Had I published the regex
+output I would have recorded a contract break that does not exist**, and it would have been the one
+data point making the association look real.
+
+⇒ **EVERY STATICALLY-CHECKABLE EXPLANATION FOR F289's BIMODALITY IS NOW ELIMINATED:**
+
+    the UI checks       SATURATED  — 3/3 and clean in 7 of 7 (F314)
+    the vendor contract CORRECT    — in 5 of 6, spanning the whole B range (this finding)
+    the app files' shape            — `meridian.py`/`api.py` agree on every readable contract detail (F291)
+
+**What remains is a genuine runtime property: two apps that look equivalent on every static reading
+behave differently when the sync actually runs.** That is not a disappointing result — it is a
+bounded one. It tells the next session precisely which reads are NOT worth repeating, and it is why
+the per-check runtime rescore matters enough to be worth the port constraint (F305: bind the tree's
+OWN baked-in port, only between units).
+
+📌 **THE ONE STATIC AVENUE NOT YET TRIED: `store.py` and the `/api/sync` handler in `api.py`.** The
+eight failing checks all read `sync1` / `payments` / `summary` responses, which those two files
+produce. ⚠ **But note the base rate: I have now eliminated three static hypotheses in three ticks, so
+the prior on a fourth static explanation should be LOW.**
