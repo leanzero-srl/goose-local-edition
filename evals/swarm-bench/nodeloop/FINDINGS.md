@@ -15260,3 +15260,44 @@ detection *by construction* (`scheduler.rs:1152`), and I recorded DO NOT re-enab
 larger budget could buy integration, or could buy a longer stall. **Those are opposite outcomes and
 the r0 log does not distinguish them.** ⇒ next: determine from r0's own trace whether the sink was
 PRODUCING at the moment the cap fired (L203 — a long tail is not necessarily serial work).
+
+## F368 — the r0 sink was WORKING when the cap cut it, which refutes the claim written at `sink_cap_secs` itself. But the obvious fix is ALSO refuted by that same comment.
+
+**IS IT PRODUCING OR STALLED?** F367 said the r0 log had not been asked. Asked now, two independent
+ways, and they agree:
+
+    tool_calls    20  =  10 shell + 9 write + 1 edit      ← it was REPAIRING, not looping on reads
+    session       20260804_746 (exists; positive control: 175709 rows visible in the DB)
+    messages      56 over 1705 s, continuous — longest gap after t+426 is ~80 s
+    final_output  0 chars                                  ← cut mid-work, produced no verdict
+    elapsed       1800088 ms == sink_cap_secs EXACTLY
+
+**⇒ r0's join was actively writing files when it was terminated.** This is the OPPOSITE of r1's sink
+(F354: three 420 s idle stalls, FAILED). Same mechanism, two different runs, two different states.
+
+🔴 **THIS REFUTES THE CLAIM WRITTEN AT `swarm.rs:267-271`**, which is the justification for the 1800
+default: *"The cap can therefore ONLY ever bite a LOOPING join, never a healthy one… MEASURED join
+durations cluster at 311s / 477s / 1252s / 1591s for healthy runs and 4326s for the one that looped…
+cutting a >30-min join loses nothing: every check already ran."* On r0 it bit a join that was neither
+looping nor healthy-and-finished — **it was mid-repair, and cutting it lost `sync_shape`, tier A,
+1.00 → 0.00** (F367). Engaging the comment's own framing: it argues the join is only
+"assemble+repair+store-probe" under fan_e2e, so cutting is safe. **The 9 writes + 1 edit say the
+REPAIR is exactly what got cut.** The band 311-1591 s was calibrated on runs whose apps were smaller;
+F366 shows app size scales with the fleet, so a 3-node run sits outside the band the default was
+fitted to.
+
+⚠️ **AND THE OBVIOUS FIX IS REFUTED BY THE SAME COMMENT — L150 EARNS ITS KEEP AGAIN.** My first
+instinct was "make it progress-shaped like `progress_watchdog_secs`, which is right there at :276 and
+explicitly says *Never applies to the integrate-verify sink*." **That would not work**, and the
+comment says why: the pathological join **re-ran the same four test blocks five times over**. A loop
+emits tool calls. A purely progress-shaped budget would happily extend a loop forever, trading a
+truncated repair for a run that never ends. **A progress rule cannot separate repair from loop; both
+are productive-shaped.**
+
+**⇒ THE FIX MUST SCALE THE CEILING, NOT RESHAPE IT.** The defect in one line: *the join's budget is a
+constant while the work it must integrate scales with the fleet.* Scaling the ceiling with the size
+of the produced tree keeps r0's repair (2.09× the bytes ⇒ ~3600 s, still **below** the 4326 s loop)
+while leaving the loop cut. **PRE-REGISTERED FALSIFIER: if a scaled ceiling lets any join exceed
+4326 s, or `sync_shape` still fails on a 3-node run, REVERT.** ⚠ Confidence in the DIAGNOSIS is high
+(two instruments, one exact cap hit, a tier-A miss). Confidence in the MAGNITUDE is low: n=1 for
+"working sink cut off", and the 4326 s loop is also n=1.
