@@ -17528,3 +17528,31 @@ risk is measured rather than hoped.
 **3 nodes builds the richer app (+0.1473 stable-set) → one startup bug masks it → F408 detects that bug
 (3/3) → F398 proved this fix loop repairs what it is handed (round 0 findings 2 → round 1 findings 0).**
 Every link measured; the composition is not, and the running sweep is what tests it.
+
+---
+
+## F419 — THE `passed: true` OVER-CLAIM IS CLOSED BY F408, AND THE WIRING IS VERIFIED NOT ASSUMED
+
+`baseline-n3-r0` reported `complete_result{passed: true}` on an app scoring 0.3895 that **never binds
+its port**. F395 measured that over-claim and explicitly did not fix it; I have been carrying it as
+open ever since, and I twice wrote that F408 "probably" closes it. Traced properly:
+
+- `swarm.rs:25379` — `if verdict.findings.is_empty() { final_passed = true; }`
+- `swarm.rs:25335` — `verdict.findings.extend(sc.findings);`
+
+So `passed` is true **iff** the round ends with an empty finding set, and `spec_contract`'s findings
+are part of that set. F408 turns "never bound under its own advertised invocation" from an
+`inconclusive` — which by design cannot gate anything — into a **finding**. On that same app,
+`verdict.findings` would therefore be non-empty and `final_passed` would stay **false**.
+
+**Closed, and closed by a code read rather than by plausibility.** Worth stating why that mattered: the
+surrounding comment is emphatic that *"`passed` is deliberately UNTOUCHED — an inconclusive check is
+not evidence of a defect, and flipping passed red on a correct app is forbidden."* That rule is intact.
+F408 does not weaken it; it moves one specific condition **out** of the inconclusive class, on the
+strength of F400 removing the ambiguity that put it there. The gate still only reddens on evidence —
+there is simply evidence now where before there was a shrug.
+
+⇒ Three separate things I shipped today compose into this single outcome, and none of them was
+designed for it: **F400** (spawn the spec's own invocation) made the non-bind unambiguous, **F408**
+promoted it to a finding, and **F395** ensured the resulting summary cannot read as success. The
+`passed:true` on a non-functional app was the visible symptom of all three gaps at once.
