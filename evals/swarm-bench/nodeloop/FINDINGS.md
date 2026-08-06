@@ -17408,3 +17408,49 @@ boundary so no later analysis compares across it.
 be measured at all without being in the binary, and the alternative is two days of cells that
 structurally cannot show the effect. F398 is the precedent — validated offline 5/5, and only a live
 run proved it worked end to end.
+
+---
+
+## F416 — REBUILT AND RESTARTED. THREE CHANGES VERIFIED, ONE UNVERIFIABLE, AND I AM NOT PRETENDING OTHERWISE.
+
+The sweep exited at its boundary as F414 planned, `baseline-n3-r1` landed, binary rebuilt **08:13**,
+sweep restarted (pid 23655, ppid 1). The three analysed cells are parked in
+`runs/nodeloop-parked-1785993855/`.
+
+### The third cell changes the picture again
+
+| cell | score | server_runs | client_timeouts |
+|---|---|---|---|
+| `baseline-n3-r0` | 0.3895 | 0.00 | **1.00** |
+| `baseline-n1-r0` | 0.3313 | 1.00 | **1.00** |
+| `baseline-n3-r1` | **0.7147** | **1.00** | **1.00** |
+
+**`client_timeouts` is 1.00 in all three new cells.** In the parked archive it was **0.00 in all four
+3-node cells**. That is F398's detector plus the fix loop holding across every cell of the new sweep,
+not a single lucky run.
+
+And `baseline-n3-r1` at **0.7147** with `server_runs 1.00` is the first cell of the day whose app
+actually works. n3 mean over two cells is 0.5521 against n1's 0.3313 — but r0 and r1 differ by 0.325
+on identical config, which is the replicate spread F382 warned about, so **two cells is not a result.**
+
+### ⚠️ ONE SHIPPED CHANGE COULD NOT BE VERIFIED IN THE BINARY
+
+Probes after rebuild: `never bound port` ✅, `when started EXACTLY as its spec documents` ✅ (F408),
+`SPLIT it into focused sibling subtasks` ✅ (F415), `http_timeout_scan` ✅ — and **`desc_sha` (F411)
+returns 0**, by `strings` AND by a raw byte grep.
+
+It is not a stale binary (08:13, rebuilt twice, other same-file literals present) and not a missing
+edit (`swarm.rs:24069`, committed, clean tree). The strange part: **`retarget_discarded` — the event
+name from the SAME `json!` macro, one source occurrence — IS in the binary while `desc_sha` from that
+same macro is not.** I cannot explain that, and I am not going to keep guessing at it while the fleet
+runs.
+
+⇒ **F411's tie-breaker is UNCONFIRMED. It must be checked from an actual `retarget_discarded` event in
+the next run that retargets — not from the binary.** Recording it as unverified rather than assuming
+it landed, because the whole point of that field was to settle a question I could not otherwise
+settle, and an instrument I merely believe is present is worth nothing.
+
+⇒ **L236. `strings` CAN PROVE PRESENCE, NEVER ABSENCE.** Every binary verification today rested on it,
+including the negative controls. This is the first case where it says a literal is missing and every
+other signal says it should be there — so a 0 from `strings` is now a reason to check the runtime
+event, not a verdict.
