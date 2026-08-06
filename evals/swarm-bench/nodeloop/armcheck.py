@@ -229,7 +229,45 @@ def arm_doc_fetch(ev):
     return "OK", f"the spec names {len(urls)} fetchable doc URL(s), e.g. {urls[0]}"
 
 
+def arm_diverse_plan(ev):
+    """The one arm whose precondition the ENGINE now answers directly, so nothing has to be inferred.
+
+    F438: the redraft ladder is the 3-node tax. Every `confidence_retarget` in the archive carries
+    `binding_signal: "agreement"`, and it cost 786/821/1657s on the 3-node cells against ZERO on the
+    1-node cell — because 3 nodes draft 3 skeletons where 1 node drafts 2, and `plan_agreement` is
+    max-min spread plus mean pairwise Jaccard, both of which (per `best_subset_agreement`'s own doc)
+    "only worsen (or hold) as the pool grows". `diverse_plan` ENFORCE replaces that score with
+    `structural_convergence`, which ignores count spread.
+
+    `plan_convergence.would_skip_ladder` is the engine's OWN counterfactual, computed from the same
+    predicate the enforce branch uses (`diverse_plan_would_skip`), and emitted whether or not the
+    lever is on. So this probe reads a fact instead of estimating one — the failure mode that made
+    `retarget_off` a null experiment twice.
+
+    UNKNOWN, never OK, on a baseline older than the event: the conservative rule this file states up
+    front. A pre-086981caf run simply cannot answer, and "absent" must never read as "false".
+    """
+    pcs = [e for e in ev if e.get("event") == "plan_convergence"]
+    if not pcs:
+        return "UNKNOWN", ("no plan_convergence event — baseline predates 086981caf, so the "
+                           "counterfactual is UNRECORDED, not false")
+    pc = pcs[0]
+    ladder = _count(ev, "confidence_retarget")
+    if not ladder:
+        return "BLOCKED", (f"agreement {pc.get('agreement_conf')} cleared the floor on the first "
+                           f"draft — no ladder ran, so there is nothing for ENFORCE to skip")
+    if not pc.get("would_skip_ladder"):
+        return "BLOCKED", (f"struct_conv {pc.get('struct_conv')} does not clear struct_stop "
+                           f"{pc.get('struct_stop')} while beating agreement "
+                           f"{pc.get('agreement_conf')} — ENFORCE would change NOTHING on this "
+                           f"baseline, so the arm is inert by construction")
+    return "OK", (f"ladder ran {ladder}x and would_skip_ladder is true (struct_conv "
+                  f"{pc.get('struct_conv')} vs agreement {pc.get('agreement_conf')}) — ENFORCE has "
+                  f"something real to remove, and prefix wall-clock reads the change")
+
+
 ARMS = {
+    "diverse_plan": arm_diverse_plan,
     "kind_prompt": arm_kind_prompt,
     "doc_prefetch": arm_doc_prefetch,
     "spec_repair": arm_spec_repair,
