@@ -2113,6 +2113,7 @@ mod tests {
         PlatformExtensionContext {
             extension_manager: None,
             session_manager: Arc::new(crate::session::SessionManager::instance()),
+            scheduler: None,
             session: None,
             use_login_shell_path: false,
         }

@@ -226,6 +226,7 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
                     content_array.push(json!({"type": "text", "text": text}));
                 }
                 MessageContentBlock::SystemNotification(_)
+                | MessageContentBlock::Error(_)
                 | MessageContentBlock::ToolConfirmationRequest(_)
                 | MessageContentBlock::ActionRequired(_) => {}
             }

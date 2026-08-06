@@ -339,7 +339,7 @@ fn format_messages_with_options(
                 MessageContentBlock::ActionRequired(_action_required) => {
                     // Skip action required messages - they're for UI only
                 }
-                MessageContentBlock::SystemNotification(_) => {
+                MessageContentBlock::SystemNotification(_) | MessageContentBlock::Error(_) => {
                     // Skip
                 }
                 MessageContentBlock::Thinking(thinking) => {
