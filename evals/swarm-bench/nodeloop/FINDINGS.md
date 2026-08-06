@@ -17707,3 +17707,52 @@ mechanism *hypothesis* with three circumstantial signatures, not a mechanism.
 or half-open while the agent still waits. That is observable from the goose CLI logs
 (`~/.local/state/goose/logs/`) and `llm_request.*.jsonl` around a stall's timestamp — a request with no
 terminating response. Registering it before looking.
+
+---
+
+## F423 — 🔴 F422 IS WRONG. I GENERALISED FROM ONE DIGEST AND THE OTHER FOURTEEN SAY OTHERWISE.
+
+F422 concluded, two turns ago, that stalls are **mid-token stream drops** — from ONE activity digest
+whose `last_thinking` ended mid-word, plus two circumstantial transport signatures. It registered a
+test against the goose CLI logs. That test is **unrunnable** (the archived stall is from Aug 4 and
+those logs are rotated; the live ones are not line-JSON), so I ran the better one available: **check
+the signature across every stalled task that has a digest.**
+
+**15 stalls with digests. The mid-word truncation appears in 2. Thirteen end CLEANLY:**
+
+> *"…let me summarize my findings."* · *"…I'll write the complete test_api.py now."* ·
+> *"…I'm not fixing anything."* · *"…which catches it:"* · *"…Good,"*
+
+**Every one of those is a point where the next thing should be a TOOL CALL.** The model completes a
+coherent reasoning block, announces what it is about to do — and then emits nothing at all for 420s.
+`malformed: 0` on all of them, and they had done real work first (1-25 calls).
+
+⇒ **This is not a transport drop. It is an EMPTY TURN AFTER REASONING** — the model finishes thinking
+and never acts.
+
+### And that unifies the two failure modes I had been treating as separate
+
+- *"You finished WITHOUT writing your owned file(s)"* — the turn ENDS, goose sees it, and reports it.
+- *"agent stalled — no progress for 420s"* — the same non-action, except nothing signals turn-end, so
+  the watchdog waits out the full idle budget.
+
+**Same behaviour, two exits.** That explains why short briefs fail the first way and long ones the
+second without needing a transport story at all.
+
+### ⚠️ WHAT I GOT WRONG, PLAINLY
+
+I had **one** digest, saw a vivid signature in it, found two circumstantial signatures elsewhere
+(`stream decode error`, `peer_keepalive_timeout`) and wrote a mechanism around them. **The vivid case
+was the 2/15 exception.** This is L234 — *"I saw the fleet idle" is an anecdote until integrated* —
+applied to a different quantity, one turn after I wrote that lesson down. The 08:03 fleet death and
+the LM Link timeout are still unexplained; they are simply **not evidence for this**.
+
+⇒ **L240. A MECHANISM BUILT ON ONE ARTEFACT IS A DESCRIPTION OF THAT ARTEFACT.** F422 named its own
+test, the test was unrunnable, and I substituted a stronger one rather than leaving the claim
+standing — that part worked. **The claim stood for two turns and should not have.**
+
+📌 The real target is now sharper and is a MODEL-MOLDING problem, not infrastructure: **the worker
+reaches "now I will write the file" and stops.** That is the same class as the `act_now_nudge` lever
+(measured: writes 23.8% -> 48.0%, no-tool-call 24% -> 4%), which is already ON. It is not solved, and
+the next honest step is to see what the SYSTEM PROMPT looks like at that exact turn — not to ship
+another guess.
