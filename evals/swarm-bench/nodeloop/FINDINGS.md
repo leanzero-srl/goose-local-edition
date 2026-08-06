@@ -17653,3 +17653,57 @@ F420b the prompt edit, F421 prefill); the discipline is the deliverable.**
 📌 What would settle it: the stalls are MID-RUN, so the next question is what the worker was doing in
 the 420s before it went quiet. `session_id` resolves to the message trace, and ~1 in 5 tasks has none
 (F356) — so this needs a stalled task that HAS one, which the sweep will eventually produce.
+
+---
+
+## F422 — THE STALL MECHANISM: THE STREAM DROPS MID-TOKEN, AND THE WATCHDOG TAKES 420s TO NOTICE
+
+F421 closed with "the stalls are MID-RUN, so the next question is what the worker was doing in the
+420s before it went quiet" and said it needed a `session_id`. **It did not** — the engine already
+writes a per-task activity digest to `.swarm/activity/<task>.json`, and it survives the run. I nearly
+proposed threading `session_id` through `DispatchError` across two crates to obtain what was already
+on disk. ⇒ **L239. BEFORE ADDING AN INSTRUMENT, LIST WHAT THE RUN ALREADY WRITES TO DISK.**
+
+The one terminal stall in the archive (`integrate-verify`, 781s, `session_id: None`):
+
+| field | value |
+|---|---|
+| `phase` | **done** |
+| `tool_calls` | **17** — shell, grep, edit, cat, edit, grep |
+| `malformed` | **0** |
+| `thinking_chars` | 12423 |
+| `last_text` | `'\n\n'` |
+| `last_thinking` | *"…while th"* — **ends mid-word** |
+
+**It was working.** Seventeen real tool calls of repair, then the reasoning stream stops **in the
+middle of a word** and nothing follows. That is not a reasoning spiral (`malformed: 0`, and 12423 is
+barely over the 12000 threshold), and F421 already refuted prefill.
+
+**It is a dropped stream** — and the archive says so in plain text elsewhere: a retry recorded
+`"stream decode error (mid-stream body drop) on test-meridian"`. I also hit `peer_keepalive_timeout`
+myself while loading `gabee` over LM Link, and the unexplained 08:03 fleet death was a *graceful*
+runtime exit with no crash, no OOM and no TTL. **Three independent signatures pointing at the
+transport, not the model.**
+
+### 🎯 THIS RELOCATES THE TARGET
+
+The brief-length correlation (34% vs 75%, controlled) is **real but probably not causal**: a longer
+brief means a longer generation, and a longer generation is more exposure to a drop. That would
+explain why F420b's prompt fix and F421's splitter both failed to be the answer — **they were aimed at
+a symptom of infrastructure instability.**
+
+**The cost is bounded and measurable: every drop burns 420 idle seconds before `worker_timeout_secs`
+notices.** Sixteen stalls across the archive is roughly **two hours of dead fleet time**, and the task
+is retried (`transient: true`) rather than lost — so this is pure latency, not correctness.
+
+### ⚠️ WHAT I AM NOT DOING, AND WHY
+
+Not shortening the idle window. A dropped stream and a slow-but-working local model look identical
+from outside — no events either way — and a shorter timeout would false-kill genuine work, which is
+exactly the trade `worker_timeout_secs` already documents. **L238 applies to me here**: I have a
+mechanism *hypothesis* with three circumstantial signatures, not a mechanism.
+
+**The test that would settle it:** a dropped stream should leave the provider's HTTP connection closed
+or half-open while the agent still waits. That is observable from the goose CLI logs
+(`~/.local/state/goose/logs/`) and `llm_request.*.jsonl` around a stall's timestamp — a request with no
+terminating response. Registering it before looking.
