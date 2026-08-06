@@ -9143,6 +9143,33 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// Two knobs whose values made the advertised behaviour impossible, and nothing tied them
     /// together. This is that tie. It is deliberately an INEQUALITY over the real functions rather
     /// than an equality against 3000: the point is the relationship, not the number.
+    /// The shadow counterfactual must be the SAME question the lever acts on.
+    ///
+    /// `plan_convergence.would_skip_ladder` exists so an ordinary run — lever OFF — answers "would
+    /// enabling diverse_plan have skipped the redraft ladder?" for free. That is only true while the
+    /// event and the enforce branch evaluate one predicate; two copies would drift and the shadow
+    /// would then be confidently wrong, which is worse than absent because it gets believed.
+    ///
+    /// Anchored on the REAL archived numbers (struct_stop 85 is the runs' `ask_floor`; struct_stop
+    /// itself resolved to 80): the 3-node cells scored agreement 50/52/54 on 3 drafts and paid
+    /// 786-1657s of ladder, while the 1-node cell scored 88 on 2 drafts and paid nothing.
+    #[test]
+    fn the_diverse_plan_shadow_asks_the_same_question_the_lever_answers() {
+        // Strictly above the stop AND strictly better than agreement -> the ladder is skippable.
+        assert!(diverse_plan_would_skip(88, 80, 54));
+        // Equal to the stop still counts (the branch is >=), but it must BEAT agreement.
+        assert!(diverse_plan_would_skip(80, 80, 54));
+        assert!(
+            !diverse_plan_would_skip(80, 80, 80),
+            "structural convergence that merely TIES agreement buys nothing and must not skip"
+        );
+        // Below the stop never skips, however far it beats a low agreement score.
+        assert!(!diverse_plan_would_skip(79, 80, 10));
+        // The 1-node shape: agreement already high, so there is nothing for the lever to rescue —
+        // which is why the 1-node cell never paid the ladder and this must report false, not true.
+        assert!(!diverse_plan_would_skip(74, 80, 88));
+    }
+
     #[test]
     fn complete_cap_fits_its_own_rounds() {
         let rounds = complete_rounds_from(None) as u64;
@@ -11088,6 +11115,20 @@ fn module_votes(
 /// a shared backbone with per-draft extras → 80-90 (stop + merge the backbone), fragmented drafts that share
 /// nothing → ~0 (won't stop → escalate). Ignores count-spread, rewards shared structure. Reuses
 /// `module_votes`/`canonical_role`/`is_scaffolding_task` (same role-space). Pure, no model call.
+/// Would diverse-plan's structural measure REPLACE the agreement score and skip the redraft ladder?
+///
+/// ONE predicate, because the enforce branch and the `plan_convergence` event's `would_skip_ladder`
+/// are the same question asked from two places, and this file's recurring defect is exactly that:
+/// two copies of one rule that drift until they disagree. The counterfactual is only worth logging
+/// if it is the SAME condition the lever acts on — a shadow that answers a slightly different
+/// question is worse than no shadow, because it will be believed.
+///
+/// Deliberately does NOT take the lever: the caller ANDs it in. That is what makes the same call
+/// serve both the shadow reading and the live branch.
+fn diverse_plan_would_skip(struct_conv: u8, struct_stop: u8, agreement_conf: u8) -> bool {
+    struct_conv >= struct_stop && struct_conv > agreement_conf
+}
+
 fn structural_convergence(valid_drafts: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
     let n = valid_drafts.len();
     if n < 2 {
@@ -13738,7 +13779,37 @@ impl GooseAgentDispatcher {
             // count spread). SHADOW (off): logged only, conf unchanged → byte-identical. ENFORCE (on): when the
             // parallel drafts strongly converge, lift agreement conf past the floor so the ladder is SKIPPED.
             let (struct_conv, struct_reason) = structural_convergence(&valid1);
-            if diverse_plan_on && struct_conv >= struct_stop && struct_conv > conf1 {
+            // A SHADOW MEASUREMENT THAT ONLY REACHES STDERR IS NOT A MEASUREMENT.
+            //
+            // `diverse_plan` runs in shadow when off — it computes `struct_conv` and prints it with a
+            // `[shadow]` marker — and the whole point of a shadow is to answer "would enabling this have
+            // changed anything?" without spending a run on it. That answer went to an eprintln. stderr is
+            // the progress log, the harness does not retain it, and a grep for `struct_conv` across every
+            // archived cell on disk returns NOTHING. So the shadow has been running for its whole life
+            // and has never once been readable.
+            //
+            // This matters now because of what the shadow would have said. Every `confidence_retarget` in
+            // the archive carries `binding_signal: "agreement"`, and the redraft ladder cost 821s / 786s /
+            // 1657s on the 3-node cells against ZERO on the 1-node cell — 40-57% of the 3-node planning
+            // prefix, which is roughly the entire gain the detail fan just bought. The 1-node cell drafted
+            // 2 skeletons and scored 88; the 3-node cells drafted 3 and scored 50/52/54. `plan_agreement`
+            // is max-min spread plus MEAN PAIRWISE JACCARD, and `best_subset_agreement`'s own doc says
+            // both "only worsen (or hold) as the pool grows" — so a bigger fleet drafts more, is scored
+            // lower for it, and pays a ladder the smaller fleet never pays.
+            //
+            // `would_skip_ladder` is the counterfactual, computed IDENTICALLY whether or not the lever is
+            // on, so an ordinary shadow run now answers the question for free instead of costing an arm.
+            self.events.write_value(serde_json::json!({
+                "event": "plan_convergence",
+                "drafts": valid1.len(),
+                "agreement_conf": conf1,
+                "struct_conv": struct_conv,
+                "struct_stop": struct_stop,
+                "enforced": diverse_plan_on,
+                "would_skip_ladder": diverse_plan_would_skip(struct_conv, struct_stop, conf1),
+                "detail": struct_reason,
+            }));
+            if diverse_plan_on && diverse_plan_would_skip(struct_conv, struct_stop, conf1) {
                 reason1 = format!(
                     "{reason1} [diverse-plan: struct-converged {struct_conv} ({struct_reason}) → skip ladder]"
                 );
