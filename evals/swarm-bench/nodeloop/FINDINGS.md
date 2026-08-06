@@ -17836,3 +17836,49 @@ half is refuted in the healthy direction.
 mode (the CAPPED sink), which in the archive cost the arm nothing: `baseline-n3-r0` was capped and
 still scored **above** the arm mean. Worth watching where this cell lands, but a capped sink is not by
 itself a bad outcome.
+
+---
+
+## F426 — 0.9343: THE BEST CELL EVER RECORDED HERE, AND F400 CONFIRMED LIVE
+
+First cell built entirely by the new binary (F400 · F408 · F411 · F415):
+
+| | this cell | best in the parked archive |
+|---|---|---|
+| **score** | **0.9343** | 0.8157 |
+| `server_runs` | **1.00** | 0.00 in the capped cell |
+| `sync_shape` | **1.00** | 0.00 in **3 of 4** 3-node cells |
+| `total_field` (all 247 payments) | **1.00** | only ever `baseline-n3-r3` |
+| `client_timeouts` | **1.00** | **0.00 in all four** |
+
+**The sync family — the block F390 sized at 51 -> 5 pairs and F405 showed was the ONLY place the arms
+differed — came in clean.** This is the first cell where the app both starts and syncs.
+
+### ✅ F400 IS CONFIRMED BY A DETERMINISTIC EVENT
+
+`spec_contract: verified 2, findings 0, inconclusive 1` — in **both** rounds. The archive was
+`verified: 0` in **9 of 9** events, which is why F395 had to stop it reading as a pass and F400 had to
+make it able to conclude at all. **It concludes now.** That is the mechanism half settled; it does not
+depend on the score.
+
+### ✅ AND THE ENGINE DID NOT CLAIM A FALSE GREEN
+
+`complete_verify: passed FALSE, findings 1` in both rounds, and `complete_result: passed False,
+verified False` — on a **0.9343** app. The gates held their line on the best result of the day rather
+than waving it through, which is the behaviour F395/F408/F419 were built for. A run that scores 93%
+and still reports `passed: false` is the honest direction to fail in.
+
+`http_timeout_scan: checked 11, findings 0` in both rounds — no timeout defect to find this time,
+which is what F388's pitfall plus F398's detector are supposed to produce upstream.
+
+### ⚠️ WHAT THIS IS NOT
+
+**n = 1.** The identical-config spread measured on this bench is **0.325** (r0 0.3895 vs r1 0.7147),
+which is larger than the gap between this cell and the previous best. **One cell at 0.9343 does not
+show the new binary caused it** — it shows the ceiling is higher than anything seen before, and that
+is a different claim. The deterministic half (F400's `verified: 2`) is settled and needs no
+replicates; the score half needs the sweep.
+
+📌 Note also that this cell's sink was **CAPPED** at 3371s (F425) and it still scored 0.9343 — which
+is the second time the archive says a capped sink costs the arm nothing (F387: the capped cell scored
+above the arm mean).
