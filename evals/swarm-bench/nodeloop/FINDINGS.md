@@ -17556,3 +17556,57 @@ there is simply evidence now where before there was a shrug.
 designed for it: **F400** (spawn the spec's own invocation) made the non-bind unambiguous, **F408**
 promoted it to a finding, and **F395** ensured the resulting summary cannot read as success. The
 `passed:true` on a non-functional app was the visible symptom of all three gaps at once.
+
+---
+
+## F420 — ✅ F411 CONFIRMED BY A LIVE EVENT. ❌ F415 FALSIFIED BY ONE.
+
+### `desc_sha` is present — and `strings` was wrong
+
+F416 recorded F411 as UNCONFIRMED because `desc_sha` was absent from the binary by `strings` **and by
+a raw byte grep**, while `retarget_discarded` from the same macro was present. The live event:
+
+`retarget_discarded` task keys = `['deps', 'desc_chars', 'desc_sha', 'id', 'owned_files']`
+
+**It landed.** The literal is in the binary; two independent searches failed to find it. ⇒ **L236 is
+now proven rather than suspected: `strings` can prove PRESENCE, never ABSENCE**, and every negative
+control I ran today rests on that asymmetry. A 0 means "look at the runtime", never "it is missing".
+
+⚠️ F411's actual purpose is still unsettled: this cell retargeted **once**, so there is no second
+digest to compare. It needs a cell with **>=2 retarget rounds** — `baseline-n3-r0` had three, but on
+the pre-`desc_sha` binary.
+
+### 🔴 F415 DID NOT LAND, BY ITS OWN REGISTERED FALSIFIER
+
+F415 registered: *"max test brief still >=1800 on a 3-node plan means the instruction did not land."*
+First plan built by the new binary:
+
+| test task | brief |
+|---|---|
+| `test-cli` | 1955 |
+| `test-api` | 2036 |
+| **`test-meridian`** | **2321** |
+| `test-store` | 1659 |
+
+**Three of four are over the threshold, the max is 2321, and there is not one aspect-suffixed sibling
+(`test-<module>-happy` etc.).** The instruction changed nothing.
+
+**The diagnosis is in the diff, and it is my mistake.** I inserted *"KEEP EACH TEST SUBTASK SMALL
+ENOUGH TO DESCRIBE IN A FEW LINES … SPLIT it into focused siblings"* **immediately before** the
+existing *"Make each per-module test THOROUGH: … cover the module's happy path AND its edge cases,
+invalid/error inputs and boundary conditions."* Those two instructions pull in opposite directions in
+adjacent sentences, and the model followed the more concrete, more forceful one. **I wrote a
+contradiction into a prompt and expected the half I had just added to win.**
+
+⇒ **L237. AN INSTRUCTION THAT CONTRADICTS THE SENTENCE AFTER IT IS NOT A WEAK INSTRUCTION, IT IS A
+COIN FLIP** — and on a weak local model, the forceful concrete one wins. Prompt additions must be
+checked against what already surrounds them, not just against the defect they target.
+
+**The doctrine already names the right fix and I reached for the wrong tool.** knob-turning: *"two
+molding tools TOGETHER: sharpen the planner prompt, AND deterministic post-plan correctors in swarm.rs
+that fix the model's output regardless of compliance."* `split_fat_modules` already does exactly this
+for CODE modules. A fat TEST task is the same shape, the retry evidence is strong (34% vs 75%
+controlled for file count), and a corrector cannot be out-argued by the next sentence.
+
+**NOT reverting F415** — it is inert, not harmful, and its stated rationale (siblings run concurrently)
+remains true if a corrector ever produces them. **Next: the deterministic splitter.**
