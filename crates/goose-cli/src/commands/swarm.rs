@@ -9170,6 +9170,73 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!diverse_plan_would_skip(74, 80, 88));
     }
 
+    /// THE POOL-SIZE PENALTY IS REAL, AND `agreement_best2` IS FREE OF IT.
+    ///
+    /// `best_of_n` is sized from the fleet (`base.max(devices.len())`), so 1 node drafts 2 skeletons
+    /// and 3 nodes draft 3. MEASURED: the 1-node cell scored agreement 88 and paid NO redraft ladder;
+    /// the 3-node cells scored 50/52/54 and paid 786-1657s. This pins the mechanism behind that.
+    ///
+    /// Both halves matter. If adding a draft did NOT lower `plan_agreement`, F438's whole explanation
+    /// is wrong. If `agreement_best2` were not a no-op at 2 drafts, the field would not be comparing
+    /// fleets on the same footing and every reading of it would be confounded by pool size — the very
+    /// thing it exists to remove.
+    #[test]
+    fn a_third_divergent_draft_lowers_agreement_but_not_the_best_pair() {
+        let mk = |files: &[(&str, &str)]| {
+            let subtasks: Vec<String> = files
+                .iter()
+                .map(|(id, f)| format!(r#"{{"id":"{id}","depends_on":[],"files":["{f}"]}}"#))
+                .collect();
+            goose_swarm::specs_from_plan_json(&format!(
+                r#"{{"subtasks":[{}]}}"#,
+                subtasks.join(",")
+            ))
+            .unwrap()
+        };
+        let a = mk(&[("core", "core.py"), ("cli", "cli.py")]);
+        let b = mk(&[("core", "core.py"), ("cli", "cli.py")]);
+        // A third draft that decomposes the SAME product differently — diverse, not wrong.
+        let c = mk(&[
+            ("alpha", "alpha.py"),
+            ("beta", "beta.py"),
+            ("gamma", "gamma.py"),
+            ("delta", "delta.py"),
+        ]);
+
+        let two = [a.clone(), b.clone()];
+        let three = [a, b, c];
+        let (pair_conf, _) = plan_agreement(&two, false);
+        let (pool_conf, _) = plan_agreement(&three, false);
+        assert!(
+            pool_conf < pair_conf,
+            "adding a divergent draft must LOWER the full-set measure — that penalty is the whole \
+             of F438. pair={pair_conf} pool={pool_conf}"
+        );
+
+        // k=2 recovers the tight pair out of the bigger pool, so the bigger fleet is scored on the
+        // same footing as the small one.
+        let (best2_of_three, _) = best_subset_agreement(&three, false, 2);
+        assert_eq!(
+            best2_of_three, pair_conf,
+            "the best-agreeing PAIR inside the 3-pool is the same pair the 2-node fleet drafted, so \
+             it must score identically — otherwise the field still carries a pool-size effect"
+        );
+        assert!(
+            best2_of_three > pool_conf,
+            "and it must beat the penalised measure"
+        );
+
+        // NO-OP AT TWO DRAFTS. `best_subset_agreement` falls through to the full-set measure when
+        // k >= pool size, so a 1-node run reports agreement_best2 == agreement_conf and `pool_penalty`
+        // is zero. Without this the field would silently mean something different per fleet size.
+        let (best2_of_two, _) = best_subset_agreement(&two, false, 2);
+        assert_eq!(
+            best2_of_two, pair_conf,
+            "at 2 drafts agreement_best2 MUST equal agreement_conf, or the two fleets are not \
+             being compared on the same measure"
+        );
+    }
+
     #[test]
     fn complete_cap_fits_its_own_rounds() {
         let rounds = complete_rounds_from(None) as u64;
@@ -13826,10 +13893,37 @@ impl GooseAgentDispatcher {
             //
             // `would_skip_ladder` is the counterfactual, computed IDENTICALLY whether or not the lever is
             // on, so an ordinary shadow run now answers the question for free instead of costing an arm.
+            // WHAT ROUND 1 WOULD HAVE SCORED IF THE POOL SIZE DID NOT COUNT AGAINST IT.
+            //
+            // `best_of_n` is sized from the fleet — `base.max(devices.len())` — so 1 node drafts 2
+            // skeletons and 3 nodes draft 3. The comment there says the extra draft is free because
+            // drafts run in parallel. It is not free: `plan_agreement` is max-min spread plus mean
+            // pairwise Jaccard, and `best_subset_agreement`'s own doc says both "only worsen (or hold)
+            // as the pool grows". MEASURED: the 1-node cell scored 88 on 2 drafts and paid NO ladder;
+            // the 3-node cells scored 50/52/54 on 3 drafts and paid 786s, 821s and 1657s — 40-57% of
+            // their planning prefix, which is roughly the whole gain their detail fan just bought.
+            //
+            // `best_subset_agreement` exists precisely so a growing pool can only RAISE the metric, and
+            // it is wired in as `consensus_k` — but its own doc says "retarget only". So the invariant
+            // measure is applied only AFTER the ladder has been triggered, never at the round-1 decision
+            // point where the pool-size penalty is what triggers it. That is backwards.
+            //
+            // k=2 is not arbitrary: it is what a 1-node fleet drafts, so this reports every fleet on the
+            // SAME footing. With 2 drafts `best_subset_agreement` falls through to the full-set measure,
+            // so on 1 node this is identically `agreement_conf` and the field is a no-op.
+            //
+            // A run where `agreement_best2` clears `plan_loaded.ask_floor` while `agreement_conf` does
+            // not is a run whose ladder was bought ENTIRELY by having more nodes. Emitted rather than
+            // acted on: the cells that laddered scored 0.9343/0.7147/0.8157 against 0.6030/0.6695 for
+            // the two that did not, so the ladder may be buying the quality and a silent flip here could
+            // spend that. Measure first.
+            let (best2, _) = best_subset_agreement(&valid1, converge, 2);
             self.events.write_value(serde_json::json!({
                 "event": "plan_convergence",
                 "drafts": valid1.len(),
                 "agreement_conf": conf1,
+                "agreement_best2": best2,
+                "pool_penalty": best2.saturating_sub(conf1),
                 "struct_conv": struct_conv,
                 "struct_stop": struct_stop,
                 "enforced": diverse_plan_on,
