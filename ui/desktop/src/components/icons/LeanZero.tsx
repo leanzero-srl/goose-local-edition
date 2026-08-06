@@ -1,5 +1,5 @@
 // LeanZero brand mark — a bold, sharp-cornered "L" monogram (the logo of
-// leanzero.atlascrafted.com). Uses currentColor so it inherits the surrounding
+// leanzero.net). Uses currentColor so it inherits the surrounding
 // text/icon color, matching how the Goose mark is drawn.
 export function LeanZero({ className = '' }) {
   return (

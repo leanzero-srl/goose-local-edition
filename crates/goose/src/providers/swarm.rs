@@ -33,7 +33,7 @@ use rmcp::model::Tool;
 
 const SWARM_PROVIDER_NAME: &str = "swarm";
 const SWARM_DEFAULT_MODEL: &str = "swarm";
-const SWARM_DOC_URL: &str = "https://leanzero.atlascrafted.com/portfolio/goose-local-edition";
+const SWARM_DOC_URL: &str = "https://leanzero.net/portfolio/goose-local-edition";
 
 /// A subprocess-backed swarm provider. Holds the `goose` binary path and the session working directory to
 /// scaffold into (threaded via [`ProviderDef::from_env_with_working_dir`] — without it the swarm would write
