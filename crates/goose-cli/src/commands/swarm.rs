@@ -1199,7 +1199,7 @@ impl Default for SwarmConfig {
             contracts: true,
             complete: true,
             split_secs: 300,
-            complete_cap_secs: 1200,
+            complete_cap_secs: default_complete_cap_secs(),
             verify_commands: true,
             fan_e2e: true,
             no_tools_means_ask: true,
@@ -7957,10 +7957,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // provider had deliberately lowered because "median 219s / p75 406s, so 900 split almost nothing",
         // and left the fix-until-green loop with NO cap at all instead of 1200s.
         assert_eq!(d.split_secs, 300, "provider forced SPLIT_SECS=300");
-        assert_eq!(
-            d.complete_cap_secs, 1200,
-            "provider forced COMPLETE_CAP_SECS=1200; 0/absent means an UNBOUNDED fix loop"
+        // The load-bearing property here is BOUNDED-AND-IDENTICAL, not the specific number: 0/absent
+        // means an unbounded fix loop, and a divergence between the two surfaces re-splits the engines.
+        // This used to pin the literal 1200 the provider forced. That number was RAISED to 3000 once it
+        // was measured to be smaller than a single fix attempt (see `default_complete_cap_secs`), and
+        // pinning the literal here made a correctness fix look like a parity regression. The value is
+        // now guarded where it belongs — `complete_cap_fits_its_own_rounds` ties it to fix_cap_secs and
+        // complete_rounds — so this asserts the property and defers the number.
+        assert!(
+            d.complete_cap_secs > 0,
+            "0/absent means an UNBOUNDED fix loop"
         );
+        assert_eq!(d.complete_cap_secs, default_complete_cap_secs());
     }
 
     /// A `swarm:` block that OMITS a key must still get the intended DEFAULT, not the type default.
@@ -9123,6 +9131,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
         assert_eq!(complete_stall_rounds_from(Some(" 3 ".to_string())), 3); // trimmed
         assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 2); // unparseable -> default 2
+    }
+
+    /// REGRESSION: the repair phase must be able to AFFORD the rounds it advertises.
+    ///
+    /// `complete_cap_secs` was 1200 — the same number as `fix_cap_secs()`, the cap on ONE fix
+    /// worker — so the first attempt could eat the whole phase budget and the loop broke on
+    /// `cap_deadline` before dispatching a second. Measured 4 for 4 across every cell that reached
+    /// the loop: `complete_fix_completed {secs: 1200, agent_ok: false}`, never a completed repair.
+    ///
+    /// Two knobs whose values made the advertised behaviour impossible, and nothing tied them
+    /// together. This is that tie. It is deliberately an INEQUALITY over the real functions rather
+    /// than an equality against 3000: the point is the relationship, not the number.
+    #[test]
+    fn complete_cap_fits_its_own_rounds() {
+        let rounds = complete_rounds_from(None) as u64;
+        let fixes = rounds; // a fix is dispatched on every round EXCEPT the last (`round == rounds`)
+        let need = fixes * fix_cap_secs();
+        assert!(
+            default_complete_cap_secs() >= need,
+            "the repair phase budgets {}s but its own defaults dispatch {} fix attempts of up to \
+             {}s each ({need}s). A budget smaller than that silently makes later rounds \
+             unreachable — measured as 4/4 attempts guillotined with agent_ok:false and no second \
+             try. Raise the cap or lower fix_cap_secs; do not let them drift apart again.",
+            default_complete_cap_secs(),
+            fixes,
+            fix_cap_secs(),
+        );
+        // And the bake must agree with the serde default, or config.yaml omitting the key gets a
+        // different budget than the Default impl — the exact divergence the merge path exists to stop.
+        assert_eq!(
+            SwarmConfig::default().complete_cap_secs,
+            default_complete_cap_secs()
+        );
     }
 
     #[test]
@@ -17604,8 +17645,33 @@ fn default_split_secs() -> u64 {
     300
 }
 
+/// THE PHASE BUDGET MUST FIT THE ROUNDS IT ADVERTISES. It did not, and the repair loop never once
+/// completed a fix.
+///
+/// This was 1200 — the SAME value as `fix_cap_secs()`, the cap on ONE fix worker. So the first fix
+/// attempt could consume the entire phase budget on its own, after which the loop head ran one more
+/// verify and hit `cap_deadline`, breaking before any second attempt. `complete_rounds` defaults to
+/// 2 and dispatches a fix on rounds 0 and 1, so the loop was budgeted for less than HALF of what it
+/// claimed to do.
+///
+/// MEASURED across every cell of this campaign that reached the fix loop — baseline-n1-r0, n3-r0,
+/// n3-r1, n3-r3 — `complete_fix_completed` was 4 for 4 at `secs: 1200, agent_ok: false`. Not one
+/// repair attempt ever returned. And the workers were NOT spiralling: baseline-n1-r0's fix agent
+/// made 11 tool calls, correctly diagnosed a MockStore/MagicMock inheritance bug, landed an edit,
+/// and was reading `meridian.py` to write the missing test when the timeout cut it mid-sentence.
+/// Round 1's verify then reported a DIFFERENT pytest error, which proves the edit landed and the
+/// attempt was making real progress.
+///
+/// So the loop is genuinely incremental — a killed attempt still leaves its edits in the tree and
+/// the next round's verify re-derives findings from disk — and it was being denied the second draw
+/// that incrementality is FOR.
+///
+/// 3000 = 2 attempts x 1200 + 600 for the three verifies. Safe to raise because a working app never
+/// enters this loop at all: round 0 breaks green on `verdict.findings.is_empty()`. This budget is
+/// only ever spent on an app that is RED, which is exactly when it is worth spending.
+/// `complete_cap_fits_its_own_rounds` fails the build if these drift apart again.
 fn default_complete_cap_secs() -> u64 {
-    1200
+    3000
 }
 
 /// Structured-output schema for the spec-ambiguity probe. `product_specified` is the strongest signal —
