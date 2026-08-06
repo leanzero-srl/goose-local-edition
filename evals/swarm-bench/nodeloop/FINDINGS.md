@@ -17610,3 +17610,46 @@ controlled for file count), and a corrector cannot be out-argued by the next sen
 
 **NOT reverting F415** — it is inert, not harmful, and its stated rationale (siblings run concurrently)
 remains true if a corrector ever produces them. **Next: the deterministic splitter.**
+
+---
+
+## F421 — I DID NOT BUILD THE SPLITTER, BECAUSE THE MECHANISM DIED UNDER MEASUREMENT
+
+F420 ended by naming the deterministic test-task splitter as the next move, on the doctrine that a
+corrector cannot be out-argued by the next sentence the way F415's prompt edit was. Before building
+it I went looking for the mechanism. Three steps, and the third killed it.
+
+**1. The split axis does not exist.** `split_fat_modules` splits a fat subtask **by files** — a real
+structural property. A fat TEST task owns **one** file and carries a long **brief**. Splitting it into
+`test-<module>-happy/-edges/-errors` means partitioning PROSE, which no deterministic corrector can
+do. The tool the doctrine points at does not fit the defect.
+
+**2. The failure modes differ by brief length, which looked like a mechanism.**
+
+| brief | dominant failure |
+|---|---|
+| **<1800** | **7 of 7** — *"finished WITHOUT writing your owned file(s)"* |
+| **>=1800** | **7 of 15** — *"agent stalled — no progress for Ns (no token/tool activity)"* |
+
+Short briefs fail by finishing empty; long briefs fail by producing nothing. That suggested a concrete
+engine defect: the idle watchdog is 420s of NO EVENTS, and **a model emits nothing during prefill**, so
+a big prompt could trip the watchdog before its first token — which would explain the length
+correlation mechanically and point at a real fix (scale the idle budget by prompt size).
+
+**3. 🔴 IT IS REFUTED. Only 3 of 16 stalls fired near 420s** (the first idle window). The rest fired at
+**507, 561, 690, 710, 779, 843, 927, 1019, 1109, 1463, 1592s** — the model was producing events, then
+went silent. **Long-brief tasks do not fail by never starting.** The prefill story is wrong.
+
+⇒ So: the correlation is real and survives a file-count control (34% vs 75%, n=73), the prompt fix is
+falsified (F420b), the tool the doctrine names does not fit, and the one mechanism I could construct is
+refuted by its own data. **I have no validated mechanism, so I am shipping no corrector.**
+
+⇒ **L238. A CORRECTOR NEEDS A MECHANISM, NOT A CORRELATION.** F398 shipped because "is a timeout
+argument passed at this call site" is a mechanism the source answers. This one has a strong controlled
+correlation and nothing underneath it, and a corrector built on that would be a guess with a test suite
+attached. **Four hypotheses died on measurement today (F399 static sync detector, F402 POST probe,
+F420b the prompt edit, F421 prefill); the discipline is the deliverable.**
+
+📌 What would settle it: the stalls are MID-RUN, so the next question is what the worker was doing in
+the 420s before it went quiet. `session_id` resolves to the message trace, and ~1 in 5 tasks has none
+(F356) — so this needs a stalled task that HAS one, which the sweep will eventually produce.
