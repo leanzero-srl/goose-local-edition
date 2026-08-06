@@ -12203,6 +12203,33 @@ impl GooseAgentDispatcher {
         } else {
             None
         };
+        // THE BUDGET IS ONLY REPORTED WHEN IT IS EXCEEDED, SO THE FORMULA CAN NEVER BE AUDITED.
+        //
+        // `tree_bytes` / `cap_secs` / `cap_base_secs` ride `sink_capped`, which fires ONLY on a sink that
+        // ran out of time. Every sink that finished comfortably reports nothing, so there is no way to
+        // ask the one question that decides whether `scaled_sink_cap` scales the right quantity: does
+        // tree size predict how long the join takes?
+        //
+        // MEASURED, and it is why this event exists: 2 of 5 archived cells ran the sink to EXACTLY their
+        // cap (3371s at 56188 bytes; 2700s at 45001) — truncated, then finalized as done so the run can
+        // terminate. The obvious explanation is "bigger tree, more work", and it is WRONG:
+        // baseline-n3-r2 has the LARGEST built tree of any cell (92400 bytes / 12 py files on disk) and
+        // finished its sink in 1656s without capping. Tree size did not predict duration in the only
+        // comparison available — and that comparison had to be made against files counted from OUTSIDE
+        // the engine, because the engine's own `tree_bytes` is unrecoverable for an uncapped run.
+        //
+        // Emitted for every sink, capped or not, so the ratio can be regressed against actual duration
+        // instead of guessed. Cheap: the bytes were already computed to build the deadline.
+        if let Some((base, secs, bytes)) = sink_cap_plan {
+            self.events.write_value(serde_json::json!({
+                "event": "sink_plan",
+                "task_id": "integrate-verify",
+                "cap_secs": secs,
+                "cap_base_secs": base,
+                "tree_bytes": bytes,
+                "scale": if base > 0 { secs as f64 / base as f64 } else { 0.0 },
+            }));
+        }
         let sink_deadline = sink_cap_plan
             .map(|(_, secs, _)| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
