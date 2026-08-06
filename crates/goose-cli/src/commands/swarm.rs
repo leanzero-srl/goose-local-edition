@@ -9237,6 +9237,63 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// A CAPPED POOL MUST KEEP THE FASTEST NODES, and the operator's ranking is the authority.
+    ///
+    /// MEASURED: `GOOSE_SWARM_MAX_NODES` sorted by `model_id` alone, so on Mihai's fleet — where
+    /// identifiers order `gabee` < `mihai-…` < `qwen3.6-…` — every capped run took `gabee`, the node
+    /// his own `speed_weights` ranks LOWEST (1 against local 2 and worksmacstudio 3) and which
+    /// benchmarks at 25.88 tok/s against 32.08. Both 1-node cells on disk report `pool: ['gabee']`.
+    ///
+    /// That is worse than slow: MAX_NODES exists to measure the node curve, so the 1-node CONTROL was
+    /// permanently handicapped while the 3-node arm used every machine.
+    #[test]
+    fn a_capped_pool_keeps_the_fastest_nodes_and_stays_deterministic() {
+        let weights: std::collections::HashMap<String, u32> = [
+            ("gabee".to_string(), 1),
+            ("local".to_string(), 2),
+            ("worksmacstudio".to_string(), 3),
+        ]
+        .into_iter()
+        .collect();
+        // The real fleet's device ids.
+        let mut ids = vec!["mac-gabee", "local-mihai-qwen", "worksmacstudio-qwen"];
+        let by_speed = |ids: &mut Vec<&str>| {
+            ids.sort_by(|a, b| {
+                configured_speed_weight(&weights, b)
+                    .cmp(&configured_speed_weight(&weights, a))
+                    .then_with(|| a.cmp(b))
+            });
+        };
+
+        by_speed(&mut ids);
+        assert_eq!(
+            ids[0], "worksmacstudio-qwen",
+            "capping to 1 node must keep the FASTEST host, not the alphabetically first — this is \
+             the whole defect: every 1-node control ran on gabee"
+        );
+        assert_eq!(&ids[..2], &["worksmacstudio-qwen", "local-mihai-qwen"]);
+
+        // DETERMINISM SURVIVES, which was the original sort's legitimate goal: a different input
+        // order must produce the same cap, so N is reproducible across runs.
+        let mut shuffled = vec!["worksmacstudio-qwen", "mac-gabee", "local-mihai-qwen"];
+        by_speed(&mut shuffled);
+        assert_eq!(
+            shuffled, ids,
+            "the cap must not depend on fleet enumeration order"
+        );
+
+        // AND AN UNRANKED FLEET FALLS BACK TO ALPHABETICAL, so an operator who never set
+        // speed_weights gets exactly the old behaviour rather than an arbitrary one.
+        let none: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut flat = vec!["c-node", "a-node", "b-node"];
+        flat.sort_by(|a, b| {
+            configured_speed_weight(&none, b)
+                .cmp(&configured_speed_weight(&none, a))
+                .then_with(|| a.cmp(b))
+        });
+        assert_eq!(flat, vec!["a-node", "b-node", "c-node"]);
+    }
+
     #[test]
     fn complete_cap_fits_its_own_rounds() {
         let rounds = complete_rounds_from(None) as u64;
@@ -17837,6 +17894,21 @@ fn default_split_secs() -> u64 {
     300
 }
 
+/// A device id to its configured `speed_weight` — substring match against the `speed_weights` map
+/// (e.g. `{"worksmacstudio":3,"local":2,"gabee":1}`); default 1 = equal share.
+///
+/// A FREE FUNCTION because two places need it and they were not both using it. The dispatcher read
+/// the map to ROUTE work; the `GOOSE_SWARM_MAX_NODES` cap, which decides WHICH devices survive at
+/// all, sorted alphabetically and never consulted it. So an operator could rank their fleet
+/// correctly and still have the cap hand them the slowest machine.
+fn configured_speed_weight(weights: &std::collections::HashMap<String, u32>, id: &str) -> u32 {
+    weights
+        .iter()
+        .find(|(pat, _)| id.contains(pat.as_str()))
+        .map(|(_, w)| (*w).max(1))
+        .unwrap_or(1)
+}
+
 /// THE PHASE BUDGET MUST FIT THE ROUNDS IT ADVERTISES. It did not, and the repair loop never once
 /// completed a fix.
 ///
@@ -22979,8 +23051,30 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .filter(|n| *n > 0)
         {
             Some(max) if max < fleet_pool.len() => {
+                // KEEP THE FASTEST NODES, NOT THE ALPHABETICALLY FIRST ONES.
+                //
+                // This sorted by `model_id` alone. Determinism was the goal and it is a correct goal —
+                // but nobody noticed that a fixed alphabetical order picks the SAME node every time,
+                // and on a real fleet that node is whatever happens to sort first. MEASURED on this
+                // fleet: identifiers order `gabee` < `mihai-…` < `qwen3.6-…`, so every capped run took
+                // `gabee` — which the operator's own config ranks SLOWEST (`speed_weights: {gabee: 1,
+                // local: 2, worksmacstudio: 3}`) and which benchmarks at 25.88 tok/s against 32.08.
+                //
+                // The cost is worse than slow runs. `GOOSE_SWARM_MAX_NODES` exists to measure the node
+                // curve, so the 1-node CONTROL was permanently handicapped while the 3-node arm used
+                // every machine — which flatters more-nodes on wall-clock for a reason that has nothing
+                // to do with node count. An A/B whose control is systematically crippled measures the
+                // crippling.
+                //
+                // The operator had already declared the ranking; only the ROUTING read it, never the
+                // CAP. Sorting by speed DESC keeps the ranking and the tie-break on `model_id` keeps
+                // determinism, so N is still reproducible — the property the original comment wanted.
                 let mut capped = fleet_pool.clone();
-                capped.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+                capped.sort_by(|a, b| {
+                    configured_speed_weight(&cfg.speed_weights, &b.id)
+                        .cmp(&configured_speed_weight(&cfg.speed_weights, &a.id))
+                        .then_with(|| a.model_id.cmp(&b.model_id))
+                });
                 capped.truncate(max);
                 eprintln!(
                     "{}",
@@ -23232,15 +23326,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         );
     }
 
-    // Map a device id to its configured speed_weight (substring match against the `speed_weights` map,
-    // e.g. {"worksmacstudio":3,"mihai":2,"gabee":1}); default 1 = equal share.
-    let speed_weight_for = |id: &str| -> u32 {
-        cfg.speed_weights
-            .iter()
-            .find(|(pat, _)| id.contains(pat.as_str()))
-            .map(|(_, w)| (*w).max(1))
-            .unwrap_or(1)
-    };
+    let speed_weight_for = |id: &str| -> u32 { configured_speed_weight(&cfg.speed_weights, id) };
     let mut devices: Vec<DeviceCfg> = enabled
         .iter()
         .map(|d| DeviceCfg {
