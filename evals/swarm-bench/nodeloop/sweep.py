@@ -1168,6 +1168,108 @@ def kill_strays() -> None:
             pass
 
 
+def _etime_secs(et: str) -> int:
+    """ps ETIME -> seconds. Formats: MM:SS, HH:MM:SS, D-HH:MM:SS."""
+    days, _, rest = et.rpartition("-")
+    parts = [int(p) for p in rest.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    return (int(days) if days else 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+def reap_run_orphans(min_age_secs: int = 10800, protect_root: int | None = None) -> list[int]:
+    """Kill orphaned worker-spawned processes by their WORKING DIRECTORY, not by port range.
+
+    `reap_stray_listeners` below was calibrated on ONE observed leak — a worker that ran
+    `python3 -m vendorsync --db … --port 8931 &` — so it sweeps PORT_BASE..PORT_BASE+40. MEASURED
+    2026-08-06: 68 orphaned processes had accumulated over FOUR DAYS, and **not one of them was in
+    that range**. The apps under test pick their own ports; the live leaks held 18082, 19000, 18080,
+    18095-18101, 18765, 18123, 19001, 19004-19006, 8000, 8081, 8099, 9000, 9090, 9999, 38081. The
+    reaper had been running between every unit and finding nothing, correctly, forever.
+
+    Widening the port range is NOT the fix: 8000/9000/9999 are exactly where a person's own dev
+    server lives, and this runs unattended on Mihai's machine. So the discriminator is the CWD —
+    every one of these was spawned by a worker inside a run directory, and nothing of his is in
+    there. The sweep itself sits at evals/swarm-bench (not under runs/), so it can never match.
+
+    AGE IS THE SECOND GUARD, and it is load-bearing rather than belt-and-braces: run directories are
+    REUSED across sweeps. Four processes with cwd `runs/nodeloop/swarm-3node-r1` were 2d20h old while
+    that cell had been running for 80 minutes — same path, different run. Age separates them where
+    the path cannot.
+
+    Kills the process GROUP: the leak is a `bash -c "… &"` whose python child holds the socket, and
+    killing only the pid the CWD scan matched leaves the listener alive.
+    """
+    root = str((HERE.parent / "runs").resolve())
+    try:
+        out = subprocess.run(["lsof", "-d", "cwd", "-Fpn"],
+                             capture_output=True, text=True, timeout=60).stdout
+        ps = subprocess.run(["ps", "-eo", "pid=,pgid=,etime=,ppid="],
+                            capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return []
+    cwds: dict[int, str] = {}
+    pid = None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line.startswith("n") and pid is not None:
+            cwds.setdefault(pid, line[1:])
+    # (pgid, age_secs, ppid) — ppid is what makes the ancestry walk possible.
+    meta: dict[int, tuple[int, int, int]] = {}
+    for line in ps.splitlines():
+        f = line.split()
+        if len(f) >= 4 and f[0].isdigit():
+            try:
+                meta[int(f[0])] = (int(f[1]), _etime_secs(f[2]), int(f[3]))
+            except ValueError:
+                continue
+    # PARAMETERISED SO THE GUARD CAN BE CONTROLLED. Defaults to this process; a test passes the
+    # live sweep's pid, because a safety guard that can only be exercised by BEING the sweep is a
+    # guard nobody has ever checked. Verifying it required exactly this: from a throwaway process
+    # the engine does not descend from ME, so the control read as a failure until the root was
+    # made explicit.
+    me = protect_root if protect_root is not None else os.getpid()
+
+    def descends_from_me(p: int) -> bool:
+        """Is `p` anywhere in THIS sweep's process tree?
+
+        A process-GROUP guard is not enough, and getting that wrong would be the worst bug in this
+        file. `goose swarm run` is spawned in its own group (measured: sweep pid 23655 is pgid 23655,
+        its live engine 87167 is pgid 87167) and the engine's CWD *is* a run directory — so a
+        group-only check leaves the running engine matching every condition here, with nothing but
+        the age guard between it and SIGKILL. Cells take ~2.5h against a 3h floor. That is not a
+        margin, it is a countdown.
+
+        Walking ppid to the root protects the engine, its shells and their children by construction,
+        however they are grouped.
+        """
+        seen = set()
+        while p and p not in seen:
+            if p == me:
+                return True
+            seen.add(p)
+            p = meta.get(p, (0, 0, 0))[2]
+        return False
+
+    groups: dict[int, list[int]] = {}
+    for p, c in cwds.items():
+        if not c.startswith(root) or p == me:
+            continue
+        pgid, age, _ = meta.get(p, (None, 0, 0))
+        if pgid is None or age < min_age_secs or descends_from_me(p):
+            continue
+        groups.setdefault(pgid, []).append(p)
+    killed = []
+    for pgid, pids in groups.items():
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            killed.extend(pids)
+        except (ProcessLookupError, PermissionError):
+            continue
+    return killed
+
+
 def reap_stray_listeners(port_lo: int, port_hi: int) -> list[int]:
     """Kill processes still LISTENING in the bench port range that this sweep did not spawn.
 
@@ -1258,6 +1360,11 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         if strays:
             log(f"[reap] {now()} killed {len(strays)} leaked app server(s) still holding a bench "
                 f"port: {strays} — a worker started them and nothing stopped them")
+        orphans = reap_run_orphans()
+        if orphans:
+            log(f"[reap] {now()} killed {len(orphans)} orphaned worker-spawned process(es) rooted "
+                f"in run directories: {orphans} — these hold app ports OUTSIDE the bench range "
+                f"(18000-19100, 8000-9999), which is why the port-range reaper never saw them")
 
     # run_build names its outputs after the ENTRANT, so two arms at the same node count and rep
     # would overwrite each other's tree AND vendor trace. Re-home both under the unit.
