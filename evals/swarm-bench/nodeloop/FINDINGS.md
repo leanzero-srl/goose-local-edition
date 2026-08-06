@@ -17498,3 +17498,33 @@ I recorded in F414 that the sweep would exit after `baseline-n3-r1`. It ran **r2
 before exiting — so the STOP sentinel does not take effect at the boundary I assumed. The cells are
 sound (and gave me this test), but **my model of `loop.sh stop` was wrong**, and anything I plan
 around "it will stop after the current unit" needs re-checking against what it actually does.
+
+---
+
+## F418 — F408 VALIDATED 3/3 AGAINST THE SCORER, AFTER IT SHIPPED
+
+F414 deployed F408 **unmeasured**, as a deliberate trade: it could not be measured without being in
+the binary, and 71 queued units would otherwise run blind to it. That trade is only defensible if the
+validation actually follows, so here it is — the same control F398 passed before shipping.
+
+Each parked app spawned **exactly as its spec documents** (`python3 -m vendorsync --db <scratch>
+--port <free>`), against the scorer's independent verdict:
+
+| parked cell | scorer `server_runs` | bound within 8s | what F408 emits |
+|---|---|---|---|
+| `baseline-n3-r0` | **0.00** | **No** | **FINDING — never bound under its own advertised command** |
+| `baseline-n3-r1` | 1.00 | Yes | nothing |
+| `baseline-n3-r2` | 1.00 | Yes | nothing |
+
+**3 of 3 agreement**, in both directions. It fires on the daemon-thread app the scorer marks broken and
+stays silent on both apps the scorer marks working.
+
+**The no-false-positive half is the one that matters.** F408 pushes a FINDING into the fix loop, and a
+wrong finding spends a weak model's repair turn on correct code — the exact cost that made me refuse
+the POST probe in F402 at 3/5 agreement. At 3/3 with two working apps declining to trigger it, that
+risk is measured rather than hoped.
+
+⇒ The chain F413 identified is now complete and each link is validated rather than argued:
+**3 nodes builds the richer app (+0.1473 stable-set) → one startup bug masks it → F408 detects that bug
+(3/3) → F398 proved this fix loop repairs what it is handed (round 0 findings 2 → round 1 findings 0).**
+Every link measured; the composition is not, and the running sweep is what tests it.
