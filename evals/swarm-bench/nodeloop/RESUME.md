@@ -112,9 +112,16 @@ rm -f STOP && ./loop.sh start     # BARE, never piped
 
 1. **F411's purpose** — needs a cell with **>=2 retarget rounds** to compare `desc_sha` across rounds.
    That settles whether the 1991.6s re-detail is pure rework. One retarget is not enough.
-2. **The stall mechanism** — long-brief test tasks fail by stalling MID-RUN (only 3 of 16 near the 420s
-   first idle window; the rest 507-1592s). Needs a stalled task with a resolvable `session_id` (~1 in 5
-   have none). **Do NOT build a corrector before this — F421.**
+2. **The stall mechanism is FOUND and it is MODEL BEHAVIOUR (F423).** Across all 15 stalled tasks with
+   activity digests, **13 end their reasoning CLEANLY** — *"let me summarize my findings."*, *"I'll write
+   the complete test_api.py now."* — at exactly the point the next thing should be a TOOL CALL,
+   `malformed: 0`, after 1-25 real calls. **The model finishes thinking, says what it will do, and never
+   acts.** This UNIFIES two failure modes: *"finished WITHOUT writing your owned file(s)"* is the turn
+   ending and goose seeing it; *"stalled 420s"* is the same non-action with nothing signalling turn-end.
+   ⚠️ **F422 claimed this was a mid-token STREAM DROP and is RETRACTED** — that signature is 2 of 15, and
+   I generalised from a single digest (L240). The target is MODEL MOLDING, same class as `act_now_nudge`
+   (already ON, measured writes 23.8->48.0%), and it is not solved. **Look at what the worker is told at
+   that turn before shipping anything.**
 3. **The 08:03 fleet death is unexplained** — graceful `srv cleaning up before exit`, "unloaded by user
    or API request", no crash/OOM/sleep/TTL, nothing in the repo unloads. It can recur.
 4. **`lms link set-preferred-device` is still pointed at Mac.lan** — I set it to load `gabee`.
