@@ -1343,6 +1343,18 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     import run_build  # imported late so a syntax error there cannot stop the loop from starting
 
     entrant = f"swarm-{nodes}node"   # run_build reads the N and sets GOOSE_SWARM_MAX_NODES
+    # STAMP THE BINARY AT DISPATCH, NOT AT RESULT-WRITE.
+    #
+    # `engine_build()` stats the binary, and the result dict used to call it AFTER the run returned —
+    # so rebuilding while a cell was in flight stamped that finished cell with the NEW binary's
+    # identity although it had executed entirely on the OLD one. A confident, wrong attribution, which
+    # is the precise failure this field was added to prevent: its own docstring records 34 hours of
+    # backlog queued against a binary predating the levers the arms set, reported as "no effect".
+    #
+    # The campaign rule "never rebuild mid-cell" was carrying this on discipline alone. Now the code
+    # carries it: a mid-cell rebuild can still mix binaries, but it can no longer LIE about which one
+    # ran, and the mismatch shows up as a stale `engine_build` that `is_done()` re-runs.
+    engine_build_at_dispatch = engine_build()
     prev = dict(os.environ)
     dog = Watchdog(unit_name(arm["name"], nodes, rep), OUT / f"{entrant}-r{rep}", arm, nodes)
     dog.start()
@@ -1443,7 +1455,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "void": void,
         "void_reason": (f"asked for {nodes} nodes, engine built {actual}" if void else None),
         "scorer_version": verdict.get("scorer_version"),
-        "engine_build": engine_build(),
+        "engine_build": engine_build_at_dispatch,
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
         "prefix": pre,
@@ -1811,6 +1823,11 @@ def main() -> int:
 
         kill_strays()
         started = time.time()
+        # Same reason as the dispatch-time stamp in run_unit: a crashed unit is recorded with
+        # `failed: True`, and `is_done()` treats that as COMPLETE. So if a rebuild landed between
+        # the attempt and the record, the failure would carry the NEW binary's id and be skipped
+        # forever against a binary it never ran on.
+        build_at_attempt = engine_build()
         result = None
         tail = ""
         for attempt in range(MAX_ATTEMPTS):
@@ -1839,7 +1856,7 @@ def main() -> int:
                       "finished_at": datetime.now().isoformat(timespec="seconds"),
                       "score": None, "failed": True, "error": tail,
                       "audit_version": dispatch_audit.AUDIT_VERSION,
-                      "engine_build": engine_build(), "audit": {}}
+                      "engine_build": build_at_attempt, "audit": {}}
 
         unit_secs = time.time() - started
         if is_real_unit({**result, "wall_secs": result.get("wall_secs") or unit_secs}):
