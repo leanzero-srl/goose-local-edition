@@ -17806,3 +17806,33 @@ evidence for that is F398 succeeding and F415 failing on the same day, against t
 ⚠️ This does NOT say prompts never work — `act_now_nudge` is measured at writes 23.8% -> 48.0%. It says
 that when a prompt fix and a detector are both available for the same defect, **today's evidence says
 build the detector.**
+
+---
+
+## F425 — ✅ F386 AND F369 BOTH SETTLED BY ONE LIVE `sink_capped` EVENT
+
+First `sink_capped` emitted by the new binary:
+
+```
+sink_capped: cap_secs 3371, cap_base_secs 1800, tree_bytes 56188
+```
+
+**F386's registered WITHIN-ROW IDENTITY holds exactly.** The prediction was that `cap_secs` must equal
+`scaled_sink_cap(cap_base_secs, tree_bytes, 30000)` computed from that same row's own fields:
+`1800 * clamp(56188/30000, 1, 2) = 1800 * 1.87293 = 3371.28 -> 3371`. **Emitted 3371.** That form was
+chosen deliberately because it is immune to the replicate spread that invalidated three earlier bands
+(F383/F384) — no second run is needed to check it.
+
+**And it settles F369 at the same time.** The sink received **3371s instead of 1800s** because it had a
+56 KB tree to integrate. Before F386 this event reported the raw env base, so a sink that got 3371s
+said "1800" and the scaling was **invisible in every log** — the exact defect F386 was written to fix,
+now demonstrated by the first event that could show it.
+
+⚠️ Note what the other falsifier says: `cap_secs == cap_base_secs` on a materially larger tree would
+have meant F369 was INERT. At 56188 bytes against a 30000-byte reference it scaled to 1.87x, so that
+half is refuted in the healthy direction.
+
+📌 The sink was then genuinely capped — it ran to its ceiling and was cut. That is the F387 failure
+mode (the CAPPED sink), which in the archive cost the arm nothing: `baseline-n3-r0` was capped and
+still scored **above** the arm mean. Worth watching where this cell lands, but a capped sink is not by
+itself a bad outcome.
