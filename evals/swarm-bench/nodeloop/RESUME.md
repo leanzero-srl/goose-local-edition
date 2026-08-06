@@ -1,12 +1,35 @@
-# RESUME — live state, rewritten 2026-08-06 ~09:45 local
+# RESUME — live state, rewritten 2026-08-06 ~09:45, HEADLINE RETRACTED 13:45
 
-Seventh rewrite. The 13:50 version is REPLACED rather than patched because **its headline is now
-false**: it said "3 nodes is NOT better", and two independent pre-registered measurements since then
-say otherwise. Full history is `FINDINGS.md` (F386-F421); this file is only what is TRUE NOW.
+> ## ⛔ READ THIS FIRST — THE SECTION BELOW IS NO LONGER TRUE (13:45, F427/F430/F431)
+>
+> `baseline-n1-r0` re-ran on the new binary at 13:15 and delivered **both** falsifiers this file
+> registered against itself, in the same cell.
+>
+> **1. The stable-set gap collapsed.** F413's `+0.1473` became **`+0.0500`** — *exactly* the
+> falsifier threshold, not one hundredth of margin. Only 6 of 24 checks moved, 2 of them AGAINST
+> 3 nodes. Remove the top mover and it is `+0.0087`; remove the top two and **the sign flips to
+> `-0.0364`**. And the top mover is now fully explained as a **library coin-flip**: n3 wrote
+> `urlopen(req, timeout=30)`, n1 wrote `http.client.HTTPSConnection(host, port)`.
+>
+> **2. The thin briefs are gone — F417 IS RETRACTED.** Same unit, same dir name, new binary:
+> min brief **166 → 1031**, THIN **2 → 0**. Every 3-node cell is 1039–1062; the 1-node cell is
+> 1031. **Indistinguishable.** The 166-char briefs were on `store` and `meridian`, the two repeat
+> `detail_fallback` victims of this whole campaign, and the new cell records `detail_fallbacks: []`.
+> A thin brief is **a detail call that timed out**, which tracks fleet load, not pool size.
+>
+> **What is true now:** two pairs lean toward 3 nodes (+0.1473, +0.0500), neither survives removing
+> its top mover, and the identical-config spread is **0.325 — wider than both gaps combined.**
+> There is still no measurement that distinguishes 3 nodes from 1.
+>
+> **The durable win from this cell is an ENGINE FIX, not a number** — see `59352f571`: the run's own
+> `http_timeout_scan` affirmed a clean tree over a client that blocks forever, because it knew
+> `requests`/`urlopen` but not `http.client`, and the only test covered the JSON *parser* rather than
+> the detector. Fixed and verified in both directions on the live trees. **⇒ L242: a check is tested
+> when its DETECTOR runs, never when its parser does.**
 
 ---
 
-## 🥇 THE HEADLINE FLIPPED — AND BOTH HALVES WERE PRE-REGISTERED
+## 🥇 ~~THE HEADLINE FLIPPED — AND BOTH HALVES WERE PRE-REGISTERED~~ (RETRACTED — see above)
 
 **1. On the pre-registered stable check set, three nodes beats one by +0.1473 (F413).**
 
