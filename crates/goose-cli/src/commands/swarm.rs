@@ -5211,6 +5211,70 @@ mod tests {
         );
     }
 
+    /// REGRESSION, from a LIVE FALSE CLEAR — and the reason the test above was never enough.
+    ///
+    /// `the_no_timeout_scan_turns_its_json_into_actionable_findings` tests `parse_http_timeout`,
+    /// which is the JSON PARSER. Nothing ever executed `HTTP_TIMEOUT_SCRIPT` itself, so the thing
+    /// that actually decides what is a defect was the one part with no coverage. baseline-n1-r0
+    /// then shipped `http.client.HTTPSConnection(self._host, self._port)` — timeout defaults to the
+    /// global socket default of None, i.e. blocks FOREVER — and the scan emitted `findings: 0` twice
+    /// while affirming every outbound call passed a timeout. A parser test cannot catch that.
+    ///
+    /// The negative controls matter as much as the positives: this scan feeds `verdict.findings`,
+    /// which gates `final_passed`, so a false positive stops a CORRECT build and sends the repair
+    /// loop to edit working code.
+    #[tokio::test]
+    async fn the_timeout_scan_sees_http_client_and_still_spares_a_positional_timeout() {
+        let dir = std::env::temp_dir().join(format!("goose_http_to_{}", std::process::id()));
+        let pkg = dir.join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        // THE MEASURED DEFECT, in all three import forms it can wear.
+        std::fs::write(
+            pkg.join("bad.py"),
+            "import http.client\nfrom http import client\nfrom http.client import HTTPSConnection\n\
+             def a(h, p):\n    return http.client.HTTPSConnection(h, p)\n\
+             def b(h):\n    return client.HTTPConnection(h)\n\
+             def c(h):\n    return HTTPSConnection(h)\n",
+        )
+        .unwrap();
+        // CORRECT CODE, which must stay silent: keyword timeout, and timeout in its POSITIONAL slot.
+        std::fs::write(
+            pkg.join("good.py"),
+            "import http.client\nfrom urllib.request import urlopen\n\
+             def a(h, p):\n    return http.client.HTTPSConnection(h, p, timeout=10)\n\
+             def b(h, p):\n    return http.client.HTTPConnection(h, p, 30)\n\
+             def c(u):\n    return urlopen(u, None, 30)\n",
+        )
+        .unwrap();
+        let planned: Vec<String> = ["pkg/__init__.py", "pkg/bad.py", "pkg/good.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let res = http_timeout_scan(&dir, TargetLang::Python, &app_scope_py(&dir, &planned)).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !res.ran {
+            return; // python3 not available in this environment
+        }
+        let joined = res.findings.join("\n");
+        assert!(
+            res.checked >= 2,
+            "a scan that parsed nothing proves nothing (L230): checked={}",
+            res.checked
+        );
+        for form in ["bad.py:5", "bad.py:7", "bad.py:9"] {
+            assert!(
+                joined.contains(form),
+                "http.client with no timeout must be flagged at {form}: {joined}"
+            );
+        }
+        assert!(
+            !joined.contains("good.py"),
+            "a timeout passed by keyword OR in its positional slot is CORRECT code and must not be \
+             flagged — a false positive here sends the repair loop to break a working client: {joined}"
+        );
+    }
+
     #[test]
     fn every_baked_on_lever_declares_itself_baked_on() {
         const SRC: &str = include_str!("swarm.rs");
@@ -18807,6 +18871,10 @@ import ast, json, sys, pathlib
 root = pathlib.Path(sys.argv[1])
 files = [f for f in sys.stdin.read().splitlines() if f.strip()]
 VERBS = {"get","post","put","patch","delete","head","options","request"}
+# Callee name -> the 0-based POSITIONAL slot its `timeout` occupies. A call with more args than
+# that slot already passed one positionally, so it must not be flagged: a gate that fails a
+# CORRECT build sends the repair loop to damage working code, which is worse than a miss.
+BLOCKING_CTORS = {"urlopen": 2, "HTTPConnection": 2, "HTTPSConnection": 2}
 findings, checked = [], 0
 for rel in files:
     p = root / rel
@@ -18838,10 +18906,16 @@ for rel in files:
                 what = "requests.%s" % f.attr
             elif f.value.id in sessions:
                 what = "%s.%s (a requests.Session)" % (f.value.id, f.attr)
-        elif isinstance(f, ast.Attribute) and f.attr == "urlopen":
-            what = "urlopen"
-        elif isinstance(f, ast.Name) and f.id == "urlopen":
-            what = "urlopen"
+        else:
+            # By BARE NAME, because every import form has to land here: `http.client.HTTPSConnection`,
+            # `client.HTTPSConnection` after `from http import client`, and a plain `HTTPSConnection`
+            # after `from http.client import HTTPSConnection` are the same defect wearing three hats.
+            # MEASURED: baseline-n1-r0 shipped `http.client.HTTPSConnection(host, port)` — no timeout,
+            # so the socket default of None applies and the client blocks FOREVER — and this scan
+            # reported `findings: 0` twice while affirming every outbound call passed a timeout.
+            name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+            if name in BLOCKING_CTORS and len(n.args) <= BLOCKING_CTORS[name]:
+                what = name
         if what:
             findings.append({"file": rel, "line": getattr(n, "lineno", 0), "call": what})
 print(json.dumps({"checked": checked, "findings": findings}))
@@ -25281,7 +25355,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "detail": if no_timeout.checked == 0 {
                         "CHECKED NOTHING — no file parsed, so a clean result here is silence, not evidence"
                     } else if no_timeout.findings.is_empty() {
-                        "every outbound call whose library blocks forever by default passes a timeout"
+                        // NAME THE LIBRARIES THE SCAN KNOWS. The old wording — "every outbound call
+                        // whose library blocks forever by default passes a timeout" — is a claim about
+                        // ALL outbound calls, which a pattern list can never earn. baseline-n1-r0 emitted
+                        // it twice over an `http.client` client that had no timeout at all, because
+                        // `http.client` was not yet a pattern. A clear is only ever as wide as the list.
+                        "no requests/urlopen/http.client call is missing a timeout (other libraries are not scanned)"
                     } else {
                         "an outbound HTTP call has no timeout — driving the fix loop"
                     },
