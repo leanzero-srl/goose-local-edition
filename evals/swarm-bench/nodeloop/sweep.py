@@ -424,6 +424,31 @@ ARMS = [
                 "is the outcome that would make this arm worth more than a speedup.",
     },
     {
+        "name": "diverse_plan",
+        "env": {"GOOSE_SWARM_DIVERSE_PLAN": "1"},
+        "gate": "F438: the redraft ladder is the 3-node TAX. Every confidence_retarget in the "
+                "archive carries binding_signal 'agreement', and it cost 786 / 821 / 1657s on the "
+                "3-node cells against ZERO on the 1-node cell — 40-57% of the 3-node planning "
+                "prefix, which is roughly the whole gain the detail fan just bought (148s per "
+                "detail on 1 node vs 13-74s on 3). The cause is structural: 3 nodes draft 3 "
+                "skeletons where 1 node drafts 2, and `plan_agreement` is max-min spread plus MEAN "
+                "PAIRWISE JACCARD — both of which, per `best_subset_agreement`'s own doc, 'only "
+                "worsen (or hold) as the pool grows'. So the bigger fleet is scored lower for its "
+                "own diversity and pays a ladder the smaller fleet never pays. ENFORCE swaps in "
+                "`structural_convergence`, which ignores count spread. "
+                "PREDICTION: the ladder is SKIPPED, the planning prefix drops by roughly the "
+                "ladder cost, and the build score does NOT move outside the replicate spread. "
+                "⚠️ THE OUTCOME THAT MATTERS MORE IS THE OTHER ONE: the three cells that "
+                "retargeted scored 0.9343 / 0.7147 / 0.8157 against 0.6030 / 0.6695 for the two "
+                "that did not, so THE TAX MAY BE BUYING THE QUALITY. If the score falls outside "
+                "the spread, the ladder is load-bearing and the correct fix is to make agreement "
+                "POOL-SIZE-INVARIANT rather than to skip the redraft — a different change "
+                "entirely, and worth far more than the wall-clock. "
+                "GATED: armcheck refuses this arm unless the baseline's own "
+                "`plan_convergence.would_skip_ladder` is true, so it can never be the null "
+                "experiment `retarget_off` was twice.",
+    },
+    {
         "name": "sink_review",
         "env": {"GOOSE_SWARM_SINK_REVIEW": "1"},
         "gate": "the SINK owns 100% of the solo window in 2 of 3 measured runs — 543-1045s with two "
@@ -517,6 +542,27 @@ QUESTIONS: list[dict] = [
              "the lever. The findings are ADVISORY and re-verified fail-closed, so the build score "
              "should NOT move outside the replicate spread; if it moves DOWN, the re-verification is "
              "not fail-closed and THAT is worth more than the utilisation."},
+    # F436 and F438 are the two halves of one answer — the sink and the prefix are most of a run and
+    # neither scales with the fleet — so this sits as close to sink_review as the ordering allows.
+    # VERIFIED BY RUNNING cells(), not by reading the slice: this is QUESTIONS[2], and cells() splices
+    # the node curve in after QUESTIONS[:2], so it lands at cell 4 with the curve BETWEEN it and
+    # sink_review, not directly behind it. Left there deliberately — the curve's own reps are what
+    # F430 showed the score comparison lacks — but the comment says where it actually goes, because an
+    # ordering asserted in a comment is how arms go missing in this file.
+    # armcheck GATES this on the baseline's own `plan_convergence.would_skip_ladder`, so if the
+    # counterfactual says ENFORCE would change nothing the arm is refused BEFORE it spends a unit.
+    {"arm": "diverse_plan", "nodes": 3, "reps": 2,
+     "asks": "GOAL ONE, THE PREFIX HALF. Does removing the pool-size penalty on plan agreement give "
+             "the 3-node fleet back the 786-1657s redraft ladder it pays and the 1-node fleet does "
+             "not? MECHANISM, valid at n=1: `confidence_retarget` count falls to zero and "
+             "`plan_convergence{enforced: true}` shows struct_conv replacing agreement_conf. "
+             "WALL-CLOCK: the pre-dispatch prefix should fall from the 3-node mean of 2025s toward "
+             "the ~1250s the two no-ladder cells actually took. "
+             "FALSIFIER, and the more valuable outcome: if the build score drops below the "
+             "replicate spread, the ladder is LOAD-BEARING — the redraft is buying the quality, not "
+             "wasting the fleet — and the correct fix becomes making agreement pool-size-invariant "
+             "rather than skipping the ladder. reps=2 because the mechanism settles at n=1 but the "
+             "score direction is the thing that decides which fix is right."},
     {"arm": "scoped_contracts", "nodes": 3, "reps": 3,
      "asks": "F164: test-authors are 31% of completions failed against ZERO for implementers, and "
              "93% of every failure this campaign has recorded. This is the ONLY queued arm aimed at "
