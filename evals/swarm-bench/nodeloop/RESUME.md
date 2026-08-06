@@ -48,6 +48,23 @@ gap that collapses, weakens this badly. The sweep will produce them and they mus
 
 ---
 
+## 🏆 THE NEW BINARY'S FIRST CELL: 0.9343 — THE BEST EVER RECORDED HERE (F426)
+
+Previous best 0.8157. `server_runs` **1.00** · `sync_shape` **1.00** · `total_field` **1.00** (all 247
+payments) · `client_timeouts` **1.00**. **The first cell where the app both STARTS and SYNCS** — the
+sync family F390 sized at 51->5 pairs and F405 showed is the only place the arms differ.
+
+- ✅ **F400 confirmed deterministically**: `spec_contract verified: 2` in both rounds, against
+  `verified: 0` in **9 of 9** archived events. Independent of the score.
+- ✅ **The engine refused a false green on its own best result**: `complete_result passed: false,
+  verified: false` on a 93% app. That is F395/F408/F419 working.
+- ✅ **F425**: one live `sink_capped` settled F386 AND F369 — `cap_secs 3371, cap_base_secs 1800,
+  tree_bytes 56188`, the within-row identity exact, scaling live at 1.87x. That sink was CAPPED and
+  the cell still scored 0.9343 (second time a capped sink cost nothing).
+- ⚠️ **n=1, and the identical-config spread here is 0.325 — larger than the gap to the previous best.**
+  This shows the CEILING is higher, not that the binary caused it. The deterministic halves need no
+  replicates; the score half needs the sweep.
+
 ## 🟢 RIGHT NOW
 
 - **Sweep pid 23655**, `ppid 1` (detached, survives the session). 73 units, ~2 days.
