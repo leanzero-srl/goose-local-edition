@@ -1,4 +1,81 @@
-# RESUME — live state, rewritten 2026-08-06 ~09:45, HEADLINE RETRACTED 13:45
+# RESUME — live state, rewritten 2026-08-06 ~14:45
+
+> ## 🥇 THE ANSWER TO THE GOAL IS NO LONGER A SCORE — IT IS TWO MEASURED BOTTLENECKS
+>
+> Mihai asked (07:45) to make 3 nodes beat 1 with **fixes in the engine**. As of 14:45 the honest
+> position is: **no score comparison distinguishes 3 nodes from 1**, and chasing one is the wrong
+> instrument — the replicate spread is 0.325, wider than every gap ever measured here. What DID
+> land is a mechanical explanation, and it is actionable.
+>
+> **1. THE SINK IS AMDAHL (F436).** `integrate-verify` holds **53.1 / 60.6 / 30.7 / 15.6 %** of the
+> dispatch window across the four 3-node cells. In the best cell ever recorded (0.9343), **100 % of
+> that 56.2 minutes runs at ≤2 of 6 slots.** `dynamic_replan` is gated on `!sink_in_flight()` —
+> **defensible, not a bug**: the sink owns no files and verifies-by-running, so a bonus task landing
+> mid-join could ship unverified code after its PASS.
+>
+> **2. THE PREFIX HANDS BACK THE FAN'S GAIN (F438).** The detail fan scales beautifully — 148 s per
+> detail on 1 node vs **13–74 s on 3**. Then:
+>
+> | cell | drafts | agreement | redraft ladder |
+> |---|---|---|---|
+> | n1-r0 | 2 | 88 | **0 s** |
+> | n3-r0 | 3 | 54 | 821 s |
+> | n3-r1 | 3 | 50 | 786 s |
+> | n3-r3 | 3 | 52 | **1657 s** |
+>
+> More nodes ⇒ more skeleton drafts ⇒ structurally lower agreement ⇒ a ladder the small fleet never
+> pays (40–57 % of the 3-node prefix). `plan_agreement` is max−min spread + mean pairwise Jaccard,
+> and `best_subset_agreement`'s own doc says both *"only worsen (or hold) as the pool grows"*. The
+> `diverse_plan` comment already calls this *"the bug that makes the SEQUENTIAL retarget ladder run
+> every time"*.
+>
+> ⚠️ **DO NOT ASSUME THE TAX IS WASTE.** Retargeting cells scored 0.9343 / 0.7147 / 0.8157 against
+> 0.6030 / 0.6695 for the two that did not. **The ladder may be buying the quality.** If
+> `diverse_plan` ENFORCE drops the score below spread, the right fix is **pool-size-invariant
+> agreement**, not skipping the redraft — a different change, worth far more than the wall-clock.
+>
+> ## 📐 STRATEGY CORRECTION — WHAT TODAY ACTUALLY PROVED ABOUT METHOD
+>
+> Every finding worth having today (F432, F434, F436, F437, F438, F439) came from a **deterministic
+> mechanism readout or a code fact**, valid at n=1. Not one came from a score comparison. Meanwhile
+> the score work produced two retractions (F430, F431) and a falsification that landed *exactly* on
+> its threshold.
+>
+> There is a standing tension: each engine fix forces a rebuild, `engine_build()` changes, and the
+> whole backlog re-runs, so score replicates never accumulate. **That tension resolves in favour of
+> shipping** — mechanism readouts survive rebuilds untouched, and they are where all the value was.
+> Treat the score as a guardrail (did anything break?) rather than as the primary instrument.
+>
+> ## 🔨 SEVEN CHANGES BATCHED, AWAITING THE REBUILD AT THE NEXT UNIT BOUNDARY
+>
+> | commit | what |
+> |---|---|
+> | `59352f571` | `http_timeout_scan` was blind to `http.client` and affirmed a clean tree over a client that blocks forever. Only the JSON **parser** was ever tested, never the **detector** ⇒ **L242** |
+> | `f37b92bf5` | **F432** — the repair loop has NEVER completed a fix: 4/4 at `secs:1200, agent_ok:false`, because `complete_cap_secs` == `fix_cap_secs`. 1200→3000 + invariant test with negative control ⇒ **L244**. ⚠️ unmeasured ship |
+> | `086981caf` | the `diverse_plan` shadow was never readable (eprintln only). New `plan_convergence` event with `would_skip_ladder` from one shared predicate — every run now answers the counterfactual free |
+> | `ab24ab31c` | **F411 unblocked** — `desc_sha` was on one side only; the "needs a rare 2-retarget cell" requirement was an instrument artifact |
+> | `c7674275e` `2ae70657f` | sweep re-prioritised: `sink_review` → cell 1, `diverse_plan` → cell 4 (new arm, armcheck-gated) |
+> | `e3949653e` `5065dd0d8` | **F439** — 68 orphaned processes over 4 days holding ports the reaper never watched ⇒ **L246** |
+> | `6ab5b157a` | `engine_build` stamped at **dispatch**, not result-write — a mid-cell rebuild used to mislabel a finished cell, and a mis-stamped `failed` row is skipped FOREVER |
+>
+> **REBUILD PROCEDURE:** `touch nodeloop/STOP` (checked at the top of the unit loop → clean exit
+> after the current unit) → `cargo build --release` → `engine_build()` changes from
+> `1785993228-235858864` → all units re-run → restart the sweep, which also picks up the new
+> QUESTIONS order, the orphan reaper and the dispatch-time stamp.
+>
+> ## ⚠️ TRAPS THAT BIT TODAY — ALL THREE ARE THE SAME TRAP
+>
+> **A zero from a wrong query is not a zero.** Three times: a missing `secs` field read as 0.0 %
+> idle-fill; `desc_sha` checked at the wrong nesting level (it lives inside `tasks[]`); and
+> `import sweep` silently picking up `bench/sweep.py` instead of `nodeloop/sweep.py`.
+>
+> **A control that passes for the wrong reason is not a control.** The orphan reaper's ancestry
+> guard "passed" only because the live engine happened to be younger than the age floor. With the
+> age guard disabled it failed. `protect_root` is a parameter specifically so that guard can be
+> exercised at all.
+>
+> ---
+
 
 > ## ⛔ READ THIS FIRST — THE SECTION BELOW IS NO LONGER TRUE (13:45, F427/F430/F431)
 >
