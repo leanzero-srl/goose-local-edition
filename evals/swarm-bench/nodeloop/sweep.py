@@ -491,6 +491,32 @@ QUESTIONS: list[dict] = [
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
              "is a mechanism readout and is answered by the FIRST unit, not the third."},
+    # PROMOTED BY F436 from position 10 of 15 — roughly two days of fleet time away — to cell 1 of 19,
+    # which is the FIRST cell after the current baseline. `cells()` splices the node curve in after
+    # QUESTIONS[:2], so sitting at QUESTIONS index 1 puts this arm BEFORE the curve, not after it, and
+    # that is deliberate: it costs the curve exactly one cell, and F430 showed the curve's score
+    # comparison cannot settle anything at n=1 per side anyway while this arm's readout is a
+    # deterministic mechanism event that is valid at n=1. Verified by running cells() after the edit
+    # rather than by reading the slice — an ordering asserted in a comment is how arms go missing here.
+    {"arm": "sink_review", "nodes": 3, "reps": 1,
+     "asks": "GOAL ONE, THE BOTTLENECK ARM. F436 measured the sink second-by-second across four "
+             "3-node cells: integrate-verify holds 53.1 / 60.6 / 30.7 / 15.6 percent of the whole "
+             "dispatch window, and in the BEST CELL EVER RECORDED (0.9343) one hundred percent of "
+             "that 56.2 minutes sits at 2 or fewer of 6 slots. The existing pre-review fill uses only "
+             "8.6% and 18.9% of the sink's idle node-time in the two cells where it is measurable — "
+             "its work-list is one review per task, so it EXHAUSTS long before the sink does. This is "
+             "the only mechanism built to fill the rest, and gates.sink_review is False in all 6 "
+             "archived cells with the `sink_review` event never once emitted (proven with a positive "
+             "control: sibling gates in the same block are present and True). "
+             "MECHANISM READOUT, valid at n=1: `sink_review{prewarmed>0}`. If prewarmed is 0 with the "
+             "lever on, the producer still cannot see its precondition and the fix is incomplete. "
+             "OCCUPANCY READOUT, the number that matters: the share of the dispatch window spent at "
+             "<=2 concurrent must FALL against the 3-node baseline band of 27.6-53.9%. "
+             "FALSIFIER: the event fires, prewarmed > 0, and the <=2 share does NOT move — then the "
+             "idle-fill runs but cannot keep the slots busy, and the ceiling is the work-list, not "
+             "the lever. The findings are ADVISORY and re-verified fail-closed, so the build score "
+             "should NOT move outside the replicate spread; if it moves DOWN, the re-verification is "
+             "not fail-closed and THAT is worth more than the utilisation."},
     {"arm": "scoped_contracts", "nodes": 3, "reps": 3,
      "asks": "F164: test-authors are 31% of completions failed against ZERO for implementers, and "
              "93% of every failure this campaign has recorded. This is the ONLY queued arm aimed at "
@@ -521,11 +547,6 @@ QUESTIONS: list[dict] = [
              "fall sharply while dry reasoning and the failures.py test-author row do NOT move, then "
              "prompt volume is a correlate and not the cause, and F156/F159/F164/F196 have been "
              "chasing the wrong quantity. That is the result worth the fleet time."},
-    {"arm": "sink_review", "nodes": 3, "reps": 1,
-     "asks": "does the sink idle-fill run at all, now that both halves read one resolver (F44)? The "
-             "SINK owns ~100% of the solo window (543-1045s with two nodes idle). MECHANISM: "
-             "`sink_review{prewarmed>0}`. If prewarmed is 0 with the lever on, the producer still "
-             "cannot see its precondition and the fix is incomplete."},
     {"arm": "split_inherit_spec", "nodes": 3, "reps": 3,
      "asks": "the ONLY mechanism whose firing pattern matches the scoreline on all three archived "
              "units: both 3-node losers split their single most-detailed task and the 1-node winner "
