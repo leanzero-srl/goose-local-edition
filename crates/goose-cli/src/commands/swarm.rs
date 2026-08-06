@@ -25056,6 +25056,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // The architect's one-line human description of what this subtask builds — surfaced in the run
             // panel so a lane reads "Tokenize the template source into a token stream" instead of just "lexer".
             "description": n.spec.description,
+            // THE SAME DIGEST `retarget_discarded` CARRIES, so the two sides can actually be compared.
+            //
+            // F411 asks whether the redraft ladder is pure REWORK — does a discarded round re-derive a
+            // description the run ends up with anyway? `retarget_discarded` records `desc_sha` per task
+            // but no text; `plan_loaded` recorded the full text but no digest. Neither side could be
+            // matched against the other without reimplementing Rust's DefaultHasher in the analysis
+            // script, which is guesswork dressed as evidence.
+            //
+            // Answering it therefore needed a rare cell with TWO retarget rounds on a post-`desc_sha`
+            // binary, and the archive has none: baseline-n3-r0 carries `desc_sha` but retargeted once,
+            // baseline-n3-r3 retargeted twice but predates the field. With the digest on BOTH sides any
+            // cell with ONE retarget answers it — and 3 of 4 archived 3-node cells have one.
+            //
+            // Emitted through `short_digest` rather than recomputed, for the same reason
+            // `diverse_plan_would_skip` is one function: two implementations of one identity drift, and
+            // a comparison across two drifted hashes reports rework that never happened.
+            "desc_sha": short_digest(n.spec.description.trim()),
             "deps": n.spec.deps,
             "files": n.spec.owned_files,
             "difficulty": format!("{:?}", n.spec.difficulty).to_lowercase(),
