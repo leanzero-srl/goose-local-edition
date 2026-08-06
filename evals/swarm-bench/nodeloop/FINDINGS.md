@@ -17756,3 +17756,53 @@ reaches "now I will write the file" and stops.** That is the same class as the `
 (measured: writes 23.8% -> 48.0%, no-tool-call 24% -> 4%), which is already ON. It is not solved, and
 the next honest step is to see what the SYSTEM PROMPT looks like at that exact turn — not to ship
 another guess.
+
+---
+
+## F424 — THE MOLDING CHANNEL IS VERIFIED CORRECT. THE FAILURE IS DOWNSTREAM OF IT.
+
+F423 relocated the target to model molding — the worker reaches *"now I will write the file"* and
+stops. The honest next step was to check the **deterministic** channel rather than assume, since system
+prompts are not reliably recoverable from the sessions DB and `rules_delivered` is the only provable
+record of what a worker was told.
+
+**Stalled tasks, by what they received:**
+
+| kind | tailored | stalls |
+|---|---|---|
+| **test-author** | **True** | **7** |
+| read-only-shard | False | 4 |
+| owns-nothing | False | 1 |
+
+**Seven of twelve stalls are test-author tasks that received kind-tailored rules and stalled anyway.**
+
+**And the wiring is correct — I suspected a `sink_review`-class gap and there is none.** Across all
+runs: `kind_prompt=True` -> `test-author` gets `tailored=True` (**151** deliveries);
+`kind_prompt=False` -> `tailored=False` (14). `levers_resolved` reports False in 21 runs and True in
+16, exactly matching the pre-bake/post-bake run mix. Reported and delivered agree. **That is the
+second time today I suspected a delivery gap and found the engine correct** (F396's contract stubs was
+the first).
+
+### 🎯 SO THE STRATEGIC CONCLUSION IS EARNED, NOT ASSUMED
+
+**Instruction delivery is complete and correct at every layer I can measure**: the documented API shape
+reaches the implementer (F389), the pitfall library reaches the client author (F388), kind-tailored
+rules reach the test-author (here). **The model still does not act.** F389 said dilution was dead
+twice; this kills it a third time, at the layer specifically built to fix it.
+
+**What has actually moved the needle today was never a prompt:**
+
+| approach | outcome |
+|---|---|
+| **F398** deterministic detector + fix loop | **worked end to end live** — findings 2 -> 0, `client_timeouts` 0.00 -> 1.00 in every new cell |
+| **F408** deterministic detector | 3/3 vs the scorer, no false positives |
+| **F415** prompt instruction | **falsified** — the next sentence out-argued it |
+
+⇒ **L241. ON THIS FLEET, DETECTION BEATS INSTRUCTION.** A rule competes with every other rule in the
+prompt and with the model's own inclination; a deterministic finding enters the fix loop and is acted
+on because the loop cannot ignore it. The doctrine's two tools are not equal partners here — and the
+evidence for that is F398 succeeding and F415 failing on the same day, against the same fleet.
+
+⚠️ This does NOT say prompts never work — `act_now_nudge` is measured at writes 23.8% -> 48.0%. It says
+that when a prompt fix and a detector are both available for the same defect, **today's evidence says
+build the detector.**
