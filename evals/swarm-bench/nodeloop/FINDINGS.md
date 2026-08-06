@@ -17454,3 +17454,47 @@ settle, and an instrument I merely believe is present is worth nothing.
 including the negative controls. This is the first case where it says a literal is missing and every
 other signal says it should be there — so a 0 from `strings` is now a reason to check the runtime
 event, not a verdict.
+
+---
+
+## F417 — ✅ F412'S DISCRIMINATING TEST PASSES: IT IS THE NODE COUNT, NOT THE REDRAFT
+
+F412 found the day's first mechanism-level 3-node advantage — zero degraded briefs on 3 nodes, two on
+1 node — and refused to claim it, because the 3-node cell had retargeted twice and the better briefs
+might have come from re-detailing. It registered the test that would separate them: **a 3-node cell
+that does NOT retarget must still show zero thin briefs.**
+
+Cells now available (parked `nodeloop-parked-1785993855`):
+
+| cell | nodes | retargets | drafts | details | min brief | THIN <300 | score |
+|---|---|---|---|---|---|---|---|
+| `baseline-n1-r0` | 1 | **0** | 1 | 9 | **166** | **2** | 0.3313 |
+| **`baseline-n3-r2`** | **3** | **0** | **1** | 8 | **1039** | **0** | 0.6030 |
+| `baseline-n3-r0` | 3 | 3 | 3 | 26 | 1039 | 0 | 0.3895 |
+| `baseline-n3-r1` | 3 | 1 | 2 | 17 | 1039 | 0 | 0.7147 |
+| `baseline-n3-r3` | 3 | 3 | 3 | 21 | 1062 | 0 | 0.8157 |
+
+**`baseline-n3-r2` is the case F412 asked for**: three nodes, **zero retargets, one draft** — the
+identical planning path the 1-node cell took — and **zero thin briefs, min 1039.** The 1-node cell on
+that same path produced **166-char briefs on `store` and `meridian`**.
+
+**The confound is eliminated. The degraded-brief protection comes from the node count, not from
+re-detailing.** And it holds across all four 3-node cells with retargets ranging 0 to 3: min brief
+1039-1062, THIN always 0. The redraft varies wildly and the brief floor does not move.
+
+⇒ This is the cleanest 3-node advantage found so far: **deterministic, a plan property, unaffected by
+the sync-family flakiness behind F405, and now with its one confound experimentally removed** rather
+than argued away.
+
+### ⚠️ What is still n=1
+
+The 1-node side is **a single cell**. "Three nodes never degrades a brief" is n=4; "one node does" is
+n=1. A second 1-node cell without thin briefs would weaken this considerably, and the sweep will
+produce them. Registering that before the cells exist.
+
+### And a correction to my own timeline
+
+I recorded in F414 that the sweep would exit after `baseline-n3-r1`. It ran **r2 and r3 as well**
+before exiting — so the STOP sentinel does not take effect at the boundary I assumed. The cells are
+sound (and gave me this test), but **my model of `loop.sh stop` was wrong**, and anything I plan
+around "it will stop after the current unit" needs re-checking against what it actually does.
