@@ -21847,6 +21847,26 @@ impl TaskDispatcher for GooseAgentDispatcher {
             if matches!(lang, TargetLang::Python) {
                 r.push_str("- Run Python with `python3`, never bare `python`.\n");
                 if is_test_author {
+                    // MEASURED, three times across two cells: a test that calls the app's own
+                    // blocking server entry point hangs pytest before it emits a single line, the
+                    // worker then produces no tokens, and the 420s no-progress watchdog records
+                    // "agent stalled" and DISCARDS the attempt. On one cell that happened twice and
+                    // cost ~36 minutes of wall-clock plus two thrown-away attempts. One instance was
+                    // caught live still holding 127.0.0.1:8080 in `serve_forever`, and because
+                    // aborting a tokio task does not signal a spawned process, it outlived its own
+                    // run and held the port afterwards. Phrased generically rather than naming this
+                    // bed's `serve()` — a rule naming a spec-specific symbol stops working on the
+                    // next spec.
+                    r.push_str(
+                        "- NEVER call the app's blocking server entry point from a test — anything \
+                         that ends in `serve_forever()`, `app.run()`, `uvicorn.run()`, or a `serve(…)` \
+                         helper NEVER RETURNS. pytest then hangs before printing a single line, your \
+                         worker looks stalled, and the whole attempt is thrown away with nothing \
+                         written. Exercise HTTP behaviour by calling the handler or the client method \
+                         DIRECTLY, or start the server in a `threading.Thread(daemon=True)` and shut \
+                         it down in teardown. A test that hangs scores ZERO — it is strictly worse \
+                         than a smaller test that returns.\n",
+                    );
                     r.push_str(
                         "- Testing a Click CLI: construct `CliRunner()` with NO arguments — the \
                          `mix_stderr` kwarg was REMOVED in Click 8.2+, so `CliRunner(mix_stderr=False)` \
