@@ -487,6 +487,43 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // still runs. The kill path was the judge's only lever, so "looks complete" and "looks stuck" both
     // resolved to kill. This branch is deliberately placed FIRST and gated on the same evidence the
     // spin branch uses, so the only cases it takes are the ones that would otherwise burn an attempt.
+    // THE SINK HAD NO REACHABLE VERDICT AT ALL, AND THAT IS WHY A TIMER KILLED IT.
+    //
+    // Every gate above needs owned files — over-read, the spiral trip, finalize-spin and the Accept
+    // branch below all require a non-empty `owned_files`, and Accept and Looping exclude
+    // `integrate-verify` by name on top of that. `secs_since_last_write` is derived only from owned
+    // files, so it is None for the sink too. The scheduler's own comment records the consequence:
+    // "leave it to worker_timeout as the hard-stall backstop" — the judge's only lever on the join was
+    // a kill, and a kill re-dispatches it, which redoes the ENTIRE join from zero.
+    //
+    // `is_still_producing` is the one predicate that works here, because it reads TOOL CALLS from the
+    // activity digest rather than files on disk. So the join IS decidable: one that has taken real
+    // actions and then gone quiet has done work, and the honest verdict is Accept — keep what it
+    // established — not a kill that throws all of it away.
+    //
+    // Accept is excluded from the intervention path by `is_problem()`, so this branch can never fail
+    // or re-dispatch a task. The worst case is stopping a join that would have continued, and that is
+    // bounded on both sides: `green_blocking_failed` already excludes owns-nothing tasks from the
+    // green veto so an accepted join gates nothing, and the deterministic smoke gate remains the
+    // correctness backstop. Against the alternative — a kill that ALSO does not finish the job and
+    // additionally burns a full restart — accepting is strictly better.
+    if input.owned_files.is_empty()
+        && input.worker_tool_calls.is_some_and(|n| n > 0)
+        && input.elapsed_secs >= cfg.min_age_secs.max(420)
+        && !is_still_producing(input, cfg)
+    {
+        return Some(JudgeOutcome {
+            verdict: Verdict::Accept,
+            confidence: 1.0,
+            hint: format!(
+                "This check owns no files, has taken {} action(s), and has done nothing new for a \
+                 while — take what it established as the result instead of restarting the whole join.",
+                input.worker_tool_calls.unwrap_or(0)
+            ),
+            proposed_split: None,
+            deterministic: true,
+        });
+    }
     let all_owned_present = !input.owned_files.is_empty()
         && input.owned_files.iter().all(|f| {
             input
@@ -1036,9 +1073,58 @@ mod tests {
         let mut i = mk("integrate-verify", false, None, 500);
         i.owned_files = vec![];
         i.worker_tool_calls = Some(40);
+        // THE GUARANTEE IS "NEVER KILLED", NOT "NEVER JUDGED", and this used to assert the proxy.
+        // It now reaches the owns-nothing Accept branch, which is a COMPLETION: `is_problem()` excludes
+        // it from the intervention path, so it can neither re-dispatch nor fail the task. Asserting the
+        // property directly keeps the original protection (integrate-verify judge_killed x3 -> run
+        // FAILED though the app worked) while allowing the salvage this sink previously could not reach.
+        let v = deterministic_verdict(&i, &JudgeConfig::default());
+        assert!(
+            v.as_ref().is_none_or(|o| !o.verdict.is_problem()),
+            "a no-owned verifier task must never receive a PROBLEM verdict, got {:?}",
+            v.as_ref().map(|o| o.verdict.as_str())
+        );
+        assert_eq!(
+            v.map(|o| o.verdict),
+            Some(Verdict::Accept),
+            "a quiet no-owned join that has acted should be accepted, not left to a timer"
+        );
+    }
+
+    /// A join that is STILL WORKING must be left alone — the Accept branch is for one that has gone
+    /// quiet, and cutting a productive sink short would be the same mistake in the other direction.
+    #[test]
+    fn a_still_producing_join_is_not_accepted_early() {
+        let mut i = mk("integrate-verify", false, None, 500);
+        i.owned_files = vec![];
+        i.prev_tool_calls = Some(10);
+        i.worker_tool_calls = Some(40);
+        i.prev_observed_secs = Some(480);
         assert!(
             deterministic_verdict(&i, &JudgeConfig::default()).is_none(),
-            "a no-owned verifier task must not be over-read-killed"
+            "a join whose tool calls are still climbing must keep running"
+        );
+        // Nor a young one, however quiet: the age floor is the same constant the other Accept uses.
+        let mut young = mk("integrate-verify", false, None, 60);
+        young.owned_files = vec![];
+        young.worker_tool_calls = Some(3);
+        assert!(deterministic_verdict(&young, &JudgeConfig::default()).is_none());
+        // Nor one that has done NOTHING — zero actions is not work to salvage.
+        let mut idle = mk("integrate-verify", false, None, 900);
+        idle.owned_files = vec![];
+        idle.worker_tool_calls = Some(0);
+        assert!(deterministic_verdict(&idle, &JudgeConfig::default()).is_none());
+    }
+
+    #[test]
+    fn over_read_still_fires_for_a_task_that_owns_files() {
+        // The over-read gate itself is untouched: a task that DOES own files and has written nothing
+        // while burning tool calls is still redirected.
+        let mut i = mk("core-tree", false, None, 500);
+        i.worker_tool_calls = Some(40);
+        assert_eq!(
+            deterministic_verdict(&i, &JudgeConfig::default()).map(|o| o.verdict),
+            Some(Verdict::OverReading)
         );
     }
 
