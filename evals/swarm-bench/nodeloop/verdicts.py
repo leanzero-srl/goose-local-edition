@@ -187,6 +187,46 @@ def f474_a_dropped_body_costs_less_the_second_time(ev, a) -> tuple[str, str]:
     return (FAIL, f"the post-drop attempt was SLOWER — {detail}") if worse else (PASS, detail)
 
 
+F511_FIX = "a29a4399e"  # the worker-prompt rule forbidding a blocking server inside a test
+
+
+def f511_no_test_author_stalled(ev, a) -> tuple[str, str]:
+    """No test-authoring task may draw an "agent stalled" retry.
+
+    That message is what the 420s no-progress watchdog emits, and F502 caught its cause live: a test
+    called the app's blocking server entry point, pytest hung before printing a line, the worker
+    produced no tokens, and the attempt was discarded. Measured three times across two cells, costing
+    two thrown-away attempts and ~36 minutes on one of them.
+
+    FALSIFIER: one test-author task with a stall retry. Checked retrospectively from the log rather
+    than from a live process scan, so it works on any archived cell — reap.py's HUNG MID-RUN section
+    only ever sees the machine as it is right now.
+
+    INERT is effectively unavailable here, which is unusual and is the point: every cell this
+    campaign has run contains test-authoring tasks, so an absence of stalls on a cell that HAS them
+    is a genuine pass rather than a precondition that never occurred.
+    """
+    sha = shardshare.build_sha(ev)
+    if not carries(F511_FIX, sha):
+        return INERT, f"this cell ran {sha}, which predates the rule {F511_FIX} — it cannot falsify it"
+    pl = [e for e in ev if e.get("event") == "plan_loaded"]
+    tasks = {str(t.get("id")): (t.get("files") or []) for t in (pl[-1].get("tasks") or [])} if pl else {}
+
+    def authors_tests(tid: str) -> bool:
+        return tid.startswith("test-") or tid.startswith("test::") or any(
+            "test" in str(f).rsplit("/", 1)[-1] for f in tasks.get(tid, []))
+
+    if not any(authors_tests(t) for t in tasks):
+        return INERT, "no test-authoring task in this plan — the rule had no addressee"
+    stalled = [str(e.get("task_id")) for e in ev
+               if e.get("event") == "task_retry" and "stalled" in str(e.get("error", ""))
+               and authors_tests(str(e.get("task_id")))]
+    if stalled:
+        return FAIL, f"test-author task(s) still stalled: {', '.join(sorted(set(stalled)))}"
+    n = sum(1 for t in tasks if authors_tests(t))
+    return PASS, f"{n} test-authoring task(s), none stalled"
+
+
 def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
     """maxuse above 4.0 is F497's registered bar for "the DAG got wider". Reported for EVERY cell
     because it is the campaign's headline number, not only when it moves."""
@@ -210,6 +250,7 @@ def report(log_path: str, label: str) -> int:
         ("F501 rewrite not a pattern", f501_rewrite_loop_is_not_a_pattern(ev, a)),
         ("F470 owns-nothing accepted", f470_owns_nothing_sink_can_be_accepted(ev, a)),
         ("F474 post-drop is faster", f474_a_dropped_body_costs_less_the_second_time(ev, a)),
+        ("F511 no test-author stall", f511_no_test_author_stalled(ev, a)),
         ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
     ]
     worst = 0

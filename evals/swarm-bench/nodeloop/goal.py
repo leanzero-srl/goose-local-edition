@@ -368,6 +368,7 @@ def print_prediction_checks(rows: list[dict]) -> None:
                 ("F501 rewrite not a pattern", verdicts.f501_rewrite_loop_is_not_a_pattern(ev, a)),
                 ("F470 owns-nothing accepted", verdicts.f470_owns_nothing_sink_can_be_accepted(ev, a)),
                 ("F474 post-drop is faster", verdicts.f474_a_dropped_body_costs_less_the_second_time(ev, a)),
+                ("F511 no test-author stall", verdicts.f511_no_test_author_stalled(ev, a)),
                 ("F497 plan is the ceiling", verdicts.f497_plan_is_still_the_ceiling(ev, a)),
             ]
         except Exception as exc:  # noqa: BLE001
