@@ -129,6 +129,7 @@ def analyse(path) -> dict:
     done: dict[str, list] = {}
     split_at: dict[str, float] = {}
     retried: dict[str, list[float]] = {}
+    killed: dict[str, list[float]] = {}
     idle_jobs: dict[str, int] = {}
 
     for e in events:
@@ -156,6 +157,22 @@ def analyse(path) -> dict:
             # through the exact check written to stop this.
             if ts is not None:
                 split_at[e.get("task_id")] = ts
+        elif ev == "judge_verdict" and e.get("action") in ("re_dispatch", "fail"):
+            # A JUDGE KILL ENDS AN ATTEMPT, AND THE RE-QUEUE IS NOT WHEN IT ENDED.
+            #
+            # The kill path aborts the worker future, releases `claimed_device` and decrements
+            # `in_flight` — the slot is genuinely free from this instant. But the task then waits in
+            # the ready queue for a slot, and closing its attempt at the NEXT DISPATCH credits that
+            # whole wait as busy.
+            # MEASURED on baseline-n1-r1: `test-api` was judge-killed at 63.1 min and not re-dispatched
+            # until 76.7 — 13.6 minutes counted as running while the device was demonstrably free. That
+            # single gap is what produced THREE concurrent tasks on a TWO-slot fleet, the reading this
+            # file already calls impossible and "indicts this sweep".
+            #
+            # `task_retry` does NOT cover this: a judge kill emits only `judge_verdict` +
+            # `task_dispatched` (F489), so a probe keyed on retries is blind to the commonest restart
+            # in the engine.
+            killed.setdefault(e.get("task_id"), []).append(ts)
         elif ev == "task_retry":
             # A RETRY ENDS AN ATTEMPT, AND THE NEXT DISPATCH IS NOT WHEN IT ENDED.
             #
@@ -208,7 +225,8 @@ def analyse(path) -> dict:
                 spl = None
             # The FIRST retry at or after this attempt's start also ends it.
             rty = next((r for r in sorted(retried.get(task_id, [])) if r is not None and r >= start), None)
-            cands = [x for x in (comp, nxt, spl, rty) if x is not None]
+            kil = next((k for k in sorted(killed.get(task_id, [])) if k is not None and k >= start), None)
+            cands = [x for x in (comp, nxt, spl, rty, kil) if x is not None]
             end = min(cands) if cands else t_end
             if end is None or end < start:
                 continue
