@@ -112,16 +112,31 @@ def cells() -> list[dict]:
     return out
 
 
-def occupancy_of(cell: str):
-    """Device-busy occupancy — the only occupancy measure validated (F480/F483). Slot utilisation is
-    WITHDRAWN and must not be resurrected here without settling the 3-on-2 artefact first."""
+def capacity_of(cell: str):
+    """DEVICE-BUSY occupancy and SLOT utilisation — two different questions, both worth asking.
+
+    Device-busy asks "was the machine doing anything"; slot utilisation asks "were its slots full". A
+    1-node fleet reads 1.0000 device-busy while filling only ~0.86-0.95 of its slots, so the perfect
+    number hides real headroom (F480).
+
+    Slot utilisation was WITHDRAWN for several hours because the concurrency histogram reported three
+    concurrent tasks on a two-slot fleet. It is restored only because that artefact was found and
+    fixed — a judge kill ends an attempt, and nothing was closing the span there (F490). The
+    `impossible_concurrency` guard is checked HERE on every read, so if it ever fires again the number
+    is suppressed rather than printed: an impossible value must never reach a scoreboard twice.
+    """
     try:
-        o = subprocess.run(["python3", os.path.join(HERE, "occupancy.py"),
-                            os.path.join(RUNS, cell)], capture_output=True, text=True, timeout=120).stdout
+        import occupancy as occ  # same directory, already on sys.path
+        a = occ.analyse(os.path.join(RUNS, cell))
     except Exception:
-        return None
-    m = re.search(r"EXECUTE OCCUPANCY ([0-9.]+)", o)
-    return float(m.group(1)) if m else None
+        return None, None
+    if a.get("impossible_concurrency"):
+        return a.get("execute_occupancy"), None  # slot number suppressed, guard fired
+    cs = a.get("concurrency_secs") or {}
+    slots = a.get("slot_count")
+    tot = sum(cs.values())
+    util = (sum(int(k) * v for k, v in cs.items()) / (tot * slots)) if (tot and slots) else None
+    return a.get("execute_occupancy"), util
 
 
 def main() -> int:
@@ -143,9 +158,10 @@ def main() -> int:
         grp = by_sha[sha]
         print(f"\n--- build_sha {sha} ---")
         for r in sorted(grp, key=lambda x: (x["nodes"], x["cell"])):
-            occ = occupancy_of(r["cell"])
+            occ, util = capacity_of(r["cell"])
             print(f"  {r['cell']:<18} {r['nodes']}-node   quality {r['quality']:.4f}   "
-                  f"speed {r['speed_min']:6.0f} min   occ {occ if occ is not None else '?'}")
+                  f"speed {r['speed_min']:6.0f} min   dev-busy {occ if occ is not None else '?':<7} "
+                  f"slots {f'{util:.4f}' if util is not None else 'SUPPRESSED (guard fired)'}")
         n1 = [r for r in grp if r["nodes"] == 1]
         nm = [r for r in grp if r["nodes"] > 1]
         if not (n1 and nm):
