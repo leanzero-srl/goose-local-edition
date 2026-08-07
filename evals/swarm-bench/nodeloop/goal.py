@@ -32,6 +32,63 @@ import shardshare  # noqa: E402  (path is set above)
 
 
 ARCHIVE = os.path.join(RUNS, "_archive")
+LOG_ARCHIVE = os.path.join(ARCHIVE, "logs")
+
+
+def archive_log(cell: str) -> None:
+    """SNAPSHOT THE RUN LOG, NOT JUST THE SCORE.
+
+    Archiving the result was half a fix. A cell's capacity numbers are computed from its `run.jsonl`,
+    and the sweep TRUNCATES that file when it re-runs the cell — so an archived result kept pointing at
+    whatever log happened to be in the directory later. MEASURED: this scoreboard printed dev-busy
+    0.6893 / slots 0.5083 for BOTH the f9b6d2bd6 and a3fdfce02 rows of `baseline-n3-r0`, two runs 29
+    minutes apart in wall-clock, because `capacity_of` took a cell NAME and read the live directory.
+    F487 recorded f9b6d2bd6's occupancy as 0.7971; the board silently replaced it with the newer run's
+    number and nothing objected.
+
+    Keyed by the LOG's own mtime so re-runs accumulate rather than overwrite, and only a log carrying
+    `run_finished` is kept — a partial log would archive a cell mid-flight and freeze half a run as if
+    it were the whole one.
+    """
+    src = os.path.join(RUNS, cell, "run.jsonl")
+    if not os.path.exists(src):
+        return
+    mt = int(os.path.getmtime(src))
+    dest = os.path.join(LOG_ARCHIVE, f"{cell}-{mt}.jsonl")
+    if os.path.exists(dest):
+        return
+    try:
+        body = open(src, errors="replace").read()
+    except OSError:
+        return
+    if '"run_finished"' not in body:
+        return
+    os.makedirs(LOG_ARCHIVE, exist_ok=True)
+    with open(dest, "w") as fh:
+        fh.write(body)
+
+
+def log_for(cell: str, result_mtime: float):
+    """The snapshot this ROW was actually measured from.
+
+    A run log is finished before its result is scored, so the right snapshot is the newest one whose
+    mtime is at or before the result's. Returning None is a real answer — it means the log was
+    destroyed before anything captured it, and the honest response is to print nothing rather than the
+    next run's numbers.
+    """
+    if not os.path.isdir(LOG_ARCHIVE):
+        return None
+    best = None
+    for f in os.listdir(LOG_ARCHIVE):
+        if not f.endswith(".jsonl"):
+            continue
+        name, _, stamp = f[:-6].rpartition("-")
+        if name != cell or not stamp.isdigit():
+            continue
+        mt = int(stamp)
+        if mt <= result_mtime + 1 and (best is None or mt > best[0]):
+            best = (mt, os.path.join(LOG_ARCHIVE, f))
+    return best[1] if best else None
 
 
 def archive(cell: str, sha: str, result: dict, mtime: float) -> None:
@@ -98,6 +155,7 @@ def cells() -> list[dict]:
             sha = "?"
         mt = os.path.getmtime(res)
         archive(d, sha, r, mt)
+        archive_log(d)
         out.append({
             "cell": d, "sha": sha, "nodes": len(pool),
             "quality": float(r["score"]), "speed_min": (r.get("wall_secs") or 0) / 60.0,
@@ -112,7 +170,7 @@ def cells() -> list[dict]:
     return out
 
 
-def capacity_of(cell: str):
+def capacity_of(log_path):
     """DEVICE-BUSY occupancy and SLOT utilisation — two different questions, both worth asking.
 
     Device-busy asks "was the machine doing anything"; slot utilisation asks "were its slots full". A
@@ -124,10 +182,17 @@ def capacity_of(cell: str):
     fixed — a judge kill ends an attempt, and nothing was closing the span there (F490). The
     `impossible_concurrency` guard is checked HERE on every read, so if it ever fires again the number
     is suppressed rather than printed: an impossible value must never reach a scoreboard twice.
+
+    Takes a LOG PATH, never a cell name. Cell directories are reused and their logs truncated, so a
+    name resolves to whichever run happens to be there now — which is how two rows 29 minutes apart
+    came to print the same occupancy. `None` means the log for that row no longer exists, and that
+    prints as SUPPRESSED.
     """
+    if log_path is None:
+        return None, None
     try:
         import occupancy as occ  # same directory, already on sys.path
-        a = occ.analyse(os.path.join(RUNS, cell))
+        a = occ.analyse(log_path)
     except Exception:
         return None, None
     if a.get("impossible_concurrency"):
@@ -158,10 +223,13 @@ def main() -> int:
         grp = by_sha[sha]
         print(f"\n--- build_sha {sha} ---")
         for r in sorted(grp, key=lambda x: (x["nodes"], x["cell"])):
-            occ, util = capacity_of(r["cell"])
+            log = log_for(r["cell"], r["mtime"])
+            occ, util = capacity_of(log)
+            why = "LOG GONE" if log is None else "guard fired"
             print(f"  {r['cell']:<18} {r['nodes']}-node   quality {r['quality']:.4f}   "
-                  f"speed {r['speed_min']:6.0f} min   dev-busy {occ if occ is not None else '?':<7} "
-                  f"slots {f'{util:.4f}' if util is not None else 'SUPPRESSED (guard fired)'}")
+                  f"speed {r['speed_min']:6.0f} min   "
+                  f"dev-busy {occ if occ is not None else 'SUPPRESSED':<11} "
+                  f"slots {f'{util:.4f}' if util is not None else f'SUPPRESSED ({why})'}")
         n1 = [r for r in grp if r["nodes"] == 1]
         nm = [r for r in grp if r["nodes"] > 1]
         if not (n1 and nm):
