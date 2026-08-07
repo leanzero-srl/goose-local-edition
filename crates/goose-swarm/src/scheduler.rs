@@ -213,6 +213,32 @@ fn critical_owned_files_written(owned_files: &[String]) -> bool {
 /// failure (that means a written-but-broken file — never promote it); it is not a test task; and its critical
 /// owned files are present non-empty on disk. `enabled == false` => always false => the exhausted arm is
 /// byte-identical.
+/// The corrective note an INFRA transient earns, if any. Extracted so it is unit-testable without a
+/// live scheduler run, like `should_degrade_on_stall`.
+///
+/// Infra transients deliberately carry no hint: a "model unloaded" retry means nothing happened, and
+/// a stale note would mislead the worker. A MID-STREAM BODY DROP is the exception, and it is the one
+/// that costs the most. MEASURED, current generation: every sink discard is a dropped HTTP body —
+/// `baseline-n3-r0` lost TWO attempts to it (1383s and 941s) and `baseline-n1-r0` one, while
+/// `baseline-n3-r1`, whose sink dropped nothing, ran a 480s join and posted the best execute
+/// occupancy on record (0.8256 against a 0.55-0.67 band).
+///
+/// The worker was mid-generation when the socket died, so its earlier tool calls ALREADY LANDED — the
+/// files it wrote or edited are on disk. But `run_agent_in` always starts a fresh conversation (there
+/// is no prior-session parameter; resume exists only at RUN level), so the retry begins with no memory
+/// of any of it and re-derives everything from nothing. The work survives; the understanding does not.
+/// A hint is the only channel that crosses that boundary.
+fn transient_retry_hint(msg: &str) -> Option<String> {
+    msg.contains("mid-stream body drop").then(|| {
+        "Your previous attempt was cut off mid-generation by a dropped connection — not by anything \
+         you did wrong, and not because the work was rejected. ANY FILE YOU HAD ALREADY WRITTEN OR \
+         EDITED IS STILL ON DISK. Do NOT start over from scratch: first READ the current state of the \
+         files involved, KEEP what is already correct, and continue from where that left off. \
+         Re-deriving work that is already done is the most expensive thing you can do here."
+            .to_string()
+    })
+}
+
 fn should_degrade_on_stall(
     enabled: bool,
     is_content: bool,
@@ -1084,6 +1110,9 @@ impl State {
                     if is_content {
                         self.prior_hints.insert(tid.to_string(), msg.clone());
                         self.judge_notes.push((tid.to_string(), msg.clone()));
+                    } else if let Some(hint) = transient_retry_hint(&msg) {
+                        // The one infra transient that HAS something to say: see `transient_retry_hint`.
+                        self.prior_hints.insert(tid.to_string(), hint);
                     }
                     self.sink.emit(&SwarmEvent::TaskRetry {
                         task_id: tid.to_string(),
@@ -2751,6 +2780,33 @@ mod salvage_tests {
         let p = dir.join(name);
         std::fs::write(&p, bytes).unwrap();
         p.to_string_lossy().into_owned()
+    }
+
+    /// A dropped body is the ONLY infra transient that earns a hint, and the distinction is the whole
+    /// point: "model unloaded" means nothing happened, so a note would mislead; a mid-stream drop means
+    /// the worker was producing and its edits are already on disk.
+    #[test]
+    fn only_a_dropped_body_earns_a_retry_hint() {
+        let h =
+            transient_retry_hint("stream decode error (mid-stream body drop) on integrate-verify")
+                .expect("a dropped body must carry a hint");
+        assert!(
+            h.contains("STILL ON DISK") && h.contains("Do NOT start over"),
+            "the hint must tell the fresh conversation that prior work survived: {h}"
+        );
+        // Every other infra transient stays silent.
+        for quiet in [
+            "model is not loaded",
+            "connection reset",
+            "529 Overloaded",
+            "invalid model identifier",
+            "",
+        ] {
+            assert!(
+                transient_retry_hint(quiet).is_none(),
+                "{quiet:?} must not carry a hint — nothing was produced to preserve"
+            );
+        }
     }
 
     #[test]
