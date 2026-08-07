@@ -428,6 +428,16 @@ def analyse(path) -> dict:
         "device_share": {k: round(v / busy, 3) for k, v in sorted(per_device.items())} if busy else {},
         "biggest_task": biggest[0] if biggest else None,
         "biggest_task_share_of_busy": round(biggest[1] / busy, 3) if biggest and busy else None,
+        # MACHINE-READABLE IMPOSSIBILITY FLAG. The human report already prints "IMPOSSIBLE, indicts
+        # this sweep" beside any concurrency above the summed device weights — but `analyse()` returned
+        # nothing a PROGRAM could test, so a caller reading `concurrency_secs` directly gets a
+        # physically impossible distribution with no signal at all. That is exactly how a 2-slot cell
+        # reporting THREE concurrent tasks, and a slot utilisation of 1.0047, was quoted as fact: the
+        # guard existed for humans and I was not one. A guard that fires without being testable by its
+        # callers is decoration.
+        "impossible_concurrency": sorted(
+            k for k in concurrency if slot_count(pool) and k > slot_count(pool)
+        ),
         "concurrency_secs": {k: round(v, 1) for k, v in sorted(concurrency.items())},
         "concurrency_share": ({k: round(v / sum(concurrency.values()), 3)
                                for k, v in sorted(concurrency.items())} if concurrency else {}),
