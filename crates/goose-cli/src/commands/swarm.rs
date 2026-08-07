@@ -351,6 +351,20 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_E2E_ORACLE overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub e2e_oracle: Option<bool>,
+    /// Size the architect's decomposition to the JOB instead of the FLEET. Both branches of
+    /// `skeleton_count_clause` derive their module target from `worker_count` (SLOTS), so the SAME spec is
+    /// asked for a different number of modules depending on how many machines are plugged in — MEASURED as
+    /// "usually 2 to 4" on one node against "usually 6 to 12" on three. The small-fleet ask lands below what
+    /// the spec needs and the model overrides it (5 modules); the big-fleet ask lands above and the model
+    /// drifts into it (7 and 6), so the scaling only ever binds INFLATIONARY: +30% modules and +64% tree
+    /// bytes for +0.0492 score, which is one seventh of the replicate spread. None => OFF (byte-identical).
+    /// env GOOSE_SWARM_SPEC_SIZED_PLAN overrides.
+    ///
+    /// ARM, NOT A DEFAULT. That the fleet-scaled ask CORRELATES with the bigger plan is measured; that it
+    /// CAUSES it is not, and the model's flat refusal of the ask's upper half argues against a clean causal
+    /// chain. This ships OFF so the sweep can answer it instead of me assuming it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_sized_plan: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #122 planning-slash: SKIP the backbone-lock round-2 re-draft when round-1 cross-draft agreement is
@@ -1195,6 +1209,7 @@ impl Default for SwarmConfig {
             spec_contract: Some(true),
             sink_max_turns: Some(120),
             e2e_oracle: Some(true),
+            spec_sized_plan: None,
             draft_timeout_secs: None,
             goals: None,
             ask_replan: None,
@@ -7724,6 +7739,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(store_flag_in_help("usage: calc [-h] {add,sub}"), None);
     }
 
+    /// The spec-sized clause must be the SAME SENTENCE on one machine or a hundred — that is what "sized to
+    /// the job" means. It holds by CONSTRUCTION here (the function takes no fleet argument), and this test
+    /// exists to fail loudly if someone ever threads `worker_count` back into it.
+    #[test]
+    fn the_spec_sized_clause_cannot_see_the_fleet() {
+        let clause = spec_sized_count_clause();
+        // Every fleet-derived phrase the two scaled branches use must be absent.
+        for banned in ["2x", "usually", "about", "for this fleet", "worker", "slot"] {
+            assert!(
+                !clause.to_lowercase().contains(banned),
+                "spec-sized clause leaked a fleet-relative phrase {banned:?}: {clause}"
+            );
+        }
+        assert!(
+            clause.contains("HOW MANY MACHINES THE FLEET HAS IS IRRELEVANT"),
+            "the clause must SEVER the fleet from the count, not merely omit it: {clause}"
+        );
+        // The OFF path is untouched: both scaled branches still say exactly what they said.
+        assert!(skeleton_count_clause(2, true).contains("usually 2 to 2x 2"));
+        assert!(skeleton_count_clause(6, true).contains("usually 6 to 2x 6"));
+        assert!(skeleton_count_clause(2, false).contains("about 4-6"));
+        // And the arm ships OFF — the causal claim behind it is measured only as a correlation.
+        assert_eq!(SwarmConfig::default().spec_sized_plan, None);
+    }
+
     /// The fleet decides how many ways to CUT; the oracle decides how many pieces EXIST. A shard that
     /// owns nothing still costs a dispatch and a fleet slot, and makespan is the MAX shard — so cutting
     /// past the number of real pieces buys idle shards, never a shorter critical path.
@@ -11624,6 +11664,33 @@ fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
     }
 }
 
+/// SPEC-SIZED PLAN (`GOOSE_SWARM_SPEC_SIZED_PLAN`). Size the decomposition to the JOB instead of the FLEET.
+///
+/// BOTH branches of `skeleton_count_clause` derive their target from `worker_count`, which is SLOTS — so the
+/// SAME spec is asked for a different number of modules depending on how many machines happen to be plugged
+/// in. MEASURED on the four post-fix baseline cells: one node (2 slots) is asked for "usually 2 to 4" and
+/// produces 5 and 5; three nodes (6 slots) are asked for "usually 6 to 12" and produce 7 and 6. The ask sits
+/// BELOW what the spec needs on the small fleet and the model overrides it; it sits ABOVE on the big fleet
+/// and the model drifts up into it. So the fleet-scaled number is a floor the model will not go under and a
+/// ceiling it drifts toward, and it only ever binds in the INFLATIONARY direction: +30% modules and +64%
+/// tree bytes on three nodes, for +0.0492 score — one seventh of the replicate spread, i.e. nothing — while
+/// the serial join that must swallow that extra code grew from 20-32% to 36% of the run (F454/F457/F458).
+///
+/// This clause takes NO ARGUMENTS ON PURPOSE. "Sized to the job" means the fleet cannot reach the number, and
+/// a function that cannot see `worker_count` cannot scale with it — the invariant holds by construction
+/// rather than by assertion. The fleet still decides how many of these run AT ONCE; it no longer decides how
+/// many EXIST.
+fn spec_sized_count_clause() -> String {
+    "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per distinct \
+     concern/responsibility the spec names (e.g. parsing, persistence, the commands/business logic, \
+     reporting, the cli entry), NOT one catch-all module and NOT a separate subtask per command. Pick the \
+     CONVENTIONAL module boundaries a senior engineer would. HOW MANY MACHINES THE FLEET HAS IS IRRELEVANT \
+     to how many modules this spec has: do NOT add modules to fill idle machines, and do NOT merge distinct \
+     concerns because the fleet is small. The same spec must yield the same decomposition on one machine or \
+     a hundred"
+        .to_string()
+}
+
 fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
     goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
     let wc = worker_count.max(1) as i64;
@@ -13616,7 +13683,14 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
-        let count_clause = skeleton_count_clause(worker_count, converge);
+        let count_clause = if swarm_gate_cfg(
+            "GOOSE_SWARM_SPEC_SIZED_PLAN",
+            load_config().spec_sized_plan.unwrap_or(false),
+        ) {
+            spec_sized_count_clause()
+        } else {
+            skeleton_count_clause(worker_count, converge)
+        };
         let research_block = if research_findings.is_empty() {
             String::new()
         } else {
@@ -24079,6 +24153,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
             "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(true)),
+            "spec_sized_plan": swarm_gate_cfg("GOOSE_SWARM_SPEC_SIZED_PLAN", load_config().spec_sized_plan.unwrap_or(false)),
             "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
                 .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
                 .unwrap_or(true),

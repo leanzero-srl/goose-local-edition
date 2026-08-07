@@ -384,9 +384,13 @@ ARMS = [
                 "equivalent to the serial one and that is a defect worth more than the speedup.",
     },
     {
-        "name": "e2e_oracle",
-        "env": {"GOOSE_SWARM_E2E_ORACLE": "1"},
-        "gate": "fan_e2e does not currently partition: e2e_shard_spec tells each shard to number the "
+        # WAS an ON arm. e2e_oracle is BAKED ON as of e620bf0b6, so setting it to "1" would measure
+        # nothing against a baseline that already has it. Flipped to the OFF direction: this is now
+        # the ABLATION that gives F455 its counterfactual on the SAME binary, which is the only way
+        # to attribute the change rather than compare across a rebuild.
+        "name": "e2e_oracle_off",
+        "env": {"GOOSE_SWARM_E2E_ORACLE": "0"},
+        "gate": "ABLATION of a now-baked lever. fan_e2e does not partition without it: e2e_shard_spec tells each shard to number the "
                 "advertised commands 'in the order the spec gives them' and never gives it the spec, "
                 "so each derives the list from the README the build itself wrote. MEASURED on one "
                 "run: three shards derived lists of length 1, 1 and 3, and the one that enumerated "
@@ -396,7 +400,31 @@ ARMS = [
                 "documentation — and crucially the shards' reports should stop citing the README. If "
                 "tier C does NOT move but the reports stop citing the README, the oracle landed and "
                 "the app was already right; if the reports still cite the README, the injection is "
-                "not reaching them and the arm has failed regardless of the score.",
+                "not reaching them and the arm has failed regardless of the score. AS AN ABLATION THE SIGNS "
+                "INVERT: this cell should REPRODUCE the 90%-in-one-shard imbalance (baseline-n3-r0 "
+                "ran 1/1/28/1 tool calls across four shards) while the baked baseline should not. "
+                "PREDICTION, ONE THRESHOLD: this cell's busiest e2e shard holds 60% OR MORE of the "
+                "e2e tool calls. Falsified below 60% — which would mean the oracle was never the "
+                "cause and F455 credited the wrong mechanism.",
+    },
+    {
+        "name": "spec_sized_plan",
+        "env": {"GOOSE_SWARM_SPEC_SIZED_PLAN": "1"},
+        "gate": "BOTH branches of skeleton_count_clause size the plan to the FLEET, not the JOB: the "
+                "target is derived from worker_count, which is SLOTS. The same spec is therefore "
+                "asked for 'usually 2 to 4' modules on one node and 'usually 6 to 12' on three. "
+                "MEASURED across four baseline cells: the 1-node ask sits BELOW what the spec needs "
+                "and the model overrides it (5 and 5 modules); the 3-node ask sits ABOVE and the "
+                "model drifts up into it (7 and 6), so the scaling only ever binds in the "
+                "INFLATIONARY direction — +30% modules and +64% tree bytes for +0.0492 score, which "
+                "is one seventh of the replicate spread. That extra code is what the serial join "
+                "must then swallow, and the join grew from 20-32% to 36% of the run. This arm "
+                "replaces the clause with one that takes NO fleet argument at all. PREDICTION, ONE "
+                "THRESHOLD: a 3-node cell under this clause emits AT MOST 5 module subtasks, "
+                "matching what the same spec yields on one node. FALSIFIED AT 6 OR MORE. Note the "
+                "causal claim is only a CORRELATION today and the model already refuses the ask's "
+                "upper half, so a null result here is a real possibility and would say the plan "
+                "inflates for some other reason.",
     },
     # doc_prefetch was here and is PULLED, not deprioritised: it forwards only findings where
     # `grounded == is_mcp && ok`, and research_tools reports available: [] on every run this machine
