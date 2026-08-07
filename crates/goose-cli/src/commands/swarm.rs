@@ -333,6 +333,29 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_lean_prefill: Option<bool>,
+    /// SINK IDLE-FILL (`GOOSE_SWARM_SINK_REVIEW`): while `integrate-verify` runs — a task that owns
+    /// nothing, blocks nothing, and holds the fleet — give the FREE nodes read-only whole-tree review
+    /// work, and hand its findings to the join.
+    ///
+    /// It targets the one measurement in this campaign that has never wobbled across any generation or
+    /// binary: EXECUTE OCCUPANCY is 1.0000 on both 1-node cells and 0.5535 / 0.6678 / 0.8256 on the
+    /// three 3-node cells — no overlap, five cells deep. A 3-node fleet spends roughly a third of its
+    /// execute window idle, and the idle is dominated by the join running ALONE (measured at 100% of
+    /// the solo time in the worst cell). Every other candidate explanation for the node curve has since
+    /// failed to reproduce; this deficit has not.
+    ///
+    /// None => OFF, which is the historical behaviour: `sink_review_enabled()` reads the ENVIRONMENT
+    /// ONLY and no bridge carried a config value to it, so `levers.sink_review` is absent from every
+    /// cell on record — THE LEVER HAS NEVER RUN. This field exists to make it REACHABLE (a desktop
+    /// launch cannot set env vars at all), not to turn it on: it is an unproven behaviour change and
+    /// earns its A/B before it earns a default.
+    ///
+    /// ⚠️ The bridge in `run_swarm` is deliberately the only way this reaches the engine.
+    /// `sink_review_enabled()` must stay the ONE resolution, because the producer (goose-swarm) and the
+    /// drain (goose-cli) both consult it and a divergence would make a run report a lever it is not
+    /// running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sink_review: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F455). Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning.
     /// Give the verify-e2e shards the ADVERTISED SURFACE enumerated by the engine from the frozen
@@ -1198,6 +1221,7 @@ impl Default for SwarmConfig {
             sink_cap_ref_bytes: default_sink_cap_ref_bytes(),
             progress_watchdog_secs: 900,
             sink_lean_prefill: Some(true),
+            sink_review: None,
             backbone_skip_confident: Some(true),
             detail_memo: Some(true),
             repeat_break: Some(true),
@@ -7808,6 +7832,20 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(fan(3, &items(2)), 2);
         // One advertised command is not a partition at all — decline and let the join run it.
         assert_eq!(fan(4, &items(1)), 0, "a single command must not be fanned");
+    }
+
+    /// SINK IDLE-FILL is now REACHABLE but still OFF. Those are different properties and they must not
+    /// drift together: making a lever settable from config is a defect fix (a desktop run cannot set env
+    /// vars, so it could never reach this one at all), while turning it on is a behaviour change that
+    /// owes an A/B first. `sink_review` targets the occupancy deficit — the only measure that has not
+    /// wobbled across any generation — but targeting it is not evidence of fixing it.
+    #[test]
+    fn sink_idle_fill_is_reachable_but_not_yet_on() {
+        assert_eq!(
+            SwarmConfig::default().sink_review,
+            None,
+            "sink_review must stay OFF until an arm measures it — reachable is not the same as proven"
+        );
     }
 
     /// The oracle is BAKED ON. Leaving it off shipped the exact defect it was written to fix: four
@@ -23299,6 +23337,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // via env) — read as written, it said the shipping default had no sink ceiling at all.
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
+    }
+    // Same bridge for SINK IDLE-FILL, and it is the FIRST one this lever has ever had.
+    // `sink_review_enabled()` reads the environment only, so a desktop run — which cannot set env vars
+    // at all — could never switch it on, and `levers.sink_review` is absent from every cell on record:
+    // the lever has never run anywhere. This makes it REACHABLE from config without disturbing the
+    // single resolution: `sink_review_enabled()` remains the ONE answer both halves consult (the
+    // producer in goose-swarm and the drain here), because this writes the env it already reads rather
+    // than adding a second, independently-resolved read. Only a config value of TRUE writes anything,
+    // so an unset or false config leaves the variable absent and the OFF path byte-identical.
+    if std::env::var("GOOSE_SWARM_SINK_REVIEW").is_err() && cfg.sink_review.unwrap_or(false) {
+        std::env::set_var("GOOSE_SWARM_SINK_REVIEW", "1");
     }
     // Same bridge for the progress watchdog (the read site in run_agent_in reads this env). Env wins; else the
     // config value — which the bake made **900, not 0**, so this default is ON too. Carried the identical stale
