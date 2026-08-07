@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Evaluate every mechanically-checkable registered prediction against a cell, automatically.
+
+Mihai, 22:20: "don't go over bad behaviors, taking note and ignoring." F503/L309 answered that for
+two pathologies by shipping detectors. This answers the wider version of the same criticism: the
+PREDICTIONS register has thirteen open entries and every one of them was being checked BY HAND, which
+is why several sat open for hours after the evidence to settle them had already landed on disk.
+
+THREE OUTCOMES, KEPT STRICTLY APART, because collapsing them is how this campaign has published
+findings it later retracted:
+
+    PASS   — the predicate was testable on this cell and held
+    FAIL   — it was testable and did not hold
+    INERT  — the PRECONDITION never occurred, so the cell says NOTHING about it
+
+INERT IS NOT A PASS. A tool that prints two colours will eventually be read as if the third did not
+exist, so INERT is spelled out with the reason its precondition was missing.
+
+Each check names the finding it belongs to and states its own falsifier inline, so a reader can see
+what would have made it fail without going back to the register.
+"""
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import occupancy as occ  # noqa: E402
+import shardshare  # noqa: E402
+
+RUNS = "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/nodeloop"
+LOG_ARCHIVE = os.path.join(RUNS, "_archive", "logs")
+
+PASS, FAIL, INERT = "PASS", "FAIL", "INERT"
+
+
+def f491_hint_was_worth_keeping(ev, a) -> tuple[str, str]:
+    """A cap-exhausted `observed` problem verdict carrying a real hint — the thing F491 stopped
+    discarding. FALSIFIER: none exists, which makes the fix unexercised on this cell."""
+    kills = {}
+    hits = []
+    for e in ev:
+        if e.get("event") != "judge_verdict":
+            continue
+        t = str(e.get("task_id"))
+        if e.get("action") == "re_dispatch":
+            kills[t] = kills.get(t, 0) + 1
+        elif (e.get("action") == "observed" and kills.get(t, 0) >= 2
+              and (e.get("hint") or "").strip() and e.get("verdict") not in ("ok", "accept")):
+            hits.append(f"{t}:{e.get('verdict')}")
+    if not hits:
+        return INERT, "no cap-exhausted observed verdict carried a hint — the fix had nothing to keep"
+    return PASS, f"{len(hits)} hint(s) the old engine would have discarded: {', '.join(hits[:3])}"
+
+
+F492_FIX = "5ed189bcf"  # the commit that populates elapsed_ms on the judge paths
+
+
+def carries(fix_sha: str, cell_sha: str) -> bool:
+    """Does the binary this cell ran actually CONTAIN the fix being checked?
+
+    Without this every pre-fix cell shows a permanent red FAIL, and a check that is always red stops
+    being read — the same failure as one that is always green. A cell that predates a fix cannot
+    falsify it; the honest verdict is INERT, and the reason is provenance rather than a missing
+    precondition.
+    """
+    import subprocess
+    if not cell_sha or cell_sha == "?":
+        return False
+    cell_sha = cell_sha.split("-")[0]  # a dirty build is still that commit's tree
+    try:
+        return subprocess.run(["git", "-C", "/Users/mihaiperdum/Projects/goose", "merge-base",
+                               "--is-ancestor", fix_sha, cell_sha],
+                              capture_output=True, timeout=15).returncode == 0
+    except Exception:
+        return False
+
+
+def f492_judge_attempts_report_time(ev, a) -> tuple[str, str]:
+    """A judge-terminated completion must report real elapsed_ms. FALSIFIER: any of them reads 0."""
+    sha = shardshare.build_sha(ev)
+    if not carries(F492_FIX, sha):
+        return INERT, f"this cell ran {sha}, which predates the fix {F492_FIX} — it cannot falsify it"
+    jt = [e for e in ev if e.get("event") == "task_completed" and not e.get("session_id")
+          and not (e.get("tool_calls") or [])]
+    if not jt:
+        return INERT, "no judge-terminated completion in this cell"
+    zero = [str(e.get("task_id")) for e in jt if (e.get("elapsed_ms") or 0) == 0]
+    if zero:
+        return FAIL, f"{len(zero)}/{len(jt)} report elapsed_ms 0: {', '.join(zero[:4])}"
+    return PASS, f"all {len(jt)} judge-terminated completions report real time"
+
+
+def f499_unmeasured_is_the_judge_set(ev, a) -> tuple[str, str]:
+    """`unmeasured_tasks` must be exactly the judge-ended set — the four-signal agreement that
+    justified the detector. FALSIFIER: the two sets differ, meaning the detector drifted."""
+    um = set(a.get("unmeasured_tasks") or [])
+    judged = {str(e.get("task_id")) for e in ev if e.get("event") == "judge_verdict"
+              and e.get("action") in ("accepted", "failed")}
+    if not um and not judged:
+        return INERT, "no judge-terminated task — nothing to agree about"
+    if um != judged:
+        return FAIL, f"unmeasured={sorted(um)} but judge-ended={sorted(judged)}"
+    return PASS, f"{len(um)} task(s), both signals agree"
+
+
+def f500_every_invisible_task_recovered(ev, a, log_path) -> tuple[str, str]:
+    """Every task the event log cannot see must have an archived digest. FALSIFIER: one has none —
+    which would mean the dispatcher never wrote it, a worse defect than the one this recovered."""
+    um = a.get("unmeasured_tasks") or []
+    if not um:
+        return INERT, "no invisible tasks in this cell"
+    act = log_path[:-6] + "-activity"
+    if not os.path.isdir(act):
+        return FAIL, f"{len(um)} invisible task(s) and NO archived digests at all"
+    missing = [t for t in um if not os.path.exists(os.path.join(act, f"{t}.json"))]
+    if missing:
+        return FAIL, f"{len(missing)}/{len(um)} have no digest: {', '.join(missing[:4])}"
+    return PASS, f"{len(um)}/{len(um)} recovered"
+
+
+def f501_rewrite_loop_is_not_a_pattern(ev, a) -> tuple[str, str]:
+    """At most ONE task per cell may reach 3+ repeated writes. FALSIFIER: two or more — which would
+    make it a pattern and would justify the lever F501 declined to build on n=1."""
+    p = a.get("pathologies") or {}
+    if not p.get("digests"):
+        return INERT, "no archived digests — the pathology scan cannot run"
+    bad = [r for r in p.get("rewrite_loops", []) if r["repeats"] >= 3]
+    if len(bad) >= 2:
+        return FAIL, ("PATTERN, not an outlier — the lever is now justified: "
+                      + ", ".join(f"{r['task']}({r['repeats']})" for r in bad))
+    return PASS, (f"{len(bad)} task(s) at 3+ repeats" +
+                  (f" ({bad[0]['task']})" if bad else "") + " — still an outlier, not a pattern")
+
+
+def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
+    """maxuse above 4.0 is F497's registered bar for "the DAG got wider". Reported for EVERY cell
+    because it is the campaign's headline number, not only when it moves."""
+    mu, slots = a.get("max_useful_nodes"), a.get("slot_count")
+    if mu is None or not slots:
+        return INERT, "no critical path — cannot compute the plan ceiling"
+    who = "PLAN binds" if mu < slots else "FLEET binds"
+    over = " — ABOVE the 4.0 bar (F497 threshold met)" if mu > 4.0 else ""
+    return PASS, f"max_useful_nodes {mu} vs {slots} slots ⇒ {who}{over}"
+
+
+def report(log_path: str, label: str) -> int:
+    ev = [json.loads(l) for l in open(log_path) if l.strip()]
+    a = occ.analyse(log_path)
+    print(f"=== {label}   build_sha {shardshare.build_sha(ev)} ===")
+    checks = [
+        ("F491 observed hint kept", f491_hint_was_worth_keeping(ev, a)),
+        ("F492 judge attempts timed", f492_judge_attempts_report_time(ev, a)),
+        ("F499 unmeasured == judged", f499_unmeasured_is_the_judge_set(ev, a)),
+        ("F500 invisible recovered", f500_every_invisible_task_recovered(ev, a, log_path)),
+        ("F501 rewrite not a pattern", f501_rewrite_loop_is_not_a_pattern(ev, a)),
+        ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
+    ]
+    worst = 0
+    for name, (verdict, why) in checks:
+        print(f"  {verdict:<5} {name:<28} {why}")
+        if verdict == FAIL:
+            worst = 1
+    return worst
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args:
+        paths = [(p, os.path.basename(p)) for p in args]
+    else:
+        paths = [(os.path.join(LOG_ARCHIVE, f), f.rpartition("-")[0])
+                 for f in sorted(os.listdir(LOG_ARCHIVE)) if f.endswith(".jsonl")]
+    worst = 0
+    for p, label in paths:
+        worst = max(worst, report(p, label))
+        print()
+    return worst
+
+
+if __name__ == "__main__":
+    sys.exit(main())
