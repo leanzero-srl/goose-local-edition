@@ -449,6 +449,34 @@ def analyse(path) -> dict:
         chain.reverse()
         return memo[end], chain
 
+    # A JUDGE-TERMINATED COMPLETION REPORTS NO WORK AT ALL, AND AN EMPTY LIST READS EXACTLY LIKE ZERO.
+    #
+    # `apply_judge_outcome` emits TaskCompleted with an empty `tool_calls`, a null `session_id` and
+    # (before the engine fix that is committed but not yet built) `elapsed_ms: 0`. None of that means
+    # the task did nothing — it means the worker's future was aborted before it could report, so the
+    # numbers are UNKNOWN. MEASURED across the six archived cells: 2, 4, 7, 4, 1 and 3 tasks of 14,
+    # 20, 23, 22, 20 and 17 — 5% to 30%, mean about 18%. Roughly one completed task in five is
+    # invisible to any work-volume, duration or session analysis, and it is systematically the HARD
+    # ones, because those are the tasks the judge had to intervene on. I read `sinkCalls = 0` off a
+    # 19.7-minute join and briefly believed it.
+    #
+    # The detector is deliberately NOT keyed on `elapsed_ms == 0`, even though it agrees perfectly
+    # today: the engine fix that populates elapsed_ms is already committed, so that clause would stop
+    # firing at the next rebuild and this guard would silently die exactly when the data it protects
+    # is still missing. Null session_id plus empty tool_calls is the pair the engine still emits.
+    #
+    # CONTROLLED BEFORE USE: null-session, empty-tool-calls, zero-elapsed and "has a judge verdict
+    # with action accepted/failed" pick out the SAME set on all six cells, four independent signals
+    # agreeing exactly, and nothing else is in it.
+    last_completion: dict[str, dict] = {}
+    for e in events:
+        if e.get("event") == "task_completed":
+            last_completion[str(e.get("task_id"))] = e
+    unmeasured = sorted(
+        t for t, e in last_completion.items()
+        if not e.get("session_id") and not (e.get("tool_calls") or [])
+    )
+
     total_work = sum(per_task.values())
     critical, critical_chain = longest_path()
     max_useful = (total_work / critical) if critical > 0 else None
@@ -533,6 +561,7 @@ def analyse(path) -> dict:
         # UNRELATED tasks had been retried, while the genuinely-unfinished one was a third task
         # dispatched once and never completed. One definition, exported, or the two drift.
         "unfinished_task_ids": unfinished,
+        "unmeasured_tasks": unmeasured,
     }
 
 
