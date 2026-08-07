@@ -144,9 +144,19 @@ def digest_pathologies(log_path) -> dict:
     Reads the digests archived beside the log (`<log>-activity/`, written by goal.py). Returns empty
     when they are absent — which is a real answer, not a pass, and callers must say so.
     """
+    # Resolves an ARCHIVED log to its snapshot dir, a LIVE cell directory to `.swarm/activity`, and a
+    # live `run.jsonl` to the same. Without the live cases this only ever fired on finished cells —
+    # so a rewrite loop could burn 80 minutes of critical path and the detector would first mention it
+    # after the run it ruined. A pathology instrument that cannot run mid-flight reports history.
     import pathlib
     p = pathlib.Path(log_path)
-    act = p.parent / (p.name[:-6] + "-activity") if p.name.endswith(".jsonl") else None
+    if p.is_dir():
+        act = p / ".swarm" / "activity"
+    elif p.name.endswith(".jsonl"):
+        snap = p.parent / (p.name[:-6] + "-activity")
+        act = snap if snap.is_dir() else p.parent / ".swarm" / "activity"
+    else:
+        act = None
     if act is None or not act.is_dir():
         return {"digests": 0, "rewrite_loops": [], "thinking_outliers": [], "thinking_p90": None}
     rows = []
