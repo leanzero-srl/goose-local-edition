@@ -34,6 +34,24 @@ def load(cell: str) -> list:
         return [json.loads(line) for line in fh if line.strip()]
 
 
+def build_sha(ev: list) -> str:
+    """WHICH CODE THIS CELL ACTUALLY RAN.
+
+    Cell directories are REUSED — the sweep re-runs `baseline-n3-r0` in the same path — so a cell name
+    identifies a slot, never a generation. That cost four separate re-checks in one day, and once put a
+    retry timeline from one generation beside a session from another before the numbers disagreed
+    loudly enough to catch it.
+
+    `levers_resolved` carries `build_sha`, which is the GIT COMMIT, not a binary fingerprint. It is the
+    only field that answers "does this cell contain the change I am asking about", so it is printed on
+    every readout rather than left to be remembered.
+    """
+    lv = [e for e in ev if e.get("event") == "levers_resolved"]
+    if not lv:
+        return "?"
+    return str(lv[-1].get("build_sha") or "?")
+
+
 def oracle_state(ev: list):
     """True / False / None, where None means THE BINARY HAD NO SUCH LEVER — not 'off'."""
     lv = [e for e in ev if e.get("event") == "levers_resolved"]
@@ -96,7 +114,7 @@ def report(cell: str) -> int:
     ev = load(cell)
     state, why = oracle_state(ev)
     per = shard_calls(ev)
-    print(f"=== {cell} ===")
+    print(f"=== {cell}   build_sha {build_sha(ev)} ===")
     print(f"  e2e_oracle = {state}   ({why})")
     injected, idetail = enumerated_in_prompt(ev)
     print(f"  MECHANISM  = {injected}   ({idetail})")
