@@ -1205,7 +1205,8 @@ def _etime_secs(et: str) -> int:
     return (int(days) if days else 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
 
 
-def reap_run_orphans(min_age_secs: int = 10800, protect_root: int | None = None) -> list[int]:
+def reap_run_orphans(min_age_secs: int = 10800, protect_root: int | None = None,
+                     orphan_age_secs: int = 600, dry_run: bool = False) -> list[int]:
     """Kill orphaned worker-spawned processes by their WORKING DIRECTORY, not by port range.
 
     `reap_stray_listeners` below was calibrated on ONE observed leak — a worker that ran
@@ -1227,6 +1228,25 @@ def reap_run_orphans(min_age_secs: int = 10800, protect_root: int | None = None)
 
     Kills the process GROUP: the leak is a `bash -c "… &"` whose python child holds the socket, and
     killing only the pid the CWD scan matched leaves the listener alive.
+
+    ⚠️ THE THREE-HOUR FLOOR IS TOO SLOW FOR THE COMMONEST LEAK, which is why `orphan_age_secs` exists.
+    MEASURED 2026-08-07, DURING the cell it was corrupting: eleven orphans in three groups had burned
+    FIFTY CPU-MINUTES, and the two doing the burning were pytest runs spinning at 39% and 63% of a
+    core — 55 and 48 minutes old, both comfortably UNDER the floor, both invisible to this function.
+    Their start times match the run's two `agent stalled — no progress for 420s` retries to the
+    minute: the worker ran pytest, pytest never returned, the watchdog restarted the attempt, and
+    nobody killed the pytest. So the engine manufactures one of these every 420 seconds of stall,
+    and the reaper was set to notice three hours later.
+
+    PPID 1 IS THE DISCRIMINATOR THE AGE GUARD WAS STANDING IN FOR. A live worker's child has the
+    engine as its parent; reparenting to init happens only when the parent is already dead. So a
+    ppid-1 process under a run directory has nobody waiting on it BY DEFINITION, not by inference
+    from its age, and it gets the short floor. Everything else keeps the three-hour one — that guard
+    was written for a different case (a stale process sharing a REUSED path with a live cell) and is
+    untouched here.
+
+    The ancestry walk is unaffected: a process that descends from this sweep never has ppid 1, so the
+    engine and its shells cannot reach the short path however they are grouped.
     """
     root = str((HERE.parent / "runs").resolve())
     try:
@@ -1284,12 +1304,17 @@ def reap_run_orphans(min_age_secs: int = 10800, protect_root: int | None = None)
     for p, c in cwds.items():
         if not c.startswith(root) or p == me:
             continue
-        pgid, age, _ = meta.get(p, (None, 0, 0))
-        if pgid is None or age < min_age_secs or descends_from_me(p):
+        pgid, age, ppid = meta.get(p, (None, 0, 0))
+        if pgid is None or descends_from_me(p):
+            continue
+        if age < (orphan_age_secs if ppid == 1 else min_age_secs):
             continue
         groups.setdefault(pgid, []).append(p)
     killed = []
     for pgid, pids in groups.items():
+        if dry_run:
+            killed.extend(pids)
+            continue
         try:
             os.killpg(pgid, signal.SIGKILL)
             killed.extend(pids)
