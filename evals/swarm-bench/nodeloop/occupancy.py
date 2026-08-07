@@ -128,6 +128,7 @@ def analyse(path) -> dict:
     disp: dict[str, list] = {}
     done: dict[str, list] = {}
     split_at: dict[str, float] = {}
+    retried: dict[str, list[float]] = {}
     idle_jobs: dict[str, int] = {}
 
     for e in events:
@@ -155,6 +156,16 @@ def analyse(path) -> dict:
             # through the exact check written to stop this.
             if ts is not None:
                 split_at[e.get("task_id")] = ts
+        elif ev == "task_retry":
+            # A RETRY ENDS AN ATTEMPT, AND THE NEXT DISPATCH IS NOT WHEN IT ENDED.
+            #
+            # Closing an attempt only at the next dispatch credits the whole retry->re-dispatch GAP as
+            # busy, and that gap is long whenever the fleet is loaded. MEASURED: baseline-n1-r1, a
+            # ONE-DEVICE fleet at WEIGHT 2, reported PEAK CONCURRENCY 3 and a slot utilisation of
+            # 1.0047 — above 1.0, which this file already calls impossible and says "indicts this
+            # sweep". The guard was right and fired; nothing enforced it, so the impossible number was
+            # reported for months.
+            retried.setdefault(e.get("task_id"), []).append(ts)
         elif ev == "task_completed":
             done.setdefault(e.get("task_id"), []).append(ts)
         if ev in IDLE_NODE_EVENTS:
@@ -195,7 +206,9 @@ def analyse(path) -> dict:
             spl = split_at.get(task_id)
             if spl is not None and spl < start:
                 spl = None
-            cands = [x for x in (comp, nxt, spl) if x is not None]
+            # The FIRST retry at or after this attempt's start also ends it.
+            rty = next((r for r in sorted(retried.get(task_id, [])) if r is not None and r >= start), None)
+            cands = [x for x in (comp, nxt, spl, rty) if x is not None]
             end = min(cands) if cands else t_end
             if end is None or end < start:
                 continue
