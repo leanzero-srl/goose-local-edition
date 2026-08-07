@@ -1550,6 +1550,20 @@ impl State {
             .map(|n| n.attempts == attempt && n.state == TaskState::Claimed)
             .unwrap_or(false);
         let interv = self.interventions.get(tid).copied().unwrap_or(0);
+        // Captured ONCE, up front, because every branch below removes `attempt_started_at` before it
+        // emits. All five emits in this function used to hard-code `elapsed_ms: 0` while this very
+        // number sat in scope — and `finish()` sums `per_device.busy_ms += a.elapsed_ms` over the whole
+        // attempt history, so EVERY judge-terminated attempt contributed zero node-seconds to its
+        // device, and a task whose LAST attempt was judge-accepted reported zero for itself. MEASURED:
+        // a task that ran 80.2 minutes across five attempts is recorded as taking no time at all on
+        // three of them. `busy_ms` is the engine's own answer to how busy each node was, which is the
+        // question the whole node-scaling goal turns on, and a judge kill is the commonest restart
+        // there is.
+        let elapsed_ms = self
+            .attempt_started_at
+            .get(tid)
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
         let elapsed = self
             .attempt_started_at
             .get(tid)
@@ -1599,7 +1613,7 @@ impl State {
                     model: model.clone(),
                     outcome: "judge_accepted".to_string(),
                     error: None,
-                    elapsed_ms: 0,
+                    elapsed_ms,
                 });
             self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
             self.relax_dependents(tid);
@@ -1612,7 +1626,7 @@ impl State {
                 device,
                 model,
                 attempts,
-                elapsed_ms: 0,
+                elapsed_ms,
                 session_id: self.task_session_id(tid),
                 error: ended_because,
                 tool_calls: Vec::new(),
@@ -1750,7 +1764,7 @@ impl State {
                     model: model.clone(),
                     outcome: outcome_label.to_string(),
                     error: Some(error_text),
-                    elapsed_ms: 0,
+                    elapsed_ms,
                 });
             self.dag.tasks.get_mut(tid).unwrap().state = state;
             if salvage {
@@ -1769,7 +1783,7 @@ impl State {
                 device,
                 model,
                 attempts,
-                elapsed_ms: 0,
+                elapsed_ms,
                 session_id: self.task_session_id(tid),
                 error: ended_because,
                 tool_calls: Vec::new(),
@@ -1819,7 +1833,7 @@ impl State {
                 model,
                 outcome: "judge_killed".to_string(),
                 error: Some(outcome.verdict.as_str().to_string()),
-                elapsed_ms: 0,
+                elapsed_ms,
             });
         // Advance the attempt epoch so the killed future's completion is ignored, then re-queue.
         let n = self.dag.tasks.get_mut(tid).unwrap();
