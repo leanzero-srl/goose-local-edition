@@ -35,11 +35,21 @@ def describe(pids: list[int]) -> None:
     if not pids:
         print("  (none)")
         return
+    # `-p` takes a COMMA-SEPARATED list. Passing the pids as separate operands made macOS `ps` fall
+    # back to a much wider listing: a kill of two bench orphans printed a block that included the
+    # operator's own shells, the running Claude session and its MCP servers. Nothing was ever at risk
+    # — the kill goes by process GROUP and those are in different groups — but a destructive tool that
+    # displays processes it is not killing is a hazard on its own, because the next reader has no way
+    # to tell the display from the target list.
     out = subprocess.run(
-        ["ps", "-o", "pid,ppid,pgid,etime,time,command", *[str(p) for p in pids]],
+        ["ps", "-o", "pid,ppid,pgid,etime,time,command", "-p", ",".join(str(p) for p in pids)],
         capture_output=True, text=True).stdout
+    shown = 0
     for line in out.splitlines():
         print("  " + line[:150])
+        shown += 1
+    if shown - 1 != len(pids):  # minus the header
+        print(f"  ⚠ ps listed {shown - 1} row(s) for {len(pids)} pid(s) — do NOT trust this display")
 
 
 WATCHDOG_SECS = 420  # the engine's own "agent stalled — no progress" bar; not a number I chose
