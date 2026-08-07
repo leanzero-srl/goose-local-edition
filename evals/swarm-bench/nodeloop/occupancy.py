@@ -398,8 +398,22 @@ def analyse(path) -> dict:
     for p in set(split_children.values()):
         plan_deps.pop(p, None)
 
-    def longest_path() -> float:
+    def longest_path() -> tuple[float, list[tuple[str, float]]]:
+        """The chain's LENGTH and the chain ITSELF.
+
+        Returning only the number is what this used to do, and it made the one actionable question
+        unanswerable: `max_useful_nodes` says the plan is the ceiling (L303), but "which tasks form
+        the ceiling" is what decides whether the fix is the architect prompt, a fan lever, or nothing
+        at all. Measured consequence of not having it: the verify:: layer LOOKED like the obvious
+        barrier — every e2e shard depends on every verify — and costs 3-6 minutes of a 85-159 minute
+        run. Removing it would have bought ~4% and I would have shipped it on the strength of a
+        legible mechanism, which is the same mistake as the 16-of-16 over-read threshold.
+
+        Each entry carries the task's OWN duration, not the running total, so the chain reads as a
+        bill of materials rather than a cumulative curve.
+        """
         memo: dict[str, float] = {}
+        prev: dict[str, str] = {}
         visiting: set[str] = set()
 
         def walk(t: str) -> float:
@@ -408,15 +422,35 @@ def analyse(path) -> dict:
             if t in visiting:      # a cycle cannot happen in a validated DAG, but never hang on one
                 return 0.0
             visiting.add(t)
-            best = max((walk(d) for d in plan_deps.get(t, []) if d in plan_deps), default=0.0)
+            best, arg = 0.0, None
+            for d in plan_deps.get(t, []):
+                if d not in plan_deps:
+                    continue
+                v = walk(d)
+                if v > best:
+                    best, arg = v, d
             visiting.discard(t)
+            if arg is not None:
+                prev[t] = arg
             memo[t] = best + per_task.get(t, 0.0)
             return memo[t]
 
-        return max((walk(t) for t in plan_deps), default=0.0)
+        for t in plan_deps:
+            walk(t)
+        if not memo:
+            return 0.0, []
+        end = max(memo, key=lambda t: memo[t])
+        chain, seen = [], set()
+        node = end
+        while node is not None and node not in seen:
+            seen.add(node)
+            chain.append((node, round(per_task.get(node, 0.0), 1)))
+            node = prev.get(node)
+        chain.reverse()
+        return memo[end], chain
 
     total_work = sum(per_task.values())
-    critical = longest_path()
+    critical, critical_chain = longest_path()
     max_useful = (total_work / critical) if critical > 0 else None
     ceiling_wall = max(critical, total_work / n) if (n and critical > 0) else None
     ceiling_occ = (total_work / (ceiling_wall * n)) if (ceiling_wall and n) else None
@@ -468,6 +502,7 @@ def analyse(path) -> dict:
         "pre_execute_secs": round(pre_exec_secs, 1) if pre_exec_secs is not None else None,
         "total_task_secs": round(total_work, 1),
         "critical_path_secs": round(critical, 1),
+        "critical_path_tasks": critical_chain,
         "max_useful_nodes": round(max_useful, 2) if max_useful else None,
         "dag_split_children": len(split_children),
         "dag_replan_added": len(replan_added),
