@@ -333,12 +333,21 @@ pub struct SwarmConfig {
     /// OFF (byte-identical). env GOOSE_SWARM_SINK_LEAN_PREFILL overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_lean_prefill: Option<bool>,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F455). Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning.
     /// Give the verify-e2e shards the ADVERTISED SURFACE enumerated by the engine from the frozen
     /// operator spec, instead of telling them to "number them in the order the spec gives them" while
     /// giving them no spec. MEASURED: three shards of one run each derived a different list — lengths
     /// 1, 1 and 3 — from the README the build itself wrote, so the modulo partition was neither
     /// disjoint nor complete and the shard with an empty slice reported clean. None => OFF
     /// (byte-identical), as is a spec with no extractable endpoint table.
+    ///
+    /// BAKED ON because leaving it off shipped exactly the defect the lever was written to fix.
+    /// MEASURED in baseline-n3-r0 with four shards: 1, 1, 28 and 1 tool calls — 90% of the work in
+    /// one shard, 56.4 min, while the other three each burned a fleet slot to make a single call and
+    /// report. The same app on 2 shards ran 2 and 9 tool calls, max 10.9 min. Makespan is the MAX
+    /// shard, so a non-partition makes the critical path GROW with the fleet: that is the mechanism
+    /// behind 3 nodes running 1.63x slower than 1 (F454).
     /// env GOOSE_SWARM_E2E_ORACLE overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub e2e_oracle: Option<bool>,
@@ -1185,7 +1194,7 @@ impl Default for SwarmConfig {
             clarity_fail_closed: true,
             spec_contract: Some(true),
             sink_max_turns: Some(120),
-            e2e_oracle: None,
+            e2e_oracle: Some(true),
             draft_timeout_secs: None,
             goals: None,
             ask_replan: None,
@@ -3506,7 +3515,18 @@ fn fan_e2e_split(
     shards: usize,
     oracle: &[String],
 ) -> usize {
-    let shards = shards.clamp(2, 4);
+    // The fleet decides how many ways to CUT; the oracle decides how many pieces EXIST. Taking only
+    // the first left shards that own nothing: the shard prompt's own closing sentence ("if you own no
+    // command ... say so and stop") asks the model to absorb a split the engine could have declined to
+    // make, and an empty shard still costs a fleet slot and a dispatch. Below two real pieces there is
+    // nothing to fan, so the join keeps the end-to-end run itself.
+    let shards = match oracle.len() {
+        0 => shards.clamp(2, 4),
+        n => shards.clamp(2, 4).min(n),
+    };
+    if shards < 2 {
+        return 0;
+    }
     let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
         return 0;
     };
@@ -7702,6 +7722,55 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         // No persisted store advertised => nothing to corrupt, so no probe and no false finding.
         assert_eq!(store_flag_in_help("usage: calc [-h] {add,sub}"), None);
+    }
+
+    /// The fleet decides how many ways to CUT; the oracle decides how many pieces EXIST. A shard that
+    /// owns nothing still costs a dispatch and a fleet slot, and makespan is the MAX shard — so cutting
+    /// past the number of real pieces buys idle shards, never a shorter critical path.
+    #[test]
+    fn the_fan_never_cuts_into_more_pieces_than_the_oracle_has() {
+        let plan_src = r#"{"subtasks":[
+                {"id":"store","depends_on":[],"files":["kv/store.py"]},
+                {"id":"cli","depends_on":[],"files":["kv/cli.py"]},
+                {"id":"integrate-verify","depends_on":["store","cli"],"files":[]}
+            ]}"#;
+        let fan = |fleet: usize, oracle: &[String]| {
+            let mut plan: serde_json::Value = serde_json::from_str(plan_src).unwrap();
+            assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
+            fan_e2e_split(&mut plan, TargetLang::Python, fleet, oracle)
+        };
+        let items = |n: usize| -> Vec<String> {
+            (0..n)
+                .map(|i| format!("GET /api/r{i} -> EXPECT ok"))
+                .collect()
+        };
+
+        // No oracle: unchanged — the fleet is the only signal there is.
+        assert_eq!(
+            fan(4, &[]),
+            4,
+            "an empty oracle must behave exactly as before"
+        );
+        // The real bed: 4 advertised endpoints, a 6-slot fleet. The clamp already lands on 4, so this
+        // guard is INERT here — it is a guard, not the treatment, and must not be credited as one.
+        assert_eq!(fan(6, &items(4)), 4);
+        // A fleet wider than the surface stops at the surface instead of minting empty shards.
+        assert_eq!(fan(6, &items(2)), 2);
+        assert_eq!(fan(3, &items(2)), 2);
+        // One advertised command is not a partition at all — decline and let the join run it.
+        assert_eq!(fan(4, &items(1)), 0, "a single command must not be fanned");
+    }
+
+    /// The oracle is BAKED ON. Leaving it off shipped the exact defect it was written to fix: four
+    /// shards that each derived their own list produced 1/1/28/1 tool calls in baseline-n3-r0 — 90% of
+    /// the work in one shard — while the same app on two shards ran 2 and 9.
+    #[test]
+    fn the_engine_enumerates_the_advertised_surface_by_default() {
+        assert_eq!(
+            SwarmConfig::default().e2e_oracle,
+            Some(true),
+            "e2e_oracle must be baked ON — an un-enumerated oracle is not a partition"
+        );
     }
 
     /// The END-TO-END run is sharded by COMMAND across the fleet. fan_verify shards by MODULE, which left
@@ -14462,7 +14531,7 @@ impl GooseAgentDispatcher {
                     // is byte-identical to today.
                     let oracle: Vec<String> = if swarm_gate_cfg(
                         "GOOSE_SWARM_E2E_ORACLE",
-                        load_config().e2e_oracle.unwrap_or(false),
+                        load_config().e2e_oracle.unwrap_or(true),
                     ) {
                         spec_advertised_surface(&self.spec_frozen.lock().unwrap().clone())
                     } else {
@@ -24009,7 +24078,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // could not say whether a green owed itself to a salvage. Parsed exactly as the engine
             // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
-            "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(false)),
+            "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(true)),
             "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
                 .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
                 .unwrap_or(true),
