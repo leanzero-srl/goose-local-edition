@@ -31,6 +31,53 @@ sys.path.insert(0, HERE)
 import shardshare  # noqa: E402  (path is set above)
 
 
+ARCHIVE = os.path.join(RUNS, "_archive")
+
+
+def archive(cell: str, sha: str, result: dict, mtime: float) -> None:
+    """SNAPSHOT EVERY RESULT, BECAUSE THE BENCH OVERWRITES ITS OWN HISTORY.
+
+    The sweep re-runs a cell IN THE SAME DIRECTORY and replaces `nodeloop-result.json`. Measured: the
+    0.9178 / 180-min cell that anchored a whole morning's comparison vanished mid-session, taking its
+    commit from n=2 vs 2 down to n=1 vs 2 — the evidence for a claim deleted while the claim stood.
+
+    Keyed by build_sha AND mtime, so a re-run on the same commit ACCUMULATES as a replicate rather
+    than overwriting its predecessor. Replicates are the scarcest thing in this campaign: every
+    outcome comparison so far has died on a within-arm spread measured at n=2.
+
+    Archiving happens here rather than in the sweep on purpose — the sweep is a running interpreter
+    and would not see the edit (L265). Reading the scoreboard is what preserves the data.
+    """
+    d = os.path.join(ARCHIVE, sha)
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{cell}-{int(mtime)}.json")
+    if not os.path.exists(path):
+        with open(path, "w") as fh:
+            json.dump(result, fh)
+
+
+def archived() -> list[dict]:
+    out = []
+    if not os.path.isdir(ARCHIVE):
+        return out
+    for sha in sorted(os.listdir(ARCHIVE)):
+        for f in sorted(os.listdir(os.path.join(ARCHIVE, sha))):
+            try:
+                r = json.load(open(os.path.join(ARCHIVE, sha, f)))
+            except Exception:
+                continue
+            pool = r.get("actual_pool")
+            if not pool or r.get("score") is None:
+                continue
+            cell, _, stamp = f[:-5].rpartition("-")
+            out.append({"cell": cell, "sha": sha, "nodes": len(pool),
+                        "quality": float(r["score"]),
+                        "speed_min": (r.get("wall_secs") or 0) / 60.0,
+                        "mtime": float(stamp) if stamp.isdigit() else 0.0,
+                        "archived": True})
+    return out
+
+
 def cells() -> list[dict]:
     out = []
     for d in sorted(os.listdir(RUNS)):
@@ -49,11 +96,19 @@ def cells() -> list[dict]:
             sha = shardshare.build_sha(ev)
         except SystemExit:
             sha = "?"
+        mt = os.path.getmtime(res)
+        archive(d, sha, r, mt)
         out.append({
             "cell": d, "sha": sha, "nodes": len(pool),
             "quality": float(r["score"]), "speed_min": (r.get("wall_secs") or 0) / 60.0,
-            "mtime": os.path.getmtime(res),
+            "mtime": mt, "archived": False,
         })
+    # Merge the archive in, de-duplicated on (sha, cell, mtime) so a live result and its own snapshot
+    # never double-count into a mean.
+    seen = {(r["sha"], r["cell"], int(r["mtime"])) for r in out}
+    for a in archived():
+        if (a["sha"], a["cell"], int(a["mtime"])) not in seen:
+            out.append(a)
     return out
 
 
