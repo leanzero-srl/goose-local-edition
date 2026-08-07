@@ -1197,7 +1197,16 @@ impl State {
             // files, judge.rs:292/311/332), and its LLM verdict is always a non-actionable "ok", so a
             // re-judge catches nothing yet steals an idle node from sink-review. Judge it ONCE (first
             // pass, for observability) then leave it to worker_timeout as the hard-stall backstop.
-            if n.spec.owned_files.is_empty() && self.last_judged.contains_key(tid) {
+            // …that rationale held while NO verdict could fire for an owns-nothing task. One can now:
+            // the Accept branch for a join that has acted and then gone quiet (judge.rs). Judging it
+            // once and never again would make that branch unreachable, because a first pass early in
+            // the join is always too young for it. So the skip now applies only while the task IS too
+            // young for that branch — the `rejudge_cooldown_secs` check above still throttles the rest,
+            // so this cannot spin re-judges at a sink-review node.
+            if n.spec.owned_files.is_empty()
+                && self.last_judged.contains_key(tid)
+                && elapsed < cfg.min_age_secs.max(420)
+            {
                 continue;
             }
             let slot = if at_cap {
