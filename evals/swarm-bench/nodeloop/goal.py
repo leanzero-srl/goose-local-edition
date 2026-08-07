@@ -282,18 +282,52 @@ def main() -> int:
             continue
         dq = mean(r["quality"] for r in nm) - mean(r["quality"] for r in n1)
         ds = mean(r["speed_min"] for r in nm) / mean(r["speed_min"] for r in n1)
-        spread = max(r["quality"] for r in nm) - min(r["quality"] for r in nm)
+        # AT n=1 THE WITHIN-ARM SPREAD IS UNMEASURABLE, NOT ZERO.
+        #
+        # `max - min` over a single cell is 0.0000, and printing that beside a verdict reads as "this
+        # arm barely varies" when the truth is "nobody measured whether it varies". The guard below
+        # then never fires, because no gap is <= 0 — so the ONE case that most needs the caveat is
+        # exactly the case that silently loses it. That is L305 again: an absent measurement must not
+        # be spelled the same way as a measured zero.
+        #
+        # The fallback bar is the spread this campaign has ACTUALLY observed for the same arm across
+        # every other commit. It is enormous — the 3-node quality band alone runs 0.4548 to 0.9343 —
+        # and a 1-vs-1 gap smaller than that is a direction whatever the verdict line says. Using
+        # measured history rather than a chosen constant keeps the bar out of my hands.
+        spread = (max(r["quality"] for r in nm) - min(r["quality"] for r in nm)
+                  if len(nm) > 1 else None)
+        same_arm = [r for r in rows if (r["nodes"] > 1) == (nm[0]["nodes"] > 1)]
+        historical = (max(r["quality"] for r in same_arm) - min(r["quality"] for r in same_arm)
+                      if len(same_arm) > 1 else None)
+        shown = f"{spread:.4f}" if spread is not None else "UNMEASURABLE at n=1"
         print(f"  => QUALITY {dq:+.4f}   SPEED {ds:.2f}x   "
-              f"(multi-node within-arm spread {spread:.4f}, n={len(nm)} vs {len(n1)})")
+              f"(multi-node within-arm spread {shown}, n={len(nm)} vs {len(n1)})")
         # BOTH PILLARS OR IT IS NOT PROGRESS.
         verdict = ("BOTH PILLARS" if dq > 0 and ds < 1.0 else
                    "QUALITY ONLY — bought with time" if dq > 0 else
                    "SPEED ONLY — bought with quality" if ds < 1.0 else
                    "NEITHER")
         print(f"     VERDICT: {verdict}")
-        if dq > 0 and abs(dq) <= spread:
-            print(f"     ⚠ the quality gap ({dq:+.4f}) is INSIDE the multi-node spread "
-                  f"({spread:.4f}) — a DIRECTION, not a proven effect")
+        bar, label = ((spread, "multi-node spread") if spread is not None
+                      else (historical, "SAME-ARM spread measured across every other commit"))
+        if bar is not None and abs(dq) <= bar:
+            print(f"     ⚠ the quality gap ({dq:+.4f}) is INSIDE the {label} "
+                  f"({bar:.4f}) — a DIRECTION, not a proven effect")
+        # THE SAME TREATMENT FOR SPEED, because the directive names TWO pillars and a caveat on only
+        # one of them produces exactly the half-checked headline it exists to prevent. Compared as a
+        # RATIO against the same arm's own fastest-to-slowest ratio, since a gain in minutes and a
+        # spread in minutes are not comparable across cells of different sizes.
+        if len(same_arm) > 1:
+            sp = [r["speed_min"] for r in same_arm if r["speed_min"]]
+            if sp and min(sp) > 0:
+                hist_ratio = max(sp) / min(sp)
+                observed = max(ds, 1 / ds) if ds else 1.0
+                if observed <= hist_ratio:
+                    print(f"     ⚠ the speed gap ({ds:.2f}x) is INSIDE the same arm's own "
+                          f"fastest-to-slowest ratio ({hist_ratio:.2f}x) — a DIRECTION, not a proven effect")
+        if spread is None:
+            print(f"     ⚠ n=1 in the multi-node arm: this commit measured NO within-arm variance. "
+                  f"A byte-identical config has scored 44.2 / 86.7 / 90.0 on this fleet.")
 
     print_prediction_checks(rows)
     return 0
