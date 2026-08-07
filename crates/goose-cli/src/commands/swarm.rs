@@ -866,12 +866,21 @@ pub struct SwarmConfig {
     /// "off by default" wording above describes the PRE-BAKE world and is kept for its reasoning (F392).
     #[serde(default = "default_true")]
     pub kind_prompt: bool,
+    /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F469). Any
+    /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning.
     /// DEGRADE-ON-STALL (#134/#132): when a task exhausts its transient-retry budget (a mid-generation model
     /// hang) but its critical owned file is already on disk, the scheduler marks it Done(degraded) + relaxes
     /// dependents instead of failing the whole subtree — so one hung core task does not kill the capstone.
     /// integrate-verify + R1 gate the degraded file honestly. OFF by default = byte-identical (fail_descendants).
     /// GOOSE_SWARM_DEGRADE_ON_STALL env overrides.
-    #[serde(default)]
+    ///
+    /// BAKED ON because a transient fault is not a verdict on the work. With it off, the engine's only
+    /// response to a stalled stream was to throw the task away and start it again — MEASURED as two
+    /// mid-stream body drops on `integrate-verify` costing 15.3 min and 44.3 min (29.5% of that run's
+    /// wall), on two different devices. Restarting the longest, most serial task in the run because a
+    /// socket hiccuped discards every command already run and every fix already written, and buys
+    /// nothing.
+    #[serde(default = "default_true")]
     pub degrade_on_stall: bool,
     /// FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into per-concern child
     /// tasks at planning time, so each gets its own small contract stub instead of one whole-package stub that
@@ -1246,7 +1255,7 @@ impl Default for SwarmConfig {
             contract_retry: false,
             read_on_fix: false,
             kind_prompt: true,
-            degrade_on_stall: false,
+            degrade_on_stall: true,
             split_fat: false,
             incremental_replan: false,
             ask_away: false,
@@ -25568,11 +25577,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         eprintln!("speculative execution: ON (idle nodes race the chokepoint — EXPERIMENTAL)");
         scheduler = scheduler.with_speculation();
     }
-    // GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, default-OFF): at transient-retry exhaustion (a mid-generation
-    // model hang), if the stalled task already wrote its critical owned file, mark it Done(degraded) + relax
-    // dependents instead of fail_descendants killing the capstone. Config-reachable (env > config > default)
-    // so the desktop toggle reaches it; OFF => the exhausted arm is byte-identical. integrate-verify gates the
-    // degraded file honestly downstream.
+    // GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, BAKED ON): at transient-retry exhaustion (a mid-generation
+    // model hang), if the stalled task already wrote its critical owned file — or owns no files at all —
+    // mark it Done(degraded) + relax dependents instead of fail_descendants killing the capstone.
+    // Config-reachable (env > config > default) so the desktop toggle reaches it. A transient fault is not
+    // a verdict on the work: the alternative was to throw the task away and start it again, which on the
+    // owns-nothing sink meant restarting the whole join from zero after a dropped socket.
     let degrade_on_stall_on = std::env::var("GOOSE_SWARM_DEGRADE_ON_STALL")
         .map(|v| {
             matches!(
@@ -25583,7 +25593,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .unwrap_or(cfg.degrade_on_stall);
     if degrade_on_stall_on {
         eprintln!(
-            "degrade-on-stall: ON (a stall-exhausted task that wrote its file is integrated, not failed)"
+            "degrade-on-stall: ON (a stall-exhausted task is integrated or recorded unfinished, never restarted from zero)"
         );
         scheduler = scheduler.with_degrade_on_stall();
     }

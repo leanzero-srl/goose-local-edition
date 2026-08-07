@@ -219,10 +219,28 @@ fn should_degrade_on_stall(
     id: &str,
     owned_files: &[String],
 ) -> bool {
-    enabled
-        && !is_content
-        && !is_test_task(id, owned_files)
-        && critical_owned_files_written(owned_files)
+    if !enabled || is_content || is_test_task(id, owned_files) {
+        return false;
+    }
+    // A task that OWNS NOTHING produces no artifact, so there is no half-written file to promote and
+    // nothing for `critical_owned_files_written` to find — its trailing `any()` over an empty slice is
+    // false, which silently excluded the ONE task that most needs this.
+    //
+    // `integrate-verify` owns nothing. It is the sole join, and MEASURED it holds the entire fleet
+    // alone for 88-98% of the solo time in a 3-node run — half the wall. Its exhaustion re-dispatched
+    // the WHOLE join to another node and restarted it from zero, discarding every command already run
+    // and every fix already written: two of three sink retries in the campaign were `stream decode
+    // error (mid-stream body drop)`, costing 15.3 min on one cell and 44.3 min (29.5% of its wall) on
+    // another, on two DIFFERENT devices. A transient LAN fault is not a verdict on the work, and
+    // killing the longest task in the run because a socket hiccuped buys nothing.
+    //
+    // Degrading one cannot manufacture a false green: `green_blocking_failed` already filters
+    // owns-nothing tasks out of the green veto, so a verification task that could not finish is
+    // recorded as unfinished and gates nothing either way.
+    if owned_files.is_empty() {
+        return true;
+    }
+    critical_owned_files_written(owned_files)
 }
 
 /// A pool device = one LM Link model id with a capacity weight.
@@ -1001,9 +1019,19 @@ impl State {
                             judge_node: self.judge_node.clone().unwrap_or_default(),
                             verdict: "degraded_stall".to_string(),
                             confidence: 1.0,
-                            hint:
+                            hint: if self
+                                .dag
+                                .tasks
+                                .get(tid)
+                                .is_some_and(|n| n.spec.owned_files.is_empty())
+                            {
+                                "stall-exhausted and owns no files; recorded unfinished rather than \
+                                 restarted — it gates no green either way"
+                                    .to_string()
+                            } else {
                                 "stall-exhausted but owned file written; integrate-verify gates it"
-                                    .to_string(),
+                                    .to_string()
+                            },
                             action: "degraded".to_string(),
                             // The scheduler's own stall accounting, not a judge opinion.
                             deterministic: true,
@@ -2722,6 +2750,39 @@ mod salvage_tests {
         let dir = degrade_fixture("off");
         let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
         assert!(!should_degrade_on_stall(false, false, "cli-entry", &[main]));
+    }
+
+    /// THE SINK IS THE TASK THIS EXISTS FOR, AND IT WAS THE ONE TASK EXCLUDED.
+    ///
+    /// `integrate-verify` owns no files, so `critical_owned_files_written` fell through to `any()` over
+    /// an empty slice — false — and the join could never degrade. Measured consequence: a transient
+    /// `stream decode error (mid-stream body drop)` re-dispatched the entire join to another node and
+    /// restarted it from zero, twice, costing 15.3 min on one cell and 44.3 min (29.5% of its wall) on
+    /// another. Killing the longest, most fleet-blocking task in the run because a socket hiccuped
+    /// discards every command already run and every fix already written.
+    #[test]
+    fn a_task_that_owns_nothing_is_recorded_unfinished_rather_than_restarted() {
+        // The sink, the per-module verifies and the e2e shards all own nothing.
+        for id in ["integrate-verify", "verify::store", "verify-e2e::2"] {
+            assert!(
+                should_degrade_on_stall(true, false, id, &[]),
+                "{id} owns nothing: a transient stall must record it unfinished, not restart it"
+            );
+        }
+        // The lever still gates it, and a CONTENT failure still refuses — an owns-nothing task whose
+        // syntax gate rejected something is a real defect, not a dropped socket.
+        assert!(!should_degrade_on_stall(
+            false,
+            false,
+            "integrate-verify",
+            &[]
+        ));
+        assert!(!should_degrade_on_stall(
+            true,
+            true,
+            "integrate-verify",
+            &[]
+        ));
     }
 
     #[test]
