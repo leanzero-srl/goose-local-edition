@@ -185,6 +185,36 @@ def main() -> int:
     if not args.kill:
         print("\nDRY RUN — nothing signalled. Re-run with --kill.")
         return 0
+
+    # THE TIMING RULE IS NOW A GUARD, BECAUSE I JUST FAILED TO EXECUTE IT BY HAND.
+    #
+    # F506 decided: reap only BETWEEN units, never during one, because within-cell mess the engine
+    # made is DATA and cross-cell survival is an ARTEFACT. I then fired it two minutes AFTER the next
+    # cell had already started, because my landing signal — the scratch directory being reset — only
+    # happens when the NEXT unit begins. The rule was right and my trigger was inherently late.
+    #
+    # A tempting simplification is that ppid-1 already encodes the distinction: F502 showed a live
+    # worker's child stays parented to the engine for the whole run. THAT IS NOT SAFE. A worker that
+    # launches `cmd &` — the exact pattern the sweep's own reaper docstring quotes — orphans its
+    # child IMMEDIATELY, while its cell is still running. So a live cell really can produce ppid-1
+    # processes, and the age floor alone would eventually kill one.
+    #
+    # The correct test is provenance, not age: a process that STARTED BEFORE the currently-live
+    # engine cannot belong to it. That makes --kill safe at any moment and removes the timing rule
+    # from my head, which is where it failed.
+    live = [r for r in ps_rows() if "swarm run" in r["cmd"] and "/goose" in r["cmd"]]
+    if live:
+        engine_age = max(etime_minutes(r["etime"]) for r in live)
+        by_pid = {r["pid"]: r for r in ps_rows()}
+        younger = [p for p in doomed
+                   if p in by_pid and etime_minutes(by_pid[p]["etime"]) < engine_age]
+        if younger:
+            print(f"\n🔴 REFUSING — {len(younger)} target(s) are YOUNGER than the live engine "
+                  f"({engine_age:.1f}m old), so they may belong to the run in flight: {younger}")
+            print("   Within-cell mess the engine made is DATA. Re-run once this cell has landed.")
+            return 3
+        print(f"\n(an engine is live, {engine_age:.1f}m old; every target predates it — cross-cell, "
+              f"safe to clear)")
     killed = sweep.reap_run_orphans(orphan_age_secs=args.orphan_age_secs)
     print(f"\nkilled {len(killed)} process(es): {sorted(killed)}")
     return 0
