@@ -55,8 +55,6 @@ def archive_log(cell: str) -> None:
         return
     mt = int(os.path.getmtime(src))
     dest = os.path.join(LOG_ARCHIVE, f"{cell}-{mt}.jsonl")
-    if os.path.exists(dest):
-        return
     try:
         body = open(src, errors="replace").read()
     except OSError:
@@ -64,8 +62,55 @@ def archive_log(cell: str) -> None:
     if '"run_finished"' not in body:
         return
     os.makedirs(LOG_ARCHIVE, exist_ok=True)
-    with open(dest, "w") as fh:
-        fh.write(body)
+    if not os.path.exists(dest):
+        with open(dest, "w") as fh:
+            fh.write(body)
+    # Deliberately OUTSIDE the "log already snapshotted" guard. The first version returned early when
+    # the log copy existed, so on every cell already archived — which was all of them — the activity
+    # digests were silently skipped and the recovery control read 0%. Two artefacts of one run get two
+    # independent existence checks, or adding the second one never takes effect for the runs that
+    # already have the first.
+    archive_activity(cell, mt)
+
+
+def archive_activity(cell: str, log_mtime: int) -> None:
+    """THE ONLY SURVIVING RECORD OF THE TASKS THE EVENT LOG CANNOT SEE.
+
+    A judge-terminated `task_completed` carries an empty `tool_calls` and a null `session_id`
+    (F499/L305) — 5% to 30% of a cell's tasks, and systematically the hard ones. Their work is not
+    gone, it is in `.swarm/activity/<task_id>.json`, which the dispatcher refreshes as the worker
+    streams and which therefore survives an abort. MEASURED on baseline-n3-r0: the event log reports
+    ZERO tool calls for `integrate-verify`; its digest holds 9, with the command text AND the output
+    of each. `test-meridian-edge` — the 80-minute task that is that cell's whole critical path —
+    shows 49,335 thinking characters against the join's 4,963, and three consecutive `write` calls to
+    the same owned file.
+
+    The digest is RICHER than the event record, which carries only name/is_mcp/ok. It is also per
+    TASK rather than per attempt and is overwritten by each new attempt, so it describes the LAST
+    attempt only — worth knowing before treating it as a full history.
+
+    And the sweep wipes the cell directory when it reuses the slot, so none of this outlives the next
+    unit unless something copies it. That is the whole reason this function exists: L293 said a bench
+    that reuses a directory overwrites its own history, and the run log was only the half of that
+    history I had already noticed.
+    """
+    src = os.path.join(RUNS, cell, ".swarm", "activity")
+    if not os.path.isdir(src):
+        return
+    dest = os.path.join(LOG_ARCHIVE, f"{cell}-{log_mtime}-activity")
+    if os.path.isdir(dest):
+        return
+    os.makedirs(dest, exist_ok=True)
+    for f in os.listdir(src):
+        if not f.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(src, f), errors="replace") as fh:
+                body = fh.read()
+            with open(os.path.join(dest, f), "w") as fh:
+                fh.write(body)
+        except OSError:
+            continue  # one unreadable digest must not cost the other forty-five
 
 
 def log_for(cell: str, result_mtime: float):
