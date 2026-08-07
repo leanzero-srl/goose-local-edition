@@ -3715,6 +3715,26 @@ fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
                 continue;
             }
             s["description"] = serde_json::json!(thin);
+            // THE JOIN OWNS NOTHING — and until now the rewrite forgot to say so.
+            //
+            // The `verify::<M>` tasks created a few lines above set `"files": []` explicitly, because a
+            // read-only verification task owns no deliverable. The SINK is the same kind of task after
+            // this rewrite, but whatever the architect happened to put in its `files` survived — and
+            // `thin_integrate_verify_spec` then CONTRADICTS that field, telling it to assemble, run,
+            // read the shards' reports and repair, never to author a file of its own.
+            //
+            // A leftover deliverable is not cosmetic; it arms gates written for implementers. MEASURED
+            // across six cells the architect gave the sink `README.md` once and
+            // `tests/test_integration.py` once — a third of the time — and in the test-file case the
+            // over-read gate armed (`owns_code` is true for a test, false for a doc) and judged the join
+            // OVER_READING -> RE_DISPATCH at 7.2 minutes: a full restart of the join, which is the exact
+            // cost this engine keeps paying for transient faults (F473: 15-44 min per restart).
+            //
+            // It also silently disabled the salvage paths. `degrade_on_stall`'s owns-nothing branch and
+            // the judge's owns-nothing Accept branch both gate on `owned_files.is_empty()`, so in
+            // precisely the cells where the sink was eligible for a re-dispatch, the two mechanisms
+            // meant to prevent one were inert.
+            s["files"] = serde_json::json!([]);
             let mut new_deps: Vec<serde_json::Value> = Vec::new();
             if let Some(deps) = s.get("depends_on").and_then(|d| d.as_array()) {
                 for d in deps {
@@ -7863,6 +7883,40 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// The END-TO-END run is sharded by COMMAND across the fleet. fan_verify shards by MODULE, which left
     /// the whole-program check as ONE task on ONE node — MEASURED h1-treat-4: 26.5 min, 47% of ALL
     /// node-busy time, while two nodes idled. Checking `get` says nothing about checking `compact`.
+    #[test]
+    fn the_join_owns_nothing_after_the_split_even_if_the_architect_gave_it_a_file() {
+        // The architect DOES hand the sink a deliverable — measured across six cells it gave it
+        // `README.md` once and `tests/test_integration.py` once. Whatever it assigned, the join is a
+        // read-only assemble/verify/repair step after the rewrite, and an owned file there arms gates
+        // written for implementers: a TEST file makes `owns_code` true and the over-read gate judged a
+        // real join OVER_READING -> RE_DISPATCH at 7.2 min, restarting the whole thing.
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"store","depends_on":[],"files":["kv/store.py"]},
+                {"id":"cli","depends_on":[],"files":["kv/cli.py"]},
+                {"id":"integrate-verify","depends_on":["store","cli"],"files":["tests/test_integration.py"]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
+        let sink = fv_task(&plan, "integrate-verify").expect("the join keeps its id");
+        assert_eq!(
+            sink.get("files")
+                .and_then(|f| f.as_array())
+                .map(|a| a.len()),
+            Some(0),
+            "the rewritten join must own nothing, like the verify:: tasks beside it: {sink}"
+        );
+        // And the per-module verifies it created own nothing either — the property this mirrors.
+        for m in ["store", "cli"] {
+            let v = fv_task(&plan, &format!("verify::{m}")).unwrap();
+            assert_eq!(
+                v.get("files").and_then(|f| f.as_array()).map(|a| a.len()),
+                Some(0)
+            );
+        }
+    }
+
     #[test]
     fn the_end_to_end_run_is_sharded_across_the_fleet() {
         let mut plan: serde_json::Value = serde_json::from_str(
