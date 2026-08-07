@@ -992,22 +992,7 @@ impl State {
                         + self.omni_aborts.get(tid).copied().unwrap_or(0);
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
-                    // A task that OWNS NOTHING CANNOT RESUME. Every re-dispatch redoes an unbounded
-                    // amount of work from zero — for `integrate-verify` that is the entire join, every
-                    // command re-run and every fix re-derived, while the whole fleet waits on it.
-                    //
-                    // One retry absorbs a genuine early blip. Past that, each further restart pays the
-                    // full cost again for a fault that says nothing about the work: MEASURED, two of
-                    // three sink retries were `stream decode error (mid-stream body drop)` on two
-                    // DIFFERENT devices, costing 916s and 1860s of pure redo. Degrading instead records
-                    // the check as unfinished, which gates nothing (`green_blocking_failed` already
-                    // excludes owns-nothing from the green veto) and frees the fleet.
-                    let cap = if n.spec.owned_files.is_empty() {
-                        self.max_attempts.min(2)
-                    } else {
-                        self.max_attempts
-                    };
-                    n.attempts.saturating_sub(judge_kills) >= cap
+                    n.attempts.saturating_sub(judge_kills) >= self.max_attempts
                 };
                 if exhausted {
                     // DEGRADE-ON-STALL (#134/#132): a transient exhaustion is usually a mid-generation model
