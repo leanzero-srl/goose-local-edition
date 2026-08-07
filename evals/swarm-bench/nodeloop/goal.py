@@ -294,7 +294,57 @@ def main() -> int:
         if dq > 0 and abs(dq) <= spread:
             print(f"     ⚠ the quality gap ({dq:+.4f}) is INSIDE the multi-node spread "
                   f"({spread:.4f}) — a DIRECTION, not a proven effect")
+
+    print_prediction_checks(rows)
     return 0
+
+
+def print_prediction_checks(rows: list[dict]) -> None:
+    """Run the registered prediction checks HERE, because this is the file the standing instruction
+    names.
+
+    Mihai's rule is "run goal.py every time a cell lands". A separate verdicts.py that I have to
+    remember is a check that will be skipped on the night it matters — the same argument that put the
+    hung-child scan into reap.py's default output rather than behind a flag (L309). Compact by
+    design: one line per cell, with any FAIL expanded in full, so a green board stays readable and a
+    red one cannot hide.
+    """
+    try:
+        import verdicts
+    except Exception as exc:  # noqa: BLE001 — a broken checker must be visible, never silently absent
+        print(f"\n⚠ prediction checks unavailable: {exc}")
+        return
+    print("\n" + "=" * 78)
+    print("PREDICTION CHECKS (INERT is not a pass; a cell predating a fix reads INERT, not FAIL)")
+    print("=" * 78)
+    seen = set()
+    for r in sorted(rows, key=lambda r: r["mtime"]):
+        log = log_for(r["cell"], r["mtime"])
+        if not log or log in seen:
+            continue
+        seen.add(log)
+        try:
+            ev = [json.loads(l) for l in open(log) if l.strip()]
+            a = verdicts.occ.analyse(log)
+            checks = [
+                ("F491 observed hint kept", verdicts.f491_hint_was_worth_keeping(ev, a)),
+                ("F492 judge attempts timed", verdicts.f492_judge_attempts_report_time(ev, a)),
+                ("F499 unmeasured == judged", verdicts.f499_unmeasured_is_the_judge_set(ev, a)),
+                ("F500 invisible recovered", verdicts.f500_every_invisible_task_recovered(ev, a, log)),
+                ("F501 rewrite not a pattern", verdicts.f501_rewrite_loop_is_not_a_pattern(ev, a)),
+                ("F497 plan is the ceiling", verdicts.f497_plan_is_still_the_ceiling(ev, a)),
+            ]
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {r['cell']:<18} ⚠ checks failed to run: {exc}")
+            continue
+        tally = {}
+        for _, (v, _w) in checks:
+            tally[v] = tally.get(v, 0) + 1
+        summary = "  ".join(f"{k}×{n}" for k, n in sorted(tally.items()))
+        print(f"  {r['cell']:<18} {r['sha']:<12} {summary}")
+        for name, (v, why) in checks:
+            if v == verdicts.FAIL:
+                print(f"      🔴 {name}: {why}")
 
 
 if __name__ == "__main__":
