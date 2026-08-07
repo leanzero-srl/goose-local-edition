@@ -180,6 +180,64 @@ def arm_e2e_oracle(ev):
     return "OK", f"{shards} e2e shard(s) ran"
 
 
+def arm_spec_sized_plan(ev):
+    """Can the plan this baseline emitted actually SHRINK?
+
+    The arm's registered threshold is <=5 module subtasks (F457/F458). If the baseline ALREADY emits
+    <=5, a spec-sized clause has nothing to remove and the cell would spend a fleet unit reproducing
+    the baseline — the classic INERT result that says nothing and reads like a null.
+
+    Counted from `plan_loaded.tasks[]` with the scaffolding excluded, because `verify::*`,
+    `verify-e2e::*`, `test-*` and `integrate-verify` are added by the engine AFTER the architect
+    answers the count clause, so they are not what the clause controls and folding them in would
+    inflate every reading. This is the same nesting the desc_sha probe got wrong (L264): the tasks
+    live INSIDE plan_loaded, not beside it.
+    """
+    pl = [e for e in ev if e.get("event") == "plan_loaded"]
+    if not pl:
+        return "UNKNOWN", "no plan_loaded"
+    tasks = pl[-1].get("tasks") or []
+    if not tasks:
+        return "UNKNOWN", "plan_loaded carries no tasks[] — cannot count modules"
+    mods = [str(t.get("id", "")) for t in tasks]
+    mods = [m for m in mods
+            if not m.startswith(("verify::", "verify-e2e::", "test-")) and m != "integrate-verify"]
+    if len(mods) <= 5:
+        return "BLOCKED", (f"baseline already emits {len(mods)} module subtasks (<=5), so the "
+                           f"spec-sized clause has nothing to remove and the cell would reproduce "
+                           f"the baseline")
+    return "OK", f"baseline emits {len(mods)} modules (>5): the clause has room to bind"
+
+
+def arm_e2e_oracle_off(ev):
+    """ABLATION of a now-BAKED lever, so the precondition inverts.
+
+    Turning the oracle OFF can only show something if the oracle was ON in the baseline. A baseline
+    that already ran without it reproduces itself and answers nothing — and after F455 baked it ON,
+    "was it on" is a real question about which binary the cell ran, not a formality.
+    """
+    # DISTINCT shards, not dispatches: a retried shard dispatches twice and would be double-counted,
+    # which read "5 shards" on a cell that has four. The verdict was right and the sentence was not,
+    # and a wrong sentence in a gate is what a later claim gets built on.
+    shards = len({str(e.get("task_id", "")) for e in ev
+                  if e.get("event") == "task_dispatched"
+                  and str(e.get("task_id", "")).startswith("verify-e2e::")})
+    if shards == 0:
+        return "BLOCKED", "no verify-e2e:: shards ran — nothing to un-source"
+    lv = [e for e in ev if e.get("event") == "levers_resolved"]
+    if not lv:
+        return "UNKNOWN", "no levers_resolved — cannot tell whether the oracle was on to ablate"
+    levers = lv[-1].get("levers")
+    if not isinstance(levers, dict):
+        return "UNKNOWN", "levers_resolved carries no nested `levers` dict (L264)"
+    if "e2e_oracle" not in levers:
+        return "UNKNOWN", "this binary predates the e2e_oracle lever — absent is not False (L264)"
+    if not levers["e2e_oracle"]:
+        return "BLOCKED", (f"the oracle was already OFF in this baseline ({shards} shards), so the "
+                           f"ablation reproduces it — this baseline predates e620bf0b6")
+    return "OK", f"oracle ON with {shards} shard(s): the ablation has something to remove"
+
+
 def arm_spiral_thinking(ev):
     """#134's early spiral trip: BUILT (judge.rs:359), default-OFF (`spiral_thinking_chars: 0`).
 
@@ -274,6 +332,8 @@ ARMS = {
     "detail_budget": arm_detail_budget,
     "complete_parallel": arm_complete_parallel,
     "e2e_oracle": arm_e2e_oracle,
+    "e2e_oracle_off": arm_e2e_oracle_off,
+    "spec_sized_plan": arm_spec_sized_plan,
     "retarget_off": arm_retarget_off,
     "sink_review": arm_sink_review,
     "doc_fetch": arm_doc_fetch,
