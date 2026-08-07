@@ -8082,6 +8082,16 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // pinning the literal here made a correctness fix look like a parity regression. The value is
         // now guarded where it belongs — `complete_cap_fits_its_own_rounds` ties it to fix_cap_secs and
         // complete_rounds — so this asserts the property and defers the number.
+        // The sink's budget has to be BAKED *and* READ. It was baked at 1800 while the code using it
+        // read `GOOSE_SWARM_SINK_CAP_SECS` from the environment only — no config fallback — so every run
+        // without that var had NO cap on the join. The desktop is precisely that run: LaunchServices
+        // hands the app its own environment, so a desktop launch cannot set it. `worker_timeout` does not
+        // cover the gap, because it is a NO-PROGRESS window and a looping join produces output the whole
+        // time. Assert the property, not the number, exactly as `complete_cap_secs` does above.
+        assert!(
+            d.sink_cap_secs > 0,
+            "0/absent means an UNBOUNDED join on any surface that cannot set env"
+        );
         assert!(
             d.complete_cap_secs > 0,
             "0/absent means an UNBOUNDED fix loop"
@@ -12451,9 +12461,18 @@ impl GooseAgentDispatcher {
         // already has; the effective one is computed per run from the tree and is the only number that
         // says what this sink was actually cut off at.
         let sink_cap_plan = if activity_key == Some("integrate-verify") {
+            // ENV > CONFIG, like every other lever. This read was env-ONLY while `ref_bytes` three lines
+            // below already fell back to `load_config()` — so `sink_cap_secs`, baked at 1800 in
+            // `Default for SwarmConfig` and documented as the join's budget, was never read by the code
+            // that uses it. Any run without `GOOSE_SWARM_SINK_CAP_SECS` in its environment had NO sink
+            // cap at all, and the desktop is exactly that run: LaunchServices hands the app its own
+            // environment, so a desktop launch cannot set the var. A looping join there was bounded by
+            // nothing — worker_timeout is a NO-PROGRESS window, and a join re-running the same test
+            // blocks is producing output the whole time, so it never trips.
             std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
+                .or(Some(load_config().sink_cap_secs))
                 .filter(|&s| s > 0)
                 .map(|base| {
                     // The base is the budget for a reference-sized tree; the join's real work tracks the tree
