@@ -788,6 +788,96 @@ async fn judge_skips_rejudging_owns_nothing_sink() {
     );
 }
 
+/// SPEED-PILLAR INSTRUMENT: a judge-terminated attempt must report the time it really ran.
+///
+/// Every emit inside `apply_judge_outcome` — accept, kill, salvage, terminal-fail — hard-coded
+/// `elapsed_ms: 0` while the elapsed time sat in scope one screen above. `finish()` then sums
+/// `per_device.busy_ms += a.elapsed_ms` across the whole attempt history, so a judge kill (per F489 the
+/// commonest restart in the engine) contributed ZERO node-seconds to its device, and a task ending in a
+/// judge accept reported zero for itself. MEASURED: a task that ran 80.2 minutes across five attempts
+/// was recorded as taking no time at all on three of them. `busy_ms` is the engine's own answer to how
+/// busy each node was — the question the entire node-scaling goal turns on.
+///
+/// The elapsed floor comes from a judge that DELIBERATES for 50 ms, not from the worker's own delay.
+/// `min_age_secs: 0` lets the judge fire on the dispatch wake, so an attempt is often barely a
+/// millisecond old when it is inspected — asserting on the worker's sleep would race the scheduler and
+/// flake. The clock starts at dispatch, so a judge that takes 50 ms to answer guarantees at least that
+/// much elapsed by the time the verdict is applied, whatever the loop does around it.
+#[tokio::test]
+async fn a_judge_killed_attempt_reports_the_time_it_really_ran() {
+    /// Kills its target like `KillJudge`, but takes measurable wall-clock to say so.
+    struct SlowKillJudge {
+        target: String,
+    }
+    #[async_trait]
+    impl Judge for SlowKillJudge {
+        async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if req.task_id == self.target {
+                JudgeOutcome {
+                    verdict: Verdict::Looping,
+                    confidence: 1.0,
+                    hint: "STOP looping and WRITE the file now".to_string(),
+                    proposed_split: None,
+                    deterministic: false,
+                }
+            } else {
+                JudgeOutcome::ok()
+            }
+        }
+    }
+
+    let runs = Arc::new(Mutex::new(HashMap::new()));
+    let hints = Arc::new(Mutex::new(Vec::new()));
+    let disp = Arc::new(JudgeTestDispatcher {
+        runs: runs.clone(),
+        hints: hints.clone(),
+        target: "stuck".to_string(),
+        delay: Duration::from_millis(40),
+        slow_all: false,
+    });
+    let dag = Dag::from_specs(vec![spec("stuck", &[], &["a.py"])]).unwrap();
+    let judge = Arc::new(SlowKillJudge {
+        target: "stuck".to_string(),
+    });
+    let cfg = JudgeConfig {
+        min_age_secs: 0,
+        intervene_confidence: 0.5,
+        max_interventions_per_task: 1,
+        ..JudgeConfig::default()
+    };
+    let sched =
+        Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+
+    let stuck = report
+        .tasks
+        .iter()
+        .find(|t| t.task_id == "stuck")
+        .expect("the killed task is in the report");
+    let killed: Vec<_> = stuck
+        .attempt_history
+        .iter()
+        .filter(|a| a.outcome == "judge_killed")
+        .collect();
+    assert!(
+        !killed.is_empty(),
+        "the scenario must actually produce a judge kill, or this asserts nothing; history={:?}",
+        stuck.attempt_history
+    );
+    for a in &killed {
+        assert!(
+            a.elapsed_ms > 0,
+            "a judge-killed attempt ran for real time; reporting 0 ms erases it from per_device.busy_ms"
+        );
+    }
+    let busy: u64 = report.per_device.values().map(|d| d.busy_ms).sum();
+    assert!(
+        busy > 0,
+        "the fleet was busy; per_device.busy_ms must not sum to zero"
+    );
+}
+
 /// With the per-task intervention cap at 0, the judge may flag but must never kill — the worker runs
 /// to completion untouched. Guards against a weak judge looping a task forever.
 #[tokio::test]
