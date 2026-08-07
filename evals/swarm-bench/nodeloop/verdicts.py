@@ -133,6 +133,60 @@ def f501_rewrite_loop_is_not_a_pattern(ev, a) -> tuple[str, str]:
                   (f" ({bad[0]['task']})" if bad else "") + " — still an outlier, not a pattern")
 
 
+def f470_owns_nothing_sink_can_be_accepted(ev, a) -> tuple[str, str]:
+    """The owns-nothing Accept branch: a join that has acted and gone quiet should be ACCEPTED rather
+    than left to a timer. FALSIFIER: the sink owns nothing, was judged, and the only verdicts it ever
+    drew were non-acting — meaning the branch is still unreachable in practice.
+
+    F486 is why the first gate is the sink's own `files`: the planner hands it a deliberable roughly a
+    third of the time, and in those cells every owns-nothing fix is INERT BY CONSTRUCTION. Reporting
+    that as a pass would be reporting a fix that could not have run.
+    """
+    pl = [e for e in ev if e.get("event") == "plan_loaded"]
+    if not pl:
+        return INERT, "no plan_loaded"
+    sink = next((t for t in (pl[-1].get("tasks") or []) if t.get("id") == "integrate-verify"), None)
+    if sink is None:
+        return INERT, "no integrate-verify in this plan"
+    owned = sink.get("files") or []
+    if owned:
+        return INERT, f"the planner gave the sink {owned} — every owns-nothing branch is disarmed (F486)"
+    verdicts_ = [e for e in ev if e.get("event") == "judge_verdict"
+                 and e.get("task_id") == "integrate-verify"]
+    if not verdicts_:
+        return INERT, "the sink owns nothing but was never judged"
+    if any(v.get("action") == "accepted" for v in verdicts_):
+        return PASS, f"owns-nothing sink ACCEPTED after {len(verdicts_)} verdict(s)"
+    seen = ", ".join(sorted({str(v.get("verdict")) for v in verdicts_}))
+    return INERT, (f"sink owns nothing and drew {len(verdicts_)} verdict(s) ({seen}) but never went "
+                   f"quiet long enough to reach the branch")
+
+
+def f474_a_dropped_body_costs_less_the_second_time(ev, a) -> tuple[str, str]:
+    """After a mid-stream body drop the surviving attempt should be FASTER, because the hint tells it
+    the earlier work is still on disk. FALSIFIER: the post-drop attempt takes longer than the one it
+    replaced."""
+    drops = [e for e in ev if e.get("event") == "task_retry"
+             and "mid-stream body drop" in str(e.get("error", ""))]
+    if not drops:
+        return INERT, "no mid-stream body drop in this cell"
+    spans: dict[str, list] = {}
+    for s in sorted(a.get("_spans") or [], key=lambda s: s["start"]):
+        spans.setdefault(s["task"], []).append(s["end"] - s["start"])
+    out = []
+    for d in drops:
+        t = str(d.get("task_id"))
+        ds = spans.get(t) or []
+        if len(ds) < 2:
+            continue
+        out.append((t, ds[-2] / 60, ds[-1] / 60))
+    if not out:
+        return INERT, "a drop occurred but the replaced attempt has no measurable span"
+    worse = [o for o in out if o[2] > o[1]]
+    detail = "; ".join(f"{t}: {b:.1f}m → {c:.1f}m" for t, b, c in out)
+    return (FAIL, f"the post-drop attempt was SLOWER — {detail}") if worse else (PASS, detail)
+
+
 def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
     """maxuse above 4.0 is F497's registered bar for "the DAG got wider". Reported for EVERY cell
     because it is the campaign's headline number, not only when it moves."""
@@ -154,6 +208,8 @@ def report(log_path: str, label: str) -> int:
         ("F499 unmeasured == judged", f499_unmeasured_is_the_judge_set(ev, a)),
         ("F500 invisible recovered", f500_every_invisible_task_recovered(ev, a, log_path)),
         ("F501 rewrite not a pattern", f501_rewrite_loop_is_not_a_pattern(ev, a)),
+        ("F470 owns-nothing accepted", f470_owns_nothing_sink_can_be_accepted(ev, a)),
+        ("F474 post-drop is faster", f474_a_dropped_body_costs_less_the_second_time(ev, a)),
         ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
     ]
     worst = 0
