@@ -239,6 +239,24 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
     })
 }
 
+/// Is an UNACTED judge verdict still worth carrying to the task's next attempt?
+///
+/// `apply_judge_outcome` can only re-dispatch while the per-task intervention cap holds, and can only
+/// terminal-fail on a DETERMINISTIC verdict. Once a task has spent its cap, a model verdict reaches no
+/// acting branch at all — it is logged as `observed` and dropped. MEASURED: one test task drew thirteen
+/// consecutive cap-exhausted verdicts naming a literal syntax error (`from Non` for `from None`) and a
+/// wrong mock target, roughly one a minute; every one was discarded, and the attempt that eventually
+/// replaced it was started by `worker_timeout` — a timer — carrying the stale hint from its last kill.
+///
+/// Keeping the hint changes no control flow. It is the difference between a timer replacing a worker
+/// blind and replacing it with the run's freshest diagnosis in hand.
+fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -> bool {
+    // `still_live` matters: a verdict on an attempt that has already ended describes a worker whose
+    // replacement is a different question, and `is_problem()` excludes Ok/Accept, whose hint is empty
+    // anyway.
+    still_live && verdict.is_problem() && !hint.trim().is_empty()
+}
+
 fn should_degrade_on_stall(
     enabled: bool,
     is_content: bool,
@@ -1759,6 +1777,18 @@ impl State {
             return true;
         }
         if !redispatch {
+            // A problem the judge SAW but could not act on is still the freshest and most specific
+            // thing the run knows about this task. It used to be discarded: `prior_hints` is written
+            // only on the re_dispatch path below, so once the intervention cap is spent every further
+            // verdict is pure logging. MEASURED: a test task drew thirteen consecutive cap-exhausted
+            // verdicts naming a literal syntax error (`from Non` for `from None`) and a wrong mock
+            // target, all `observed`, and the attempt that replaced it — started by worker_timeout,
+            // a timer — carried the stale hint from its last kill instead. Storing here kills, fails
+            // and re-queues nothing; it only makes the NEXT dispatch of this task an informed one,
+            // whatever ends the current attempt.
+            if observed_hint_worth_keeping(still_live, outcome.verdict, &outcome.hint) {
+                self.prior_hints.insert(tid.to_string(), outcome.hint);
+            }
             return false;
         }
         if let Some(h) = self.abort_handles.remove(tid) {
@@ -2825,6 +2855,47 @@ mod salvage_tests {
     /// restarted it from zero, twice, costing 15.3 min on one cell and 44.3 min (29.5% of its wall) on
     /// another. Killing the longest, most fleet-blocking task in the run because a socket hiccuped
     /// discards every command already run and every fix already written.
+    /// A supervisor that has run out of levers has not run out of information.
+    ///
+    /// The cap-exhausted verdicts that motivated this were `spec_drift` and `broken_code` — the two
+    /// carrying the actual diagnosis — interleaved with `ok` verdicts whose hint is empty. Keeping the
+    /// empty one would OVERWRITE the useful hint with nothing, which is worse than never keeping any,
+    /// so the empty-hint case is asserted explicitly rather than left to the `is_problem()` filter.
+    #[test]
+    fn a_verdict_the_judge_could_not_act_on_still_keeps_its_diagnosis() {
+        let real = "SyntaxError: `from Non` should be `from None`";
+        for v in [
+            Verdict::BrokenCode,
+            Verdict::SpecDrift,
+            Verdict::OverReading,
+        ] {
+            assert!(
+                observed_hint_worth_keeping(true, v, real),
+                "{v:?} named a real defect the judge could not act on — the next attempt must hear it"
+            );
+        }
+        // An `ok` verdict must never clobber a kept diagnosis, whether or not it carries text.
+        assert!(!observed_hint_worth_keeping(true, Verdict::Ok, ""));
+        assert!(!observed_hint_worth_keeping(
+            true,
+            Verdict::Ok,
+            "looks fine"
+        ));
+        assert!(!observed_hint_worth_keeping(true, Verdict::Accept, "done"));
+        // Nor may a problem verdict with nothing to say replace one that had something.
+        assert!(!observed_hint_worth_keeping(
+            true,
+            Verdict::BrokenCode,
+            "   "
+        ));
+        // A verdict about an attempt that has already ended is not about the worker being replaced.
+        assert!(!observed_hint_worth_keeping(
+            false,
+            Verdict::BrokenCode,
+            real
+        ));
+    }
+
     #[test]
     fn a_task_that_owns_nothing_is_recorded_unfinished_rather_than_restarted() {
         // The sink, the per-module verifies and the e2e shards all own nothing.
