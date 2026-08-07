@@ -12461,14 +12461,16 @@ impl GooseAgentDispatcher {
         // already has; the effective one is computed per run from the tree and is the only number that
         // says what this sink was actually cut off at.
         let sink_cap_plan = if activity_key == Some("integrate-verify") {
-            // ENV > CONFIG, like every other lever. This read was env-ONLY while `ref_bytes` three lines
-            // below already fell back to `load_config()` — so `sink_cap_secs`, baked at 1800 in
-            // `Default for SwarmConfig` and documented as the join's budget, was never read by the code
-            // that uses it. Any run without `GOOSE_SWARM_SINK_CAP_SECS` in its environment had NO sink
-            // cap at all, and the desktop is exactly that run: LaunchServices hands the app its own
-            // environment, so a desktop launch cannot set the var. A looping join there was bounded by
-            // nothing — worker_timeout is a NO-PROGRESS window, and a join re-running the same test
-            // blocks is producing output the whole time, so it never trips.
+            // ENV > CONFIG at the read site, like every other lever — a SECOND, independent path to the
+            // same value, not a repair.
+            //
+            // ⚠️ CORRECTION, recorded because the claim went out in a commit message before it was
+            // checked: I added this believing the read was env-ONLY and therefore that a desktop run had
+            // no sink ceiling at all. THAT WAS FALSE. `run_swarm` already bridges the config value into
+            // `GOOSE_SWARM_SINK_CAP_SECS` when the env is unset, and that bridge's own comment says it is
+            // "the ONLY thing that carries the baked ceiling to a desktop run". The ceiling was always
+            // there. What this line actually buys is that the read no longer DEPENDS on the bridge having
+            // run first — an ordering coupling worth removing on its own, and nothing more than that.
             std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
