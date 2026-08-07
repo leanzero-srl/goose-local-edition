@@ -117,6 +117,67 @@ def slot_count(pool: list) -> int | None:
     return sum(max(int(d.get("weight") or 1), 1) for d in pool)
 
 
+REWRITE_LOOP_REPEATS = 2      # registered on the 118-task distribution: median 0, p90 0, max 7
+THINKING_OUTLIER_MULTIPLE = 3.0   # x the cell's OWN p90, so a quiet cell and a chatty one are judged alike
+
+
+def digest_pathologies(log_path) -> dict:
+    """Detect the two worker pathologies the event stream cannot see, from the archived digests.
+
+    Mihai, 2026-08-07: "see if you can add instruments for these issues as well, don't go over bad
+    behaviors, taking note and ignoring." That is the correct criticism of F501 and F502 — both were
+    measured carefully, written up, and left with no detector, so the next occurrence would need me to
+    go looking again by hand.
+
+    REWRITE LOOP: a worker writing the same path over and over without running it. `test-meridian-edge`
+    did it 8 times in 9 tool calls while the judge diagnosed the real bug thirteen times and the engine
+    discarded every diagnosis. It cost 80.2 minutes and WAS its cell's entire critical path.
+
+    THINKING OUTLIER: 49,335 thinking characters against a 118-task median of 2,268 and p90 of 9,431.
+
+    THE THRESHOLDS ARE REGISTERED ON THE EXISTING DISTRIBUTION AND FIXED HERE so they cannot be nudged
+    after seeing a new cell. Repeats >= 2 sits far outside a distribution whose median AND p90 are both
+    zero; the thinking bar is a MULTIPLE OF EACH CELL'S OWN p90 rather than an absolute, because a cell
+    of hard tasks would otherwise flag wholesale. A per-cell relative bar also means this cannot be
+    gamed by the engine simply getting chattier.
+
+    Reads the digests archived beside the log (`<log>-activity/`, written by goal.py). Returns empty
+    when they are absent — which is a real answer, not a pass, and callers must say so.
+    """
+    import pathlib
+    p = pathlib.Path(log_path)
+    act = p.parent / (p.name[:-6] + "-activity") if p.name.endswith(".jsonl") else None
+    if act is None or not act.is_dir():
+        return {"digests": 0, "rewrite_loops": [], "thinking_outliers": [], "thinking_p90": None}
+    rows = []
+    for f in sorted(act.glob("*.json")):
+        try:
+            j = json.loads(f.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        calls = j.get("calls") or []
+        w = [c.get("summary") for c in calls if c.get("name") == "write"]
+        rows.append({"task": f.stem, "thinking": int(j.get("thinking_chars") or 0),
+                     "writes": len(w), "repeats": len(w) - len(set(w))})
+    if not rows:
+        return {"digests": 0, "rewrite_loops": [], "thinking_outliers": [], "thinking_p90": None}
+    th = sorted(r["thinking"] for r in rows)
+    p90 = th[min(int(0.9 * len(th)), len(th) - 1)]
+    bar = p90 * THINKING_OUTLIER_MULTIPLE
+    return {
+        "digests": len(rows),
+        "thinking_p90": p90,
+        "rewrite_loops": [
+            {"task": r["task"], "writes": r["writes"], "repeats": r["repeats"]}
+            for r in sorted(rows, key=lambda r: -r["repeats"]) if r["repeats"] >= REWRITE_LOOP_REPEATS
+        ],
+        "thinking_outliers": [
+            {"task": r["task"], "thinking": r["thinking"], "over_p90": round(r["thinking"] / p90, 1) if p90 else None}
+            for r in sorted(rows, key=lambda r: -r["thinking"]) if p90 and r["thinking"] >= bar
+        ],
+    }
+
+
 def analyse(path) -> dict:
     events = read_events(path)
     if not events:
@@ -562,6 +623,7 @@ def analyse(path) -> dict:
         # dispatched once and never completed. One definition, exported, or the two drift.
         "unfinished_task_ids": unfinished,
         "unmeasured_tasks": unmeasured,
+        **{"pathologies": digest_pathologies(path)},
     }
 
 
