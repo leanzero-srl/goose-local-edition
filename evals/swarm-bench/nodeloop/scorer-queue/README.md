@@ -118,6 +118,20 @@ triggers the ladder. Their words: *"That is backwards."*
 85 floor while `agreement_conf` did not** — penalties 10/19/13/10, raw conf 83/69/80/83 rising to
 93/88/93/93 on the 1-node footing. Each such round costs **25.0 min (F610, 6.73 SE)**.
 
+**🔴 DO NOT LAND THIS YET — MEASURED 2026-08-08 (F645), AND THE AUTHOR'S HOLD IS UNMEETABLE ON THIS CORPUS.**
+The author's own words are `Measure first`, and the risk they named is `the ladder may be buying the
+quality and a silent flip here could spend that`. F612 discharged the MECHANISM half. The OUTCOME half
+cannot be discharged at all: of 11 real rows only **5 carry a known `ladder` value**, and in those five
+**all 3 laddering runs are 3-node and both non-laddering runs are 1-node** — ladder and arm are
+PERFECTLY COLLINEAR, so the within-arm comparison has no data in either cell. That is no answer, not a
+weak one, and it is what F607/F612 predict once ladders are pool-bought.
+
+⚠️ A first pass appeared to give a within-arm gap of +0.1463 (n=3 vs 3); the second group was entirely
+rows whose `ladder` field is **None** — a could-not-look scored as a negative. Invalid, and withdrawn.
+
+✅ It becomes answerable at no extra cost: `tierlog.py` now records `ladder` on every new row, so each
+future run adds a gradable point. The blocker is that 6 of 11 existing rows predate the field.
+
 - **Denominator is 5.** A per-round mechanism check against the author's stated criterion, not a mean.
 - **Does NOT license flipping anything by itself** — F611 measured the quality side of this trade as
   needing **183 cells per bucket**. This explains why the tax is paid, not that paying it is wrong.
