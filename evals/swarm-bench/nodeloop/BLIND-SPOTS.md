@@ -18,7 +18,10 @@ Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 - **scouts_planned (orig)** (21x) — SPEED — never mentioned
 - ~~**sink_plan**~~ **READ (F636)** — cap scales with tree_bytes (1.13x) but is binding in only 1 of 21 runs; non-issue
 - **sink_plan (orig)** (21x) — SPEED — never mentioned
-- **research_tools** (21x) — other — prose only in sweep.py
+- ~~**research_tools**~~ **READ (F644)** — `can_look_things_up` FALSE in 42/42 runs, `available` EMPTY always: NO MCP research
+  extension has ever been registered. But the alarm dies at its premise — scouts keep the developer shell and curl, so
+  **80.7% of 119 findings are grounded in a real fetch** (0 runs with zero grounded). Arm gap +0.069 at 0.94 SE — a hint.
+- **research_tools (orig)** (21x) — other — prose only in sweep.py
 - **review** (18x) — other — prose only in armcheck.py, dispatch_audit.py, occupancy.py, phases.py, review.py, selftest.py, sinkwatch.py, sweep.py, tierlog.py
 - **run_overview** (18x) — other — never mentioned
 - **complete_fix_completed** (17x) — other — prose only in verdicts.py
