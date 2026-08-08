@@ -12,7 +12,8 @@ Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 - ~~**sink_capped**~~ **READ (F636)** — fires 1 of 21 runs (0/9 at one node, 1/12 at three)
 - **sink_capped (orig)** (1x) — QUALITY — prose only in review.py
 - **complete_missing_deliverables** (1x) — QUALITY — never mentioned
-- **http_timeout_scan** (33x) — SPEED — never mentioned
+- ~~**http_timeout_scan**~~ **READ (F637)** — the only detector that FINDS defects; fix loop clears 92%; arm gap 4.2x per run but only 1.65 SE
+- **http_timeout_scan (orig)** (33x) — SPEED — never mentioned
 - **scouts_planned** (21x) — SPEED — never mentioned
 - ~~**sink_plan**~~ **READ (F636)** — cap scales with tree_bytes (1.13x) but is binding in only 1 of 21 runs; non-issue
 - **sink_plan (orig)** (21x) — SPEED — never mentioned
