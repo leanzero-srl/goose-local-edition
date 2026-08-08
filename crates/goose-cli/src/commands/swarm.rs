@@ -18413,6 +18413,7 @@ impl Judge for GooseAgentDispatcher {
             // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
+            attempt: req.attempt,
         };
         // WHAT THE JUDGE ACTUALLY SAW, as a deterministic engine event.
         //
