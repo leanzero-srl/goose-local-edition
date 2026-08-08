@@ -279,6 +279,58 @@ def f517_raced_repair_fires_and_never_regresses(ev, a) -> tuple[str, str]:
                   f"suffix {(post or 0) / 60:.1f} min")
 
 
+F532_FIX = "34359b8b7"   # the commit that enforces the repair-budget invariant on the RESOLVED value
+F532_FIX_CAP_SECS = 1200  # one fix attempt's own cap; a round costs up to this
+
+
+def f532_repair_budget_was_not_left_on_the_table(ev, a) -> tuple[str, str]:
+    """A red app must never finish COMPLETE holding enough budget for another repair round.
+
+    This is the defect F532 fixes, stated as a property of the run rather than of the config.
+    baseline-n3-r0 scored the campaign's best 0.9033 and still shipped RED at 1 finding, having used
+    1216s of a nominal 3000s budget — because the LIVE config carried the pre-raise
+    `complete_cap_secs: 1200`, one round consumed it, and the loop broke at `cap_deadline` before the
+    second round it was budgeted for. Nothing in the suite could see it: the invariant test asserts on
+    `default_complete_cap_secs()` and config merges OVER the default.
+
+    The budget is read from `complete_cap_lifted.effective_secs`, which is the only place a run states
+    the repair budget it actually used. When that event is absent the budget is genuinely unknown from
+    the log alone, and the honest verdict is INERT with that as the reason — an unknown budget must
+    never be guessed at, because guessing high manufactures a FAIL and guessing low manufactures a
+    PASS. F533 predicts the event fires on every cell on this machine, so a persistent INERT here is
+    itself the interesting reading.
+    """
+    sha = shardshare.build_sha(ev)
+    if not carries(F532_FIX, sha):
+        return INERT, f"this cell ran {sha}, which predates the fix {F532_FIX} — it cannot falsify it"
+    result = next((e for e in ev if e.get("event") == "complete_result"), None)
+    verifies = [e for e in ev if e.get("event") == "complete_verify"]
+    if result is None or not verifies:
+        return INERT, "this cell never reached the COMPLETE loop"
+
+    def t(e):
+        return occ.parse_ts(e.get("ts"))
+
+    elapsed = (t(result) or 0) - (t(verifies[0]) or 0)
+    lifted = next((e for e in ev if e.get("event") == "complete_cap_lifted"), None)
+    if lifted is None:
+        return INERT, ("no complete_cap_lifted — the run never states its repair budget, so unspent "
+                       "time cannot be computed without guessing at it")
+    budget = lifted.get("effective_secs")
+    if not isinstance(budget, (int, float)):
+        return INERT, "complete_cap_lifted carried no effective_secs"
+    unspent = budget - elapsed
+    red = not result.get("passed") and (result.get("remaining_findings") or 0) > 0
+    where = (f"used {elapsed:.0f}s of {budget:.0f}s "
+             f"(requested {lifted.get('requested_secs')}s), {unspent:.0f}s unspent")
+    if red and unspent >= F532_FIX_CAP_SECS:
+        return FAIL, (f"shipped RED with {result.get('remaining_findings')} finding(s) and {where} — "
+                      f"enough for another {F532_FIX_CAP_SECS}s round it never ran")
+    if red:
+        return PASS, f"red at {result.get('remaining_findings')} finding(s) but the budget was spent: {where}"
+    return PASS, f"finished green; {where}"
+
+
 def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
     """maxuse above 4.0 is F497's registered bar for "the DAG got wider". Reported for EVERY cell
     because it is the campaign's headline number, not only when it moves."""
@@ -304,6 +356,7 @@ def report(log_path: str, label: str) -> int:
         ("F474 post-drop is faster", f474_a_dropped_body_costs_less_the_second_time(ev, a)),
         ("F511 no test-author stall", f511_no_test_author_stalled(ev, a)),
         ("F517 raced repair safe", f517_raced_repair_fires_and_never_regresses(ev, a)),
+        ("F532 repair budget spent", f532_repair_budget_was_not_left_on_the_table(ev, a)),
         ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
     ]
     worst = 0
