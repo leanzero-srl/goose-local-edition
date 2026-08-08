@@ -81,6 +81,14 @@ and it needs its own arm judged on BOTH pillars.
 `verdicts.py` (which resolves activity dirs out of it). The other ten glob the live cell directories
 and therefore see **nine runs where twenty exist**.
 
+**There are TWO event-log archives, and the on-landing chain protects the wrong one (F608).**
+`tierlog.py` writes `nodeloop/eventlogs/`; `verdicts.py` reads ONLY `runs/nodeloop/_archive/logs`
+(line 489), which `goal.py` writes. Running `tierlog.py` first to "protect the log" therefore does
+nothing for the instrument that produces the headline — measured on `baseline-n3-r2` 2026-08-08,
+where `verdicts.py` still showed only the two older runs of that cell name until `goal.py` ran.
+
+> **On-landing chain: `tierlog.py` → `goal.py` → `spread.py` → `verdicts.py`.**
+
 No instrument has a cell-name collision bug — every one globs a pattern yielding one file per cell
 directory, where the name is unique. The split is a coverage gap nobody declared, not a defect.
 
