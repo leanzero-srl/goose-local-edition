@@ -73,3 +73,41 @@ additive JSON values.
 
 **Therefore: ship the event, not the conclusion.** The correct next step is a field that makes the
 overlap question answerable per-injection, not a stricter gate justified by a corpus-level share.
+
+---
+
+## AMENDED (F622) — this entry was HALF the story. There is a SIZING problem too.
+
+Everything above assumes the injections are normally-sized work that merely lands badly, i.e. a
+**timing** defect. Measured, that assumption is wrong:
+
+| group (sink excluded) | n | mean | median |
+|---|---|---|---|
+| **replan-injected** | 30 | **825.6s** | **675.7s** |
+| original plan tasks | 238 | 451.1s | 390.9s |
+
+**1.83x on the mean, 1.73x on the median, +374.5s at 4.47 SE.** The median tracking the mean kills the
+confound that a few un-aborted survivors carry the result — the whole distribution is shifted. The
+one-node injected group is EMPTY (n=0), which is the control passing, since F607 proved replan cannot
+fire there.
+
+**The replanner emits work roughly twice the size of the planner's own tasks.** That is a GENERATION
+defect sitting upstream of the timing one, and a concurrency gate alone would leave it untouched.
+
+It also re-explains F621 without invoking timing at all: an injected task is the biggest single
+consumer of node-busy in 6 of 11 three-node runs, and at 1.83x the size of a plan task it would tend
+to be the biggest task *wherever* it ran. Two findings that looked like one effect are two.
+
+**So the queue entry now has two halves, and the second one is cheaper to act on:**
+
+1. the `replan_accepted` event above (answers *when* it runs), and
+2. a **size constraint on what the replanner may ask for** — the architect prompt is already
+   fleet-relative and explicit about task granularity; the replan prompt is where to look first,
+   because 13.8 minutes per injected task on a 27B local worker is also more exposure to the
+   turn-cap, straggler and spiral guards than a 7.5-minute plan task carries.
+
+⚠️ **The counter-evidence above applies unchanged, and one wrinkle is added:** spans are ATTEMPTS, so
+a retried task contributes more than one span, and a longer task is likelier to be retried. That
+could inflate the injected span COUNT without inflating the per-span mean — which is exactly why the
+per-span mean and median are the statistics quoted, and why the 30 is not itself evidence of
+anything.
