@@ -35,6 +35,23 @@ on every call.
   only remaining channel by which a build-time probe could contaminate tier C.
 - Bounded impact: 0.02 of the composite.
 
+### 1b. `F618-replan-projected-overlap.md` — pure instrument, and it re-orders the replan question
+**Replan-injected tasks are 42.2% of all solo node-time at three nodes** (2704s / 11 runs), more than
+the integrate-verify sink at 39.5%. Control: replan is arithmetically impossible at one node (F607),
+and the 1-node arm shows **exactly 0.0s** of injected solo time. The idle-filler's own output runs at
+concurrency ONE.
+
+The guard already exists and was reasoned carefully — `replan_has_enough_dag_left` names this exact
+harm and was calibrated on two measured cases at 14% and 11% remaining. **What is new is that the
+harm recurs above its 25% bar**, because the bar is a proxy for "will this overlap" rather than a
+measurement of it.
+
+- **Pairs with F591, and arguably outranks it.** F591 asks why replan DECLINES; this says the more
+  urgent question is why it ACCEPTS.
+- **Ship the event, not the conclusion.** The entry carries its own counter-evidence: the injected
+  work is all tests, F616 measured 3-node verification at 2.82x the problem-find rate, F611 priced
+  the quality side at 183 cells/bucket, and F618 did not prove the run is longer.
+
 ### 2. `F591-replan-declined-reason.md` — pure instrument, no verdict changes
 Dynamic replan's trigger is EIGHT conjunctive terms and the cap is not the binder (all four 3-node
 cells fired one round against `max_replans` 2). The engine emits `Replanned` when it fires and
