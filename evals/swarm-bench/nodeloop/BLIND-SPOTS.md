@@ -7,7 +7,8 @@ Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 - **spec_contract (orig)** (33x) — QUALITY — prose only in crunch.py, phases.py
 - ~~**cross_module_drift**~~ **READ (F633)** — guard working: 0 findings, 6-12 modules checked/run
 - **cross_module_drift (orig)** (18x) — QUALITY — never mentioned
-- **orphan_files** (8x) — QUALITY — never mentioned
+- ~~**orphan_files**~~ **READ (F635)** — 75% of orphaned files are REPLAN-INJECTED output; 9 firings, all 3-node, zero 1-node
+- **orphan_files (orig)** (8x) — QUALITY — never mentioned
 - **sink_capped** (1x) — QUALITY — prose only in review.py
 - **complete_missing_deliverables** (1x) — QUALITY — never mentioned
 - **http_timeout_scan** (33x) — SPEED — never mentioned
