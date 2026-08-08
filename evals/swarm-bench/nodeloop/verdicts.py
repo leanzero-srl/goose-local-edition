@@ -104,19 +104,42 @@ def f499_unmeasured_is_the_judge_set(ev, a) -> tuple[str, str]:
     return PASS, f"{len(um)} task(s), both signals agree"
 
 
+def activity_dir_for(log_path: str) -> str | None:
+    """Where this log's per-task digests live, for an ARCHIVED snapshot or a LIVE cell.
+
+    Digests sit in two different places depending on which the caller passed, and this check knew
+    only the archived one. Pointing it at a live cell therefore reported "NO archived digests at
+    all" — a FAIL describing the dispatcher as broken when the real difference was the shape of the
+    path I typed. MEASURED: it fired on baseline-n3-r0 while that cell's own `.swarm/activity` held
+    43 digests and its archived sibling held a full copy.
+
+    A check that fails on its INPUT SHAPE rather than on the property it tests is a false-finding
+    generator, which is the whole of L332. Returning None here lets the caller say "I could not
+    look" instead of "I looked and it was empty" — the distinction the PASS/FAIL/INERT split exists
+    to preserve.
+    """
+    archived = log_path[:-6] + "-activity"          # _archive/logs/<cell>-<epoch>-activity
+    if os.path.isdir(archived):
+        return archived
+    live = os.path.join(os.path.dirname(log_path), ".swarm", "activity")
+    return live if os.path.isdir(live) else None
+
+
 def f500_every_invisible_task_recovered(ev, a, log_path) -> tuple[str, str]:
-    """Every task the event log cannot see must have an archived digest. FALSIFIER: one has none —
-    which would mean the dispatcher never wrote it, a worse defect than the one this recovered."""
+    """Every task the event log cannot see must have a digest. FALSIFIER: one has none — which would
+    mean the dispatcher never wrote it, a worse defect than the one this recovered."""
     um = a.get("unmeasured_tasks") or []
     if not um:
         return INERT, "no invisible tasks in this cell"
-    act = log_path[:-6] + "-activity"
-    if not os.path.isdir(act):
-        return FAIL, f"{len(um)} invisible task(s) and NO archived digests at all"
+    act = activity_dir_for(log_path)
+    if act is None:
+        return INERT, (f"{len(um)} invisible task(s) but no digest directory exists for this log — "
+                       "an un-archived live cell reads identically to a broken dispatcher here, so "
+                       "this says nothing either way")
     missing = [t for t in um if not os.path.exists(os.path.join(act, f"{t}.json"))]
     if missing:
-        return FAIL, f"{len(missing)}/{len(um)} have no digest: {', '.join(missing[:4])}"
-    return PASS, f"{len(um)}/{len(um)} recovered"
+        return FAIL, f"{len(missing)}/{len(um)} have no digest in {act}: {', '.join(missing[:4])}"
+    return PASS, f"{len(um)}/{len(um)} recovered from {os.path.basename(act)}"
 
 
 def f501_rewrite_loop_is_not_a_pattern(ev, a) -> tuple[str, str]:
