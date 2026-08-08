@@ -484,5 +484,89 @@ def main() -> int:
     return worst
 
 
+
+def self_test() -> int:
+    """Every check must be shown to FAIL on an input that deserves it.
+
+    MEASURED, and it is why this exists: across 23 archived cells, NOT ONE of the twelve checks has
+    ever returned FAIL. Five are provenance-gated on fixes newer than the corpus, which is correct
+    behaviour but leaves them unproven; the other six pass and have never once gone red. A file of
+    checks that has never failed is indistinguishable from a file of checks that CANNOT fail, and
+    this campaign has already shipped one predicate (F532's firing rate) that returned zero on a
+    corpus where the defect demonstrably existed because it encoded my misunderstanding rather than
+    the defect.
+
+    So each case below is a hand-built event stream carrying the exact defect its check exists to
+    catch. The provenance gate is stubbed off where it would otherwise short-circuit the predicate —
+    the gate is separately proven by the INERT results on the real pre-fix corpus.
+    """
+    import copy
+    fails = []
+    real_carries = globals()["carries"]
+    globals()["carries"] = lambda fix, sha: True
+
+    def ts(i):
+        return f"2026-08-08T10:{i // 60:02d}:{i % 60:02d}Z"
+
+    def check(label, got, want=FAIL):
+        if got[0] != want:
+            fails.append(f"{label}: expected {want}, got {got[0]} — {got[1][:70]}")
+
+    # F499: unmeasured set must equal the judge-ended set. Disagreement is the defect.
+    ev = [{"event": "judge_verdict", "task_id": "a", "action": "accepted", "ts": ts(1)}]
+    check("F499 disagreeing sets", f499_unmeasured_is_the_judge_set(ev, {"unmeasured_tasks": ["b"]}))
+
+    # F500: an invisible task with no digest anywhere.
+    check("F500 missing digest",
+          f500_every_invisible_task_recovered([], {"unmeasured_tasks": ["ghost"]},
+                                              "/nonexistent/run.jsonl"), want=INERT)
+    import tempfile, os as _os
+    d = tempfile.mkdtemp()
+    _os.makedirs(_os.path.join(d, ".swarm", "activity"))
+    check("F500 digest dir exists but task absent",
+          f500_every_invisible_task_recovered([], {"unmeasured_tasks": ["ghost"]},
+                                              _os.path.join(d, "run.jsonl")))
+
+    # F501: two tasks at 3+ repeated writes is a PATTERN, not an outlier.
+    check("F501 two rewrite loops", f501_rewrite_loop_is_not_a_pattern(
+        [], {"pathologies": {"digests": 5,
+                             "rewrite_loops": [{"task": "x", "repeats": 4},
+                                               {"task": "y", "repeats": 3}]}}))
+
+    # F492: a judge-terminated completion reporting elapsed_ms 0 — the defect F492 fixed.
+    ev = [{"event": "task_completed", "task_id": "t", "elapsed_ms": 0, "ts": ts(2)}]
+    check("F492 zero elapsed", f492_judge_attempts_report_time(ev, {}))
+
+    # F537: an injection with almost none of the mandatory plan left.
+    ev = [{"event": "plan_loaded", "ts": ts(0),
+           "tasks": [{"id": f"t{i}"} for i in range(10)]}]
+    ev += [{"event": "task_completed", "task_id": f"t{i}", "ts": ts(1 + i)} for i in range(9)]
+    ev += [{"event": "replanned", "round": 0, "added": ["bonus"], "ts": ts(30)}]
+    check("F537 late injection", f537_replan_did_not_inject_into_a_finishing_dag(ev, {}))
+    # ...and the same shape EARLY must pass, or the check is just always-red.
+    ev2 = [{"event": "plan_loaded", "ts": ts(0), "tasks": [{"id": f"t{i}"} for i in range(10)]},
+           {"event": "task_completed", "task_id": "t0", "ts": ts(1)},
+           {"event": "replanned", "round": 0, "added": ["bonus"], "ts": ts(2)}]
+    check("F537 early injection", f537_replan_did_not_inject_into_a_finishing_dag(ev2, {}), want=PASS)
+
+    # F532: a post-fix cell that ends RED holding more than a full fix round of its lifted budget.
+    ev = [{"event": "complete_verify", "round": 0, "ts": ts(0)},
+          {"event": "complete_cap_lifted", "requested_secs": 1200, "effective_secs": 3000,
+           "ts": ts(0)},
+          {"event": "complete_result", "passed": False, "remaining_findings": 2, "ts": ts(60)}]
+    check("F532 budget left on the table", f532_repair_budget_was_not_left_on_the_table(ev, {}))
+
+    # F517: a promoted wave whose winner was NOT strictly better — the safety property.
+    ev = [{"event": "spec_repair_wave", "round": 0, "twins": 3, "promoted": True,
+           "baseline_findings": 4, "winner_findings": 4, "ts": ts(0)}]
+    check("F517 tie promoted", f517_raced_repair_fires_and_never_regresses(ev, {"pool_size": 3}))
+
+    globals()["carries"] = real_carries
+    for f in fails:
+        print(f"  FAIL {f}")
+    print(f"verdicts self-test: {'PASS' if not fails else str(len(fails)) + ' FAILURES'}")
+    return 1 if fails else 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(self_test() if "--self-test" in sys.argv else main())
