@@ -572,6 +572,20 @@ def self_test() -> int:
            "baseline_findings": 4, "winner_findings": 4, "ts": ts(0)}]
     check("F517 tie promoted", f517_raced_repair_fires_and_never_regresses(ev, {"pool_size": 3}))
 
+    # F511: a test-authoring task carrying an "agent stalled" retry — the 420s no-progress watchdog
+    # firing on a test that called the app's blocking server entry point. This was the last check with
+    # a real FAIL branch and no negative control, and it is now exercised.
+    ev = [{"event": "plan_loaded", "ts": ts(0),
+           "tasks": [{"id": "test-api", "files": ["test_api.py"]}, {"id": "api", "files": ["api.py"]}]},
+          {"event": "task_retry", "task_id": "test-api", "error": "agent stalled", "ts": ts(1)}]
+    check("F511 stalled test-author", f511_no_test_author_stalled(ev, {}))
+    # The same plan WITHOUT the stall must pass, or the check is merely always-red.
+    check("F511 clean test-author", f511_no_test_author_stalled(ev[:1], {}), want=PASS)
+    # A stall on a NON-test task must NOT trip it — the rule is about test authors specifically, and a
+    # check that fires on any stall anywhere would mis-attribute an unrelated defect to this fix.
+    ev_other = [ev[0], {"event": "task_retry", "task_id": "api", "error": "agent stalled", "ts": ts(1)}]
+    check("F511 stall on non-test task", f511_no_test_author_stalled(ev_other, {}), want=PASS)
+
     globals()["carries"] = real_carries
 
     # STRUCTURAL GUARD, so a future check cannot quietly join the file without a way to fail. Anything
