@@ -18252,9 +18252,22 @@ fn default_complete_cap_secs() -> u64 {
 /// MEASURED on baseline-n3-r0, and it is the documented failure reproduced through config instead of
 /// through the default: round 0's race ran 1207s against a resolved cap of 1200, round 1's verify found
 /// the app still RED at 1 finding, `cap_deadline` had already passed, and the loop broke WITHOUT
-/// dispatching the second fix it was budgeted for. The app shipped red with 1784s of the intended budget
-/// unspent. That is the "first fix attempt consumes the entire phase budget, then one more verify hits
-/// cap_deadline" sequence `default_complete_cap_secs` was written to prevent.
+/// dispatching the second fix it was budgeted for. That is the "first fix attempt consumes the entire
+/// phase budget, then one more verify hits cap_deadline" sequence `default_complete_cap_secs` was
+/// written to prevent.
+///
+/// SAY IT AS EXHAUSTION, NOT AS SLACK — an earlier version of this comment got it backwards. It read
+/// "1216s of a nominal 3000s budget, 1784s unspent", which describes a run that had budget and failed
+/// to use it. The opposite is true: the run's RESOLVED budget was 1200 and it spent 1216, SEVEN
+/// SECONDS OVER. There was no unspent budget; there was a budget too small to finish the job it was
+/// dispatched for, and the 1784s exists only in the counterfactual this function creates. The
+/// distinction matters because a firing-rate predicate written from the wrong version searched for
+/// leftover budget and found the defect in ZERO of 19 cells that contain it.
+///
+/// The correct signature, across the corpus: a qualifying cell spends 1201-1411s against its 1200s cap
+/// and ends RED WITH EXACTLY ONE FINDING. Roughly a third of runs reaching COMPLETE finish one finding
+/// short of green because repair ran out of budget mid-recovery — a specific recurring outcome rather
+/// than accounting slack, and a better reason for this function to exist.
 ///
 /// LIFT, do not refuse. A cap too small for its own rounds is a stale value rather than an intent, and by
 /// the time this is known the run is mid-flight holding a red app. Lifting costs at most the rounds the
