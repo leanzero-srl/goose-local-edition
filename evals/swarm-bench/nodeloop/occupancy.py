@@ -599,6 +599,22 @@ def analyse(path) -> dict:
         "execute_wall_secs": round(exec_wall, 1) if exec_wall else None,
         "execute_occupancy": round(exec_occupancy, 4) if exec_occupancy is not None else None,
         "pre_execute_secs": round(pre_exec_secs, 1) if pre_exec_secs is not None else None,
+        # THE SUFFIX WAS NEVER MEASURED, AND IT IS WHERE BOTH PILLARS ARE LOST.
+        #
+        # This file has always reported the PREFIX — research, planning, contracts before the first
+        # dispatch — and stopped there. Everything after the scheduler's last task is the COMPLETE /
+        # repair phase, and it is invisible to `critical_path_secs`, which is computed only over tasks
+        # the plan declared. MEASURED on the seven cells of build 071b57514: the four scoring >= 0.74
+        # spent 0.8 to 10.2 minutes here; the three scoring below that spent 23.5, 30.2 and 39.8.
+        # baseline-n3-r2 has a critical path of 31 minutes inside a 100-minute wall — FORTY of those
+        # minutes are repair that no existing field could see, so every "the DAG is the ceiling"
+        # reading was computed on two thirds of the run.
+        #
+        # Derived by subtraction from the file's own decomposition rather than from a hand-rolled
+        # "last completion" scan, so prefix + execute + suffix is guaranteed to reconstruct the wall
+        # and the three numbers cannot silently disagree.
+        "post_execute_secs": (round(wall - (pre_exec_secs or 0) - (exec_wall or 0), 1)
+                              if (wall and exec_wall) else None),
         "total_task_secs": round(total_work, 1),
         "critical_path_secs": round(critical, 1),
         "critical_path_tasks": critical_chain,
