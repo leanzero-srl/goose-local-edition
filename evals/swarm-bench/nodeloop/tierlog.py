@@ -133,6 +133,112 @@ def existing_keys(path=LOG) -> set:
     return keys
 
 
+def repair_plan_signal(log=LOG, eventlogs=None, archives=None) -> dict:
+    """Recover `ladder`/`conv1` for rows whose `run.jsonl` was gone WHEN THEY WERE RECORDED.
+
+    `backfill` protects the LOG; it does not repair the ROW. A row harvested before its event log
+    was archived keeps `ladder: None` for ever, and F645 then read those Nones as "did not ladder"
+    and published a collinearity that did not exist. The data was on disk the whole time.
+
+    THE CONTROL IS NOT OPTIONAL AND IT GATES THE WRITE. Rows that ALREADY carry a ladder count are
+    re-derived from their archived log first; if a single one disagrees, NOTHING is written and the
+    disagreement is returned. A repair that silently rewrites history on an unvalidated derivation is
+    worse than the gap it closes. Measured when this was added: 5 of 5 agreed exactly (1,0,2,0,1).
+
+    Absent stays absent. A row with no archived log keeps `None`, because L340 in the data model is
+    the whole point of the field.
+    """
+    dirs = [eventlogs if eventlogs is not None else EVENTLOGS]
+    if archives is None:
+        archives = [RUNS / "_archive" / "logs"]
+    dirs += list(archives)
+
+    def _find(cell, fin) -> Path | None:
+        exact = f"{cell}@{str(fin).replace(':', '-')}.jsonl"
+        for d in dirs:
+            p = Path(d) / exact
+            if p.is_file():
+                return p
+        want = _epoch(fin)
+        best, gap = None, None
+        for d in dirs:
+            if not Path(d).is_dir():
+                continue
+            for p in Path(d).glob("*.jsonl"):
+                if not p.name.startswith(f"{cell}@") and not p.name.startswith(f"{cell}-"):
+                    continue
+                got = _log_finish_epoch(p)
+                if got is None or want is None:
+                    continue
+                delta = abs(got - want)
+                if delta <= 240 and (gap is None or delta < gap):
+                    best, gap = p, delta
+        return best
+
+    if not Path(log).exists():
+        return {"checked": 0, "agreed": 0, "repaired": 0, "disagreements": []}
+    rows, changed, agreed, disagree = [], 0, 0, []
+    for line in Path(log).read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rows.append(r)
+    for r in rows:
+        src = _find(r.get("cell"), r.get("finished_at"))
+        if src is None:
+            continue
+        got = plan_signal(src)
+        if r.get("ladder") is not None:
+            if got["ladder"] == r["ladder"]:
+                agreed += 1
+            else:
+                disagree.append({"cell": r.get("cell"), "recorded": r["ladder"], "derived": got["ladder"]})
+    if disagree:
+        return {"checked": len(rows), "agreed": agreed, "repaired": 0, "disagreements": disagree}
+    for r in rows:
+        if r.get("ladder") is not None:
+            continue
+        src = _find(r.get("cell"), r.get("finished_at"))
+        if src is None:
+            continue
+        r.update(plan_signal(src))
+        r["ladder_source"] = "archive"
+        changed += 1
+    if changed:
+        Path(log).write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return {"checked": len(rows), "agreed": agreed, "repaired": changed, "disagreements": []}
+
+
+def _epoch(s):
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _log_finish_epoch(p: Path):
+    """`run_finished.ts` is UTC-with-offset; tier rows carry LOCAL time. Parse through the offset —
+    subtracting a constant reintroduces the three-hour error that made an earlier join match 1 of 43."""
+    import datetime as _dt
+    try:
+        for line in p.read_text(errors="replace").splitlines():
+            if '"run_finished"' not in line:
+                continue
+            ts = json.loads(line).get("ts")
+            if ts:
+                return _dt.datetime.fromisoformat(ts).timestamp()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return None
+
+
 def harvest(runs=RUNS, log=LOG, eventlogs=None) -> list:
     """Append any result carrying a `tiers` block that is not already recorded."""
     seen = existing_keys(log)
