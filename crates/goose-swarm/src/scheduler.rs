@@ -280,6 +280,45 @@ fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -
 /// wall-clock, everything downstream is blocked behind it, and it is empirically the run's tail risk.
 /// A fresh task competing for the same slot is not. The bar is 2 rather than 1 because single
 /// retries are common and cheap, and this targets only the case that was actually measured to hurt.
+/// The DAG must still have real work left before the replanner is allowed to invent more.
+///
+/// Dynamic-replan exists to fill idle capacity in the MIDDLE of a run. Near the end its arithmetic
+/// inverts: a task injected when almost everything is done has nothing left to overlap with, so it
+/// does not fill a gap — it BECOMES the tail, and the run waits on work nobody asked for.
+///
+/// MEASURED across every 3-node cell in the corpus that replanned, 3 for 3, the LAST task to
+/// complete — the one that sets the run's length — is a replanner-added bonus task:
+///
+///   n3-r2  injected at 50.2m with  3 of 21 mandatory left (14%)  ->  18.3 min of bonus tail
+///   n3-r3  injected at 50.7m with  2 of 18 mandatory left (11%)  ->  26.8 min of bonus tail
+///
+/// n3-r3 settles it: its last MANDATORY task finished at 48.8m and the replanner injected three
+/// tasks at 50.7m which ran until 75.7m. The run was already done. The engine made it 55% longer
+/// with work the planner never asked for.
+///
+/// AND IT IS NODE-COUNT-SPECIFIC, which is why it matters here. The gate requires
+/// `idle_capacity() >= 2`; a 1-node run never has it, so it never injects bonus work and never grows
+/// a bonus tail. Spare nodes are the precondition — so adding nodes does not merely fail to help, it
+/// arms the mechanism that makes the run longer.
+///
+/// This is the same principle the gate ALREADY applies via `sink_in_flight`: when only the join
+/// remains, do not replan. That rule was one case short — "only the join remains" and "almost
+/// nothing remains" are the same situation, and only the first was covered.
+///
+/// THE BAR IS A FRACTION, NOT A COUNT, and the first version of this got that wrong. An absolute
+/// "more than 3 tasks left" reproduced both measured cases correctly and DISABLED DYNAMIC-REPLAN
+/// ENTIRELY FOR SMALL DAGS — `idle_triggers_replan_and_fills_nodes` builds a 2-task DAG where one
+/// task runs long, and 1-of-2 remaining is the mid-run case the feature exists for, not a tail. The
+/// harm is "nothing left to overlap with", which is inherently relative to the plan's size. Two
+/// pre-existing tests failed and are the reason this reads as it does.
+///
+/// A quarter of the plan still outstanding clears both measured harms (14% and 11%) while leaving
+/// mid-run injection untouched. Deliberately conservative: it can only ever refuse a replan, so it
+/// cannot make a run longer.
+fn replan_has_enough_dag_left(mandatory_incomplete: usize, mandatory_total: usize) -> bool {
+    mandatory_total == 0 || mandatory_incomplete * 4 >= mandatory_total
+}
+
 fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
     is_hard || attempts >= 2
 }
@@ -621,6 +660,31 @@ impl State {
     /// here could land UNVERIFIED code AFTER the sink's PASS. Before the sink starts (its deps are every
     /// other task, so it runs alone at the end) other tasks are still in flight and replan is fine; this
     /// only guards the exact sink-race window.
+    /// Mandatory (planned) work still outstanding — bonus tasks excluded.
+    ///
+    /// `incomplete_count` counts the whole DAG, and the DAG grows every time the replanner adds a
+    /// task. So once bonus work is in flight, the very tasks that make the tail long also make the
+    /// DAG look busy, and any gate reading `incomplete_count` sees a healthy run right up to the end.
+    fn mandatory_incomplete(&self) -> usize {
+        self.dag
+            .tasks
+            .iter()
+            .filter(|(id, n)| {
+                !self.bonus_ids.contains(*id)
+                    && !matches!(n.state, TaskState::Done | TaskState::Failed)
+            })
+            .count()
+    }
+
+    /// Every planned (non-bonus) task, terminal or not — the denominator for the replan gate.
+    fn mandatory_total(&self) -> usize {
+        self.dag
+            .tasks
+            .keys()
+            .filter(|id| !self.bonus_ids.contains(*id))
+            .count()
+    }
+
     fn sink_in_flight(&self) -> bool {
         self.dag
             .tasks
@@ -2463,6 +2527,9 @@ impl Scheduler {
                         && s.idle_capacity() >= 2
                         && s.replans_done < self.max_replans
                         && !s.sink_in_flight()
+                        // Near the end, an injected task has nothing to overlap with and simply
+                        // becomes the tail — see `replan_has_enough_dag_left`.
+                        && replan_has_enough_dag_left(s.mandatory_incomplete(), s.mandatory_total())
                         // A previous EMPTY answer is cached against the DAG size that produced it.
                         // Re-ask only when strictly fewer tasks remain — the one change that can make
                         // the replanner answer differently — so the tail gets its ask without the
@@ -3046,5 +3113,43 @@ mod salvage_tests {
             "manifest",
             &[empty_mod]
         ));
+    }
+
+    #[test]
+    fn replan_does_not_invent_work_for_a_dag_that_is_already_finishing() {
+        // The two measured harmful injections must now be refused: n3-r2 at 3-of-21 (18.3 min of
+        // bonus tail) and n3-r3 at 2-of-18 (26.8 min, on a run whose mandatory work was ALREADY done).
+        assert!(
+            !replan_has_enough_dag_left(3, 21),
+            "n3-r2's injection must be refused"
+        );
+        assert!(
+            !replan_has_enough_dag_left(2, 18),
+            "n3-r3's injection must be refused"
+        );
+
+        // MID-RUN INJECTION IS THE FEATURE AND MUST SURVIVE. The first version of this gate used an
+        // absolute count and silently disabled dynamic-replan for every small DAG — 1-of-2 remaining
+        // is mid-run, not a tail, and two pre-existing tests caught it.
+        assert!(
+            replan_has_enough_dag_left(1, 2),
+            "a 2-task DAG with one left is MID-RUN"
+        );
+        assert!(replan_has_enough_dag_left(2, 4));
+        assert!(replan_has_enough_dag_left(9, 20));
+
+        // Degenerate input must not divide the world by zero or refuse forever.
+        assert!(replan_has_enough_dag_left(0, 0));
+
+        // Monotone in the work remaining: more left can never be a weaker reason to replan.
+        for n in 0..25usize {
+            if replan_has_enough_dag_left(n, 24) {
+                assert!(
+                    replan_has_enough_dag_left(n + 1, 24),
+                    "{n} armed the replan but {} did not — the gate is not monotone",
+                    n + 1
+                );
+            }
+        }
     }
 }
