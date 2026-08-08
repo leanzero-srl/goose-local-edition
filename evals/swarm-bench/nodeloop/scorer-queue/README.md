@@ -52,6 +52,26 @@ measurement of it.
   work is all tests, F616 measured 3-node verification at 2.82x the problem-find rate, F611 priced
   the quality side at 183 cells/bucket, and F618 did not prove the run is longer.
 
+### 1c. `F643-scout-lens-timing.md` — pure instrument, and it prices its own prize honestly
+**The research phase does not get faster with the fleet**: 377.2s at three nodes against 395.4s at
+one — 4.6% on the median, +39.1s at **0.64 SE** (n=11 vs 17). The lens fan is structurally
+fleet-blind too (`select_lenses` never sees node count). ~7 min per run where extra hardware buys
+nothing, on the pillar that looks worse.
+
+Two of three candidate causes are already dead: the lenses DO fan out one-per-device
+(`fanout_over_fleet_straggler`, swarm.rs:13436), and lens-drop is balanced across arms (0.0% vs
+4.3%, F643). The Amdahl reading fails its own arithmetic — a 1.05 observed ratio where lens-bound
+work would give ~2.0.
+
+- **The phase is the least-instrumented in the engine**: 6m07s of total log silence between
+  `scouts_planned` and `research_completed`, and `research_completed` carries lens NAMES but no
+  timings and no device.
+- **The prize is bounded and I am not hiding it**: ~7 min of a ~120 min run, so perfect
+  parallelisation returns at most ~3 min, against F628's ~9.1 min/run ladder projection.
+- **F642's registration was compromised** (guard refused the write while the measurement ran); the
+  4.6% is disclosed as not-cleanly-pre-registered. The `select_lenses` source observation is
+  unaffected.
+
 ### 2. `F591-replan-declined-reason.md` — pure instrument, no verdict changes
 Dynamic replan's trigger is EIGHT conjunctive terms and the cap is not the binder (all four 3-node
 cells fired one round against `max_replans` 2). The engine emits `Replanned` when it fires and
