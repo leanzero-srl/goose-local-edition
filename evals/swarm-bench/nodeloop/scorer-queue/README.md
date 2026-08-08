@@ -118,7 +118,18 @@ triggers the ladder. Their words: *"That is backwards."*
 85 floor while `agreement_conf` did not** — penalties 10/19/13/10, raw conf 83/69/80/83 rising to
 93/88/93/93 on the 1-node footing. Each such round costs **25.0 min (F610, 6.73 SE)**.
 
-**🔴 DO NOT LAND THIS YET — MEASURED 2026-08-08 (F645, CORRECTED BY F646). ONE RUN SHORT OF DECIDABLE.**
+**✅ THE MEASUREMENT GATES ARE DISCHARGED (F649-F652, 2026-08-08). THE ONLY REMAINING GATE IS A REBUILD AT A NATURAL CELL BOUNDARY.** Full case with every caveat: `../LADDER-IS-THE-SPEED-DEFICIT.md`.
+
+The author's hold was *"the ladder may be buying the quality"*. Measured within three nodes: laddering
+scores **0.7490 (n=6) vs 0.7197 (n=7) — +0.0293 at 0.31 SE**, under the 0.05 bar, and **the median runs
+the other way** (0.7192 vs 0.7426). Their five-cell 0.185 does not replicate. Meanwhile the ladder costs
+**+25.4 min** of planning (F610 priced a round at 25.0 by another route), and a 3-node run that never
+ladders plans at **14.0 min against one-node's 13.0** — no second cause.
+
+⚠️ **Runs are NOT randomised into laddering**, so this discharges a stated objection and never proves the
+ladder worthless. ⚠️ **n is 6 vs 7** — it clears the pre-registered minimum of 3 and nothing more.
+
+**SUPERSEDED BELOW (kept for the record):**
 The author's own words are `Measure first`, and the risk they named is `the ladder may be buying the
 quality and a silent flip here could spend that`. F612 discharged the MECHANISM half. The OUTCOME half
 cannot be discharged at all: of 11 real rows only **5 carry a known `ladder` value**, and in those five
