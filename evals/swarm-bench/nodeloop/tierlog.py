@@ -27,6 +27,43 @@ from pathlib import Path
 
 RUNS = Path("/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/nodeloop")
 LOG = RUNS / "tiers.jsonl"
+EVENTLOGS = RUNS / "eventlogs"
+
+
+def archive_eventlog(cell_dir: Path, cell: str, finished_at: str, dest=None) -> str | None:
+    """Copy the run's event log somewhere the next same-named run cannot delete it.
+
+    RESCUING FIELDS DOES NOT SCALE, AND THE FIELD-BY-FIELD VERSION ABOVE ONLY LOOKS SUFFICIENT UNTIL
+    YOU COUNT THE READERS. NINETEEN instruments in this directory open `run.jsonl` — armcheck,
+    bonusclass, curve, dispatch_audit, failures, goal, goalstate, occupancy, phases, planshape,
+    prefix, reaudit, review, selftest, shardshare, suffixcost, sweep, tierlog, verdicts. Every one of
+    them is silently answering its question over NINE cells while `loop.log` records 171 completed
+    runs, because `run.jsonl` is overwritten per cell NAME. Each new question I think of would need
+    its own rescue field, retrofitted after the evidence it needs is already gone.
+
+    So archive the WHOLE log instead. Measured: 0.16 MB mean, 0.26 MB max, so all 171 runs cost about
+    27 MB — nothing against a corpus that already holds full app trees. Every existing instrument can
+    then be re-pointed at the archive and re-run over real history rather than over the last nine
+    survivors.
+
+    NEVER OVERWRITE. The filename carries the finish timestamp precisely so a re-run of a cell adds a
+    file instead of replacing one; if the destination exists it is kept, because this whole mechanism
+    exists to undo an overwrite and must not reintroduce one. Returns the archived filename, or None
+    when the source log is already gone — absent, not zero, for the same reason `plan_signal` does.
+    """
+    src = cell_dir / "run.jsonl"
+    if not src.is_file():
+        return None
+    (dest or EVENTLOGS).mkdir(parents=True, exist_ok=True)
+    name = f"{cell}@{str(finished_at).replace(':', '-')}.jsonl"
+    out = (dest or EVENTLOGS) / name
+    if out.exists():
+        return name
+    try:
+        out.write_bytes(src.read_bytes())
+    except OSError:
+        return None
+    return name
 
 
 def plan_signal(run_log: Path) -> dict:
@@ -96,7 +133,7 @@ def existing_keys(path=LOG) -> set:
     return keys
 
 
-def harvest(runs=RUNS, log=LOG) -> list:
+def harvest(runs=RUNS, log=LOG, eventlogs=None) -> list:
     """Append any result carrying a `tiers` block that is not already recorded."""
     seen = existing_keys(log)
     added = []
@@ -118,7 +155,9 @@ def harvest(runs=RUNS, log=LOG) -> list:
                "void": bool(j.get("void")), "engine_build": j.get("engine_build"),
                "scorer_version": j.get("scorer_version"),
                "tiers": {k: v.get("mean") for k, v in (j.get("tiers") or {}).items()},
-               **plan_signal(p.parent / "run.jsonl")}
+               **plan_signal(p.parent / "run.jsonl"),
+               "eventlog": archive_eventlog(p.parent, p.parent.name, j.get("finished_at"),
+                                            eventlogs if eventlogs is not None else EVENTLOGS)}
         added.append(row)
         seen.add(key)
     if added:
@@ -126,6 +165,68 @@ def harvest(runs=RUNS, log=LOG) -> list:
             for r in added:
                 f.write(json.dumps(r) + "\n")
     return added
+
+
+def backfill(runs=RUNS, log=LOG, eventlogs=None) -> list:
+    """Archive the event logs of cells ALREADY recorded, before the next same-named run deletes them.
+
+    THE FIX ABOVE WAS PROSPECTIVE ONLY AND THAT IS NOT GOOD ENOUGH. `archive_eventlog` runs when a
+    row is first harvested, so the nine `run.jsonl` still on disk — every cell this campaign can
+    currently reason about — are already past that point and stay unprotected. `loop.log` names
+    `baseline-n1-r1` as the NEXT unit, and that cell scored 0.9650, the best result of the frozen era.
+    Its event log would have been overwritten within the hour by a fix that had just been written to
+    prevent exactly that.
+
+    ATTRIBUTION IS THE ONLY SUBTLE PART, AND I GOT IT WRONG ON THE FIRST RUN OF THIS FUNCTION. A cell
+    dir holds the LATEST run's `run.jsonl`, so it belongs to that cell's row with the greatest
+    `finished_at`, never to an older one. Filing it under an earlier timestamp silently attaches one
+    run's events to a different run's score, which is worse than losing it — a wrong row cannot be
+    detected later, a missing one can.
+
+    THE CASE I MISSED IS THE CELL THAT IS STILL RUNNING. `baseline-n3-r1` was mid-flight when this
+    first executed: its `run.jsonl` was 11 KB and growing, and the newest RECORDED row for that name
+    had finished hours earlier. So the backfill archived a partial, in-flight log under a completed
+    run's timestamp — committing, within two minutes, the precise corruption the paragraph above
+    warns against. The guard is mtime: if the log has been written to since the row it would be filed
+    under finished, it belongs to a LATER run and must be skipped, not guessed at. A live cell is
+    picked up normally by `harvest` once it writes its own result row.
+    """
+    import datetime as _dt
+
+    def _fin_epoch(s):
+        try:
+            return _dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+        except (ValueError, TypeError):
+            return None
+
+    if not log.exists():
+        return []
+    latest: dict = {}
+    for line in log.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        c, f = r.get("cell"), r.get("finished_at")
+        if c and f and (c not in latest or f > latest[c]):
+            latest[c] = f
+    done = []
+    for cell, fin in sorted(latest.items()):
+        d = runs / cell
+        src = d / "run.jsonl"
+        if not src.is_file():
+            continue
+        # STILL RUNNING, OR ALREADY REPLACED: the log has been touched since the row it would be
+        # filed under finished, so it is a LATER run's log. Skip rather than misattribute.
+        fe = _fin_epoch(fin)
+        if fe is not None and src.stat().st_mtime > fe + 120:
+            continue
+        name = archive_eventlog(d, cell, fin, eventlogs if eventlogs is not None else EVENTLOGS)
+        if name:
+            done.append(name)
+    return done
 
 
 def report(log=LOG) -> str:
@@ -165,15 +266,16 @@ def self_test() -> int:
                                    "tiers": {"A": {"mean": 0.9}, "B": {"mean": 0.4},
                                              "C": {"mean": 0.5}, "D": {"mean": 0.6}}}))
 
+    ev = d / "eventlogs"
     write(0.9033, "2026-08-08T10:55:28")
-    if len(harvest(d, log)) != 1:
+    if len(harvest(d, log, ev)) != 1:
         fails.append("first harvest did not record the row")
-    if harvest(d, log):
+    if harvest(d, log, ev):
         fails.append("re-harvesting an unchanged result duplicated it")
 
     # THE WHOLE POINT: the same cell re-run must not overwrite its predecessor.
     write(0.0561, "2026-08-08T11:34:29")
-    if len(harvest(d, log)) != 1:
+    if len(harvest(d, log, ev)) != 1:
         fails.append("a RE-RUN of the same cell was not recorded — the overwrite survives")
     rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
     if len(rows) != 2 or {r["score"] for r in rows} != {0.9033, 0.0561}:
@@ -181,7 +283,7 @@ def self_test() -> int:
 
     # A result with no tiers block must be skipped rather than recorded as zeros.
     res.write_text(json.dumps({"arm": "baseline", "nodes": 3, "finished_at": "x", "score": 0.5}))
-    if harvest(d, log):
+    if harvest(d, log, ev):
         fails.append("a result with no tiers block was recorded anyway")
 
     # THE PLAN SIGNAL. Absent evidence must read as None, never as a confident zero — a cell whose
@@ -189,6 +291,8 @@ def self_test() -> int:
     rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
     if any(r.get("ladder") is not None for r in rows):
         fails.append("a missing run.jsonl was recorded as a real ladder count instead of None")
+    if any(r.get("eventlog") is not None for r in rows):
+        fails.append("a missing run.jsonl produced an eventlog name instead of None")
 
     # And with a run.jsonl present it must count the ladder and keep ROUND ONE's convergence.
     (cell / "run.jsonl").write_text("\n".join([
@@ -202,7 +306,7 @@ def self_test() -> int:
                     "pool_penalty": 13, "would_skip_ladder": True}),
     ]))
     write(0.7, "2026-08-08T12:00:00")
-    new = harvest(d, log)
+    new = harvest(d, log, ev)
     if len(new) != 1:
         fails.append("the run with a plan signal was not recorded")
     else:
@@ -211,6 +315,21 @@ def self_test() -> int:
             fails.append(f"ladder counts wrong: {r['ladder']}/{r['retarget_discarded']}/{r['draft_rounds']}")
         if (r["conv1"] or {}).get("pool_penalty") != 19:
             fails.append(f"kept the LAST plan_convergence, not round one: {r.get('conv1')}")
+        # THE ARCHIVE: byte-identical, and a RE-RUN of the same cell must add a file, never replace.
+        arch = ev / (r.get("eventlog") or "__missing__")
+        if not arch.is_file():
+            fails.append(f"event log was not archived: {r.get('eventlog')}")
+        elif arch.read_bytes() != (cell / "run.jsonl").read_bytes():
+            fails.append("archived event log does not match the source bytes")
+        before = sorted(p.name for p in ev.glob("*.jsonl"))
+        (cell / "run.jsonl").write_text(json.dumps({"event": "run_started"}))
+        write(0.8, "2026-08-08T13:00:00")
+        harvest(d, log, ev)
+        after = sorted(p.name for p in ev.glob("*.jsonl"))
+        if len(after) != len(before) + 1:
+            fails.append(f"a re-run did not ADD an archive: {before} -> {after}")
+        if arch.read_bytes() == (cell / "run.jsonl").read_bytes():
+            fails.append("the earlier archive was overwritten — the mechanism reintroduced the bug it undoes")
 
     for f in fails:
         print(f"  FAIL {f}")
@@ -221,6 +340,10 @@ def self_test() -> int:
 if __name__ == "__main__":
     if "--self-test" in sys.argv:
         sys.exit(self_test())
+    saved = backfill()
+    if saved:
+        print(f"backfilled {len(saved)} event log(s) that were one re-run from deletion: "
+              + ", ".join(saved))
     new = harvest()
     if new:
         print(f"recorded {len(new)} new row(s): " +
