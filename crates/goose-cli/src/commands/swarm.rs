@@ -9538,6 +9538,45 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn a_stale_config_cap_cannot_make_the_later_fix_rounds_unreachable() {
+        let (rounds, fix, def) = (2u64, 1200u64, 3000u64);
+
+        // The measured case: config.yaml still carries the pre-raise 1200, which is exactly ONE fix
+        // attempt, so round 1's fix was unreachable and baseline-n3-r0 shipped red at 1 finding.
+        assert_eq!(complete_cap_fitting_rounds(1200, rounds, fix, def), 3000);
+
+        // A budget that already fits is returned UNTOUCHED — this must not gratuitously inflate every
+        // run's cap, or it stops being a repair of a broken value and becomes a silent policy change.
+        assert_eq!(complete_cap_fitting_rounds(2400, rounds, fix, def), 2400);
+        assert_eq!(complete_cap_fitting_rounds(3000, rounds, fix, def), 3000);
+
+        // An operator who deliberately raised it keeps their number; lifting is a floor, never a set.
+        assert_eq!(complete_cap_fitting_rounds(5000, rounds, fix, def), 5000);
+
+        // 0 means "no cap at all" and is an explicit choice, not a too-small budget to repair.
+        assert_eq!(complete_cap_fitting_rounds(0, rounds, fix, def), 0);
+
+        // One round needs one attempt, so 1200 fits and must NOT be lifted — the defect is the
+        // mismatch between the cap and the rounds, never the number 1200 itself.
+        assert_eq!(complete_cap_fitting_rounds(1200, 1, fix, def), 1200);
+
+        // The live config must actually be repaired by this, or the fix is theatre.
+        let live = complete_cap_fitting_rounds(
+            load_config().complete_cap_secs,
+            complete_rounds() as u64,
+            fix_cap_secs(),
+            default_complete_cap_secs(),
+        );
+        assert!(
+            live == 0 || live >= complete_rounds() as u64 * fix_cap_secs(),
+            "the resolved repair budget is {live}s but this machine's config dispatches {} fix \
+             attempts of up to {}s each — the later rounds are still unreachable",
+            complete_rounds(),
+            fix_cap_secs(),
+        );
+    }
+
+    #[test]
     fn boundary_probe_from_defaults_on_and_parses() {
         assert!(boundary_probe_from(None)); // default ON (flipped 2026-07-10)
         assert!(!boundary_probe_from(Some("0".to_string())));
@@ -18203,6 +18242,37 @@ fn default_complete_cap_secs() -> u64 {
     3000
 }
 
+/// The repair budget that will ACTUALLY be used, given the rounds it will actually dispatch.
+///
+/// `complete_cap_fits_its_own_rounds` asserts the invariant on `default_complete_cap_secs()` — and only
+/// there. `load_config` merges config.yaml OVER the baked default, so a config still carrying the
+/// pre-raise `complete_cap_secs: 1200` silently reinstates the exact budget the raise to 3000 existed to
+/// eliminate, and every test still passes because no test looks at the resolved value.
+///
+/// MEASURED on baseline-n3-r0, and it is the documented failure reproduced through config instead of
+/// through the default: round 0's race ran 1207s against a resolved cap of 1200, round 1's verify found
+/// the app still RED at 1 finding, `cap_deadline` had already passed, and the loop broke WITHOUT
+/// dispatching the second fix it was budgeted for. The app shipped red with 1784s of the intended budget
+/// unspent. That is the "first fix attempt consumes the entire phase budget, then one more verify hits
+/// cap_deadline" sequence `default_complete_cap_secs` was written to prevent.
+///
+/// LIFT, do not refuse. A cap too small for its own rounds is a stale value rather than an intent, and by
+/// the time this is known the run is mid-flight holding a red app. Lifting costs at most the rounds the
+/// operator already asked for; refusing throws the build away. It lifts to `default_cap` — the budget the
+/// engine already computed for these rounds, verify headroom included — rather than to a fresh number
+/// invented here. An explicit 0 means "no cap" and is honoured; a cap that already fits is returned
+/// untouched, so this can only ever raise a budget that cannot do its own job.
+fn complete_cap_fitting_rounds(resolved: u64, rounds: u64, fix_cap: u64, default_cap: u64) -> u64 {
+    if resolved == 0 {
+        return 0;
+    }
+    if resolved >= rounds.saturating_mul(fix_cap) {
+        resolved
+    } else {
+        default_cap.max(resolved)
+    }
+}
+
 /// Structured-output schema for the spec-ambiguity probe. `product_specified` is the strongest signal —
 /// false means the request never says WHAT to build (the whole product is open), which a weak model tends to
 /// report as a single consolidated decision even though it should force the ask. `material_open_decisions`
@@ -25818,10 +25888,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut ov_verified = false;
     if complete_on {
         let rounds = complete_rounds();
-        let cap_deadline = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
+        let cap_requested = std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .or_else(|| Some(load_config().complete_cap_secs))
+            .unwrap_or_else(|| load_config().complete_cap_secs);
+        let cap_secs = complete_cap_fitting_rounds(
+            cap_requested,
+            rounds as u64,
+            fix_cap_secs(),
+            default_complete_cap_secs(),
+        );
+        if cap_secs != cap_requested {
+            eprintln!(
+                "complete: repair budget {cap_requested}s cannot fit its own {rounds} fix round(s) of up \
+                 to {}s — raised to {cap_secs}s so the later rounds are reachable",
+                fix_cap_secs()
+            );
+            sink.write_value(serde_json::json!({
+                "event": "complete_cap_lifted",
+                "requested_secs": cap_requested,
+                "effective_secs": cap_secs,
+                "rounds": rounds,
+                "fix_cap_secs": fix_cap_secs(),
+            }));
+        }
+        let cap_deadline = Some(cap_secs)
             .filter(|&s| s > 0)
             .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
         // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
