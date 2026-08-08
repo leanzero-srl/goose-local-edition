@@ -106,12 +106,14 @@ def report(rows: list[dict], since: str | None = None) -> str:
     if since:
         L.append(f"   (frozen-binary view: rows at or after {since})")
     L.append("")
-    L.append(f"  {'arm':<20}{'nodes':>6}{'n':>5}{'mean':>9}{'spread':>9}{'sd':>8}")
+    L.append(f"  {'arm':<20}{'nodes':>6}{'n':>5}{'mean':>9}{'spread':>9}{'sd':>8}{'wall min':>10}")
     groups: dict = {}
+    walls: dict = {}
     for r in real:
         if since and r["time"] < since:
             continue
         groups.setdefault((r["arm"], r["nodes"]), []).append(r["score"])
+        walls.setdefault((r["arm"], r["nodes"]), []).append(r["mins"])
     if not groups:
         L.append("  (no real runs in this view)")
         return "\n".join(L)
@@ -119,7 +121,9 @@ def report(rows: list[dict], since: str | None = None) -> str:
         s = stats(scores)
         spread = f"{s['spread']:.4f}" if s["spread"] is not None else "UNMEAS"
         sd = f"{s.get('sd'):.4f}" if s.get("sd") is not None else "     -"
-        L.append(f"  {arm:<20}{str(nodes):>6}{s['n']:>5}{s['mean']:>9.4f}{spread:>9}{sd:>8}")
+        w = walls.get((arm, nodes), [])
+        wm = f"{sum(w)/len(w):.1f}" if w else "-"
+        L.append(f"  {arm:<20}{str(nodes):>6}{s['n']:>5}{s['mean']:>9.4f}{spread:>9}{sd:>8}{wm:>10}")
         if s["why"]:
             L.append(f"      ^ {s['why']}")
 
@@ -134,7 +138,18 @@ def report(rows: list[dict], since: str | None = None) -> str:
             verdict = ("CLEARS the noise" if abs(ratio) >= 2
                        else "a HINT, not a result — inside one standard error" if abs(ratio) < 1
                        else "suggestive, still inside two standard errors")
-            L.append(f"  3-node minus 1-node: {gap:+.4f}   SE {se:.4f}   = {ratio:+.2f} SE  ⇒ {verdict}")
+            L.append(f"  QUALITY  3-node minus 1-node: {gap:+.4f}   SE {se:.4f}   = {ratio:+.2f} SE  ⇒ {verdict}")
+            w1, w3 = walls.get(("baseline", 1), []), walls.get(("baseline", 3), [])
+            if len(w1) >= MIN_N and len(w3) >= MIN_N:
+                import statistics as st
+                mw1, mw3 = sum(w1) / len(w1), sum(w3) / len(w3)
+                wse = (st.variance(w1) / len(w1) + st.variance(w3) / len(w3)) ** 0.5
+                wr = (mw3 - mw1) / wse if wse else float("inf")
+                wv = ("CLEARS the noise" if abs(wr) >= 2
+                      else "a HINT, not a result — inside one standard error" if abs(wr) < 1
+                      else "suggestive, still inside two standard errors")
+                L.append(f"  SPEED    3-node minus 1-node: {mw3-mw1:+.1f} min  SE {wse:.1f}  "
+                         f"= {wr:+.2f} SE  ⇒ {wv}   ({mw1/mw3:.2f}x, >1 means 3 nodes FASTER)")
         else:
             L.append(f"  3-node minus 1-node: {gap:+.4f} — SE UNMEASURABLE at this n, so the gap "
                      f"cannot be placed against the noise at all")
