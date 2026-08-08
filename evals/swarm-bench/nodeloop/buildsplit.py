@@ -68,6 +68,36 @@ def _local_secs_of_day(ts):
         return _to_secs(ts.split("T")[1][:8])
 
 
+def result_rows(runs=RUNS) -> list[dict]:
+    """Every scored run EXACTLY ONCE, keyed by (cell, finished_at).
+
+    THE BUG THIS EXISTS TO PREVENT, MEASURED 2026-08-08. A corpus built by globbing `_archive/*/*.json`
+    PLUS `*/nodeloop-result.json` double-counts every run that is in both — which is every run on the
+    CURRENT build, because a cell keeps its result file until the next run of that cell overwrites it.
+    EIGHT OF FORTY-TWO RUNS were counted twice, and it silently inflated three consecutive analyses
+    (F649/F650/F651). Duplication raises n and LOWERS the standard error, so it flatters whatever is
+    being measured: a planning difference published at 4.63 SE was really 3.23.
+
+    `result.json` carries NO `cell` field — the cell name is only in the path, which is why the first
+    join written against it matched zero of fifty rows without raising anything.
+    """
+    out = {}
+    for p in glob.glob(os.path.join(runs, "_archive", "*", "*.json")) + \
+            glob.glob(os.path.join(runs, "*", "nodeloop-result.json")):
+        if os.sep + "logs" + os.sep in p:
+            continue
+        try:
+            with open(p) as fh:
+                r = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        base = os.path.basename(p)
+        cell = os.path.basename(os.path.dirname(p)) if base == "nodeloop-result.json" \
+            else re.sub(r"-\d+\.json$", "", base)
+        out[(cell, r.get("finished_at"))] = {**r, "cell": cell, "path": p}
+    return list(out.values())
+
+
 def loop_rows() -> list[dict]:
     """The EXACT rows spread.py calls real — same regex, same 30-minute floor."""
     out = []
