@@ -14375,7 +14375,35 @@ impl GooseAgentDispatcher {
                         .map(|f| canonical_role(f))
                         .collect();
                     let system2 = build_system(&frozen_backbone_clause(&frozen));
+                    // THE SECOND SILENT WINDOW. `skeleton_drafts` is emitted for the FIRST draft round
+                    // only, and this is a SECOND full best-of-N round over the whole fleet with no event
+                    // of its own. MEASURED across the three retargeting cells in the corpus: the gap
+                    // between `plan_convergence` and the first `detail_completed` is 6.6-8.2 minutes with
+                    // ZERO events in it — 6.8/6.7/6.6 on consecutive rounds of one cell — while the first
+                    // detail call in that window self-reports 80s. So ~5.5 min per round is unaccounted,
+                    // roughly 16 minutes of a 58.5-minute prefix.
+                    //
+                    // The engine already learned this lesson once: its own comment reads "THE SKELETON
+                    // DRAFT IS THE LONGEST SILENT WINDOW IN A RUN", measured at 12 minutes with not one
+                    // event, and the fix was to emit `skeleton_drafts` with an arithmetic identity that
+                    // must close. That window is instrumented; this one was not, and it is the same
+                    // function being called a second time.
+                    //
+                    // Emitting rather than asserting is deliberate. The code shows two `draft_round`
+                    // calls here and the timing fits, but stderr is not captured for these cells so I
+                    // cannot confirm WHICH path ran — and naming a mechanism from the shape of the source
+                    // has been wrong twice in one day (a confidence threshold that was the wrong
+                    // variable, a review layer called blind that was merely narrow). Let the measurement
+                    // name its own occupant.
+                    let r2_started = std::time::Instant::now();
                     let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
+                    self.events.write_value(serde_json::json!({
+                        "event": "skeleton_drafts_round2",
+                        "path": "incremental",
+                        "returned": candidates2.len(),
+                        "dead": _dead2,
+                        "secs": r2_started.elapsed().as_secs(),
+                    }));
                     let (best2, _valid2) =
                         select_best_skeleton(candidates2, worker_count, "incremental ");
                     match best2 {
@@ -14450,7 +14478,17 @@ impl GooseAgentDispatcher {
                         backbone.join(", ")
                     );
                     let system2 = build_system(&backbone_clause(&backbone));
+                    // Second silent window, backbone variant — see the incremental path above for the
+                    // measurement. Both call the same `draft_round` a second time and neither emitted.
+                    let r2_started = std::time::Instant::now();
                     let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
+                    self.events.write_value(serde_json::json!({
+                        "event": "skeleton_drafts_round2",
+                        "path": "backbone",
+                        "returned": candidates2.len(),
+                        "dead": _dead2,
+                        "secs": r2_started.elapsed().as_secs(),
+                    }));
                     let (best2, _valid2) =
                         select_best_skeleton(candidates2, worker_count, "round2 ");
                     match best2 {
