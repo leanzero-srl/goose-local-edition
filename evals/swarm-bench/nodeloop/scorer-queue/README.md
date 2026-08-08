@@ -74,3 +74,25 @@ and it needs its own arm judged on BOTH pillars.
 - **The one finding that survived every test is F584/F600**: at one node the FLEET binds, at three
   the PLAN binds — 7/7 against 8/9 across five builds. It is a verdict per run, not a mean, which is
   why the replicate spread cannot touch it. Anything landed here should be judged the same way.
+
+## Also queued, found while auditing (F605) — a coverage split, not a bug
+
+**Only two of twelve instruments read `runs/nodeloop/_archive`**: `goal.py` (which writes it) and
+`verdicts.py` (which resolves activity dirs out of it). The other ten glob the live cell directories
+and therefore see **nine runs where twenty exist**.
+
+No instrument has a cell-name collision bug — every one globs a pattern yielding one file per cell
+directory, where the name is unique. The split is a coverage gap nobody declared, not a defect.
+
+**It predicts which of today's findings held.** F584 came from `verdicts.py` (archive-aware, 16
+readings) and survived every re-test unchanged. F585 came from `planshape.py` (live dirs, 6 points)
+and collapsed from −0.814 to −0.551 when re-run against the archive. F587 came from an ad-hoc
+live-dir scan of four cells and strengthened at nine. That needs no mechanism — it is nine runs
+against twenty.
+
+**The change:** one shared `all_runs()` resolver over live dirs + `_archive`, keyed by
+`(cell, epoch)` with a ±120s tolerance (result rows and event logs are written 4–5 seconds apart),
+retrofitted into the ten. **Deliberately not written tonight** — `goal.py` and `verdicts.py` have
+already rolled their own readers, so a third bespoke one is the duplication L355 exists to prevent,
+and F598 caught me committing exactly that with the tierlog archive. Retrofitting ten instruments is
+a deliberate change, not a late-evening one.
