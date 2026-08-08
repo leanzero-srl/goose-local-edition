@@ -64,6 +64,29 @@ the engine's own note records laddering cells at 0.9343/0.7147/0.8157 against 0.
 concludes *"the ladder may be buying the quality… Measure first."* This is a TRADE, not a free win,
 and it needs its own arm judged on BOTH pillars.
 
+**MEASURED 2026-08-08 (F612), and it is worse than that caveat.** `would_skip_ladder` is **TRUE for
+all five laddering rounds in the corpus** — so `diverse_plan` would have skipped **every ladder this
+campaign has ever run**, not just the one cell. That includes the single round F612 showed was
+*genuine* (`agreement_conf` 81, `agreement_best2` 81, `pool_penalty` **0** — real disagreement on
+both footings), which is the **0.9760** run, the best 3-node score of the frozen era.
+
+### 6. `F612-pool-invariant-at-round-1` — the engine author's own fix, now evidenced
+Not my idea: `swarm.rs:14260-14280` states it and closes *"Emitted rather than acted on… Measure
+first."* `best_subset_agreement(k=2)` exists so a growing pool can only RAISE the metric and reports
+every fleet on a 1-node footing, but it is wired as `consensus_k` (*"retarget only"*), so the
+pool-invariant measure never reaches the round-1 decision point where the pool penalty is what
+triggers the ladder. Their words: *"That is backwards."*
+
+**The measurement they asked for (F612): 4 of 5 laddering rounds had `agreement_best2` clearing the
+85 floor while `agreement_conf` did not** — penalties 10/19/13/10, raw conf 83/69/80/83 rising to
+93/88/93/93 on the 1-node footing. Each such round costs **25.0 min (F610, 6.73 SE)**.
+
+- **Denominator is 5.** A per-round mechanism check against the author's stated criterion, not a mean.
+- **Does NOT license flipping anything by itself** — F611 measured the quality side of this trade as
+  needing **183 cells per bucket**. This explains why the tax is paid, not that paying it is wrong.
+- Distinct from F577: this makes the *trigger* fleet-invariant. F577 *skips the ladder entirely*, and
+  F612 just showed that would have killed the genuine round too.
+
 ## Standing constraints for whoever lands these
 
 - **`cargo` needs `. bin/activate-hermit` and cwd = repo root.**
