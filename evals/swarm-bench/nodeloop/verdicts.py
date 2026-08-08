@@ -33,6 +33,17 @@ LOG_ARCHIVE = os.path.join(RUNS, "_archive", "logs")
 
 PASS, FAIL, INERT = "PASS", "FAIL", "INERT"
 
+# A FOURTH OUTCOME, added because three of the twelve entries in this file turned out to have NO FAIL
+# BRANCH AT ALL. `f491`, `f470` and `f497` return PASS or INERT and nothing else — they REPORT a number
+# or an observation, they do not gate on it. Dressed as passes they inflated the file's apparent
+# health: a quarter of the "12 checks, 23 cells, zero reds" column was green by construction rather
+# than by evidence, which is exactly the reading L349 warns about. INFO says "this is an observation,
+# not a verdict" so a reader counting greens counts only things that could have been red.
+INFO = "INFO"
+REPORTERS = {"f491_hint_was_worth_keeping",
+             "f470_owns_nothing_sink_can_be_accepted",
+             "f497_plan_is_still_the_ceiling"}
+
 
 def f491_hint_was_worth_keeping(ev, a) -> tuple[str, str]:
     """A cap-exhausted `observed` problem verdict carrying a real hint — the thing F491 stopped
@@ -50,7 +61,7 @@ def f491_hint_was_worth_keeping(ev, a) -> tuple[str, str]:
             hits.append(f"{t}:{e.get('verdict')}")
     if not hits:
         return INERT, "no cap-exhausted observed verdict carried a hint — the fix had nothing to keep"
-    return PASS, f"{len(hits)} hint(s) the old engine would have discarded: {', '.join(hits[:3])}"
+    return INFO, f"{len(hits)} hint(s) the old engine would have discarded: {', '.join(hits[:3])}"
 
 
 F492_FIX = "5ed189bcf"  # the commit that populates elapsed_ms on the judge paths
@@ -179,7 +190,7 @@ def f470_owns_nothing_sink_can_be_accepted(ev, a) -> tuple[str, str]:
     if not verdicts_:
         return INERT, "the sink owns nothing but was never judged"
     if any(v.get("action") == "accepted" for v in verdicts_):
-        return PASS, f"owns-nothing sink ACCEPTED after {len(verdicts_)} verdict(s)"
+        return INFO, f"owns-nothing sink ACCEPTED after {len(verdicts_)} verdict(s)"
     seen = ", ".join(sorted({str(v.get("verdict")) for v in verdicts_}))
     return INERT, (f"sink owns nothing and drew {len(verdicts_)} verdict(s) ({seen}) but never went "
                    f"quiet long enough to reach the branch")
@@ -441,7 +452,7 @@ def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
         return INERT, "no critical path — cannot compute the plan ceiling"
     who = "PLAN binds" if mu < slots else "FLEET binds"
     over = " — ABOVE the 4.0 bar (F497 threshold met)" if mu > 4.0 else ""
-    return PASS, f"max_useful_nodes {mu} vs {slots} slots ⇒ {who}{over}"
+    return INFO, f"max_useful_nodes {mu} vs {slots} slots ⇒ {who}{over}"
 
 
 def report(log_path: str, label: str) -> int:
@@ -562,6 +573,25 @@ def self_test() -> int:
     check("F517 tie promoted", f517_raced_repair_fires_and_never_regresses(ev, {"pool_size": 3}))
 
     globals()["carries"] = real_carries
+
+    # STRUCTURAL GUARD, so a future check cannot quietly join the file without a way to fail. Anything
+    # named like a check must either contain a FAIL branch or be declared a REPORTER on purpose. This
+    # is the mechanism that makes the defect unable to recur, rather than a note saying to watch for it.
+    import ast as _ast, inspect as _inspect
+    tree = _ast.parse(_inspect.getsource(sys.modules[__name__]))
+    for node in tree.body:
+        if not isinstance(node, _ast.FunctionDef) or not node.name.startswith("f"):
+            continue
+        if node.name in ("self_test",):
+            continue
+        names = {n.id for n in _ast.walk(node) if isinstance(n, _ast.Name)}
+        if "FAIL" not in names and node.name not in REPORTERS:
+            fails.append(f"{node.name} has NO FAIL branch and is not declared a REPORTER — "
+                         f"it can only ever be green, which is a claim about the instrument")
+        if "FAIL" in names and node.name in REPORTERS:
+            fails.append(f"{node.name} is declared a REPORTER but HAS a FAIL branch — "
+                         f"promote it to a real check or drop it from REPORTERS")
+
     for f in fails:
         print(f"  FAIL {f}")
     print(f"verdicts self-test: {'PASS' if not fails else str(len(fails)) + ' FAILURES'}")
