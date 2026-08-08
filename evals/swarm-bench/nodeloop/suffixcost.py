@@ -57,6 +57,13 @@ SAMPLE_PERIOD = 30.0
 # Below this fraction of a window actually observed, the numbers are reported but not to be believed.
 MIN_COVERAGE = 0.6
 
+# COVERAGE IS NOT RESOLUTION, and conflating them published a number built from two readings. A
+# 48-second suffix is fully covered -- coverage 1.00, `reliable` true -- while resting on 2 samples,
+# where one node flipping state moves occupancy by 0.5. Two archived cells with sub-minute suffixes
+# reported 0.454 and 0.908 on that basis, a spread that is pure quantisation and was about to be read
+# as a difference between runs. A window must be observed AND sampled often enough to mean anything.
+MIN_SAMPLES = 6
+
 
 def _parse_detail(detail: str) -> dict:
     """`gabee=GENERATING mihai=IDLE qwen3=PROCESSINGPROMPT` -> {ident: state}.
@@ -134,6 +141,7 @@ def window_busy(samples: list[dict], t_start: float, t_end: float) -> dict | Non
     observed = 0.0
     per_node: dict[str, float] = {}
     peak = 0
+    n_samples = 0
     for i, s in enumerate(samples):
         nxt = samples[i + 1]["t"] if i + 1 < len(samples) else s["t"] + SAMPLE_PERIOD
         span_end = min(nxt, s["t"] + MAX_SAMPLE_SPAN)
@@ -142,6 +150,7 @@ def window_busy(samples: list[dict], t_start: float, t_end: float) -> dict | Non
             continue
         dur = hi - lo
         observed += dur
+        n_samples += 1
         busy_secs += s["busy"] * dur
         peak = max(peak, s["busy"])
         for ident, state in s["nodes"].items():
@@ -164,7 +173,8 @@ def window_busy(samples: list[dict], t_start: float, t_end: float) -> dict | Non
         "wall_secs": round(wall, 1),
         "observed_secs": round(observed, 1),
         "coverage": round(coverage, 3),
-        "reliable": coverage >= MIN_COVERAGE,
+        "samples": n_samples,
+        "reliable": coverage >= MIN_COVERAGE and n_samples >= MIN_SAMPLES,
         "busy_node_secs": round(busy_secs, 1),
         "occupancy": round(busy_secs / (observed * denom_nodes), 4),
         "peak_busy_nodes": peak,
@@ -265,7 +275,8 @@ def render(a: dict) -> str:
         if not w:
             L.append(f"  {name:<8} UNMEASURED (no samples in window)")
             continue
-        flag = "" if w["reliable"] else f"  ⚠ only {w['coverage']*100:.0f}% observed"
+        flag = ("" if w["reliable"]
+                else f"  ⚠ UNRELIABLE ({w['coverage']*100:.0f}% observed, {w['samples']} samples)")
         L.append(f"  {name:<8} wall {w['wall_secs']/60:6.1f}m   busy {w['busy_node_secs']/60:7.1f} node-min"
                  f"   occ {w['occupancy']:.3f}   peak {w['peak_busy_nodes']}/{w['nodes_seen']}{flag}")
 
@@ -368,6 +379,16 @@ def self_test() -> int:
     roll = read_samples(mk([_s(23 * 3600 + 59 * 60, "a=IDLE"), _s(1, "a=IDLE")]))
     if len(roll) == 2 and not (0 < roll[1]["t"] - roll[0]["t"] < 3600):
         fails.append(f"midnight rollover gave a {roll[1]['t'] - roll[0]['t']}s gap")
+
+    # RESOLUTION IS NOT COVERAGE. A 90-second window is fully observed and still rests on 3 readings;
+    # it must be UNRELIABLE despite coverage 1.0, or two-sample noise gets published as a difference
+    # between runs. The long window beside it, identically covered, must stay reliable.
+    short = window_busy(busy, busy[0]["t"], busy[0]["t"] + 90)
+    if not short or short["reliable"]:
+        fails.append(f"a 3-sample window reported reliable (coverage {short and short['coverage']})")
+    long_w = window_busy(busy, busy[0]["t"], busy[-1]["t"] + 30)
+    if not long_w or not long_w["reliable"]:
+        fails.append("a fully-sampled 10-minute window reported unreliable")
 
     # Determinism: two passes over the SAME file must agree exactly.
     same = mk([_s(base + i * 30, "a=GENERATING b=IDLE") for i in range(8)])
