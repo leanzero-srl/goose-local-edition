@@ -23056,10 +23056,29 @@ fn complete_parallel() -> bool {
 /// the count that opened the round. Ties and regressions promote NOTHING. The current engine promotes on the
 /// agent returning Ok — it never checks the fix at all — and the corpus shows the cost: findings ROSE in 3
 /// of 13 rounds. Requiring strict improvement makes that outcome unreachable rather than unlikely.
+/// ⚠️ BAKED ON (2026-08-08). It was written, documented, measured across 31 repair rounds — and never
+/// once switched on: `spec_repair_wave` appears in ZERO of the 13 archived cells in this bench's corpus.
+///
+/// The evidence that flipped it is the campaign's own. Decomposing seven cells built from an IDENTICAL
+/// binary showed the EXECUTE window is nearly constant (43.0-58.9 min) while the wall ranges 68.5-108.3,
+/// so almost none of the variance lives in the DAG. It lives in the post-execute repair phase: the two
+/// cells that scored 0.3587 and 0.4624 are EXACTLY the two whose `complete_result.passed` was false,
+/// each after a SERIAL fix worker burned 23.4 and 20.0 minutes. This file already recorded the same
+/// observation independently — "a serial complete-fix burned ~35min on one node while two idled".
+///
+/// And repair cannot be parallelised by splitting findings: measured, findings-per-round is min 0 /
+/// median 1 / max 2, so no round has ever had work for a third node. The axis that decomposes is the
+/// ATTEMPT. On three nodes the serial path leaves TWO IDLE for twenty minutes at the exact moment both
+/// pillars are decided, which is the clearest use for extra nodes this campaign has found.
+///
+/// Safe to default ON because promotion is MONOTONIC BY CONSTRUCTION: a twin lands only when its
+/// re-verified finding count is STRICTLY below the count that opened the round (`pick_repair_winner`),
+/// so ties and regressions promote nothing and a raced round can never leave the tree worse than it
+/// found it. Set GOOSE_SWARM_SPEC_REPAIR=0 to restore the serial path.
 fn spec_repair() -> bool {
     std::env::var("GOOSE_SWARM_SPEC_REPAIR")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Which raced twin (if any) is allowed to touch the real tree. PURE, because this one rule is the whole
@@ -26218,7 +26237,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
                 break;
             };
-            if spec_repair() && !fleet_models.is_empty() {
+            // `len() > 1`, not `!is_empty()`. Racing ONE model is the serial path plus shadow-tree
+            // machinery: same single attempt, same single verify, extra copying. The entire argument for
+            // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
+            // one model there is nothing to recover and the overhead is pure cost. This matters now that
+            // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
+            if spec_repair() && fleet_models.len() > 1 {
                 // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
                 // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
                 let baseline = verdict.findings.len();
