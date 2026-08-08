@@ -329,8 +329,47 @@ def main() -> int:
             print(f"     ⚠ n=1 in the multi-node arm: this commit measured NO within-arm variance. "
                   f"A byte-identical config has scored 44.2 / 86.7 / 90.0 on this fleet.")
 
+    print_sweep_arm_table()
     print_prediction_checks(rows)
     return 0
+
+
+def print_sweep_arm_table() -> None:
+    """THE SWEEP'S OWN ARM TABLE, SHOWN BESIDE MINE, BECAUSE I SPENT A CAMPAIGN NOT READING IT.
+
+    F519/L325: the sweep re-prints an arm table into `loop.log` after EVERY completed unit, carrying
+    n, score mean, spread, kind-mismatch and wall per arm. At n=8 per arm it said the quality arms are
+    1.6 points apart inside 52-61 point spreads and that three nodes is 4 minutes FASTER — the answer
+    to the campaign's whole question — while I hand-derived a smaller version of the same comparison
+    from archived cells and chased a deficit its table says does not exist.
+
+    Shown BESIDE this file's rows rather than instead of them, because the two disagree on principle
+    and both principles matter: the sweep's table POOLS ACROSS BUILDS, which is the F479 error that
+    once forced a retraction, while these rows are build-pure and therefore smaller-n. Neither is
+    strictly better. When they AGREE — as they do today, quality a wash and three nodes marginally
+    faster — that agreement is worth more than either number alone, and it can only be noticed if
+    they are printed together.
+    """
+    log = os.path.join(RUNS, "loop.log")
+    if not os.path.exists(log):
+        return
+    try:
+        lines = open(log, errors="replace").read().splitlines()
+    except OSError:
+        return
+    starts = [i for i, l in enumerate(lines) if l.startswith("arm ") and "score mean" in l]
+    if not starts:
+        return
+    i = starts[-1]
+    print("\n" + "=" * 78)
+    print("THE SWEEP'S OWN ARM TABLE (pools across builds — see the build-pure rows above)")
+    print("=" * 78)
+    for l in lines[i:]:
+        if not l.strip():
+            break
+        # Arms with no completed unit carry a '-' mean; they are queue entries, not results.
+        if l.startswith("arm ") or " - " not in l:
+            print("  " + l[:110])
 
 
 def print_prediction_checks(rows: list[dict]) -> None:
