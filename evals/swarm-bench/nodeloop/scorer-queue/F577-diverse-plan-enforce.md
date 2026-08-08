@@ -24,11 +24,33 @@ pairwise Jaccard, `best_subset_agreement`'s doc says both "only worsen (or hold)
 and so a bigger fleet drafts more, is scored lower for it, and pays a ladder the smaller fleet is
 never eligible for. That is the mechanism of "more nodes make it worse" on the speed pillar.
 
-⚠️ THIS IS A TRADE AND MUST BE JUDGED AS ONE. Skipping the ladder saves the 35 minutes but also
-skips a re-plan the engine judged necessary. The one cell that paid it scored 0.6457 — MID-RANGE,
-between 0.4624 and 0.7703. Whether skipping would have scored better or worse is UNMEASURED. So
-this gets its own arm once the freeze lifts, judged on BOTH pillars; a speed-only verdict would be
-exactly the half-reading F539 warns against.
+⚠️⚠️ THE EVIDENCE AGAINST THIS CHANGE IS STRONGER THAN THE CAVEAT I FIRST WROTE HERE (F579).
+
+The engine had already measured the proposal and recorded the result, in its own words at :14277:
+"Emitted rather than acted on: the cells that laddered scored 0.9343/0.7147/0.8157 against
+0.6030/0.6695 for the two that did not, so the ladder may be buying the quality and a silent flip
+here could spend that. Measure first."
+
+That is +0.185 IN FAVOUR OF LADDERING. My original caveat here rested only on the frozen-era spread
+— 0.6457 laddered against 0.4624 and 0.7703 not, a mere +0.03. The two eras AGREE IN DIRECTION and
+disagree in magnitude; pooling all eight cells gives laddered 0.7776 against non-laddered 0.6263,
++0.151, though pooling across binaries is itself questionable.
+
+It is observational, not randomised, and that cuts BOTH ways: a cell ladders BECAUSE its drafts
+disagreed, and disagreement may itself mark a harder planning situation. Nobody has run the arm.
+
+⇒ SO THE HONEST POSTURE IS THE ENGINE'S OWN: MEASURE FIRST. This change buys back 35 minutes of the
+speed pillar by potentially spending the quality pillar, and the main goal requires BOTH — a
+speed-only win here would not be a win at all.
+
+RELATED, AND THE ENGINE SAYS THE FIX MAY BE IN THE WRONG PLACE ENTIRELY: `best_subset_agreement`
+exists so a growing pool can only RAISE the metric, and is wired in as `consensus_k` — but applied
+"retarget only", i.e. only AFTER the ladder has triggered, never at the round-1 decision point where
+the pool penalty is what triggers it. The engine's verdict on that ordering is "That is backwards."
+`consensus_k` is NOT a config field (3 references in the whole file, no `pub`, no SwarmConfig entry),
+so it cannot be switched on without editing the call site. k=2 is principled rather than arbitrary:
+it is what a 1-node fleet drafts, so every fleet is reported on the same footing, and at 2 drafts it
+falls through to the full-set measure so the field is a no-op on 1 node (unit-tested at :9437).
 
 ⚠️ AND THE ERA GAP IS UNEXPLAINED. The in-source comment records 3-node agreement at 50/52/54 with
 ladders of 786/821/1657s on EVERY 3-node cell; the frozen era shows 69/88/100 with one of three
