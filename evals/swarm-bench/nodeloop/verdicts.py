@@ -379,11 +379,21 @@ def f532_repair_budget_was_not_left_on_the_table(ev, a) -> tuple[str, str]:
     """A red app must never finish COMPLETE holding enough budget for another repair round.
 
     This is the defect F532 fixes, stated as a property of the run rather than of the config.
-    baseline-n3-r0 scored the campaign's best 0.9033 and still shipped RED at 1 finding, having used
-    1216s of a nominal 3000s budget — because the LIVE config carried the pre-raise
-    `complete_cap_secs: 1200`, one round consumed it, and the loop broke at `cap_deadline` before the
-    second round it was budgeted for. Nothing in the suite could see it: the invariant test asserts on
-    `default_complete_cap_secs()` and config merges OVER the default.
+    baseline-n3-r0 scored the campaign's best 0.9033 and still shipped RED at 1 finding: the LIVE
+    config carried the pre-raise `complete_cap_secs: 1200`, one round consumed it, and the loop broke
+    at `cap_deadline` before the second round. Nothing in the suite could see it — the invariant test
+    asserts on `default_complete_cap_secs()` and config merges OVER the default.
+
+    THE PRE-FIX DEFECT IS EXHAUSTION, NOT SLACK, and an earlier version of this docstring said the
+    opposite ("1216s of a nominal 3000s budget"). That run's budget WAS 1200 and it spent 1216 — seven
+    seconds over, fully consumed. Nothing was left on any table. Across the corpus the signature is a
+    cell spending 1201-1411s against its 1200s cap and ending RED WITH EXACTLY ONE FINDING, in roughly
+    a third of runs reaching COMPLETE.
+
+    The check below is nonetheless about SLACK, and correctly so — it runs only on POST-fix cells,
+    where the lift has already granted a budget large enough for another round. There, unspent budget
+    beside a red app is a real failure: the engine was given the room and did not use it. The pre-fix
+    world could not produce that state at all, which is exactly why the provenance gate matters here.
 
     The budget is read from `complete_cap_lifted.effective_secs`, which is the only place a run states
     the repair budget it actually used. When that event is absent the budget is genuinely unknown from
