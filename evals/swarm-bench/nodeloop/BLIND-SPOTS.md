@@ -9,11 +9,13 @@ Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 - **cross_module_drift (orig)** (18x) — QUALITY — never mentioned
 - ~~**orphan_files**~~ **READ (F635)** — 75% of orphaned files are REPLAN-INJECTED output; 9 firings, all 3-node, zero 1-node
 - **orphan_files (orig)** (8x) — QUALITY — never mentioned
-- **sink_capped** (1x) — QUALITY — prose only in review.py
+- ~~**sink_capped**~~ **READ (F636)** — fires 1 of 21 runs (0/9 at one node, 1/12 at three)
+- **sink_capped (orig)** (1x) — QUALITY — prose only in review.py
 - **complete_missing_deliverables** (1x) — QUALITY — never mentioned
 - **http_timeout_scan** (33x) — SPEED — never mentioned
 - **scouts_planned** (21x) — SPEED — never mentioned
-- **sink_plan** (21x) — SPEED — never mentioned
+- ~~**sink_plan**~~ **READ (F636)** — cap scales with tree_bytes (1.13x) but is binding in only 1 of 21 runs; non-issue
+- **sink_plan (orig)** (21x) — SPEED — never mentioned
 - **research_tools** (21x) — other — prose only in sweep.py
 - **review** (18x) — other — prose only in armcheck.py, dispatch_audit.py, occupancy.py, phases.py, review.py, selftest.py, sinkwatch.py, sweep.py, tierlog.py
 - **run_overview** (18x) — other — never mentioned
