@@ -29,6 +29,55 @@ RUNS = Path("/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/nodeloop")
 LOG = RUNS / "tiers.jsonl"
 
 
+def plan_signal(run_log: Path) -> dict:
+    """The ladder + round-1 convergence verdict, rescued before the next run overwrites it.
+
+    WHY THIS LIVES HERE. `run.jsonl` is overwritten per cell NAME exactly like the result file was.
+    MEASURED: 171 [done] rows in loop.log, 118 result dirs, and only NINE surviving run.jsonl. So
+    every event-derived question is capped at nine cells forever, and the one that matters right now
+    — does the confidence ladder BUY the quality it costs 35 minutes for — came back `n=1 vs 5, SE
+    UNMEASURABLE`. The engine parked a real change on that question with the words "measure first",
+    and the archive cannot answer it at any sample size because the evidence is deleted, not absent.
+    tierlog already runs on a 5-minute tick against ~1.9-hour cells, so it sees each `run.jsonl`
+    while it still exists. This makes the sample grow from here instead of staying at nine.
+
+    ROUND ONE, NOT THE LAST ROUND. A laddering cell emits one `plan_convergence` per draft round, and
+    it is the FIRST that decides whether the ladder fires at all. Reading the last one is a different
+    question and quietly answers it: on baseline-n3-r0 round 1 is conf 69 / best2 88 / penalty 19 —
+    the numbers that bought the ladder — while round 3 is 68 / 81 / 13. Taking the last would have
+    understated the pool penalty by six points and pointed at a decision that was never made.
+
+    ABSENT IS `None`, NEVER 0. A cell whose `run.jsonl` is already gone must be distinguishable from
+    a cell that genuinely never laddered, or the overwrite silently manufactures evidence for the
+    cheaper answer — L340 in the data model rather than in a sentence.
+    """
+    out = {"ladder": None, "retarget_discarded": None, "draft_rounds": None, "conv1": None}
+    if not run_log.is_file():
+        return out
+    lad = disc = rounds = 0
+    conv1 = None
+    try:
+        text = run_log.read_text(errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        if '"confidence_retarget"' in line:
+            lad += 1
+        elif '"retarget_discarded"' in line:
+            disc += 1
+        elif '"skeleton_drafts"' in line:
+            rounds += 1
+        elif '"plan_convergence"' in line and conv1 is None:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            conv1 = {k: e.get(k) for k in
+                     ("drafts", "agreement_conf", "agreement_best2", "pool_penalty",
+                      "struct_conv", "struct_stop", "enforced", "would_skip_ladder")}
+    return {"ladder": lad, "retarget_discarded": disc, "draft_rounds": rounds, "conv1": conv1}
+
+
 def existing_keys(path=LOG) -> set:
     """(cell, finished_at) pairs already recorded. The timestamp is half the key on purpose: without
     it a re-run of the same cell would look like a duplicate and be dropped, which is precisely the
@@ -68,7 +117,8 @@ def harvest(runs=RUNS, log=LOG) -> list:
                "score": j.get("score"), "wall_secs": j.get("wall_secs"),
                "void": bool(j.get("void")), "engine_build": j.get("engine_build"),
                "scorer_version": j.get("scorer_version"),
-               "tiers": {k: v.get("mean") for k, v in (j.get("tiers") or {}).items()}}
+               "tiers": {k: v.get("mean") for k, v in (j.get("tiers") or {}).items()},
+               **plan_signal(p.parent / "run.jsonl")}
         added.append(row)
         seen.add(key)
     if added:
@@ -133,6 +183,34 @@ def self_test() -> int:
     res.write_text(json.dumps({"arm": "baseline", "nodes": 3, "finished_at": "x", "score": 0.5}))
     if harvest(d, log):
         fails.append("a result with no tiers block was recorded anyway")
+
+    # THE PLAN SIGNAL. Absent evidence must read as None, never as a confident zero — a cell whose
+    # run.jsonl was already overwritten must not be recorded as a cell that did not ladder.
+    rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    if any(r.get("ladder") is not None for r in rows):
+        fails.append("a missing run.jsonl was recorded as a real ladder count instead of None")
+
+    # And with a run.jsonl present it must count the ladder and keep ROUND ONE's convergence.
+    (cell / "run.jsonl").write_text("\n".join([
+        json.dumps({"event": "skeleton_drafts", "requested": 3}),
+        json.dumps({"event": "plan_convergence", "agreement_conf": 69, "agreement_best2": 88,
+                    "pool_penalty": 19, "would_skip_ladder": True}),
+        json.dumps({"event": "confidence_retarget"}),
+        json.dumps({"event": "retarget_discarded"}),
+        json.dumps({"event": "skeleton_drafts", "requested": 3}),
+        json.dumps({"event": "plan_convergence", "agreement_conf": 68, "agreement_best2": 81,
+                    "pool_penalty": 13, "would_skip_ladder": True}),
+    ]))
+    write(0.7, "2026-08-08T12:00:00")
+    new = harvest(d, log)
+    if len(new) != 1:
+        fails.append("the run with a plan signal was not recorded")
+    else:
+        r = new[0]
+        if r["ladder"] != 1 or r["retarget_discarded"] != 1 or r["draft_rounds"] != 2:
+            fails.append(f"ladder counts wrong: {r['ladder']}/{r['retarget_discarded']}/{r['draft_rounds']}")
+        if (r["conv1"] or {}).get("pool_penalty") != 19:
+            fails.append(f"kept the LAST plan_convergence, not round one: {r.get('conv1')}")
 
     for f in fails:
         print(f"  FAIL {f}")
