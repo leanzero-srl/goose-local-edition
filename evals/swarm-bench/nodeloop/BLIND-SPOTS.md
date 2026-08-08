@@ -3,8 +3,10 @@
 Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 `prose only` = the name appears in a docstring/gate description but never in a comparison.
 
-- **spec_contract** (33x) — QUALITY — prose only in crunch.py, phases.py
-- **cross_module_drift** (18x) — QUALITY — never mentioned
+- ~~**spec_contract**~~ **READ (F634)** — 0 findings, but 1 in 3 advertised checks INCONCLUSIVE and ungraded by anything
+- **spec_contract (orig)** (33x) — QUALITY — prose only in crunch.py, phases.py
+- ~~**cross_module_drift**~~ **READ (F633)** — guard working: 0 findings, 6-12 modules checked/run
+- **cross_module_drift (orig)** (18x) — QUALITY — never mentioned
 - **orphan_files** (8x) — QUALITY — never mentioned
 - **sink_capped** (1x) — QUALITY — prose only in review.py
 - **complete_missing_deliverables** (1x) — QUALITY — never mentioned
