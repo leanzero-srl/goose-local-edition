@@ -369,6 +369,7 @@ def print_prediction_checks(rows: list[dict]) -> None:
                 ("F470 owns-nothing accepted", verdicts.f470_owns_nothing_sink_can_be_accepted(ev, a)),
                 ("F474 post-drop is faster", verdicts.f474_a_dropped_body_costs_less_the_second_time(ev, a)),
                 ("F511 no test-author stall", verdicts.f511_no_test_author_stalled(ev, a)),
+                ("F517 raced repair safe", verdicts.f517_raced_repair_fires_and_never_regresses(ev, a)),
                 ("F497 plan is the ceiling", verdicts.f497_plan_is_still_the_ceiling(ev, a)),
             ]
         except Exception as exc:  # noqa: BLE001

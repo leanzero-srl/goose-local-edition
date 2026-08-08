@@ -227,6 +227,58 @@ def f511_no_test_author_stalled(ev, a) -> tuple[str, str]:
     return PASS, f"{n} test-authoring task(s), none stalled"
 
 
+F517_FIX = "d91fd8b96"          # the commit that bakes spec_repair ON
+F517_SERIAL_WORST_SECS = 1410   # 23.5 min — the worst post-execute suffix the SERIAL path ever produced
+
+
+def f517_raced_repair_fires_and_never_regresses(ev, a) -> tuple[str, str]:
+    """`spec_repair` must fire on a multi-node repair round, and must never make the app worse.
+
+    Three things are checked, and the SECOND is the one that matters most:
+
+      1. FIRES. On a fleet with more than one model that actually entered repair, a
+         `spec_repair_wave` must appear. Its absence would mean the baked default is not reaching the
+         code path — the same class of defect as a lever that is on but dead.
+      2. NEVER REGRESSES. `pick_repair_winner` promotes only when a twin's re-verified finding count
+         is STRICTLY below the count that opened the round, so `winner_findings < baseline_findings`
+         must hold on EVERY promoted wave. This is the whole safety argument for racing N writers at
+         one tree; if it ever fails, racing is unsafe and the lever must come straight back off.
+      3. NOT SLOWER. Where it fires, the post-execute suffix must not exceed 1410s — the worst the
+         serial path ever produced (F516: 23.5 min on baseline-n1-r2).
+
+    INERT is genuine here in two ways that must not be confused with a pass: a 1-node fleet cannot
+    race (the guard requires len() > 1, deliberately), and a cell that never entered repair had
+    nothing to race. Both are reported with their reason.
+    """
+    sha = shardshare.build_sha(ev)
+    if not carries(F517_FIX, sha):
+        return INERT, f"this cell ran {sha}, which predates the bake {F517_FIX} — it cannot falsify it"
+    waves = [e for e in ev if e.get("event") == "spec_repair_wave"]
+    entered_repair = any(e.get("event") == "complete_fix_dispatched" for e in ev)
+    pool = a.get("pool_size") or 0
+    if not waves:
+        if pool < 2:
+            return INERT, f"{pool}-node fleet — racing requires more than one model by design"
+        if not entered_repair:
+            return INERT, "this cell never entered repair, so there was nothing to race"
+        return FAIL, "a multi-node cell entered repair and NO spec_repair_wave fired — the baked lever is dead"
+    bad = [w for w in waves if w.get("promoted")
+           and not (isinstance(w.get("winner_findings"), int)
+                    and isinstance(w.get("baseline_findings"), int)
+                    and w["winner_findings"] < w["baseline_findings"])]
+    if bad:
+        return FAIL, ("PROMOTION WAS NOT STRICTLY BETTER — racing is unsafe, take the lever back off: "
+                      + "; ".join(f"round {w.get('round')}: {w.get('baseline_findings')} -> "
+                                 f"{w.get('winner_findings')}" for w in bad))
+    post = a.get("post_execute_secs")
+    if post is not None and post > F517_SERIAL_WORST_SECS:
+        return FAIL, (f"raced repair fired but the suffix is {post / 60:.1f} min, worse than the "
+                      f"serial path's {F517_SERIAL_WORST_SECS / 60:.1f} min worst case")
+    promoted = sum(1 for w in waves if w.get("promoted"))
+    return PASS, (f"{len(waves)} wave(s), {promoted} promoted, every promotion strictly better, "
+                  f"suffix {(post or 0) / 60:.1f} min")
+
+
 def f497_plan_is_still_the_ceiling(ev, a) -> tuple[str, str]:
     """maxuse above 4.0 is F497's registered bar for "the DAG got wider". Reported for EVERY cell
     because it is the campaign's headline number, not only when it moves."""
@@ -251,6 +303,7 @@ def report(log_path: str, label: str) -> int:
         ("F470 owns-nothing accepted", f470_owns_nothing_sink_can_be_accepted(ev, a)),
         ("F474 post-drop is faster", f474_a_dropped_body_costs_less_the_second_time(ev, a)),
         ("F511 no test-author stall", f511_no_test_author_stalled(ev, a)),
+        ("F517 raced repair safe", f517_raced_repair_fires_and_never_regresses(ev, a)),
         ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
     ]
     worst = 0
