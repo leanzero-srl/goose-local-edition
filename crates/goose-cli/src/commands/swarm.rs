@@ -26222,6 +26222,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "verified": sc_verified,
                     "findings": sc_found,
                     "inconclusive": sc_incon,
+                    // THE COUNT WITHOUT THE REASON IS NOT READABLE, and I proved that on myself.
+                    // `inconclusive: 1` appears in 15 of 15 archived cells, and from the count alone I
+                    // attributed it to the already-bound-port guard — the one branch whose comment I had
+                    // just read. THEN I MEASURED THE SPEC AND THAT ATTRIBUTION COLLAPSED: the bed's spec
+                    // does carry a backticked `python -m vendorsync --db PATH --port N`, so
+                    // `spec_run_argv` returns a non-empty argv, so `port` is the OS-assigned free port,
+                    // which is un-bound BY CONSTRUCTION. The guard I blamed cannot fire on this bed at
+                    // all, and the real reason is one of the other push sites — which the log cannot
+                    // distinguish, because it only ever carried a number.
+                    //
+                    // `verified` was added for exactly this class of problem: its own comment says it
+                    // exists so a zero is never mistaken for a pass. The same argument applies one level
+                    // down. A count of abstentions tells a reader THAT the check declined; only the
+                    // reason tells them whether the check is guarding correctly, mis-configured, or
+                    // looking at the wrong process. Truncated, because these strings embed command lines
+                    // and tails of output and the log is read whole.
+                    "inconclusive_reasons": sc.inconclusive.iter()
+                        .map(|r| r.chars().take(240).collect::<String>())
+                        .collect::<Vec<_>>(),
                     // ORDER MATTERS, AND THE PREVIOUS ORDER WAS BACKWARDS. The "CHECKED NOTHING" arm
                     // required all THREE counters to be zero — including `inconclusive`. But recording
                     // WHY a check could not conclude is exactly what puts a message in `inconclusive`,
