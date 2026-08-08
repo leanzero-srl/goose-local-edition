@@ -14,7 +14,8 @@ Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
 - **complete_missing_deliverables** (1x) — QUALITY — never mentioned
 - ~~**http_timeout_scan**~~ **READ (F637)** — the only detector that FINDS defects; fix loop clears 92%; arm gap 4.2x per run but only 1.65 SE
 - **http_timeout_scan (orig)** (33x) — SPEED — never mentioned
-- **scouts_planned** (21x) — SPEED — never mentioned
+- ~~**scouts_planned**~~ **READ (F642)** — fan is structurally FLEET-BLIND (`select_lenses` ignores node count; 3 lenses on greenfield) AND research wall-time does not drop with the fleet: median 395s vs 377s = 4.6%, 0.64 SE
+- **scouts_planned (orig)** (21x) — SPEED — never mentioned
 - ~~**sink_plan**~~ **READ (F636)** — cap scales with tree_bytes (1.13x) but is binding in only 1 of 21 runs; non-issue
 - **sink_plan (orig)** (21x) — SPEED — never mentioned
 - **research_tools** (21x) — other — prose only in sweep.py
