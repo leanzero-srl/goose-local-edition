@@ -257,6 +257,33 @@ fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -
     still_live && verdict.is_problem() && !hint.trim().is_empty()
 }
 
+/// Does this dispatch deserve the FASTEST free node?
+///
+/// `pick_device` already routes HARD tasks to the quickest host, on the reasoning stated there —
+/// identical models differ only in host speed, so putting the heaviest work on the fastest node
+/// shortens the critical path. A task on its THIRD attempt has earned exactly the same treatment and
+/// was not getting it.
+///
+/// MEASURED. `test-api-error-handling` went to the fast worksmacstudio node at 44.0 min, was killed
+/// `over_reading` at 51.2, went to the fast local-mihai node, was killed `over_reading` again at
+/// 60.3 — and its third dispatch landed on `mac-gabee`, the SLOWEST node, where it then ran for 29
+/// minutes drawing nothing but `ok` verdicts while both faster nodes reported READY. It was the last
+/// task in the run, so the whole run waited on the slowest host.
+///
+/// ⚠️ THE BAN IS NOT THE CULPRIT AND I NEARLY "FIXED" IT. `avoid_device` holds ONE device and is
+/// overwritten each kill, so the third attempt had both gabee AND worksmacstudio available. It went
+/// to gabee because `test-meridian-resilience` was dispatched in the SAME instant and took the fast
+/// node, leaving one slot. Nothing was malfunctioning; the ranking simply had no reason to prefer the
+/// twice-killed task over the fresh one.
+///
+/// That is the reason to rank by attempts: a task on attempt 2+ has already consumed two attempts of
+/// wall-clock, everything downstream is blocked behind it, and it is empirically the run's tail risk.
+/// A fresh task competing for the same slot is not. The bar is 2 rather than 1 because single
+/// retries are common and cheap, and this targets only the case that was actually measured to hurt.
+fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
+    is_hard || attempts >= 2
+}
+
 fn should_degrade_on_stall(
     enabled: bool,
     is_content: bool,
@@ -668,7 +695,13 @@ impl State {
         // A HARD task (the heaviest work, incl. integrate-verify) prefers the FASTEST free node: identical
         // models differ only in host speed, so the critical path shrinks if the big tasks land on the
         // quickest node. Load (in_flight) stays primary, so this never over-concentrates.
-        let hard = matches!(n.spec.difficulty, Difficulty::Hard);
+        // A REPEATEDLY-RETRIED task is tail risk and gets the same fast-node preference as a hard one
+        // — see `dispatch_prefers_fastest_node`. Measured: the run's last task, twice killed, landed
+        // on the slowest host for 29 minutes while both faster nodes sat READY.
+        let hard = dispatch_prefers_fastest_node(
+            matches!(n.spec.difficulty, Difficulty::Hard),
+            n.attempts,
+        );
         pool.into_iter().min_by_key(|&i| {
             let d = &self.devices[i];
             let sw = d.cfg.speed_weight.max(1) as u64;
@@ -2875,6 +2908,27 @@ mod salvage_tests {
     /// carrying the actual diagnosis — interleaved with `ok` verdicts whose hint is empty. Keeping the
     /// empty one would OVERWRITE the useful hint with nothing, which is worse than never keeping any,
     /// so the empty-hint case is asserted explicitly rather than left to the `is_problem()` filter.
+    /// A twice-killed task is tail risk and must compete for the fastest node like a hard one.
+    ///
+    /// Measured live: the run's last task, killed `over_reading` twice, took its third dispatch on
+    /// the slowest host and ran there 29 minutes while both faster nodes reported READY. Nothing was
+    /// broken — the ranking simply had no reason to prefer a twice-killed task over a fresh one
+    /// competing for the same slot in the same instant.
+    #[test]
+    fn a_repeatedly_retried_task_competes_for_the_fastest_node() {
+        // A fresh EASY task must NOT claim the fast-node preference — that would hand it to
+        // everything and the preference would stop meaning anything.
+        assert!(!dispatch_prefers_fastest_node(false, 0));
+        // One retry is common and cheap; the bar is deliberately above it.
+        assert!(!dispatch_prefers_fastest_node(false, 1));
+        // The third dispatch — exactly the measured case.
+        assert!(dispatch_prefers_fastest_node(false, 2));
+        assert!(dispatch_prefers_fastest_node(false, 5));
+        // HARD keeps the preference it always had, on its first dispatch and every later one.
+        assert!(dispatch_prefers_fastest_node(true, 0));
+        assert!(dispatch_prefers_fastest_node(true, 3));
+    }
+
     #[test]
     fn a_verdict_the_judge_could_not_act_on_still_keeps_its_diagnosis() {
         let real = "SyntaxError: `from Non` should be `from None`";
