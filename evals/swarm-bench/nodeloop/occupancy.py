@@ -630,6 +630,20 @@ def analyse(path) -> dict:
         "split_superseded_tasks": sorted(split_at),
         "idle_node_jobs": idle_jobs,
         "idle_slots": idle_slot_accounting(events),
+        # COMPUTED SINCE occ-1 AND THROWN AWAY EVERY RUN UNTIL NOW. `solo_secs` was published from
+        # this walk while the histogram it came from — seconds of wall-clock at each concurrency
+        # level — was discarded at the end of the loop. F584 established the plan ceiling as a RATIO
+        # (max_useful_nodes 4.38 against 6 slots), which says the plan cannot fill the fleet but not
+        # how much TIME the fleet spends underfilled; this is that number, and it was already in
+        # memory. On a 6-slot fleet, wall-clock at concurrency <= 4 IS wall-clock with at least two
+        # idle slots, which is exactly dynamic replan's precondition.
+        #
+        # ⚠ IT IS AN UPPER BOUND ON IDLENESS, NOT A MEASUREMENT OF IT. Concurrency counts DISPATCHED
+        # TASKS, while judge / pre_review / speculation hold a real slot without being one — which is
+        # why `idle_slot_accounting` exists at all. A low number here means "few tasks were running",
+        # never "the nodes were provably doing nothing".
+        "concurrency_secs": {str(k): round(v, 1) for k, v in sorted(concurrency.items())}
+        if concurrency else None,
         "_spans": attempt_spans,
         "_t0": t0,
         "_t_end": t_end,
