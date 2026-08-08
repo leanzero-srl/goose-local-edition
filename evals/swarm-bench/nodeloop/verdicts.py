@@ -302,6 +302,75 @@ def f517_raced_repair_fires_and_never_regresses(ev, a) -> tuple[str, str]:
                   f"suffix {(post or 0) / 60:.1f} min")
 
 
+F537_FIX = "46f0c84ca"        # the commit that gates dynamic-replan on the fraction of plan remaining
+F537_MIN_FRACTION = 0.25      # the gate: at least a quarter of the mandatory plan must still be open
+
+
+def f537_replan_did_not_inject_into_a_finishing_dag(ev, a) -> tuple[str, str]:
+    """No replan may inject bonus work once the mandatory plan is nearly done.
+
+    F537 IS OTHERWISE INVISIBLE, and that is the whole reason this check exists. The engine emits an
+    event when a replan HAPPENS and nothing at all when the gate REFUSES one, so a working fix looks
+    exactly like a quiet run. Three times today I read an absence I could not observe as an absence
+    that did not exist (F530 on the suffix, F531 on `complete_fix_completed`, F534 on the digests),
+    and shipping a fourth silent mechanism without a detector would be inviting the same mistake a
+    fourth time. The freeze forbids adding an engine event, so the property is reconstructed from
+    what IS emitted: `plan_loaded` gives the mandatory task set, `task_completed` says which of them
+    were done at any instant, and `replanned` carries the moment of injection.
+
+    MEASURED HARMS THIS MUST NOW REFUSE: n3-r2 injected at 3-of-21 mandatory left (14%) and grew an
+    18.3-minute bonus tail; n3-r3 injected at 2-of-18 (11%) and grew 26.8 minutes onto a run whose
+    mandatory work had ALREADY finished.
+
+    A FIRING REPLAN IS NOT A FAILURE. F537 blocks only LATE injection; n3-r0's injection came at
+    44 minutes with most of the DAG still open and would still be allowed. Reporting every
+    `replanned` as a regression would make this check red on correct behaviour, which is how a check
+    stops being read.
+
+    Bonus ids are excluded from both sides of the fraction. The DAG GROWS with every injection, so
+    counting them makes a run look busier the more unplanned work it has taken on — the same
+    denominator error the gate itself had to avoid.
+    """
+    sha = shardshare.build_sha(ev)
+    if not carries(F537_FIX, sha):
+        return INERT, f"this cell ran {sha}, which predates the fix {F537_FIX} — it cannot falsify it"
+    replans = [e for e in ev if e.get("event") == "replanned"]
+    if not replans:
+        return INERT, ("no replan fired in this cell — the gate was never asked, which says nothing "
+                       "either way about whether it would have refused")
+    plan = next((e for e in ev if e.get("event") == "plan_loaded"), None)
+    if not plan:
+        return INERT, "no plan_loaded — the mandatory task set is unknown"
+    planned = {t.get("id") for t in (plan.get("tasks") or []) if t.get("id")}
+    if not planned:
+        return INERT, "plan_loaded carried no tasks"
+
+    def t(e):
+        return occ.parse_ts(e.get("ts"))
+
+    bonus = {x for e in replans for x in (e.get("added") or [])}
+    mandatory = planned - bonus
+    late = []
+    for r in replans:
+        at = t(r)
+        done = {e.get("task_id") for e in ev
+                if e.get("event") == "task_completed" and (t(e) or 0) <= (at or 0)}
+        left = len(mandatory - done)
+        frac = left / len(mandatory) if mandatory else 1.0
+        if frac < F537_MIN_FRACTION:
+            late.append(f"round {r.get('round')}: {left}/{len(mandatory)} mandatory left ({frac:.0%})")
+    if late:
+        return FAIL, ("replan injected into a finishing DAG — the gate did not hold: " + "; ".join(late))
+    fracs = []
+    for r in replans:
+        at = t(r)
+        done = {e.get("task_id") for e in ev
+                if e.get("event") == "task_completed" and (t(e) or 0) <= (at or 0)}
+        fracs.append(len(mandatory - done) / len(mandatory))
+    return PASS, (f"{len(replans)} replan(s), all at or above the {F537_MIN_FRACTION:.0%} bar "
+                  f"(lowest {min(fracs):.0%} of the mandatory plan still open)")
+
+
 F532_FIX = "34359b8b7"   # the commit that enforces the repair-budget invariant on the RESOLVED value
 F532_FIX_CAP_SECS = 1200  # one fix attempt's own cap; a round costs up to this
 
@@ -380,6 +449,7 @@ def report(log_path: str, label: str) -> int:
         ("F511 no test-author stall", f511_no_test_author_stalled(ev, a)),
         ("F517 raced repair safe", f517_raced_repair_fires_and_never_regresses(ev, a)),
         ("F532 repair budget spent", f532_repair_budget_was_not_left_on_the_table(ev, a)),
+        ("F537 replan not late", f537_replan_did_not_inject_into_a_finishing_dag(ev, a)),
         ("F497 plan is the ceiling", f497_plan_is_still_the_ceiling(ev, a)),
     ]
     worst = 0
