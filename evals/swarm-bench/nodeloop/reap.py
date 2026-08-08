@@ -22,6 +22,7 @@ floor — which is exactly why a manual entry point is worth having at all.
     python3 reap.py --kill     # actually signal
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -153,6 +154,115 @@ def hung_children() -> list[dict]:
     return sorted(hung, key=lambda h: -h["age_min"])
 
 
+def live_run_log() -> tuple:
+    """The RUNNING engine's own event log, resolved from its CWD.
+
+    CELL NAME IS NOT APP ROOT (F588). `resolve_app_root` redirects a run out of its cell directory
+    into `runs/nodeloop/swarm-<N>node-r<rep>`, and that tree is MOVED into the cell directory when
+    the run ends — so `<cell>/run.jsonl` is stale for the whole life of the run and only becomes
+    correct after it no longer matters. The engine's own working directory IS the app root, which
+    needs no breadcrumb and cannot go stale while the process exists.
+
+    Returns (path, None) or (None, reason). NEVER returns "clean" for "could not look" — L340.
+    """
+    live = [r for r in ps_rows() if "swarm run" in r["cmd"] and "/goose" in r["cmd"]]
+    if not live:
+        return None, "no engine running — nothing to join against"
+    pid = live[0]["pid"]
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, timeout=15).stdout
+    except (subprocess.SubprocessError, OSError) as exc:
+        return None, f"could not read the engine's cwd ({exc}) — UNKNOWN, not clean"
+    cwd = next((l[1:] for l in out.splitlines() if l.startswith("n/")), None)
+    if not cwd:
+        return None, "lsof gave no cwd for the engine — UNKNOWN, not clean"
+    log = os.path.join(cwd, "run.jsonl")
+    if not os.path.isfile(log):
+        return None, f"engine cwd {cwd} has no run.jsonl yet — UNKNOWN, not clean"
+    return log, None
+
+
+def widowed_children(log_path: str, min_outlived_mins: float = 5.0) -> list:
+    """Processes STILL ALIVE that were already running when a task reported DONE.
+
+    MEASURED, AND THIS IS WHY IT EXISTS. `test-entry-validation` was dispatched at 15:04:43, its
+    pytest started at 15:09:30, the task reported `task_completed status=done` at 15:16:06 after 683
+    seconds — and that pytest was STILL BLOCKED at 15:44 when it was finally reaped, 25 minutes after
+    its own task claimed success and well after the entire run had finished. This file's own
+    docstring records two earlier pytest orphans at 55 and 48 minutes burning 50 CPU-minutes "during
+    the cell they were corrupting". So a task's success report says nothing about its children, and
+    nothing in this directory joined the two.
+
+    ⚠️ THIS REPORTS A WINDOW OVERLAP, NOT A PROVEN PARENT LINK, and the wording matters more than
+    usual: five attributions were wrong in one day, four of them because a plausible story was
+    published before the marker that would have tested it. `ps` does not record who spawned a
+    reparented process — ppid is 1 precisely because the parent is gone — so this can say "alive
+    across a completion boundary" and must not say "leaked by task X".
+
+    ⚠️ SCOPED TO THE BENCH, AND THE FIRST DRAFT WAS NOT. Filtering only on `ppid == 1` flagged 666
+    processes on a live machine — every launchd daemon on the box — which is a check that reports
+    everything and therefore reports nothing, the mirror image of a check that cannot fail. The
+    filter is now the same discriminator `sweep.py`'s real reaper uses: the process must reference
+    the bench runs directory, so nothing of Mihai's own can ever appear.
+
+    ⚠️ KNOWN LIMITATION, STATED RATHER THAN HIDDEN: the path appears in the argv of the SHELL that a
+    worker spawns, not in the argv of its grandchildren. The measured case is exactly that shape — a
+    `bash -c cd <runs>/... && python3 -m pytest ...` whose own children carry no path — so this
+    catches the shell that owns the leak while a grandchild reparented independently would be missed.
+    """
+    import datetime as dt
+    rows, now = [], None
+    comps = []
+    try:
+        for line in open(log_path, errors="replace"):
+            if '"task_completed"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("event") != "task_completed":
+                continue
+            try:
+                t = dt.datetime.fromisoformat(str(e.get("ts")).replace("Z", "+00:00")).timestamp()
+            except (ValueError, TypeError):
+                continue
+            comps.append((t, e.get("task_id"), e.get("status")))
+    except OSError:
+        return []
+    if not comps:
+        return []
+    now = dt.datetime.now().timestamp()
+    runs_root = os.path.join(os.path.dirname(HERE), "runs")
+    for r in ps_rows():
+        # ppid 1 = reparented, so no waiter exists by definition rather than by inference from age.
+        # The runs-root match is what keeps this from reporting every daemon on the machine.
+        if r["ppid"] != 1 or "swarm run" in r["cmd"] or runs_root not in r["cmd"]:
+            continue
+        started = now - etime_minutes(r["etime"]) * 60
+        after = [c for c in comps if c[0] > started]
+        if not after:
+            continue
+        first = min(after)
+        # A FLOOR, BECAUSE ppid==1 IS NORMAL DURING A LIVE RUN. F502/L308, recorded in this file's
+        # own reaper notes: a worker's shell exits the instant it spawns its child, so the child is
+        # reparented immediately and a healthy cell produces ppid-1 processes constantly. Measured
+        # here: a real worker shell in the live cell's app root appeared in the first unfloored pass
+        # and had already exited seconds later. The leak this exists to catch outlived its task's
+        # completion by 25 MINUTES, and the two earlier pytest orphans were 55 and 48 minutes old, so
+        # a five-minute floor separates the two populations by an order of magnitude. It is a
+        # BLIND SPOT as well as a filter — a leak that dies at four minutes is invisible — which is
+        # why it is a parameter the controls set to zero rather than a constant.
+        if (now - first[0]) / 60.0 < min_outlived_mins:
+            continue
+        rows.append({"pid": r["pid"], "cmd": r["cmd"][:110],
+                     "age_min": etime_minutes(r["etime"]),
+                     "outlived_min": (now - first[0]) / 60.0,
+                     "task": first[1], "status": first[2], "n_completions": len(after)})
+    return sorted(rows, key=lambda x: -x["outlived_min"])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kill", action="store_true", help="actually signal; default is report only")
@@ -171,6 +281,24 @@ def main() -> int:
     # Printed on EVERY invocation rather than behind a flag: a hung child is invisible to the orphan
     # scan for the whole run (F502), which is exactly the window in which it does its damage. A check
     # you have to remember to ask for is one you will not run on the night it matters.
+    # A task reporting DONE is not evidence its children are (L393). Printed unconditionally for the
+    # same reason as the hung block: a check you must remember to ask for is one you will not run on
+    # the night it matters.
+    log, why = live_run_log()
+    if log is None:
+        print(f"\n=== OUTLIVED A COMPLETED TASK === UNKNOWN — {why}")
+    else:
+        widows = widowed_children(log)
+        print(f"\n=== STILL ALIVE ACROSS A COMPLETION BOUNDARY "
+              f"(window overlap, NOT a proven parent link) ({len(widows)}) ===")
+        if not widows:
+            print("  (none — every reparented process predates this run's first completion)")
+        for w in widows:
+            print(f"  pid {w['pid']:<7} age {w['age_min']:6.1f}m  outlived {w['outlived_min']:6.1f}m "
+                  f"of completions  first-crossed '{w['task']}' (status={w['status']}, "
+                  f"{w['n_completions']} completion(s) since)")
+            print(f"      {w['cmd']}")
+
     hung = hung_children()
     print(f"\n=== HUNG MID-RUN (older than the engine's own {WATCHDOG_SECS}s stall bar; "
           f"REPORTED, never killed) ({len(hung)}) ===")
