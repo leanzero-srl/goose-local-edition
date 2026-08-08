@@ -118,7 +118,7 @@ triggers the ladder. Their words: *"That is backwards."*
 85 floor while `agreement_conf` did not** — penalties 10/19/13/10, raw conf 83/69/80/83 rising to
 93/88/93/93 on the 1-node footing. Each such round costs **25.0 min (F610, 6.73 SE)**.
 
-**🔴 DO NOT LAND THIS YET — MEASURED 2026-08-08 (F645), AND THE AUTHOR'S HOLD IS UNMEETABLE ON THIS CORPUS.**
+**🔴 DO NOT LAND THIS YET — MEASURED 2026-08-08 (F645, CORRECTED BY F646). ONE RUN SHORT OF DECIDABLE.**
 The author's own words are `Measure first`, and the risk they named is `the ladder may be buying the
 quality and a silent flip here could spend that`. F612 discharged the MECHANISM half. The OUTCOME half
 cannot be discharged at all: of 11 real rows only **5 carry a known `ladder` value**, and in those five
@@ -128,6 +128,27 @@ weak one, and it is what F607/F612 predict once ladders are pool-bought.
 
 ⚠️ A first pass appeared to give a within-arm gap of +0.1463 (n=3 vs 3); the second group was entirely
 rows whose `ladder` field is **None** — a could-not-look scored as a negative. Invalid, and withdrawn.
+
+**CORRECTED 2026-08-08 (F646) — the collinearity above was an ARTEFACT OF MISSING DATA, and the
+author's own objection has now FIRED.** `ladder` is the count of `confidence_retarget` events; the six
+rows tierlog left as `None` had their run.jsonl overwritten by cell reuse, but **those logs survive in
+the two archives**. Re-deriving recovered all six, and the derivation reproduces all five known values
+exactly (1,0,2,0,1), zero mismatches, every match inside 6s. Corpus **5 -> 11 rows**.
+
+Two recovered rows are **3-node runs that did NOT ladder** (0.4624, 0.7703) — precisely the cell
+reported empty. So ladder and arm were never collinear; that was the shape of the hole.
+
+**P1 FIRED: laddering runs average 0.7408 (n=4) vs 0.6900 (n=7) — a gap of +0.0508 at 0.43 SE against
+a 0.10 bar. The author's five-cell 0.185 does NOT replicate.** So the stated reason for holding is not
+supported — but +0.0508 +/- 0.1175 is UNINFORMATIVE, not evidence either way.
+
+**P2 remains refused and is decisive: within 3 nodes it is 4 laddering vs 2 not — ONE SHORT of the
+pre-registered minimum of 3.** Observed within-arm gap is +0.1244 and is NOT quoted as a result. At one
+node laddering is structurally zero (F607/F612).
+
+⇒ **The trigger is now concrete: ONE more 3-node run that does not ladder makes the within-arm test
+runnable at 3 vs 4.** Two of the last six 3-node runs did not ladder, so this is a matter of runs, not
+instrumentation.
 
 ✅ It becomes answerable at no extra cost: `tierlog.py` now records `ladder` on every new row, so each
 future run adds a gradable point. The blocker is that 6 of 11 existing rows predate the field.
