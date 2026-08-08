@@ -1328,6 +1328,7 @@ impl State {
             remaining,
             failed,
             split_count: self.split_generation.get(&tid).copied().unwrap_or(0),
+            attempt: self.dag.tasks.get(&tid).map(|n| n.attempts).unwrap_or(0),
         };
         self.judge_running = true;
         // Record the JUDGING node before the call, not after: the verdict emit reads

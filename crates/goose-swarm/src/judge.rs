@@ -131,6 +131,9 @@ pub struct JudgeInput {
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
+    /// Which attempt of this task is running (0 = first). The nothing-written deadline scales with it —
+    /// see `no_output_deadline_secs`.
+    pub attempt: u32,
 }
 
 /// One child subtask proposed when the judge SPLITS a too-big task. It owns a DISJOINT SUBSET of the
@@ -302,6 +305,9 @@ pub struct JudgeRequest {
     /// once, so a child born from a split (split_count >= 1) is never split again — preventing runaway
     /// shattering. The scheduler tracks this and the goose-cli judge feeds it into `is_split_candidate`.
     pub split_count: u32,
+    /// Which attempt of this task is running (0 = first). The nothing-written deadline scales with it —
+    /// see `no_output_deadline_secs`.
+    pub attempt: u32,
 }
 
 /// Inspects one in-flight worker and returns a verdict. Implemented in goose-cli by gathering evidence
@@ -455,7 +461,11 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // original schedule. Combined with `is_still_producing` keying on ACTIONS rather than reasoning, a
     // spiral (thinking climbs, tool calls flat) is NOT producing and still dies at 420s — which is the
     // case this branch exists for.
-    let deadline = cfg.min_age_secs.max(420) * if is_still_producing(input, cfg) { 2 } else { 1 };
+    let deadline = no_output_deadline_secs(
+        cfg.min_age_secs.max(420),
+        input.attempt,
+        is_still_producing(input, cfg),
+    );
     if owns_code && !input.any_owned_written && input.elapsed_secs >= deadline {
         let read_nothing = input.worker_tool_calls == Some(0);
         return Some(JudgeOutcome {
@@ -566,6 +576,42 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         });
     }
     None
+}
+
+/// How long a worker that owns code may go without producing it, GIVEN which attempt this is.
+///
+/// It used to be flat: `min_age_secs.max(420)`, doubled while the worker is still producing. So every
+/// attempt got the same seven minutes, including the attempt dispatched *because* the previous one was
+/// killed at seven minutes for exactly this.
+///
+/// MEASURED on `baseline-n3-r0`, and it is the run's entire critical path. `test-api-error-handling`
+/// consumed 51.7 minutes of a 63.4-minute execute phase — 82% of it — on one node while the other two
+/// had nothing to do:
+///
+///   attempt 0  7.2 min  KILLED  "none of the files you own exists on disk yet, though you have run 2 command(s)"
+///   attempt 1  9.1 min  KILLED  the IDENTICAL diagnosis, after receiving attempt 0's hint
+///   attempt 2 35.4 min  COMPLETED
+///
+/// The obvious reading is that the worker needed a firmer hand, and the obvious fix is to kill it
+/// sooner on a retry. The digest says the opposite, and this is why the rule reads the way it does:
+/// ALL THREE ATTEMPTS RAN THE SAME THREE-STEP SHAPE — two shell commands, then `write`. Attempts 0 and
+/// 1 were killed *before reaching the write*. Attempt 2 was not observed until 16.8 minutes in, wrote
+/// its file, and finished. The only attempt that was left alone is the only attempt that worked.
+///
+/// So the kill was not correcting a pathology, it was restarting a process that had not finished its
+/// second step — and the corrective hint had already been delivered to attempt 1 (the scheduler
+/// threads `prior_hints` onto the re-dispatch) and changed nothing. Two identical kills producing two
+/// identical behaviours is evidence that the intervention does not work on this failure, and the
+/// engine's answer to "the intervention is not working" must not be a third, faster intervention.
+///
+/// Growing rather than shrinking also keeps the guard honest where it EARNS its keep: attempt 0 is
+/// unchanged at 420s, so a genuinely stuck first attempt is caught exactly as before. Only a task that
+/// has already paid for a kill buys more rope, and it is capped at 3x so a truly wedged worker is still
+/// bounded — `worker_timeout_secs` and the behavioural over-read gate remain in force throughout.
+fn no_output_deadline_secs(base: u64, attempt: u32, still_producing: bool) -> u64 {
+    let rope = 1 + attempt.min(2) as u64;
+    base.saturating_mul(rope)
+        .saturating_mul(if still_producing { 2 } else { 1 })
 }
 
 /// The nothing-written correction, COMPOSED — and in particular, it STATES what it observes instead
@@ -915,6 +961,7 @@ mod tests {
             prev_tool_calls: None,
             prev_observed_secs: None,
             split_count: 0,
+            attempt: 0,
         }
     }
 
@@ -1215,6 +1262,7 @@ mod provenance_tests {
             prev_tool_calls: None,
             prev_observed_secs: None,
             split_count: 0,
+            attempt: 0,
         };
         let cfg = JudgeConfig::default();
         let out =
@@ -1224,5 +1272,33 @@ mod provenance_tests {
             out.deterministic,
             "a compile error is an ENGINE FACT — it must be marked deterministic or it can never fail a task"
         );
+    }
+
+    #[test]
+    fn a_retried_task_gets_more_rope_to_write_its_file_not_less() {
+        // baseline-n3-r0's critical path: two kills at 7.2 and 9.1 min for the IDENTICAL reason, then a
+        // third attempt that was left alone and finished. The first attempt is unchanged — a genuinely
+        // stuck opener is still caught at 420s — and only an attempt that has already paid for a kill
+        // buys more time.
+        assert_eq!(no_output_deadline_secs(420, 0, false), 420);
+        assert_eq!(no_output_deadline_secs(420, 1, false), 840);
+        assert_eq!(no_output_deadline_secs(420, 2, false), 1260);
+
+        // Capped at 3x: more rope is not unbounded rope. A wedged worker is still bounded here, and
+        // worker_timeout_secs and the behavioural over-read gate remain in force regardless.
+        assert_eq!(no_output_deadline_secs(420, 7, false), 1260);
+
+        // It must GROW, never shrink — the whole point is that killing sooner was the wrong direction.
+        for a in 0..5u32 {
+            assert!(
+                no_output_deadline_secs(420, a + 1, false)
+                    >= no_output_deadline_secs(420, a, false),
+                "attempt {a} got LESS rope than the attempt before it"
+            );
+        }
+
+        // The still-producing doubling composes with the attempt scaling rather than replacing it.
+        assert_eq!(no_output_deadline_secs(420, 0, true), 840);
+        assert_eq!(no_output_deadline_secs(420, 1, true), 1680);
     }
 }

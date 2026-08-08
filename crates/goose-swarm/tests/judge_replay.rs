@@ -133,6 +133,7 @@ fn to_input(
         prev_tool_calls: prev_calls,
         prev_observed_secs: prev_at,
         split_count: 0,
+        attempt: 0,
     }
 }
 
