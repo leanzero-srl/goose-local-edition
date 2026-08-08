@@ -1,0 +1,22 @@
+# Engine events no instrument reads (F632, 21 runs, modern corpus)
+
+Third-pass audit: 43 distinct event types, 31 genuinely read, 12 blind.
+`prose only` = the name appears in a docstring/gate description but never in a comparison.
+
+- **spec_contract** (33x) — QUALITY — prose only in crunch.py, phases.py
+- **cross_module_drift** (18x) — QUALITY — never mentioned
+- **orphan_files** (8x) — QUALITY — never mentioned
+- **sink_capped** (1x) — QUALITY — prose only in review.py
+- **complete_missing_deliverables** (1x) — QUALITY — never mentioned
+- **http_timeout_scan** (33x) — SPEED — never mentioned
+- **scouts_planned** (21x) — SPEED — never mentioned
+- **sink_plan** (21x) — SPEED — never mentioned
+- **research_tools** (21x) — other — prose only in sweep.py
+- **review** (18x) — other — prose only in armcheck.py, dispatch_audit.py, occupancy.py, phases.py, review.py, selftest.py, sinkwatch.py, sweep.py, tierlog.py
+- **run_overview** (18x) — other — never mentioned
+- **complete_fix_completed** (17x) — other — prose only in verdicts.py
+
+## Why this list exists
+
+Twice in one hour an unread signal surfaced by accident (F630, F631), and the
+second cost a published number. Start here before building a proxy.
