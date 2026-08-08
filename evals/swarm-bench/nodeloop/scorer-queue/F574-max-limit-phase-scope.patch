@@ -1,0 +1,54 @@
+QUEUED — DO NOT APPLY MID-MEASUREMENT.
+
+Applying this changes `scorer_version` sb-3 -> sb-4 and every existing row becomes incomparable to
+every new one. `baseline-n3-r1` is cell 2 of the 4-cell frozen-binary spread measurement (F533); it
+is in flight and will be graded by whatever `score_build.py` says at that moment. Land this only at
+a clean boundary, bump `scorer_version`, and RE-SCORE the archived cells from their preserved trees
+and traces rather than mixing two instrument versions in one table.
+
+⚠️ AND NOTE WHO IT HELPS. The leak inflates BROKEN clients. In the archived sample it awarded +1.00
+to a 1-node cell and +0.02 to a 3-node cell, so correcting it moves the comparison TOWARD the 3-node
+hypothesis this campaign is trying to prove. That is precisely why it is queued and version-gated
+instead of applied quietly: a fix that flatters your own hypothesis, made mid-measurement, is
+indistinguishable from fitting the instrument to the answer.
+
+Evidence, controls and prevalence: `nodeloop/tracescope.py` (run `--self-test` first).
+Bounded composite impact: 0.02 (one of ten tier-D checks, tier weight 0.20).
+
+--- a/evals/swarm-bench/bench/score_build.py
++++ b/evals/swarm-bench/bench/score_build.py
+@@
+ def _trace_split(trace: List[Dict]) -> tuple:
+     """(first-sync requests, second-sync requests, second-sync 304s, largest limit seen)."""
+     marks = [i for i, e in enumerate(trace) if e.get("__phase__", "").startswith("sync")]
+     lists = lambda seg: [e for e in seg if e.get("path") == "/v1/payments" and e.get("method") == "GET"]
+     if len(marks) >= 2:
+         first, second = trace[marks[0] + 1:marks[1]], trace[marks[1] + 1:]
+     elif len(marks) == 1:
+         first, second = trace[marks[0] + 1:], []
+     else:
+         first, second = trace, []
+-    limits = [int(e["query"]["limit"]) for e in lists(trace)
++    # SCOPED to the graded phase, like the three fields beside it and like every tier-C check.
++    # Reading the whole trace credited the agent's own development requests: measured on
++    # baseline-n1-r2, whose delivered client made ZERO graded vendor list calls (sync1_reqs == 0
++    # from this same call) yet scored a perfect 1.00 for page-size efficiency off eight build-time
++    # requests. That is the failure mark_phase was introduced to prevent, still live in this field.
++    graded = trace[marks[0] + 1:] if marks else trace
++    limits = [int(e["query"]["limit"]) for e in lists(graded)
+               if str(e.get("query", {}).get("limit", "")).isdigit()]
+     return (len(lists(first)), len(lists(second)),
+             sum(1 for e in lists(second) if e.get("status") == 304), max(limits or [0]))
+
+REGRESSION TEST to land with it (the property, not the number):
+
+    def test_max_limit_ignores_build_phase_requests():
+        mark = {"__phase__": "sync1", "method": "-", "path": "-", "status": 0, "query": {}}
+        get = lambda lim: {"path": "/v1/payments", "method": "GET", "status": 200,
+                           "query": {"limit": str(lim)}}
+        # A client that never issued a graded request must score zero, whatever the build did.
+        assert _trace_split([get(100), get(100), mark])[3] == 0
+        # The graded value wins even when it is LOWER than the build's.
+        assert _trace_split([get(100), mark, get(25)])[3] == 25
+        # An unmarked trace still grades whole, so older traces do not silently zero out.
+        assert _trace_split([get(50)])[3] == 50
