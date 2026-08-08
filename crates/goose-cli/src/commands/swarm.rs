@@ -24254,6 +24254,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "contract_retry": swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry),
             "read_on_fix": swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix),
             "kind_prompt": swarm_gate_cfg("GOOSE_SWARM_KIND_PROMPT", load_config().kind_prompt),
+            // AND A THIRD, ADDED THE SAME MORNING IT WAS BAKED, BECAUSE I MADE THIS EXACT MISTAKE AGAIN.
+            //
+            // `spec_repair` was flipped default-ON hours ago and shipped WITHOUT a line here. The first
+            // cell on the new binary then reported `spec_repair: ABSENT` from its own levers event —
+            // which, per the comment below, reads exactly like "resolved to null". Had no
+            // `spec_repair_wave` fired, I could not have told a dead lever from a cell that simply never
+            // entered repair, and the whole point of baking it was to find out which.
+            "spec_repair": spec_repair(),
             // TWO LEVERS SHIPPED WITHOUT A LINE HERE, AND THE LOG COULD NOT SAY WHETHER EITHER WAS ON.
             //
             // `levers_resolved` is a hand-maintained list, so a new gate is invisible until someone adds
