@@ -44,6 +44,7 @@ NEW = {
     "description_chars": "C12(b) — the split child's instruction length, on TaskDispatched",
     "requested_best_of_n": "C5(A) — the PRE-clamp ask on skeleton_drafts",
     "distinct_draft_models": "C5(A) — what actually caps the draft pool",
+    "The spec names these documents": "C7 — the scout branch for a spec that names docs",
 }
 # Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
 # a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute

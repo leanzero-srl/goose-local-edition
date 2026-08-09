@@ -3434,6 +3434,33 @@ fn id_names_a_test(id: &str) -> bool {
 /// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
 /// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
 /// that differs from the real one by one character.
+/// Which grounding a scout is told it has. Extracted as a pure function because the alternative —
+/// an inline three-branch `if` — is exactly the shape that let the ladder's shadow diagnostic and
+/// the branch it mirrored drift apart (F707): a test of the *condition* passes while the *call site*
+/// does something else. Here the call site matches on this value, so a test of this function is a
+/// test of the call site.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ScoutLookup {
+    /// An MCP extension is attached; the lens's own tool hint applies.
+    Mcp,
+    /// No extension, but the SPEC NAMES DOCUMENTS and the scout has a shell to curl them with.
+    SpecDocs,
+    /// Nothing to look up with — ask for calibration instead of lookup.
+    None,
+}
+
+fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
+    // MCP wins when both are available: it is the channel the lens tool_hints are written for, and
+    // the doc URLs still reach the worker verbatim through `doc_facts` regardless.
+    if has_mcp {
+        ScoutLookup::Mcp
+    } else if has_docs {
+        ScoutLookup::SpecDocs
+    } else {
+        ScoutLookup::None
+    }
+}
+
 fn spec_doc_urls(spec: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (idx, _) in spec.match_indices("http") {
@@ -7539,6 +7566,67 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// whitespace fetches an address one character off the real one — and a 404 here is
     /// indistinguishable from a spec that named no documentation at all. The bare origin on the next
     /// line must NOT be fetched: it is the service the build is writing a client for, not a document.
+    /// ONE BOOLEAN WAS ANSWERING TWO QUESTIONS AND GOT THE SECOND WRONG — all four combinations.
+    ///
+    /// The defect: `has_lookup = !exts.is_empty()` drove BOTH the tool hint and the clause asserting
+    /// the scout "cannot look anything up on this run". A scout with no MCP extension still has a
+    /// shell, and 59 of 77 archived scouts (77%) fetched a spec-named URL while under that
+    /// instruction — so the engine told them a falsehood and then counted the result as grounded.
+    ///
+    /// The bottom row is the one that makes the change SAFE to ship: a spec naming no document is
+    /// byte-identical to today, which is why the gate's off-state cannot regress an existing run.
+    #[test]
+    fn a_spec_naming_documents_is_not_told_it_cannot_look_anything_up() {
+        assert_eq!(
+            scout_lookup(true, true),
+            ScoutLookup::Mcp,
+            "MCP wins when both exist"
+        );
+        assert_eq!(
+            scout_lookup(true, false),
+            ScoutLookup::Mcp,
+            "MCP alone is unchanged"
+        );
+        assert_eq!(
+            scout_lookup(false, true),
+            ScoutLookup::SpecDocs,
+            "THE DEFECT: no extension but the spec names documents — this used to say 'you cannot \
+             look anything up' to a scout holding a shell and a URL"
+        );
+        assert_eq!(
+            scout_lookup(false, false),
+            ScoutLookup::None,
+            "no extension and no named document must stay EXACTLY as today — this is what makes the \
+             change safe on every spec that names no URL"
+        );
+    }
+
+    /// The gate must be able to force the old behaviour even when the spec DOES name documents,
+    /// because that off-state is the control arm any measurement of this change compares against.
+    #[test]
+    fn the_scout_doc_gate_off_reproduces_todays_behaviour_on_a_spec_that_names_documents() {
+        let urls = spec_doc_urls("see https://example.com/api/reference.md for the contract");
+        assert!(
+            !urls.is_empty(),
+            "positive control: the spec really does name a document"
+        );
+        // has_docs is `gate && !doc_urls.is_empty()` at the call site — with the gate off it is false
+        // no matter what the spec says, so the decision must collapse to today's None branch.
+        let gate_off = false;
+        assert_eq!(
+            scout_lookup(false, gate_off && !urls.is_empty()),
+            ScoutLookup::None,
+            "gate OFF must reproduce today's clause even on a doc-naming spec"
+        );
+        let gate_on = true;
+        assert_eq!(
+            scout_lookup(false, gate_on && !urls.is_empty()),
+            ScoutLookup::SpecDocs,
+            "gate ON on the same spec must take the new branch — otherwise the gate does nothing \
+             and the arm would measure a no-op"
+        );
+    }
+
     #[test]
     fn spec_doc_urls_takes_the_document_and_not_the_bare_origin() {
         let spec = "The Meridian API documentation is at `http://127.0.0.1:8930/v1/docs`. Read it \
@@ -13558,11 +13646,17 @@ impl GooseAgentDispatcher {
         } else {
             0
         };
+        // THE DOCUMENTS THE SPEC ITSELF NAMES, hoisted out of the per-lens closure so every scout is
+        // told the same truth. `spec_doc_urls` is pure and cheap; computing it per lens would just be
+        // the same parse three times.
+        let doc_urls = spec_doc_urls(user_prompt);
+        let scout_doc_urls = swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", false);
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
         fanout_over_fleet_straggler(worker_models, lenses, scout_grace, "scout", move |lens, model| {
             let me = me.clone();
             let exts = research_extensions.clone();
             let prompt = prompt.clone();
+            let doc_urls = doc_urls.clone();
             async move {
                 let started = std::time::Instant::now();
                 eprintln!(
@@ -13590,18 +13684,51 @@ impl GooseAgentDispatcher {
                 // So when there is nothing attached, say so, and ask for CALIBRATION instead of lookup: what
                 // it is confident of, and what it is NOT, marked. An honest "I am not certain of this
                 // signature" is worth more to the planner than a fluent invention.
-                let has_lookup = !exts.is_empty();
-                let tool_hint = if has_lookup {
+                // ONE BOOLEAN WAS ANSWERING TWO DIFFERENT QUESTIONS, AND GOT THE SECOND ONE WRONG.
+                //
+                // `has_lookup = !exts.is_empty()` is the right test for `tool_hint` — naming context7
+                // when no extension is attached is the falsehood the block above exists to stop. It is
+                // the WRONG test for `lookup_clause`, which asserts the scout "cannot look anything up
+                // on this run". A scout with no MCP extension still has a SHELL, and the spec routinely
+                // names its own documentation URLs.
+                //
+                // MEASURED, and it is not marginal: `research_completed.grounded` averages 2.27/3 with
+                // ZERO runs at 0, and 59 of 77 scouts (77%) fetched a URL while under an explicit
+                // instruction that they could not. `research_lookups` grounds on `is_mcp ||
+                // fetched_external`, and `fetched_external` is set by a shell curl. So the engine both
+                // tells the scout it cannot look anything up AND counts it as grounded when it does.
+                //
+                // The stale comment that justified the old wording claimed `grounded` was 0 on every
+                // run. The corpus refutes it — that reading predates the `is_mcp || fetched_external`
+                // change, which landed 12h43m earlier the same day.
+                let has_mcp = !exts.is_empty();
+                let has_docs = scout_doc_urls && !doc_urls.is_empty();
+                let lookup = scout_lookup(has_mcp, has_docs);
+                let tool_hint = if has_mcp {
                     lens.tool_hint
                 } else {
                     "You have NO documentation or web-search tools attached — do not attempt to use \
                      context7 or web-search, they are not there."
                 };
-                let lookup_clause = if has_lookup {
+                let lookup_clause = if lookup == ScoutLookup::Mcp {
                     format!(
                         "You have at most {max_lookups} tool call(s): spend them on LOOKING THINGS UP, not \
                          on exploring. Stop as soon as you can answer — an early, grounded answer beats a \
                          long one."
+                    )
+                } else if lookup == ScoutLookup::SpecDocs {
+                    // THE ONLY NEW BRANCH. It fires exactly when the spec named a document and no MCP
+                    // extension is attached — the case the old code described as "you cannot look
+                    // anything up". Everything the scout asserts about the vendor API must now come
+                    // from fetched text or be marked UNVERIFIED, because an invented signature here
+                    // becomes a frozen contract every worker builds against.
+                    format!(
+                        "The spec names these documents: {}. Fetch each one with `curl -s <url>` as \
+                         your FIRST action, and quote it VERBATIM for anything you assert about the \
+                         vendor API. Mark anything NOT present in the fetched text as UNVERIFIED \
+                         rather than guessing a plausible-looking name — a signature you invent here \
+                         becomes a frozen contract every worker builds against.",
+                        doc_urls.join(", ")
                     )
                 } else {
                     "You cannot look anything up on this run, so answer from what you already know — and \

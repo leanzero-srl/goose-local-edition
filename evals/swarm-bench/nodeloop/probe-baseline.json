@@ -6,7 +6,8 @@
     "would_skip_ladder_prelift": false,
     "description_chars": false,
     "requested_best_of_n": false,
-    "distinct_draft_models": false
+    "distinct_draft_models": false,
+    "The spec names these documents": false
   },
   "controls": {
     "would_skip_ladder": true,
