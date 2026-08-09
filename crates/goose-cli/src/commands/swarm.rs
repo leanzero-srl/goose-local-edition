@@ -5404,8 +5404,7 @@ mod tests {
             .cloned()
             .collect();
         let skipped = planned.len() - app_only.len();
-        let res =
-            http_timeout_scan(&dir, TargetLang::Python, &app_scope_py(&dir, &app_only)).await;
+        let res = http_timeout_scan(&dir, TargetLang::Python, &app_scope_py(&dir, &app_only)).await;
         let _ = std::fs::remove_dir_all(&dir);
         if !res.ran {
             return; // python3 not available in this environment
@@ -11595,9 +11594,12 @@ fn diverse_plan_would_skip(struct_conv: u8, struct_stop: u8, agreement_conf: u8)
 /// must too, and the pre-lift reading is kept under its own key rather than silently replacing it.
 #[test]
 fn shadow_and_branch_agree_on_the_lifted_confidence() {
-    for (conf1, best2, struct_conv, struct_stop) in
-        [(81u8, 81u8, 93u8, 80u8), (60, 88, 100, 80), (100, 100, 100, 80), (54, 88, 95, 80)]
-    {
+    for (conf1, best2, struct_conv, struct_stop) in [
+        (81u8, 81u8, 93u8, 80u8),
+        (60, 88, 100, 80),
+        (100, 100, 100, 80),
+        (54, 88, 95, 80),
+    ] {
         let lifted = conf1.max(best2);
         // what the branch at the round-1 decision point evaluates, post-lift
         let branch = diverse_plan_would_skip(struct_conv, struct_stop, lifted);
@@ -11611,7 +11613,10 @@ fn shadow_and_branch_agree_on_the_lifted_confidence() {
         // and the pre-lift reading is a DIFFERENT question, kept only for continuity
         let prelift = diverse_plan_would_skip(struct_conv, struct_stop, conf1);
         if best2 > conf1 && struct_conv > conf1 && struct_conv <= best2 {
-            assert_ne!(prelift, branch, "this case is exactly why both keys are emitted");
+            assert_ne!(
+                prelift, branch,
+                "this case is exactly why both keys are emitted"
+            );
         }
     }
 }
@@ -15835,17 +15840,22 @@ mod is_test_path_tests {
         // silence rather than evidence
         assert!(!is_test_path(py, "vendorsync/meridian.py"));
         assert!(!is_test_path(py, "vendorsync/api.py"));
-        assert!(!is_test_path(py, "latest/protest.py"), "substring must not match a segment rule");
+        assert!(
+            !is_test_path(py, "latest/protest.py"),
+            "substring must not match a segment rule"
+        );
         // and the old one-argument form is exactly why this exists
-        assert!(!py.is_test_file("tests/test_api.py"), "is_test_file takes a BASENAME");
+        assert!(
+            !py.is_test_file("tests/test_api.py"),
+            "is_test_file takes a BASENAME"
+        );
         assert!(py.is_test_file("test_api.py"));
     }
 }
 
 fn is_test_path(lang: TargetLang, f: &str) -> bool {
     let base = f.rsplit('/').next().unwrap_or(f);
-    lang.is_test_file(base)
-        || f.split('/').any(|seg| seg == "tests" || seg == "test")
+    lang.is_test_file(base) || f.split('/').any(|seg| seg == "tests" || seg == "test")
 }
 
 fn app_scope_py(root: &Path, planned: &[String]) -> AppScope {
