@@ -9455,21 +9455,33 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
         // Below the stop never skips, however far it beats a low agreement score.
         assert!(!diverse_plan_would_skip(79, 80, 10));
-        // The 1-node shape: agreement already high, so there is nothing for the lever to rescue —
-        // which is why the 1-node cell never paid the ladder and this must report false, not true.
+        // High agreement, so there is nothing for the lever to rescue and this must report false.
+        // ⚠️ CORRECTED: this was labelled "the 1-node shape" and used to explain why the one-node
+        // cell never paid the ladder. It does not explain that. A one-node run has NO agreement
+        // score at all (plan_confidence NULL in 11/11), so it never reaches this predicate — the
+        // input triple below is a valid high-agreement case, not a one-node one.
         assert!(!diverse_plan_would_skip(74, 80, 88));
     }
 
     /// THE POOL-SIZE PENALTY IS REAL, AND `agreement_best2` IS FREE OF IT.
     ///
-    /// `best_of_n` is sized from the fleet (`base.max(devices.len())`), so 1 node drafts 2 skeletons
-    /// and 3 nodes draft 3. MEASURED: the 1-node cell scored agreement 88 and paid NO redraft ladder;
-    /// the 3-node cells scored 50/52/54 and paid 786-1657s. This pins the mechanism behind that.
+    /// ⚠️ CORRECTED: this said `best_of_n` is sized from the fleet so "1 node drafts 2 skeletons".
+    /// It is NOT sized from the fleet. `n = requested_n.min(draft_models.len().max(1))` (:14142) and
+    /// `draft_models` is deduped by MODEL NAME — so the cap is DISTINCT MODELS, not device count. A
+    /// one-device fleet has one distinct model and drafts exactly ONE skeleton: `skeleton_drafts`
+    /// reads requested=1/returned=1 on all 11 one-node runs on record.
     ///
-    /// Both halves matter. If adding a draft did NOT lower `plan_agreement`, F438's whole explanation
-    /// is wrong. If `agreement_best2` were not a no-op at 2 drafts, the field would not be comparing
-    /// fleets on the same footing and every reading of it would be confounded by pool size — the very
-    /// thing it exists to remove.
+    /// That correction changes the mechanism story, which is why it is worth the words. At one draft
+    /// there is no cross-draft agreement to compute at all — `plan_loaded.plan_confidence` is NULL in
+    /// 11/11 one-node runs and non-null in 17/17 three-node runs. So the one-node arm does not skip
+    /// the ladder because its agreement was comfortably high; it skips because the ladder's input
+    /// DOES NOT EXIST. That is a CAPABILITY difference, not a behaviour difference, and conflating
+    /// the two is what would make "cutting the ladder" look free when measured one-node-vs-three.
+    ///
+    /// The property tested below is unaffected and still worth pinning: adding a third divergent
+    /// draft must lower `plan_agreement` while leaving `agreement_best2` alone, and at k >= pool size
+    /// `best_subset_agreement` must fall through to the full-set measure. Both are facts about the
+    /// function, established here on synthetic drafts — not claims about what any fleet produces.
     #[test]
     fn a_third_divergent_draft_lowers_agreement_but_not_the_best_pair() {
         let mk = |files: &[(&str, &str)]| {
@@ -9517,8 +9529,13 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
 
         // NO-OP AT TWO DRAFTS. `best_subset_agreement` falls through to the full-set measure when
-        // k >= pool size, so a 1-node run reports agreement_best2 == agreement_conf and `pool_penalty`
-        // is zero. Without this the field would silently mean something different per fleet size.
+        // k >= pool size, so at two drafts agreement_best2 == agreement_conf and `pool_penalty` is
+        // zero. Without this the field would silently mean something different per pool size.
+        //
+        // ⚠️ CORRECTED: this cited "a 1-node run" as the two-draft case. A one-node run drafts ONE
+        // (the cap is distinct MODELS, :14142), and at one draft there is no agreement to report at
+        // all — plan_confidence is NULL in 11/11 one-node runs. The two-draft case is real and worth
+        // testing; it is simply not the shape a one-node fleet produces.
         let (best2_of_two, _) = best_subset_agreement(&two, false, 2);
         assert_eq!(
             best2_of_two, pair_conf,
@@ -14294,8 +14311,15 @@ impl GooseAgentDispatcher {
         self.events.write_value(serde_json::json!({
             "event": "skeleton_drafts",
             "requested": n,
-            "returned": candidates.len(),
-            "dead": dead_drafts,
+            // `requested` above is the POST-clamp number, and reading it as the ask is the confound
+            // that makes a CAPABILITY difference look like a BEHAVIOUR difference. One node shows
+            // requested=1 not because the ladder asked for one draft but because `n` is clamped to
+            // DISTINCT MODELS (:14142) — so "one node never ladders" is the clamp, not a choice.
+            // MEASURED: 11 of 11 redraft rungs escalated best_of_n to 4 or 5 and still drafted 3.
+            // Without these three fields that escalation is invisible and the rung reads as normal.
+            "requested_best_of_n": requested_n,
+            "distinct_draft_models": draft_models.len(),
+            "clamped": n < requested_n,
             // THE ARITHMETIC MUST CLOSE, and on its first real reading it did not: requested 3,
             // returned 2, dead 0 — one draft unaccounted for. `dead` counts the non-straggler path's
             // losses (timeout / error / no final_output). It does NOT count a draft that
@@ -14356,7 +14380,9 @@ impl GooseAgentDispatcher {
             // the archive carries `binding_signal: "agreement"`, and the redraft ladder cost 821s / 786s /
             // 1657s on the 3-node cells against ZERO on the 1-node cell — 40-57% of the 3-node planning
             // prefix, which is roughly the entire gain the detail fan just bought. The 1-node cell drafted
-            // 2 skeletons and scored 88; the 3-node cells drafted 3 and scored 50/52/54. `plan_agreement`
+            // ONE skeleton (⚠️ CORRECTED from "2" — the cap is distinct MODELS, :14142, and all 11
+            // one-node runs read requested=1/returned=1), so it had NO agreement score to be penalised
+            // by; the 3-node cells drafted 3 and scored 50/52/54. `plan_agreement`
             // is max-min spread plus MEAN PAIRWISE JACCARD, and `best_subset_agreement`'s own doc says
             // both "only worsen (or hold) as the pool grows" — so a bigger fleet drafts more, is scored
             // lower for it, and pays a ladder the smaller fleet never pays.
@@ -14365,8 +14391,9 @@ impl GooseAgentDispatcher {
             // on, so an ordinary shadow run now answers the question for free instead of costing an arm.
             // WHAT ROUND 1 WOULD HAVE SCORED IF THE POOL SIZE DID NOT COUNT AGAINST IT.
             //
-            // `best_of_n` is sized from the fleet — `base.max(devices.len())` — so 1 node drafts 2
-            // skeletons and 3 nodes draft 3. The comment there says the extra draft is free because
+            // `best_of_n` is requested from the fleet but CLAMPED to distinct models (:14142), so on
+            // this fleet 1 node drafts 1 and 3 nodes draft 3. The comment there says the extra draft
+            // is free because
             // drafts run in parallel. It is not free: `plan_agreement` is max-min spread plus mean
             // pairwise Jaccard, and `best_subset_agreement`'s own doc says both "only worsen (or hold)
             // as the pool grows". MEASURED: the 1-node cell scored 88 on 2 drafts and paid NO ladder;
@@ -26534,6 +26561,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // was recorded as a list of collected tests ending in `================`, the error
                     // banner starting one character past the old 400-char head cut.
                     .map(|f| elide_middle(f, 150, 650))
+                    .collect::<Vec<_>>(),
+                // WHY the run abstained, which is what decides `verified` — and until now it existed
+                // only in stderr. `verified` is false in 25/25 archived runs, and telling "pytest
+                // timed out having executed nothing" apart from "we never probe POST /api/sync by
+                // design" required reconstructing the reason from 9 surviving verdict.json files
+                // instead of reading all 24 event logs. Same elision as finding_texts above.
+                "inconclusive_reasons": verdict.inconclusive.iter()
+                    .map(|r| elide_middle(r, 150, 650))
                     .collect::<Vec<_>>(),
             }));
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a

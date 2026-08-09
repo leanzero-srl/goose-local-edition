@@ -41,7 +41,23 @@ BASELINE = HERE / "probe-baseline.json"
 NEW = {
     "skipped_tests": "F711/C1 — timeout scan reports what it filtered out",
     "would_skip_ladder_prelift": "F707 — the pre-lift shadow diagnostic",
+    "description_chars": "C12(b) — the split child's instruction length, on TaskDispatched",
+    "requested_best_of_n": "C5(A) — the PRE-clamp ask on skeleton_drafts",
+    "distinct_draft_models": "C5(A) — what actually caps the draft pool",
 }
+# Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
+# a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute
+# is a probe that manufactures confidence. The two C5(A) fields above are distinctive and cover it.
+#
+# Deliberately NOT probed: `inconclusive_reasons` (C6 step 1). The baseline run found it ALREADY
+# PRESENT — it has shipped on the `spec_contract` event since before this batch (swarm.rs:26503), and
+# C6 deliberately REUSES the name on `complete_verify` (:26570) so both events read the same shape.
+# Two different events, no duplicate key — checked, because a duplicate key inside one json! macro
+# silently keeps only the last value. But a literal that was present before the rebuild can never
+# evidence the rebuild, so probing it would be a vacuous pass dressed as a verification.
+# C6 IS VERIFIED A DIFFERENT WAY: the first post-rebuild run's log must show `inconclusive_reasons`
+# on a `complete_verify` event, not merely somewhere in the binary. Recorded here so the gap is
+# deliberate and visible rather than silently dropped.
 
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
@@ -107,8 +123,8 @@ def main() -> int:
             print(f"\n⚠️  {already} ALREADY PRESENT before the rebuild. These cannot serve as evidence "
                   "that the rebuild landed — the flip test is vacuous for them.")
         else:
-            print("\n✅ BASELINE RECORDED: both new literals ABSENT pre-rebuild, so a PRESENT reading "
-                  "after the rebuild is a real flip and not a pre-existing string.")
+            print(f"\n✅ BASELINE RECORDED: all {len(NEW)} new literals ABSENT pre-rebuild, so a "
+                  "PRESENT reading after the rebuild is a real flip and not a pre-existing string.")
         return 0
 
     if not BASELINE.exists():
