@@ -80,7 +80,16 @@ MIN_REPS = 5
 # The node curve's own replicate target (F327). Scoped to baseline n3/n1 only — see `backlog`.
 CURVE_REPS = 8
 TRANSIENT = ("500", "502", "503", "529", "overloaded", "rate limit", "throttl",
-             "connection reset", "stream decode", "temporarily", "unreachable")
+             "connection reset", "stream decode", "temporarily", "unreachable",
+             # ⚠ THE FLEET BEING DOWN IS THE MOST COMMON BLIP AND IT WAS THE ONE OMISSION (F666).
+             # This module's own docstring promises "a fleet blip is retried with backoff, never
+             # recorded as a score of zero" — and then listed only HTTP faults. When LM Studio is
+             # empty the engine refuses correctly and exits 1 in 0.1s, `looks_transient` said no,
+             # and the unit was written as a real 0.0. Because each failure costs a tenth of a
+             # second, THE SWEEP CONSUMED 104 QUEUED UNITS IN MINUTES — a transient outage did not
+             # pause the backlog, it ANNIHILATED it, and `is_done` then skipped every one forever.
+             "no models are loaded", "lms ps` is empty", "model loading is off",
+             "no models loaded", "fleet is empty")
 MAX_ATTEMPTS = 3
 BACKOFF = (60, 240)
 
@@ -834,7 +843,17 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     if r.get("abandoned") or r.get("aborted"):
         return False
     want, got = r.get("nodes"), r.get("actual_nodes")
+    # ⚠ THE SAME `None`-EXEMPTION AS THE VOID GUARD, IN THE ONE PLACE THAT DECIDES RE-RUNS (F665).
+    # `isinstance(None, int)` is False, so a unit that NEVER REPORTED A POOL sailed past the
+    # node-shortfall check and counted as complete — skipped forever, its fabricated 0.0 standing as
+    # that arm's answer. That is the identical "missing is treated as fine" defect the void guard
+    # had, in a second location, and it is why re-running the lever arms could never have healed the
+    # corpus on its own. A run with no pool is not a short run; it is not a run.
+    if got is None:
+        return False
     if isinstance(want, int) and isinstance(got, int) and got < want:
+        return False
+    if r.get("harness_ok") is False:
         return False
     return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION
             and r.get("engine_build") == engine_build())
@@ -843,6 +862,55 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
 def looks_transient(tail: str) -> bool:
     low = (tail or "").lower()
     return any(t in low for t in TRANSIENT)
+
+
+LMS = os.path.expanduser("~/.lmstudio/bin/lms")
+
+
+def fleet_loaded() -> int:
+    """How many models `lms ps` reports. READ-ONLY — this never loads, unloads or re-aliases.
+
+    Returns -1 when the probe itself failed, which is NOT the same as an empty fleet and must never
+    be treated as one.
+    """
+    try:
+        out = subprocess.run([LMS, "ps"], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return -1
+    if out.returncode != 0:
+        return -1
+    return sum(1 for ln in out.stdout.splitlines() if "Identifier:" in ln or "identifier:" in ln)
+
+
+def wait_for_fleet(ceiling_secs: int = 7200) -> bool:
+    """Block until the fleet has models again. Waiting beats consuming the backlog (F666).
+
+    Retry-with-backoff alone still marches through every queued unit during a long outage — 104
+    units at ~5 min of backoff each is most of a day spent manufacturing failures. Unattended, the
+    right response to a shared resource being briefly gone is to WAIT, not to spend the night
+    proving it is gone once per unit.
+
+    A probe failure (-1) is treated as "unknown, keep waiting", never as "empty" — the negative that
+    would authorise marching on has to be a POSITIVE observation of an empty fleet, not a broken
+    probe. Returns False if the ceiling is reached, so the caller can still make progress.
+    """
+    if fleet_loaded() > 0:
+        return True
+    waited = 0
+    log(f"[fleet] {now()} FLEET IS DOWN — holding the sweep rather than burning the backlog "
+        f"(ceiling {ceiling_secs // 60} min). Nothing is being reconfigured; this only watches.")
+    while waited < ceiling_secs:
+        time.sleep(60)
+        waited += 60
+        n = fleet_loaded()
+        if n > 0:
+            log(f"[fleet] {now()} fleet is back ({n} model(s) loaded) after {waited // 60} min — resuming")
+            return True
+        if waited % 600 == 0:
+            log(f"[fleet] {now()} still down after {waited // 60} min (probe={n})")
+    log(f"[fleet] {now()} ⚠ fleet still down at the {ceiling_secs // 60} min ceiling — proceeding so "
+        f"the loop cannot wedge forever; expect the next unit to fail and be retried.")
+    return False
 
 
 def engine_build() -> str:
@@ -1542,6 +1610,11 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "abandon_reasons": dog.abandon_reasons,
         "timed_out": (verdict.get("agent") or {}).get("timed_out"),
         "wall_secs": (verdict.get("agent") or {}).get("secs"),
+        # The engine's own exit and stderr tail. Kept because the retry loop can only see an
+        # EXCEPTION, and a fleet-down is not one — the engine refuses cleanly, run_unit returns a
+        # perfectly-formed verdict scoring 0.0, and the loop breaks having "succeeded" (F666).
+        "engine_exit": (verdict.get("agent") or {}).get("exit"),
+        "engine_tail": (verdict.get("agent") or {}).get("tail"),
         "actual_pool": verdict.get("actual_pool"),
         "actual_nodes": actual,
         "void": void,
@@ -1933,6 +2006,21 @@ def main() -> int:
             try:
                 result = run_unit(arm, nodes, rep, port)
                 port += 1
+                # A FLEET-DOWN IS NOT AN EXCEPTION, WHICH IS WHY THE RETRY BELOW NEVER FIRED (F666).
+                # The engine refuses cleanly ("No models are loaded on the fleet"), exits 1 in 0.1s,
+                # and run_unit returns a well-formed verdict whose score is 0.0 because the scorer
+                # graded an empty tree. So this loop `break`s having apparently succeeded, and a
+                # transient outage is written to disk as that arm's answer. At a tenth of a second
+                # per unit the whole backlog is consumed in minutes: 104 of 133 rows, every lever
+                # arm, all of it fabricated. A unit that never reported a pool is NOT a result.
+                if result.get("actual_nodes") is None and looks_transient(result.get("engine_tail")):
+                    tail = f"engine refused (exit {result.get('engine_exit')}): {result.get('engine_tail')}"
+                    result = None
+                    log(f"[fail] {now()} {label} attempt {attempt}: FLEET UNAVAILABLE — {tail[:300]}")
+                    if attempt < MAX_ATTEMPTS - 1:
+                        wait_for_fleet()
+                        continue
+                    break
                 break
             except (Exception, SystemExit) as exc:   # SystemExit is NOT an Exception
                 tail = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-800:]}"
