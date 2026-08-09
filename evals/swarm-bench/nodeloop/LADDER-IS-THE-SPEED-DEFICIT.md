@@ -112,6 +112,15 @@ The fix is the engine author's own, already specified in `scorer-queue/README.md
 growing pool cannot manufacture the pool penalty that triggers the ladder. `k=2` is what a one-node
 fleet drafts, so it reports every fleet on the same footing and is a **no-op at one node**.
 
+**The no-op is verified, and NOT for the reason first published (F658).** I originally argued it from
+value equality — one node drafts 2, so `best_subset_agreement` falls through and `best2 == conf1`.
+That is a plausible type-level argument I cannot confirm from data, because those values are never
+computed at one node. The EVIDENCED reason is stronger: across **24 one-node logs, `skeleton_drafts`
+fires in 22 and `plan_convergence` fires in ZERO** — the block containing the change is never reached
+at one node, so the guarantee is by non-execution rather than by value. Positive control: the same
+predicate finds `pool_penalty > 0` in 19 of 45 three-node rounds (values to 34), so it can detect a
+nonzero; it simply had nothing to look at.
+
 **Not landed as of 2026-08-08 23:45, deliberately.** The measurement gates are all discharged; what
 remains is that landing it needs a rebuild, and the sweep never leaves an idle window — so a rebuild
 means killing a live cell. `rebuild-and-rotate.sh`'s own header records what that cost last time:
