@@ -2001,6 +2001,38 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     if curve:
         picked = {id(u) for u in curve}
         units = curve + [u for u in units if id(u) not in picked]
+
+    # THE DOC WIRE RUNS BEFORE THE CURVE — ONE UNIT EACH, MECHANISM ONLY.
+    #
+    # This is the same argument the `think_off` hoist above makes, applied to a bigger question, and
+    # it is here because the queue had buried the arm its own gate text calls the top arm: "the
+    # single largest block of score on the board… nothing else examined today is within an order of
+    # magnitude of that." It sat at position 16.
+    #
+    # THE CURVE IS NOT THE RIGHT THING TO WAIT FOR HERE. `CURVE_REPS = 8` means 16 curve units, and
+    # 14 are still owed — roughly 24-30 fleet-hours before any treatment runs at all. The curve
+    # answers "does 3 beat 1", which genuinely needs 8 matched pairs. It is NOT the denominator these
+    # two arms need, because their PRIMARY readouts are deterministic mechanism events that no
+    # denominator improves:
+    #   doc_fetch       `doc_fetched{ok:true,status:200,bytes:4789}` — zero in all 54 archived logs,
+    #                   so any non-zero is unambiguous; plus vendor_cursor_paging and vendor_all_pages
+    #                   reaching 1.00 on a cell that is not r3.
+    #   scout_doc_urls  the literal "The spec names these documents" reaching a scout prompt — present
+    #                   in the binary, never executed, because the gate is default OFF.
+    #
+    # Both wires have NEVER carried a byte: `doc_facts` is empty in every archived run and there are
+    # zero `doc_fetched` events across 54 logs. "Does the wire connect" cannot be answered by more
+    # baselines, and if it does not connect, every score comparison built on top of it is moot.
+    #
+    # SCOPED TO ONE UNIT EACH, DELIBERATELY. Only rep 0 is hoisted; doc_fetch's remaining score
+    # replicates stay behind the curve where they belong, because THOSE do need the denominator. So
+    # this costs the curve exactly two cells and buys the answer to the campaign's largest open
+    # question about 24 hours earlier. Self-limiting: once both rep-0 units complete this partition
+    # is empty and the ordering is exactly what it was before.
+    wire = [u for u in units if u[0]["name"] in ("doc_fetch", "scout_doc_urls") and u[2] == 0]
+    if wire:
+        picked = {id(u) for u in wire}
+        units = wire + [u for u in units if id(u) not in picked]
     return units
 
 
