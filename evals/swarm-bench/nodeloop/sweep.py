@@ -1391,6 +1391,31 @@ def reap_stray_listeners(port_lo: int, port_hi: int) -> list[int]:
     return killed
 
 
+def unit_is_void(actual_nodes, nodes: int, harness_ok) -> bool:
+    """Is this unit's number evidence? Pure, so it can be tested without a fleet.
+
+    Extracted because the inline version carried an `actual_nodes is not None` exemption that voided
+    a MISMATCH while passing MISSING, and that distinction is invisible when it is one clause inside
+    a 100-line function. `None != nodes` is True, which is the whole point: a run that never reported
+    a pool is the most broken outcome available and must never outrank one that reported the wrong
+    number. See `test_unit_is_void`.
+    """
+    return actual_nodes != nodes or harness_ok is False
+
+
+def test_unit_is_void() -> None:
+    """The F664 regression. 104 of 133 rows scored 0.0 and read as real because of one clause."""
+    assert unit_is_void(None, 3, True), "THE F664 BUG: a run that never reported a pool must be VOID"
+    assert unit_is_void(None, 1, True), "same at one node"
+    assert unit_is_void(1, 3, True), "a pool mismatch is void (this half always worked)"
+    assert unit_is_void(3, 3, False), "a unit whose own self-test failed is not evidence"
+    assert not unit_is_void(3, 3, True), "a matching pool with a passing self-test is REAL"
+    assert not unit_is_void(1, 1, True), "and at one node"
+    # harness_ok is None means the audit never reported, which is not a refusal.
+    assert not unit_is_void(3, 3, None), "an unreported audit must not void a good run"
+    print("test_unit_is_void: 7/7 PASS")
+
+
 def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     """One episode: build, grade the artifact, then grade the INSTRUCTIONS it was given."""
     import run_build  # imported late so a syntax error there cannot stop the loop from starting
@@ -1480,7 +1505,21 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     actual = verdict.get("actual_nodes")
     # The label is an intention; run_started.pool is the fact. A mismatch has silently voided a
     # whole campaign before, so it voids the unit here rather than being averaged in.
-    void = actual is not None and actual != nodes
+    #
+    # ⚠ THE `is not None` EXEMPTION COST 104 OF 133 ROWS (F664). It guarded a MISMATCH and let
+    # MISSING through: a run that never reported a pool at all — the most broken outcome there is —
+    # got `actual = None`, failed `actual is not None`, and was recorded as a VALID result. Its score
+    # is 0.0 because the scorer graded an empty directory, so 78% of the corpus read as genuine
+    # zeroes. EVERY lever arm was 100% phantom and the whole lever campaign measured nothing.
+    # `None != nodes` is already True, so dropping the exemption is the entire fix.
+    #
+    # The harness clause closes the second half. selftest.py CAUGHT all 104 at the time
+    # (`harness_ok: false`, "invariant pass CRASHED: no run log") and nothing was ever wired from its
+    # verdict to this flag — the instrument was right and unheard. Verified safe before landing: of
+    # 118 rows, 0 would be voided by the harness clause alone and 0 surviving rows carry
+    # `harness_ok is False`, so this voids nothing that is currently counted as evidence.
+    harness_failed = harness["ok"] is False
+    void = unit_is_void(actual, nodes, harness["ok"])
 
     return {
         "arm": arm["name"],
@@ -1506,7 +1545,14 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "actual_pool": verdict.get("actual_pool"),
         "actual_nodes": actual,
         "void": void,
-        "void_reason": (f"asked for {nodes} nodes, engine built {actual}" if void else None),
+        "void_reason": (None if not void else "; ".join(filter(None, [
+            (f"NEVER REPORTED A POOL (actual_nodes is None) — the run produced no run log, so its "
+             f"score grades an empty tree and is a MISSING measurement, not a bad build"
+             if actual is None else
+             f"asked for {nodes} nodes, engine built {actual}"),
+            ("harness self-test FAILED — this unit's own instruments did not pass their controls, "
+             "so its numbers are not evidence" if harness_failed else None),
+        ]))),
         "scorer_version": verdict.get("scorer_version"),
         "engine_build": engine_build_at_dispatch,
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
