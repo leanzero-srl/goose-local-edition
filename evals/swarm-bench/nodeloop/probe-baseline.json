@@ -1,0 +1,14 @@
+{
+  "mtime": 1786255781.5118036,
+  "size": 235925104,
+  "new": {
+    "skipped_tests": false,
+    "would_skip_ladder_prelift": false
+  },
+  "controls": {
+    "would_skip_ladder": true,
+    "plan_convergence": true,
+    "task_dispatched": true
+  },
+  "negative": false
+}
