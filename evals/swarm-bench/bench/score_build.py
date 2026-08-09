@@ -149,8 +149,24 @@ def check(name: str, tier: str) -> Callable:
     return deco
 
 
-def g(score: float, detail: str, consequence: str = "") -> Dict:
-    return {"score": max(0.0, min(1.0, score)), "detail": detail, "consequence": consequence}
+def g(score: float, detail: str, consequence: str = "", parts: Dict = None) -> Dict:
+    """`parts` is the PER-ITEM breakdown behind the aggregate in `detail`.
+
+    Added because the aggregate alone made a whole class of question unanswerable. `modules_present`
+    already computes exactly which of the five named files exist and then reports only "5/5 named
+    files"; the breakdown was discarded one line later. That meant a file-level claim — e.g. "does a
+    task_split child build its files worse than a normal task?" — could not be tested at all, and the
+    only available substitute was a RUN-level score comparison, which answers a different question
+    (and reversed under a corrected join when it was tried).
+
+    PURELY ADDITIVE: no score, tier weight or `detail` string changes, so `SCORER_VERSION` is
+    deliberately NOT bumped — a bump would force the entire archived corpus to be re-scored to
+    acquire a field that changes no number. Absent when a check has no natural per-item split.
+    """
+    out = {"score": max(0.0, min(1.0, score)), "detail": detail, "consequence": consequence}
+    if parts:
+        out["parts"] = parts
+    return out
 
 
 def frac(have, want) -> float:
@@ -165,7 +181,8 @@ def _(c: Ctx):
     want = ["meridian.py", "store.py", "api.py", "__main__.py", "web/index.html"]
     have = [w for w in want if (c.pkg / w).is_file()]
     return g(len(have) / len(want), f"{len(have)}/{len(want)} named files",
-             "files the spec names by path are missing")
+             "files the spec names by path are missing",
+             parts={w: (w in have) for w in want})
 
 
 @check("interfaces_declared", "A")
@@ -177,7 +194,9 @@ def _(c: Ctx):
     score = (len(client & want_c) + len(store & want_s)) / (len(want_c) + len(want_s))
     missing = sorted((want_c - client) | (want_s - store))
     return g(score, f"{int(score * 8)}/8 methods" + (f", missing {missing}" if missing else ""),
-             "the named interface is not implemented as specified")
+             "the named interface is not implemented as specified",
+             parts={**{f"MeridianClient.{m}": (m in client) for m in sorted(want_c)},
+                    **{f"Store.{m}": (m in store) for m in sorted(want_s)}})
 
 
 @check("server_runs", "A")
