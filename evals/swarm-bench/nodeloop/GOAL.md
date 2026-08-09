@@ -16,8 +16,8 @@ Two different mechanisms scale two different ways, and the shape is read off the
 
 - **QUALITY scales with SPARE nodes, ~linearly.** ⚠️ **CORRECTED BY MEASUREMENT (F662).** The first
   version of this claimed one node runs *zero* idle review. **That is FALSE — it runs pre-review in
-  100% of runs.** What is true is the VOLUME: **pre-review runs 1.3×/run at one node and 10.6×/run at
-  three — 8×.** So the per-node quality shape stands, but it rests on measured 8× scaling of
+  100% of runs.** What is true is the VOLUME: **pre-review runs 2.0×/run at one node and 10.2×/run at
+  three — 5.1× (F670, corrected from an inflated 8× that came from a broken log join).** So the per-node quality shape stands, but it rests on measured 5.1× scaling of
   pre-review, not on a zero that does not exist. **The judge does NOT scale at all** (85.0 → 82.8 per
   run), so it contributes nothing to the per-node quality story. ⇒ **25% of the defect gap per spare
   node**, carried by pre-review alone.
@@ -78,19 +78,25 @@ a powered score comparison. Saying otherwise would be promising a number the fle
 
 ## ⚠️ TWO MECHANISMS THAT ARE STRICTLY THREE-NODE-ONLY (F662) — one taxes speed, one taxes quality
 
-Measured on 9 one-node and 15 three-node logs, positive control passing on every one:
+Measured on 11 one-node and 13 three-node logs, ONE LOG PER ROW (F670 — an earlier pass let up
+to four rows share a log), positive control passing on every one:
 
 | event | 1-node | 3-node | what it is |
 |---|---|---|---|
-| **`replanned`** | **0%** | **60%** | the author's documented speed penalty — made an already-finished run **55% longer** with work nobody asked for |
-| **`task_split`** | **0%** | **53%** | a split child's whole task statement is **43 characters** (`scheduler.rs:35`) |
+| **`replanned`** | **0%** | **85%** | the author's documented speed penalty — made an already-finished run **55% longer** with work nobody asked for |
+| **`task_split`** | **0%** | **46%** | a split child's whole task statement is **43 characters** (`scheduler.rs:35`) |
 
-**These are the only two mechanisms in the engine that one node can never trigger.** Both make three
-nodes worse, and both fire in the MAJORITY of three-node runs. Half of every three-node run hands an
-extra node a near-empty instruction; 60% inject work the planner never asked for.
+**These are the only two mechanisms in the engine that one node can never trigger.** Both fire in a
+large share of three-node runs — **85% inject work the planner never asked for**, and 46% hand an
+extra node a 43-character instruction.
 
-**The judge is pure overhead in both arms.** ~85 verdicts/run with ~80 skipped — a **94% skip rate at
-one node**, 68% at three. Invoked ~165×/run, does nothing in most of them. This is the looping Mihai
+⚠️ **`task_split` is NOT established as harmful — that claim was OVERTURNED (F669).** On a corrected
+one-to-one join, three-node runs that SPLIT score **0.7710** against **0.7355** for those that do
+not, while taking 108.2 min against 93.2. **Splitting buys quality and costs time**, the opposite of
+what an earlier broken join showed.
+
+**The judge is pure overhead in both arms.** ~88 verdicts/run at one node against ~78 at three — a
+ratio of 0.9, so it does not scale with the fleet at all. Invoked ~165×/run, does nothing in most of them. This is the looping Mihai
 named, it is measured, and it is not a node-count question.
 
 ## The named levers (Mihai's own list)
