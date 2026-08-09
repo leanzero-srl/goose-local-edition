@@ -101,12 +101,25 @@ named, it is measured, and it is not a node-count question.
 
 ## The named levers (Mihai's own list)
 
-*"Judge stops looping, planning is done better"* — both already have evidence behind them:
-- **Planning** — the confidence ladder costs **~25 min/round** on four independent estimates and buys
-  +0.029 at 0.31 SE. Fix committed (`a9f43543d`), **not yet in the running binary.**
-- **Judge / idle-node work** — F662 is measuring whether it fires at all before anything is claimed.
-- **Dynamic replan** — the author's own comment records it making an already-finished 3-node run
-  **55% longer** with work nobody asked for, gated on `idle_capacity()>=2` that one node never has.
+*"Judge stops looping, planning is done better"* — both have evidence behind them:
+- **Planning — the confidence ladder is the ONLY phase quantity in the engine that clears 2 SE**
+  (41.0 vs 14.5 min of planning when it fires, t=+9.6). It costs ~25 min/round on four independent
+  estimates and buys +0.029 at 0.31 SE. My fix (`a9f43543d`) is **live and verified in the binary**,
+  but **reaches at most 20% of runs** (F683): it is a no-op whenever fewer than three drafts return,
+  and the fleet requests three and gets **2.4** on average because the straggler stop *deliberately*
+  aborts the lone last-place draft.
+- **⭐ THE BIGGEST LEVER, AND IT IS ALREADY BUILT: `diverse_plan`.** The engine carries a free shadow
+  counterfactual (`would_skip_ladder`) saying whether enabling it would have skipped the ladder.
+  Among runs that laddered it reads TRUE in **7 of 7**. One fully traced instance cost **13.7 minutes
+  and shipped the exact plan it already held**. ⚠️ **But (F687) `struct_conv` reads 93–100 in all 16
+  runs against a bar of 80 — the threshold is never near the data, so this lever is closer to *turn
+  the ladder off* than *turn off the unnecessary ones*.** That makes the quality question governing:
+  laddering runs score 0.7490 vs 0.7140. **The arm is queued and has never run; read it on SCORE as
+  well as minutes.** Open tuning question: is `struct_stop = 80` simply set too low?
+- **Judge / idle-node work** — measured (F670): ~88 verdicts per run at one node against ~78 at
+  three, a ratio of 0.9. **It does not scale with the fleet at all** — pure overhead in both arms.
+- **Dynamic replan** — fires in **85%** of 3-node runs and 0% of 1-node; the author's own comment
+  records it making an already-finished run **55% longer** with work nobody asked for.
 
 ---
 
