@@ -3025,7 +3025,9 @@ fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLa
             .and_then(|f| f.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
             .unwrap_or_default();
-        id.contains("test") || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(f)))
+        // was `lang.is_test_file(f)` — a FULL PATH into a BASENAME predicate, so every
+        // `tests/test_*.py` read as NOT-a-test. Six sibling sites already used `base_of`.
+        id.contains("test") || (!files.is_empty() && files.iter().all(|f| is_test_path(lang, f)))
     };
     let test_ids: std::collections::HashSet<String> = arr
         .iter()
@@ -15733,6 +15735,53 @@ struct AppScope {
     dropped: Vec<String>,
 }
 
+/// Is this path a TEST file? Takes a PATH, unlike `is_test_file` which takes a BASENAME.
+///
+/// `is_test_file` matches `base.starts_with("test_")`, so it returns FALSE for `tests/test_api.py`
+/// and TRUE for `test_api.py` — the same file, decided by whether the caller remembered `base_of`.
+/// Six call sites remember; `swarm.rs:3028` did not, and passed the full path straight in. This
+/// exists so a seventh cannot get it wrong, and so the directory rule lives in one place too: a file
+/// under a `tests/` or `test/` segment is a test file whatever it is named (`tests/conftest_helpers.py`
+/// matches no basename rule).
+///
+/// MEASURED, and this is why it matters: of 60 round-0 no-timeout findings naming a parseable file,
+/// 33 (55%) are TEST files — 28 of them `tests/test_api.py` — and the scorer's matching check
+/// (`client_timeouts`, Tier D) grades the APP's vendor client, never the swarm's own tests. The fix
+/// loop was being sent to repair files nobody grades.
+#[cfg(test)]
+mod is_test_path_tests {
+    use super::*;
+
+    /// BOTH DIRECTIONS. The bug this replaces was invisible to a one-sided check: passing a full
+    /// path to `is_test_file` returns FALSE, which reads exactly like "this is app code" — the
+    /// failure was silent, and it sent the repair loop at files the scorer never grades.
+    #[test]
+    fn is_test_path_catches_pathed_tests_and_spares_app_code() {
+        let py = TargetLang::Python;
+        // POSITIVE: the exact shape that defeated `is_test_file` — 28 of 60 findings named this file
+        assert!(is_test_path(py, "tests/test_api.py"));
+        assert!(is_test_path(py, "test_store.py"));
+        assert!(is_test_path(py, "tests/conftest.py"));
+        // a `tests/` segment wins even when no basename rule matches
+        assert!(is_test_path(py, "tests/helpers.py"));
+        assert!(is_test_path(py, "pkg/test/util.py"));
+        // NEGATIVE: app code must SURVIVE, or the filter has eaten the scope and a clean scan is
+        // silence rather than evidence
+        assert!(!is_test_path(py, "vendorsync/meridian.py"));
+        assert!(!is_test_path(py, "vendorsync/api.py"));
+        assert!(!is_test_path(py, "latest/protest.py"), "substring must not match a segment rule");
+        // and the old one-argument form is exactly why this exists
+        assert!(!py.is_test_file("tests/test_api.py"), "is_test_file takes a BASENAME");
+        assert!(py.is_test_file("test_api.py"));
+    }
+}
+
+fn is_test_path(lang: TargetLang, f: &str) -> bool {
+    let base = f.rsplit('/').next().unwrap_or(f);
+    lang.is_test_file(base)
+        || f.split('/').any(|seg| seg == "tests" || seg == "test")
+}
+
 fn app_scope_py(root: &Path, planned: &[String]) -> AppScope {
     app_scope_py_capped(root, planned, SCAN_FILE_CAP)
 }
@@ -26264,13 +26313,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // timeout". F388 already added the fact to the pitfalls library, and F389 measured that
             // workers RECEIVE the facts they miss, so another sentence in a prompt is not the lever. A
             // deterministic finding fires whether or not anyone read anything.
+            // POINT THE SCAN AT THE APP, NOT AT THE SWARM'S OWN TESTS. Filtered HERE and not inside
+            // `app_scope_py`, because `cross_module_drift` shares that helper and reports 0 findings
+            // in 24 of 24 runs — widening the edit would buy an untestable scope change on a detector
+            // with no signal to lose.
+            let app_only: Vec<String> = smoke_all_files
+                .iter()
+                .filter(|f| !is_test_path(complete_lang, f))
+                .cloned()
+                .collect();
+            let skipped_tests = smoke_all_files.len().saturating_sub(app_only.len());
             let no_timeout =
-                http_timeout_scan(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await;
+                http_timeout_scan(&cwd, complete_lang, &app_scope_py(&cwd, &app_only)).await;
             if no_timeout.ran {
                 sink.write_value(serde_json::json!({
                     "event": "http_timeout_scan",
                     "round": round,
                     "checked": no_timeout.checked,
+                    // How many files the test filter removed BEFORE the scan. Emitted beside
+                    // `checked` for the same reason `checked` exists: "0 findings" must never be
+                    // readable without knowing what was in scope, and a filter that silently ate the
+                    // whole scope would otherwise look exactly like a clean app.
+                    "skipped_tests": skipped_tests,
                     "findings": no_timeout.findings.len(),
                     "partial": no_timeout.partial,
                     // L230: the affirmative signal decides it. `checked` is reported alongside the
