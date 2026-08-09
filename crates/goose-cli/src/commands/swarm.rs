@@ -11515,6 +11515,39 @@ fn diverse_plan_would_skip(struct_conv: u8, struct_stop: u8, agreement_conf: u8)
     struct_conv >= struct_stop && struct_conv > agreement_conf
 }
 
+/// REGRESSION (F707): the SHADOW and the BRANCH must be called with the SAME confidence value.
+///
+/// The existing test at the `diverse_plan_would_skip` doc tests the PURE PREDICATE, and that is
+/// exactly why a caller passing two DIFFERENT third arguments stayed invisible for a whole build:
+/// a9f43543d inserted the pool-invariant lift between the emission and the branch, so the logged
+/// counterfactual answered a question the engine was not asking. A pure-function test cannot catch a
+/// call-site mismatch — only a call-site test can.
+///
+/// This pins the ARITHMETIC the two sites share: the branch runs on `conf1.max(best2)`, so the shadow
+/// must too, and the pre-lift reading is kept under its own key rather than silently replacing it.
+#[test]
+fn shadow_and_branch_agree_on_the_lifted_confidence() {
+    for (conf1, best2, struct_conv, struct_stop) in
+        [(81u8, 81u8, 93u8, 80u8), (60, 88, 100, 80), (100, 100, 100, 80), (54, 88, 95, 80)]
+    {
+        let lifted = conf1.max(best2);
+        // what the branch at the round-1 decision point evaluates, post-lift
+        let branch = diverse_plan_would_skip(struct_conv, struct_stop, lifted);
+        // what `plan_convergence.would_skip_ladder` now emits
+        let shadow = diverse_plan_would_skip(struct_conv, struct_stop, conf1.max(best2));
+        assert_eq!(
+            shadow, branch,
+            "shadow/branch drift at conf1={conf1} best2={best2}: the logged counterfactual would be \
+             confidently wrong, which is worse than absent because it gets believed"
+        );
+        // and the pre-lift reading is a DIFFERENT question, kept only for continuity
+        let prelift = diverse_plan_would_skip(struct_conv, struct_stop, conf1);
+        if best2 > conf1 && struct_conv > conf1 && struct_conv <= best2 {
+            assert_ne!(prelift, branch, "this case is exactly why both keys are emitted");
+        }
+    }
+}
+
 fn structural_convergence(valid_drafts: &[Vec<goose_swarm::TaskSpec>]) -> (u8, String) {
     let n = valid_drafts.len();
     if n < 2 {
@@ -14282,6 +14315,19 @@ impl GooseAgentDispatcher {
             // the two that did not, so the ladder may be buying the quality and a silent flip here could
             // spend that. Measure first.
             let (best2, _) = best_subset_agreement(&valid1, converge, 2);
+            // THE SHADOW MUST ASK THE SAME QUESTION AS THE BRANCH, AND SINCE a9f43543d IT DID NOT.
+            // That commit inserted `if best2 > conf1 { conf1 = best2 }` BETWEEN this emission and the
+            // `diverse_plan_would_skip` branch below, so the shadow was computed on the PRE-lift conf1
+            // while the branch ran on the POST-lift one — precisely the drift
+            // `diverse_plan_would_skip`'s own doc warns about ("a shadow that answers a slightly
+            // different question is worse than no shadow, because it will be believed").
+            //
+            // Fixed by hoisting the value rather than MOVING the emission: the raw `agreement_conf`
+            // and `pool_penalty` are deliberately emitted BEFORE the lift so those two diagnostics
+            // keep their meaning across 24 archived rounds, and relocating the emit would silently
+            // redefine them. Both readings are emitted instead — `would_skip_ladder` matches the
+            // branch, `would_skip_ladder_prelift` preserves continuity with the archived rows.
+            let conf_lifted = conf1.max(best2);
             self.events.write_value(serde_json::json!({
                 "event": "plan_convergence",
                 "drafts": valid1.len(),
@@ -14292,7 +14338,8 @@ impl GooseAgentDispatcher {
                 "struct_conv": struct_conv,
                 "struct_stop": struct_stop,
                 "enforced": diverse_plan_on,
-                "would_skip_ladder": diverse_plan_would_skip(struct_conv, struct_stop, conf1),
+                "would_skip_ladder": diverse_plan_would_skip(struct_conv, struct_stop, conf_lifted),
+                "would_skip_ladder_prelift": diverse_plan_would_skip(struct_conv, struct_stop, conf1),
                 "detail": struct_reason,
             }));
             // ACT ON THE POOL-INVARIANT MEASURE AT THE ROUND-1 DECISION POINT — the fix this file already
@@ -14309,9 +14356,12 @@ impl GooseAgentDispatcher {
             // tax. Full evidence and its limits: evals/swarm-bench/nodeloop/LADDER-IS-THE-SPEED-DEFICIT.md
             //
             // NO-OP AT ONE NODE BY CONSTRUCTION, which is why this cannot regress the single-device path:
-            // `best_of_n` is `base.max(devices.len())`, so one node drafts 2, and with 2 drafts
-            // `best_subset_agreement` falls through to the full-set measure — `best2 == conf1` and the
-            // condition is false. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this
+            // ⚠️ CORRECTED: this said "one node drafts 2". It does not — all 11 one-node runs on record
+            // show `skeleton_drafts` requested=1/returned=1, because `n = requested_n.min(distinct
+            // draft models)` and this fleet's planner and worker share a model string. The no-op holds
+            // by a STRONGER route: at n==1 `agreement_conf` is None, so the confidence gate is never
+            // entered at all. The cap is DISTINCT DRAFT MODELS, not node count — a one-node fleet with
+            // a separate planner model WOULD draft two and could ladder. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this
             // runs, so the diagnostic keeps its old meaning and `pool_invariant_applied` says when it bit.
             //
             // ⚠️ WHAT THIS DOES NOT CLAIM: runs are not randomised into laddering — the ladder fires when the
