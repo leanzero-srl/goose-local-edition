@@ -164,6 +164,38 @@ def log_facts(path: str):
     return {"cell": cell, "sha": sha, "finish": finish, "run_id": run_id, "path": path}
 
 
+def log_label(path: str) -> str:
+    """An UNAMBIGUOUS label for a log. Print this, never the parent directory.
+
+    THREE wrong claims in one day came from printing `os.path.basename(os.path.dirname(p))`, which
+    is the cell for a live `run.jsonl` and the literal string "eventlogs" for EVERY archived log.
+    Two runs both labelled "eventlogs" read as one place; a label that collapses distinct objects
+    invites exactly the inference that they ARE one object. I then reasoned from that label twice —
+    once into a wrong mechanism story (F668) and once into a wrong motivating number (F673).
+
+    A display string is not data, but it becomes data the moment you reason from it, so the fix is
+    to make the display incapable of collapsing.
+    """
+    base = os.path.basename(path)
+    if base == "run.jsonl":
+        return f"{os.path.basename(os.path.dirname(path))} (live)"
+    return base[:-6] if base.endswith(".jsonl") else base
+
+
+def test_log_label() -> None:
+    """The control: distinct logs must get distinct labels. That is the whole property."""
+    paths = event_logs()
+    assert paths, "POSITIVE CONTROL FAILED: no logs found"
+    labels = [log_label(p) for p in paths]
+    dupes = {l for l in labels if labels.count(l) > 1}
+    assert not dupes, f"labels collapse distinct logs — the exact bug: {sorted(dupes)[:4]}"
+    archived = [log_label(p) for p in paths if "/eventlogs/" in p or "/_archive/" in p]
+    assert len(set(archived)) == len(archived), "archived labels collapse"
+    assert "eventlogs" not in set(archived), "an archived log is labelled by its DIRECTORY"
+    print(f"test_log_label: {len(paths)} logs -> {len(set(labels))} distinct labels, "
+          f"{len(archived)} archived and individually named — PASS")
+
+
 def cell_logs() -> dict:
     """{cell: [log paths]} across live cells AND both archives. USE THIS, never a hand-rolled glob.
 
