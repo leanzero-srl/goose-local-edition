@@ -3,7 +3,10 @@
   "size": 235925104,
   "new": {
     "skipped_tests": false,
-    "would_skip_ladder_prelift": false
+    "would_skip_ladder_prelift": false,
+    "description_chars": false,
+    "requested_best_of_n": false,
+    "distinct_draft_models": false
   },
   "controls": {
     "would_skip_ladder": true,

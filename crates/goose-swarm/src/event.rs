@@ -16,6 +16,9 @@ pub enum SwarmEvent {
         deps: Vec<String>,
         owned_files: Vec<String>,
         context_slice_len: usize,
+        /// Length of the task's own instruction. A split child inherits a 43-character stand-in
+        /// while its parent spec averages 2514, and no archived run records which one a worker got.
+        description_chars: usize,
     },
     TaskCompleted {
         task_id: String,

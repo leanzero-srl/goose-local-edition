@@ -899,6 +899,7 @@ impl State {
             deps,
             owned_files: files.clone(),
             context_slice_len: slice.len(),
+            description_chars: description.len(),
         });
         let owned_files = files.clone();
         let mut all_files: Vec<String> = self
