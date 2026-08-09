@@ -1543,7 +1543,29 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     dst = unit_dir(arm["name"], nodes, rep)
     if src.exists():
         if dst.exists():
-            shutil.rmtree(dst)
+            # ⚠ THIS WAS `shutil.rmtree(dst)` AND IT WAS DESTROYING THE CORPUS (F694/F695).
+            #
+            # A cell directory is REUSED every time its unit re-runs — after a rebuild, after a
+            # void, after a fleet outage. Deleting the old one did not merely drop a row: it
+            # ERASED A COMPLETED, SCORED RUN AND ITS EVENT LOG. loop.log records 19 cells with
+            # more than one `[done]` line; `baseline-n3-r0` alone has SEVENTEEN, of which only the
+            # last survives on disk. Worse, the fleet-outage phantoms re-ran real cells and their
+            # 0.0 rows deleted genuine results — `sink_review-n3-r0` went 0.7326 then 0.0, and
+            # two real `think_off` runs (0.4428, 0.9143) were erased the same way.
+            #
+            # That is why the result corpus read as "every lever arm is phantom" and why
+            # "the instruments do not undercount" was wrong: BOTH SIDES OF THAT COMPARISON WERE
+            # READING A SURVIVORSHIP SNAPSHOT. 25 of 53 real runs on disk are missing from it.
+            #
+            # Archiving instead of deleting is the whole fix. Disk is cheap; a scored run on a
+            # binary that no longer exists cannot be re-made at any price.
+            keep = dst.parent / f"_superseded/{dst.name}@{engine_build_at_dispatch}"
+            keep.parent.mkdir(parents=True, exist_ok=True)
+            if keep.exists():
+                keep = keep.with_name(f"{keep.name}-{int(time.time())}")
+            shutil.move(str(dst), str(keep))
+            log(f"[archive] {now()} {dst.name} already existed — moved to {keep} rather than "
+                f"deleted; a re-run must never erase the run it replaces")
         src.rename(dst)
     trace_src = OUT / f"trace-{entrant}-r{rep}.jsonl"
     if trace_src.exists():
