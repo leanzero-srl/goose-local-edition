@@ -1,3 +1,80 @@
+# ⛔ RED-TEAM 2026-08-09 — THREE OF THIS DOCUMENT'S CLAIMS ARE REFUTED. READ THIS FIRST.
+
+An adversarial pass re-derived every headline from raw data. **Three were REFUTED and one WEAKENED.**
+The corrections are below; the original text follows for provenance but MUST NOT be quoted.
+
+## 1. THE 7-OF-7 LADDER CLAIM IS A TAUTOLOGY — WITHDRAWN
+
+`would_skip_ladder` is **`struct_conv >= struct_stop && struct_conv > agreement_conf`**
+(swarm.rs:11511). `struct_stop = 80` is **never binding** — `struct_conv` is 93/95/100 in all 16
+instrumented runs, so the first conjunct is TRUE 16/16 and the field reduces exactly to
+**`agreement_conf < struct_conv`**, i.e. `agreement < 93` on this corpus.
+
+The ladder fires at `min(agreement, clarity) < ask_floor = 85`, and all 11 redraft retargets are
+`binding_signal = agreement`. **So laddering IMPLIES agreement ≤ 83 < 93 ≤ struct_conv — the predicate
+is TRUE on every laddering run BY ARITHMETIC. The 7 of 7 is withdrawn as evidence.**
+
+**My base-rate control is withdrawn too, and it failed on the exact trap I had named.** The 3 FALSE
+runs are precisely the 3 with agreement = 100 — the only value that can make the predicate false, and
+one that cannot trip an agreement-bound ladder. I tested *"is it ever FALSE anywhere"* when the
+question was *"is it ever FALSE among runs that could ladder"*. The correct two-group rate is 7/7
+laddering vs 6/9 non-laddering: **Fisher two-sided p = 0.2125 — no discrimination at n=16.**
+
+**WHAT STANDS:** `struct_stop` does nothing (0 of 16 rounds fail it), so `diverse_plan` is **not**
+"turn off the unnecessary ladders" — it is **"raise the agreement bar from 85 to 93 and stop
+laddering"**. That is the only claim the data supports, and it makes the quality risk larger, not
+smaller.
+
+## 2. "THREE NODES DOES 64% MORE VERIFICATION" IS A COST LINE — REFUTED
+
+**Three nodes spends 64% more node-time on verification and gets nothing for it.** 46.1 ± 7.1
+shard-minutes vs 28.0 ± 3.2 (perm p = 0.023, holds within both adequately-powered builds).
+
+**It is not more verification.** `swarm.rs:14842` sizes the e2e fan as `clamp(worker_count, 2, 4)`
+over SLOTS — one node (2 slots) always gets 2 shards, three nodes (6 slots) always gets 4. Measured
+**2.00 ± 0.00 vs 3.93 ± 0.07, zero variance.** Every shard builds and launches the entry point and
+then checks only `position mod shards == i`, so **the union of commands checked is identical** — four
+shards pay the build-and-launch cost four times for the same coverage (+10.6 min). The other half
+(+7.5 min) is pure slowdown: the `verify::<module>` count does not differ (5.36 vs 5.71, p=0.358) but
+each task takes 1.77 → 2.99 min, **+69%, p=0.001**.
+
+**RETRACTED: "integrate-verify is FASTER at three nodes (11.7 vs 15.5)."** Pooled −4.40, SE 5.62,
+p=0.513. The entire effect is ONE run (baseline-n1-r1, integrate-verify 64.6 min); drop it and the
+sign flips. Stratified by build the sign flips in both powered strata (+1.87, +0.41).
+**RETRACTED: "median 4 vs 2 concurrent shards" as evidence of parallelism.** The one-node 2 IS the
+device cap; both arms saturate their fleet cap (11/11 and 12/14), so the comparison discriminates
+nothing.
+
+## 3. THE FIX'S REACH WAS UNDERSTATED — REFUTED, IN MY FAVOUR
+
+**It flips the round-1 decision on 4 of 15 runs = 26.7% (SE 11.4pp), not 3 of 15 = 20%** — and on the
+newest binary, **3 of 7 = 42.9%**. My 20% came from taking the LAST `skeleton_drafts` row when the
+decision site is ROUND 1, and from using `skeleton_drafts.returned` when the engine branches on
+`plan_convergence.drafts` (valid drafts). **All four reachable runs FLIP**: 83→93, 69→88, 83→93,
+54→88 — each currently pays a redraft ladder AND a low-confidence ask that the fix removes.
+The ≥3-draft requirement is exact, not heuristic: `best_subset_agreement` short-circuits to the
+full-set call when n ≤ k, so with ≤2 valid drafts `best2` and `conf1` are bitwise identical. Control:
+**0 of 13 rows with drafts≤2 fire; 10 of 12 with drafts≥3 do.**
+
+## 4. "NOT MEASURABLE" SURVIVES, BUT MY RETRACTION WAS ITSELF WRONG — WEAKENED
+
+The right number is **MATCHED PAIRS on (build, rep), n=10** — it removes build, replicate and time:
+**wall −0.52 min, 95% CI [−14.6, +13.6]; score −0.0001, 95% CI [−0.149, +0.149].** Flat.
+**The CI is the point, not the SE:** this corpus cannot exclude three nodes being **29% slower** or
+**13% faster**. MDE at 80% power is 29.3 min and 0.211 score — powered to detect a catastrophe and
+nothing else.
+
+⚠️ **AND THESE 27 ROWS SPAN SEVEN ENGINE BUILDS, WHICH I POOLED — MY OWN RULE FORBIDS IT.**
+Build-adjusted: wall +9.99 at **1.02 SE**, *over* the one-SE bar I used to call the effect absent.
+
+⚠️ **MY RETRACTION OF THE "+10.0 min at 1.04 SE" CLAIM WAS ITSELF WRONG, in the same shape as the two
+reversals earlier today.** That figure was computed on the **53-row loop.log corpus**; I "retracted"
+it with a number from the **27-row result.json corpus** and blamed one new row. **A CORPUS SWAP
+PRESENTED AS A RE-DERIVATION.** "The number changed" is coverage; "the number changed on the same
+data" is correctness.
+
+---
+
 # The three-node speed deficit is the confidence ladder, and nothing else
 
 **Status: the mechanism is closed. The fix is NOT landed, and the last gate is a rebuild, not a
