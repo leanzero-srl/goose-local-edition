@@ -1,3 +1,89 @@
+# THE GOAL — FINAL NUMBERS (set 2026-08-09, quality-first, per added node)
+
+**Supersedes the speed-first framing below.** Mihai: *quality is the most important thing, but avoid
+way too slow swarms — so quality first with some speed too*, and *calculate it per node added*.
+
+## ⚠️ FIRST: "50% higher quality" cannot mean the score
+
+The score is bounded at 1.0 and one node already sits at **0.733**. A 50% increase is **1.10 —
+arithmetically impossible.** So the 50% is stated where it IS achievable and where it means what
+Mihai actually wants: **HALVE THE DEFECTS.** "50% better" = *the app gets half as much wrong*, which
+is both the standard reading on a bounded scale and genuinely ambitious.
+
+## The per-node targets
+
+Two different mechanisms scale two different ways, and the shape is read off the engine, not guessed:
+
+- **QUALITY scales with SPARE nodes, ~linearly.** Judge, pre-review and sink-review are all gated on
+  `idle_capacity()` in `scheduler.rs`. One node has **ZERO** spare capacity, so it runs **zero**
+  idle-node review. Two nodes have one spare, three have two. ⇒ **25% of the defect gap per spare
+  node.**
+- **SPEED scales by Amdahl, sublinearly.** Measured parallel fraction p = 0.79 (EXECUTE is 77.2 of a
+  98.1 min one-node run). Ceilings: 2 nodes 1.65x (39%), 3 nodes 2.11x (53%). Real DAGs reach a
+  fraction of that, and the first added node delivers ~74% of the total.
+
+| | 1 node (baseline) | **2 nodes** | **3 nodes** |
+|---|---|---|---|
+| spare nodes | 0 | 1 | 2 |
+| **QUALITY — defect gap** | 0.267 | **−25% ⇒ 0.200** | **−50% ⇒ 0.134** |
+| **⇒ score** | 0.733 | **≥ 0.800** | **≥ 0.866** |
+| **Tier B (behaviour)** | 0.538 | **≥ 0.653** | **≥ 0.769** |
+| **excellent-run rate (≥0.90)** | 36.4% | **≥ 45%** | **≥ 54.5%** |
+| **SPEED vs 1 node** | — | **≥ 10% faster** | **≥ 15% faster** |
+| | | (≥ 9.8 min) | (≥ 14.7 min) |
+
+## Priority — quality is the GATE, speed is a FLOOR
+
+1. **GATE (must pass):** the quality row. A 3-node swarm that is fast and no better is a FAILURE.
+2. **FLOOR (must not breach):** **three nodes must NEVER be slower than one.** Today it is +10.0 min
+   SLOWER at 1.04 SE — *the floor is currently breached*, which is why the ladder fix is the first
+   thing to land.
+3. **TARGET:** the 15% / 10% speed numbers. Missing these while passing the gate is a partial win,
+   not a failure.
+
+## Where the quality actually is — TIER B, and it is half of everything lost
+
+| tier | what it checks | weight | 1-node | 3-node | score lost (1-node) |
+|---|---|---|---|---|---|
+| **B** | **does the app DO what the spec says** — sync completeness, resync idempotency, pagination, row shape, totals, chronological order, summary accuracy, UTC bounds, input validation, UI states/currency/offline | 0.30 | **0.538** | **0.572** | **0.1385** |
+| C | robustness | 0.25 | 0.792 | 0.686 | 0.0520 |
+| D | quality-of-build | 0.20 | 0.771 | 0.757 | 0.0458 |
+| A | it exists and runs | 0.25 | 0.876 | 0.933 | 0.0311 |
+
+**Tier B is 52% of all score lost at one node and 47% at three.** Half the app's specified behaviours
+are wrong in the average run. **This is the goal's real target — everything else is rounding.** It is
+also exactly Mihai's end goal (working apps), so the metric and the intent finally agree.
+
+**Two real per-arm differences already visible, both worth chasing:** three nodes is **better on A**
+(0.933 vs 0.876 — it ships something that runs more reliably) and **worse on C** (0.686 vs 0.792 —
+robustness regresses). The C regression is a live defect, not noise to average away.
+
+## What this costs to prove — and quality is CHEAPER than speed
+
+Pooled score sd = 0.1839. At 80% power, alpha 0.05:
+
+| claim | effect | **n/arm** |
+|---|---|---|
+| **3-node quality (gap −50%)** | 0.134 | **30** |
+| 3-node speed (15%) | 14.7 min | 44 |
+| 2-node quality (gap −25%) | 0.067 | 119 |
+
+**The 3-node quality gate is the cheapest headline claim available (~30/arm, ~4 fleet-days).** The
+2-node row needs 119/arm and is NOT affordable as a measured claim — it is stated as a *design
+target* and will be judged on the mechanism (does a 2-node run fire idle-node review at all), not on
+a powered score comparison. Saying otherwise would be promising a number the fleet cannot deliver.
+
+## The named levers (Mihai's own list)
+
+*"Judge stops looping, planning is done better"* — both already have evidence behind them:
+- **Planning** — the confidence ladder costs **~25 min/round** on four independent estimates and buys
+  +0.029 at 0.31 SE. Fix committed (`a9f43543d`), **not yet in the running binary.**
+- **Judge / idle-node work** — F662 is measuring whether it fires at all before anything is claimed.
+- **Dynamic replan** — the author's own comment records it making an already-finished 3-node run
+  **55% longer** with work nobody asked for, gated on `idle_capacity()>=2` that one node never has.
+
+---
+
 # THE GOAL — read this FIRST on every wake, before anything else
 
 **Overarching:** make the swarm actually WORTH IT — beat one node on time and on the quality of what
