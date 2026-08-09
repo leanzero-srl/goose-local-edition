@@ -60,9 +60,11 @@ Two different mechanisms scale two different ways, and the shape is read off the
 ## Priority — quality is the GATE, speed is a FLOOR
 
 1. **GATE (must pass):** the quality row. A 3-node swarm that is fast and no better is a FAILURE.
-2. **FLOOR (must not breach):** **three nodes must NEVER be slower than one.** Today it is +10.0 min
-   SLOWER at 1.04 SE — *the floor is currently breached*, which is why the ladder fix is the first
-   thing to land.
+2. **FLOOR (must not breach):** **three nodes must NEVER be slower than one.** ⚠️ **THE FLOOR CANNOT
+   BE ADJUDICATED AT THIS n — the MDE is 30 MINUTES.** Three estimates of the same quantity: **+8.1
+   min (95% CI −12.6 to +28.8)** on 27 result rows; **+11.3 min (1.18 SE)** on the 49-run `loop.log`
+   record; **+10.0 min (1.02 SE)** build-adjusted. The ladder work is prioritised on the **planning
+   mechanism**, not on the wall-clock.
 3. **TARGET:** the 15% / 10% speed numbers. Missing these while passing the gate is a partial win,
    not a failure.
 
