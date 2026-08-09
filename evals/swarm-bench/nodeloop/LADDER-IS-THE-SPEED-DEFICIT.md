@@ -21,6 +21,12 @@ against 13 three-node:
 other headline sits under one standard error — quality +0.0484 (0.84), wall (0.38), research (0.83),
 research grounding (0.94).
 
+**REPLICATED 2026-08-09 (F653) on five more cells** — corpus 9v13 -> 11v15, same conclusions, and the
+ladder cost landed at **24.9 min**, a third independent estimate. Meanwhile the arm gap moved AGAINST
+three nodes: speed is now **+10.0 min at 1.04 SE**, the first time this campaign's deficit has
+cleared one standard error, and the equal-n tier table (8 vs 8) reads 1-node 0.731 against 3-node
+0.698.
+
 ## The planning tax is entirely the ladder
 
 Within three-node runs only, split by whether a confidence-ladder round fired:
@@ -63,6 +69,30 @@ five-cell 0.185 does not replicate.
 **So the objection they named is not supported by the data they asked for.** The ladder costs 25.4
 minutes a round and buys 0.0293 of score at a third of a standard error.
 
+## What the engine ALREADY does about the ladder — read this before proposing anything (F657)
+
+Two mechanisms exist that I did not know about until I grepped, and both blunt the obvious follow-up
+ideas. **Do not propose either of them again.**
+
+- **The best round is kept, not the last.** `swarm.rs:24853`: *"Monotonic best (retarget only):
+  remember the highest-confidence plan so a re-draft that happens to diverge can never ship worse
+  than the best already measured."* So a run whose rounds read 83 then 60 **ships the 83 plan**. A
+  per-round `agreement_conf` sequence is a measurement, NOT what the run lives with — I briefly
+  believed otherwise and the source refuted it.
+- **A stall guard stops a ladder that is not climbing**, default `true` (`swarm.rs:1250`), gated by
+  `GOOSE_SWARM_RETARGET_STALL_GUARD`. Its comment: *"a redraft that failed to beat the best
+  confidence already measured is evidence the ladder is not climbing, and every further rung costs a
+  full planning pass across the fleet (**~20 min measured**) to ship a plan `best_plan` is already
+  holding."*
+
+**That ~20 min is a FOURTH independent estimate of the rung cost**, reached by the engine author from
+different data, sitting beside 24.9 / 25.0 / 25.4.
+
+**What the ladder does achieve, stated fairly (F656, n=6):** it reaches the 85 floor in only 2 of 6
+runs, but measured first-round-to-best it gains **+11 points on average**. It is not useless. The
+case for the pool-invariant fix rests on ladders that **should never have fired**, not on how badly
+the ones that fire perform.
+
 ## What this does NOT establish — read before acting
 
 - **Runs are not randomised into laddering.** The ladder fires precisely when the draft skeletons
@@ -95,4 +125,9 @@ bad runs, and one **overwrote the campaign's best result, 0.9033**.
 F607 (ladder impossible at one node) · F610 (25.0 min/round, 6.73 SE) · F612 (4 of 5 rounds
 pool-bought) · F649 (the deficit is a planning deficit) · F650 (the ladder is the whole planning tax)
 · F651 (the hold discharged; and the dedup correction that shrank F649 from +15.9/4.63 SE to
-+12.8/3.23 SE) · F652 (the dedup bug is bounded to ad-hoc scripts; every shipped instrument is clean).
++12.8/3.23 SE) · F652 (the dedup bug is bounded to ad-hoc scripts; every shipped instrument is clean)
+· F653 (both halves replicated on 5 more cells; ladder cost 24.9) · F655 (a live pre-fix run laddering
+on a round the fix would have prevented, conf 54 against a pool-invariant 88 and a verified 85 floor)
+· F656 (the ladder reaches its floor in 2 of 6 runs but gains ~11 points at its best)
+· F657 (my own follow-up hypothesis REFUTED by the source: best-plan retention and the stall guard
+already exist).
