@@ -232,6 +232,19 @@ orphans = [a["name"] for a in m.arms_now() if a["name"] not in named and a.get("
 for o in orphans:
     print(f"  {o:<20} {'reps>0 but named in NO question':<36} CANNOT EVER BE SCHEDULED")
     bad.append((o, "no question references this arm"))
+# DUPLICATE NAMES — the other way an arm's reasoning goes missing, and the one that leaves no trace.
+# MEASURED (F721): I added a `doc_fetch` arm and question for C10 without checking, and both already
+# existed. The copy sorted FIRST, so every by-name lookup would have returned MY gate text and
+# silently discarded the original's F389 correction — the one recording that the `/v1` readout is
+# OVERTAKEN and would score an INERT arm as FIRED. A duplicate does not fail; it SHADOWS, and the
+# thing it shadows is usually the correction someone added after being burned once already.
+from collections import Counter as _C
+for _label, _names in (("ARMS", [a["name"] for a in m.ARMS]),
+                       ("QUESTIONS", [q["arm"] for q in m.QUESTIONS])):
+    for _n, _c in _C(_names).items():
+        if _c > 1:
+            print(f"  {_n:<20} {'appears ' + str(_c) + 'x in ' + _label:<36} DUPLICATE — the first SHADOWS the rest")
+            bad.append((_n, f"duplicated {_c}x in {_label}"))
 for a in m.arms_now():
     if not a["env"]:
         print(f"  {a['name']:<20} (no lever — baseline)")
