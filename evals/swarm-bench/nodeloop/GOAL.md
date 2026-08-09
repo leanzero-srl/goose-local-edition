@@ -1,3 +1,13 @@
+> ⛔ **RED-TEAM 2026-08-09:** three claims in this file were REFUTED. **The `diverse_plan` 7-of-7 is a
+> TAUTOLOGY** (`would_skip_ladder` reduces to `agreement < 93`, and laddering requires `agreement < 85`);
+> the lever is **"raise the agreement bar 85→93 and stop laddering"**, which makes the quality risk
+> LARGER. **The sink's "64% more verification" is a COST LINE** — the e2e fan is `clamp(slots,2,4)` so
+> the same command union is cut into twice as many pieces, each re-paying build-and-launch; and
+> "integrate-verify is faster at three nodes" was ONE outlier run. **The fix's reach was understated:
+> 4 of 15 = 26.7%, and 42.9% on the newest binary, with all four reachable runs flipping.** The honest
+> headline number is MATCHED PAIRS (n=10): wall −0.52 min CI [−14.6,+13.6], score −0.0001 CI
+> [−0.149,+0.149]. See LADDER-IS-THE-SPEED-DEFICIT.md for the full corrections.
+
 # THE GOAL — FINAL NUMBERS (set 2026-08-09, quality-first, per added node)
 
 **Supersedes the speed-first framing below.** Mihai: *quality is the most important thing, but avoid
