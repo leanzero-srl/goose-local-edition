@@ -5365,6 +5365,72 @@ mod tests {
         );
     }
 
+    /// C1 END-TO-END (F711/F712): the SCAN must skip the swarm's own tests, not merely the helper.
+    ///
+    /// My first test for this covered `is_test_path` in isolation and passed — which proves nothing
+    /// about the scan, because the defect it replaces was a CALL SITE handing a full path to a
+    /// basename predicate. That is the third time in one day a pure-predicate test would have missed
+    /// the real bug (the shadow/branch drift, the orphan refusal that could never fire, and this).
+    /// So this drives `http_timeout_scan` itself and asserts BOTH directions on the same run.
+    #[tokio::test]
+    async fn timeout_scan_skips_the_swarms_own_tests_and_still_flags_app_code() {
+        let dir = std::env::temp_dir().join(format!("c1scan{}", std::process::id()));
+        let pkg = dir.join("pkg");
+        let tests = dir.join("tests");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::create_dir_all(&tests).unwrap();
+        std::fs::write(pkg.join("__init__.py"), "").unwrap();
+        // APP CODE with a real no-timeout defect — MUST still be flagged.
+        std::fs::write(
+            pkg.join("bad.py"),
+            "import http.client\ndef a(h):\n    return http.client.HTTPConnection(h)\n",
+        )
+        .unwrap();
+        // THE SWARM'S OWN TEST FILE, same defect. 28 of 60 real findings named exactly this shape,
+        // and the scorer never grades it. MUST be absent.
+        std::fs::write(
+            tests.join("test_api.py"),
+            "import http.client\ndef t(h):\n    return http.client.HTTPConnection(h)\n",
+        )
+        .unwrap();
+
+        let planned: Vec<String> = ["pkg/__init__.py", "pkg/bad.py", "tests/test_api.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let app_only: Vec<String> = planned
+            .iter()
+            .filter(|f| !is_test_path(TargetLang::Python, f))
+            .cloned()
+            .collect();
+        let skipped = planned.len() - app_only.len();
+        let res =
+            http_timeout_scan(&dir, TargetLang::Python, &app_scope_py(&dir, &app_only)).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !res.ran {
+            return; // python3 not available in this environment
+        }
+        let joined = res.findings.join("\n");
+
+        assert_eq!(skipped, 1, "the filter must remove exactly the tests/ file");
+        // A FILTER THAT ATE THE WHOLE SCOPE LOOKS IDENTICAL TO A CLEAN APP — this is the guard.
+        assert!(
+            res.checked > 0,
+            "checked==0 after filtering: the filter removed everything, so a clean result here is \
+             silence, not evidence"
+        );
+        assert!(
+            joined.contains("bad.py"),
+            "APP code with a no-timeout client must STILL be flagged — if the filter is too greedy \
+             the detector goes silent and the fix loop stops seeing real defects: {joined}"
+        );
+        assert!(
+            !joined.contains("test_api.py"),
+            "the swarm's OWN test file must NOT be flagged — 55% of real round-0 findings were this, \
+             and the scorer grades none of them: {joined}"
+        );
+    }
+
     #[test]
     fn every_baked_on_lever_declares_itself_baked_on() {
         const SRC: &str = include_str!("swarm.rs");
