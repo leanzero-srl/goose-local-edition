@@ -51,6 +51,28 @@ That is **~10.5% from known causes**. The remaining ~5% has to come from **plan 
 the real ceiling**: F601 measured the delivered plan widening only **1.11x for 3.00x of hardware**.
 Until the architect emits a wider DAG, no scheduling change gets near 2x — let alone 3x.
 
+### Two channels, two very different prices (F661)
+
+**The mechanism check is powered today; the outcome check is not.** Measured on the same rows:
+
+| channel | difference | SE | SE units | verdict |
+|---|---|---|---|---|
+| WALL | +4.1 min | 9.6 | 0.38 | hopeless at this n — drowned by execute variance |
+| **PLANNING** | **+12.8 min** | **3.5** | **3.23** | **already decisive** |
+
+So F654's P2 — 3-node planning falling below 20 min — should read after roughly **3-5 post-fix
+three-node runs**, not forty-four. The **15% wall target still needs the full ~44 per arm.**
+
+⚠️ **The fast channel must never stand in for the slow one.** Planning falling shows the ladder
+stopped firing — a mechanism verdict, valid at small n. It does **not** show the run got 15% faster.
+That is the outcome claim, it is what this goal says, and it costs six fleet-days whatever the
+mechanism does.
+
+**No cheaper measurement exists.** The 24% CV was checked for pathology: **zero of 26 rows carry
+`timed_out` or `aborted`**, and both arms run smoothly from ~67 to ~150 min with no isolated outlier
+a flag would catch. Trimming the tail until 15% becomes detectable would be fitting the instrument to
+the answer, so the price stands.
+
 ### The failure gate
 
 If, after the ladder fix has run its ~44 cells per arm, speed is not ≥15% and the decomposition above
