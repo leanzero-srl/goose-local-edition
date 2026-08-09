@@ -14285,12 +14285,41 @@ impl GooseAgentDispatcher {
                 "agreement_conf": conf1,
                 "agreement_best2": best2,
                 "pool_penalty": best2.saturating_sub(conf1),
+                "pool_invariant_applied": best2 > conf1,
                 "struct_conv": struct_conv,
                 "struct_stop": struct_stop,
                 "enforced": diverse_plan_on,
                 "would_skip_ladder": diverse_plan_would_skip(struct_conv, struct_stop, conf1),
                 "detail": struct_reason,
             }));
+            // ACT ON THE POOL-INVARIANT MEASURE AT THE ROUND-1 DECISION POINT — the fix this file already
+            // asked for, now measured. The comment above states the defect: `best_subset_agreement` exists so
+            // a growing pool can only RAISE the metric, but it is wired in as `consensus_k` ("retarget only"),
+            // so the invariant measure never reached the round-1 decision that the pool penalty is what
+            // triggers. "That is backwards."
+            //
+            // The hold was `Measure first`, and the risk named was "the ladder may be buying the quality".
+            // MEASURED 2026-08-08/09 on the deduped corpus: a ladder round costs 24.9-25.4 min of planning by
+            // THREE independent routes agreeing within half a minute, while laddering runs score +0.035 above
+            // non-laddering ones at 0.39 SE — and LOSE on the median (0.7192 vs 0.7426). Non-laddering 3-node
+            // planning is 14.5 min against one-node's 12.8, so the ladder is the ENTIRE three-node planning
+            // tax. Full evidence and its limits: evals/swarm-bench/nodeloop/LADDER-IS-THE-SPEED-DEFICIT.md
+            //
+            // NO-OP AT ONE NODE BY CONSTRUCTION, which is why this cannot regress the single-device path:
+            // `best_of_n` is `base.max(devices.len())`, so one node drafts 2, and with 2 drafts
+            // `best_subset_agreement` falls through to the full-set measure — `best2 == conf1` and the
+            // condition is false. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this
+            // runs, so the diagnostic keeps its old meaning and `pool_invariant_applied` says when it bit.
+            //
+            // ⚠️ WHAT THIS DOES NOT CLAIM: runs are not randomised into laddering — the ladder fires when the
+            // drafts disagree, so laddering runs may be the ones facing a harder decomposition. The evidence
+            // shows where the time GOES, never that removing the ladder RETURNS it. Watch `plan_convergence`
+            // and the arm wall-clock after this lands.
+            if best2 > conf1 {
+                reason1 =
+                    format!("{reason1} [pool-invariant: {conf1} → {best2} on a 1-node footing]");
+                conf1 = best2;
+            }
             if diverse_plan_on && diverse_plan_would_skip(struct_conv, struct_stop, conf1) {
                 reason1 = format!(
                     "{reason1} [diverse-plan: struct-converged {struct_conv} ({struct_reason}) → skip ladder]"
