@@ -343,6 +343,25 @@ ARMS = [
                 "non-empty, and the external literals research reported reaching a worker unchanged.",
     },
     {
+        "name": "scout_doc_urls",
+        "env": {"GOOSE_SWARM_SCOUT_DOC_URLS": "1"},
+        "gate": "C7. The OTHER half of the doc wire, and the cheap half. `doc_fetch` splices the "
+                "document in from the ORCHESTRATOR; this one stops the engine LYING to its scouts. "
+                "One boolean drove both the tool hint and the clause asserting the scout 'cannot "
+                "look anything up on this run' - but a scout with no MCP extension still has a "
+                "SHELL, and 59 of 77 archived scouts (77%) fetched a spec-named URL while under "
+                "that instruction. The engine tells them a falsehood and then counts the result as "
+                "grounded. MECHANISM readout, n=1: the literal `The spec names these documents` must "
+                "appear in a scout's system prompt (it is in the binary but has NEVER executed, "
+                "since the gate is default OFF). QUALITY readout: per-lens doc-only vendor tokens "
+                "(next_cursor, Retry-After, ETag, Idempotency-Key, 429) in finding_texts, against a "
+                "measured per-run spread of 4-9. HARD GUARD: prefix.research_secs (mean 7.49, sd "
+                "2.51) must NOT rise - by this phase's own tier-C correlation (r=-0.650, t=-2.90) a "
+                "longer research phase is a loss regardless of grounding, and a rise triggers revert "
+                "on that readout alone. Do NOT settle this on `grounded`: the instruction guarantees "
+                "it, so that readout is circular.",
+    },
+    {
         "name": "spec_repair",
         "env": {"GOOSE_SWARM_SPEC_REPAIR": "1"},
         "gate": "the ONE mechanism found that puts three nodes on a one-finding round. The tail is "
@@ -549,6 +568,34 @@ NODE_LEVELS = (3, 1, 2)
 # `reps` is the replicate count for THIS cell; `asks` is the question, printed in the log so an
 # operator reading it knows why the fleet is spending two hours.
 QUESTIONS: list[dict] = [
+    {"arm": "doc_fetch", "nodes": 3, "reps": 3,
+     "asks": "🔼 RE-PROMOTED BY F390 — the F53 demotion was right about the PREFIX and wrong about the "
+             "DOCUMENT. F53 refuted 'losing `/v1` breaks the build' (the 83.4% unit lost it and crunch "
+             "still passed 7/7, because workers have shell and re-derive a PATH), and F389 confirms the "
+             "prefix half is dead: /v1 now appears in plan_loaded in ALL FIVE cells and in every built "
+             "client. But the demotion generalised one refuted claim to the whole arm. The document is "
+             "4769 bytes (MEASURED by serving vendor_service and fetching /v1/docs — well under "
+             "doc_fetch's 24000-byte cap, so NOTHING is truncated) and it carries `cursor` x11, "
+             "`next_cursor` x3, ETag/If-None-Match and Retry-After. A worker re-derives a PATH by trying "
+             "it; it does not re-derive a CURSOR PAGINATION PROTOCOL by trial and error, and the archive "
+             "agrees — only 1 of 5 cells ever retrieves all 247 payments. "
+             "WHY THIS IS NOW THE TOP ARM: the sync-dependent family (payment_row_shape, total_field, "
+             "chronological_order, summary_accuracy, summary_bounds_utc, concurrent_sync_safe, "
+             "local_pagination, resync_idempotent — SEVEN of eight in tier B, the heaviest tier) is the "
+             "single largest block of score on the board. If every 3-node cell synced like r3 the arm "
+             "mean goes 0.6390 -> 0.7717 and the gap +0.0593 -> +0.1920, which the PRE-REGISTERED 5 "
+             "pairs can settle (F385: as measured it needs 51). Nothing else examined today is within an "
+             "order of magnitude of that. "
+             "⚠️ THAT COUNTERFACTUAL SIZES THE PRIZE, NOT THIS LEVER'S EFFECT — r3 synced WITHOUT "
+             "doc_fetch, by guessing the protocol. This arm is the bet that reading beats guessing; it "
+             "is not evidence that it does. "
+             "⚠️ THE REAL RISK IS DILUTION, not failure: 4769 bytes (~1.2k tokens) lands in EVERY "
+             "worker's prompt, and measured 27B compliance falls 0.588@10 rules -> 0.094@40. A drop in "
+             "checks UNRELATED to sync is the signal that the document is crowding out the task. "
+             "MECHANISM readout (revised — the old one was `/v1` count in plan_loaded, which F389 showed "
+             "now reads TRUE with the lever doing nothing): `doc_fetched{ok:true, status:200}` PLUS "
+             "vendor_cursor_paging and vendor_all_pages both reaching 1.00 on a cell that is not r3. "
+             "reps=3 because the mechanism settles at n=1 but the score cannot (F382)."},
     {"arm": "baseline", "nodes": 3, "reps": 3,
      "asks": "the replicate spread on this engine (every score comparison is measured against it), "
              "AND whether the F49 detail-budget fix drove detail_fallback to zero — that second half "
@@ -588,6 +635,17 @@ QUESTIONS: list[dict] = [
     # ordering asserted in a comment is how arms go missing in this file.
     # armcheck GATES this on the baseline's own `plan_convergence.would_skip_ladder`, so if the
     # counterfactual says ENFORCE would change nothing the arm is refused BEFORE it spends a unit.
+    {"arm": "scout_doc_urls", "nodes": 3, "reps": 1,
+     "asks": "whether the engine can stop telling 77% of its scouts a falsehood, and whether "
+             "that changes what they bring back. MECHANISM, n=1 and deterministic: the literal "
+             "\"The spec names these documents\" must appear in a scout system prompt — it is in "
+             "the binary (probe verified the flip) but has NEVER executed, because the gate is "
+             "default OFF. QUALITY: per-lens doc-only vendor tokens in finding_texts against the "
+             "measured 4-9 per-run spread. GUARD: research_secs must not rise; a rise reverts the "
+             "arm on that readout alone. Paired with doc_fetch, which runs immediately before it — "
+             "doc_fetch hands the document to WORKERS from the orchestrator, this hands it to "
+             "SCOUTS via their own shell, and the two are separable because they touch different "
+             "phases. NOT settled on `grounded`: the instruction guarantees it, so it is circular."},
     {"arm": "diverse_plan", "nodes": 3, "reps": 2,
      "asks": "GOAL ONE, THE PREFIX HALF. Does removing the pool-size penalty on plan agreement give "
              "the 3-node fleet back the 786-1657s redraft ladder it pays and the 1-node fleet does "
@@ -701,34 +759,6 @@ QUESTIONS: list[dict] = [
              "found with a precondition that never held (after task_split, sink_review, "
              "complete_parallel), which makes 'prove the precondition can occur' the first question "
              "to ask of any lever."},
-    {"arm": "doc_fetch", "nodes": 3, "reps": 3,
-     "asks": "🔼 RE-PROMOTED BY F390 — the F53 demotion was right about the PREFIX and wrong about the "
-             "DOCUMENT. F53 refuted 'losing `/v1` breaks the build' (the 83.4% unit lost it and crunch "
-             "still passed 7/7, because workers have shell and re-derive a PATH), and F389 confirms the "
-             "prefix half is dead: /v1 now appears in plan_loaded in ALL FIVE cells and in every built "
-             "client. But the demotion generalised one refuted claim to the whole arm. The document is "
-             "4769 bytes (MEASURED by serving vendor_service and fetching /v1/docs — well under "
-             "doc_fetch's 24000-byte cap, so NOTHING is truncated) and it carries `cursor` x11, "
-             "`next_cursor` x3, ETag/If-None-Match and Retry-After. A worker re-derives a PATH by trying "
-             "it; it does not re-derive a CURSOR PAGINATION PROTOCOL by trial and error, and the archive "
-             "agrees — only 1 of 5 cells ever retrieves all 247 payments. "
-             "WHY THIS IS NOW THE TOP ARM: the sync-dependent family (payment_row_shape, total_field, "
-             "chronological_order, summary_accuracy, summary_bounds_utc, concurrent_sync_safe, "
-             "local_pagination, resync_idempotent — SEVEN of eight in tier B, the heaviest tier) is the "
-             "single largest block of score on the board. If every 3-node cell synced like r3 the arm "
-             "mean goes 0.6390 -> 0.7717 and the gap +0.0593 -> +0.1920, which the PRE-REGISTERED 5 "
-             "pairs can settle (F385: as measured it needs 51). Nothing else examined today is within an "
-             "order of magnitude of that. "
-             "⚠️ THAT COUNTERFACTUAL SIZES THE PRIZE, NOT THIS LEVER'S EFFECT — r3 synced WITHOUT "
-             "doc_fetch, by guessing the protocol. This arm is the bet that reading beats guessing; it "
-             "is not evidence that it does. "
-             "⚠️ THE REAL RISK IS DILUTION, not failure: 4769 bytes (~1.2k tokens) lands in EVERY "
-             "worker's prompt, and measured 27B compliance falls 0.588@10 rules -> 0.094@40. A drop in "
-             "checks UNRELATED to sync is the signal that the document is crowding out the task. "
-             "MECHANISM readout (revised — the old one was `/v1` count in plan_loaded, which F389 showed "
-             "now reads TRUE with the lever doing nothing): `doc_fetched{ok:true, status:200}` PLUS "
-             "vendor_cursor_paging and vendor_all_pages both reaching 1.00 on a cell that is not r3. "
-             "reps=3 because the mechanism settles at n=1 but the score cannot (F382)."},
     {"arm": "complete_parallel", "nodes": 3, "reps": 1,
      "asks": "now that F41 taught the finding-extractor to read backticked paths and dotted modules, "
              "does the repair fan actually fire? MECHANISM: count `complete_fix_wave` / per-file fix "
