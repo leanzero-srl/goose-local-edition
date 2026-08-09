@@ -741,6 +741,24 @@ QUESTIONS: list[dict] = [
      "asks": "do the e2e shards stop deriving their checklist from the build's own README and start "
              "from the engine-extracted surface? MECHANISM: the shard reports must stop citing the "
              "README. Can fail independently of the score."},
+    # F708: these two arms carried reps>0 but were named in NO question, so `cells()` could never
+    # schedule them and the sweep warned about it on EVERY pass, unread, for a long time. Both were
+    # locked out — and both test defects the 2026-08-09 phase audit independently REDISCOVERED from
+    # scratch, which is the expensive part: the experiment that would have answered the question was
+    # already written and could not run.
+    {"arm": "e2e_oracle_off", "nodes": 3, "reps": 1,
+     "asks": "ABLATION of the baked oracle, and it now has a corroborating measurement it did not "
+             "have when it was written: 27% of e2e shards and integrate-verify in 17 of 25 runs "
+             "completed with status=done and ZERO shell tool calls. This arm's own gate explains "
+             "HOW — a shard that derives an empty command slice from the build's README reports "
+             "CLEAN without running anything. MECHANISM readout on the new verify_coverage.exec_rate, "
+             "not on the score."},
+    {"arm": "spec_sized_plan", "nodes": 3, "reps": 1,
+     "asks": "does sizing the plan to the JOB instead of the FLEET break the depth-4 ceiling? The "
+             "audit measured DAG depth EXACTLY 4 in 14 of 14 three-node runs (zero variance) while "
+             "EXECUTE is critical-path bound in 13 of 14 — and skeleton_count_clause derives its "
+             "target from worker_count, which is SLOTS. Same worker_count-is-SLOTS confusion as the "
+             "e2e fan's clamp(worker_count,2,4). MECHANISM: plan_loaded depth and root width."},
 ]
 
 # THE NODE CURVE IS GOAL ONE AND IT RUNS THIRD, not last.
