@@ -100,8 +100,9 @@ research grounding (0.94).
 
 **REPLICATED 2026-08-09 (F653) on five more cells** — corpus 9v13 -> 11v15, same conclusions, and the
 ladder cost landed at **24.9 min**, a third independent estimate. Meanwhile the arm gap moved AGAINST
-three nodes: speed is now **+10.0 min at 1.04 SE**, the first time this campaign's deficit has
-cleared one standard error, and the equal-n tier table (8 vs 8) reads 1-node 0.731 against 3-node
+three nodes: speed on THAT corpus reads **+11.33 min at 1.18 SE** (F653-OUTCOME, the 49-row loop.log record —
+`spread.py` still prints it). ⚠️ This is a DIFFERENT corpus from the 27-row result set and the two
+must never be compared as though one superseded the other, and the equal-n tier table (8 vs 8) reads 1-node 0.731 against 3-node
 0.698.
 
 
@@ -154,7 +155,8 @@ the `diverse_plan` arm, which is already queued and has never executed.
   one SE": one additional row put it back under, and a difference that crosses and re-crosses on a
   single row was never a finding.
 - **The 3-node wall of 102.1 min is stale** — it is **105.80** on the current 16 rows.
-- **The pool-invariant fix reaches at most 20% of runs (F683).** It is dead whenever fewer than three
+- **The pool-invariant fix reaches 4 of 15 = 26.7% of runs, and 3 of 7 = 42.9% on the newest binary —
+  all four reachable runs FLIP (F683-CORRECTED). The earlier "at most 20%" is STRICKEN.** It is dead whenever fewer than three
   drafts return, and the fleet requests three and gets **2.4** on average — because
   `collect_drafts_with_straggler_stop` *deliberately* aborts the lone last-place draft once two valid
   ones land (F684, `straggler_aborted`). That is a designed speed trade, not a defect, and it costs
@@ -168,7 +170,7 @@ Within three-node runs only, split by whether a confidence-ladder round fired:
 |---|---|---|
 | 3-node, laddered | 6 | **39.5 min** |
 | 3-node, no ladder | 7 | **14.0 min** |
-| 1-node (never ladders) | 9 | **13.0 min** |
+| 1-node (never ladders **on THIS fleet** — see the refutation below) | 9 | **13.0 min** |
 
 - Laddering costs **+25.4 min** — and F610 independently priced a single ladder round at **25.0 min
   (6.73 SE)** by a completely different route.
@@ -177,7 +179,18 @@ Within three-node runs only, split by whether a confidence-ladder round fired:
 
 ## Why it is a three-node event
 
-**One node drafts exactly ONE skeleton** — `skeleton_drafts.requested` is 1 in 22 of 22 one-node runs
+⛔ **REFUTED BY COUNTEREXAMPLE (red-team, 2026-08-09) — THREE ONE-NODE RUNS LADDERED.** The cap is
+**DISTINCT DRAFT MODELS**, not node count: `swarm.rs:14014` dedupes `draft_models` by model string
+and `:14033` takes `n = requested_n.min(len)`. On the CURRENT one-node cell the planner and worker
+share a model string, so 11 of 11 *live-corpus* runs report `redraft_rounds` 0 — but across all 26
+one-node runs on disk, `skeleton_drafts.requested` is **2 in six of them**, a one-node
+`plan_convergence` exists (drafts 2, agreement_conf 88, one device `mac-gabee`), and **three
+one-node runs laddered** (`preboundary-1785657605/baseline-n1-r0` score 0.8708 redraft_rounds=1;
+`parked-1785942777/baseline-n1-r0` score 0.5798; `preboundary-3/baseline-n1-r0`). A single-node
+fleet with a distinct planner model WOULD draft two and COULD ladder. The original text follows and
+is WRONG:
+
+~~**One node drafts exactly ONE skeleton** — `skeleton_drafts.requested` is 1 in 22 of 22 one-node runs
 (F659). Cross-draft agreement is therefore undefined, and the retarget site fires only *"when
 AGREEMENT is the binding signal"* — `binding_signal` explicitly accepts a missing agreement
 (swarm.rs:6735). **So the ladder cannot fire at one node**, and no convergence is even measured:
@@ -275,7 +288,7 @@ bad runs, and one **overwrote the campaign's best result, 0.9033**.
 
 ## Provenance
 
-F607 (ladder impossible at one node) · F610 (25.0 min/round, 6.73 SE) · F612 (4 of 5 rounds
+F607 (~~ladder impossible at one node~~ — MISLABELLED; F607 governs the DYNAMIC REPLANNER) · F610 (25.0 min/round, 6.73 SE) · F612 (4 of 5 rounds
 pool-bought) · F649 (the deficit is a planning deficit) · F650 (the ladder is the whole planning tax)
 · F651 (the hold discharged; and the dedup correction that shrank F649 from +15.9/4.63 SE to
 +12.8/3.23 SE) · F652 (the dedup bug is bounded to ad-hoc scripts; every shipped instrument is clean)
