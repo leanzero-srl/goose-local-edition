@@ -72,7 +72,17 @@ nothing needs a second rebuild.
      the **cell** (`baseline-n3-r1`). They disagree BY DESIGN (`:1580`) — not the reused-dir bug.
    - A quiet `run.jsonl` beside a fresh heartbeat is a **long worker call**, not a hang. Only a
      heartbeat older than ~3 min is a real stall.
-3. `cargo build --release -p goose-cli`.
+3. **`./greengate.sh` FIRST, and build only on exit 0.** Then `cargo build --release -p goose-cli`.
+
+   This step used to say only "cargo build", and that omission cost twice in one day.
+   **F714:** `cargo fmt --check` failed after four engine edits verified with `cargo check` alone —
+   which says nothing about formatting, while AGENTS.md says never skip fmt. **F718:** an edit landed
+   between an existing `#[test]` and its function; the orphaned attribute duplicated onto the new
+   test and the original became dead code that no longer ran. **Only clippy saw it.**
+   ⚠️ **And the test TOTAL cannot catch that class at all** — F718 measured 473 passing in *both* the
+   broken and the fixed tree, because a disabled test and an added test cancel exactly. After adding
+   tests, confirm the neighbours still run **by name**. The gate is proven to exit 1 on the F718
+   defect and 0 once restored.
 4. **Verify the binary with the string-literal probe** — `strings` cannot see private Rust fn names
    (three known-present fns read 0), but it *can* see emitted literals, which is what makes a zero
    there a proven negative rather than an observed one.
