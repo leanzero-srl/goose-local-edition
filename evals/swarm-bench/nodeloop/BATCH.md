@@ -60,6 +60,18 @@ nothing needs a second rebuild.
 2. `touch STOP` → the sweep finishes its current cell and **exits cleanly between units** (F675).
    Never mid-cell: a past interruption landed 0.0563/0.0561/0.0561 as non-void and **overwrote the
    campaign's best result, 0.9033**.
+
+   **Gate this on `python3 boundary.py`, never on a hand-written glob or `pgrep` (F715).** Rebuild
+   only on `BOUNDARY-REACHED` (exit 0). Twice on 2026-08-09 I globbed the heartbeat under `.swarm/`
+   — it is at the **cell root** — got zero, and *a blind zero is indistinguishable from a finished
+   cell*; acting on it would have rebuilt under a live 21-minute run. Three facts the detector
+   encodes so they are not re-derived wrong:
+   - `heartbeat` / `run.jsonl` are at the **cell root**; `.swarm/` holds only `current-run.json`,
+     whose mtime is a **start** time and so looks stale on a healthy run.
+   - The live dir is named for the **entrant** (`swarm-3node-r1`, `sweep.py:1544`); the sweep logs
+     the **cell** (`baseline-n3-r1`). They disagree BY DESIGN (`:1580`) — not the reused-dir bug.
+   - A quiet `run.jsonl` beside a fresh heartbeat is a **long worker call**, not a hang. Only a
+     heartbeat older than ~3 min is a real stall.
 3. `cargo build --release -p goose-cli`.
 4. **Verify the binary with the string-literal probe** — `strings` cannot see private Rust fn names
    (three known-present fns read 0), but it *can* see emitted literals, which is what makes a zero
