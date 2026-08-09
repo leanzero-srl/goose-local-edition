@@ -9345,7 +9345,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn complete_stall_rounds_defaults_off_and_clamps() {
-        assert_eq!(complete_stall_rounds_from(None), 2); // default ON at 2 (flipped 2026-07-10)
+        // The default is 2 AND AT 2 THE LEVER CANNOT FIRE — complete_rounds is also 2, so the
+        // loop runs rounds 0 and 1, the check needs round>0, `stall` tops out at 1, and firing
+        // needs 2. This assert pins the VALUE; the impossibility is documented on the fn.
+        assert_eq!(complete_stall_rounds_from(None), 2);
         assert_eq!(complete_stall_rounds_from(Some("2".to_string())), 2);
         assert_eq!(complete_stall_rounds_from(Some("99".to_string())), 6); // clamped high
         assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
@@ -23161,12 +23164,25 @@ fn complete_rounds() -> u32 {
 
 /// GOOSE_SWARM_COMPLETE_STALL_ROUNDS: early-exit the push-to-completion fix loop after N consecutive
 /// fix rounds that made NO change to the deterministic oracle's findings (i.e. the fix is not moving
-/// the app). Default 0 = OFF (byte-identical to today); clamped to [0,6]. Grounded in the observation
-/// that every fix that ever landed dropped findings on the FIRST fix round — no run ever showed findings
-/// go flat-then-drop — so exiting after N no-progress rounds cannot cut a fix that would have landed.
+/// the app). Clamped to [0,6]. Grounded in the observation that every fix that ever landed dropped
+/// findings on the FIRST fix round — no run ever showed findings go flat-then-drop — so exiting after
+/// N no-progress rounds cannot cut a fix that would have landed.
+///
+/// ⚠️ THE DEFAULT IS 2, AND AT 2 THIS LEVER CANNOT FIRE. THAT IS ARITHMETIC, NOT A RARE CASE.
+/// `complete_rounds` also defaults to 2, so the loop runs rounds 0 and 1. The check below requires
+/// `round > 0`, so it can only ever evaluate on round 1 — exactly ONE round-to-round comparison — so
+/// `stall` reaches at most 1. Firing requires `stall >= stall_cap == 2`. ONE CAN NEVER REACH TWO.
+/// MEASURED: `complete_stall_exit` fires 0 times across 54 run logs, on a reader that finds
+/// `complete_verify` 94 times and `complete_fix_completed` 71 times in the same files — a PROVEN
+/// zero, not a blind one.
+///
+/// THREE COMMENTS IN THIS FILE USED TO DESCRIBE A DEFAULT THE CODE DOES NOT HAVE (two said "Default
+/// 0 = OFF", one said "Default ON at 2"), and the only accurate one described a value that cannot
+/// fire. A reader auditing the repair loop would conclude it is protected against no-progress spins.
+/// IT IS NOT. Corrected here rather than silently changing the default: flipping it to 0 or 3 changes
+/// BEHAVIOUR and belongs in a measured arm, whereas the actual harm — a false impression of
+/// protection — is entirely in the documentation and is fixed by telling the truth.
 fn complete_stall_rounds_from(v: Option<String>) -> u32 {
-    // Default ON at 2 (flipped 2026-07-10): after 2 completion rounds that make no change to the
-    // findings, early-exit. Set the env to 0 to disable.
     v.and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(2)
         .min(6)
@@ -26388,7 +26404,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // round's, the last fix made no progress. After `stall_cap` consecutive no-progress rounds,
             // stop instead of burning the remaining budget on a failure the loop cannot move. Fires only
             // on round>0 with unchanged non-empty findings; `final_passed` stays false, so a still-red app
-            // is never falsely reported green. OFF by default (stall_cap == 0).
+            // is never falsely reported green.
+            //
+            // ⚠️ NOT "OFF by default" — that comment was wrong. `stall_cap` DEFAULTS TO 2, and with
+            // `complete_rounds` also 2 this branch evaluates on round 1 only, so `stall` tops out at
+            // 1 and `stall >= stall_cap` is unreachable. 0 firings in 54 logs. See
+            // `complete_stall_rounds_from` for the full arithmetic.
             if stall_cap > 0 && round > 0 && verdict.findings == last_findings {
                 stall += 1;
                 if stall >= stall_cap {
