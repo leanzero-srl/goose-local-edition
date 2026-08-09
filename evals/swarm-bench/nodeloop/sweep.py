@@ -879,7 +879,20 @@ def fleet_loaded() -> int:
         return -1
     if out.returncode != 0:
         return -1
-    return sum(1 for ln in out.stdout.splitlines() if "Identifier:" in ln or "identifier:" in ln)
+    # ⚠ PARSE THE REAL OUTPUT, NOT THE ONE I ASSUMED. My first version counted lines containing
+    # "Identifier:" and returned ZERO against a healthy three-node fleet with all three GENERATING —
+    # `lms ps` prints a TABLE whose header is `IDENTIFIER  MODEL  STATUS ...`, with no colons
+    # anywhere. wait_for_fleet would then have blocked the sweep for its full two-hour ceiling on
+    # every single unit, on a working fleet: a "fix" strictly worse than the bug it replaced. Caught
+    # only by running the probe against the actual command instead of trusting the parser.
+    rows = 0
+    for ln in out.stdout.splitlines():
+        s = ln.strip()
+        if not s or s.startswith("IDENTIFIER"):
+            continue
+        if len(s.split()) >= 4:
+            rows += 1
+    return rows
 
 
 def wait_for_fleet(ceiling_secs: int = 7200) -> bool:
