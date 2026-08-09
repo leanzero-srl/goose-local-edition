@@ -214,6 +214,24 @@ import run_build
 out = subprocess.run(["strings", str(run_build.GOOSE)], capture_output=True, text=True).stdout
 print(f"engine_build {m.engine_build()}")
 bad = []
+
+# F708: AN ARM WITH reps>0 THAT NO QUESTION NAMES CAN NEVER BE SCHEDULED, and this used to be a
+# WARNING printed on EVERY sweep pass. It went unread for weeks — and the two arms it named,
+# e2e_oracle_off and spec_sized_plan, turned out to describe the two largest defects a five-agent
+# audit later rediscovered from scratch. AN ALERT THAT FIRES EVERY ITERATION IS WALLPAPER; the
+# refusal belongs at STARTUP, beside the lever-absent check, which exists for the same reason: a
+# campaign that cannot run what it claims to schedule must not start.
+named = {q["arm"] for q in m.QUESTIONS}
+# ⚠ `reps` DEFAULTS TO 1, NOT 0 — an ARMS entry usually has no reps key at all (reps live in
+# QUESTIONS), so a missing key means SCHEDULABLE. My first draft of this check wrote
+# `a.get("reps", 0)`, which made it silently unable to fire on exactly the arms it exists to
+# catch — the same "a check that cannot fire" defect this refusal was added to prevent, in the
+# refusal itself. The predicate is copied verbatim from sweep.py's own orphan scan so the two
+# cannot drift.
+orphans = [a["name"] for a in m.arms_now() if a["name"] not in named and a.get("reps", 1) > 0]
+for o in orphans:
+    print(f"  {o:<20} {'reps>0 but named in NO question':<36} CANNOT EVER BE SCHEDULED")
+    bad.append((o, "no question references this arm"))
 for a in m.arms_now():
     if not a["env"]:
         print(f"  {a['name']:<20} (no lever — baseline)")
