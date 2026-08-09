@@ -1472,29 +1472,51 @@ def reap_stray_listeners(port_lo: int, port_hi: int) -> list[int]:
     return killed
 
 
-def unit_is_void(actual_nodes, nodes: int, harness_ok) -> bool:
+NEVER_RAN = "no run log"
+
+
+def unit_is_void(actual_nodes, nodes: int, harness_ok, harness_detail: str = "") -> bool:
     """Is this unit's number evidence? Pure, so it can be tested without a fleet.
 
     Extracted because the inline version carried an `actual_nodes is not None` exemption that voided
-    a MISMATCH while passing MISSING, and that distinction is invisible when it is one clause inside
-    a 100-line function. `None != nodes` is True, which is the whole point: a run that never reported
-    a pool is the most broken outcome available and must never outrank one that reported the wrong
-    number. See `test_unit_is_void`.
+    a MISMATCH while passing MISSING. `None != nodes` is True, which is the whole point: a run that
+    never reported a pool is the most broken outcome available and must never outrank one that
+    reported the wrong number.
+
+    ⚠ THE `harness_ok is False` CLAUSE I ADDED THIS MORNING WAS DESTROYING REAL EVIDENCE (F698).
+    I verified it as safe on the LIVE corpus — "0 non-void rows carry harness_ok False" — and that
+    check was true and useless, because the live corpus is a SURVIVORSHIP SNAPSHOT (F694/F695).
+    Across all 31 run trees on disk the boolean covers TWO DIFFERENT FAILURES:
+      654 rows fail st-2, detail "invariant pass CRASHED: no run log" — the fleet-outage phantoms,
+          0.1 s, no pool, nothing ran. These are correctly void.
+        3 rows fail st-1 (dispatch/completion pairing) — REAL 112-124 min runs with pool 3/3 and
+          scores 0.7186 / 0.672 / 0.819, one of them `retarget_off-n3-r0`, a REAL LEVER RUN.
+          Voiding these deletes the scarcest data the campaign has.
+    So the void keys on the st-2 SIGNATURE, never on the boolean. A harness self-test that failed for
+    any OTHER reason marks a unit as suspect — which `harness_ok` already records — and must not
+    silently erase a run that actually executed. 654 against 3 is not a close call.
     """
-    return actual_nodes != nodes or harness_ok is False
+    if actual_nodes != nodes:
+        return True
+    return harness_ok is False and NEVER_RAN in (harness_detail or "")
 
 
 def test_unit_is_void() -> None:
     """The F664 regression. 104 of 133 rows scored 0.0 and read as real because of one clause."""
-    assert unit_is_void(None, 3, True), "THE F664 BUG: a run that never reported a pool must be VOID"
-    assert unit_is_void(None, 1, True), "same at one node"
-    assert unit_is_void(1, 3, True), "a pool mismatch is void (this half always worked)"
-    assert unit_is_void(3, 3, False), "a unit whose own self-test failed is not evidence"
-    assert not unit_is_void(3, 3, True), "a matching pool with a passing self-test is REAL"
-    assert not unit_is_void(1, 1, True), "and at one node"
+    assert unit_is_void(None, 3, True, ""), "THE F664 BUG: a run that never reported a pool must be VOID"
+    assert unit_is_void(None, 1, True, ""), "same at one node"
+    assert unit_is_void(1, 3, True, ""), "a pool mismatch is void (this half always worked)"
+    # F698: the boolean alone destroyed REAL runs. Void only on the st-2 "never ran" signature.
+    assert unit_is_void(3, 3, False, "invariant pass CRASHED: no run log under /x"), \
+        "a run that NEVER RAN (st-2) must be VOID"
+    assert not unit_is_void(3, 3, False, "HARNESS SELF-TEST FAILED (st-1, controls + invariants)"), \
+        "THE F698 BUG: a REAL 112-min run that failed st-1 must NOT be voided"
+    assert not unit_is_void(3, 3, False, ""), "a bare False with no signature must not void a real run"
+    assert not unit_is_void(3, 3, True, ""), "a matching pool with a passing self-test is REAL"
+    assert not unit_is_void(1, 1, True, ""), "and at one node"
     # harness_ok is None means the audit never reported, which is not a refusal.
-    assert not unit_is_void(3, 3, None), "an unreported audit must not void a good run"
-    print("test_unit_is_void: 7/7 PASS")
+    assert not unit_is_void(3, 3, None, ""), "an unreported audit must not void a good run"
+    print("test_unit_is_void: PASS — st-2 voids, st-1 does NOT (F698)")
 
 
 def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
@@ -1622,7 +1644,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     # 118 rows, 0 would be voided by the harness clause alone and 0 surviving rows carry
     # `harness_ok is False`, so this voids nothing that is currently counted as evidence.
     harness_failed = harness["ok"] is False
-    void = unit_is_void(actual, nodes, harness["ok"])
+    void = unit_is_void(actual, nodes, harness["ok"], harness.get("detail", ""))
 
     return {
         "arm": arm["name"],
