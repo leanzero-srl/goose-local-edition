@@ -44,9 +44,17 @@ Within three-node runs only, split by whether a confidence-ladder round fired:
 
 ## Why it is a three-node event
 
-`replan_has_enough_dag_left` and the trigger's `idle_capacity() >= 2` term make a ladder
-**arithmetically impossible at one node** (F607, proven from source). Confirmed in the data six
-separate times: **every one-node run in the corpus reports `redraft_rounds` zero.**
+**One node drafts exactly ONE skeleton** — `skeleton_drafts.requested` is 1 in 22 of 22 one-node runs
+(F659). Cross-draft agreement is therefore undefined, and the retarget site fires only *"when
+AGREEMENT is the binding signal"* — `binding_signal` explicitly accepts a missing agreement
+(swarm.rs:6735). **So the ladder cannot fire at one node**, and no convergence is even measured:
+`plan_convergence` appears in ZERO of 24 one-node logs (F658). Confirmed in the data six separate
+times: **every one-node run reports `redraft_rounds` zero.**
+
+⚠️ **CORRECTED (F660).** This section previously credited F607's `idle_capacity() >= 2` proof. That
+proof governs the DYNAMIC REPLANNER, not the confidence ladder — a neighbouring mechanism. F607 is
+still correct and still what makes the replan-injection findings attributable (F618/F621/F622/F635);
+it was simply the wrong citation here. No measured number changes.
 
 And F612 measured *why* it fires: **4 of 5 laddering rounds had `agreement_best2` clearing the floor
 while `agreement_conf` did not** — i.e. the round was bought by pool size, not by real disagreement.
