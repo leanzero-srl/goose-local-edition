@@ -43,10 +43,47 @@ EXPECTED = [
 ]
 
 
+GOOSE = Path("/Users/mihaiperdum/Projects/goose/target/release/goose")
+
+
 def logs_under(root: Path) -> list[Path]:
     if not root.is_dir():
         return []
     return sorted(root.glob("*/run.jsonl")) + sorted(root.glob("cells/*/run.jsonl"))
+
+
+def started_after_build(path: Path, build_mtime: float) -> bool:
+    """Did this run start on the CURRENT binary?
+
+    ⚠️ WITHOUT THIS THE INSTRUMENT POOLS ACROSS ENGINE BUILDS — the cardinal sin of this campaign,
+    committed here by omission. `runs/nodeloop/` keeps pre-rebuild cell dirs alongside the new one, so
+    the first post-rebuild reading counted 293 `task_dispatched` events and called the new field
+    MISSING on all of them. Every one of those events was written by the OLD binary, which cannot
+    emit a field that did not exist when it was compiled. The correct answer was INERT — the new run
+    was six events in and had not reached dispatch.
+
+    A run is POST if its `run_started` timestamp is later than the binary's mtime. That is the same
+    vintage test `ladderwatch.py` applies via `engine_build`, and it is decided from the log's own
+    first line rather than from its directory name.
+    """
+    try:
+        with path.open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                ev = json.loads(line)
+                if ev.get("event") != "run_started":
+                    continue
+                ts = ev.get("ts")
+                if not ts:
+                    return False
+                import datetime as _dt
+                started = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                return started >= build_mtime
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    return False
 
 
 def scan(paths: list[Path]) -> dict:
@@ -76,18 +113,34 @@ def scan(paths: list[Path]) -> dict:
 
 
 def main() -> int:
-    live = scan(logs_under(RUNS))
-    old = scan(logs_under(ARCHIVE))
-    print(f"live logs   {len(logs_under(RUNS)):3d}   archive logs {len(logs_under(ARCHIVE)):3d}")
+    build_mtime = GOOSE.stat().st_mtime
+    all_live = logs_under(RUNS)
+    post = [p for p in all_live if started_after_build(p, build_mtime)]
+    pre_live = [p for p in all_live if p not in post]
+    live = scan(post)
+    old = scan(logs_under(ARCHIVE) + pre_live)
+    import time as _t
+    print(f"binary built {_t.strftime('%Y-%m-%d %H:%M:%S', _t.localtime(build_mtime))}")
+    print(f"POST-rebuild logs {len(post):3d}   pre-rebuild {len(pre_live):3d}   archive "
+          f"{len(logs_under(ARCHIVE)):3d}   (pre-rebuild logs are POOLED INTO THE 'pre' COLUMN, "
+          "never the live one)")
+    if not post:
+        print("— NO RUN HAS STARTED ON THIS BINARY YET. Nothing can be attributed; not a failure.")
+        return 2
     if not live["events"]:
-        print("🔴 no live events at all — instrument blind or no run has completed since the rebuild.")
+        print("🔴 no events in the post-rebuild logs — instrument blind.")
         return 2
     # POSITIVE CONTROL, on the same objects, before any zero below is allowed to mean anything.
     # `inconclusive_reasons` reading 0 on `complete_verify` must mean "not emitted there yet", NOT
     # "this scan cannot see that field name". It ships on `spec_contract` today, so if the scan is
     # honest it MUST find it there. Without this, C6's whole verdict rests on an unproven negative —
     # the exact failure this campaign has hit six times.
-    ctl = live["pairs"].get(("spec_contract", "inconclusive_reasons"), 0)
+    # Scanned across BOTH vintages on purpose. This control asks "can this scanner see that field
+    # name at all", which is a property of the SCANNER — not of the new run, which may simply not
+    # have reached `spec_contract` yet. Scoping it to post-rebuild logs made it fail on a healthy
+    # six-event run and refuse to report anything, which is a blind instrument of the opposite kind.
+    ctl = live["pairs"].get(("spec_contract", "inconclusive_reasons"), 0) \
+        + old["pairs"].get(("spec_contract", "inconclusive_reasons"), 0)
     if ctl:
         print(f"positive control: `inconclusive_reasons` found {ctl}x on spec_contract — the scan "
               "can see this field name, so a 0 on complete_verify is a real absence ✅")
@@ -121,9 +174,23 @@ def main() -> int:
     if inert:
         print(f"⚠️  events that have not fired live yet: {sorted(set(inert))} — re-run after a")
         print("   completed post-rebuild cell. An INERT row is NOT a pass and NOT a failure.")
-    print("✅ every checked field landed and is attributable" if ok
-          else "🔴 at least one field did not land, or cannot be attributed to this batch")
-    return 0 if ok else 1
+    # ⚠️ AN ALL-INERT RUN IS NOT A PASS. The first version of this line printed "every checked field
+    # landed" and exited 0 while every single row was INERT — nothing had been attributed at all,
+    # because `ok` only ever went False on a real failure. That is the vacuous-truth failure this
+    # whole file exists to prevent, committed in its own summary: a check that examined nothing
+    # reporting success. LANDED must be counted, not inferred from the absence of failures.
+    landed = sum(1 for e, f, _ in EXPECTED
+                 if live["pairs"].get((e, f), 0) and not old["pairs"].get((e, f), 0))
+    if not ok:
+        print("🔴 at least one field did not land, or cannot be attributed to this batch")
+        return 1
+    if landed < len(EXPECTED):
+        print(f"— PENDING: {landed}/{len(EXPECTED)} fields attributed; the rest are INERT because "
+              "their events have not fired on this binary yet. NOT a pass — re-run after a "
+              "completed post-rebuild cell.")
+        return 2
+    print(f"✅ all {landed}/{len(EXPECTED)} fields landed and are attributable to this batch")
+    return 0
 
 
 if __name__ == "__main__":
