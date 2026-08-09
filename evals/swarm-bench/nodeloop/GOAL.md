@@ -1,3 +1,15 @@
+> ⛔ **SECOND RED-TEAM WAVE (F694) — THE BIGGEST CLAIM OF THE DAY IS OVERTURNED.**
+> "The entire lever campaign has produced zero data" is **WRONG**. The result corpus is a
+> **SURVIVORSHIP SNAPSHOT**: cell dirs are REUSED, so the fleet-outage phantoms **overwrote** the real
+> `nodeloop-result.json` files. `loop.log` preserves five real lever runs the corpus cannot see —
+> sink_review-n3-r0 0.7326, think_off 0.4428 / 0.9143 / 0.9057 / 0.3273, all pool 3/3, void=False —
+> and **25 of 53 real runs on disk (47%) are missing from the corpus.** F673's "no free data" is wrong
+> the same way: I compared logs to rows while reading the survivorship snapshot on both sides.
+> Also: the "+10.0 min at 1.04 SE" retraction was wrong twice — that figure is on the **49-row
+> loop.log corpus** (spread.py still prints it, now +11.33 at 1.18 SE); and on the result corpus the r6
+> row moved wall **UP** (+4.45/0.46 SE at n=26 → +8.11/0.81 SE at n=27), the opposite of what I said.
+> And "one node never ladders" scopes to **ONE DISTINCT DRAFT MODEL**, not one node.
+
 > ⛔ **RED-TEAM 2026-08-09:** three claims in this file were REFUTED. **The `diverse_plan` 7-of-7 is a
 > TAUTOLOGY** (`would_skip_ladder` reduces to `agreement < 93`, and laddering requires `agreement < 85`);
 > the lever is **"raise the agreement bar 85→93 and stop laddering"**, which makes the quality risk
