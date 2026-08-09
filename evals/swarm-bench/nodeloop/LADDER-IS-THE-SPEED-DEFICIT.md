@@ -27,6 +27,51 @@ three nodes: speed is now **+10.0 min at 1.04 SE**, the first time this campaign
 cleared one standard error, and the equal-n tier table (8 vs 8) reads 1-node 0.731 against 3-node
 0.698.
 
+
+## ⭐ THE ENGINE ALREADY KNEW: 7 OF 7 LADDERS WERE UNNECESSARY (F685, 2026-08-09)
+
+**`plan_convergence` carries a shadow counterfactual nobody had read.** `would_skip_ladder` answers,
+for free on every run with the lever OFF, *"would enabling `diverse_plan` have skipped the redraft
+ladder?"* — swarm.rs:9368 built it deliberately, and warns that the event and the enforce branch must
+evaluate ONE predicate or "the shadow would then be confidently wrong, which is worse than absent
+because it gets believed."
+
+**Among runs that laddered, it reads TRUE in 7 of 7 — 100%.** Present in all 16 distinct runs
+(deduped by `run_id`), so this is the whole corpus, not one build.
+
+**A fully traced instance, live on 2026-08-09:**
+
+| at | event |
+|---|---|
+| +15.0m | agreement 81; **`struct_conv` 93 clears `struct_stop` 80**; `would_skip_ladder` TRUE, `enforced` FALSE |
+| +30.8m | `confidence_retarget` fires, `binding_signal: agreement` |
+| +35.5m | redraft's drafts agree 100 — but the resulting **plan scores 52** |
+| +40.8m | `stall_stop`: "1 round failed to beat the best confidence (81)" |
+| +44.5m | `plan_loaded` ships **agreement 81 — the exact plan held at +15.0m** |
+
+**The ladder cost 13.7 minutes and changed nothing.** The monotonic-best guard worked perfectly; it
+could not give the time back.
+
+⚠️ **THIS DOES NOT AUTHORISE FLIPPING THE DEFAULT.** `would_skip_ladder` says the ladder was
+structurally *unnecessary*, not that the build would have been as *good*. Skipping ships a
+lower-confidence plan, and F651 has laddering runs at 0.7490 against 0.7140 (0.39 SE) — the author's
+original hold. **Quality is the gate: 13.7 min for 0.02 of score is a LOSS.** The action is to RUN
+the `diverse_plan` arm, which is already queued and has never executed.
+
+## ⚠️ TWO CORRECTIONS TO THIS DOCUMENT'S OWN FRAMING (2026-08-09)
+
+- **"Three nodes is losing" was never supported.** On 27 non-void rows: wall **+8.11 ± 10.04 (0.81
+  SE)**, score **−0.0038 ± 0.0716 (0.05 SE)**. Both under one SE. The honest claim is **NOT
+  MEASURABLE**. This retracts the earlier "+10.0 min at 1.04 SE — the first time the deficit cleared
+  one SE": one additional row put it back under, and a difference that crosses and re-crosses on a
+  single row was never a finding.
+- **The 3-node wall of 102.1 min is stale** — it is **105.80** on the current 16 rows.
+- **The pool-invariant fix reaches at most 20% of runs (F683).** It is dead whenever fewer than three
+  drafts return, and the fleet requests three and gets **2.4** on average — because
+  `collect_drafts_with_straggler_stop` *deliberately* aborts the lone last-place draft once two valid
+  ones land (F684, `straggler_aborted`). That is a designed speed trade, not a defect, and it costs
+  nothing measurable (0.20 SE, Fisher p=1.000).
+
 ## The planning tax is entirely the ladder
 
 Within three-node runs only, split by whether a confidence-ladder round fired:
