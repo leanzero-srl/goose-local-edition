@@ -164,6 +164,40 @@ def log_facts(path: str):
     return {"cell": cell, "sha": sha, "finish": finish, "run_id": run_id, "path": path}
 
 
+def cell_logs() -> dict:
+    """{cell: [log paths]} across live cells AND both archives. USE THIS, never a hand-rolled glob.
+
+    Every ad-hoc analysis I have written re-derived this join, and the hand-rolled version is wrong
+    the same way each time: it keys an archived log by its whole basename. Archived logs are named
+    `<cell>@<iso>.jsonl` and `<cell>-<epoch>.jsonl`, so the basename NEVER equals the cell and the
+    lookup silently misses every archived run — not by collapsing them, but by never reaching them.
+    `log_facts` already strips the suffix correctly (`re.split(r"[-@]\\d")` handles both
+    conventions); the failure was only ever that nothing imported it.
+
+    Returns a LIST per cell because a cell legitimately has several logs across builds — collapsing
+    to one is the other half of the same bug (F668 counted a single log up to four times by joining
+    result rows to a one-log-per-cell dict).
+    """
+    out = defaultdict(list)
+    for p in event_logs():
+        f = log_facts(p)
+        if f:
+            out[f["cell"]].append(p)
+    return dict(out)
+
+
+def test_cell_logs() -> None:
+    """Control in both directions: archived logs must be REACHABLE, and cells must stay distinct."""
+    m = cell_logs()
+    assert m, "cell_logs returned nothing — the glob or RUNS path is wrong"
+    archived = [p for ps in m.values() for p in ps if "/eventlogs/" in p or "/_archive/" in p]
+    assert archived, "POSITIVE CONTROL FAILED: no archived log is reachable by cell — the exact bug"
+    for cell, paths in m.items():
+        assert "@" not in cell and not cell.endswith(".jsonl"), f"cell key not stripped: {cell!r}"
+    print(f"test_cell_logs: {len(m)} cells, {sum(len(v) for v in m.values())} logs, "
+          f"{len(archived)} of them archived and reachable — PASS")
+
+
 def build_index() -> list[dict]:
     out = []
     for p in event_logs():
