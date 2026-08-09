@@ -23,6 +23,18 @@ REBUILD (~4 fleet-days and a corpus reset), not the code. Everything below lands
 |---|---|---|---|
 | **F706** | Stall lever's three contradictory comments corrected. **Comments only — the default is untouched.** | none (documentation) | `cargo check` clean; grep control confirms all three false strings gone |
 | **F707** | The shadow/branch invariant **my own `a9f43543d` broke** — `conf_lifted` hoisted above the emission (emission NOT moved, or two diagnostics silently change meaning across 24 archived rounds); both `would_skip_ladder` and `would_skip_ladder_prelift` ship | low | `cargo check` clean; **call-site regression test passes** |
+| **F711 · C1** | Timeout scan pointed at the app, not the swarm's own tests; `is_test_path` extracted so a fourth copy cannot be written | low | replay 2.75 → 1.62 findings, 2.4 SE |
+| **F712** | End-to-end test for the above, **watched FAILING with the filter deleted** | none (test) | proven to discriminate |
+| **F717 · C12(b)** | `description_chars` on `TaskDispatched` — the split child's instruction length | none (instrument) | compiles; `landcheck` will confirm it emits |
+| **F717 · C5(A)** | `requested_best_of_n` / `distinct_draft_models` / `clamped` on `skeleton_drafts` — today's `requested` is POST-clamp | none (instrument) | same |
+| **F717 · C6(1)** | `inconclusive_reasons` on `complete_verify` — why a run abstained; previously stderr-only | none (instrument) | **string probe CANNOT attribute this** (name pre-exists on `spec_contract`) — `landcheck` is the only check |
+| **F717 · C5(C)** | Four sites claiming "1 node drafts 2 skeletons" corrected. The clamp is **distinct models**; one node drafts ONE, so it has no agreement score at all — a CAPABILITY difference that was being read as a behaviour one | none (comments) | assertions untouched; 5 `⚠️ CORRECTED` markers |
+| **F718 · C7** | Scout no longer told it "cannot look anything up" when the spec names documents and it holds a shell. **77% of scouts fetched a URL under that instruction.** Pure `scout_lookup()` the call site matches on | low — **env-gated `GOOSE_SWARM_SCOUT_DOC_URLS`, default OFF** | 2 tests, all four combinations + both gate states, **watched FAILING against reverted logic** |
+
+**Verification for all of the above is now executable, not remembered** (F719/F720): `greengate.sh`
+(fmt + clippy `--all-targets` + full suite, refuses the build), `probe.py --verify` (6 literals
+baselined ABSENT, a real absent→present flip), `landcheck.py` (the fields actually EMIT in a run
+log — the half a string probe cannot answer), `boundary.py` (never rebuild under a live cell).
 
 **Also corrected inside F707:** the comment claiming "one node drafts 2". All 11 one-node runs show
 `requested=1`. The cap is **distinct draft models**, not node count.
