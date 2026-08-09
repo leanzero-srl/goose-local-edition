@@ -14,10 +14,13 @@ is both the standard reading on a bounded scale and genuinely ambitious.
 
 Two different mechanisms scale two different ways, and the shape is read off the engine, not guessed:
 
-- **QUALITY scales with SPARE nodes, ~linearly.** Judge, pre-review and sink-review are all gated on
-  `idle_capacity()` in `scheduler.rs`. One node has **ZERO** spare capacity, so it runs **zero**
-  idle-node review. Two nodes have one spare, three have two. ⇒ **25% of the defect gap per spare
-  node.**
+- **QUALITY scales with SPARE nodes, ~linearly.** ⚠️ **CORRECTED BY MEASUREMENT (F662).** The first
+  version of this claimed one node runs *zero* idle review. **That is FALSE — it runs pre-review in
+  100% of runs.** What is true is the VOLUME: **pre-review runs 1.3×/run at one node and 10.6×/run at
+  three — 8×.** So the per-node quality shape stands, but it rests on measured 8× scaling of
+  pre-review, not on a zero that does not exist. **The judge does NOT scale at all** (85.0 → 82.8 per
+  run), so it contributes nothing to the per-node quality story. ⇒ **25% of the defect gap per spare
+  node**, carried by pre-review alone.
 - **SPEED scales by Amdahl, sublinearly.** Measured parallel fraction p = 0.79 (EXECUTE is 77.2 of a
   98.1 min one-node run). Ceilings: 2 nodes 1.65x (39%), 3 nodes 2.11x (53%). Real DAGs reach a
   fraction of that, and the first added node delivers ~74% of the total.
@@ -72,6 +75,23 @@ Pooled score sd = 0.1839. At 80% power, alpha 0.05:
 2-node row needs 119/arm and is NOT affordable as a measured claim — it is stated as a *design
 target* and will be judged on the mechanism (does a 2-node run fire idle-node review at all), not on
 a powered score comparison. Saying otherwise would be promising a number the fleet cannot deliver.
+
+## ⚠️ TWO MECHANISMS THAT ARE STRICTLY THREE-NODE-ONLY (F662) — one taxes speed, one taxes quality
+
+Measured on 9 one-node and 15 three-node logs, positive control passing on every one:
+
+| event | 1-node | 3-node | what it is |
+|---|---|---|---|
+| **`replanned`** | **0%** | **60%** | the author's documented speed penalty — made an already-finished run **55% longer** with work nobody asked for |
+| **`task_split`** | **0%** | **53%** | a split child's whole task statement is **43 characters** (`scheduler.rs:35`) |
+
+**These are the only two mechanisms in the engine that one node can never trigger.** Both make three
+nodes worse, and both fire in the MAJORITY of three-node runs. Half of every three-node run hands an
+extra node a near-empty instruction; 60% inject work the planner never asked for.
+
+**The judge is pure overhead in both arms.** ~85 verdicts/run with ~80 skipped — a **94% skip rate at
+one node**, 68% at three. Invoked ~165×/run, does nothing in most of them. This is the looping Mihai
+named, it is measured, and it is not a node-count question.
 
 ## The named levers (Mihai's own list)
 
