@@ -3,6 +3,60 @@
 **Overarching:** make the swarm actually WORTH IT — beat one node on time and on the quality of what
 ships. Everything below is a sub-goal of that and nothing else belongs here.
 
+## 🎯 THE MEASURABLE TARGET — set 2026-08-09 after Mihai asked for percentages
+
+The overarching line above is a slogan until it names a number and a sample size. It now does.
+
+| pillar | target | how it is judged |
+|---|---|---|
+| **SPEED** | 3-node **≥15% faster** wall-clock than 1-node | difference of means, same spec, both arms |
+| **QUALITY** | 3-node **non-inferior within 15%** | lower bound of the difference stays above −15% |
+
+**Both read off the SAME runs: ~44 runs per arm, about 6 fleet-days.** Not twelve — one set of cells
+answers both questions.
+
+### Why 15%, and not 5%
+
+Measured on the deduped corpus (1-node n=11, 3-node n=15; pooled sd wall **24.3 min**, score
+**0.185**):
+
+| to detect | runs per arm | fleet-days |
+|---|---|---|
+| 5% | ~389 | ~55 |
+| 10% | ~98 | ~14 |
+| **15%** | **~44** | **~6** |
+| 20% | ~25 | ~4 |
+
+**At today's sample nothing under ~28% is provable on either pillar** — minimum detectable effect is
+27.6% on wall and 28.1% on score. That is why every headline in this campaign has sat under one
+standard error: the corpus cannot resolve anything smaller. **15% is the cheapest target that is both
+reachable and falsifiable.** A 5% goal costs 55 fleet-days to prove and would be unfalsifiable in
+practice.
+
+### Why quality is NON-INFERIORITY and not "better by X%"
+
+**Three measured mechanisms should make 3 nodes faster. Zero should make it better.** Six
+quality-adjacent measures and three separate corpora have failed to separate the arms, and the
+cleanest contrast available — equal-n, same-build — is **+0.0008**, a dead tie. Setting "better by
+10%" would set a goal with no mechanism to reach it and no budget to measure it. Non-inferiority is
+the honest form: **the swarm must not BUY its speed with quality.**
+
+### Is 15% speed reachable? The decomposition, not a hope
+
+- ladder fix (`a9f43543d`): 3-node planning 24.5 → ~14.5 min ⇒ **~7.5%**
+- research is fleet-blind — ~7 min per run buying nothing; parallelising it ⇒ **~3%**
+- execute is **already 7.7 min faster** at 3 nodes and is banked
+
+That is **~10.5% from known causes**. The remaining ~5% has to come from **plan width, and that is
+the real ceiling**: F601 measured the delivered plan widening only **1.11x for 3.00x of hardware**.
+Until the architect emits a wider DAG, no scheduling change gets near 2x — let alone 3x.
+
+### The failure gate
+
+If, after the ladder fix has run its ~44 cells per arm, speed is not ≥15% and the decomposition above
+is exhausted, **the answer is plan width or nothing** — and that becomes the whole campaign rather
+than one queue item.
+
 ## ⭐ THE PRIME DIRECTIVES — filed by Mihai 2026-08-02 19:40. These OUTRANK every finding below.
 
 **1. "IF IT APPEARS LIKE IT'S NOT WORTH IT THEN YOU ARE NOT DOING IT RIGHT."** More nodes CANNOT be
