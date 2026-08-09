@@ -39,6 +39,17 @@ because it gets believed."
 **Among runs that laddered, it reads TRUE in 7 of 7 — 100%.** Present in all 16 distinct runs
 (deduped by `run_id`), so this is the whole corpus, not one build.
 
+⚠️ **BASE-RATE CONTROL (F687) — READ THIS BEFORE QUOTING THE 7/7.** The predicate is not vacuous:
+it is FALSE on 3 of 16 runs, so 7/7 among ladderers carries information. **But the three FALSE runs
+are exactly the three with agreement = 100**, where there is no ladder to skip — and `struct_conv`
+reads **93, 95 or 100 in all sixteen runs against a `struct_stop` of 80**. The threshold is never
+remotely near the data (minimum margin 13 points). So the honest statement is NOT "the engine
+identified these particular ladders as unnecessary" but **"the structural signal clears its bar in
+every run ever measured, so enabling `diverse_plan` would skip essentially EVERY ladder"** — a
+materially different lever, closer to *turn the ladder off* than to *turn off the unnecessary ones*.
+**That sharpens the quality risk rather than softening it:** a lever that cannot tell a wasteful
+ladder from a needed one makes F651's laddering-scores-higher signal governing, not a footnote.
+
 **A fully traced instance, live on 2026-08-09:**
 
 | at | event |
