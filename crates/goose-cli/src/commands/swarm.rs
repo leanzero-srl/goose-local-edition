@@ -3461,6 +3461,45 @@ fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
     }
 }
 
+/// The fenced example blocks of a fetched document, which is where the wire contract actually lives.
+///
+/// WHY. `doc_fetch` delivers the whole document verbatim into `doc_facts`, which reaches the planner
+/// AND every worker. Its arm scored 0.369 with `server_runs` going 1.00 -> 0.00 — seven checks
+/// unrelated to the vendor regressed. 4789 bytes of prose in every worker's prompt crowds out the
+/// task, and measured compliance on this class of model falls from 0.588 at 10 rules to 0.094 at 40.
+/// The delivery mechanism was the defect, not the document.
+///
+/// MEASURED on the bed's own vendor doc: 5 fenced blocks, 750 bytes of 4769 — **16%** — and those
+/// 750 bytes carry the exact facts the failing apps got wrong. Half the corpus scores
+/// `sync_completeness 0`; two of those cells read `data.get("payments", [])` when the documented
+/// response is `{"data": [...], "next_cursor", "total"}`, which appears verbatim inside a fence.
+///
+/// ⚠️ FALLS BACK TO THE WHOLE TEXT when a document has no fences. An extraction that can return
+/// nothing would silently deliver an empty documentation block, and the run would look exactly like
+/// a doc_fetch that found nothing — a delivery bug wearing a measurement's clothes. Empty input must
+/// never quietly become empty output here.
+fn doc_examples(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        let after = &rest[open + 3..];
+        let Some(nl) = after.find('\n') else { break };
+        let body_start = nl + 1;
+        let Some(close) = after[body_start..].find("```") else {
+            break;
+        };
+        let block = after[body_start..body_start + close].trim_end();
+        if !block.trim().is_empty() {
+            out.push(block);
+        }
+        rest = &after[body_start + close + 3..];
+    }
+    if out.is_empty() {
+        return text.to_string();
+    }
+    out.join("\n\n")
+}
+
 fn spec_doc_urls(spec: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (idx, _) in spec.match_indices("http") {
@@ -7888,6 +7927,62 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(
             spec_post_endpoints("| `GET` | `/api/health` | `{}` |").is_empty(),
             "a GET-only spec advertises nothing to probe, so the gate stays silent"
+        );
+    }
+
+    /// The examples-only delivery, in BOTH directions — including the one that must NOT shrink.
+    ///
+    /// The failing direction is the dangerous one: an extraction that can return nothing would ship
+    /// an empty documentation block, and the run would be indistinguishable from a doc fetch that
+    /// found nothing. So a document with no fences must come back WHOLE, byte for byte.
+    #[test]
+    fn doc_examples_keeps_the_wire_contract_and_never_returns_nothing() {
+        let doc = "# Meridian\nProse that crowds out the task, at length, repeatedly.\n\n\
+                   ```http\nHTTP/1.1 200 OK\n\n{\n  \"data\": [ { \"id\": \"pay_7Qk2\" } ],\n  \
+                   \"next_cursor\": \"eyJvIjoyfQ\",\n  \"total\": 247\n}\n```\n\n\
+                   More prose about rate limits and etiquette.\n\n```json\n{ \"error\": \"bad_cursor\" }\n```\n\n\
+                   Closing prose.";
+        let got = doc_examples(doc);
+        assert!(
+            got.contains("\"data\""),
+            "the response shape must survive: {got}"
+        );
+        assert!(
+            got.contains("next_cursor"),
+            "pagination must survive: {got}"
+        );
+        assert!(
+            got.contains("bad_cursor"),
+            "every fence is kept, not just the first: {got}"
+        );
+        assert!(
+            !got.contains("crowds out the task") && !got.contains("Closing prose"),
+            "prose is exactly what this drops: {got}"
+        );
+        assert!(
+            got.len() < doc.len() / 2,
+            "it must actually shrink: {} vs {}",
+            got.len(),
+            doc.len()
+        );
+        // ⚠️ THE ARM THAT MATTERS. No fences => the whole document, unchanged. Never empty.
+        let plain = "A document with no fenced blocks at all, only prose.";
+        assert_eq!(
+            doc_examples(plain),
+            plain,
+            "a fence-less document must pass through WHOLE — returning nothing here would look \
+             exactly like a fetch that failed"
+        );
+        assert_eq!(
+            doc_examples(""),
+            "",
+            "empty in, empty out — and no panic on the scan"
+        );
+        assert_eq!(
+            doc_examples("```json\n```\ntail"),
+            "```json\n```\ntail",
+            "an EMPTY fence contributes nothing, so the document falls back whole rather than \
+             silently delivering a blank block"
         );
     }
 
@@ -24872,6 +24967,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 Err(e) => (0, String::new(), e.to_string()),
             };
             let ok = (200..300).contains(&status) && !body.trim().is_empty();
+            // EXAMPLES-ONLY DELIVERY, its own gate so it is a separate arm and cannot confound the
+            // baseline. `doc_examples` is a no-op on a document with no fences, so OFF and ON are
+            // byte-identical whenever there is nothing to extract.
+            let body = if swarm_gate("GOOSE_SWARM_DOC_EXAMPLES", false) {
+                doc_examples(&body)
+            } else {
+                body
+            };
             let truncated = body.len() > DOC_MAX_BYTES;
             let text = if truncated {
                 body.chars().take(DOC_MAX_BYTES).collect::<String>()
