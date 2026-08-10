@@ -3559,6 +3559,16 @@ fn spec_post_endpoints(spec: &str) -> Vec<String> {
 enum RepeatedPost {
     Idempotent,
     Duplicates(String),
+    /// Correct on rows and WASTEFUL on the wire: inserted nothing, but re-downloaded the collection
+    /// it already had.
+    ///
+    /// ⚠️ THIS ARM EXISTS BECAUSE THE FIRST VERSION OF THIS FUNCTION SCORED THE FAILING APP AS A
+    /// PASS. It returned `Idempotent` on `inserted == 0` with a flat `total` — which is EXACTLY the
+    /// signature of the defect: `vendor_conditional` fails while rows stay correct, because the app
+    /// re-fetches every page and then upserts them to no effect. The spec asks for two things, "a
+    /// second sync must be CHEAP **and** must not duplicate rows", and the check only tested the
+    /// second. A gate that passes the thing it was built to catch is worse than no gate.
+    NotCheap(String),
     /// Not JSON, or no field that speaks to idempotency. FAIL-OPEN: says nothing, blames nothing.
     Unreadable,
 }
@@ -3587,10 +3597,28 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
         if t2 != t1 {
             return RepeatedPost::Duplicates(format!("total went {t1} -> {t2} on a repeat call"));
         }
+    }
+    // THE CHEAPNESS HALF. Rows being correct is necessary and not sufficient: an app that re-pulls
+    // every page and upserts it changes nothing and still burns the quota the spec is protecting.
+    // `fetched` is the documented field that distinguishes them, so when both bodies carry it the
+    // verdict is decidable; when either lacks it, fail open rather than guess.
+    if let (Some(f1), Some(f2)) = (
+        a.get("fetched").and_then(|v| v.as_u64()),
+        b.get("fetched").and_then(|v| v.as_u64()),
+    ) {
+        if f1 > 0 && f2 >= f1 {
+            return RepeatedPost::NotCheap(format!(
+                "the second sync re-fetched {f2} row(s) it already had"
+            ));
+        }
         return RepeatedPost::Idempotent;
     }
-    if b.get("inserted").and_then(|v| v.as_u64()).is_some() {
-        return RepeatedPost::Idempotent;
+    if a.get("total").and_then(|v| v.as_u64()).is_some()
+        || b.get("inserted").and_then(|v| v.as_u64()).is_some()
+    {
+        // Rows proven correct, cheapness UNPROVEN because the app advertises no `fetched`. Say so
+        // rather than banking a pass the evidence does not support.
+        return RepeatedPost::Unreadable;
     }
     RepeatedPost::Unreadable
 }
@@ -7715,9 +7743,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     fn a_repeated_post_is_only_a_finding_when_the_body_actually_proves_duplication() {
         let sync = r#"{"fetched":247,"inserted":247,"total":247}"#;
         assert_eq!(
-            repeated_post_verdict(sync, r#"{"fetched":247,"inserted":0,"total":247}"#),
+            repeated_post_verdict(sync, r#"{"fetched":0,"inserted":0,"total":247}"#),
             RepeatedPost::Idempotent,
-            "a cheap second sync inserts nothing and leaves the total alone"
+            "a CHEAP second sync re-fetches nothing, inserts nothing, and leaves the total alone"
+        );
+        // ⚠️ THE REGRESSION THAT MATTERS. The first version of this function returned Idempotent
+        // here — on the exact signature of the defect it exists to catch. Rows are correct
+        // (inserted 0, total flat) and the app still re-pulled all 247 pages.
+        assert_eq!(
+            repeated_post_verdict(sync, r#"{"fetched":247,"inserted":0,"total":247}"#),
+            RepeatedPost::NotCheap("the second sync re-fetched 247 row(s) it already had".into()),
+            "correct rows do NOT excuse re-downloading the collection — the spec asks for both"
         );
         assert_eq!(
             repeated_post_verdict(sync, r#"{"fetched":247,"inserted":247,"total":494}"#),
@@ -18007,9 +18043,22 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 RepeatedPost::Idempotent => verified += 1,
                 RepeatedPost::Duplicates(why) => findings.push(format!(
                     "POST {path} is NOT idempotent — {why}. The spec requires that the tool be run \
-                     repeatedly against the same database and that a second run be cheap and not \
-                     duplicate rows. Store the vendor's ETag and send If-None-Match on the next \
-                     fetch, and upsert on the natural key rather than inserting."
+                     repeatedly against the same database and that a second run not duplicate \
+                     rows. Upsert on the payment's own id rather than inserting."
+                )),
+                // THE REMEDIATION NAMES THE KEY, because the measured failure is not "forgot to send
+                // If-None-Match" — the apps DO send it. MEASURED across three cells: 0 of 13, 0 of 16
+                // and 0 of 13 conditional requests were answered 304, and every mismatch was shifted
+                // by exactly ONE PAGE. They store a single ETag and replay it on the NEXT request,
+                // where it can never match because it is the previous page's tag. Advice that says
+                // "store the ETag" describes what they already do.
+                RepeatedPost::NotCheap(why) => findings.push(format!(
+                    "POST {path} is not CHEAP on a repeat run — {why}. Rows are correct, so this is \
+                     not a duplication bug: the app re-downloads the whole collection every sync, \
+                     which the spec calls out as the top cause of quota exhaustion. Key each page's \
+                     ETag by the exact request that produced it (path + offset + limit) and send \
+                     If-None-Match only when re-issuing THAT SAME request. A single stored ETag \
+                     replayed on the following page can never match — it is the previous page's tag."
                 )),
                 RepeatedPost::Unreadable => inconclusive.push(format!(
                     "spec-contract: POST {path} answered, but neither response carried an \
