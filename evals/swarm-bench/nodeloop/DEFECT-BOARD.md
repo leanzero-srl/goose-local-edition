@@ -392,3 +392,44 @@ findings > 0 and a dispatched repair — that would put the loss after detection
 Instrument: `repaircensus.py`. Its control asserts one cell that repaired (`baseline-n1-r0`, 1
 finding / 1 fix) and one that did not (`baseline-n3-r0`, 0/0) before any aggregate prints, so a
 parser that sees no repairs and a parser that sees repairs everywhere both hard-fail.
+
+### F751 REFUTED — by its own falsifier, 25 minutes after it was written
+
+Registered: *"REFUTED if a 3-node cell scores at or below 0.75 with round-0 findings > 0 and a
+dispatched repair — that would put the loss after detection, not in it."*
+
+`baseline-n3-r1` landed at **0.7110** with **round-0 findings 1, six fix dispatches across three
+verify rounds**, `complete_result{passed:false, remaining_findings:1}`. Detection worked. Repair
+engaged harder than on any cell except `probe_post`. COMPLETE correctly refused to call it green.
+The app is still the worst 3-node score on the build.
+
+**So detection is NOT the binding constraint.** What survives of F751 is only the narrower fact it
+was built on: `baseline-n3-r0` and `scout_doc_urls-n3-r0` DID reach round-0 GREEN with zero findings
+on 0.72 and 0.74 apps, and that remains a real false green in a phase whose stated job is to refuse
+one. What is dead is the causal reading — that the blindness explains the node curve — and with it
+the elevation of `probed_post` to "lead candidate". Six fix dispatches produced 0.8986 on
+`probe_post` and 0.7110 here; fix count does not predict score.
+
+The `probed_post` emission shipped anyway, on its own merit: the code comment claimed the field was
+"emitted either way" and no such field existed.
+
+### What the r1 cell DID establish: the gap is one tier, not a diffuse quality loss
+
+    cell                    score   A       B       C       D      wall
+    baseline-n1-r0         0.9283  1.000  1.0000  0.857  0.820   73 min
+    probe_post-n3-r0       0.8986  1.000  1.0000  0.714  0.850  110 min
+    scout_doc_urls-n3-r0   0.7386  1.000  0.3611  0.857  0.750   73 min
+    baseline-n3-r0         0.7226  1.000  0.3611  0.857  0.750   75 min
+    baseline-n3-r1         0.7110  0.833  0.3611  0.857  0.900  119 min
+
+A, C and D are comparable across all five cells. **Tier B alone separates them**, and on this build
+it takes exactly two values — 0.3611 and 1.0000. At weight 0.30 that single tier is ~0.19 of score,
+which is the entire observed gap.
+
+⚠️ **NOT a claim that Tier B is all-or-nothing.** The wider corpus refutes that directly: build
+1786178750 shows 0.2222 / 0.3611 / 0.975 / 1.0 and build 1786277705 shows 0.25 / 0.8333 / 0.9306 /
+0.975. Intermediate values exist. The clustering is a property of these five cells, checked rather
+than assumed, and stated as such.
+
+Also recorded: 3-node wall time is 75 and 119 minutes on identical config. Any speed claim from a
+single pair is noise.
