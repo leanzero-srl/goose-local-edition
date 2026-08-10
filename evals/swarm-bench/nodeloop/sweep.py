@@ -568,6 +568,27 @@ ARMS = [
                 "with a 200-status fetch on record, the splice is not reaching the decomposition and "
                 "the arm has failed no matter what the number does.",
     },
+    {
+        "name": "doc_examples",
+        "env": {"GOOSE_SWARM_DOC_FETCH": "1", "GOOSE_SWARM_DOC_EXAMPLES": "1"},
+        "gate": "THE THIRD DELIVERY MECHANISM, and the parked doc_fetch entry asked for exactly this "
+                "— 'do not simply flip reps; that is a different lever and deserves its own arm'. "
+                "Two have failed: doc_fetch broadcast 4769 bytes into EVERY worker prompt and scored "
+                "0.369 with server_runs 1.00 -> 0.00, and scout_doc_urls left both its target checks "
+                "perfect while the sync family went 0.00. The document is not the problem and never "
+                "was; it is the ONLY place the vendor's response shape is written, because "
+                "spec-build.md documents the APP's api and not the vendor's. "
+                "This arm keeps the fetch and shrinks the payload: only the fenced example blocks, "
+                "MEASURED at 5 blocks / 750 of 4769 bytes = 16%, carrying `{\"data\": [...]}`, "
+                "`next_cursor` and `total` verbatim — which is precisely what the failing cells get "
+                "wrong. "
+                "MECHANISM readout, n=1 and deterministic: `doc_fetched{ok:true}` with `bytes` around "
+                "750 instead of 4769. If bytes does not shrink, the gate did not reach the fetch and "
+                "the arm examined NOTHING — report it as such, never as a pass. "
+                "⚠️ THE SHRINK IS NOT THE POINT, the sync is: a cell that delivers 750 bytes and "
+                "still scores sync_completeness 0 has refuted the bet that reading beats guessing, "
+                "and no amount of correct plumbing rescues it.",
+    },
 ]
 
 # Goal one is the node curve, so the node levels come first and every pass covers all three. An
@@ -589,6 +610,25 @@ NODE_LEVELS = (3, 1, 2)
 # `reps` is the replicate count for THIS cell; `asks` is the question, printed in the log so an
 # operator reading it knows why the fleet is spending two hours.
 QUESTIONS: list[dict] = [
+    # ⏸ reps 0 UNTIL THE NEXT BUILD. `GOOSE_SWARM_DOC_EXAMPLES` is committed to swarm.rs and is NOT
+    # in the running binary, so an arm run now would set an env var nothing reads and score a plain
+    # doc_fetch replicate under a different name — the INERT-as-FIRED trap, with two hours of fleet
+    # time attached. Flip to reps 3 only after `probe.py --verify` confirms the rebuild landed.
+    {"arm": "doc_examples", "nodes": 3, "reps": 0,
+     "asks": "whether SHRINKING the payload rescues the document that two delivery mechanisms have "
+             "failed to deliver. Established today and the reason this arm exists: spec-build.md "
+             "documents the APP's own api and NOT the vendor's response shape, so the fetched "
+             "document is the ONLY source of truth for it — and half the corpus (7 of 14 cells) "
+             "scores sync_completeness 0. doc_fetch put all 4769 bytes in every worker prompt and "
+             "collapsed to 0.369; scout_doc_urls cached itself into emptiness. The fenced blocks are "
+             "750 bytes (16%) and contain the exact fact the failing cells get wrong. "
+             "MECHANISM, n=1: doc_fetched{ok:true} with bytes ~750, not ~4769 — if it does not "
+             "shrink the arm examined NOTHING. SCORE, needs the replicates: the sync family moving "
+             "on a cell that is not already passing it. "
+             "⚠️ PRE-REGISTERED FALSIFIER: a cell that delivers 750 bytes and still scores "
+             "sync_completeness 0 refutes the bet that reading beats guessing — and the wrong-key "
+             "census says 5 of 7 failing cells already read the key correctly, so the document can "
+             "only ever address part of the class."},
     # ⛔ PARKED AT reps 0 BY F736 — THE PRE-REGISTERED FALSIFIER FIRED. Kept in the queue with its
     # reasoning intact rather than deleted, because a removed arm looks like one nobody thought of.
     #
