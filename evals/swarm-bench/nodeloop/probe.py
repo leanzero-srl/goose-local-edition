@@ -45,9 +45,7 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "GOOSE_SWARM_PROBE_ADVERTISED_POST": "F738 — the gate that probes advertised POST endpoints",
-    "is not CHEAP on a repeat run": "F740 — the NotCheap finding (the arm that caught my own false pass)",
-    "it is the previous page's tag": "F740 — the corrected ETag remediation, keyed per request",
+    "probed_post": "F751 — how many advertised POST endpoints the contract check actually wrote to",
 }
 # Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
 # a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute
@@ -78,6 +76,13 @@ POSITIVE_CONTROLS = {
     "requested_best_of_n": "C5(A) — landed 2026-08-09",
     "distinct_draft_models": "C5(A) — landed 2026-08-09",
     "The spec names these documents": "C7 — landed 2026-08-09",
+    # GRADUATED 2026-08-10. All three read PRESENT in the 08:44 binary while still sitting in NEW —
+    # the exact stale-pending state the NEW docstring warns about, caught only by reading the probe
+    # instead of trusting the set. That reading also settled a live question: the `probe_post` ARM
+    # exercised a gate that IS in the binary, so its 6 fix dispatches are a real mechanism readout.
+    "GOOSE_SWARM_PROBE_ADVERTISED_POST": "F738 — the advertised-POST gate — landed 2026-08-10",
+    "is not CHEAP on a repeat run": "F740 — the NotCheap finding — landed 2026-08-10",
+    "it is the previous page's tag": "F740 — the per-request ETag remediation — landed 2026-08-10",
 }
 
 # Must never appear. Catches a grep that matches everything, or a probe run against the wrong file.
@@ -121,6 +126,13 @@ def check_controls(r: dict) -> None:
 
 def main() -> int:
     import time
+    # AN EMPTY NEW SET PASSES BOTH ARMS VACUOUSLY. `--baseline` would report "all 0 literals absent"
+    # and `--verify` would leave `ok` True having checked nothing, printing the same ✅ as a real
+    # verification. That is `all([])` wearing a rebuild's clothes, and it is the one failure this
+    # file cannot afford: its entire job is to make a rebuild's contents PROVABLE.
+    if not NEW:
+        sys.exit("🔴 NEW is empty — there is nothing to prove about this rebuild. Either register "
+                 "the literal the edit introduces, or do not run the probe and say so plainly.")
     mode = "--verify" if "--verify" in sys.argv else "--baseline"
     r = read(GOOSE)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["mtime"]))
