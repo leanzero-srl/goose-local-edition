@@ -2182,13 +2182,11 @@ impl Agent {
             .ok()
             .and_then(|model_info| model_info.resolved_model);
         let provider_session_id = provider.provider_session_id();
-        let inference = (resolved_model.is_some() || provider_session_id.is_some()).then(|| {
-            InferenceMetadata {
-                provider: provider_name.clone(),
-                requested_model,
-                resolved_model,
-                provider_session_id,
-            }
+        let inference = Some(InferenceMetadata {
+            provider: provider_name.clone(),
+            requested_model,
+            resolved_model,
+            provider_session_id,
         });
         let session_manager = self.config.session_manager.clone();
         let session_id = session_config.id.clone();
