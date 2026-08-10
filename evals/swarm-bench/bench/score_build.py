@@ -53,6 +53,62 @@ TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
 # cheaper model appeared to beat a stronger one.
 SCORER_VERSION = "sb-3"
 
+# ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
+#
+# WHY. Three cells of build 1786340680 reported Tier B = 0.3611 — "36% of twelve checks" — which
+# reads as a broad weakness across twelve vendor-contract behaviours and sent a week of work at "the
+# vendor contract" as though it were many things. It is not. Their own detail strings:
+#
+#     sync_completeness    0/247 payments after one sync
+#     payment_row_shape    no rows
+#     total_field          total=0
+#     chronological_order  too few rows
+#     summary_accuracy     total_minor=0 (want 4409197)
+#     summary_bounds_utc   oldest=None newest=None
+#     resync_idempotent    second sync inserted=0 total=0
+#
+# Six grammars for one sentence: the sync brought back nothing. Six of those checks CANNOT be
+# evaluated at all without rows — they are not independent evidence, they are the same failure seen
+# through six windows.
+#
+# ⚠️ THE SCORE IS DELIBERATELY UNCHANGED, and the first design here was wrong. Marking the blocked
+# checks "unscored" was the obvious move and it is backwards: it lifts a totally broken app from
+# 0.7226 to 0.8309 — an app whose headline feature returns zero rows would be rewarded for the
+# checks it never got far enough to fail. "Absent input must score zero, never full marks" applies
+# in both directions. The defect is real and its cost SHOULD be large; what was wrong was the
+# REPORT, which implied breadth where there is depth. So this is attribution only — purely additive,
+# no score, weight or detail string changes, and SCORER_VERSION deliberately NOT bumped.
+#
+# `local_pagination` is NOT here on purpose: it scores 0.33 rather than 0.00 on the same cells,
+# because default/cap/offset semantics remain partly checkable against an empty collection. A
+# partially-independent check does not belong in a blocked set.
+ROOT_BLOCKS = {
+    "sync_completeness": (
+        "payment_row_shape", "total_field", "chronological_order",
+        "summary_accuracy", "summary_bounds_utc", "resync_idempotent",
+    ),
+}
+
+
+def attribute_root_causes(rows: List[Dict]) -> Dict[str, List[str]]:
+    """Which zero checks are downstream of another zero check. Pure, so it is testable offline.
+
+    A dependent is attributed ONLY when it scored 0 AND its prerequisite scored 0. A dependent that
+    fails on its own while the prerequisite passed is a genuine independent defect and must keep its
+    own name — attributing it would be the mirror of the error this function exists to correct.
+    """
+    by_name = {r["check"]: r for r in rows}
+    out = {}
+    for root, dependents in ROOT_BLOCKS.items():
+        r = by_name.get(root)
+        if r is None or r["score"] > 0:
+            continue
+        blocked = [d for d in dependents
+                   if d in by_name and by_name[d]["score"] == 0]
+        if blocked:
+            out[root] = blocked
+    return out
+
 
 # ── http helpers ──────────────────────────────────────────────────────────────────────────────
 
@@ -608,7 +664,8 @@ def evaluate(c: Ctx) -> Dict:
         tiers[tier] = {"mean": round(mean, 4), "checks": len(sub), "weight": weight}
         weighted += mean * weight
     return {"score": round(weighted, 4), "scorer_version": SCORER_VERSION,
-            "tiers": tiers, "checks": rows}
+            "tiers": tiers, "checks": rows,
+            "root_causes": attribute_root_causes(rows)}
 
 
 def format_report(result: Dict, title: str = "") -> str:
@@ -616,6 +673,12 @@ def format_report(result: Dict, title: str = "") -> str:
     head = (f"{title}  {100 * result['score']:.1f}%   " +
             " · ".join(f"{k} {100 * t[k]['mean']:.0f}%" for k in ("A", "B", "C", "D")))
     lines = [head, ""]
+    # THE LINE THAT STOPS A TIER MEAN BEING READ AS BREADTH. Without it, "B 36%" is indistinguishable
+    # from twelve half-working behaviours, and that reading cost this campaign real work.
+    for root, blocked in (result.get("root_causes") or {}).items():
+        lines.append(f"  ⚠ {len(blocked)} further check(s) are downstream of `{root}`, which scored "
+                     f"0 — this is ONE defect, not {len(blocked) + 1}: {', '.join(blocked)}")
+        lines.append("")
     for row in sorted(result["checks"], key=lambda r: (r["tier"], r["check"])):
         pct = f"{100 * row['score']:>3.0f}%"
         lines.append(f"  {row['tier']} {pct} {row['check']:<26} {str(row.get('detail', ''))[:82]}")

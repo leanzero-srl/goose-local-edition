@@ -509,3 +509,33 @@ carry the weight it actually represents. That is a scorer-version bump (`sb-3` �
 **re-scores the whole corpus**, so it happens at a boundary, with the old scores kept beside the new
 ones and no cross-version comparison. Until then, every Tier B number in this document is a number
 about one defect.
+
+### F752 addendum — my own pre-registered fix was backwards, and two numbers were wrong
+
+**The sb-4 plan is WITHDRAWN.** Marking the blocked checks "unscored" when `sync_completeness` is 0
+would lift `baseline-n3-r0` from **0.7226 to 0.8309** — an app whose headline feature returns zero
+rows would be *rewarded* for the checks it never got far enough to fail. "Absent input must score
+zero, never full marks" cuts both ways, and I had proposed the mirror of the error I was correcting.
+The defect is real and its cost SHOULD be large. What was wrong was never the score; it was the
+REPORT, which implied breadth where there is depth.
+
+Corrected arithmetic, since the entry above rounded loosely: the root defect zeroes **7** Tier-B
+checks (`sync_completeness` plus **6** blocked dependents), not 8. Blast radius is
+**7/12 × 0.30 = 0.175** of score, not 0.20. `local_pagination` is excluded on purpose — it scores
+0.33 rather than 0.00 on the same cells because default/cap/offset semantics stay partly checkable
+against an empty collection, so it is partially independent and does not belong in a blocked set.
+
+**Shipped instead: attribution, not re-weighting.** `attribute_root_causes` in `score_build.py` is
+purely additive — no score, weight or detail string changes, `SCORER_VERSION` deliberately NOT
+bumped, so **the corpus does not need re-scoring and nothing already published moves.** Every report
+now carries a line that makes the tier mean unreadable as breadth:
+
+    ⚠ 6 further check(s) are downstream of `sync_completeness`, which scored 0 —
+      this is ONE defect, not 7: payment_row_shape, total_field, chronological_order,
+      summary_accuracy, summary_bounds_utc, resync_idempotent
+
+`rootcheck.py` holds it to both directions against REAL stored verdicts: `baseline-n3-r0` must
+attribute exactly those six, `baseline-n1-r0` (sync working) must attribute **nothing at all**, and a
+synthetic case where the prerequisite PASSES while a dependent fails must keep the dependent's own
+name — an attribution that fires everywhere excuses genuine defects. The control was watched
+REFUSING with the guard removed before it was trusted green.
