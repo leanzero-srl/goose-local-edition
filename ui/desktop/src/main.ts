@@ -501,14 +501,20 @@ if (process.platform !== 'darwin') {
         handleProtocolUrl(protocolUrl, parsedUrl);
       }
 
-      // Only focus existing windows for non-bot/recipe URLs
-      const existingWindows = BrowserWindow.getAllWindows();
-      if (existingWindows.length > 0) {
-        const mainWindow = existingWindows[0];
+      // Only focus existing regular windows for non-bot/recipe URLs
+      const regularWindows = getRegularWindows();
+      if (regularWindows.length > 0) {
+        const mainWindow = regularWindows[0];
         if (mainWindow.isMinimized()) {
           mainWindow.restore();
         }
         mainWindow.focus();
+      } else if (!protocolUrl) {
+        app.whenReady().then(async () => {
+          const recentDirs = loadRecentDirs();
+          const openDir = recentDirs.length > 0 ? recentDirs[0] : null;
+          await createChat(app, { dir: openDir || undefined });
+        });
       }
     });
   }
@@ -646,10 +652,10 @@ async function handleProtocolUrl(url: string, parsedUrl: URL) {
     if (!targetWindow) return;
     await processProtocolUrl(url, parsedUrl, targetWindow);
   } else {
-    const existingWindows = BrowserWindow.getAllWindows();
+    const regularWindows = getRegularWindows();
     let targetWindow: BrowserWindow | undefined;
-    if (existingWindows.length > 0) {
-      targetWindow = existingWindows[0];
+    if (regularWindows.length > 0) {
+      targetWindow = regularWindows[0];
       if (targetWindow.isMinimized()) {
         targetWindow.restore();
       }
@@ -744,10 +750,10 @@ app.on('open-url', async (_event, url) => {
       return;
     }
 
-    // For extension/session URLs, send to existing window or store pending for new one
-    const existingWindows = BrowserWindow.getAllWindows();
-    if (existingWindows.length > 0) {
-      const targetWindow = existingWindows[0];
+    // For extension/session URLs, send to an existing regular window or open one
+    const regularWindows = getRegularWindows();
+    if (regularWindows.length > 0) {
+      const targetWindow = regularWindows[0];
       if (targetWindow.isMinimized()) targetWindow.restore();
       targetWindow.focus();
       if (parsedUrl.hostname === 'extension' || parsedUrl.hostname === 'sessions') {
@@ -986,6 +992,10 @@ let appConfig = {
 
 const windowMap = new Map<number, BrowserWindow>();
 const appWindows = new Map<string, BrowserWindow>();
+
+function getRegularWindows(): BrowserWindow[] {
+  return [...windowMap.values()].filter((w) => !w.isDestroyed());
+}
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
