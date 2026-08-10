@@ -3584,6 +3584,20 @@ enum RepeatedPost {
     Unreadable,
 }
 
+/// Split `curl -w "\n%{http_code}"` output into (body, code). Pure, so the parse can be pinned.
+///
+/// The body is whatever precedes the final line, because a JSON body may itself contain newlines
+/// and taking the FIRST line would truncate any pretty-printed response into invalid JSON — which
+/// `repeated_post_verdict` would then read as Unreadable, converting a decidable case into an
+/// abstention. A missing or non-numeric trailing line yields code 0, which is below every threshold
+/// and so can never manufacture a finding.
+fn split_curl_status(out: &str) -> (&str, u16) {
+    match out.rsplit_once('\n') {
+        Some((body, tail)) => (body, tail.trim().parse().unwrap_or(0)),
+        None => (out, 0),
+    }
+}
+
 fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
     let (Ok(a), Ok(b)) = (
         serde_json::from_str::<serde_json::Value>(first),
@@ -7850,6 +7864,23 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "{why}"
             );
         }
+        // THE STATUS SPLIT, both directions. A body containing newlines must survive intact —
+        // taking the first line instead of everything-before-the-last truncates pretty-printed JSON
+        // into an Unreadable abstention, turning a decidable case into silence.
+        assert_eq!(
+            split_curl_status("{\"inserted\":0}\n200"),
+            ("{\"inserted\":0}", 200)
+        );
+        assert_eq!(
+            split_curl_status("{\n  \"error\": \"bad_cursor\"\n}\n500"),
+            ("{\n  \"error\": \"bad_cursor\"\n}", 500),
+            "a multi-line body must not be truncated by the status split"
+        );
+        assert_eq!(
+            split_curl_status("no trailing status").1,
+            0,
+            "a missing status is 0, which is below every threshold and cannot manufacture a finding"
+        );
         // And the endpoint extractor must find the POST the whole check depends on.
         let spec = "| Method | Path | Response |\n|---|---|---|\n\
                     | `GET` | `/api/health` | `{}` |\n| `POST` | `/api/sync` | `{\"inserted\": 0}` |\n";
@@ -18097,9 +18128,18 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     if swarm_gate("GOOSE_SWARM_PROBE_ADVERTISED_POST", false) {
         for path in spec_post_endpoints(spec) {
             let url = format!("http://127.0.0.1:{port}{path}");
+            // THE STATUS, NOT ONLY THE BODY. The GET arm above has treated `code >= 500` as a
+            // finding since it was written; this arm captured neither the code nor anything derived
+            // from it, so an advertised sync endpoint that 500s handed its error body to
+            // `repeated_post_verdict`, which found no idempotency field and abstained. MEASURED on
+            // baseline-n3-r1: the app raises `RuntimeError: Unexpected 400 from Meridian:
+            // bad_cursor` inside POST /api/sync, and the run's verdict for that was "could not be
+            // decided from the body" — an abstention where the GET arm two screens up would have
+            // named it. A 5xx on the endpoint the spec advertises is the least ambiguous finding
+            // this check can produce, and it was the one shape it could not see.
             let call = || {
                 let mut cmd = tokio::process::Command::new("curl");
-                cmd.args(["-s", "-X", "POST", "-m", "20", &url]);
+                cmd.args(["-s", "-w", "\n%{http_code}", "-X", "POST", "-m", "20", &url]);
                 cmd
             };
             let (Some(a), Some(b)) = (
@@ -18112,10 +18152,19 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 continue;
             };
             post_probed += 1;
-            match repeated_post_verdict(
-                &String::from_utf8_lossy(&a.stdout),
-                &String::from_utf8_lossy(&b.stdout),
-            ) {
+            let a_out = String::from_utf8_lossy(&a.stdout).into_owned();
+            let b_out = String::from_utf8_lossy(&b.stdout).into_owned();
+            let (a_body, a_code) = split_curl_status(&a_out);
+            let (b_body, _) = split_curl_status(&b_out);
+            if a_code >= 500 {
+                findings.push(format!(
+                    "POST {path} returned {a_code} — the spec advertises this endpoint and it \
+                     errors (server 5xx). Nothing downstream of it can work; fix this before any \
+                     idempotency concern."
+                ));
+                continue;
+            }
+            match repeated_post_verdict(a_body, b_body) {
                 RepeatedPost::Idempotent => verified += 1,
                 RepeatedPost::Duplicates(why) => findings.push(format!(
                     "POST {path} is NOT idempotent — {why}. The spec requires that the tool be run \
