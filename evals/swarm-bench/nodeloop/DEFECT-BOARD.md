@@ -10,6 +10,31 @@ scored cells. Mean overall score 0.7559, total remaining loss 0.24411.
 
 ---
 
+> ## ⚠️ MEASURED 2026-08-10: DO NOT WORK THIS LIST TOP-DOWN
+>
+> §3.7 already warns that the ranking *assumes* checks are independent loss. That assumption has now
+> been **falsified empirically**, and the counterexample is the board's own rank 1 and rank 2.
+>
+> `scout_doc_urls-n3-r0` drove **`vendor_conditional` 0.33 → 1.00** and **`resync_conditional_ratio`
+> 0.33 → 1.00** — precisely what the board recommends. In the same cell the entire sync family went
+> to **0.00** (`sync_completeness`, `vendor_all_pages`, `payment_row_shape`, `total_field`,
+> `summary_accuracy`, `concurrent_sync_safe`, `resync_idempotent`, `chronological_order`), **Tier B
+> collapsed 0.936 → 0.361**, and the cell scored 0.7386 (−2.24 SD). It was also *faster* — 73 min
+> against 94.9 — because it did less work.
+>
+> **The mechanism: the app implemented conditional requests so well it cached itself into emptiness.**
+> Perfect 304 handling with `vendor_all_pages` at 0.00 means it negotiated freshness correctly and
+> never fetched the payments at all.
+>
+> **The sync family is the PRECONDITION for conditional requests meaning anything.** Satisfying a
+> downstream check by starving its upstream is a net loss the ranking cannot see, because weighted
+> loss is computed per check with no edge between them.
+>
+> **So before acting on any row: name what must already work for that check to be meaningful, and
+> confirm the fix cannot trade it away.** The ranking tells you where score is lost. It does not tell
+> you that the loss is independently recoverable, and on this board it demonstrably is not. (n=1, and
+> not noise-shaped: noise does not zero eight related checks while perfecting the two they depend on.)
+
 ## 1. The method
 
 For every check `k` in a cell set, over the cells in one slice:
