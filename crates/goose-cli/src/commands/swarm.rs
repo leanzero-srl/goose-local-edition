@@ -17594,6 +17594,15 @@ struct SpecContractResult {
     // The reader is the `spec_contract` event emitted from the COMPLETE gate: without it a zero from
     // this check could not be told apart from the check having bound nothing at all.
     verified: usize,
+    /// How many advertised POST endpoints were actually issued a write. Separates "the gate was off /
+    /// the spec advertises no mutating endpoint" from "we probed and it behaved", which every other
+    /// field conflates: both produce zero POST findings.
+    // MEASURED: the two lowest-scoring cells of build 1786340680 reached COMPLETE round-0 GREEN with
+    // zero findings while this very check pushed `... were NOT probed because this check only issues
+    // bare GETs: POST /api/sync` into `inconclusive`. The unprobed surface is where the majority of
+    // the remaining loss lives, so whether it was probed is not a diagnostic detail — it decides
+    // whether a green means anything.
+    probed_post: usize,
 }
 
 /// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
@@ -17829,6 +17838,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     }
     let Some(pkg) = spec_python_entry(spec) else {
@@ -17836,6 +17846,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     };
     let gets = spec_get_endpoints(spec);
@@ -17844,6 +17855,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     }
     // PREFER THE INVOCATION THE SPEC ADVERTISES, on a port WE choose.
@@ -17888,6 +17900,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     };
     let mut up = false;
@@ -17927,6 +17940,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     }
     if !up {
@@ -17967,6 +17981,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             findings,
             inconclusive,
             verified,
+            probed_post: 0,
         };
     }
     for path in gets {
@@ -18090,6 +18105,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         findings,
         inconclusive,
         verified,
+        probed_post: post_probed,
     }
 }
 
@@ -26847,6 +26863,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "verified": sc_verified,
                     "findings": sc_found,
                     "inconclusive": sc_incon,
+                    // WHETHER THE CHECK LOOKED AT THE MUTATING SURFACE AT ALL. Every other counter
+                    // here is silent about it: a run that never issued a write and a run that issued
+                    // two and found them well-behaved both report zero POST findings. The bare-GET
+                    // limitation is already confessed in `inconclusive_reasons` on every cell of
+                    // every build, which is precisely why it stopped being read — a caveat that is
+                    // always present carries no information. A COUNT changes when the gate flips, so
+                    // it can be graphed, ablated, and used to reject a green.
+                    "probed_post": sc.probed_post,
                     // THE COUNT WITHOUT THE REASON IS NOT READABLE, and I proved that on myself.
                     // `inconclusive: 1` appears in 15 of 15 archived cells, and from the count alone I
                     // attributed it to the already-bound-port guard — the one branch whose comment I had
