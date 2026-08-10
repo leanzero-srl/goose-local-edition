@@ -589,7 +589,25 @@ NODE_LEVELS = (3, 1, 2)
 # `reps` is the replicate count for THIS cell; `asks` is the question, printed in the log so an
 # operator reading it knows why the fleet is spending two hours.
 QUESTIONS: list[dict] = [
-    {"arm": "doc_fetch", "nodes": 3, "reps": 3,
+    # ⛔ PARKED AT reps 0 BY F736 — THE PRE-REGISTERED FALSIFIER FIRED. Kept in the queue with its
+    # reasoning intact rather than deleted, because a removed arm looks like one nobody thought of.
+    #
+    # doc_fetch-n3-r0 scored 0.369 against a same-binary baseline of 0.829 — 2.30 SD below the
+    # pre-batch 3-node mean — and took 156 min against 95. EVERY tier fell (A 0.833->0.333,
+    # B 0.861->0.250, C 0.857->0.429, D 0.740->0.518) and SEVEN checks unrelated to sync regressed,
+    # including `server_runs` 1.00 -> 0.00: the app does not start. That is exactly the dilution the
+    # falsifier named in advance — 4789 bytes in EVERY worker prompt against a measured 27B
+    # compliance curve of 0.588 at 10 rules falling to 0.094 at 40.
+    #
+    # The DOCUMENT is not the problem; the DELIVERY is. scout_doc_urls, which tells scouts to fetch
+    # it instead of injecting it everywhere, scored 0.8843 — inside the baseline band. Re-running
+    # doc_fetch at reps 3 would spend ~7 fleet-hours re-confirming a result that is already
+    # unambiguous, and the engine_build reset is the only reason it re-entered the queue at all.
+    #
+    # TO REVIVE IT, do not simply flip reps: gate `doc_facts` BY TASK KIND first (C10's own
+    # pre-registered follow-up — vendor-touching implementers yes, test-authors no). That is a
+    # different lever and deserves its own arm.
+    {"arm": "doc_fetch", "nodes": 3, "reps": 0,
      "asks": "🔼 RE-PROMOTED BY F390 — the F53 demotion was right about the PREFIX and wrong about the "
              "DOCUMENT. F53 refuted 'losing `/v1` breaks the build' (the 83.4% unit lost it and crunch "
              "still passed 7/7, because workers have shell and re-derive a PATH), and F389 confirms the "
@@ -996,6 +1014,18 @@ def wait_for_fleet(ceiling_secs: int = 7200) -> bool:
     while waited < ceiling_secs:
         time.sleep(60)
         waited += 60
+        # STOP MUST BE HONOURED HERE TOO, AND IT WAS NOT.
+        #
+        # MEASURED 2026-08-10: the fleet went down at 08:25, STOP was armed at 08:30, and the sweep
+        # ignored it — this loop only ever checks the fleet, so `./loop.sh stop` could not take
+        # effect until the fleet returned or the 120-minute ceiling expired. An operator who stops
+        # the loop during an outage is asking to stop NOW; making them wait out a ceiling for a
+        # resource that is already gone is the opposite of what the request means. It also blocks
+        # the one thing an outage is genuinely good for: rebuilding while no cell can possibly run.
+        if STOP.exists():
+            log(f"[fleet] {now()} STOP observed during the fleet wait — exiting cleanly after "
+                f"{waited // 60} min. No cell is running, so nothing is interrupted.")
+            raise SystemExit(0)
         n = fleet_loaded()
         if n > 0:
             log(f"[fleet] {now()} fleet is back ({n} model(s) loaded) after {waited // 60} min — resuming")
@@ -1909,7 +1939,21 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
             # decision justifies. So the target is scoped to the two arms the curve actually compares.
             is_curve = c["arm"]["name"] == "baseline" and c["nodes"] in (NODE_LEVELS[0], 1)
             floor = CURVE_REPS if is_curve else target_reps
-            cap = 1 if c.get("reps", 1) == 1 else max(c.get("reps", 1), floor)
+            # ⛔ reps == 0 MEANS PARKED, AND IT DID NOT.
+            #
+            # MEASURED 2026-08-10: I parked `doc_fetch` at reps 0 after its falsifier fired, verified
+            # by running backlog() — and it came back with FIVE units, still at position 0. The cap
+            # expression read `1 if reps == 1 else max(reps, floor)`, so zero fell into the else and
+            # became `max(0, target_reps)` = target_reps. Setting reps to 0 did not park the arm, it
+            # gave it the FULL score budget: the exact opposite of what the number plainly means, and
+            # of what the `detail_budget` comment in ARMS already claims it does.
+            #
+            # This is why the check is `cap <= 0 -> continue` rather than a guard at the call site:
+            # every future reader will write reps 0 expecting parked, and they should be right.
+            declared = c.get("reps", 1)
+            if declared == 0:
+                continue
+            cap = 1 if declared == 1 else max(declared, floor)
             if rep >= cap:
                 continue
             if not complete(c["arm"]["name"], c["nodes"], rep):
