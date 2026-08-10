@@ -539,3 +539,60 @@ attribute exactly those six, `baseline-n1-r0` (sync working) must attribute **no
 synthetic case where the prerequisite PASSES while a dependent fails must keep the dependent's own
 name — an attribution that fires everywhere excuses genuine defects. The control was watched
 REFUSING with the guard removed before it was trusted green.
+
+---
+
+## 10. F753 — The root cause, reproduced offline: two different vendor-integration bugs, one identical symptom
+
+`sync_completeness 0/247` is not a mystery any more. Both failing modes were reproduced in seconds by
+importing each cell's own `vendorsync.meridian` and pointing it at a freshly started real vendor
+fixture on a private port — no fleet, no run, no guesswork.
+
+    baseline-n3-r0        fetch_all_payments() -> 0 payments, no error
+    scout_doc_urls-n3-r0  same code path
+        The vendor returns {"data": [...], "next_cursor", "total"}.
+        These apps read `data.get("payments", [])` — a key the vendor never sends. The `.get`
+        default swallows it, the page loop sees an empty list, `next_cursor` ends the loop, and the
+        sync reports success having stored nothing.
+
+    baseline-n3-r1        fetch_all_payments() -> RuntimeError: Unexpected 400 from Meridian:
+                          {"error": "bad_cursor"}
+        Reads the RIGHT key (`payload["data"]`) and mishandles the cursor, so POST /api/sync raises
+        and answers 5xx.
+
+The two cells that scored **B = 1.0000** — `baseline-n1-r0` and `probe_post-n3-r0` — both read
+`.get("data"`. A 4-of-4 separation on one JSON key across the cells where the key is the issue.
+
+⚠️ **NOT "one key explains the build".** `baseline-n3-r1` reads the correct key and still ends at
+zero rows for an unrelated reason. Two distinct defects, one identical symptom, and only a per-cell
+reproduction could tell them apart — a tier mean never could.
+
+### Why every gate passed both of them
+
+An app that returns well-formed EMPTY results satisfies the entire pipeline: it compiles, it runs,
+`GET /` is 200, `GET /api/payments` is 200 with `[]` and `total: 0`, its own unit tests pass because
+they mock the vendor with the shape the implementer assumed, and — before today — the contract gate
+called the repeat sync `Idempotent` and counted it as `verified`. **Nothing in the pipeline ever
+exercised the app against the real vendor.** The engine cannot see vendor traffic, so it cannot know
+a sync of zero rows is wrong; what it CAN see, it was not looking at.
+
+### Two engine changes shipped from this, both decidable without vendor visibility
+
+1. **`RepeatedPost::Vacuous`** (`e958c9d2d`) — a first call that fetched nothing, inserted nothing
+   and left an empty collection makes the repeat vacuous. Inconclusive, never a finding (an empty
+   vendor is legitimate), and crucially never `verified`. This is exactly the `baseline-n3-r0` /
+   `scout_doc_urls` signature.
+2. **5xx on an advertised POST is now a finding** (`78fb94047`) — the POST arm captured no status at
+   all, so `baseline-n3-r1`'s 5xx sync was filed as "could not be decided from the body" while the
+   GET arm two screens up would have named it. This is exactly the `baseline-n3-r1` signature.
+
+Between them the two engine fixes now see both measured failure modes. Whether seeing them repairs
+them is a separate question, pre-registered below and NOT claimed.
+
+### Falsifier, pre-registered
+
+On the next build, a cell whose sync returns zero rows must emit either a `Vacuous` inconclusive or
+a 5xx finding on `POST /api/sync` — visible in the `spec_contract` event with `probed_post >= 1`.
+**REFUTED if** a cell scores `sync_completeness 0` while its `spec_contract` event still reports
+`verified >= 1` with no such inconclusive or finding. That would mean both gates miss a third
+failure mode and the class is wider than these two.
