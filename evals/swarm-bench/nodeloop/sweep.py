@@ -343,6 +343,27 @@ ARMS = [
                 "non-empty, and the external literals research reported reaching a worker unchanged.",
     },
     {
+        "name": "probe_post",
+        "env": {"GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
+        "gate": "F738/F740. The contract gate issues ONLY bare GETs, so every requirement living "
+                "behind an advertised POST has never been checked by the engine on any run. That is "
+                "not abstract: `vendor_conditional` and `resync_conditional_ratio` are rank 1 and "
+                "rank 2 of all remaining weighted loss on the n=8 current-binary corpus (0.03982 of "
+                "0.24411 = 16.3% — NOT the 44% I first reported off a 4-cell slice, which the "
+                "adversarial pass refuted). Both are the spec's own sentence: a second sync must be "
+                "CHEAP and must not duplicate rows. MECHANISM readout, n=1 and deterministic: the "
+                "run log must carry a spec-contract POST probe with probed_post >= 1, which is zero "
+                "in every cell to date — if that is absent the arm examined NOTHING and must be "
+                "reported as such, never as a pass. QUALITY readout: whether the fix loop, finally "
+                "shown the finding, repairs it — vendor_conditional and resync_conditional_ratio "
+                "moving together on a cell that ALSO scores vendor_all_pages 1.00. A pass on a cell "
+                "with vendor_all_pages 0.00 is the one-page-client loophole and settles nothing. "
+                "⚠️ THE RISK IS A FALSE FINDING: this is the first WRITE the gate has ever issued, "
+                "and `repeated_post_verdict` already had to be corrected once for passing the exact "
+                "defect it exists to catch. If a cell reports NOT idempotent while its rows are "
+                "provably fine, the verdict is wrong and the arm reverts on that alone.",
+    },
+    {
         "name": "scout_doc_urls",
         "env": {"GOOSE_SWARM_SCOUT_DOC_URLS": "1"},
         "gate": "C7. The OTHER half of the doc wire, and the cheap half. `doc_fetch` splices the "
@@ -635,6 +656,18 @@ QUESTIONS: list[dict] = [
     # ordering asserted in a comment is how arms go missing in this file.
     # armcheck GATES this on the baseline's own `plan_convergence.would_skip_ladder`, so if the
     # counterfactual says ENFORCE would change nothing the arm is refused BEFORE it spends a unit.
+    {"arm": "probe_post", "nodes": 3, "reps": 1,
+     "asks": "whether the engine can SEE the requirement that is rank 1 and rank 2 of all "
+             "remaining weighted loss. The contract gate issues only bare GETs, so the spec's "
+             "own sentence — a second sync must be cheap and must not duplicate rows — has "
+             "never been checked on any run, and the repair loop cannot fix what nothing "
+             "reports. MECHANISM, n=1: the run log must carry probed_post >= 1; it is zero in "
+             "every cell to date, so absence means the arm examined NOTHING and is reported as "
+             "such rather than as a pass. The apps already send If-None-Match (measured 0 of "
+             "13, 0 of 16, 0 of 13 answered 304, every mismatch shifted exactly ONE PAGE) — "
+             "they replay a single ETag on the next request, so the finding now names the real "
+             "repair: key each page ETag by path plus offset plus limit. FALSIFIER: a NOT-idempotent finding on a cell whose rows are provably correct means the verdict is wrong and "
+             "the arm reverts on that alone."},
     {"arm": "scout_doc_urls", "nodes": 3, "reps": 1,
      "asks": "whether the engine can stop telling 77% of its scouts a falsehood, and whether "
              "that changes what they bring back. MECHANISM, n=1 and deterministic: the literal "
@@ -2029,7 +2062,16 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     # this costs the curve exactly two cells and buys the answer to the campaign's largest open
     # question about 24 hours earlier. Self-limiting: once both rep-0 units complete this partition
     # is empty and the ordering is exactly what it was before.
-    wire = [u for u in units if u[0]["name"] in ("doc_fetch", "scout_doc_urls") and u[2] == 0]
+    # `probe_post` joins this partition for the same reason and on the same terms. Its primary
+    # readout is `probed_post >= 1` in the run log — zero in every cell ever recorded — which is a
+    # deterministic fact about whether the gate can SEE the requirement at all. No number of baseline
+    # replicates makes that question easier, and if the gate cannot see it, every score comparison
+    # built on top of the conditional-request family is moot.
+    wire = [
+        u
+        for u in units
+        if u[0]["name"] in ("doc_fetch", "scout_doc_urls", "probe_post") and u[2] == 0
+    ]
     if wire:
         picked = {id(u) for u in wire}
         units = wire + [u for u in units if id(u) not in picked]
