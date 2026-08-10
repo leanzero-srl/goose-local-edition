@@ -162,4 +162,13 @@ if __name__ == "__main__":
     print(f"\n{time.strftime('%H:%M:%S')}  {state}\n  {why}")
     stop = os.path.join(os.path.dirname(os.path.abspath(__file__)), "STOP")
     print(f"  STOP {'present — sweep exits at the next boundary' if os.path.exists(stop) else 'ABSENT — sweep will start another unit'}")
-    sys.exit(0 if state in ("BOUNDARY-REACHED", "BETWEEN-UNITS") else 1)
+    # ⚠️ ONLY "no sweep process" LICENSES A REBUILD.
+    #
+    # This used to exit 0 on BETWEEN-UNITS too, while the very message it printed said "WAIT for the
+    # process to go, do not rebuild under it". BATCH.md gates the rebuild on exit 0, so the code and
+    # the words disagreed — and the code is what a script reads. A live sweep between units is about
+    # to claim the next unit; rebuilding there swaps the binary under a run that is already starting,
+    # which is the mid-cell corruption this whole file exists to prevent, just with better timing.
+    #
+    # Exit 2 = WAIT (transient, will resolve on its own). Exit 1 = a cell is running. Exit 0 = safe.
+    sys.exit({"BOUNDARY-REACHED": 0, "BETWEEN-UNITS": 2}.get(state, 1))
