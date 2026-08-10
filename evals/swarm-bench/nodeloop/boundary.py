@@ -89,29 +89,76 @@ def _age_min(path: str) -> float | None:
         return None
 
 
+def is_engine(cmd: str) -> bool:
+    """argv[0] IS the goose binary and argv[1..2] are `swarm run`.
+
+    ⚠️ A SUBSTRING TEST IS NOT ENOUGH, and the self-test below caught me writing one. `"goose" in cmd
+    and "swarm run" in cmd` is true of `grep -n 'goose swarm run' notes.md`, which is the F678 decoy
+    wearing new clothes — and it would have been true of this very agent's own commands. The engine's
+    argv is fixed and cheap to check, so check it.
+    """
+    argv = cmd.split()
+    return (len(argv) >= 3
+            and os.path.basename(argv[0]) == "goose"
+            and argv[1] == "swarm"
+            and argv[2] == "run")
+
+
+def engine_pids(rows) -> list[tuple[str, str, str]]:
+    """EVERY live `goose swarm run`, whether or not a sweep still owns it.
+
+    ⚠️ THIS IS THE FIX FOR THE WORST FAILURE THIS FILE HAS HAD. It used to walk ONLY the sweep's
+    descendants, so when the sweep supervisor died at 18:35 on 2026-08-10 and left its engine child
+    running, `verdict()` found no sweep, found no cells, and printed **"no sweep process — safe to
+    rebuild"** while pid 44400 was writing `run.jsonl` and `heartbeat` every few seconds. BATCH.md
+    gates the rebuild on exit 0. One command later and the binary would have been swapped under a
+    live 75-minute run — the exact corruption this whole file exists to prevent, produced BY the
+    instrument that exists to prevent it.
+
+    An orphan is not a rarer case than a supervised child; it is the SAME process with a dead parent,
+    and it holds the fleet just as hard. Detection must not depend on who its parent is.
+    """
+    return [(pid, et, cmd) for pid, _ppid, et, cmd in rows if is_engine(cmd)]
+
+
 def live_cells(rows=None) -> list[dict]:
     rows = rows if rows is not None else _ps()
+    sweeps = set(sweep_pids(rows))
+    owned = {pid for sp in sweeps for pid, _et, cmd in descendants(sp, rows) if is_engine(cmd)}
     cells = []
-    for sp in sweep_pids(rows):
-        for pid, et, cmd in descendants(sp, rows):
-            if "goose" not in cmd or "swarm run" not in cmd:
-                continue
-            cwd = proc_cwd(pid)
-            cells.append({
-                "sweep": sp, "pid": pid, "elapsed": et, "dir": cwd,
-                "cell": os.path.basename(cwd) if cwd else None,
-                "heartbeat_min": _age_min(os.path.join(cwd, "heartbeat")) if cwd else None,
-                "runjsonl_min": _age_min(os.path.join(cwd, "run.jsonl")) if cwd else None,
-            })
+    for pid, et, _cmd in engine_pids(rows):
+        cwd = proc_cwd(pid)
+        cells.append({
+            "sweep": next((sp for sp in sweeps if pid in owned), None),
+            "orphan": pid not in owned,
+            "pid": pid, "elapsed": et, "dir": cwd,
+            "cell": os.path.basename(cwd) if cwd else None,
+            "heartbeat_min": _age_min(os.path.join(cwd, "heartbeat")) if cwd else None,
+            "runjsonl_min": _age_min(os.path.join(cwd, "run.jsonl")) if cwd else None,
+        })
     return cells
 
 
 def verdict() -> tuple[str, str]:
     rows = _ps()
     sweeps = sweep_pids(rows)
-    if not sweeps:
-        return "BOUNDARY-REACHED", "no sweep process — safe to rebuild"
     cells = live_cells(rows)
+    # THE ENGINE IS ASKED ABOUT FIRST, AND THE SWEEP SECOND. The old order asked "is there a sweep?"
+    # and returned safe-to-rebuild on no, which is a question about the SUPERVISOR when the thing
+    # that must not be disturbed is the ENGINE. A live run with a dead parent answered "safe".
+    orphans = [c for c in cells if c["orphan"]]
+    if orphans:
+        c = orphans[0]
+        hb = c["heartbeat_min"]
+        return "CELL-RUNNING", (
+            f"⚠️ ORPHANED ENGINE: {c['cell']} pid {c['pid']} up {c['elapsed']}, heartbeat "
+            f"{'n/a' if hb is None else f'{hb:.1f} min'} — its sweep is GONE but the run is ALIVE. "
+            "Do NOT rebuild and do NOT start a second sweep: it holds the fleet and a new unit would "
+            "contend with it. Let it finish, then score its cell by hand")
+    if not sweeps:
+        if cells:
+            return "CELL-RUNNING", "no sweep, but a live engine was found — see above"
+        return "BOUNDARY-REACHED", "no sweep process and no live `goose swarm run` — safe to rebuild"
     if not cells:
         return "BETWEEN-UNITS", (f"sweep {sweeps[0]} alive, no `goose swarm run` child. It is "
                                 "scoring/bookkeeping and will exit here if STOP is present — WAIT "
@@ -148,6 +195,16 @@ def selftest() -> None:
     tree = [("200", "100", "1:00", "sh"), ("201", "200", "1:00", "goose swarm run")]
     kids = {p for p, _, _ in descendants("100", fake + tree)}
     assert kids == {"200", "201"}, f"descendants must be transitive, got {kids}"
+    # ⚠️ THE ORPHAN ARM, in BOTH directions. This is the case that printed "safe to rebuild" over a
+    # live run on 2026-08-10, so it is asserted rather than described.
+    orphan_rows = [("900", "1", "1:10:00", "/x/target/release/goose swarm run # Build vendorsync")]
+    assert [p for p, _, _ in engine_pids(orphan_rows)] == ["900"], \
+        "an engine with NO sweep ancestor must still be found — that miss is the whole bug"
+    owned_rows = fake + [("300", "100", "1:00", "/x/target/release/goose swarm run # Build x")]
+    assert [p for p, _, _ in engine_pids(owned_rows)] == ["300"], \
+        "a supervised engine must be found by the same path"
+    assert not engine_pids([("901", "1", "1:00", "grep -n 'goose swarm run' notes.md")]), \
+        "NEGATIVE CONTROL FAILED: a grep mentioning the command line is not an engine"
     # the .swarm trap, asserted as a fact rather than a comment
     assert not os.path.join("cell", ".swarm", "heartbeat").endswith("cell/heartbeat"), \
         "heartbeat is at the CELL ROOT — a .swarm/ path is the blind glob that caused this file"
