@@ -56,6 +56,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
+import { resolveWorkingDir } from './utils/workingDir';
 
 function shouldSetupUpdater(): boolean {
   // Setup updater if either the flag is enabled OR dev updates are enabled
@@ -890,6 +891,7 @@ interface ExternalBackend {
   url: string;
   secret: string;
   certFingerprint?: string;
+  workingDir?: string;
 }
 
 const getExternalBackendUrlFromEnv = (): string | null => {
@@ -936,7 +938,10 @@ const getServerSecret = (settings: Settings): string => {
 const getActiveExternalBackend = (settings: Settings): ExternalBackend | null => {
   const envBackend = getExternalBackendFromEnv();
   if (envBackend) {
-    return envBackend;
+    return {
+      ...envBackend,
+      workingDir: settings.externalGoosed?.workingDir,
+    };
   }
 
   if (settings.externalGoosed?.enabled && settings.externalGoosed.url) {
@@ -945,6 +950,7 @@ const getActiveExternalBackend = (settings: Settings): ExternalBackend | null =>
       url: settings.externalGoosed.url,
       secret: getServerSecret(settings),
       certFingerprint: settings.externalGoosed.certFingerprint,
+      workingDir: settings.externalGoosed.workingDir,
     };
   }
 
@@ -1068,7 +1074,7 @@ const createChat = async (
   }
 
   const serverSecret = externalBackend ? externalBackend.secret : GENERATED_SECRET;
-  let workingDir = dir || os.homedir();
+  let workingDir = resolveWorkingDir(externalBackend?.workingDir, dir, os.homedir());
   let gooseServeLease: GooseServeLease | null = null;
 
   if (externalBackend) {
@@ -3003,7 +3009,17 @@ async function appMain() {
         throw new Error('No backend lease found for launching window');
       }
 
-      const workingDir = app.getPath('home');
+      const launchingWorkingDir = await launchingWindow.webContents
+        .executeJavaScript(`window.appConfig ? window.appConfig.get('GOOSE_WORKING_DIR') : null`)
+        .catch((error) => {
+          console.warn('Failed to get working directory from launching window:', error);
+          return undefined;
+        });
+      const workingDir = resolveWorkingDir(
+        typeof launchingWorkingDir === 'string' ? launchingWorkingDir : undefined,
+        undefined,
+        app.getPath('home')
+      );
       const appWindow = new BrowserWindow({
         title: formatAppName(gooseApp.name),
         width: gooseApp.width ?? 800,
