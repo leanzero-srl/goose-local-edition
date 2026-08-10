@@ -3569,6 +3569,17 @@ enum RepeatedPost {
     /// second sync must be CHEAP **and** must not duplicate rows", and the check only tested the
     /// second. A gate that passes the thing it was built to catch is worse than no gate.
     NotCheap(String),
+    /// The FIRST call did no work, so a second call that also does nothing proves nothing.
+    ///
+    /// ⚠️ THIS IS THE SAME MISTAKE AS `NotCheap`, ONE LEVEL DOWN, AND IT SHIPPED. The measured
+    /// signature is `sync_completeness 0/247 payments after one sync` with `second sync inserted=0
+    /// total=0`: an app whose sync brings back NOTHING. Every arm above reads that as healthy —
+    /// `inserted` is not > 0, `total` does not grow, `fetched` is 0 so the cheapness branch returns
+    /// `Idempotent` — and `Idempotent` increments `verified`, the counter whose entire purpose is to
+    /// let a consumer tell a real pass from "checked nothing". **Nothing happened twice is not
+    /// idempotency; it is an empty app.** Being inconclusive, this never blames the app for a vendor
+    /// that legitimately has no rows.
+    Vacuous(String),
     /// Not JSON, or no field that speaks to idempotency. FAIL-OPEN: says nothing, blames nothing.
     Unreadable,
 }
@@ -3583,6 +3594,29 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
     let (Some(a), Some(b)) = (a.as_object(), b.as_object()) else {
         return RepeatedPost::Unreadable;
     };
+    // DID THE FIRST CALL DO ANYTHING AT ALL? Every arm below compares the second call to the first,
+    // so a first call that fetched nothing, inserted nothing and left an empty collection makes all
+    // of them vacuous. Some(true) = work is evidenced, Some(false) = the fields are present and all
+    // zero, None = no counter is present so this says nothing either way.
+    let worked = |o: &serde_json::Map<String, serde_json::Value>| -> Option<bool> {
+        let mut seen = false;
+        for k in ["fetched", "inserted", "total"] {
+            if let Some(n) = o.get(k).and_then(|v| v.as_u64()) {
+                seen = true;
+                if n > 0 {
+                    return Some(true);
+                }
+            }
+        }
+        seen.then_some(false)
+    };
+    if worked(a) == Some(false) {
+        return RepeatedPost::Vacuous(
+            "the first sync fetched nothing, inserted nothing and left the collection empty, so a \
+             second call that also does nothing establishes no idempotency"
+                .to_string(),
+        );
+    }
     // A second identical call must insert NOTHING.
     if let Some(ins) = b.get("inserted").and_then(|v| v.as_u64()) {
         if ins > 0 {
@@ -7767,6 +7801,33 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             ),
             RepeatedPost::Duplicates("total went 247 -> 248 on a repeat call".into()),
             "a growing total is duplication even with no `inserted` field"
+        );
+        // ⚠️ THE SECOND REGRESSION OF THE SAME SHAPE, MEASURED ON REAL CELLS. Three cells of build
+        // 1786340680 scored `sync_completeness 0/247 payments after one sync` with `resync_idempotent
+        // second sync inserted=0 total=0`. Before this arm every branch above read that as healthy
+        // and the cheapness branch returned Idempotent — which increments `verified`, the counter
+        // that exists so a consumer can tell a real pass from having checked nothing. An app that
+        // syncs zero rows was being affirmatively verified as idempotent.
+        let empty = r#"{"fetched":0,"inserted":0,"total":0}"#;
+        assert!(
+            matches!(
+                repeated_post_verdict(empty, empty),
+                RepeatedPost::Vacuous(_)
+            ),
+            "nothing happening twice is an empty app, not idempotency"
+        );
+        assert!(
+            matches!(
+                repeated_post_verdict(r#"{"inserted":0,"total":0}"#, r#"{"inserted":0,"total":0}"#),
+                RepeatedPost::Vacuous(_)
+            ),
+            "no `fetched` field does not rescue it — an empty collection decides nothing"
+        );
+        // ...and the guard must not swallow a REAL pass: work on the first call still decides.
+        assert_eq!(
+            repeated_post_verdict(sync, r#"{"fetched":0,"inserted":0,"total":247}"#),
+            RepeatedPost::Idempotent,
+            "NEGATIVE CONTROL: a populated collection is still judged, not called vacuous"
         );
         // FAIL-OPEN — none of these may produce a finding.
         for (a, b, why) in [
@@ -18074,6 +18135,12 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                      ETag by the exact request that produced it (path + offset + limit) and send \
                      If-None-Match only when re-issuing THAT SAME request. A single stored ETag \
                      replayed on the following page can never match — it is the previous page's tag."
+                )),
+                // INCONCLUSIVE, NOT A FINDING, AND CRUCIALLY NOT `verified`. A vendor with no rows
+                // is a legitimate empty sync, so this never blames the app; what it must never do
+                // again is bank the affirmative pass that `Idempotent` used to hand it.
+                RepeatedPost::Vacuous(why) => inconclusive.push(format!(
+                    "spec-contract: POST {path} was issued twice and {why}"
                 )),
                 RepeatedPost::Unreadable => inconclusive.push(format!(
                     "spec-contract: POST {path} answered, but neither response carried an \
