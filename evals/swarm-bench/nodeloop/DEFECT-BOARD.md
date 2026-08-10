@@ -627,3 +627,35 @@ Pooling is defensible here only because this is a **binary did-the-integration-w
 mean of scores; it is still three engine builds in one table and must not be quoted as a per-build
 result. `baseline-n1-r4` reads the right key and scores B = 0.2222, so the 1-node arm fails this too
 — any story of the form "fanning out breaks the vendor integration" has to explain that cell.
+
+### F753 addendum 2 — a THIRD cause, and the sqlite hypothesis checked and REJECTED
+
+`baseline-n1-r1`, live, `complete_verify` round 0:
+
+    sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same
+    thread. The object was created in thread id 83 — store.py:33 in upsert_many
+
+A third distinct way to reach the same symptom, and on the **1-node** arm. So the tally is: wrong
+JSON key (2 cells), cursor mishandled → 5xx (1 cell), sqlite connection used across threads (1 cell).
+
+**The obvious follow-up was tested and does not hold.** AST-scanning every archived `store.py` for
+`sqlite3.connect(...)` without `check_same_thread=False`:
+
+    UNGUARDED : 12 of 14 cells — 6 score Tier B < 0.5
+    GUARDED   :  2 of 14 cells — 1 scores Tier B < 0.5
+
+Twelve of fourteen apps are unguarded and half of them pass, while the only fully guarded cell
+(`baseline-n1-r4`, 2 connections both guarded) scores **B = 0.2222**, the worst 1-node result on the
+board. The guard predicts nothing. Recorded as a REJECTED hypothesis so it is not investigated twice.
+
+### What three rejected single-cause explanations add up to
+
+The wrong key covers 2 of 7. The cursor covers 1. The sqlite guard covers 0. **No single defect
+explains the class, and each failing run fails differently.** That is the finding, and it changes
+where the leverage is: there is no one bug to fix in the engine's prompts or correctors, because the
+apps are not making one mistake. The leverage is in the engine NOTICING that the advertised sync
+produced nothing and driving a repair — which is precisely what `Vacuous` and the 5xx-POST finding
+do, and what `complete_verify`'s pytest path is doing in this live cell right now.
+
+⚠️ Stated as scope, not as a prediction: those two changes are not in any scored binary yet, so
+nothing here claims they will improve a score.
