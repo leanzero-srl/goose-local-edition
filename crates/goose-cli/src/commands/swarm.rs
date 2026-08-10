@@ -3522,6 +3522,79 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
     out
 }
 
+/// Advertised endpoints that MUTATE, as bare paths. `spec_advertised_surface` returns display
+/// strings ("POST /api/sync -> EXPECT {...}"); this returns the paths a prober can actually call.
+fn spec_post_endpoints(spec: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for adv in spec_advertised_surface(spec) {
+        let mut it = adv.split_whitespace();
+        let (Some(method), Some(path)) = (it.next(), it.next()) else {
+            continue;
+        };
+        if method == "POST" && path.starts_with('/') && !out.contains(&path.to_string()) {
+            out.push(path.to_string());
+        }
+    }
+    out
+}
+
+/// What calling an advertised mutating endpoint TWICE proves about idempotency.
+///
+/// WHY THIS EXISTS. `run_spec_contract` issues only bare GETs, and `spec_unprobed_advertised`
+/// merely NAMES the POSTs it skips. So every requirement that lives behind a POST is invisible to
+/// the engine's own contract gate, and the fix loop never sees it.
+///
+/// MEASURED, and this is the whole reason: across the four best 3-node cells on the current binary,
+/// `vendor_conditional` (mean 0.25) and `resync_conditional_ratio` (mean 0.25) are **44% of ALL
+/// remaining weighted score loss** — the single largest block on the board. Both are the spec's own
+/// sentence "the tool is run repeatedly against the same database; a second sync must be cheap and
+/// must not duplicate rows". One cell's detail reads "13 requests carried If-None-Match, 0 answered
+/// 304": the app KNOWS to send the header and still re-downloads everything. Another scores 1.00
+/// ("3 requests carried If-None-Match, 3 answered 304"), so it is achievable and unreliable — 3 of
+/// 4 cells fail it and nothing in the engine ever told them.
+///
+/// The verdict is decidable from the RESPONSE BODIES ALONE — no visibility into vendor traffic is
+/// needed — which is what makes it cheap enough to run in the contract gate.
+#[derive(Debug, PartialEq, Eq)]
+enum RepeatedPost {
+    Idempotent,
+    Duplicates(String),
+    /// Not JSON, or no field that speaks to idempotency. FAIL-OPEN: says nothing, blames nothing.
+    Unreadable,
+}
+
+fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
+    let (Ok(a), Ok(b)) = (
+        serde_json::from_str::<serde_json::Value>(first),
+        serde_json::from_str::<serde_json::Value>(second),
+    ) else {
+        return RepeatedPost::Unreadable;
+    };
+    let (Some(a), Some(b)) = (a.as_object(), b.as_object()) else {
+        return RepeatedPost::Unreadable;
+    };
+    // A second identical call must insert NOTHING.
+    if let Some(ins) = b.get("inserted").and_then(|v| v.as_u64()) {
+        if ins > 0 {
+            return RepeatedPost::Duplicates(format!("the second call inserted {ins} more row(s)"));
+        }
+    }
+    // ...and must not grow the collection.
+    if let (Some(t1), Some(t2)) = (
+        a.get("total").and_then(|v| v.as_u64()),
+        b.get("total").and_then(|v| v.as_u64()),
+    ) {
+        if t2 != t1 {
+            return RepeatedPost::Duplicates(format!("total went {t1} -> {t2} on a repeat call"));
+        }
+        return RepeatedPost::Idempotent;
+    }
+    if b.get("inserted").and_then(|v| v.as_u64()).is_some() {
+        return RepeatedPost::Idempotent;
+    }
+    RepeatedPost::Unreadable
+}
+
 fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[String]) -> String {
     // THE LIST, ENUMERATED BY THE ENGINE. Without it each shard re-derives "the commands the spec
     // advertises" from whatever spec-shaped artifact is in the tree — the README the build itself
@@ -7624,6 +7697,69 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             ScoutLookup::SpecDocs,
             "gate ON on the same spec must take the new branch — otherwise the gate does nothing \
              and the arm would measure a no-op"
+        );
+    }
+
+    /// THE 44%-OF-REMAINING-LOSS CHECK, and every way it must refuse to fire.
+    ///
+    /// Measured across the four best 3-node cells on the current binary: `vendor_conditional` and
+    /// `resync_conditional_ratio` together are 44% of ALL remaining weighted score loss, and both
+    /// are the spec's own "a second sync must be cheap and must not duplicate rows". The engine
+    /// never checked it because `run_spec_contract` issues only bare GETs.
+    ///
+    /// The FAIL-OPEN rows matter more than the positive one. This is the first WRITE the contract
+    /// gate ever issues, and a false finding against a freshly built app is the most expensive
+    /// mistake available here — so anything it cannot decide from the body must be Unreadable,
+    /// never Duplicates.
+    #[test]
+    fn a_repeated_post_is_only_a_finding_when_the_body_actually_proves_duplication() {
+        let sync = r#"{"fetched":247,"inserted":247,"total":247}"#;
+        assert_eq!(
+            repeated_post_verdict(sync, r#"{"fetched":247,"inserted":0,"total":247}"#),
+            RepeatedPost::Idempotent,
+            "a cheap second sync inserts nothing and leaves the total alone"
+        );
+        assert_eq!(
+            repeated_post_verdict(sync, r#"{"fetched":247,"inserted":247,"total":494}"#),
+            RepeatedPost::Duplicates("the second call inserted 247 more row(s)".into()),
+            "THE DEFECT: re-syncing duplicates the collection"
+        );
+        assert_eq!(
+            repeated_post_verdict(
+                r#"{"fetched":247,"total":247}"#,
+                r#"{"fetched":247,"total":248}"#
+            ),
+            RepeatedPost::Duplicates("total went 247 -> 248 on a repeat call".into()),
+            "a growing total is duplication even with no `inserted` field"
+        );
+        // FAIL-OPEN — none of these may produce a finding.
+        for (a, b, why) in [
+            ("not json", "{}", "a non-JSON body decides nothing"),
+            (
+                r#"{"ok":true}"#,
+                r#"{"ok":true}"#,
+                "no idempotency-bearing field",
+            ),
+            ("[1,2]", "[1,2]", "a JSON array is not an object"),
+            (
+                r#"{"inserted":0}"#,
+                "oops",
+                "one unreadable side is enough to abstain",
+            ),
+        ] {
+            assert_eq!(
+                repeated_post_verdict(a, b),
+                RepeatedPost::Unreadable,
+                "{why}"
+            );
+        }
+        // And the endpoint extractor must find the POST the whole check depends on.
+        let spec = "| Method | Path | Response |\n|---|---|---|\n\
+                    | `GET` | `/api/health` | `{}` |\n| `POST` | `/api/sync` | `{\"inserted\": 0}` |\n";
+        assert_eq!(spec_post_endpoints(spec), vec!["/api/sync".to_string()]);
+        assert!(
+            spec_post_endpoints("| `GET` | `/api/health` | `{}` |").is_empty(),
+            "a GET-only spec advertises nothing to probe, so the gate stays silent"
         );
     }
 
@@ -17835,11 +17971,62 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         }
         // 3xx / other 4xx (a route that needs a body/auth) -> neither a finding nor verified (fail-open)
     }
+    // PROBE THE ADVERTISED MUTATING ENDPOINTS — the 44%-of-remaining-loss hole.
+    //
+    // Everything above issues bare GETs, so the spec's own sentence "a second sync must be cheap and
+    // must not duplicate rows" has never once been checked by the engine. It is worth more than any
+    // other single defect on the board (see `repeated_post_verdict`), and the fix loop cannot repair
+    // what nothing reports.
+    //
+    // Gated default OFF: this is the first time the contract gate issues a WRITE, and a write against
+    // a freshly built app is exactly where a false finding would be most expensive. `probed_post` is
+    // emitted either way so the arm's OFF state is measurable rather than assumed.
+    let mut post_probed = 0usize;
+    if swarm_gate("GOOSE_SWARM_PROBE_ADVERTISED_POST", false) {
+        for path in spec_post_endpoints(spec) {
+            let url = format!("http://127.0.0.1:{port}{path}");
+            let call = || {
+                let mut cmd = tokio::process::Command::new("curl");
+                cmd.args(["-s", "-X", "POST", "-m", "20", &url]);
+                cmd
+            };
+            let (Some(a), Some(b)) = (
+                smoke_output(call(), 25).await,
+                smoke_output(call(), 25).await,
+            ) else {
+                inconclusive.push(format!(
+                    "spec-contract: POST {path} did not complete twice, so idempotency is unproven"
+                ));
+                continue;
+            };
+            post_probed += 1;
+            match repeated_post_verdict(
+                &String::from_utf8_lossy(&a.stdout),
+                &String::from_utf8_lossy(&b.stdout),
+            ) {
+                RepeatedPost::Idempotent => verified += 1,
+                RepeatedPost::Duplicates(why) => findings.push(format!(
+                    "POST {path} is NOT idempotent — {why}. The spec requires that the tool be run \
+                     repeatedly against the same database and that a second run be cheap and not \
+                     duplicate rows. Store the vendor's ETag and send If-None-Match on the next \
+                     fetch, and upsert on the natural key rather than inserting."
+                )),
+                RepeatedPost::Unreadable => inconclusive.push(format!(
+                    "spec-contract: POST {path} answered, but neither response carried an \
+                     `inserted` or `total` field, so idempotency could not be decided from the body"
+                )),
+            }
+        }
+    }
     let _ = child.kill().await;
     // NO SILENT CAPS. Reported here, at the one exit where the check actually ran, because this is the
     // only path that produces a `verified` a consumer will read as coverage. It is `inconclusive`, never
     // a `finding`: not probing an endpoint is an admission about the CHECK, not a defect in the app.
-    let unprobed = spec_unprobed_advertised(spec);
+    let unprobed = if post_probed > 0 {
+        Vec::new()
+    } else {
+        spec_unprobed_advertised(spec)
+    };
     if !unprobed.is_empty() {
         inconclusive.push(format!(
             "spec-contract: probed {} advertised GET endpoint(s); {} advertised endpoint(s) were NOT \
