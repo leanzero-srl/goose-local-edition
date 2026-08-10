@@ -1,18 +1,21 @@
 {
-  "mtime": 1786255781.5118036,
-  "size": 235925104,
+  "mtime": 1786277705.5148811,
+  "size": 235908576,
   "new": {
-    "skipped_tests": false,
-    "would_skip_ladder_prelift": false,
-    "description_chars": false,
-    "requested_best_of_n": false,
-    "distinct_draft_models": false,
-    "The spec names these documents": false
+    "GOOSE_SWARM_PROBE_ADVERTISED_POST": false,
+    "is not CHEAP on a repeat run": false,
+    "it is the previous page's tag": false
   },
   "controls": {
     "would_skip_ladder": true,
     "plan_convergence": true,
-    "task_dispatched": true
+    "task_dispatched": true,
+    "skipped_tests": true,
+    "would_skip_ladder_prelift": true,
+    "description_chars": true,
+    "requested_best_of_n": true,
+    "distinct_draft_models": true,
+    "The spec names these documents": true
   },
   "negative": false
 }

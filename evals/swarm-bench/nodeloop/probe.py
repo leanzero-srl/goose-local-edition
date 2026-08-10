@@ -38,13 +38,16 @@ GOOSE = Path("/Users/mihaiperdum/Projects/goose/target/release/goose")
 BASELINE = HERE / "probe-baseline.json"
 
 # Literals introduced by THIS batch. Each must flip absent -> present across the rebuild.
+# PENDING literals — must flip absent -> present across the NEXT rebuild.
+#
+# ⚠️ A LITERAL GRADUATES OUT OF THIS SET THE MOMENT IT LANDS. Leaving a landed literal here makes
+# every subsequent run report it "present before AND after — vacuous", which is true, useless, and
+# trains the reader to skim past the one line that might say STILL ABSENT. Move it to
+# POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "skipped_tests": "F711/C1 — timeout scan reports what it filtered out",
-    "would_skip_ladder_prelift": "F707 — the pre-lift shadow diagnostic",
-    "description_chars": "C12(b) — the split child's instruction length, on TaskDispatched",
-    "requested_best_of_n": "C5(A) — the PRE-clamp ask on skeleton_drafts",
-    "distinct_draft_models": "C5(A) — what actually caps the draft pool",
-    "The spec names these documents": "C7 — the scout branch for a spec that names docs",
+    "GOOSE_SWARM_PROBE_ADVERTISED_POST": "F738 — the gate that probes advertised POST endpoints",
+    "is not CHEAP on a repeat run": "F740 — the NotCheap finding (the arm that caught my own false pass)",
+    "it is the previous page's tag": "F740 — the corrected ETag remediation, keyed per request",
 }
 # Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
 # a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute
@@ -66,6 +69,15 @@ POSITIVE_CONTROLS = {
     "would_skip_ladder": "the pre-existing shadow diagnostic",
     "plan_convergence": "emitted every planning phase",
     "task_dispatched": "the most common event in any run log",
+    # GRADUATED from NEW after the 2026-08-09 15:15 rebuild, where all six were watched flipping
+    # absent -> present. They now earn their keep as controls: if any of them ever reads ABSENT the
+    # build is not the one I think it is, and nothing below may be interpreted.
+    "skipped_tests": "F711/C1 — landed 2026-08-09",
+    "would_skip_ladder_prelift": "F707 — landed 2026-08-09",
+    "description_chars": "C12(b) — landed 2026-08-09",
+    "requested_best_of_n": "C5(A) — landed 2026-08-09",
+    "distinct_draft_models": "C5(A) — landed 2026-08-09",
+    "The spec names these documents": "C7 — landed 2026-08-09",
 }
 
 # Must never appear. Catches a grep that matches everything, or a probe run against the wrong file.
