@@ -433,3 +433,79 @@ than assumed, and stated as such.
 
 Also recorded: 3-node wall time is 75 and 119 minutes on identical config. Any speed claim from a
 single pair is noise.
+
+---
+
+## 9. F752 — Tier B is not twelve checks. It is one defect counted eight times.
+
+The per-check readout of the two Tier-B values, all five current-build cells:
+
+    check                     n1-r0  probe_post  scout_doc  n3-r0  n3-r1
+    sync_completeness          1.00     1.00      0.00      0.00   0.00
+    resync_idempotent          1.00     1.00      0.00      0.00   0.00
+    local_pagination           1.00     1.00      0.33      0.33   0.33
+    payment_row_shape          1.00     1.00      0.00      0.00   0.00
+    total_field                1.00     1.00      0.00      0.00   0.00
+    chronological_order        1.00     1.00      0.00      0.00   0.00
+    summary_accuracy           1.00     1.00      0.00      0.00   0.00
+    summary_bounds_utc         1.00     1.00      0.00      0.00   0.00
+    input_validation           1.00     1.00      1.00      1.00   1.00
+    ui_states                  1.00     1.00      1.00      1.00   1.00
+    ui_currency                1.00     1.00      1.00      1.00   1.00
+    ui_offline                 1.00     1.00      1.00      1.00   1.00
+
+Their own detail strings settle what is happening:
+
+    sync_completeness    0/247 payments after one sync
+    payment_row_shape    no rows
+    total_field          total=0
+    chronological_order  too few rows
+    summary_accuracy     total_minor=0 (want 4409197)
+    summary_bounds_utc   oldest=None newest=None
+    resync_idempotent    second sync inserted=0 total=0
+
+**Seven of those are the same sentence in seven grammars: there is no data.** The sync returns
+nothing, and every check that needs a row to look at reports zero. This is the isolation failure the
+loop doctrine names outright — *"each check must fail on its own defect and nothing else; shared
+setup that can fail will collapse a mostly-correct result to zero"* — and it is in MY scorer, not in
+the engine.
+
+### The correction, stated as loudly as the original claim
+
+Every "Tier B is 52% of all score lost" line in this campaign should be read as **"the sync returning
+zero rows is 52% of all score lost."** The tier is not a broad vendor-contract weakness across twelve
+independent behaviours. It is one upstream failure with a wide blast radius inside the instrument:
+one defect costs 8/12 × 0.30 ≈ 0.20 of score, while a genuinely independent Tier-B defect costs
+1/12 × 0.30 ≈ 0.025 — an 8× weighting nobody chose.
+
+The four checks that hold at 1.00 in every cell (`input_validation`, `ui_states`, `ui_currency`,
+`ui_offline`) are exactly the ones that need no synced data. They are not evidence the apps are
+partly fine; they are evidence of where the gate sits.
+
+### What this does NOT change
+
+- The apps really are broken. `0/247 payments` is a genuine, total failure of the headline feature,
+  not a scoring artefact. The defect is real; only its WEIGHT was inflated.
+- Cross-cell comparisons stay valid — every cell is scored by the same instrument, so the ranking of
+  0.9283 / 0.8986 / 0.7386 / 0.7226 / 0.7110 is unaffected.
+- It does not explain the node curve either. Both 1.0000 cells and all three 0.3611 cells span node
+  counts.
+
+### The engine defect this exposed, fixed in `e958c9d2d`
+
+`repeated_post_verdict` walked that exact signature — `inserted:0, total:0, fetched:0` twice — and
+returned **`Idempotent`**, which increments `verified`, the counter documented to exist so a consumer
+can tell a real pass from having checked nothing. An app that synced zero rows was being
+affirmatively verified as idempotent by the one gate built to catch the sync contract. New
+`RepeatedPost::Vacuous` arm routes it to `inconclusive` — never a finding, because a vendor with no
+rows is a legitimate empty sync, and never `verified`. The test was watched FAILING with the guard
+disabled before being trusted green.
+
+### Owed to the scorer, pre-registered
+
+Tier B must stop paying eight times for one gate. The fix is to make the seven data-dependent checks
+report **unscored** rather than 0.00 when `sync_completeness` is 0, and to let `sync_completeness`
+carry the weight it actually represents. That is a scorer-version bump (`sb-3` → `sb-4`) and it
+**re-scores the whole corpus**, so it happens at a boundary, with the old scores kept beside the new
+ones and no cross-version comparison. Until then, every Tier B number in this document is a number
+about one defect.
