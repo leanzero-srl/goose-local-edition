@@ -336,3 +336,59 @@ the collinear clusters, and the per-cell concentration.
 - **Not examined on the current build:** the 104 void cells of build 1785868965-235742608 (examined
   nothing, no claim either way) and the pre-batch SNAPSHOT corpus, which contains **zero** cells on
   the current build and is therefore disjoint from it.
+
+---
+
+## 8. F751 — COMPLETE ships GREEN at round 0 on the worst apps of the build
+
+The COMPLETE phase exists to "refuse to ship a red app". On the current binary it did the opposite:
+the two lowest-scoring cells are exactly the two whose verifier found **nothing** and therefore never
+dispatched a repair.
+
+    engine_build 1786340680-235925264, every non-void cell
+      baseline-n1-r0        n=1  0.9283   round-0 findings 1   fixes 1   verify rounds 2
+      probe_post-n3-r0      n=3  0.8986   round-0 findings 1   fixes 6   verify rounds 3
+      scout_doc_urls-n3-r0  n=3  0.7386   round-0 findings 0   fixes 0   verify rounds 1
+      baseline-n3-r0        n=3  0.7226   round-0 findings 0   fixes 0   verify rounds 1
+
+`baseline-n3-r0`'s own stderr reads *"complete: GREEN at round 0 — the built app runs and its checks
+pass"* about an app the scorer puts at 0.7226, and it emitted the same
+`complete_result{passed:true, verified:false, remaining_findings:0}` as the 0.9283 cell.
+
+**The repair loop is NOT broken — detection is.** A census over every readable cell on all three
+builds found **zero** cells with round-0 findings > 0 and no fix dispatched. Repair always runs when
+it is given a reason; on these two cells it was never given one.
+
+The verifier names its own hole in `inconclusive_reasons`, on every cell of every build:
+
+> spec-contract: probed 2 advertised GET endpoint(s); 1 advertised endpoint(s) were NOT probed
+> because this check only issues bare GETs: **POST /api/sync**.
+
+That is the Tier B surface — 52% of all score lost in this campaign. The checker announces it cannot
+see the endpoint that carries the majority of the defect, and then round-0 GREEN ships the app.
+
+**The one arm that closes the hole is the one arm where 3-node repair engaged.** `probe_post` probes
+advertised POST endpoints; it is the only 3-node cell on this build with a round-0 finding, it drove
+**6** fix dispatches over 3 verify rounds, and it is the best 3-node score on the build (0.8986). At
+n=1 that is a MECHANISM readout — the gate fired and drove repair — not a score claim.
+
+### What this does and does not license
+
+- **Mechanism, valid at n=1:** the round-0 verdict does not track app quality, and a probe that
+  reaches POST turns a silent GREEN into six repair dispatches.
+- **NOT licensed:** "no repair ⇒ low score". Build 1786277705 contains a green-no-repair cell that
+  scored **0.926**. The rule fails there and is not claimed.
+- **Repair-engagement rate by node count** (suggestive only, all three builds): 1-node **5/5**,
+  3-node **5/9**. Fisher one-tailed p = 0.126 — not significant, recorded so it is not rediscovered
+  as news.
+
+### Falsifier, pre-registered
+
+If the next 3-node baseline cells continue to reach round-0 GREEN with zero findings while scoring
+below their 1-node partners, detection is the binding constraint and `probed_post` moves ahead of
+every remaining tuning arm. **REFUTED if** a 3-node cell scores at or below 0.75 *with* round-0
+findings > 0 and a dispatched repair — that would put the loss after detection, not in it.
+
+Instrument: `repaircensus.py`. Its control asserts one cell that repaired (`baseline-n1-r0`, 1
+finding / 1 fix) and one that did not (`baseline-n3-r0`, 0/0) before any aggregate prints, so a
+parser that sees no repairs and a parser that sees repairs everywhere both hard-fail.
