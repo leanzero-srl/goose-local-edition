@@ -659,3 +659,47 @@ do, and what `complete_verify`'s pytest path is doing in this live cell right no
 
 ⚠️ Stated as scope, not as a prediction: those two changes are not in any scored binary yet, so
 nothing here claims they will improve a score.
+
+---
+
+## 11. F754 — PAIR r1 LANDS POSITIVE. F750's reversed sign is REFUTED by its own falsifier.
+
+F750 pre-registered: *"real if the sign HOLDS across the next 3-4 pairs; **REFUTED if the next pair
+lands positive**."* It landed positive.
+
+    engine_build 1786340680-235925264, baseline only, matched pairs
+    r0   3-node 0.7226 (75 min, B 0.3611)   1-node 0.9283 (73 min, B 1.0000)   delta -0.2057   3-node 2.1% SLOWER
+    r1   3-node 0.7110 (119 min, B 0.3611)  1-node 0.4784 (126 min, B 0.3611)  delta +0.2326   3-node 5.6% FASTER
+
+    MEAN over 2 pairs:  score delta +0.0134    speed +1.7%    signs: - +
+
+**Reported as loudly as the negative one, because that was the promise.** The honest reading is not
+"3-node wins" — it is that **after two matched pairs on this binary there is no measurable node-count
+effect at all.** The mean delta is +0.0134, which is nothing, and the two pairs disagree in sign with
+near-equal magnitudes (-0.2057 and +0.2326).
+
+### The variance is in the ONE-NODE arm, not the three-node arm
+
+    3-node   0.7226, 0.7110    spread 0.0116
+    1-node   0.9283, 0.4784    spread 0.4499
+
+The campaign's famous 46-point replicate spread shows up here entirely on the 1-node side, while the
+3-node arm repeated itself to within 1.2 points. ⚠️ n=2 per arm — this is an OBSERVATION and a
+reason to keep pairing, not a claim. A third pair could invert it exactly as r1 inverted r0.
+
+### `baseline-n1-r1` is the low cell, and its repair failed
+
+    score 0.4784   A 0.8333   B 0.3611   C 0.1429   D 0.6300   126 min
+    round-0 findings 2, fixes 2, verify rounds 3, passed false, remaining 1
+
+Its round-0 finding is the `sqlite3.ProgrammingError` cross-thread failure in `upsert_many`. Two fix
+dispatches over three rounds did not clear it, and Tier C collapsed to 0.1429. So this is another
+cell where detection worked, repair engaged, and the app still shipped broken — the same shape that
+refuted F751, now on the 1-node arm.
+
+### What this does to every node-curve claim on the board
+
+F737's +0.2268 (three pairs, superseded binary) and F750's -0.2057 (one pair, this binary) are both
+single-sign readings from a two-sided distribution. **No node-count effect is established on any
+binary.** The pre-registered design needs 5 matched pairs for a sign test to reach p = 0.031; two
+pairs that disagree cannot reach any p at all.
