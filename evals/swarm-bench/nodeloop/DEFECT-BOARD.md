@@ -596,3 +596,34 @@ a 5xx finding on `POST /api/sync` — visible in the `spec_contract` event with 
 **REFUTED if** a cell scores `sync_completeness 0` while its `spec_contract` event still reports
 `verified >= 1` with no such inconclusive or finding. That would mean both gates miss a third
 failure mode and the class is wider than these two.
+
+### F753 addendum — the wrong key explains 2 of 7 failures, not the class. My own emphasis was too narrow.
+
+`keycensus.py` AST-parses every archived cell's `meridian.py` (string-literal subscripts and
+`.get("…")` calls only — a grep for `data` matches the variable named `data` in nearly every one of
+these files, which is the F678 decoy in a new costume) and pairs the key against Tier B:
+
+    reads only a WRONG key :  2 cells, 2 with Tier B < 0.5
+    reads the RIGHT key    : 12 cells, 5 with Tier B < 0.5
+
+**Five of the seven failing cells read the correct key.** The wrong key is *sufficient* to fail —
+both cells that have it failed — but it is a minority cause. It explained 2 of 3 failures on the
+current build, which made it look like the story when it is one member of a heterogeneous class.
+`baseline-n3-r5` and `baseline-n3-r6` read `data` and still sync nothing; `baseline-n3-r1` reads
+`data` and 5xxs on the cursor.
+
+**This raises the value of the two engine fixes rather than lowering it.** Both key on BEHAVIOUR —
+an empty result, a 5xx — not on any particular bug, so they cover the cases where the key is fine
+and something else is broken. A fix aimed at the key itself would have addressed 2 of 7.
+
+### The vendor integration fails in HALF the corpus, and 1-node is not immune
+
+Seven of fourteen cells with a readable app score Tier B < 0.5. By node count, pooled across builds:
+
+    3-node   6 of 9 failed
+    1-node   1 of 5 failed        Fisher one-tailed p = 0.133 — NOT significant
+
+Pooling is defensible here only because this is a **binary did-the-integration-work outcome**, not a
+mean of scores; it is still three engine builds in one table and must not be quoted as a per-build
+result. `baseline-n1-r4` reads the right key and scores B = 0.2222, so the 1-node arm fails this too
+— any story of the form "fanning out breaks the vendor integration" has to explain that cell.
