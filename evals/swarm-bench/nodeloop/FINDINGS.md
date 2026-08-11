@@ -17955,3 +17955,31 @@ A2/A3 (no stacking, spread reviews), K4/K5 and the D-coherence fixes. Third boun
 at 22:13 with 7 more commits (S1 shard preference, prefix-cache tail, streaming inactivity
 timeouts, render fix, truncation marker, finding expiry, K1 prep); sink_shard + aux_slim +
 doc_examples arms enter the queue at this restart.
+
+## F759 — the Q2 residual list is CLOSED by the board's own decomposition; nothing left to build
+
+The plan carried four "residual classes needing their own detectors": summary_bounds_utc,
+summary_accuracy, ui_currency, ui_states. Checked each against DEFECT-BOARD's measured
+decomposition before designing anything, and every one resolves without new engine code:
+
+- **summary_accuracy — REFUTED as an independent defect** (board §5, rank 7): its failure
+  vector is byte-identical to total_field/sync_completeness/resync_idempotent/payment_row_shape/
+  chronological_order — six checks, one upstream cause, and that cause is the sync-acquire
+  persist defect the batch-2 detector already blocks. Accuracy has NEVER once failed when a
+  value exists (4/4 exact); every zero reads `total_minor=None`. A detector here would be a
+  seventh window on the same failure.
+- **summary_bounds_utc — 13% of it was real** and Q2b2 (held commit e04a2661e) covers exactly
+  that slice (documented-UTC values must carry a designator); the other 87% is dead-app or
+  empty-table cells where None is the correct answer — same sync root.
+- **ui_states — 1.00 in every cell of every arm** (board: one of the four checks that never
+  fail). A static HTML probe would guard nothing that has ever broken. Not built.
+- **ui_currency — stays deferred** on the recorded 1.3%-loss-vs-FP-risk call (n=1, no rate claim).
+
+Consequence: Q2 is COMPLETE as a batch — the detector family (templated GETs, body asserts,
+POST-effect persist, UTC bounds) plus provenance covers every measured Tier-B loss class that
+is independently real. The wait-slot work pivots to S1 increment 2 (sink fix sharding along
+the group_findings_by_file partition), which the board still names as the largest lever.
+
+Registered check: the next 3 units on the post-boundary-4 binary — if any summary_accuracy or
+ui_states zero appears WITHOUT a sync-acquire/server-dead zero in the same cell, this closure
+is wrong and reopens.
