@@ -24759,6 +24759,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if let Some(cap) = cfg.context_cap {
         std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
     }
+    // K4: keep the last turns VERBATIM through compaction. A swarm worker's recent tail is all
+    // tool content, so the pre-K4 compactor preserved none of it and a 40-turn sink lost the exact
+    // bytes of the file it was editing mid-loop — the re-reading spiral the judge then polices.
+    // Swarm-scoped: core's default stays 0 (byte-identical outside swarm); an explicit env wins.
+    if std::env::var("GOOSE_COMPACT_KEEP_TAIL").is_err() {
+        std::env::set_var("GOOSE_COMPACT_KEEP_TAIL", "3");
+    }
     // Hard-cap any single tool result fed back to the weak model. Over-cap content spills to a temp file
     // ("response was larger… stored in /…/goose_mcp_responses/…"). CAUTION: set this ABOVE a normal source
     // file / pytest run — at 8000 a routine `cat store.py` (8.6KB) tripped the spill, the worker then catted

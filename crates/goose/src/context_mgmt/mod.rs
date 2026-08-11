@@ -127,7 +127,31 @@ pub async fn compact_messages(
         (None, false)
     };
 
-    let messages_to_compact = messages.as_slice();
+    // K4 KEEP-TAIL: summarize everything EXCEPT the last `keep_tail` messages, which survive
+    // VERBATIM. The measured defect: a long tool loop's recent tail is all tool content, so
+    // `has_text_only` preserves nothing from it and the summary is the ONLY survivor — a 40-turn
+    // swarm sink loses the exact bytes of the file it is mid-way through editing and must re-read
+    // it, which is precisely the re-reading spiral the swarm polices. A strong model survives
+    // prose-only recall; a 27B does not. Default 0 => byte-identical for every non-swarm session.
+    let keep_tail = Config::global()
+        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
+        .unwrap_or(0)
+        .min(messages.len().saturating_sub(2));
+    let mut cut = messages.len() - keep_tail;
+    // A kept tail may not OPEN on a tool response whose request was summarized away — that is an
+    // orphan `role:tool` message and OpenAI-compatible servers reject the request outright. Extend
+    // the tail backward until its first message carries no ToolResponse (the paired request then
+    // rides along); `cut == 0` degrades to keeping everything except the summary, which is safe.
+    while cut > 0
+        && cut < messages.len()
+        && messages[cut]
+            .content
+            .iter()
+            .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+    {
+        cut -= 1;
+    }
+    let messages_to_compact = &messages[..cut];
 
     let (summary_message, summarization_usage) =
         do_compact(provider, model_config, session_id, messages_to_compact).await?;
@@ -138,10 +162,11 @@ pub async fn compact_messages(
     // 3. Assistant messages to continue the conversation are also agent_visible but not user_visible
     let mut final_messages = Vec::new();
 
-    for (idx, msg) in messages_to_compact.iter().enumerate() {
+    for (idx, msg) in messages.iter().enumerate() {
         let updated_metadata = if is_most_recent
-            && idx == messages_to_compact.len() - 1
+            && idx == messages.len() - 1
             && preserved_user_message.is_some()
+            && keep_tail == 0
         {
             // This is the most recent message and we're preserving it by adding a fresh copy
             MessageMetadata::invisible()
@@ -172,9 +197,24 @@ pub async fn compact_messages(
     let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
     final_messages.extend(merged_continuation);
 
+    // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
+    // early conversation, then the last turns exactly as they happened" — same shape as the
+    // preserved-user mechanism, generalized to tool content.
+    for msg in &messages[cut..] {
+        final_messages.push(msg.clone().with_metadata(MessageMetadata::agent_only()));
+    }
+
+    // With a kept tail, the most recent user text is usually INSIDE it already — appending the
+    // preserved copy too would duplicate the instruction the model most attends to.
+    let preserved_in_tail = keep_tail > 0
+        && messages[cut..]
+            .iter()
+            .any(|m| matches!(m.role, rmcp::model::Role::User) && has_text_only(m));
     if let Some(user_msg) = preserved_user_message {
-        if let Some(text) = extract_text(&user_msg) {
-            final_messages.push(Message::user().with_text(&text));
+        if !preserved_in_tail {
+            if let Some(text) = extract_text(&user_msg) {
+                final_messages.push(Message::user().with_text(&text));
+            }
         }
     }
 
