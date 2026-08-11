@@ -3496,18 +3496,21 @@ fn scout_lookup(has_mcp: bool, has_docs: bool) -> ScoutLookup {
 fn doc_examples(text: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     let mut rest = text;
-    while let Some(open) = rest.find("```") {
-        let after = &rest[open + 3..];
-        let Some(nl) = after.find('\n') else { break };
-        let body_start = nl + 1;
-        let Some(close) = after[body_start..].find("```") else {
+    // split_once instead of find()+manual byte slicing: same walk (opening fence -> skip the
+    // language line -> take up to the closing fence -> continue after it), with no string indexing
+    // for clippy to flag and no offset arithmetic to get wrong.
+    while let Some((_, after_fence)) = rest.split_once("```") {
+        let Some((_, after_lang)) = after_fence.split_once('\n') else {
             break;
         };
-        let block = after[body_start..body_start + close].trim_end();
+        let Some((block, tail)) = after_lang.split_once("```") else {
+            break;
+        };
+        let block = block.trim_end();
         if !block.trim().is_empty() {
             out.push(block);
         }
-        rest = &after[body_start + close + 3..];
+        rest = tail;
     }
     if out.is_empty() {
         return text.to_string();
@@ -12789,6 +12792,12 @@ pub struct GooseAgentDispatcher {
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
     sink_review_findings: Mutex<Vec<String>>,
+    /// Q2 pre-review rotation: which REVIEW_DIMENSIONS brief the NEXT pre-review runs. Pre-review is the
+    /// one idle mechanism that scales with the fleet (measured 2.0x/run at one node vs 10.2x at three,
+    /// F670) and its prompt asked for exactly TWO defect classes — neither of them the Tier-B behaviour
+    /// classes that are half of every score lost. The five dimension briefs already existed, wired only
+    /// into the never-run sink_review path; rotating them here points the scaling mechanism at the loss.
+    prereview_dim: std::sync::atomic::AtomicUsize,
     /// WHY the spec-clarity probe last returned None — "timeout" / "no_final_output" / "unparseable" /
     /// "agent_error: …". `None` means it succeeded (or never ran).
     ///
@@ -12911,6 +12920,7 @@ impl GooseAgentDispatcher {
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
+            prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             clarity_fail: Mutex::new(None),
             spec_frozen: Mutex::new(String::new()),
             owner_snapshots: Mutex::new(HashMap::new()),
@@ -19885,15 +19895,59 @@ impl PreReviewer for GooseAgentDispatcher {
         if files_block.is_empty() {
             return none; // nothing on disk to review
         }
-        let system = "You CORRECTNESS-review one COMPLETED subtask of a larger build, BEFORE final \
-            integration, on a spare node. A passing test suite does NOT prove correctness: the deepest \
-            failure mode is code whose DEFAULT/primary path produces WRONG output (wrong constants/params) \
-            or a spec deliverable that is built but never WIRED into the program's entry point. Read the \
-            files against the GOAL and the subtask, and find ANY concrete defect of that kind. Reply with \
-            EXACTLY one line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable \
-            corrections (what is wrong + which file), empty when OK. Be conservative — only ISSUES when you \
-            can point to a real defect."
-            .to_string();
+        // Q2 RE-AIM: rotate the five REVIEW_DIMENSIONS briefs instead of hard-coding two of them.
+        // The old prompt asked for exactly `correctness` + `wiring` — real classes, but neither is
+        // pagination, totals, UTC bounds, input validation or interface drift, i.e. the Tier-B
+        // behaviour classes measured as HALF of every score lost. The briefs for those already
+        // existed and were reachable only through the never-run sink_review path. Pre-review fires
+        // ~10x per 3-node run (the ONLY idle mechanism that scales with the fleet), so the rotation
+        // covers every dimension twice per run where the old prompt covered two classes ten times.
+        // GOOSE_SWARM_PREREVIEW_DIMS=0 restores the legacy two-class prompt verbatim.
+        // swarm_gate_cfg, NOT swarm_gate: the second arg there is assured-bundle membership, so
+        // `true` would mean "on only under GOOSE_SWARM_ASSURED" — a silent default-OFF, the exact
+        // stale-config-key class that reverted the repair-budget fix (34359b8b7). Here `true` is a
+        // real default with the env var as the escape hatch.
+        let dims_on = swarm_gate_cfg("GOOSE_SWARM_PREREVIEW_DIMS", true);
+        let (dim_id, system) = if dims_on {
+            let i = self
+                .prereview_dim
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dim = &REVIEW_DIMENSIONS[i % REVIEW_DIMENSIONS.len()];
+            // The domain lens is only as good as the ground truth it checks against — same
+            // injection the sink_review path documents (a 27B given the list flagged cronmate's
+            // exact dow off-by-one; without it the lens re-derives the code's own wrong convention).
+            let pitfalls = if dim.id == "domain-conventions" {
+                format!("\n\nKNOWN-CORRECT CONVENTIONS to check against:\n{DOMAIN_PITFALLS}")
+            } else {
+                String::new()
+            };
+            (
+                dim.id,
+                format!(
+                    "You review one COMPLETED subtask of a larger build, BEFORE final integration, on a \
+                     spare node, along ONE dimension: {brief}{pitfalls}\n\nA passing test suite does NOT \
+                     prove this dimension holds. Read the files against the GOAL and the subtask, and find \
+                     ANY concrete defect of that kind. Reply with EXACTLY one line `STATUS|findings`: \
+                     STATUS is OK or ISSUES; findings = specific, actionable corrections (what is wrong + \
+                     which file), empty when OK. Be conservative — only ISSUES when you can point to a \
+                     real defect.",
+                    brief = dim.brief,
+                ),
+            )
+        } else {
+            (
+                "legacy",
+                "You CORRECTNESS-review one COMPLETED subtask of a larger build, BEFORE final \
+                 integration, on a spare node. A passing test suite does NOT prove correctness: the deepest \
+                 failure mode is code whose DEFAULT/primary path produces WRONG output (wrong constants/params) \
+                 or a spec deliverable that is built but never WIRED into the program's entry point. Read the \
+                 files against the GOAL and the subtask, and find ANY concrete defect of that kind. Reply with \
+                 EXACTLY one line `STATUS|findings`: STATUS is OK or ISSUES; findings = specific, actionable \
+                 corrections (what is wrong + which file), empty when OK. Be conservative — only ISSUES when you \
+                 can point to a real defect."
+                    .to_string(),
+            )
+        };
         // GOOSE_SWARM_GOALS (part 5): let the correctness pre-review catch a concrete pillar violation
         // (wrong interface/command name, or a deliverable not wired to the pillar's entry) as an ISSUE.
         let pillars_block = if goals_enabled() {
@@ -19932,9 +19986,13 @@ impl PreReviewer for GooseAgentDispatcher {
             // Persist for integrate-verify to consume (M5 increment 2b wires the injection).
             let dir = cwd.join(".swarm").join("prereview");
             let _ = std::fs::create_dir_all(&dir);
+            // `dimension` is provenance for the finding's whole downstream life: the sink's
+            // injection, the expiry/dedup work, and every analysis that asks WHICH lens finds
+            // real defects — a question that was unanswerable while all findings looked alike.
             let _ = std::fs::write(
                 dir.join(format!("{}.json", req.task_id)),
-                serde_json::json!({"task_id": req.task_id, "findings": findings}).to_string(),
+                serde_json::json!({"task_id": req.task_id, "findings": findings, "dimension": dim_id})
+                    .to_string(),
             );
         }
         PreReviewOutput {
