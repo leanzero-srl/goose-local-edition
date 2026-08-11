@@ -10522,6 +10522,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn a_fix_shard_promotes_only_a_verified_strictly_better_tree() {
+        // S1 increment 2: the per-shard promote rule is pick_repair_winner's, per shard.
+        assert!(shard_beats_baseline(Some(3), 5));
+        assert!(
+            !shard_beats_baseline(Some(5), 5),
+            "equal is not an improvement — a traded finding must not overwrite the tree"
+        );
+        assert!(
+            !shard_beats_baseline(Some(7), 5),
+            "a regression never lands"
+        );
+        assert!(
+            !shard_beats_baseline(None, 5),
+            "an unverifiable shadow is UNKNOWN, never clean — the vacuous-pass trap"
+        );
+        assert!(!shard_beats_baseline(Some(0), 0));
+    }
+
+    #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
             "tests/test_a.py:5: in test_x\n    assert foo() == 1\nE   AssertionError".to_string(),
@@ -24717,6 +24736,17 @@ fn prefer_shard_over_race(shard_on: bool, distinct_file_groups: usize) -> bool {
     shard_on && distinct_file_groups >= 2
 }
 
+/// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
+/// `pick_repair_winner`, per shard: `None` (no shadow, or the gate could not run there) is
+/// UNKNOWN and never promotes — scoring it as clean would land an unchecked tree on the real
+/// app, the vacuous-pass trap. Equal-to-baseline promotes nothing either: an unimproved tree
+/// gains nothing and still risks cross-shard interaction. Shards own disjoint single files,
+/// so each promote decision is independent and their compositions are re-judged at the loop
+/// head by the same gate.
+fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
+    verified.is_some_and(|v| v < baseline)
+}
+
 fn spec_repair() -> bool {
     std::env::var("GOOSE_SWARM_SPEC_REPAIR")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
@@ -28138,12 +28168,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     unassigned.len()
                 );
                 if !groups.is_empty() {
+                    let baseline = verdict.findings.len();
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
                     let dev = dev_id.clone();
                     // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
                     let decisions = user_decisions.clone();
                     let facts = doc_facts.clone();
+                    let sink_r = sink.clone();
                     let summaries =
                         fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
                             let me = me.clone();
@@ -28151,13 +28183,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             let dev = dev.clone();
                             let decisions = decisions.clone();
                             let facts = facts.clone();
+                            let sink_r = sink_r.clone();
                             async move {
                                 let task_id = format!("complete-fix::{}", g.file);
+                                sink_r.write_value(serde_json::json!({
+                                    "event": "complete_fix_dispatched",
+                                    "round": round, "shard": g.file, "model": model,
+                                    "task_id": task_id, "baseline_findings": baseline,
+                                }));
+                                let started = std::time::Instant::now();
                                 let req = DispatchRequest {
                                     task_id: task_id.clone(),
                                     description: smoke_fix_description(&g.findings, complete_lang),
                                     device_id: dev,
-                                    model_id: model,
+                                    model_id: model.clone(),
                                     context_slice: String::new(),
                                     attempt: round,
                                     owned_files: vec![g.file.clone()],
@@ -28181,27 +28220,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // to 120..=3600. Same default, same purpose, and only one of them
                                 // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
                                 // path and silently left the fanned path at 20 minutes.
-                                match tokio::time::timeout(
+                                let ran = tokio::time::timeout(
                                     std::time::Duration::from_secs(fix_cap_secs()),
                                     me.run(req),
                                 )
-                                .await
-                                {
-                                    Ok(Ok(o)) => {
-                                        // Fixed in the shadow -> copy ONLY this shard's owned file to real.
-                                        me.promote_speculative(&task_id).await;
-                                        format!(
-                                            "{}: {}",
-                                            g.file,
-                                            o.output.lines().next().unwrap_or("fixed")
-                                        )
+                                .await;
+                                // GRADE THE TREE, NOT THE AGENT'S EXIT — the twin race's rule, for the
+                                // same measured reasons: a shard killed at the cap may still hold the
+                                // fix in its shadow, and an agent's "done" may not survive the gate.
+                                // Promoting on `Ok(Ok(_))` alone (what this branch did before) lands
+                                // whatever the agent claims, unverified, on the real tree. The shard
+                                // owns ONE file and the worker is pinned to it (single_owned_file), so
+                                // the shadow's gate verdict is what a promote would produce for real.
+                                let verified = match me.speculative_root(&task_id) {
+                                    Some(root) => {
+                                        let gate = run_smoke_gate(&root, complete_lang).await;
+                                        if gate.ran {
+                                            Some(gate.findings.len())
+                                        } else {
+                                            None
+                                        }
                                     }
-                                    _ => {
-                                        // Errored/timed out -> drop the shadow; its edits never reach real.
-                                        me.discard_speculative(&task_id).await;
-                                        format!("{}: (fix timed out or errored)", g.file)
-                                    }
+                                    None => None,
+                                };
+                                let promoted = shard_beats_baseline(verified, baseline);
+                                if promoted {
+                                    me.promote_speculative(&task_id).await;
+                                } else {
+                                    me.discard_speculative(&task_id).await;
                                 }
+                                sink_r.write_value(serde_json::json!({
+                                    "event": "complete_fix_completed",
+                                    "round": round, "shard": g.file, "model": model,
+                                    "secs": started.elapsed().as_secs(),
+                                    "agent_ok": matches!(ran, Ok(Ok(_))),
+                                    "verified_findings": verified,
+                                    "baseline_findings": baseline,
+                                    "promoted": promoted,
+                                }));
+                                promoted
                             }
                         })
                         .await;
@@ -28209,6 +28266,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "event": "complete_fix_wave",
                         "round": round,
                         "shards": summaries.len(),
+                        "promoted": summaries.iter().filter(|p| **p).count(),
                         "unassigned": unassigned.len(),
                     }));
                 }
