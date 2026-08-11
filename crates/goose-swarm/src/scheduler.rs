@@ -937,13 +937,14 @@ impl State {
         let deps = self.dag.tasks[&tid].spec.deps.clone();
         let neighborhood = self.neighborhood_of(&tid, &deps);
         let slice = self.ctx.slice_for(&deps);
-        let (files, description, attempt) = {
+        let (files, description, attempt, subsplit) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
             n.state = TaskState::Claimed;
             (
                 n.spec.owned_files.clone(),
                 n.spec.description.clone(),
                 n.attempts,
+                n.spec.subsplit.clone(),
             )
         };
         for f in &files {
@@ -1017,6 +1018,7 @@ impl State {
                 owned_files,
                 all_files,
                 prior_hint,
+                subsplit,
                 speculative: false,
                 // The user's own words reach a worker for the first time here. Every other channel the
                 // engine claimed (research_findings, the amended spec) is planner-side only.
@@ -1652,6 +1654,7 @@ impl State {
             owned_files,
             all_files,
             prior_hint: None,
+            subsplit: Vec::new(),
             speculative: true,
             user_decisions: self.user_decisions.clone(),
             doc_facts: self.doc_facts.clone(),

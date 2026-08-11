@@ -28651,6 +28651,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 owned_files: all_files.clone(),
                                 all_files: all_files.clone(),
                                 prior_hint: None,
+                                subsplit: Vec::new(),
                                 speculative: true,
                                 user_decisions: decisions,
                                 doc_facts: facts,
@@ -28773,6 +28774,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     owned_files: vec![g.file.clone()],
                                     all_files,
                                     prior_hint: None,
+                                    subsplit: Vec::new(),
                                     // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
                                     // concurrent fix agents can never write the real tree at once. On success
                                     // ONLY this shard's owned file is promoted back — and the file-groups are a
@@ -28879,6 +28881,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         owned_files: smoke_all_files.clone(),
                         all_files: smoke_all_files.clone(),
                         prior_hint: None,
+                        subsplit: Vec::new(),
                         speculative: true,
                         // A FIX worker must honour the user's choices too — a fix that re-introduces
                         // `Decimal` after the user chose integer cents is still wrong.
@@ -28933,6 +28936,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
+                    subsplit: Vec::new(),
                     speculative: false,
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
@@ -29142,6 +29146,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
+                    subsplit: Vec::new(),
                     speculative: false,
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
@@ -29349,6 +29354,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
                     prior_hint: None,
+                    subsplit: Vec::new(),
                     speculative: false,
                     // A FIX worker must honour the user's choices too — a fix that re-introduces
                     // `Decimal` after the user chose integer cents is still wrong.
