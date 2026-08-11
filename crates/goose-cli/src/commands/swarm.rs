@@ -10522,6 +10522,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn generated_tests_come_from_the_largest_fence_and_must_contain_a_test() {
+        // The deliverable block wins over a small illustrative fence.
+        let reply = "Here is an example:\n```python\nx = 1\n```\nAnd the tests:\n```python\nimport pytest\n\ndef test_cursor_pagination():\n    assert paginate([], None) == []\n\ndef test_total_is_documented():\n    assert total({}) == 0\n```\nDone.";
+        let got = extract_generated_tests(reply).unwrap();
+        assert!(got.starts_with("import pytest"));
+        assert!(got.contains("def test_total_is_documented"));
+        // A big fence with NO test function is not a test file.
+        assert_eq!(
+            extract_generated_tests("```python\nprint('hello world, this is long')\n```"),
+            None
+        );
+        // No fence at all: raw prose never lands, even when it mentions def test_.
+        assert_eq!(extract_generated_tests("def test_x(): pass"), None);
+        // Unclosed fence: nothing landable.
+        assert_eq!(
+            extract_generated_tests("```python\ndef test_x(): pass"),
+            None
+        );
+        // Untagged fences count too — the 27B frequently omits the language tag.
+        assert!(extract_generated_tests("```\ndef test_y():\n    assert True\n```").is_some());
+    }
+
+    #[test]
     fn a_fix_shard_promotes_only_a_verified_strictly_better_tree() {
         // S1 increment 2: the per-shard promote rule is pick_repair_winner's, per shard.
         assert!(shard_beats_baseline(Some(3), 5));
@@ -24772,6 +24795,82 @@ fn pick_repair_winner(
         .filter(|(n, _, _)| *n < baseline)
         .min_by_key(|(n, i, _)| (*n, *i))
         .map(|(n, _, t)| (n, t))
+}
+
+/// S7: idle slots generate contract-derived tests (GOOSE_SWARM_TESTGEN, default OFF — an arm,
+/// not a silent flip; the baseline must not shift underneath the campaign). Replaces the
+/// never-fired speculative-twin rung as the idle-slot filler with the one job that has ZERO
+/// merge surface: new pytest files in their own directory, auto-collected, generated from the
+/// FROZEN CONTRACTS and spec — never from the code, so a test cannot cement the code's own bug.
+// dead_code: S7 increment 1 lands the deterministic half; increment 2 (the scheduler picker +
+// drain wiring, next commit) is the caller and removes these allows.
+#[allow(dead_code)]
+fn testgen_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_TESTGEN")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Pure: the test body inside a model reply. Takes the LARGEST fenced code block (prose replies
+/// carry small illustrative fences; the deliverable is the big one) and requires a `def test_`
+/// inside it — a block without a single test function is not a test file, whatever the model
+/// says around it. None means the reply carried nothing landable, which the caller records
+/// rather than papering over. Split on the fence marker: parts at odd indices are fence bodies,
+/// and a body is CLOSED only when another part follows it — a trailing unterminated fence is
+/// dropped, never landed half-open.
+#[allow(dead_code)]
+fn extract_generated_tests(reply: &str) -> Option<String> {
+    let parts: Vec<&str> = reply.split("```").collect();
+    parts
+        .iter()
+        .enumerate()
+        .skip(1)
+        .step_by(2)
+        .filter(|(i, _)| *i < parts.len() - 1)
+        .map(|(_, fence)| fence.split_once('\n').map(|(_, body)| body).unwrap_or(""))
+        .filter(|b| b.contains("def test_"))
+        .max_by_key(|b| b.len())
+        .map(|b| b.trim().to_string())
+}
+
+/// Land a generated test body only if pytest can COLLECT it from the tree root — a SyntaxError
+/// or bad-import test file is worse than none (it breaks the whole suite the deterministic gate
+/// runs). On any failure the file is removed again and the reason returned, so the caller can
+/// emit an honest event instead of a landed-looking no-op.
+#[allow(dead_code)]
+async fn land_generated_tests(
+    root: &std::path::Path,
+    body: &str,
+    seq: usize,
+) -> Result<String, String> {
+    let rel = format!("tests/generated/test_gen_{seq}.py");
+    let abs = root.join(&rel);
+    if let Some(dir) = abs.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&abs, body).map_err(|e| e.to_string())?;
+    let collect = tokio::process::Command::new("python3")
+        .args(["-m", "pytest", "--collect-only", "-q", &rel])
+        .current_dir(root)
+        .output()
+        .await;
+    let ok = collect.as_ref().is_ok_and(|o| o.status.success());
+    if ok {
+        Ok(rel)
+    } else {
+        let why = match &collect {
+            Ok(o) => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .chain(String::from_utf8_lossy(&o.stderr).lines())
+                .filter(|l| !l.trim().is_empty())
+                .last()
+                .unwrap_or("collection failed")
+                .to_string(),
+            Err(e) => e.to_string(),
+        };
+        let _ = std::fs::remove_file(&abs);
+        Err(why)
+    }
 }
 
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
