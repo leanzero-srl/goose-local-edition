@@ -599,6 +599,23 @@ ARMS = [
                 "shard_beats_baseline (pinned by test).",
     },
     {
+        "name": "testgen",
+        "env": {"GOOSE_SWARM_TESTGEN": "1"},
+        "gate": "S7 (S7-DESIGN.md): idle slots generate contract-derived pytest files — the one "
+                "idle job with ZERO merge surface, replacing the never-fired speculative-twin rung "
+                "(Speculated: 0 in 75+ logs). Tests come from the FROZEN CONTRACTS + goal, never "
+                "the code (a code-derived test cements the code's own bug); landing requires "
+                "pytest --collect-only to pass from the tree root, else the file is removed. "
+                "MECHANISM, n=1: testgen{landed} with tests/generated/test_gen_*.py in the unit "
+                "tree; testgen{reason} rows are the honest misses (no contracts, no fence, "
+                "collection failure) — count both. CAP: 3/run, claimed like every idle job "
+                "(never the last free slot). QUALITY: do the landed tests FAIL anything the "
+                "suite passed — a generated test that fails a green build is either the "
+                "cross-execution currency working or an undocumented-value assertion; read the "
+                "failure before crediting it. FALSIFIER: stable-24 below the baseline spread "
+                "reverts the arm; landed=0 across the unit means the mechanism examined nothing.",
+    },
+    {
         "name": "doc_examples",
         "env": {"GOOSE_SWARM_DOC_FETCH": "1", "GOOSE_SWARM_DOC_EXAMPLES": "1"},
         "gate": "THE THIRD DELIVERY MECHANISM, and the parked doc_fetch entry asked for exactly this "
@@ -647,6 +664,8 @@ QUESTIONS: list[dict] = [
      "asks": "whether cutting the invisible end-of-turn 27B summarization calls (up to 10 serialized "
              "per long worker) buys measurable wall at no stable-24 cost, now that K4's keep-tail "
              "carries the recent turns verbatim through compaction."},
+    {"arm": "testgen", "nodes": 3, "reps": 1,
+     "note": "S7 mechanism probe — testgen{landed} + generated files + stable-24 guard"},
     {"arm": "sink_shard", "nodes": 3, "reps": 1,
      "asks": "whether sharding a multi-file repair round by the existing file partition lands the "
              "substance two monolithic race waves could not — read complete_fix_wave{shards>=2} "
