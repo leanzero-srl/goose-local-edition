@@ -56,3 +56,46 @@ Registered checks: MECHANISM n=1 — a hard single-file task's detail_completed 
 subsplit>=2. INERTNESS — with no consumer wired, run behaviour is byte-identical (the readout
 is the event field only); any wall/score movement on the landing boundary indicts the prompt
 change, not the latent list, and reverts it.
+
+## Increment 3 — the fill fan (designed 2026-08-12; implementation next)
+
+The dispatcher-internal shape — the SCHEDULER SEES ONE TASK, unchanged. When the worker
+dispatch site receives a Ready task that is Hard, owns exactly one .py file, and carries
+subsplit>=2 (after contract anchoring), the DISPATCHER fans instead of running one agent:
+
+0. GATE: GOOSE_SWARM_FILL_FAN, default OFF, an arm. Any precondition failing → the existing
+   serial path byte-identically.
+1. ANCHOR: parse the module's `### module: <id>` stub section (the same text every worker
+   prompt gets); subsplit names not present as top-level defs in the stub are dropped; <2
+   survivors → serial path. The stub also becomes the SKELETON: it is contract text that
+   already had to parse (drop_unparseable_stubs guarantees the section survived validation),
+   so writing it to the owned file with `raise NotImplementedError` bodies is DETERMINISTIC —
+   zero model calls, and the skeleton is BY CONSTRUCTION the contract the siblings import.
+2. FAN: one filler per surviving slot name via fanout_over_fleet (its queue already respects
+   the 2/node ceiling), each speculative:true rooted at a shadow of the skeleton tree, each
+   prompt: "implement ONLY <slot>; every other def stays exactly as given" — the fence makes
+   that instruction ENFORCED, not hoped.
+3. SPLICE on each completion: splice_functions(current, root=skeleton, shadow, [slot]).
+   Refusal → discard that shadow, log it; the slot keeps its NotImplementedError body and the
+   run's own verify/fix chain owns it from there (monotone: landed fills never revert).
+4. COMPLETE: task Done when every filler resolved. All-refused/all-failed → ONE serial rescue
+   attempt on the skeleton (the current path, warm), so the fan can never do worse than a
+   delayed serial run.
+
+Events: `fill_fan{task_id, slots, spliced, refused, secs}` per round + per-fill
+`fill_completed{slot, spliced, refusal}`.
+
+Registered checks (before the arm runs):
+- MECHANISM n=1: fill_fan{slots>=2} with spliced>=1 on a hard module; the module file parses
+  after every splice (py_module_spans is called inside splice_functions — refusal is the check).
+- SAFETY: zero ShadowTouchedForeignSlot promotes (the fence holds); a slot refused never
+  leaves partial foreign bytes on the real tree.
+- WALL: p90 hard-module task time vs the corpus p90 (1,522s); the design's claim is ~655s
+  three-way — anything above the serial median kills the arm on speed alone.
+- QUALITY GATE: stable-24 not below the pre-arm mean − spread.
+
+Confidence note (flagged per the standing rule): the skeleton-write step and the fence are
+HIGH confidence (deterministic, tested); the fan's completion semantics inside the dispatcher
+run path is MEDIUM — the dispatcher's run() contract (one agent, one outcome) gets an internal
+fan and the timeout/retry interaction there is where a subtle bug could hide. The
+implementation tick starts by reading run()'s retry/timeout callers before touching anything.
