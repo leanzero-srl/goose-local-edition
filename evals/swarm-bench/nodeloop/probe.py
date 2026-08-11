@@ -45,8 +45,14 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "GOOSE_SWARM_SINK_SHARD": "S1i1 — multi-file repair rounds shard instead of racing monoliths",
+    "must carry a UTC designator": "Q2b2 — documented-UTC values without Z/+00:00 become findings",
 }
+# Literal-LESS in this batch, verified BEHAVIOURALLY on the first post-rebuild run: 4bb2b1ac7
+# difficulty on task_dispatched (the bare words "difficulty"/"easy"/"hard" cannot attribute in a
+# 236 MB binary — check = task_dispatched events carry the key, then A2 becomes a log lookup);
+# a7a4e6ee7 S1i2 shard verify-before-promote (its new json keys "shard"/"promoted" are reused
+# words — check = complete_fix_completed carrying BOTH shard and promoted on a sink_shard round,
+# and complete_fix_wave reporting promoted counts).
 # Literal-LESS changes in the same pending batch, each verified BEHAVIOURALLY on the first
 # post-rebuild run instead (recorded so the gap is deliberate): A2 hard_device_key (private fn,
 # invisible to strings; check = no hard task on a busy device while another idles), A3 idle-job
@@ -72,6 +78,8 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # GRADUATED from NEW after the 2026-08-11 22:13 rebuild (watched flipping absent -> present):
+    "GOOSE_SWARM_SINK_SHARD": "S1i1 — landed 2026-08-11",
     # GRADUATED from NEW after the 2026-08-11 17:49 rebuild (watched flipping absent -> present):
     "probed_post": "F751 — landed 2026-08-11",
     "straggler_deferred": "B5 — landed 2026-08-11",

@@ -1,10 +1,11 @@
 {
-  "mtime": 1786469784.6771195,
-  "size": 235743344,
+  "mtime": 1786475634.2918646,
+  "size": 235975200,
   "new": {
-    "GOOSE_SWARM_SINK_SHARD": false
+    "must carry a UTC designator": false
   },
   "controls": {
+    "GOOSE_SWARM_SINK_SHARD": true,
     "probed_post": true,
     "straggler_deferred": true,
     "CONTRACT UNAVAILABLE": true,
