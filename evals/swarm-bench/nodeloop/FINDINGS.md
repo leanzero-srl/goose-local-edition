@@ -17918,3 +17918,27 @@ honestly REFUSED green — the smoke gate the twins verify against does not meas
 behaviour the round exists to fix. Both honest-machinery claims confirmed; the budget default
 raised to 3000 in the held batch. The substance readout (does a full-budget twin implement
 per-page ETags?) belongs to the next unit.
+
+## F755b — the probe_post arm's full readout: 0.6236, honest red, every new mechanism observed
+
+`probe_post-n3-r0` (recovered from loop.log after a STOP-path slip nearly let the next unit
+overwrite the reused entrant dir — my own absolute-paths violation, not the sweep's trap):
+
+    score 0.6236   pool 3/3   void False   147 min   prefix 1358s / plan 974s / redraft 0
+
+Observed on this one unit, each previously registered: B5's `straggler_deferred: true` with
+`straggler_aborted: 0` (the full pool was awaited below the floor — and redraft 0 followed);
+Q2's `probed_post: 1` with the NotCheap rank-1 finding CAUGHT, blocking green through THREE
+verify rounds; `complete_result{passed:false, verified:false}` — the engine shipped an honest
+red rather than a false green; spec_repair raced 3+3 twins, promoted only re-verified-clean
+trees, and a killed twin's partial tree was the round-0 survivor exactly as the
+grade-the-tree design intends.
+
+## F756b — CORRECTION to F756: 1200 is the designed per-fix budget; my raise was a misread
+
+The invariant test `complete_cap_fits_its_own_rounds` refused the raise at the greengate:
+F432's 3000 went to the COMPLETE loop total, sized for TWO 1200s attempts. Reverted. What the
+two all-cap-death waves actually indict is the repair's SHAPE — one monolithic twin per model
+re-deriving context for 20 minutes — and the fixes with evidence are S1's file-sharded repair
+and the G-batch progress-shaped cap. F756's "stale sibling" framing is WITHDRAWN; the
+greengate catching it (second save today) is the finding.
