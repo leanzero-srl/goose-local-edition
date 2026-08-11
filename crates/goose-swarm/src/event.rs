@@ -19,6 +19,9 @@ pub enum SwarmEvent {
         /// Length of the task's own instruction. A split child inherits a 43-character stand-in
         /// while its parent spec averages 2514, and no archived run records which one a worker got.
         description_chars: usize,
+        /// The task's planned difficulty ("easy"/"hard"). A2's registered check — no hard task on
+        /// a busy device while another idles — was unanswerable from the log without it.
+        difficulty: String,
     },
     TaskCompleted {
         task_id: String,
