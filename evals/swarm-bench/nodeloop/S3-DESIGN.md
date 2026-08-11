@@ -124,3 +124,32 @@ scheduler state + pickers + resolution, one careful tick each:
   i3a: state maps + pick_fill_targets (claims, yields, caps) + tests on the pick logic.
   i3b: dispatch wiring in the drain + skeleton write at claim time.
   i3c: resolution + splice + events + serial rescue; arm added to sweep.py only then.
+
+## Increment 3 FINAL SHAPE (2026-08-12 01:45): DAG-native — i3 folds into S4's expand_subsplits
+
+Scheduler-side state maps (the previous correction) die on inspection too: per-slot twins
+racing a live primary co-write one real file (unsound — speculation survives only because
+promote happens after the loser is aborted), and replacing the primary at claim time needs
+multi-device claims that do_claim's one-task-one-device contract cannot express.
+
+The shape that needs NO new machinery: the fill fan is a TASK SPLIT whose children share a
+file. The engine already has deterministic DAG splitting (splice_specs); the only thing it
+forbids is shared write ownership — and shadows+splice is exactly the tool that makes shared
+ownership safe. So:
+
+    module-task (hard, subsplit>=2, contract stub parses)
+      ⇒ expand_subsplits post-pass rewrites it into:
+         skeleton::<M>   — deterministic dispatcher step: write skeleton_from_stub to the file
+         fill::<M>::<slot> × N — each depends on skeleton::<M>, runs speculative (shadow),
+                                 prompt = implement ONLY <slot>
+         join::<M>       — depends on all fills; deterministic dispatcher step: splice each
+                           shadow via splice_functions(current, skeleton, shadow, [slot]),
+                           discard refusals, serial-rescue if all refused
+
+Everything rides existing rails: pick_assignments places fills like any tasks (capacity truth,
+2/node ceiling, A2/A3 respected for free), retries/events/occupancy come built-in, and the
+disjointness invariant is satisfied by construction because only skeleton:: and join:: ever
+touch the real file — fills own their shadows. Open design points for the implementation
+(deliberately deferred to a fresh session, not 2am work): virtual owned-file naming for fills
+(held_files keying), the two deterministic task kinds (dispatcher short-circuit, no model
+call), and split_generation bookkeeping. The a/b/c increments are superseded by this shape.
