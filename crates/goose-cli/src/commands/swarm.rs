@@ -8204,6 +8204,32 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn utc_bounds_fire_only_on_documented_naive_timestamps() {
+        // Q2(b2) both directions.
+        let row = "| `GET` | `/api/summary` | `{\"oldest\": <str>}` as RFC3339 **UTC** |";
+        assert!(spec_documents_utc(row, "/api/summary"));
+        assert!(
+            !spec_documents_utc(row, "/api/health"),
+            "only the advertising row's convention"
+        );
+        // A naive timestamp violates; Z and +00:00 pass; nulls and non-dates pass.
+        assert_eq!(
+            utc_bounds_violation(&serde_json::json!("2026-08-11T20:00:00")),
+            Some("2026-08-11T20:00:00".into())
+        );
+        assert_eq!(
+            utc_bounds_violation(&serde_json::json!("2026-08-11T20:00:00Z")),
+            None
+        );
+        assert_eq!(
+            utc_bounds_violation(&serde_json::json!("2026-08-11T20:00:00+00:00")),
+            None
+        );
+        assert_eq!(utc_bounds_violation(&serde_json::json!("EUR")), None);
+        assert_eq!(utc_bounds_violation(&serde_json::Value::Null), None);
+    }
+
+    #[test]
     fn spec_get_endpoints_does_not_scrape_across_a_backtick() {
         // The exact sentence from the real spec that produced "GET /`".
         let spec =
@@ -18167,6 +18193,47 @@ fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// Q2(b2): does the advertising row document RFC3339 UTC for this endpoint's timestamps? The
+/// residual Tier-B class once the sync works: summary bounds served as local time or naive
+/// strings score 0.75 while every probe passes on status and presence. Spec-derived and generic:
+/// fires only when the row's own text names the convention.
+fn spec_documents_utc(spec: &str, path: &str) -> bool {
+    let base = path.split('?').next().unwrap_or(path);
+    for line in spec.lines() {
+        if !line.trim_start().starts_with('|') {
+            continue;
+        }
+        let advertises = line.split('|').map(str::trim).any(|c| {
+            let c = c.trim_matches('`');
+            c.split(['?', '`', ' ']).next().unwrap_or("") == base && !base.is_empty()
+        });
+        if advertises && line.contains("RFC3339") && line.to_uppercase().contains("UTC") {
+            return true;
+        }
+    }
+    // The convention may live in prose near the table ("as RFC3339 **UTC**") — accept a
+    // spec-wide declaration only when the path's row exists at all (checked by the caller via
+    // documented keys), never invent one for an undocumented endpoint.
+    false
+}
+
+/// A documented-timestamp value violates RFC3339-UTC when it is date-shaped but carries no
+/// UTC designator. Non-date strings (currency codes, ids) and nulls pass — "or null" is legal.
+fn utc_bounds_violation(value: &serde_json::Value) -> Option<String> {
+    let s = value.as_str()?;
+    let date_shaped = s.len() >= 10
+        && s.as_bytes().get(4) == Some(&b'-')
+        && s.as_bytes().get(7) == Some(&b'-')
+        && s[..4].chars().all(|c| c.is_ascii_digit());
+    if !date_shaped {
+        return None;
+    }
+    if s.ends_with('Z') || s.ends_with("+00:00") {
+        return None;
+    }
+    Some(s.to_string())
+}
+
 /// Q2(c): what the POST's own response says it acquired — the max of its documented count-like
 /// fields. None when the body carries none of them (an app that reports nothing cannot be held to
 /// a persistence promise; the Unreadable arm already names that gap).
@@ -18604,6 +18671,21 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ));
+                        }
+                        // Q2(b2): when the row documents RFC3339 UTC, a date-shaped documented
+                        // value without a UTC designator is a finding naming key and value.
+                        if spec_documents_utc(spec, path) {
+                            for k in &documented {
+                                if let Some(bad) = v.get(k.as_str()).and_then(utc_bounds_violation)
+                                {
+                                    findings.push(format!(
+                                        "GET {path}'s `{k}` reads `{bad}` — the spec documents \
+                                         this endpoint's timestamps as RFC3339 UTC, so the value \
+                                         must carry a UTC designator (`Z` or `+00:00`). Convert at \
+                                         the boundary; never serve naive or local time."
+                                    ));
+                                }
+                            }
                         }
                     }
                     Err(_) => findings.push(format!(
