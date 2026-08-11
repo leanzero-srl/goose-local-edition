@@ -83,6 +83,11 @@ pub struct DispatchRequest {
     /// A corrective hint from the idle-model judge when this is a re-dispatch after the judge killed a
     /// prior attempt (e.g. "you were looping/over-reading — WRITE now"). `None` on a normal attempt.
     pub prior_hint: Option<String>,
+    /// S3 i3 (GOOSE_SWARM_FILL_FAN): the task's contract-anchored parallel-fill slots, carried
+    /// from TaskSpec.subsplit. Empty everywhere except a normal dispatch of a task whose spec
+    /// carries the detailer's SUBSPLIT line; the dispatcher fans fillers only when the gate is
+    /// on AND this has 2+ names that survive contract anchoring.
+    pub subsplit: Vec<String>,
     /// True when this is a SPECULATIVE twin of an in-flight chokepoint task, raced on an idle device
     /// (GOOSE_SWARM_SPECULATE). The dispatcher must run it in an ISOLATED shadow workspace so it never
     /// writes the real owned_files; the winner's output is promoted back. `false` for every normal task.
