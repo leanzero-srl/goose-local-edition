@@ -1,12 +1,14 @@
 {
-  "mtime": 1786481192.4212422,
-  "size": 235726944,
+  "mtime": 1786483621.3102422,
+  "size": 235942512,
   "new": {
-    "GOOSE_SWARM_TESTGEN": false,
-    "tests/generated/test_gen_": false,
-    "no landable fenced test block": false
+    "the shadow differs from its root outside its owned slots": false,
+    "SUBSPLIT:": false
   },
   "controls": {
+    "GOOSE_SWARM_TESTGEN": true,
+    "tests/generated/test_gen_": true,
+    "no landable fenced test block": true,
     "complete-fix::cross-file": true,
     "must carry a UTC designator": true,
     "GOOSE_SWARM_SINK_SHARD": true,

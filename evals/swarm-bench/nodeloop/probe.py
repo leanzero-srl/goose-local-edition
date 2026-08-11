@@ -44,11 +44,19 @@ BASELINE = HERE / "probe-baseline.json"
 # every subsequent run report it "present before AND after — vacuous", which is true, useless, and
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
-NEW = {
-    "GOOSE_SWARM_TESTGEN": "S7 — idle slots generate contract-derived tests (gate, default OFF)",
-    "tests/generated/test_gen_": "S7 — the landed-file path prefix (land_generated_tests)",
-    "no landable fenced test block": "S7 — the honest-miss reason string (extraction refused)",
-}
+NEW = {}
+# The 01:01 boundary's two chosen literals were BOTH unprobeable classes, found the hard way
+# (probe read STILL ABSENT while the live-path key `subsplit` count=1 proved the build carried
+# the edit — a false "rebuild did not carry" alarm from probe design, not from the build):
+#   - "the shadow differs from its root outside its owned slots" sits in #[allow(dead_code)]
+#     splice_functions: ZERO callers in release => the optimizer never codegens it, so NO
+#     literal inside dead-until-wired code can ever evidence a rebuild. Its evidence is the
+#     debug-build test suite (greengate runs the 5-way splice test).
+#   - "SUBSPLIT:" is 9 bytes inside strip_prefix: short literals get constant-folded into
+#     immediate comparisons and never reach .rodata. Prefer LONG live-path strings — json event
+#     keys, format strings — and verify a candidate with bytes.count() BEFORE trusting absence.
+# S3i2's landing IS verified: `subsplit` (the detail_completed event key, live path) reads
+# count=1 in the 01:01 binary and the string existed nowhere before these commits.
 # Literal-LESS in this batch, verified BEHAVIOURALLY on the first post-rebuild run: 4bb2b1ac7
 # difficulty on task_dispatched (the bare words "difficulty"/"easy"/"hard" cannot attribute in a
 # 236 MB binary — check = task_dispatched events carry the key, then A2 becomes a log lookup);
@@ -80,6 +88,12 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # Landed 2026-08-12 01:01 (verified by bytes.count after the false alarm above):
+    "subsplit": "S3i2 — the detail_completed event key, the live half of the latent decomposition",
+    # GRADUATED from NEW after the 2026-08-12 00:27 rebuild (watched flipping absent -> present):
+    "GOOSE_SWARM_TESTGEN": "S7 — landed 2026-08-12",
+    "tests/generated/test_gen_": "S7 — landed 2026-08-12",
+    "no landable fenced test block": "S7 — landed 2026-08-12",
     # GRADUATED from NEW after the 2026-08-11 23:46 rebuild (watched flipping absent -> present):
     "complete-fix::cross-file": "S1i3 — landed 2026-08-11",
     # GRADUATED from NEW after the 2026-08-11 23:30 rebuild (watched flipping absent -> present):
