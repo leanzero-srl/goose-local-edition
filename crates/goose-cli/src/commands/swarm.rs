@@ -20336,6 +20336,56 @@ impl PreReviewer for GooseAgentDispatcher {
             self.sink_review_findings.lock().unwrap().push(finding);
         }
     }
+
+    async fn generate_tests(&self, model_id: &str, goal: &str, seq: u32) {
+        // Contract-derived ONLY: the prompt sees the goal and the FROZEN interface bundle,
+        // never the produced code — a test written from the code can only cement the code's
+        // own bugs (AgentCoder's load-bearing choice, S7-DESIGN.md). No contracts yet means
+        // nothing worth testing against; the claim was still cheap (one scheduler tick).
+        let Some(bundle) = self.contracts.get().filter(|b| !b.trim().is_empty()) else {
+            self.events.write_value(serde_json::json!({
+                "event": "testgen",
+                "seq": seq, "model": model_id, "landed": Option::<String>::None,
+                "reason": "no frozen contracts on this run — generation skipped",
+            }));
+            return;
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let started = std::time::Instant::now();
+        let system = "You write ADDITIONAL pytest tests for a multi-module Python app, from its \
+                      interface contracts alone. You see the goal and the frozen module \
+                      signatures — NOT the implementation — so assert only what those two \
+                      guarantee: exact module/function/class names and signatures, documented \
+                      data shapes, values the goal itself states. Do NOT invent undocumented \
+                      values and do NOT assert internal implementation details. Reply with ONE \
+                      fenced python code block containing a complete pytest file: imports first, \
+                      then 3-5 focused test functions (def test_...). No prose outside the fence."
+            .to_string();
+        let user = format!(
+            "GOAL: {goal}\n{contracts}\nYour pytest file (one fenced block):",
+            contracts = frozen_interfaces_block(bundle)
+        );
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model_id, system, user, None, 2, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_default();
+        let landed = match extract_generated_tests(&reply) {
+            None => Err("no landable fenced test block in the reply".to_string()),
+            Some(body) => land_generated_tests(&cwd, &body, seq as usize).await,
+        };
+        self.events.write_value(serde_json::json!({
+            "event": "testgen",
+            "seq": seq, "model": model_id,
+            "secs": started.elapsed().as_secs(),
+            "landed": landed.as_ref().ok(),
+            "reason": landed.as_ref().err(),
+        }));
+    }
 }
 
 /// Embedded model-free AST wiring reviewer (GOOSE_SWARM_REVIEW). Parses the produced Python tree and
@@ -24807,7 +24857,6 @@ fn pick_repair_winner(
 /// rather than papering over. Split on the fence marker: parts at odd indices are fence bodies,
 /// and a body is CLOSED only when another part follows it — a trailing unterminated fence is
 /// dropped, never landed half-open.
-#[allow(dead_code)]
 fn extract_generated_tests(reply: &str) -> Option<String> {
     let parts: Vec<&str> = reply.split("```").collect();
     parts
@@ -24826,7 +24875,6 @@ fn extract_generated_tests(reply: &str) -> Option<String> {
 /// or bad-import test file is worse than none (it breaks the whole suite the deterministic gate
 /// runs). On any failure the file is removed again and the reason returned, so the caller can
 /// emit an honest event instead of a landed-looking no-op.
-#[allow(dead_code)]
 async fn land_generated_tests(
     root: &std::path::Path,
     body: &str,
