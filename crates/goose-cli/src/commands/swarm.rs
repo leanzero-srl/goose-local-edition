@@ -8437,9 +8437,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ]});
         let out = drop_unparseable_stubs(bundle.clone(), &validation);
         assert!(out.contains("### module: store"), "a good stub is kept");
+        // D1: the failed module's BODY must not be frozen as an interface — but the module may no
+        // longer vanish silently either. Its section becomes a MARKED absence that licenses one
+        // direct read (fired live: r2's `cli`, injected 3 of 4, with the banner still claiming the
+        // bundle was complete). Both properties pinned:
         assert!(
-            !out.contains("### module: cli"),
+            !out.contains("def main()"),
             "prose that does not parse must not be frozen as an interface"
+        );
+        assert!(
+            out.contains("### missing module: cli") && out.contains("CONTRACT UNAVAILABLE"),
+            "a failed stub must be a marked absence, never a silent hole: {out}"
         );
         // Validation absent (it did not run) => byte-identical, so the OFF path cannot change a run.
         assert_eq!(
@@ -19408,15 +19416,15 @@ fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> Str
             // injected 3 of 4). A stub DERIVED from plan prose was considered and rejected: under
             // a banner that says "build against these EXACTLY", a guessed signature is worse than
             // an honest gap. The marker states the gap and licenses the one read that closes it.
-            out.push_str("### module: ");
+            // "missing module", NOT "module": the caller counts `### module: ` sections to decide
+            // `frozen` and the module count — a marker matching that heading would make an all-bad
+            // bundle read frozen:true, the exact lie the count exists to prevent (its test pins 0).
+            out.push_str("### missing module: ");
             out.push_str(id);
             out.push_str(
-                "
-# CONTRACT UNAVAILABLE — this module's frozen stub failed to parse and is NOT                  shown.
-# Its real interface exists only in its source file. If you must call                  this module,
-# read that ONE file directly before writing the call — do NOT                  guess names or signatures.
-
-",
+                "\n# CONTRACT UNAVAILABLE — this module's frozen stub failed to parse and is NOT shown.\n\
+                 # Its real interface exists only in its source file. If you must call this module,\n\
+                 # read that ONE file directly before writing the call — do NOT guess names or signatures.\n\n",
             );
             continue;
         }
@@ -24575,16 +24583,18 @@ fn pick_repair_winner(
 /// next round's deterministic verify gates the (partial) result. GOOSE_SWARM_FIX_CAP_SECS overrides
 /// (default 1200 = 20min, matching the fleet-parallel fix path); clamped to 120..=3600.
 fn fix_cap_secs() -> u64 {
-    // 3000, matching the F432/F440 repair-budget raise. The raise landed on the complete loop's
-    // cap and this sibling default stayed 1200 — the stale-copy class 34359b8b7 documents —
-    // MEASURED: the first live spec_repair wave ran 3/3 twins into agent_ok:false at 1282-1320s,
-    // one or two build-test cycles on this fleet, and the round's only survivor was a killed
-    // twin's partial tree. F440 already established the raise is spiral-safe; the deeper fix
-    // (a progress-shaped cap on rounds-without-mutation) is the G-batch item, this unblocks now.
+    // 1200 is the DESIGNED per-fix budget, not a stale sibling: F432's raise went to the COMPLETE
+    // loop's total (default_complete_cap_secs = 3000), sized so TWO 1200s attempts fit — and the
+    // invariant test complete_cap_fits_its_own_rounds enforces exactly that geometry (an F756
+    // attempt to raise this to 3000 was caught BY that test at the greengate and is corrected
+    // here). What the first live waves actually showed — two full rounds of twins dying at this
+    // cap with the ETag findings unchanged — indicts the shape of the repair (one monolithic
+    // twin per model), not the constant: the S1 shard design and the G-batch progress-shaped cap
+    // (rounds-without-mutation) are the fixes with evidence behind them.
     std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(3000)
+        .unwrap_or(1200)
         .clamp(120, 3600)
 }
 
