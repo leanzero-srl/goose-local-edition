@@ -10522,6 +10522,52 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn splice_fills_owned_slots_and_refuses_every_foreign_touch() {
+        // S3's 5-way plan (S3-DESIGN.md), one composed skeleton, all directions.
+        let skeleton = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        // (1) Two fillers, disjoint slots: each edited ONLY its own body.
+        let fill_a = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let fill_b = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    return json.dumps([2])\n\n\ndef gamma():\n    return 3\n";
+        let after_a = splice_functions(skeleton, skeleton, fill_a, &["alpha".into()]).unwrap();
+        assert!(after_a.contains("return {\"a\": 1}"));
+        assert!(after_a.contains("def beta():\n    raise NotImplementedError"));
+        let done = splice_functions(&after_a, skeleton, fill_b, &["beta".into()]).unwrap();
+        assert!(done.contains("return {\"a\": 1}") && done.contains("json.dumps([2])"));
+        assert!(done.contains("def gamma():\n    return 3"));
+        // (2) A filler that ALSO edited a sibling's body: refused whole, tree untouched.
+        let overreach = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    return \"sneaky\"\n\n\ndef gamma():\n    return 3\n";
+        assert!(matches!(
+            splice_functions(skeleton, skeleton, overreach, &["alpha".into()]),
+            Err(SpliceRefusal::ShadowTouchedForeignSlot(_))
+        ));
+        // (3) A filler that deleted its own slot.
+        let deleted = "import json\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        assert!(matches!(
+            splice_functions(skeleton, skeleton, deleted, &["alpha".into()]),
+            Err(SpliceRefusal::SlotMissingInShadow(_))
+        ));
+        assert!(matches!(
+            splice_functions(skeleton, skeleton, fill_a, &["delta".into()]),
+            Err(SpliceRefusal::SlotMissingInSkeleton(_))
+        ));
+        // (4) Import ADD merges once and lands above the defs; import CONFLICT refuses.
+        let with_import = "import json\nimport hashlib\n\n\ndef alpha():\n    return hashlib.sha256(b\"x\").hexdigest()\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        let merged = splice_functions(skeleton, skeleton, with_import, &["alpha".into()]).unwrap();
+        assert_eq!(merged.matches("import hashlib").count(), 1);
+        assert!(merged.find("import hashlib").unwrap() < merged.find("def alpha").unwrap());
+        let conflict = "import json as j\n\n\ndef alpha():\n    return j.dumps(1)\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
+        assert!(matches!(
+            splice_functions(skeleton, skeleton, conflict, &["alpha".into()]),
+            Err(SpliceRefusal::ImportConflict(_))
+        ));
+        // (5) The composed module still parses (py_module_spans is the same validator the
+        // skeleton passed) and every skeleton def survives with its name.
+        let spans = py_module_spans(&done).unwrap();
+        let names: Vec<&str> = spans.defs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
     fn generated_tests_come_from_the_largest_fence_and_must_contain_a_test() {
         // The deliverable block wins over a small illustrative fence.
         let reply = "Here is an example:\n```python\nx = 1\n```\nAnd the tests:\n```python\nimport pytest\n\ndef test_cursor_pagination():\n    assert paginate([], None) == []\n\ndef test_total_is_documented():\n    assert total({}) == 0\n```\nDone.";
@@ -24910,6 +24956,221 @@ async fn land_generated_tests(
         let _ = std::fs::remove_file(&abs);
         Err(why)
     }
+}
+
+/// S3: why a splice was REFUSED. Refusal is a first-class outcome, never a panic — a refused
+/// splice falls back to the serial path with the tree untouched, which is always safe.
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)] // S3 increment 1: the pure helper + tests; increments 2-3 wire the callers.
+enum SpliceRefusal {
+    SlotMissingInShadow(String),
+    SlotMissingInSkeleton(String),
+    /// The byte-fence: the shadow differs from the skeleton OUTSIDE its owned slots (imports
+    /// excepted — those merge under their own rules). CooperBench's overlapping-write failure
+    /// mode, refused mechanically instead of trusted away.
+    ShadowTouchedForeignSlot(String),
+    /// Same bound name imported differently on the two sides — or a skeleton import the shadow
+    /// dropped. Either way the composed module's names would not mean what the contract meant.
+    ImportConflict(String),
+    Unparseable(&'static str),
+}
+
+/// A slot's (start, end) line range in one source — 1-based inclusive.
+type SlotSpan = (usize, usize);
+
+/// One top-level span (1-based inclusive line range) in a Python module.
+#[derive(serde::Deserialize)]
+struct PySpan {
+    name: String,
+    start: usize,
+    end: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct PySpans {
+    defs: Vec<PySpan>,
+    imports: Vec<PySpan>,
+}
+
+/// Top-level def/class + import spans via the interpreter's own ast (the drift checks' pattern:
+/// python3 is already a hard dependency of every Python-target run). Decorators are part of a
+/// def's span — a shadow that edits a sibling's decorator edited the sibling.
+#[allow(dead_code)] // S3 increment 1 (see SpliceRefusal).
+fn py_module_spans(src: &str) -> Option<PySpans> {
+    use std::io::Write;
+    let script = r#"
+import ast, json, sys
+src = sys.stdin.read()
+try:
+    tree = ast.parse(src)
+except SyntaxError:
+    print("PARSE_ERROR"); sys.exit(0)
+defs, imports = [], []
+for n in tree.body:
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        start = min([d.lineno for d in n.decorator_list] + [n.lineno])
+        defs.append({"name": n.name, "start": start, "end": n.end_lineno})
+    elif isinstance(n, (ast.Import, ast.ImportFrom)):
+        for a in n.names:
+            bound = a.asname or a.name.split(".")[0]
+            imports.append({"name": bound, "start": n.lineno, "end": n.end_lineno})
+print(json.dumps({"defs": defs, "imports": imports}))
+"#;
+    let mut child = std::process::Command::new("python3")
+        .args(["-c", script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(src.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() || text.trim() == "PARSE_ERROR" {
+        return None;
+    }
+    serde_json::from_str(text.trim()).ok()
+}
+
+/// S3's merge: the CURRENT module with ONLY the named slots' bodies replaced from one filler's
+/// shadow. The byte-fence compares the shadow against the ROOT it was fanned from — not against
+/// `current`, which other fillers' landed slots have already advanced (the first live test of
+/// the 3-arg version refused exactly that false positive). Everything outside the owned slots
+/// must be byte-identical between root and shadow (imports excepted: the shadow may ADD
+/// imports, deduped against BOTH root and current; same-name-different-text refuses). Splices
+/// apply in DESCENDING order so earlier line ranges stay valid; the composed module must itself
+/// parse or the whole splice refuses. For a single filler, `current == root`.
+#[allow(dead_code)] // S3 increment 1 (see SpliceRefusal).
+fn splice_functions(
+    current_src: &str,
+    root_src: &str,
+    shadow_src: &str,
+    slots: &[String],
+) -> Result<String, SpliceRefusal> {
+    let cur = py_module_spans(current_src).ok_or(SpliceRefusal::Unparseable("current"))?;
+    let root = py_module_spans(root_src).ok_or(SpliceRefusal::Unparseable("root"))?;
+    let shad = py_module_spans(shadow_src).ok_or(SpliceRefusal::Unparseable("shadow"))?;
+    let find = |spans: &[PySpan], name: &str| -> Option<(usize, usize)> {
+        spans
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| (s.start, s.end))
+    };
+    // Per slot: its span in all three sources. Missing in current/root is the skeleton side.
+    let mut owned: Vec<(SlotSpan, SlotSpan, SlotSpan)> = Vec::new();
+    for slot in slots {
+        let in_cur = find(&cur.defs, slot)
+            .ok_or_else(|| SpliceRefusal::SlotMissingInSkeleton(slot.clone()))?;
+        let in_root = find(&root.defs, slot)
+            .ok_or_else(|| SpliceRefusal::SlotMissingInSkeleton(slot.clone()))?;
+        let in_shad = find(&shad.defs, slot)
+            .ok_or_else(|| SpliceRefusal::SlotMissingInShadow(slot.clone()))?;
+        owned.push((in_cur, in_root, in_shad));
+    }
+    let cur_lines: Vec<&str> = current_src.lines().collect();
+    let root_lines: Vec<&str> = root_src.lines().collect();
+    let shad_lines: Vec<&str> = shadow_src.lines().collect();
+    // The byte-fence: strip owned slots AND all import lines from root and shadow, then the
+    // remainders must match exactly. Content comparison, not offsets — replaced bodies shift
+    // every line number below them, which is why spans cannot be compared directly.
+    let strip = |lines: &[&str], cut: &[(usize, usize)]| -> String {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let ln = i + 1;
+                !cut.iter().any(|(s, e)| ln >= *s && ln <= *e)
+            })
+            .map(|(_, l)| *l)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let root_cut: Vec<(usize, usize)> = owned
+        .iter()
+        .map(|(_, r, _)| *r)
+        .chain(root.imports.iter().map(|s| (s.start, s.end)))
+        .collect();
+    let shad_cut: Vec<(usize, usize)> = owned
+        .iter()
+        .map(|(_, _, h)| *h)
+        .chain(shad.imports.iter().map(|s| (s.start, s.end)))
+        .collect();
+    if strip(&root_lines, &root_cut) != strip(&shad_lines, &shad_cut) {
+        return Err(SpliceRefusal::ShadowTouchedForeignSlot(
+            "the shadow differs from its root outside its owned slots".to_string(),
+        ));
+    }
+    // Import rules: every root import must survive in the shadow with identical text (a dropped
+    // or re-aimed import changes what foreign code MEANS); shadow-only imports merge into
+    // current unless current already carries the name (identical text -> dedupe, different ->
+    // conflict: two fillers wanting the same name to mean different things).
+    let import_text = |lines: &[&str], span: &PySpan| -> String {
+        lines[span.start - 1..span.end.min(lines.len())]
+            .join("\n")
+            .trim()
+            .to_string()
+    };
+    for ri in &root.imports {
+        match shad.imports.iter().find(|x| x.name == ri.name) {
+            None => {
+                return Err(SpliceRefusal::ImportConflict(format!(
+                    "the shadow dropped root import `{}`",
+                    ri.name
+                )))
+            }
+            Some(xi) => {
+                if import_text(&root_lines, ri) != import_text(&shad_lines, xi) {
+                    return Err(SpliceRefusal::ImportConflict(format!(
+                        "`{}` is imported differently in shadow and root",
+                        ri.name
+                    )));
+                }
+            }
+        }
+    }
+    let mut added: Vec<String> = Vec::new();
+    for xi in shad
+        .imports
+        .iter()
+        .filter(|x| !root.imports.iter().any(|r| r.name == x.name))
+    {
+        let text = import_text(&shad_lines, xi);
+        match cur.imports.iter().find(|c| c.name == xi.name) {
+            None => added.push(text),
+            Some(ci) => {
+                if import_text(&cur_lines, ci) != text {
+                    return Err(SpliceRefusal::ImportConflict(format!(
+                        "`{}` already means something else in the composed module",
+                        xi.name
+                    )));
+                }
+            }
+        }
+    }
+    // Compose: slot replacements in DESCENDING current order (indices above stay valid), then
+    // added imports after the last CURRENT import (import lines sit above every def and are
+    // untouched by the splices below them).
+    let mut out: Vec<String> = cur_lines.iter().map(|l| l.to_string()).collect();
+    let mut by_desc = owned.clone();
+    by_desc.sort_by_key(|((s, _), _, _)| std::cmp::Reverse(*s));
+    for ((cs, ce), _, (hs, he)) in &by_desc {
+        let body: Vec<String> = shad_lines[hs - 1..*he]
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        out.splice(cs - 1..*ce, body);
+    }
+    if !added.is_empty() {
+        let at = cur.imports.iter().map(|s| s.end).max().unwrap_or(0);
+        for (k, line) in added.iter().enumerate() {
+            out.insert(at + k, line.clone());
+        }
+    }
+    let composed = out.join("\n") + "\n";
+    if py_module_spans(&composed).is_none() {
+        return Err(SpliceRefusal::Unparseable("composed"));
+    }
+    Ok(composed)
 }
 
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
