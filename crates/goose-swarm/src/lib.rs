@@ -26,5 +26,6 @@ pub use judge::{
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
-    sink_review_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler, TaskOutcome,
+    sink_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
+    Scheduler, TaskOutcome,
 };

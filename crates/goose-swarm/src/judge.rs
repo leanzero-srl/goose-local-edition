@@ -350,6 +350,12 @@ pub trait PreReviewer: Send + Sync {
     /// re-verify against the FINAL tree after the sink. Read-only (no tools) so it never races the sink's
     /// writes; a stale/torn read just yields a finding the post-sink re-verify refutes. Default no-op.
     async fn idle_dimension_review(&self, _model_id: &str, _goal: &str, _dim_index: usize) {}
+
+    /// S7 (GOOSE_SWARM_TESTGEN): generate 3-5 pytest functions from the FROZEN CONTRACTS + goal —
+    /// never from the code — into a NEW auto-collected file. The dispatcher side owns extraction
+    /// and the collect-only landing guard. Default no-op so mocks and thin implementors are
+    /// untouched.
+    async fn generate_tests(&self, _model_id: &str, _goal: &str, _seq: u32) {}
 }
 
 /// A verdict derivable from cheap, unambiguous signals alone — no model required. The scheduler trusts

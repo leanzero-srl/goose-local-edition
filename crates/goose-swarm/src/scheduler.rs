@@ -55,6 +55,21 @@ pub fn sink_review_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// The ONE resolution of GOOSE_SWARM_TESTGEN (S7): idle slots generate contract-derived tests.
+/// Default OFF — an arm, not a silent flip. Shared with goose-cli's dispatcher for the same
+/// reason as sink_review_enabled above: two halves reading different answers is the measured
+/// failure mode.
+pub fn testgen_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_TESTGEN")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn split_inherit_spec_enabled() -> bool {
     matches!(
         std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
@@ -528,6 +543,11 @@ struct Assignment {
 /// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
 const SPECULATION_CAP: u32 = 8;
 
+/// S7: total generated-test jobs per run. Each lands at most one new pytest file; 3 files of
+/// 3-5 functions is the design's own ask, and a cap keeps a long idle tail from burning
+/// unbounded generations on one app.
+const TESTGEN_CAP: u32 = 3;
+
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -630,6 +650,8 @@ struct State {
     spec_abort: HashMap<TaskId, tokio::task::AbortHandle>,
     speculating: HashSet<TaskId>,
     spec_count: u32,
+    /// S7 (GOOSE_SWARM_TESTGEN): generated-test jobs fired this run, capped at TESTGEN_CAP.
+    testgen_count: u32,
 }
 
 impl State {
@@ -1537,6 +1559,27 @@ impl State {
         self.idle_jobs += 1;
         self.devices[claimed_device].in_flight += 1;
         Some((model_id, dim, self.goal.clone(), claimed_device))
+    }
+
+    /// S7 (GOOSE_SWARM_TESTGEN): claim an idle device for one contract-derived test-generation
+    /// job. Fires only when at least one task is DONE — before that there is no agreed contract
+    /// worth testing against and the fan needs every slot. Mirrors pick_prereview's claim
+    /// discipline exactly (idle_jobs + in_flight, released by the IdleSlotGuard); the seq is the
+    /// landed filename's suffix, so replicates of a run produce the same names.
+    fn pick_testgen(&mut self) -> Option<(String, u32, usize)> {
+        if !testgen_enabled() || self.testgen_count >= TESTGEN_CAP {
+            return None;
+        }
+        if !self.dag.tasks.values().any(|n| n.state == TaskState::Done) {
+            return None;
+        }
+        let claimed_device = self.least_loaded_free_device()?;
+        let model_id = self.devices[claimed_device].cfg.model_id.clone();
+        let seq = self.testgen_count;
+        self.testgen_count += 1;
+        self.idle_jobs += 1;
+        self.devices[claimed_device].in_flight += 1;
+        Some((model_id, seq, claimed_device))
     }
 
     /// SPECULATIVE EXECUTION: pick a TWIN to race on an idle device. Choose the longest-running Claimed task
@@ -2492,6 +2535,7 @@ impl Scheduler {
             spec_abort: HashMap::new(),
             speculating: HashSet::new(),
             spec_count: 0,
+            testgen_count: 0,
         }));
         let notify = Arc::new(Notify::new());
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
@@ -2806,6 +2850,36 @@ impl Scheduler {
                             notify: Some(nt),
                         };
                         pr.idle_dimension_review(&model_id, &goal, dim).await;
+                    });
+                }
+            }
+            // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and
+            // sink-review got first refusal, spend it generating contract-derived tests — the one
+            // idle job with ZERO merge surface (new files, pytest-collected). Same last-slot yield
+            // as its siblings; the IdleSlotGuard releases the claim. Default OFF -> pick_testgen
+            // returns None and this block is byte-identical to absent.
+            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
+                let pick = {
+                    let mut s = state.lock().await;
+                    if s.idle_capacity() == 0 || (!s.ready.is_empty() && s.idle_capacity() <= 1) {
+                        None
+                    } else {
+                        s.pick_testgen()
+                    }
+                };
+                if let Some((model_id, seq, claimed_device)) = pick {
+                    let pr = pr.clone();
+                    let st = state.clone();
+                    let nt = notify.clone();
+                    let goal = { state.lock().await.goal.clone() };
+                    tokio::spawn(async move {
+                        let _slot = IdleSlotGuard {
+                            state: st,
+                            is_judge: false,
+                            claimed_device: Some(claimed_device),
+                            notify: Some(nt),
+                        };
+                        pr.generate_tests(&model_id, &goal, seq).await;
                     });
                 }
             }

@@ -24797,19 +24797,8 @@ fn pick_repair_winner(
         .map(|(n, _, t)| (n, t))
 }
 
-/// S7: idle slots generate contract-derived tests (GOOSE_SWARM_TESTGEN, default OFF — an arm,
-/// not a silent flip; the baseline must not shift underneath the campaign). Replaces the
-/// never-fired speculative-twin rung as the idle-slot filler with the one job that has ZERO
-/// merge surface: new pytest files in their own directory, auto-collected, generated from the
-/// FROZEN CONTRACTS and spec — never from the code, so a test cannot cement the code's own bug.
-// dead_code: S7 increment 1 lands the deterministic half; increment 2 (the scheduler picker +
-// drain wiring, next commit) is the caller and removes these allows.
-#[allow(dead_code)]
-fn testgen_enabled() -> bool {
-    std::env::var("GOOSE_SWARM_TESTGEN")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
-}
+// S7's GOOSE_SWARM_TESTGEN gate lives in goose_swarm::testgen_enabled — ONE resolution shared
+// by the scheduler's picker and this crate's dispatcher, the sink_review_enabled lesson.
 
 /// Pure: the test body inside a model reply. Takes the LARGEST fenced code block (prose replies
 /// carry small illustrative fences; the deliverable is the big one) and requires a `def test_`
