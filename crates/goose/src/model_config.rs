@@ -97,7 +97,26 @@ pub async fn get_fast_model(
 
     match fast_model_name {
         Some(name) if name != model_config.model_name => {
-            model_config_from_user_config(provider_name, name)
+            let cfg = model_config_from_user_config(provider_name, name)?;
+            // K1 prep: a qwen-class fast model on LM Studio starts every generation inside an
+            // open <think> block, and `ThinkingEffort::Off` provably never reaches the server
+            // (reasoning_effort is emitted only for OpenAI-Responses models) — so an auxiliary
+            // summarizer reasons at full effort, which defeats the whole point of routing
+            // compaction to a small model. The assistant PREFILL that pre-closes the block is
+            // the one mechanism verified to work; scoped to qwen-family ids so a non-thinking
+            // fast model never gets stray think-tags in its output. Dormant until the operator
+            // sets GOOSE_FAST_MODEL.
+            let cfg = if cfg.model_name.to_lowercase().contains("qwen") {
+                let mut params = std::collections::HashMap::new();
+                params.insert(
+                    goose_providers::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
+                    serde_json::Value::String("<think>\n\n</think>\n\n".to_string()),
+                );
+                cfg.with_merged_request_params(params)
+            } else {
+                cfg
+            };
+            Ok(cfg)
         }
         _ => Ok(model_config.clone()),
     }
