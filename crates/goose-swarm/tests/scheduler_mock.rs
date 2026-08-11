@@ -118,6 +118,7 @@ fn spec(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
         preferred_model: None,
         owned_files: files.iter().map(|s| s.to_string()).collect(),
         deps: deps.iter().map(|s| s.to_string()).collect(),
+        subsplit: Vec::new(),
     }
 }
 

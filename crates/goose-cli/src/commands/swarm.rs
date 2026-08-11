@@ -6908,6 +6908,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             preferred_model: None,
             owned_files: files.iter().map(|s| s.to_string()).collect(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
+            subsplit: Vec::new(),
         }
     }
 
@@ -10523,6 +10524,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn subsplit_takes_two_to_four_identifiers_or_nothing() {
+        use goose_swarm::extract_subsplit;
         let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
         assert_eq!(
             extract_subsplit(spec),
@@ -16161,6 +16163,7 @@ impl GooseAgentDispatcher {
                         "spec_chars": desc.len(),
                         "brief_chars": brief.len(),
                         "budget_secs": detail_budget,
+                        "subsplit": goose_swarm::extract_subsplit(&desc).len(),
                     }));
                 }
                 if !fallback_reason.is_empty() {
@@ -25058,34 +25061,6 @@ print(json.dumps({"defs": defs, "imports": imports}))
         return None;
     }
     serde_json::from_str(text.trim()).ok()
-}
-
-/// S3 i2: the detailer's optional latent decomposition. The LAST `SUBSPLIT:` line of a detailed
-/// spec, comma-split into 2-4 valid Python identifiers — 1 name is no split, 5+ is the model
-/// listing rather than decomposing, and anything non-identifier poisons the whole line (a name
-/// the splicer cannot find would refuse every fill). Latent: nothing consumes this until the
-/// fill fan does, and names are re-anchored against the module's FROZEN STUB at consumption —
-/// the prompt is a hope; the contract is the truth.
-#[allow(dead_code)] // S3 increment 2: parser first; the TaskSpec plumb + detail stamp follow.
-fn extract_subsplit(spec_text: &str) -> Vec<String> {
-    let is_ident = |n: &str| {
-        !n.is_empty()
-            && n.chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    let names: Vec<String> = spec_text
-        .lines()
-        .rev()
-        .find_map(|l| l.trim().strip_prefix("SUBSPLIT:"))
-        .map(|rest| rest.split(',').map(|n| n.trim().to_string()).collect())
-        .unwrap_or_default();
-    if (2..=4).contains(&names.len()) && names.iter().all(|n| is_ident(n)) {
-        names
-    } else {
-        Vec::new()
-    }
 }
 
 /// S3's merge: the CURRENT module with ONLY the named slots' bodies replaced from one filler's

@@ -17,7 +17,9 @@ pub mod scheduler;
 
 pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;
-pub use dag::{specs_from_plan_json, Dag, Difficulty, Node, TaskId, TaskSpec, TaskState};
+pub use dag::{
+    extract_subsplit, specs_from_plan_json, Dag, Difficulty, Node, TaskId, TaskSpec, TaskState,
+};
 pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
