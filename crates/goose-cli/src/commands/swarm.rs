@@ -24901,8 +24901,7 @@ async fn land_generated_tests(
                 let err = String::from_utf8_lossy(&o.stderr);
                 out.lines()
                     .chain(err.lines())
-                    .filter(|l| !l.trim().is_empty())
-                    .next_back()
+                    .rfind(|l| !l.trim().is_empty())
                     .unwrap_or("collection failed")
                     .to_string()
             }
