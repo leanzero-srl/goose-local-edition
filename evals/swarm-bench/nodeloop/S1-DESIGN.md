@@ -29,3 +29,33 @@ of the splitting design law hold.
 Shadow copies per shard (cp -r of the tree; measured cheap at this tree size ~60KB); the thin
 cross-file join remains serial (bounded by the finding mix — measured 10 survivors ≈ 4-5
 defects, mostly single-file).
+
+## Increment 3 — the thin cross-file join loses its last unverified write path (designed 2026-08-11, not yet implemented)
+
+What increment 2 left: findings that name NO file get one serial dispatch AFTER the wave with
+`speculative: false` — the last place in the whole repair tail where an agent writes the REAL
+tree directly, ungraded. Every other path (twins, shards) now goes shadow → gate → promote-only-
+strictly-better; the join twin should be no different.
+
+Mechanism (one rule, already proven twice):
+1. After the wave's barrier, IF unassigned findings exist: run the smoke gate ONCE on the real
+   (post-promote) tree → `post_wave` count. This is the join's honest baseline — the round's
+   opening count is stale the moment a shard promotes.
+2. Dispatch the join twin `complete-fix::cross-file` with `speculative: true`, owned_files []
+   (whole-tree twin semantics — which file the cross-file fix needs is exactly what is unknown,
+   the race branch's argument verbatim). Its shadow cp -r roots at the post-promote tree by
+   construction (dispatch happens after the barrier).
+3. Grade the tree, not the agent's exit: `run_smoke_gate` on its shadow; promote iff
+   `shard_beats_baseline(verified, post_wave)`. Emit complete_fix_dispatched/completed with
+   `shard: "(cross-file)"` so the join stops being the tail's one dark dispatch.
+
+Cost stated: one extra gate run per round that has unassigned findings (measured gate cost:
+seconds — pytest on a ~60KB tree), plus one cp -r. Nothing else changes; rounds without
+unassigned findings pay zero.
+
+Registered checks (write before the arm runs):
+- MECHANISM, n=1: `complete_fix_completed{shard:"(cross-file)"}` with a `promoted` verdict on a
+  round whose findings include a file-less one (the http_timeout class reliably produces these).
+- SAFETY: grep the round — no dispatch in the repair tail carries `speculative: false` anymore;
+  findings count never rises across a join promote.
+- QUALITY GATE: unchanged (stable-24 vs pre-S1 mean − spread).
