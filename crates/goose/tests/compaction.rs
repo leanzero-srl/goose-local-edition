@@ -750,3 +750,111 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
 
     Ok(())
 }
+
+/// K4 both directions: keep-tail preserves the last turns VERBATIM through compaction, and K=0 is
+/// byte-identical to the pre-K4 behavior. The measured defect this pins: a long tool loop's tail is
+/// all tool content, so nothing survived summarization verbatim and a 40-turn swarm sink lost the
+/// exact bytes of the file it was editing.
+#[tokio::test]
+async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result<()> {
+    use goose::context_mgmt::compact_messages_with_tail;
+    use rmcp::model::{AnnotateAble, CallToolRequestParams, CallToolResult, RawContent};
+    use rmcp::object;
+
+    let provider = MockCompactionProvider::new();
+    let model_config = ModelConfig::new("mock");
+    // A tool-heavy conversation: user ask, then two request/response pairs, ending on a response —
+    // the exact shape whose tail the old compactor could never preserve.
+    let convo = Conversation::new_unvalidated(vec![
+        Message::user().with_text("build the thing"),
+        Message::assistant().with_tool_request(
+            "1",
+            Ok(CallToolRequestParams::new("write").with_arguments(object!({"path": "a.py"}))),
+        ),
+        Message::user().with_tool_response(
+            "1",
+            Ok(CallToolResult::success(vec![RawContent::text(
+                "wrote a.py: def f(): return 41",
+            )
+            .no_annotation()])),
+        ),
+        Message::assistant().with_tool_request(
+            "2",
+            Ok(CallToolRequestParams::new("shell").with_arguments(object!({"cmd": "pytest"}))),
+        ),
+        Message::user().with_tool_response(
+            "2",
+            Ok(CallToolResult::success(vec![RawContent::text(
+                "1 failed: expected 42 got 41",
+            )
+            .no_annotation()])),
+        ),
+    ]);
+
+    // Direction 1 — K=3: the tail returns verbatim among the agent-visible messages, and the kept
+    // tail never OPENS on an orphan tool response (the cut extended back to include its request).
+    let (compacted, _) =
+        compact_messages_with_tail(&provider, &model_config, "s1", &convo, false, 3).await?;
+    let visible: Vec<_> = compacted
+        .messages()
+        .iter()
+        .filter(|m| m.is_agent_visible())
+        .cloned()
+        .collect();
+    let visible_text = visible
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::ToolResponse(r) => Some(format!("{:?}", r)),
+            MessageContent::Text(t) => Some(t.text.clone()),
+            MessageContent::ToolRequest(q) => Some(format!("{:?}", q)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        visible_text.contains("expected 42 got 41"),
+        "the tail's exact bytes must survive: {visible_text}"
+    );
+    // No agent-visible tool RESPONSE may precede its request: walk visibles, track open requests.
+    let mut open: std::collections::HashSet<String> = Default::default();
+    for m in &visible {
+        for c in &m.content {
+            match c {
+                MessageContent::ToolRequest(r) => {
+                    open.insert(r.id.clone());
+                }
+                MessageContent::ToolResponse(r) => {
+                    assert!(
+                        open.contains(&r.id),
+                        "orphan tool response {} in the kept tail",
+                        r.id
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Direction 2 — K=0: identical to the legacy call (same visible set as compact_messages'
+    // pre-K4 shape: summary + continuation + preserved user text, and NO verbatim tool tail).
+    let (legacy, _) =
+        compact_messages_with_tail(&provider, &model_config, "s2", &convo, false, 0).await?;
+    let legacy_text = legacy
+        .messages()
+        .iter()
+        .filter(|m| m.is_agent_visible())
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::Text(t) => Some(t.text.clone()),
+            MessageContent::ToolResponse(r) => Some(format!("{:?}", r)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !legacy_text.contains("expected 42 got 41"),
+        "K=0 must not keep the tool tail (byte-identical legacy): {legacy_text}"
+    );
+    Ok(())
+}

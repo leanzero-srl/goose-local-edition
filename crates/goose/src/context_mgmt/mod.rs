@@ -71,6 +71,30 @@ pub async fn compact_messages(
     conversation: &Conversation,
     manual_compact: bool,
 ) -> Result<(Conversation, ProviderUsage)> {
+    let keep_tail = Config::global()
+        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
+        .unwrap_or(0);
+    compact_messages_with_tail(
+        provider,
+        model_config,
+        session_id,
+        conversation,
+        manual_compact,
+        keep_tail,
+    )
+    .await
+}
+
+/// `compact_messages` with the keep-tail injected — the testable form (no env/config read), and
+/// the single implementation both entry points share.
+pub async fn compact_messages_with_tail(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    conversation: &Conversation,
+    manual_compact: bool,
+    keep_tail: usize,
+) -> Result<(Conversation, ProviderUsage)> {
     info!("Performing message compaction");
 
     let messages = conversation.messages();
@@ -133,10 +157,7 @@ pub async fn compact_messages(
     // swarm sink loses the exact bytes of the file it is mid-way through editing and must re-read
     // it, which is precisely the re-reading spiral the swarm polices. A strong model survives
     // prose-only recall; a 27B does not. Default 0 => byte-identical for every non-swarm session.
-    let keep_tail = Config::global()
-        .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
-        .unwrap_or(0)
-        .min(messages.len().saturating_sub(2));
+    let keep_tail = keep_tail.min(messages.len().saturating_sub(2));
     let mut cut = messages.len() - keep_tail;
     // A kept tail may not OPEN on a tool response whose request was summarized away — that is an
     // orphan `role:tool` message and OpenAI-compatible servers reject the request outright. Extend
