@@ -28270,19 +28270,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         "unassigned": unassigned.len(),
                     }));
                 }
-                // A finding that names no file still gets one serial shot after the partitioned wave.
-                if !unassigned.is_empty() {
+                // A finding that names no file still gets one shot after the partitioned wave —
+                // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
+                // the `speculative: false` direct write this was. That flag made this the LAST
+                // dispatch in the whole repair tail whose agent touched the real tree ungraded.
+                // The gate must run on the REAL tree first: the round's opening count is stale
+                // the moment a shard promotes, so the join's honest baseline is the post-wave
+                // tree. If that gate cannot run, no promote decision can be honest — skip the
+                // join entirely; the loop head re-gates next round and the findings drive it
+                // there. (A sentinel baseline here would promote on UNKNOWN, the vacuous-pass
+                // trap with the sign flipped.)
+                let post_wave_gate = if unassigned.is_empty() {
+                    None
+                } else {
+                    Some(run_smoke_gate(&cwd, complete_lang).await)
+                };
+                if let Some(post_wave) = post_wave_gate.filter(|g| g.ran).map(|g| g.findings.len())
+                {
+                    let task_id = "complete-fix::cross-file".to_string();
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_fix_dispatched",
+                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
+                        "task_id": task_id, "baseline_findings": post_wave,
+                    }));
+                    let started = std::time::Instant::now();
                     let req = DispatchRequest {
-                        task_id: "complete-fix-unassigned".to_string(),
+                        task_id: task_id.clone(),
                         description: smoke_fix_description(&unassigned, complete_lang),
                         device_id: dev_id,
-                        model_id,
+                        model_id: model_id.clone(),
                         context_slice: String::new(),
                         attempt: round,
-                        owned_files: vec![],
+                        // Whole-tree twin semantics: which file a cross-file fix needs is exactly
+                        // what is unknown, so it owns everything and its shadow (cp -r of the
+                        // POST-promote tree — this dispatch is after the wave's barrier) promotes
+                        // in full or not at all.
+                        owned_files: smoke_all_files.clone(),
                         all_files: smoke_all_files.clone(),
                         prior_hint: None,
-                        speculative: false,
+                        speculative: true,
                         // A FIX worker must honour the user's choices too — a fix that re-introduces
                         // `Decimal` after the user chose integer cents is still wrong.
                         user_decisions: user_decisions.clone(),
@@ -28290,11 +28316,38 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                         neighborhood: Vec::new(),
                     };
-                    let _ = tokio::time::timeout(
+                    let ran = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_secs()),
                         smoke_fix_dispatcher.run(req),
                     )
                     .await;
+                    // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule.
+                    let verified = match smoke_fix_dispatcher.speculative_root(&task_id) {
+                        Some(root) => {
+                            let gate = run_smoke_gate(&root, complete_lang).await;
+                            if gate.ran {
+                                Some(gate.findings.len())
+                            } else {
+                                None
+                            }
+                        }
+                        None => None,
+                    };
+                    let promoted = shard_beats_baseline(verified, post_wave);
+                    if promoted {
+                        smoke_fix_dispatcher.promote_speculative(&task_id).await;
+                    } else {
+                        smoke_fix_dispatcher.discard_speculative(&task_id).await;
+                    }
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_fix_completed",
+                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
+                        "secs": started.elapsed().as_secs(),
+                        "agent_ok": matches!(ran, Ok(Ok(_))),
+                        "verified_findings": verified,
+                        "baseline_findings": post_wave,
+                        "promoted": promoted,
+                    }));
                 }
             } else {
                 eprintln!("complete: fix round {round} against the distilled failure ...");
