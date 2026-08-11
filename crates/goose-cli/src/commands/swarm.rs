@@ -10480,6 +10480,22 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn a_multi_file_round_shards_instead_of_racing_when_the_lever_is_on() {
+        // S1 both directions: the preference needs the lever AND a real partition.
+        assert!(prefer_shard_over_race(true, 2));
+        assert!(prefer_shard_over_race(true, 5));
+        assert!(
+            !prefer_shard_over_race(true, 1),
+            "one group: racing is the designed win"
+        );
+        assert!(!prefer_shard_over_race(true, 0));
+        assert!(
+            !prefer_shard_over_race(false, 4),
+            "lever off: byte-identical race"
+        );
+    }
+
+    #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
             "tests/test_a.py:5: in test_x\n    assert foo() == 1\nE   AssertionError".to_string(),
@@ -24549,6 +24565,23 @@ fn complete_parallel() -> bool {
 /// re-verified finding count is STRICTLY below the count that opened the round (`pick_repair_winner`),
 /// so ties and regressions promote nothing and a raced round can never leave the tree worse than it
 /// found it. Set GOOSE_SWARM_SPEC_REPAIR=0 to restore the serial path.
+/// S1 increment 1 (GOOSE_SWARM_SINK_SHARD, default OFF — armed in the sweep): when a repair
+/// round's findings partition into 2+ distinct file groups, prefer the PER-FILE fan over the
+/// monolithic race. MEASURED basis: two full race waves (3+3 twins) died at the per-fix cap with
+/// the findings unchanged — each twin re-derives whole-app context to fix everything at once,
+/// while the fan hands each shard ONE file's findings under the same shadow discipline. The race
+/// stays for single-group rounds, where a partition cannot help and racing is the designed win.
+fn sink_shard() -> bool {
+    std::env::var("GOOSE_SWARM_SINK_SHARD")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Pure: does this round shard instead of race? (Pinned by test — the decision, not the env.)
+fn prefer_shard_over_race(shard_on: bool, distinct_file_groups: usize) -> bool {
+    shard_on && distinct_file_groups >= 2
+}
+
 fn spec_repair() -> bool {
     std::env::var("GOOSE_SWARM_SPEC_REPAIR")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
@@ -27827,7 +27860,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
             // one model there is nothing to recover and the overhead is pure cost. This matters now that
             // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            if spec_repair() && fleet_models.len() > 1 {
+            let shard_this_round = prefer_shard_over_race(sink_shard(), {
+                let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
+                groups.len()
+            });
+            if spec_repair() && fleet_models.len() > 1 && !shard_this_round {
                 // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
                 // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
                 let baseline = verdict.findings.len();
@@ -27956,7 +27993,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                          rather than damaged by an unverified edit"
                     },
                 }));
-            } else if complete_parallel() && !fleet_models.is_empty() {
+            } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
                 let (groups, unassigned) =
                     group_findings_by_file(&verdict.findings, &smoke_all_files);
                 eprintln!(
