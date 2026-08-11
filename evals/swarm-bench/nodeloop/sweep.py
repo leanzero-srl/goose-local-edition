@@ -587,7 +587,16 @@ ARMS = [
                 "rides along so multi-finding rounds exist to shard. MECHANISM, n=1: "
                 "complete_fix_wave{shards>=2} on a multi-finding round (absent => the arm examined "
                 "NOTHING). SAFETY: round findings never rise after a promote. FALSIFIER: stable-24 "
-                "score below the baseline spread reverts the arm on that alone.",
+                "score below the baseline spread reverts the arm on that alone. "
+                "Increments 2+3 (in the 23:46 2026-08-11 binary) extend the readout: i2 — every "
+                "shard now emits complete_fix_dispatched/completed{shard, verified_findings, "
+                "promoted} and promotes ONLY a verified strictly-better tree (agent_ok true with "
+                "promoted false is the mechanism catching an unverified claim — count those); "
+                "i3 — file-less findings dispatch as complete-fix::cross-file with "
+                "shard:'(cross-file)', baseline re-measured post-wave; a round with unassigned "
+                "findings and NO cross-file event means the real-tree gate could not run (the "
+                "designed skip, not a bug). SAFETY unchanged and now enforced per shard by "
+                "shard_beats_baseline (pinned by test).",
     },
     {
         "name": "doc_examples",
