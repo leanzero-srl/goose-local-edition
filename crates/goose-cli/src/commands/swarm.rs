@@ -6320,7 +6320,7 @@ mod tests {
         let (c, dead, stopped, _) = collect_drafts_with_straggler_stop(
             js,
             3,
-            1,
+            StragglerGrace::Fixed(1),
             |s| s.starts_with("VALID"),
             |_: &[String]| true,
         )
