@@ -1,10 +1,13 @@
 {
-  "mtime": 1786480206.622973,
-  "size": 235726800,
+  "mtime": 1786481192.4212422,
+  "size": 235726944,
   "new": {
-    "complete-fix::cross-file": false
+    "GOOSE_SWARM_TESTGEN": false,
+    "tests/generated/test_gen_": false,
+    "no landable fenced test block": false
   },
   "controls": {
+    "complete-fix::cross-file": true,
     "must carry a UTC designator": true,
     "GOOSE_SWARM_SINK_SHARD": true,
     "probed_post": true,

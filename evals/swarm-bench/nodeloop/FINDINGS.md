@@ -18008,3 +18008,25 @@ UTC-designator detector, TaskDispatched difficulty (A2's check becomes a log loo
 shard verify-before-promote (+ the clippy fix). Behavioural checks owed on the first
 post-rebuild run: difficulty key on task_dispatched; complete_fix_completed{shard,promoted}
 on a sink_shard round.
+
+## F761 — boundary 5 (pause-boundary, 00:27 binary): S7 lands complete; the gate catches my own filtered clippy check
+
+**S7 complete in three increments while the fleet waits on gabee:** (1) the deterministic half —
+extract_generated_tests (largest CLOSED fence, must contain `def test_`; unterminated fences
+never land; pinned by test) + land_generated_tests (pytest --collect-only from the tree root or
+the file is removed and the reason returned); (2) the scheduler — pick_testgen mirrors
+pick_prereview's claim discipline, fires only with a Done task on the DAG, TESTGEN_CAP=3, gate
+resolved ONCE in goose_swarm::testgen_enabled (the sink_review two-halves lesson applied at
+birth); (3) the dispatcher — prompt from goal + frozen contracts ONLY (never code), tool-less
+call, testgen event with landed file or honest miss. The sweep gains the testgen arm (n3,
+reps 1) with mechanism/quality/falsifier readouts pre-registered.
+
+**Process note that must not be forgotten:** my pre-commit "clippy check" was
+`clippy | grep -E "(function|unused|indexing)"` — a FILTERED reading that passed while the full
+gate failed on an iterator lint outside the pattern. The greengate's full run is the only gate;
+a grep over clippy is the `test | grep` trap wearing a new coat. Two forward-fix commits
+(next_back → rfind), gate then green: 585 across 8 suites.
+
+**Boundary 5:** probe rotated (cross-file graduated to controls), baseline 3 literals absent →
+build 00:27:01 → all 3 flipped, 19 controls held. The binary now carries S1 inc1-3 + S7
+complete + Q2b2 + difficulty. Fleet still 2/3 (gabee down); STOP stays until the pool is whole.
