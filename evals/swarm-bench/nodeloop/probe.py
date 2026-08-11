@@ -45,9 +45,7 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "CONTRACT UNAVAILABLE": "D1 — a failed stub becomes a marked absence, never a silent hole",
-    "NONE ON DISK YET": "D3 — empty dep section redirects to the frozen interfaces",
-    "GOOSE_COMPACT_KEEP_TAIL": "K4 — compaction keeps the last turns verbatim (swarm sets 3)",
+    "GOOSE_SWARM_SINK_SHARD": "S1i1 — multi-file repair rounds shard instead of racing monoliths",
 }
 # Literal-LESS changes in the same pending batch, each verified BEHAVIOURALLY on the first
 # post-rebuild run instead (recorded so the gap is deliberate): A2 hard_device_key (private fn,
@@ -77,6 +75,10 @@ POSITIVE_CONTROLS = {
     # GRADUATED from NEW after the 2026-08-11 17:49 rebuild (watched flipping absent -> present):
     "probed_post": "F751 — landed 2026-08-11",
     "straggler_deferred": "B5 — landed 2026-08-11",
+    # GRADUATED after the 2026-08-11 20:36 rebuild (watched flipping):
+    "CONTRACT UNAVAILABLE": "D1 — landed 2026-08-11",
+    "NONE ON DISK YET": "D3 — landed 2026-08-11",
+    "GOOSE_COMPACT_KEEP_TAIL": "K4 — landed 2026-08-11",
     "would_skip_ladder": "the pre-existing shadow diagnostic",
     "plan_convergence": "emitted every planning phase",
     "task_dispatched": "the most common event in any run log",

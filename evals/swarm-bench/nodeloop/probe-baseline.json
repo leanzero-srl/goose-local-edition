@@ -1,14 +1,15 @@
 {
-  "mtime": 1786459764.9117956,
-  "size": 235908848,
+  "mtime": 1786469784.6771195,
+  "size": 235743344,
   "new": {
-    "CONTRACT UNAVAILABLE": false,
-    "NONE ON DISK YET": false,
-    "GOOSE_COMPACT_KEEP_TAIL": false
+    "GOOSE_SWARM_SINK_SHARD": false
   },
   "controls": {
     "probed_post": true,
     "straggler_deferred": true,
+    "CONTRACT UNAVAILABLE": true,
+    "NONE ON DISK YET": true,
+    "GOOSE_COMPACT_KEEP_TAIL": true,
     "would_skip_ladder": true,
     "plan_convergence": true,
     "task_dispatched": true,
