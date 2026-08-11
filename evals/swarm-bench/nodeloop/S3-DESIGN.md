@@ -99,3 +99,28 @@ HIGH confidence (deterministic, tested); the fan's completion semantics inside t
 run path is MEDIUM — the dispatcher's run() contract (one agent, one outcome) gets an internal
 fan and the timeout/retry interaction there is where a subtle bug could hide. The
 implementation tick starts by reading run()'s retry/timeout callers before touching anything.
+
+## Increment 3 CORRECTION (2026-08-12, found at the wiring read, before any wrong code)
+
+The designed dispatcher-internal fan is UNSAFE mid-EXECUTE: routing is by model alias (verified
+— run_agent takes model_id; device_id is bookkeeping), and the dispatcher has no view of slot
+occupancy. A fan inside run() would send fillers to nodes the scheduler is concurrently
+assigning real tasks to — oversubscription past the 2/node HARD ceiling, the measured
+"+1 QUEUED" pathology, invisible to every capacity invariant. The fix waves get away with the
+same shape only because they run in the TAIL, on an idle fleet.
+
+The safe shape is SCHEDULER-SIDE, modeled line-for-line on the speculation machinery, which
+already solved this exact problem: per-fill device claims via least_loaded_free_device +
+in_flight bump + IdleSlotGuard-style release, fill state maps beside spec_* (fill_device,
+fill_started_at, filling set), a pick_fill_targets that only fires when a device is genuinely
+free AND ready work is not waiting (the A3 last-slot yield), and resolution hooks that splice
+on completion. The task's PRIMARY worker is NOT dispatched in fan mode — the skeleton write
+replaces it and the fills are the only agents; completion synthesizes when all fills resolve.
+
+Consequence for the increments: the anchor+skeleton half, the prompt ask and the
+DispatchRequest plumb all stand unchanged (the scheduler shape consumes TaskSpec.subsplit
+directly — the DispatchRequest field becomes the DEBUG surface and stays). The fan lands as
+scheduler state + pickers + resolution, one careful tick each:
+  i3a: state maps + pick_fill_targets (claims, yields, caps) + tests on the pick logic.
+  i3b: dispatch wiring in the drain + skeleton write at claim time.
+  i3c: resolution + splice + events + serial rescue; arm added to sweep.py only then.
