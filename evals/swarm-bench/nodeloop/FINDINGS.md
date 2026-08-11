@@ -17983,3 +17983,28 @@ the group_findings_by_file partition), which the board still names as the larges
 Registered check: the next 3 units on the post-boundary-4 binary — if any summary_accuracy or
 ui_states zero appears WITHOUT a sync-acquire/server-dead zero in the same cell, this closure
 is wrong and reopens.
+
+## F760 — boundary 4: three-commit batch landed; the probe_post re-run collapses 0.9153 → 0.268 on the same cell; gabee drops the fleet to 2/3
+
+**The unit.** The 66-min probe_post-n3-r0 RE-RUN (its 0.9153 row was voided by the 22:13
+rebuild, so the sweep re-ran the cell) finished 0.268, pool 3/3, honest red. Same cell, same
+arm, adjacent binaries: 0.9153 then 0.268. The repair chain WORKED in it — round 0 promoted a
+twin that took verified findings 5→0 (workhorse, 745s, agent_ok; a second twin cleared 5→0 at
+the 1200s cap with agent_ok:false — the grade-the-tree rule paying again), round 1 raced a
+residual spec_contract finding, gabee's twin hit 0 in 21s. The score collapsed anyway: the
+replicate spread on this cell is ~0.65, the largest single-cell spread yet recorded, and a
+brutal restatement of F385 — no single-n score reading on this bench means anything.
+
+**The fleet event.** Immediately after, scout_doc_urls-n3-r0 voided in 1 min at pool=2/3:
+**gabee is gone** — `lms ps` lists only mihai + workhorse; gabee's endpoint does not answer.
+Per the fleet rule its restore is Mihai's call, so STOP stays until the pool is 3/3 (an n3
+queue on a 2-node fleet manufactures voids). The sweep exited cleanly on STOP.
+
+**Boundary 4 (23:30 binary).** Gate sequence in full: boundary.py safe (no sweep, no engine) →
+greengate RED on first pass — clippy string_slice in Q2b2's date-shape check, fixed
+(byte-index the year digits), gate re-run GREEN (584 across 8 suites) → release build 23:30:06
+→ probe: "must carry a UTC designator" flipped absent→present, 18 controls held. Landed: Q2b2
+UTC-designator detector, TaskDispatched difficulty (A2's check becomes a log lookup), S1i2
+shard verify-before-promote (+ the clippy fix). Behavioural checks owed on the first
+post-rebuild run: difficulty key on task_dispatched; complete_fix_completed{shard,promoted}
+on a sink_shard round.
