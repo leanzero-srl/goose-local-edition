@@ -25,6 +25,37 @@ pub struct TaskSpec {
     /// Files this task owns/edits; two tasks holding the same file never run concurrently.
     pub owned_files: Vec<String>,
     pub deps: Vec<TaskId>,
+    /// S3 i2 (LATENT): 2-4 top-level function/class names the detailer marked as independently
+    /// implementable — parsed from the spec's trailing `SUBSPLIT:` line, re-anchored against the
+    /// module's frozen stub at consumption. Nothing dispatches differently until a fill fan
+    /// consumes it; empty for every task whose spec carries no such line.
+    pub subsplit: Vec<String>,
+}
+
+/// The detailer's optional latent decomposition: the LAST `SUBSPLIT:` line of a spec,
+/// comma-split into 2-4 valid Python identifiers — 1 name is no split, 5+ is the model listing
+/// rather than decomposing, and anything non-identifier poisons the whole line (a name the
+/// splicer cannot find would refuse every fill). The prompt is a hope; the contract re-anchors
+/// the names at consumption.
+pub fn extract_subsplit(spec_text: &str) -> Vec<String> {
+    let is_ident = |n: &str| {
+        !n.is_empty()
+            && n.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let names: Vec<String> = spec_text
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("SUBSPLIT:"))
+        .map(|rest| rest.split(',').map(|n| n.trim().to_string()).collect())
+        .unwrap_or_default();
+    if (2..=4).contains(&names.len()) && names.iter().all(|n| is_ident(n)) {
+        names
+    } else {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,16 +329,20 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
     Ok(plan
         .subtasks
         .into_iter()
-        .map(|t| TaskSpec {
-            id: t.id,
-            description: t.description,
-            difficulty: match t.difficulty.as_deref() {
-                Some("hard") => Difficulty::Hard,
-                _ => Difficulty::Easy,
-            },
-            preferred_model: t.model,
-            owned_files: t.files,
-            deps: t.depends_on,
+        .map(|t| {
+            let subsplit = extract_subsplit(&t.description);
+            TaskSpec {
+                id: t.id,
+                description: t.description,
+                difficulty: match t.difficulty.as_deref() {
+                    Some("hard") => Difficulty::Hard,
+                    _ => Difficulty::Easy,
+                },
+                preferred_model: t.model,
+                owned_files: t.files,
+                deps: t.depends_on,
+                subsplit,
+            }
         })
         .collect())
 }

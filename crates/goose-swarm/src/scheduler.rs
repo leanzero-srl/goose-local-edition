@@ -2167,6 +2167,7 @@ impl State {
                     preferred_model: orig_model.clone(),
                     owned_files: c.files.clone(),
                     deps,
+                    subsplit: Vec::new(),
                 }
             })
             .collect();
