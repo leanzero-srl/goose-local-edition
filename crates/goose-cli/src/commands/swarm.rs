@@ -10522,6 +10522,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn subsplit_takes_two_to_four_identifiers_or_nothing() {
+        let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
+        assert_eq!(
+            extract_subsplit(spec),
+            ["fetch_page", "parse_rows", "total_count"]
+        );
+        // The LAST line wins when the model repeats itself.
+        let twice = "SUBSPLIT: a, b\nmore prose\nSUBSPLIT: alpha, beta";
+        assert_eq!(extract_subsplit(twice), ["alpha", "beta"]);
+        assert_eq!(extract_subsplit("no line at all"), Vec::<String>::new());
+        assert_eq!(extract_subsplit("SUBSPLIT: only_one"), Vec::<String>::new());
+        assert_eq!(
+            extract_subsplit("SUBSPLIT: a, b, c, d, e"),
+            Vec::<String>::new(),
+            "five names is listing, not decomposing"
+        );
+        assert_eq!(
+            extract_subsplit("SUBSPLIT: fetch page, parse"),
+            Vec::<String>::new(),
+            "a non-identifier poisons the whole line"
+        );
+        assert_eq!(
+            extract_subsplit("SUBSPLIT: 1st, second"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn splice_fills_owned_slots_and_refuses_every_foreign_touch() {
         // S3's 5-way plan (S3-DESIGN.md), one composed skeleton, all directions.
         let skeleton = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
@@ -25030,6 +25058,34 @@ print(json.dumps({"defs": defs, "imports": imports}))
         return None;
     }
     serde_json::from_str(text.trim()).ok()
+}
+
+/// S3 i2: the detailer's optional latent decomposition. The LAST `SUBSPLIT:` line of a detailed
+/// spec, comma-split into 2-4 valid Python identifiers — 1 name is no split, 5+ is the model
+/// listing rather than decomposing, and anything non-identifier poisons the whole line (a name
+/// the splicer cannot find would refuse every fill). Latent: nothing consumes this until the
+/// fill fan does, and names are re-anchored against the module's FROZEN STUB at consumption —
+/// the prompt is a hope; the contract is the truth.
+#[allow(dead_code)] // S3 increment 2: parser first; the TaskSpec plumb + detail stamp follow.
+fn extract_subsplit(spec_text: &str) -> Vec<String> {
+    let is_ident = |n: &str| {
+        !n.is_empty()
+            && n.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let names: Vec<String> = spec_text
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("SUBSPLIT:"))
+        .map(|rest| rest.split(',').map(|n| n.trim().to_string()).collect())
+        .unwrap_or_default();
+    if (2..=4).contains(&names.len()) && names.iter().all(|n| is_ident(n)) {
+        names
+    } else {
+        Vec::new()
+    }
 }
 
 /// S3's merge: the CURRENT module with ONLY the named slots' bodies replaced from one filler's
