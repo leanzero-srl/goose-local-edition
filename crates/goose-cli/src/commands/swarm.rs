@@ -2876,16 +2876,26 @@ fn should_run_backbone_round2(backbone_on: bool, skip_confident: bool, conf1: u8
     backbone_on && !(skip_confident && conf1 >= BACKBONE_SKIP_CONF_FLOOR)
 }
 
-/// #135: resolve the straggler grace window (seconds). env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins, else
-/// config, else 45. NOT clamped here — the caller clamps to [10, draft_timeout] once draft_timeout is known.
-fn straggler_grace_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
-    env.and_then(|s| s.trim().parse::<u64>().ok())
-        .or(cfg)
-        .unwrap_or(45)
+/// #135: resolve the straggler grace window (seconds). An EXPLICIT env or config value wins and is
+/// used fixed, exactly as before; None means DERIVE it from the round's own timings at arming
+/// (G1 — a constant grace cannot fit a fleet whose calls span 30-900s: 45s was a fraction of one
+/// call and structurally degraded best-of-N to N-1). NOT clamped here — the caller clamps once
+/// draft_timeout is known.
+fn straggler_grace_resolved(env: Option<String>, cfg: Option<u64>) -> Option<u64> {
+    env.and_then(|s| s.trim().parse::<u64>().ok()).or(cfg)
 }
 
-fn straggler_grace_secs(cfg: Option<u64>) -> u64 {
+fn straggler_grace_secs(cfg: Option<u64>) -> Option<u64> {
     straggler_grace_resolved(std::env::var("GOOSE_SWARM_STRAGGLER_GRACE_SECS").ok(), cfg)
+}
+
+/// G1: the straggler's grace, DERIVED from the round it is in. When the quorum lands at
+/// `quorum_at_secs` (all drafts start together), the straggler has already run that long; it gets
+/// HALF that again — 1.5x the quorum's own time in total — floored at 10s and capped by what
+/// remains of draft_timeout (the hard backstop). Slow rounds get a proportionally patient grace,
+/// fast rounds a tight one; no constant survives to misfit either. Pure/testable.
+fn derived_straggler_grace(quorum_at_secs: u64, draft_timeout: u64) -> u64 {
+    (quorum_at_secs / 2).clamp(10, draft_timeout.saturating_sub(quorum_at_secs).max(10))
 }
 
 /// #135 pure decision: given the number of drafts requested (`n`) and how many have so far returned a VALID
@@ -2895,6 +2905,16 @@ fn straggler_grace_secs(cfg: Option<u64>) -> u64 {
 /// diversity while more than one draft is still outstanding. n < 3 can never arm (no lone straggler to stop).
 fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
     n >= 3 && valid >= 2 && valid >= n - 1
+}
+
+/// G1: how the drafts collector sizes the straggler's grace. Fixed = an explicit env/config value
+/// (pre-G1 behavior, clamped by the caller); Derive = compute at arming from the round's own
+/// clock via `derived_straggler_grace` — the default, because no constant fits calls spanning
+/// 30-900s (a 45s constant structurally degraded best-of-N to N-1 on this fleet).
+#[derive(Clone, Copy)]
+enum StragglerGrace {
+    Fixed(u64),
+    Derive { draft_timeout: u64 },
 }
 
 /// #135 collection loop: drain `js` (one draft future per slot) as drafts resolve. The instant every draft
@@ -2913,7 +2933,7 @@ fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
 async fn collect_drafts_with_straggler_stop<F, Q>(
     mut js: tokio::task::JoinSet<Option<String>>,
     n: usize,
-    grace_secs: u64,
+    grace: StragglerGrace,
     is_valid: F,
     quorum_decides: Q,
 ) -> (Vec<String>, usize, usize, bool)
@@ -2921,6 +2941,7 @@ where
     F: Fn(&str) -> bool,
     Q: Fn(&[String]) -> bool,
 {
+    let round_started = std::time::Instant::now();
     let mut c: Vec<String> = Vec::new();
     let mut dead = 0usize;
     let mut valid = 0usize;
@@ -2949,6 +2970,13 @@ where
                 }
                 if !armed && should_arm_straggler_grace(n, valid) {
                     if quorum_decides(&c) {
+                        let grace_secs = match grace {
+                            StragglerGrace::Fixed(g) => g,
+                            StragglerGrace::Derive { draft_timeout } => derived_straggler_grace(
+                                round_started.elapsed().as_secs(),
+                                draft_timeout,
+                            ),
+                        };
                         grace_timer
                             .as_mut()
                             .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
@@ -6165,13 +6193,21 @@ mod tests {
     }
 
     #[test]
-    fn straggler_grace_resolves_env_then_config_then_default() {
-        assert_eq!(straggler_grace_resolved(None, None), 45);
-        assert_eq!(straggler_grace_resolved(None, Some(30)), 30);
-        assert_eq!(straggler_grace_resolved(Some("90".into()), Some(30)), 90);
-        // Unparseable env falls through to config, then default.
-        assert_eq!(straggler_grace_resolved(Some("abc".into()), Some(30)), 30);
-        assert_eq!(straggler_grace_resolved(Some("abc".into()), None), 45);
+    fn straggler_grace_resolves_env_then_config_then_derive() {
+        // G1: no explicit value means DERIVE per round (None), no baked constant — an explicit
+        // env or config value stays a fixed override exactly as before.
+        assert_eq!(straggler_grace_resolved(None, None), None);
+        assert_eq!(straggler_grace_resolved(None, Some(30)), Some(30));
+        assert_eq!(
+            straggler_grace_resolved(Some("90".into()), Some(30)),
+            Some(90)
+        );
+        // Unparseable env falls through to config, then to derive.
+        assert_eq!(
+            straggler_grace_resolved(Some("abc".into()), Some(30)),
+            Some(30)
+        );
+        assert_eq!(straggler_grace_resolved(Some("abc".into()), None), None);
     }
 
     #[test]
@@ -6212,8 +6248,14 @@ mod tests {
             Some("C".to_string())
         });
         // Two valid drafts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
-        let (c, dead, stopped, _) =
-            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
+        let (c, dead, stopped, _) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            StragglerGrace::Fixed(1),
+            |_| true,
+            |_: &[String]| true,
+        )
+        .await;
         assert_eq!(stopped, 1, "the lone straggler is stopped");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 2, "quorum of 2 kept; straggler dropped");
@@ -6228,8 +6270,14 @@ mod tests {
             let s = k.to_string();
             js.spawn(async move { Some(s) });
         }
-        let (c, dead, stopped, _) =
-            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
+        let (c, dead, stopped, _) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            StragglerGrace::Fixed(1),
+            |_| true,
+            |_: &[String]| true,
+        )
+        .await;
         assert_eq!(stopped, 0);
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
@@ -6245,8 +6293,14 @@ mod tests {
             Some("C".to_string())
         });
         // grace 10s >> the 50ms straggler, so it lands inside the window and is kept (all 3 collected).
-        let (c, dead, stopped, _) =
-            collect_drafts_with_straggler_stop(js, 3, 10, |_| true, |_: &[String]| true).await;
+        let (c, dead, stopped, _) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            StragglerGrace::Fixed(10),
+            |_| true,
+            |_: &[String]| true,
+        )
+        .await;
         assert_eq!(stopped, 0, "straggler finished within grace");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
@@ -6288,8 +6342,14 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(80)).await;
             Some("C".to_string())
         });
-        let (c, dead, stopped, deferred) =
-            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| false).await;
+        let (c, dead, stopped, deferred) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            StragglerGrace::Fixed(1),
+            |_| true,
+            |_: &[String]| false,
+        )
+        .await;
         assert_eq!(
             stopped, 0,
             "below-floor quorum must never abort the last draft"
@@ -6306,11 +6366,28 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             Some("C".to_string())
         });
-        let (c, _dead, stopped, deferred) =
-            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
+        let (c, _dead, stopped, deferred) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            StragglerGrace::Fixed(1),
+            |_| true,
+            |_: &[String]| true,
+        )
+        .await;
         assert_eq!(stopped, 1, "deciding quorum keeps the pre-B5 abort");
         assert!(!deferred);
         assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn the_derived_grace_scales_with_the_round_and_respects_the_backstop() {
+        // G1 both directions. A slow round (quorum at 200s, timeout 480) earns a patient grace…
+        assert_eq!(derived_straggler_grace(200, 480), 100);
+        // …a fast round gets the floor, not a constant sized for a slower fleet…
+        assert_eq!(derived_straggler_grace(12, 480), 10);
+        // …and near the hard backstop the grace can never outrun draft_timeout.
+        assert_eq!(derived_straggler_grace(470, 480), 10);
+        assert_eq!(derived_straggler_grace(400, 480), 80);
     }
 
     // Scout collector (generic, every completion counts — advisory phase, no validity gate).
@@ -12845,7 +12922,9 @@ pub struct GooseAgentDispatcher {
     straggler_stop: bool,
     /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
     /// the drafting call site. Resolved once at construction (default 45).
-    straggler_grace_secs: u64,
+    /// G1: None = derive per round (drafts); Some = explicit env/config, fixed. Non-draft fans
+    /// (scouts, contracts/details straggler) keep the pre-G1 fixed default via unwrap_or(45).
+    straggler_grace_secs: Option<u64>,
     /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
     /// Resolved once at construction (default OFF).
     straggler_stop_degrade: bool,
@@ -12889,7 +12968,7 @@ impl GooseAgentDispatcher {
         sampling: SamplingParams,
         stream_decode_retry: bool,
         straggler_stop: bool,
-        straggler_grace_secs: u64,
+        straggler_grace_secs: Option<u64>,
         straggler_stop_degrade: bool,
         detail_memo_on: bool,
         repeat_break: bool,
@@ -14131,7 +14210,9 @@ impl GooseAgentDispatcher {
         // FALSIFIER: if a run under this change shows `lenses_returned` still short of `scouts_planned`, the
         // cause is NOT straggler-stop and this comment is wrong.
         let scout_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs.clamp(10, scout_budget.max(10))
+            self.straggler_grace_secs
+                .unwrap_or(45)
+                .clamp(10, scout_budget.max(10))
         } else {
             0
         };
@@ -14426,6 +14507,7 @@ impl GooseAgentDispatcher {
         // interface, and integrate-verify reconciles. grace 0 => OFF => byte-identical await-all.
         let contract_grace = if self.straggler_stop_degrade {
             self.straggler_grace_secs
+                .unwrap_or(45)
                 .clamp(10, self.worker_timeout_secs.max(10))
         } else {
             0
@@ -14873,7 +14955,12 @@ impl GooseAgentDispatcher {
                     // got 2.4, and the ladder it caused costs ~25 min/rung. Below the floor, the third draft
                     // is the cheapest possible ladder-avoidance; draft_timeout still bounds it. No floor set
                     // (quorum_floor None) => always-true closure, byte-identical to the pre-B5 behavior.
-                    let grace = straggler_grace.clamp(10, draft_timeout.max(10));
+                    // G1: an explicit env/config grace stays fixed (clamped exactly as before);
+                    // otherwise the grace is DERIVED at arming from the round's own clock.
+                    let grace = match straggler_grace {
+                        Some(g) => StragglerGrace::Fixed(g.clamp(10, draft_timeout.max(10))),
+                        None => StragglerGrace::Derive { draft_timeout },
+                    };
                     let quorum_decides = |cands: &[String]| -> bool {
                         let Some(floor) = quorum_floor else {
                             return true;
@@ -14906,7 +14993,7 @@ impl GooseAgentDispatcher {
                     .await;
                     if stopped > 0 {
                         eprintln!(
-                            "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after {grace}s grace \
+                            "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after the grace \
                              — proceeding on {} valid of {n}",
                             style("↯").yellow(),
                             c.iter().filter(|j| draft_is_valid(j)).count()
@@ -15810,6 +15897,7 @@ impl GooseAgentDispatcher {
             // sibling contracts fanout's `worker_timeout_secs.max(10)`. Same call kind, same fleet;
             // the ceiling now comes from the same place.
             self.straggler_grace_secs
+                .unwrap_or(45)
                 .clamp(10, self.worker_timeout_secs.max(10))
         } else {
             0
