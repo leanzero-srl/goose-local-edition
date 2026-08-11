@@ -19280,6 +19280,18 @@ impl GooseAgentDispatcher {
 
 /// M5: read all `.swarm/prereview/<task>.json` findings under `cwd` into a worker-prompt block for the
 /// integrate-verify sink (CONFIRM + FIX). Returns "" when the dir is absent or no findings were recorded.
+/// D5: a cheap stable content hash (FNV-1a) — provenance, not cryptography. A finding is about the
+/// BYTES the reviewer read; when those change, the finding describes a file that no longer exists
+/// and must stop being injected as a mandatory repair order.
+fn content_hash(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    format!("{h:016x}")
+}
+
 fn read_prereview_findings(cwd: &std::path::Path) -> String {
     let entries = match std::fs::read_dir(cwd.join(".swarm").join("prereview")) {
         Ok(e) => e,
@@ -19291,6 +19303,21 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         {
+            // D5 EXPIRY: skip a finding whose reviewed file changed since the review — the fix
+            // loop or a re-dispatch rewrote it, and a stale mandatory order re-litigates a closed
+            // defect. Findings WITHOUT provenance (pre-D5 files) are kept: expiring on absence
+            // would drop every legacy finding, and the fail-open direction is inject-as-before.
+            let stale = v.get("files").and_then(|x| x.as_object()).is_some_and(|m| {
+                !m.is_empty()
+                    && m.iter().any(|(f, h)| {
+                        std::fs::read(cwd.join(f))
+                            .map(|b| h.as_str() != Some(content_hash(&b).as_str()))
+                            .unwrap_or(true)
+                    })
+            });
+            if stale {
+                continue;
+            }
             if let (Some(t), Some(f)) = (
                 v.get("task_id").and_then(|x| x.as_str()),
                 v.get("findings").and_then(|x| x.as_str()),
@@ -19314,6 +19341,19 @@ fn read_prereview_findings(cwd: &std::path::Path) -> String {
 #[cfg(test)]
 mod shipped_defaults_tests {
     use super::*;
+
+    #[test]
+    fn a_prereview_finding_expires_with_its_file() {
+        // D5 both directions, at the hash level (the fs walk is a thin wrapper over it).
+        let v1 = content_hash(b"def f(): return 41");
+        let v2 = content_hash(b"def f(): return 42");
+        assert_ne!(v1, v2, "different bytes must hash apart");
+        assert_eq!(
+            v1,
+            content_hash(b"def f(): return 41"),
+            "same bytes, same hash"
+        );
+    }
 
     /// The two verified defects that ship ON. Both had a switch already written and both were OFF,
     /// so every run this campaign measured carried the defect.
@@ -20126,9 +20166,22 @@ impl PreReviewer for GooseAgentDispatcher {
             // `dimension` is provenance for the finding's whole downstream life: the sink's
             // injection, the expiry/dedup work, and every analysis that asks WHICH lens finds
             // real defects — a question that was unanswerable while all findings looked alike.
+            // D5: `files` records WHAT BYTES the reviewer read (path -> hash), so the finding
+            // expires the moment its file changes — the never-expiring pile injected stale
+            // mandatory-repair orders about files long since rewritten.
+            let file_hashes: serde_json::Map<String, serde_json::Value> = req
+                .owned_files
+                .iter()
+                .filter_map(|f| {
+                    std::fs::read(cwd.join(f))
+                        .ok()
+                        .map(|b| (f.clone(), serde_json::json!(content_hash(&b))))
+                })
+                .collect();
             let _ = std::fs::write(
                 dir.join(format!("{}.json", req.task_id)),
-                serde_json::json!({"task_id": req.task_id, "findings": findings, "dimension": dim_id})
+                serde_json::json!({"task_id": req.task_id, "findings": findings, "dimension": dim_id,
+                                   "files": file_hashes})
                     .to_string(),
             );
         }
