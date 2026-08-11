@@ -2898,23 +2898,34 @@ fn should_arm_straggler_grace(n: usize, valid: usize) -> bool {
 }
 
 /// #135 collection loop: drain `js` (one draft future per slot) as drafts resolve. The instant every draft
-/// but one has returned a VALID skeleton (should_arm_straggler_grace), give the lone straggler only
-/// `grace_secs` more, then abort it and return the quorum. Returns (candidates in completion order, dead
-/// count, stopped count). Extracted from draft_round so the async abort/grace mechanics are unit-testable —
-/// the pure predicate test alone missed a panic here (a huge inert-timer duration overflows std::Instant).
-async fn collect_drafts_with_straggler_stop<F>(
+/// but one has returned a VALID skeleton (should_arm_straggler_grace) AND the in-hand quorum already
+/// decides the outcome (`quorum_decides`), give the lone straggler only `grace_secs` more, then abort it
+/// and return the quorum. Returns (candidates in completion order, dead count, stopped count, deferred).
+///
+/// `quorum_decides` is the fix for the measured collapse: aborting the third draft cut every round to 2,
+/// and at 2 drafts `best_subset_agreement`'s `n <= k` fallback made the pool-invariant lift arithmetically
+/// unreachable, `consensus_k` dead, and `structural_convergence` a unanimity vote — so the ladder fired on
+/// a harsher metric than a full pool would produce, ~25 min per rung. The asymmetry is deliberate: when the
+/// two in-hand drafts already clear the ask floor, the third cannot trigger a ladder and aborting it keeps
+/// the full speed win; when they are BELOW the floor, the third draft is the cheapest thing that can avert
+/// a rung, so the straggler keeps running (bounded by draft_timeout, the hard backstop). `deferred` reports
+/// that the count condition held while the quorum did not decide — the observable for the registered check.
+async fn collect_drafts_with_straggler_stop<F, Q>(
     mut js: tokio::task::JoinSet<Option<String>>,
     n: usize,
     grace_secs: u64,
     is_valid: F,
-) -> (Vec<String>, usize, usize)
+    quorum_decides: Q,
+) -> (Vec<String>, usize, usize, bool)
 where
     F: Fn(&str) -> bool,
+    Q: Fn(&[String]) -> bool,
 {
     let mut c: Vec<String> = Vec::new();
     let mut dead = 0usize;
     let mut valid = 0usize;
     let mut stopped = 0usize;
+    let mut deferred = false;
     // Inert until armed: the `if armed` select guard means this is never awaited to completion before the
     // quorum lands, at which point it is reset to `grace_secs` from now. A day is far past any real draft
     // (bounded by draft_timeout) yet nowhere near the std::Instant overflow that a huge sentinel would hit.
@@ -2937,10 +2948,14 @@ where
                     None => break,
                 }
                 if !armed && should_arm_straggler_grace(n, valid) {
-                    grace_timer
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
-                    armed = true;
+                    if quorum_decides(&c) {
+                        grace_timer
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + std::time::Duration::from_secs(grace_secs));
+                        armed = true;
+                    } else {
+                        deferred = true;
+                    }
                 }
             }
             _ = &mut grace_timer, if armed => {
@@ -2952,7 +2967,7 @@ where
             }
         }
     }
-    (c, dead, stopped)
+    (c, dead, stopped, deferred)
 }
 
 /// #135 generic straggler collector for a fleet fanout where EVERY completed task is a usable result and any
@@ -6194,7 +6209,8 @@ mod tests {
             Some("C".to_string())
         });
         // Two valid drafts land instantly and arm a 1s grace; the 30s straggler is aborted ~1s later.
-        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 1, |_| true).await;
+        let (c, dead, stopped, _) =
+            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
         assert_eq!(stopped, 1, "the lone straggler is stopped");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 2, "quorum of 2 kept; straggler dropped");
@@ -6209,7 +6225,8 @@ mod tests {
             let s = k.to_string();
             js.spawn(async move { Some(s) });
         }
-        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 1, |_| true).await;
+        let (c, dead, stopped, _) =
+            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
         assert_eq!(stopped, 0);
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
@@ -6225,7 +6242,8 @@ mod tests {
             Some("C".to_string())
         });
         // grace 10s >> the 50ms straggler, so it lands inside the window and is kept (all 3 collected).
-        let (c, dead, stopped) = collect_drafts_with_straggler_stop(js, 3, 10, |_| true).await;
+        let (c, dead, stopped, _) =
+            collect_drafts_with_straggler_stop(js, 3, 10, |_| true, |_: &[String]| true).await;
         assert_eq!(stopped, 0, "straggler finished within grace");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
@@ -6242,11 +6260,54 @@ mod tests {
         });
         // Only ONE valid draft lands until the 3rd resolves, so the 2-valid quorum never forms before the
         // last draft — the grace never arms and nothing is stopped, even though a draft was slower.
-        let (c, dead, stopped) =
-            collect_drafts_with_straggler_stop(js, 3, 1, |s| s.starts_with("VALID")).await;
+        let (c, dead, stopped, _) = collect_drafts_with_straggler_stop(
+            js,
+            3,
+            1,
+            |s| s.starts_with("VALID"),
+            |_: &[String]| true,
+        )
+        .await;
         assert_eq!(stopped, 0, "one valid draft is not a quorum -> never armed");
         assert_eq!(dead, 0);
         assert_eq!(c.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn straggler_quorum_below_floor_defers_the_abort() {
+        // B5 both directions. Direction 1: the in-hand pair does NOT decide (quorum_decides false),
+        // so the count condition holding must NOT arm the grace — the slow third draft is awaited in
+        // full and `deferred` reports why.
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { Some("A".to_string()) });
+        js.spawn(async { Some("B".to_string()) });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            Some("C".to_string())
+        });
+        let (c, dead, stopped, deferred) =
+            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| false).await;
+        assert_eq!(
+            stopped, 0,
+            "below-floor quorum must never abort the last draft"
+        );
+        assert!(deferred, "the deferral must be observable");
+        assert_eq!(dead, 0);
+        assert_eq!(c.len(), 3, "the full pool is collected");
+
+        // Direction 2: the pair DOES decide -> today's behavior exactly (abort after grace).
+        let mut js = tokio::task::JoinSet::new();
+        js.spawn(async { Some("A".to_string()) });
+        js.spawn(async { Some("B".to_string()) });
+        js.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Some("C".to_string())
+        });
+        let (c, _dead, stopped, deferred) =
+            collect_drafts_with_straggler_stop(js, 3, 1, |_| true, |_: &[String]| true).await;
+        assert_eq!(stopped, 1, "deciding quorum keeps the pre-B5 abort");
+        assert!(!deferred);
+        assert_eq!(c.len(), 2);
     }
 
     // Scout collector (generic, every completion counts — advisory phase, no validity gate).
@@ -14415,6 +14476,10 @@ impl GooseAgentDispatcher {
         // instead of the full spread, so growing best_of_n actually raises the metric. None = full-set
         // measure (default/cloud path, byte-identical).
         consensus_k: Option<usize>,
+        // B5: the ask floor, threaded so the straggler-stop only aborts the third draft when the
+        // in-hand quorum already clears it (the third draft cannot change the ladder decision).
+        // None => always-abort, byte-identical to pre-B5.
+        quorum_floor: Option<u8>,
         // Some(t): draft plan skeletons at temperature t so the weak fleet's independent drafts converge
         // (raises real agreement — the model's draft variance is the root cause of low/noisy agreement).
         // None = the server/model default (today's behavior, byte-identical).
@@ -14722,6 +14787,7 @@ impl GooseAgentDispatcher {
 
                 let mut c: Vec<String> = Vec::new();
                 let mut dead = 0usize;
+                let mut straggler_deferred = false;
 
                 if straggler_stop {
                     // #135: race the lone lagging draft. Collect drafts as they resolve; once every draft but
@@ -14730,20 +14796,58 @@ impl GooseAgentDispatcher {
                     // the full draft_timeout. Mihai's "if 2 of 3 finish and the 3rd doesn't finish close
                     // enough, stop it to avoid wasting time". The grace/abort mechanics live in the unit-
                     // tested collect_drafts_with_straggler_stop.
+                    //
+                    // GATED ON THE QUORUM DECIDING (B5): abort the straggler only when the in-hand valid
+                    // drafts already clear the ask floor. MEASURED collapse this repairs: the unconditional
+                    // abort cut every round to 2 drafts, where the pool-invariant lift, consensus_k and an
+                    // honest structural_convergence are all arithmetically dead — the fleet requested 3 and
+                    // got 2.4, and the ladder it caused costs ~25 min/rung. Below the floor, the third draft
+                    // is the cheapest possible ladder-avoidance; draft_timeout still bounds it. No floor set
+                    // (quorum_floor None) => always-true closure, byte-identical to the pre-B5 behavior.
                     let grace = straggler_grace.clamp(10, draft_timeout.max(10));
+                    let quorum_decides = |cands: &[String]| -> bool {
+                        let Some(floor) = quorum_floor else {
+                            return true;
+                        };
+                        let parsed: Vec<Vec<goose_swarm::TaskSpec>> = cands
+                            .iter()
+                            .filter_map(|j| {
+                                goose_swarm::specs_from_plan_json(j)
+                                    .ok()
+                                    .filter(|s| goose_swarm::Dag::from_specs(s.clone()).is_ok())
+                            })
+                            .collect();
+                        if parsed.len() < 2 {
+                            return false;
+                        }
+                        plan_agreement(&parsed, converge).0 >= floor
+                    };
                     let mut js = tokio::task::JoinSet::new();
                     for i in 0..n {
                         js.spawn(make_draft(i));
                     }
                     let stopped;
-                    (c, dead, stopped) =
-                        collect_drafts_with_straggler_stop(js, n, grace, &draft_is_valid).await;
+                    (c, dead, stopped, straggler_deferred) = collect_drafts_with_straggler_stop(
+                        js,
+                        n,
+                        grace,
+                        &draft_is_valid,
+                        quorum_decides,
+                    )
+                    .await;
                     if stopped > 0 {
                         eprintln!(
                             "  {} straggler-stop: {stopped} lagging plan draft(s) aborted after {grace}s grace \
                              — proceeding on {} valid of {n}",
                             style("↯").yellow(),
                             c.iter().filter(|j| draft_is_valid(j)).count()
+                        );
+                    }
+                    if straggler_deferred && stopped == 0 {
+                        eprintln!(
+                            "  {} straggler-stop DEFERRED: in-hand drafts below the ask floor — waited for \
+                             the full pool instead of aborting the last draft",
+                            style("↯").green()
                         );
                     }
                 } else {
@@ -14777,7 +14881,7 @@ impl GooseAgentDispatcher {
                         c.len()
                     );
                 }
-                (c, dead)
+                (c, dead, straggler_deferred)
             }
         };
         // `dead` = slots that produced no draft at all. Carried out of the round because the confidence
@@ -14793,7 +14897,8 @@ impl GooseAgentDispatcher {
         // `dead` is the load-bearing half: a slot that returned nothing is a node that did the work and
         // produced no usable draft, and the confidence metric only ever scores the ANSWERS.
         let drafts_started = std::time::Instant::now();
-        let (candidates, dead_drafts) = draft_round(system.clone(), draft_temp).await;
+        let (candidates, dead_drafts, straggler_deferred) =
+            draft_round(system.clone(), draft_temp).await;
         self.events.write_value(serde_json::json!({
             "event": "skeleton_drafts",
             "requested": n,
@@ -14804,6 +14909,10 @@ impl GooseAgentDispatcher {
             // MEASURED: 11 of 11 redraft rungs escalated best_of_n to 4 or 5 and still drafted 3.
             // Without these three fields that escalation is invisible and the rung reads as normal.
             "requested_best_of_n": requested_n,
+            // B5 observable: the straggler-stop count condition held while the in-hand drafts were
+            // below the ask floor, so the abort was DEFERRED and the full pool was awaited. The
+            // registered check reads this: rungs with 3 returned drafts must appear where this is true.
+            "straggler_deferred": straggler_deferred,
             "distinct_draft_models": draft_models.len(),
             "clamped": n < requested_n,
             // THE ARITHMETIC MUST CLOSE, and on its first real reading it did not: requested 3,
@@ -15064,7 +15173,7 @@ impl GooseAgentDispatcher {
                     // variable, a review layer called blind that was merely narrow). Let the measurement
                     // name its own occupant.
                     let r2_started = std::time::Instant::now();
-                    let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
+                    let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
                     self.events.write_value(serde_json::json!({
                         "event": "skeleton_drafts_round2",
                         "path": "incremental",
@@ -15149,7 +15258,7 @@ impl GooseAgentDispatcher {
                     // Second silent window, backbone variant — see the incremental path above for the
                     // measurement. Both call the same `draft_round` a second time and neither emitted.
                     let r2_started = std::time::Instant::now();
-                    let (candidates2, _dead2) = draft_round(system2, draft_temp).await;
+                    let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
                     self.events.write_value(serde_json::json!({
                         "event": "skeleton_drafts_round2",
                         "path": "backbone",
@@ -25582,6 +25691,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         } else {
                             None
                         },
+                        // B5: the straggler-stop may abort the last draft only when the in-hand pair
+                        // already clears this floor — below it, the third draft is the cheapest
+                        // ladder-avoidance in the engine (a rung costs ~25 min).
+                        ask_floor,
                         draft_temp,
                         converge,
                         backbone_on,
