@@ -1,9 +1,8 @@
 {
-  "mtime": 1786483621.3102422,
-  "size": 235942512,
+  "mtime": 1786485716.8315828,
+  "size": 235942464,
   "new": {
-    "the shadow differs from its root outside its owned slots": false,
-    "SUBSPLIT:": false
+    "END your spec with ONE line": false
   },
   "controls": {
     "GOOSE_SWARM_TESTGEN": true,

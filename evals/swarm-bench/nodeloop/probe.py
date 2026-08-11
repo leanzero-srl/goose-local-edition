@@ -44,7 +44,12 @@ BASELINE = HERE / "probe-baseline.json"
 # every subsequent run report it "present before AND after — vacuous", which is true, useless, and
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
-NEW = {}
+NEW = {
+    "END your spec with ONE line": "S3i2's producer — the SUBSPLIT ask in the detail prompt (live path, bytes-verified absent pre-build)",
+}
+# The five adopted upstream commits carry no probeable literal (8f1590b75's distinctive
+# strings are all in #[cfg(test)] code — the F762 dead-code rule): their rebuild evidence is
+# greengate's debug suite, which ran their own tests green at each pick.
 # The 01:01 boundary's two chosen literals were BOTH unprobeable classes, found the hard way
 # (probe read STILL ABSENT while the live-path key `subsplit` count=1 proved the build carried
 # the edit — a false "rebuild did not carry" alarm from probe design, not from the build):
@@ -88,8 +93,11 @@ NEW = {}
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
-    # Landed 2026-08-12 01:01 (verified by bytes.count after the false alarm above):
-    "subsplit": "S3i2 — the detail_completed event key, the live half of the latent decomposition",
+    # "subsplit" was here 2026-08-12 02:11-02:15 and is REMOVED: the binary's one occurrence
+    # is the mangled SYMBOL extract_subsplit (which does prove compilation), invisible to this
+    # probe's `strings` haystack — a control verified with a different instrument (bytes.count)
+    # than the probe reads with is a guaranteed-blind control. THIRD PROBE RULE: graduate a
+    # literal only after `strings <binary> | grep` — the probe's own instrument — finds it.
     # GRADUATED from NEW after the 2026-08-12 00:27 rebuild (watched flipping absent -> present):
     "GOOSE_SWARM_TESTGEN": "S7 — landed 2026-08-12",
     "tests/generated/test_gen_": "S7 — landed 2026-08-12",
