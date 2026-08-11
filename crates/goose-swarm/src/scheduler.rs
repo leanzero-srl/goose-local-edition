@@ -725,6 +725,17 @@ impl State {
             .any(|(id, n)| n.state == TaskState::Claimed && id.as_str() == "integrate-verify")
     }
 
+    /// B2: any replanner-added task not yet terminal? The sink's claim gate keys on this — bonus
+    /// work must land BEFORE the join certifies the tree, or it ships unverified after the PASS.
+    fn bonus_incomplete(&self) -> bool {
+        self.bonus_ids.iter().any(|id| {
+            self.dag
+                .tasks
+                .get(id)
+                .is_some_and(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+        })
+    }
+
     fn make_replan_context(&self) -> ReplanContext {
         let mut completed = Vec::new();
         let mut failed = Vec::new();
@@ -872,6 +883,19 @@ impl State {
                 continue; // defensive: stale heap entry
             }
             if self.files_conflict(&tid) {
+                leftover.push(tid);
+                continue;
+            }
+            // B2: the sink waits for every replanner-added task, as a CLAIM-TIME gate. splice_specs
+            // never rewires integrate-verify's plan-time deps, and the K1 suppression only covers the
+            // sink's Claimed window — so bonus tasks raced the join and OUTLIVED it (measured: 1,263s
+            // of post-sink solo tail, both bonus tasks failed, their test files written into a tree
+            // the sink had already certified). Mutating deps/indegree instead is INERT once the sink
+            // is Ready (pick_assignments gates on state, relax_dependents swallows the extra count) —
+            // this predicate is pure DAG-state evidence, needs no bookkeeping, and clears itself:
+            // a bonus task's terminal state (Done OR Failed) unblocks the claim, so a failed bonus
+            // stays non-fatal by construction. The leftover re-push keeps the sink Ready meanwhile.
+            if tid.as_str() == "integrate-verify" && self.bonus_incomplete() {
                 leftover.push(tid);
                 continue;
             }
