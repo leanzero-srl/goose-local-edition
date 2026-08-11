@@ -45,7 +45,7 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "must carry a UTC designator": "Q2b2 — documented-UTC values without Z/+00:00 become findings",
+    "complete-fix::cross-file": "S1i3 — the cross-file join twin (shadow+gate, no more direct real-tree writes)",
 }
 # Literal-LESS in this batch, verified BEHAVIOURALLY on the first post-rebuild run: 4bb2b1ac7
 # difficulty on task_dispatched (the bare words "difficulty"/"easy"/"hard" cannot attribute in a
@@ -78,6 +78,8 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # GRADUATED from NEW after the 2026-08-11 23:30 rebuild (watched flipping absent -> present):
+    "must carry a UTC designator": "Q2b2 — landed 2026-08-11",
     # GRADUATED from NEW after the 2026-08-11 22:13 rebuild (watched flipping absent -> present):
     "GOOSE_SWARM_SINK_SHARD": "S1i1 — landed 2026-08-11",
     # GRADUATED from NEW after the 2026-08-11 17:49 rebuild (watched flipping absent -> present):

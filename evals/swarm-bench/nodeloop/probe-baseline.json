@@ -1,10 +1,11 @@
 {
-  "mtime": 1786475634.2918646,
-  "size": 235975200,
+  "mtime": 1786480206.622973,
+  "size": 235726800,
   "new": {
-    "must carry a UTC designator": false
+    "complete-fix::cross-file": false
   },
   "controls": {
+    "must carry a UTC designator": true,
     "GOOSE_SWARM_SINK_SHARD": true,
     "probed_post": true,
     "straggler_deferred": true,
