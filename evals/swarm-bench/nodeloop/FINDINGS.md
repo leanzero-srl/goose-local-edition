@@ -17942,3 +17942,16 @@ two all-cap-death waves actually indict is the repair's SHAPE — one monolithic
 re-deriving context for 20 minutes — and the fixes with evidence are S1's file-sharded repair
 and the G-batch progress-shaped cap. F756's "stale sibling" framing is WITHDRAWN; the
 greengate catching it (second save today) is the finding.
+
+## F758 — 0.9153 at 82 minutes: the second-best score ever, at near-half the wall, on the batch-2 binary
+
+The unit whose repair race finally worked end to end: all three twins finished WITHIN budget
+(479/597/925s — the prior unit: 4/4 cap deaths at 1282-1320s), the clean twin promoted, the
+gate's findings fell 2 → 1 on the real tree, and the cell scored **0.9153 in 82 min** against
+the prior cell's 0.6236 in 147 and the baseline mean ~0.66 at 120-169. n=1 — a direction,
+never a magnitude — but it is the direction the goal names: quality UP, wall DOWN, on the
+binary carrying B5+G1 (full draft pools), Q2 (the rank-1 detector), the pre-review re-aim,
+A2/A3 (no stacking, spread reviews), K4/K5 and the D-coherence fixes. Third boundary crossed
+at 22:13 with 7 more commits (S1 shard preference, prefix-cache tail, streaming inactivity
+timeouts, render fix, truncation marker, finding expiry, K1 prep); sink_shard + aux_slim +
+doc_examples arms enter the queue at this restart.
