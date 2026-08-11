@@ -45,8 +45,18 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "probed_post": "F751 — how many advertised POST endpoints the contract check actually wrote to",
+    "CONTRACT UNAVAILABLE": "D1 — a failed stub becomes a marked absence, never a silent hole",
+    "NONE ON DISK YET": "D3 — empty dep section redirects to the frozen interfaces",
+    "GOOSE_COMPACT_KEEP_TAIL": "K4 — compaction keeps the last turns verbatim (swarm sets 3)",
 }
+# Literal-LESS changes in the same pending batch, each verified BEHAVIOURALLY on the first
+# post-rebuild run instead (recorded so the gap is deliberate): A2 hard_device_key (private fn,
+# invisible to strings; check = no hard task on a busy device while another idles), A3 idle-job
+# spread/yield/notify (check = no review holding the last slot while ready work waits), B2 sink
+# claim gate (check = no task_completed after sink completion on a replanned run), G1 derived
+# grace (check = no straggler_aborted with round elapsed < 3x45s), K5 single-owned-file repair
+# (check = the no-path write/edit error class vanishes for single-file workers), K7 tool_choice
+# guard + F756 fix-cap 3000 (check = twins run past 1320s; agent_ok true appears).
 # Deliberately NOT probed: `clamped`. It is a real new field, but the bare word is common enough in
 # a 236 MB binary that a match would not attribute to this edit — and a probe that cannot attribute
 # is a probe that manufactures confidence. The two C5(A) fields above are distinctive and cover it.
@@ -64,6 +74,9 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # GRADUATED from NEW after the 2026-08-11 17:49 rebuild (watched flipping absent -> present):
+    "probed_post": "F751 — landed 2026-08-11",
+    "straggler_deferred": "B5 — landed 2026-08-11",
     "would_skip_ladder": "the pre-existing shadow diagnostic",
     "plan_convergence": "emitted every planning phase",
     "task_dispatched": "the most common event in any run log",
