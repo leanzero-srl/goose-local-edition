@@ -19313,6 +19313,23 @@ fn drop_unparseable_stubs(bundle: String, validation: &serde_json::Value) -> Str
         }
         let id = section.lines().next().unwrap_or("").trim();
         if bad.contains(id) {
+            // D1: MARKED absence, never a silent hole. The dropped section left a bundle whose
+            // banner still claimed "the stubs every sibling module WILL expose" while one module
+            // was simply missing — and the same prompt forbids reading dependency files, so the
+            // hole was unrecoverable by any permitted action (fired live: r2's `cli`, parsed:false,
+            // injected 3 of 4). A stub DERIVED from plan prose was considered and rejected: under
+            // a banner that says "build against these EXACTLY", a guessed signature is worse than
+            // an honest gap. The marker states the gap and licenses the one read that closes it.
+            out.push_str("### module: ");
+            out.push_str(id);
+            out.push_str(
+                "
+# CONTRACT UNAVAILABLE — this module's frozen stub failed to parse and is NOT                  shown.
+# Its real interface exists only in its source file. If you must call                  this module,
+# read that ONE file directly before writing the call — do NOT                  guess names or signatures.
+
+",
+            );
             continue;
         }
         out.push_str("### module: ");
@@ -22927,6 +22944,20 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     ));
                 }
             }
+            // D3: the worker prompts point at "'API of …'" as the authoritative surface, and for a
+            // FIRST-WAVE task no dependency file exists on disk yet — dep_block is EMPTY, the
+            // heading is absent, and the worker is pointed at a section that is not there while the
+            // real interfaces sit under '## FROZEN MODULE INTERFACES'. Emitting the heading WITH a
+            // redirect makes every pointer true without touching the prompts that carry them.
+            let dep_block = if dep_block.is_empty() {
+                "## API of dependencies — NONE ON DISK YET\n\
+                 No dependency source exists on disk yet (your siblings are still building). The \
+                 authoritative interfaces are under '## FROZEN MODULE INTERFACES' below — import and \
+                 call EXACTLY those names and signatures.\n\n"
+                    .to_string()
+            } else {
+                dep_block
+            };
             format!(
                 "## PROJECT FILE LAYOUT — the agreed plan\n\
                  Every module lives at EXACTLY these paths; import from here, NEVER invent another \
