@@ -319,6 +319,28 @@ fn replan_has_enough_dag_left(mandatory_incomplete: usize, mandatory_total: usiz
     mandatory_total == 0 || mandatory_incomplete * 4 >= mandatory_total
 }
 
+/// A2: the ranking key for a HARD task's device choice — min() wins. IDLE beats busier (first
+/// element), weight decides among equally-loaded devices (second), a first-dispatch timing accident
+/// never outranks the operator's weights (speed is third, among equal weights only). The measured
+/// defect this pins against: weight-absolute ordering stacked hard tasks two-deep on the fastest
+/// host while a whole node idled, and concurrent generations on one Apple host degrade each other
+/// (queue-time monotonic in concurrency, 7.06 SE).
+fn hard_device_key(
+    in_flight: u32,
+    weight_rank: u32,
+    speed: u64,
+    weighted_load: u64,
+    idx: usize,
+) -> (u64, u64, u64, u64, usize) {
+    (
+        in_flight as u64,
+        weight_rank as u64,
+        speed,
+        weighted_load,
+        idx,
+    )
+}
+
 fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
     is_hard || attempts >= 2
 }
@@ -796,34 +818,24 @@ impl State {
                 / sw;
             // ORDERING DEPENDS ON THE TASK, and this is the whole point of having weights.
             //
-            // For a HARD task, SPEED IS PRIMARY: the biggest work must land on the highest-weighted
-            // (fastest) node that has free capacity, every time. Every device in `pool` already passed
-            // `in_flight < weight`, so preferring speed here can never oversubscribe a node — it only
-            // decides WHICH free node wins. Previously `in_flight` was primary for every task, so speed
-            // was a tie-break only: with the fastest host holding one in-flight task and a slower host
-            // idle, the heaviest task went to the SLOW host. That is backwards — the critical path is
-            // set by the big tasks, so those are exactly the ones that must not run on the slow node.
+            // For a HARD task, an IDLE device beats a BUSIER faster one, and weight decides among
+            // equally-loaded devices (A2). Weight used to be ABSOLUTE primary here, and the measured
+            // consequence was hard tasks stacking two-deep on the highest-weighted host while a whole
+            // node sat idle — and two concurrent generations on one Apple host degrade each other
+            // (detail time is QUEUE time, monotonic in concurrency at 7.06 SE, F623; the operator has
+            // fixed 2-per-node as the hard ceiling for the same reason). A shared "fast" slot is not
+            // faster than a whole "slow" one at this fleet's weight spread, and the critical path is
+            // set by exactly these tasks.
+            //
+            // What the old comment defended still holds one level down: among devices at EQUAL load,
+            // weight is decisive and is never overridden by a first-dispatch timing accident —
+            // observed ms/task breaks ties only among equally-weighted hosts.
             //
             // For everything else load stays primary, which is what spreads ordinary work across the
             // fleet and keeps idle nodes busy.
-            // WEIGHT IS DECISIVE FOR A HARD TASK — not a tie-break, and not overridable by a timing
-            // sample. Inverted so a HIGHER speed_weight sorts FIRST; observed ms/task then breaks ties
-            // among equally-weighted hosts, and load breaks ties after that.
-            //
-            // Ordering by observed speed alone was not enough: whichever host happened to be dispatched
-            // first acquires a real average while the others are still `u64::MAX - sw`, so a single
-            // sample on a slow host would beat the configured fastest host forever. The operator sets
-            // these weights precisely because they know which machine is fastest; a first-dispatch
-            // accident must not outrank that.
             let weight_rank = u32::MAX - d.cfg.speed_weight.max(1);
             if hard {
-                (
-                    weight_rank as u64,
-                    speed,
-                    d.in_flight as u64,
-                    weighted_load,
-                    i,
-                )
+                hard_device_key(d.in_flight, weight_rank, speed, weighted_load, i)
             } else {
                 (
                     d.in_flight as u64,
@@ -2996,6 +3008,26 @@ mod salvage_tests {
         // HARD keeps the preference it always had, on its first dispatch and every later one.
         assert!(dispatch_prefers_fastest_node(true, 0));
         assert!(dispatch_prefers_fastest_node(true, 3));
+    }
+
+    #[test]
+    fn a_hard_task_prefers_an_idle_node_over_a_busier_faster_one() {
+        // Both directions of A2. weight_rank inverts speed_weight (lower rank = faster host).
+        let fast_busy = hard_device_key(1, u32::MAX - 3, 0, 0, 0);
+        let slow_idle = hard_device_key(0, u32::MAX - 1, 0, 0, 1);
+        assert!(
+            slow_idle < fast_busy,
+            "an idle device must win over a busier higher-weighted one — stacking two hard \
+             generations on one Apple host degrades both (F623)"
+        );
+        // Among equally-loaded devices the operator's weight stays decisive — the intent the old
+        // absolute ordering was defending, preserved one tier down.
+        let fast_idle = hard_device_key(0, u32::MAX - 3, 0, 0, 0);
+        let slow_idle = hard_device_key(0, u32::MAX - 1, 0, 0, 1);
+        assert!(fast_idle < slow_idle, "equal load: higher weight wins");
+        // And a timing sample still cannot outrank a configured weight at equal load.
+        let fast_idle_slow_sample = hard_device_key(0, u32::MAX - 3, 9_999, 0, 0);
+        assert!(fast_idle_slow_sample < slow_idle);
     }
 
     #[test]
