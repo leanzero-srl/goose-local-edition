@@ -18030,3 +18030,25 @@ a grep over clippy is the `test | grep` trap wearing a new coat. Two forward-fix
 **Boundary 5:** probe rotated (cross-file graduated to controls), baseline 3 literals absent →
 build 00:27:01 → all 3 flipped, 19 controls held. The binary now carries S1 inc1-3 + S7
 complete + Q2b2 + difficulty. Fleet still 2/3 (gabee down); STOP stays until the pool is whole.
+
+## F762 — boundary 6 (01:01 binary): S3 inc1+2 land; the probe cries wolf and teaches two rules
+
+**The scare.** probe --verify read both S3 literals STILL ABSENT after a gate-green rebuild —
+"THE REBUILD DID NOT CARRY THE EDIT". It did carry it: `subsplit`, the detail_completed event
+key from the same commit, counts exactly 1 in the 01:01 binary (bytes.count, the probe's own
+method), and the string existed nowhere in the codebase before tonight. The alarm was my probe
+DESIGN: (a) the splice-fence string lives in #[allow(dead_code)] splice_functions — zero
+callers in release means the optimizer never codegens the function, so NO literal inside
+dead-until-wired code can evidence any rebuild, ever; (b) "SUBSPLIT:" is 9 bytes inside a
+strip_prefix — short literals constant-fold into immediate comparisons and never reach
+.rodata. Two new probe rules, now in probe.py's comments: never probe dead-code literals
+(their evidence is the debug-suite greengate), and prefer LONG live-path strings verified with
+bytes.count before trusting absence. Also re-learned: `grep -c` on a Mach-O undercounts to 0 —
+my ad-hoc grep manufactured the panic; python bytes.count is the instrument.
+
+**The boundary.** Gate green (585/8 suites, including the 5-way splice test and the subsplit
+parser pins), release 01:01:56, 24 controls held, S3 inc1 (splice_functions with the
+root-anchored byte-fence — the first test run corrected the CONTRACT: fence against root, not
+current) + inc2 (subsplit stamped at plan parse, observable via detail_completed.subsplit,
+dispatch byte-identical) both in. Fleet still 2/3 — gabee down since ~23:20, terminal
+notification sent 00:50; STOP stays.
