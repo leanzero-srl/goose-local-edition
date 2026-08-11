@@ -1360,6 +1360,18 @@ where
                         msg = msg.with_id(id);
                     }
 
+                    // bb539f7d6 ADAPT (engine slice): a max_tokens cutoff used to end the stream
+                    // exactly like a finished answer — silent garbage for a weak model mid-file, and
+                    // the swarm's gates could not tell "done" from "guillotined". The marker is
+                    // deterministic text every downstream reader sees: a truncated final_output no
+                    // longer passes as complete, and the retry machinery has a signal to re-ask.
+                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
+                        msg = msg.with_text(
+                            "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit \
+                             mid-generation — this response is INCOMPLETE]",
+                        );
+                    }
+
                     yield (
                         Some(msg),
                         if chunk.choices[0].finish_reason.is_some() {
