@@ -7,26 +7,26 @@ for defaults is the code, never this file.
 
 | lever | resolution site(s) | verdict | evidence |
 |---|---|---|---|
-| GOOSE_SWARM_ACT_NOW | config-default gate [swarm.rs] |  |  |
+| GOOSE_SWARM_ACT_NOW | config-default gate [swarm.rs] | code-read | reachable, default ON via cfg-bundle; measured writes 23.8→48% — BAKE candidate |
 | GOOSE_SWARM_ANSWERS_WIN_FLOOR | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_ASK_AWAY | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_ASK_FILE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_ASK_FILE | raw env read [swarm.rs] | code-read | reachable operational toggle (file-handshake forcing) — KEEP as env-only, not a tuning lever |
 | GOOSE_SWARM_ASK_FLOOR | raw env read [swarm.rs] |  | resolved=85 (live run, engine-emitted) |
-| GOOSE_SWARM_ASK_MAXQ | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_ASK_MAXQ | raw env read [swarm.rs] | code-read | reachable, env>config>3 — tuning lever, QUEUED behind ask-family arm |
 | GOOSE_SWARM_ASK_REPLAN | raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_ASK_ROUNDS | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_ASK_SCALE | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_ASK_WAIT_SECS | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_ASSURED | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_ASK_ROUNDS | raw env read [swarm.rs] | code-read | inert unless ask_away (resolved=false on live run) — decide with ask_away |
+| GOOSE_SWARM_ASK_SCALE | raw env read [swarm.rs] | code-read | reachable only when a floor is set; heuristic bump capped 100 — KEEP |
+| GOOSE_SWARM_ASK_WAIT_SECS | raw env read [swarm.rs] | code-read | raw env, default 1800 — G-batch: derive-or-KEEP decision pending |
+| GOOSE_SWARM_ASSURED | raw env read [swarm.rs] | code-read | the profile switch itself — KEEP (meta-lever) |
 | GOOSE_SWARM_AUTHOR_PITFALLS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_BACKBONE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_BACKBONE_SKIP_CONFIDENT | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_BOUNDARY_PROBE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_BOUNDARY_PROBE | raw env read [swarm.rs] | code-read | default ON (off-values opt out) — reachable; evidence via probe events |
 | GOOSE_SWARM_CLARIFY_SPEC_BOUND | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_CLARITY_FAIL_CLOSED | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_CLARITY_PROBE_SECS | raw env read [swarm.rs] |  | resolved=null (live run, engine-emitted) |
-| GOOSE_SWARM_CLI_CONTRACT | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_COMPILE_GATE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_CLI_CONTRACT | raw env read [swarm.rs] | code-read | default ON, entry-worker injection — reachable; BAKE candidate with C3 family |
+| GOOSE_SWARM_COMPILE_GATE | raw env read [swarm.rs] | code-read | raw env default OFF — reachability confirmed; QUEUED (Rust/TS beds only) |
 | GOOSE_SWARM_COMPLETE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_COMPLETE_CAP_SECS | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_COMPLETE_PARALLEL | raw env read [swarm.rs] |  |  |
