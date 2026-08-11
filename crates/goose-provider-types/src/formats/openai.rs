@@ -200,6 +200,16 @@ pub fn format_messages_with_options(
     image_format: &ImageFormat,
     options: OpenAiFormatOptions,
 ) -> Vec<Value> {
+    // U-batch (affd1cea1 ADAPT): the volatile <turn-context> block sits mid-history and changes
+    // every turn, so it busts the OpenAI-compatible server's implicit prefix cache from that point
+    // on — on a local fleet whose calls are prefill-dominated (30-900s), that is a full re-prefill
+    // per turn. Pull it out and re-emit it at the request TAIL: every prior byte stays stable and
+    // the cache hits. No block -> byte-identical.
+    let extracted = extract_turn_context(messages);
+    let (messages, turn_context): (&[Message], Option<&str>) = match &extracted {
+        Some((stripped, text)) => (stripped.as_slice(), Some(text.as_str())),
+        None => (messages, None),
+    };
     let mut messages_spec = Vec::new();
     let mut pending_assistant_reasoning = String::new();
     // Reasoning to propagate across consecutive tool-call messages in the same turn.
@@ -504,7 +514,61 @@ pub fn format_messages_with_options(
     }
 
     merge_split_tool_call_messages(&mut messages_spec);
+    if let Some(text) = turn_context {
+        append_turn_context_tail(&mut messages_spec, text);
+    }
+
     messages_spec
+}
+
+/// affd1cea1 ADAPT: find the LAST user message carrying a turn-context text block and strip that
+/// block out, returning the stripped history + the block's text. Only strips when the block is not
+/// the message's sole content on a non-final message (mirrors upstream's guard: a lone-context
+/// mid-history user message must stay a message or strict templates lose the turn boundary).
+fn extract_turn_context(messages: &[Message]) -> Option<(Vec<Message>, String)> {
+    let (mi, bi) = messages.iter().enumerate().rev().find_map(|(mi, m)| {
+        if m.role != Role::User {
+            return None;
+        }
+        m.content
+            .iter()
+            .position(|block| {
+                matches!(block, MessageContent::Text(t)
+                    if crate::conversation::is_turn_context_text(&t.text))
+            })
+            .map(|bi| (mi, bi))
+    })?;
+    if mi + 1 != messages.len() && messages[mi].content.len() <= 1 {
+        return None;
+    }
+    let mut messages = messages.to_vec();
+    let MessageContent::Text(text) = messages[mi].content.remove(bi) else {
+        return None;
+    };
+    Some((messages, text.text.clone()))
+}
+
+/// Merges into a trailing user message when one exists; strict chat templates reject consecutive
+/// user messages. (Runs BEFORE the prefill-assistant append in create_request_with_options, so a
+/// prefilled request keeps its assistant message last.)
+fn append_turn_context_tail(messages_spec: &mut Vec<Value>, text: &str) {
+    if let Some(last) = messages_spec.last_mut() {
+        if last["role"] == json!("user") {
+            match last.get_mut("content") {
+                Some(Value::String(existing)) => {
+                    existing.push('\n');
+                    existing.push_str(text);
+                    return;
+                }
+                Some(Value::Array(blocks)) => {
+                    blocks.push(json!({"type": "text", "text": text}));
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+    messages_spec.push(json!({"role": "user", "content": text}));
 }
 
 /// The agent splits a single assistant response with N tool_calls into N
@@ -4218,6 +4282,73 @@ data: [DONE]"#;
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_prefix_stability_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn turn_context(time: &str) -> String {
+        format!(
+            "<turn-context>\n<current-time>{time}</current-time>\n\
+             <working-directory>/Users/me/code</working-directory>\n</turn-context>"
+        )
+    }
+
+    fn convo(tc: &str) -> Vec<Message> {
+        vec![
+            Message::user().with_text("build the thing"),
+            Message::assistant().with_text("on it"),
+            Message::user()
+                .with_text(tc)
+                .with_text("now add error handling"),
+            Message::assistant().with_text("done"),
+            Message::user().with_text("and tests"),
+        ]
+    }
+
+    /// affd1cea1 ADAPT, both directions: the volatile block leaves mid-history (every prior byte
+    /// identical across turns whose ONLY difference is the block's content — the property the
+    /// prefix cache needs) and rides the tail instead; without a block the output is untouched.
+    #[test]
+    fn turn_context_leaves_the_prefix_and_rides_the_tail() {
+        let a = format_messages(&convo(&turn_context("10:00:00")), &ImageFormat::OpenAi);
+        let b = format_messages(&convo(&turn_context("10:05:00")), &ImageFormat::OpenAi);
+        // Everything except the tail is BYTE-IDENTICAL across the two requests.
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()).take(a.len() - 1) {
+            assert_eq!(
+                x, y,
+                "a mid-history byte changed with the turn-context — cache busted"
+            );
+        }
+        // The block is at the TAIL (merged into the final user message), not mid-history.
+        let tail = serde_json::to_string(a.last().unwrap()).unwrap();
+        assert!(
+            tail.contains("<turn-context>"),
+            "tail must carry the block: {tail}"
+        );
+        let mid = serde_json::to_string(&a[..a.len() - 1]).unwrap();
+        assert!(
+            !mid.contains("<turn-context>"),
+            "mid-history must not: {mid}"
+        );
+        // And the final message stays role:user exactly once (merged, not duplicated).
+        assert_eq!(a.last().unwrap()["role"], json!("user"));
+
+        // No block -> byte-identical legacy output shape (no phantom tail message).
+        let plain = convo("just text, not a context block");
+        let out = format_messages(&plain, &ImageFormat::OpenAi);
+        assert_eq!(
+            out.len(),
+            a.len(),
+            "no extra message may appear without a block"
+        );
+        assert!(!serde_json::to_string(&out)
+            .unwrap()
+            .contains("<turn-context>"));
     }
 }
 
