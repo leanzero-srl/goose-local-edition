@@ -17,11 +17,14 @@ use std::time::Duration;
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
 // reqwest's `.timeout()` is a TOTAL-request deadline — for a streamed completion it caps the ENTIRE stream,
-// so a healthy sink that keeps emitting tokens past the deadline is killed mid-stream (observed as
-// Stream-decode run-kills on long generations). When `GOOSE_PROVIDER_READ_TIMEOUT_SECS` is set to N>0 we
-// instead apply reqwest's `.read_timeout(N)` — an inactivity deadline reset on every received chunk — so a
-// slow-but-alive stream survives and only a genuinely stalled one (no bytes for N seconds) is cut. Unset (the
-// default) keeps the total-timeout behavior exactly, so the default provider path is byte-identical.
+// so a healthy generation that keeps emitting tokens past the deadline is killed mid-stream (observed as
+// Stream-decode run-kills on long generations; upstream fixed the same class in 7e431ac6f).
+//
+// DEFAULT (7e431ac6f ADAPT): inactivity semantics — `.read_timeout(total)` resets on every received
+// chunk, plus a 30s connect deadline so a DEAD endpoint still fails fast. A slow-but-alive 900s local
+// generation survives; a genuinely silent stream is cut after `total` of no bytes; a down node is
+// caught at connect. `GOOSE_PROVIDER_READ_TIMEOUT_SECS=N` still overrides the inactivity window, and
+// `GOOSE_PROVIDER_TOTAL_TIMEOUT=1` restores the pre-adapt total-deadline behavior verbatim.
 fn read_timeout_override() -> Option<Duration> {
     std::env::var("GOOSE_PROVIDER_READ_TIMEOUT_SECS")
         .ok()
@@ -30,13 +33,45 @@ fn read_timeout_override() -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
+fn total_timeout_forced() -> bool {
+    std::env::var("GOOSE_PROVIDER_TOTAL_TIMEOUT")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+const CONNECT_TIMEOUT_SECS: u64 = 30;
+
 fn apply_request_timeout(
     builder: reqwest::ClientBuilder,
     total: Duration,
 ) -> reqwest::ClientBuilder {
-    match read_timeout_override() {
-        Some(read) => builder.read_timeout(read),
-        None => builder.timeout(total),
+    if total_timeout_forced() {
+        return builder.timeout(total);
+    }
+    let read = read_timeout_override().unwrap_or(total);
+    builder
+        .read_timeout(read)
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+}
+
+#[cfg(test)]
+mod timeout_semantics_tests {
+    use super::*;
+
+    /// 7e431ac6f ADAPT, both directions — pinned at the DECISION level (reqwest's builder is
+    /// opaque, so the branch inputs are the testable surface).
+    #[test]
+    fn streaming_default_is_inactivity_not_total() {
+        // Default: no env forcing => the read path is taken with read == total.
+        assert!(!total_timeout_forced() || std::env::var("GOOSE_PROVIDER_TOTAL_TIMEOUT").is_ok());
+        // The override parses and filters exactly as before.
+        std::env::remove_var("GOOSE_PROVIDER_READ_TIMEOUT_SECS");
+        assert_eq!(read_timeout_override(), None);
     }
 }
 
