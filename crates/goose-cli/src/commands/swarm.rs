@@ -13031,6 +13031,7 @@ impl GooseAgentDispatcher {
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             temp_override,
+            None, // planner-side calls own no files
         )
         .await
     }
@@ -13062,6 +13063,7 @@ impl GooseAgentDispatcher {
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             None,
+            None, // generic path: no owned-file repair target
         )
         .await
     }
@@ -13108,6 +13110,11 @@ impl GooseAgentDispatcher {
         // today's behavior). Used to draft plan skeletons at a LOW temperature so the weak fleet's independent
         // drafts converge (raises real agreement) without touching worker/coding calls.
         temp_override: Option<f32>,
+        // K5: when this call is a WORKER that owns exactly ONE file, its path — core's
+        // `repair_swarm_tool_call` then injects it into any write/edit call the model emitted with a
+        // missing/empty `path`, the single most common weak-model malformation. The hook was built
+        // FOR the swarm and had zero callers; None (every planner-side call) is byte-identical.
+        single_owned_file: Option<String>,
     ) -> Result<RunAgentOut> {
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
@@ -13118,6 +13125,7 @@ impl GooseAgentDispatcher {
             GoosePlatform::GooseCli,
         );
         let agent = Agent::with_config(agent_config);
+        agent.set_swarm_single_owned_file(single_owned_file);
 
         let session = self
             .session_manager
@@ -23444,6 +23452,9 @@ impl TaskDispatcher for GooseAgentDispatcher {
                     None
                 },
                 None,
+                // K5: exactly one owned file -> core repairs a write/edit call whose `path` the
+                // weak model omitted, instead of the tool erroring and burning a turn.
+                (req.owned_files.len() == 1).then(|| req.owned_files[0].clone()),
             )
             .await;
         let secs = started.elapsed().as_secs_f64();
