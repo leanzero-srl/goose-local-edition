@@ -464,6 +464,11 @@ struct IdleSlotGuard {
     /// see it as busy and never stack a 2nd call on the same node (the "+1 QUEUED on one node, another idle"
     /// bug). `None` when the fleet was saturated so no idle device could be claimed (deterministic-only judge).
     claimed_device: Option<usize>,
+    /// A3: the scheduler loop's wakeup. Releasing a claimed slot without notifying left the freed
+    /// slot unusable until the next 15s tick — ~41-61 releases per run (CONFIRMED), each a dead slot
+    /// window while ready work waited. Notified AFTER the decrement lands, so the woken pass sees
+    /// the slot free. None (tests) => release exactly as before.
+    notify: Option<Arc<Notify>>,
 }
 
 impl Drop for IdleSlotGuard {
@@ -472,16 +477,22 @@ impl Drop for IdleSlotGuard {
             let st = self.state.clone();
             let is_judge = self.is_judge;
             let claimed = self.claimed_device;
+            let notify = self.notify.clone();
             handle.spawn(async move {
-                let mut s = st.lock().await;
-                s.idle_jobs = s.idle_jobs.saturating_sub(1);
-                if is_judge {
-                    s.judge_running = false;
-                }
-                if let Some(dev) = claimed {
-                    if s.devices[dev].in_flight > 0 {
-                        s.devices[dev].in_flight -= 1;
+                {
+                    let mut s = st.lock().await;
+                    s.idle_jobs = s.idle_jobs.saturating_sub(1);
+                    if is_judge {
+                        s.judge_running = false;
                     }
+                    if let Some(dev) = claimed {
+                        if s.devices[dev].in_flight > 0 {
+                            s.devices[dev].in_flight -= 1;
+                        }
+                    }
+                }
+                if let Some(n) = notify {
+                    n.notify_one();
                 }
             });
         }
@@ -1284,6 +1295,20 @@ impl State {
     /// Choose an in-flight worker for the judge to inspect: the longest-running Claimed task that is at
     /// least `min_age_secs` old and under its intervention cap, to be judged on a currently-idle device.
     /// Returns the request + the attempt inspected, and marks a judge running (at most one at a time).
+    /// A3: the device an IDLE JOB (judge / pre-review / sink-review / twin) claims — the
+    /// LEAST-LOADED free device, never the first free one. `.position()` stacked a review as a
+    /// second concurrent generation beside a busy worker while another node sat physically idle
+    /// (CONFIRMED live), and concurrent generations on one Apple host degrade each other (F623).
+    /// Ties break by index for determinism, matching the old behavior on an evenly-loaded fleet.
+    fn least_loaded_free_device(&self) -> Option<usize> {
+        self.devices
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.cfg.enabled && d.in_flight < d.cfg.weight)
+            .min_by_key(|(i, d)| (d.in_flight, *i))
+            .map(|(i, _)| i)
+    }
+
     fn pick_judge_target(
         &mut self,
         cfg: &JudgeConfig,
@@ -1293,10 +1318,7 @@ impl State {
         // the next idle-job never stack on it), but fall through with no claim + an empty model_id so the
         // deterministic verdicts still fire when every node is busy (saturated) — a stuck worker must not go
         // unjudged. The actual claim (in_flight bump) happens at the end, only if a task is selected.
-        let claimed_device = self
-            .devices
-            .iter()
-            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight);
+        let claimed_device = self.least_loaded_free_device();
         let judge_model_id = claimed_device
             .map(|i| self.devices[i].cfg.model_id.clone())
             .unwrap_or_default();
@@ -1428,10 +1450,7 @@ impl State {
     /// reviewable, or all idle slots are taken. Marks the task pre_reviewed up front so it is picked at most
     /// once even while the review is in flight.
     fn pick_prereview_request(&mut self) -> Option<(PreReviewRequest, usize)> {
-        let claimed_device = self
-            .devices
-            .iter()
-            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)?;
+        let claimed_device = self.least_loaded_free_device()?;
         let reviewer_model_id = self.devices[claimed_device].cfg.model_id.clone();
         let tid = self
             .dag
@@ -1483,10 +1502,7 @@ impl State {
         if !sink_review_enabled() || !self.sink_in_flight() {
             return None;
         }
-        let claimed_device = self
-            .devices
-            .iter()
-            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)?;
+        let claimed_device = self.least_loaded_free_device()?;
         let model_id = self.devices[claimed_device].cfg.model_id.clone();
         let dim = self.sink_review_dim;
         self.sink_review_dim = self.sink_review_dim.wrapping_add(1);
@@ -1501,10 +1517,7 @@ impl State {
     /// but `speculative: true`, and claims the twin's OWN device slot + spec_* maps WITHOUT touching
     /// held_files / claimed_device / the task's Claimed state (only the primary holds the real files).
     fn pick_speculation_target(&mut self) -> Option<(DispatchRequest, usize)> {
-        let dev = self
-            .devices
-            .iter()
-            .position(|d| d.cfg.enabled && d.in_flight < d.cfg.weight)?;
+        let dev = self.least_loaded_free_device()?;
         let mut best: Option<(TaskId, u64)> = None;
         for (tid, n) in &self.dag.tasks {
             if n.state != TaskState::Claimed || self.speculating.contains(tid) {
@@ -2659,6 +2672,7 @@ impl Scheduler {
                             state: st.clone(),
                             is_judge: true,
                             claimed_device,
+                            notify: Some(nt.clone()),
                         };
                         let outcome = judge.judge(req).await;
                         let intervened = {
@@ -2687,7 +2701,13 @@ impl Scheduler {
                     // Idle-jobs now CLAIM a device (bump in_flight), so idle_capacity() already reflects them
                     // — fire a pre-review iff a device is genuinely free. (The old `idle_jobs >= idle_capacity`
                     // double-counted once claiming was added, blocking the concurrent pre-review.)
-                    if s.idle_capacity() == 0 {
+                    //
+                    // A3: AND never the LAST free slot while ready work is waiting on capacity.
+                    // pick_assignments ran first this pass, so a non-empty ready set here means tasks
+                    // exist that could not be placed — a review claiming the final slot would make the
+                    // fleet supervise instead of build at exactly the moment building is possible. With
+                    // 2+ slots free (or nothing waiting) the review proceeds as before.
+                    if s.idle_capacity() == 0 || (!s.ready.is_empty() && s.idle_capacity() <= 1) {
                         None
                     } else {
                         s.pick_prereview_request()
@@ -2696,6 +2716,7 @@ impl Scheduler {
                 if let Some((req, claimed_device)) = req {
                     let pr = pr.clone();
                     let st = state.clone();
+                    let nt = notify.clone();
                     tokio::spawn(async move {
                         // The IdleSlotGuard is the SOLE releaser of this idle_jobs slot AND the claimed device
                         // slot — decrement-ONCE on both normal and panic exit (is_judge=false leaves
@@ -2705,6 +2726,7 @@ impl Scheduler {
                             state: st.clone(),
                             is_judge: false,
                             claimed_device: Some(claimed_device),
+                            notify: Some(nt),
                         };
                         let tid = req.task_id.clone();
                         let dev = req.reviewer_model_id.clone();
@@ -2731,17 +2753,29 @@ impl Scheduler {
                 // call and returns None once none is free, so this saturates the idle nodes during the sink
                 // instead of leaving them idle between the ~15s tick and a ~90s review finishing.
                 loop {
-                    let pick = { state.lock().await.pick_sink_review() };
+                    let pick = {
+                        let mut s = state.lock().await;
+                        // A3: same last-slot yield as pre-review — inert during a normal sink window
+                        // (ready is empty by construction) but load-bearing if a replan injects work
+                        // mid-sink.
+                        if !s.ready.is_empty() && s.idle_capacity() <= 1 {
+                            None
+                        } else {
+                            s.pick_sink_review()
+                        }
+                    };
                     let Some((model_id, dim, goal, claimed_device)) = pick else {
                         break;
                     };
                     let pr = pr.clone();
                     let st = state.clone();
+                    let nt = notify.clone();
                     tokio::spawn(async move {
                         let _slot = IdleSlotGuard {
                             state: st.clone(),
                             is_judge: false,
                             claimed_device: Some(claimed_device),
+                            notify: Some(nt),
                         };
                         pr.idle_dimension_review(&model_id, &goal, dim).await;
                     });
