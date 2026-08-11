@@ -24575,10 +24575,16 @@ fn pick_repair_winner(
 /// next round's deterministic verify gates the (partial) result. GOOSE_SWARM_FIX_CAP_SECS overrides
 /// (default 1200 = 20min, matching the fleet-parallel fix path); clamped to 120..=3600.
 fn fix_cap_secs() -> u64 {
+    // 3000, matching the F432/F440 repair-budget raise. The raise landed on the complete loop's
+    // cap and this sibling default stayed 1200 — the stale-copy class 34359b8b7 documents —
+    // MEASURED: the first live spec_repair wave ran 3/3 twins into agent_ok:false at 1282-1320s,
+    // one or two build-test cycles on this fleet, and the round's only survivor was a killed
+    // twin's partial tree. F440 already established the raise is spiral-safe; the deeper fix
+    // (a progress-shaped cap on rounds-without-mutation) is the G-batch item, this unblocks now.
     std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(1200)
+        .unwrap_or(3000)
         .clamp(120, 3600)
 }
 

@@ -17906,3 +17906,15 @@ was awaited, exactly as registered.
 
 (F-number continues the commit-stream sequence past F754; the ledger file's own tail predates
 the split ledgers.)
+
+## F756 — the repair-budget raise never reached the twin path, and the first live wave proves both halves
+
+`swarm-3node-r0`'s round 0: 3 spec_repair twins, ALL `agent_ok: false` at 1282-1320s —
+`fix_cap_secs` still defaulted 1200 (the F432 raise landed on the complete loop's cap; this
+sibling stayed, the 34359b8b7 stale-copy class again). And the promote machinery carried the
+round anyway: a killed twin's partial tree re-verified findings:0 and was PROMOTED
+(grade-the-tree-not-the-agent working exactly as documented), then `complete_verify` round 1
+honestly REFUSED green — the smoke gate the twins verify against does not measure the ETag
+behaviour the round exists to fix. Both honest-machinery claims confirmed; the budget default
+raised to 3000 in the held batch. The substance readout (does a full-budget twin implement
+per-page ETags?) belongs to the next unit.
