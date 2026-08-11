@@ -24896,13 +24896,16 @@ async fn land_generated_tests(
         Ok(rel)
     } else {
         let why = match &collect {
-            Ok(o) => String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .chain(String::from_utf8_lossy(&o.stderr).lines())
-                .filter(|l| !l.trim().is_empty())
-                .last()
-                .unwrap_or("collection failed")
-                .to_string(),
+            Ok(o) => {
+                let out = String::from_utf8_lossy(&o.stdout);
+                let err = String::from_utf8_lossy(&o.stderr);
+                out.lines()
+                    .chain(err.lines())
+                    .filter(|l| !l.trim().is_empty())
+                    .next_back()
+                    .unwrap_or("collection failed")
+                    .to_string()
+            }
             Err(e) => e.to_string(),
         };
         let _ = std::fs::remove_file(&abs);
