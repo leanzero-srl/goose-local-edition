@@ -18088,3 +18088,22 @@ With the fleet still 2/3 and S3 deferred by design, the pause went to the upstre
   deliberate-merge queue stands at THREE (1e03bbb56 reasoning-preservation vs our variant;
   ad87dd4c3 structured compaction vs K4; 8e54bad4e builder divergence) — each needs a session
   that reads both sides, none is tick-work. Clean-pick pause-work is EXHAUSTED.
+
+## F765 — boundary 7 (02:16 binary): the full 8-commit batch lands; the probe teaches its third rule
+
+**The instrument saga concludes.** The boundary's control check failed BLIND — because F762's
+"verified" control was itself flawed: the binary's single `subsplit` occurrence is the mangled
+SYMBOL `extract_subsplit...` in the export table, not the event-key string, and it is visible
+to bytes.count but INVISIBLE to the probe's own `strings` haystack. Two instruments, two
+answers, and I graduated a control on the wrong one. (The symbol still proves S3i2 compiled
+into 01:01 — the landing claim survives; the control does not.) THIRD PROBE RULE, now in
+probe.py: a literal graduates only after `strings <binary> | grep` — the probe's own
+instrument — finds it. Also confirmed: the 8-byte json key never reached .rodata at all, the
+F762 short-literal rule again.
+
+**Boundary 7, clean:** control repaired → baseline ("END your spec with ONE line" absent by
+strings) → gate GREEN → release 02:16:06 → the literal FLIPPED, controls held. In the binary:
+the S3 trio (anchor+skeleton, SUBSPLIT ask, DispatchRequest plumb) + 5 upstream picks
+(atomic table init, extension-skip elimination, tool-summary session-manager, exact
+extension-owner match, command normalization). Nothing held. Fleet still 2/3; STOP stays;
+WATCH MODE begins — tonight's engineering queue is done by design.
