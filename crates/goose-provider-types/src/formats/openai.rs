@@ -1495,7 +1495,18 @@ pub fn create_request_with_options(
         let already_acted = payload["messages"]
             .as_array()
             .is_some_and(|msgs| msgs.iter().any(|m| m.get("tool_calls").is_some()));
-        if !already_acted {
+        // AND ONLY WHEN THE REQUEST CARRIES TOOLS. The force key rides ModelConfig.request_params,
+        // and the same ModelConfig serves the session's AUXILIARY calls — compaction and tool-pair
+        // summaries go through `complete_fast` with an EMPTY tools array and a single user message
+        // (so `already_acted` is false by construction). Demanding a tool call from a request that
+        // offers none poisons every such call the moment a force_write arm is switched on — the
+        // leak would have been indistinguishable from "compaction broke", one layer away from the
+        // lever that caused it.
+        let has_tools = payload
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .is_some_and(|a| !a.is_empty());
+        if !already_acted && has_tools {
             // "required", NOT the named-function object. MEASURED against the live server:
             //   {"error":"Invalid tool_choice type: 'object'.
             //             Supported string values: none, auto, required"}   -> HTTP 400
@@ -4223,17 +4234,37 @@ mod force_tool_until_act_tests {
         ModelConfig::new("m").with_merged_request_params(extra)
     }
 
-    fn req(cfg: &ModelConfig, messages: &[Message]) -> Value {
-        create_request(cfg, "sys", messages, &[], &ImageFormat::OpenAi, false).unwrap()
+    fn req(cfg: &ModelConfig, messages: &[Message], tools: &[rmcp::model::Tool]) -> Value {
+        create_request(cfg, "sys", messages, tools, &ImageFormat::OpenAi, false).unwrap()
     }
 
-    /// Before the model has acted, the named tool is MANDATORY.
+    fn write_tool() -> rmcp::model::Tool {
+        rmcp::model::Tool::new("write", "write a file", object!({"type": "object"}))
+    }
+
+    /// Before the model has acted, the named tool is MANDATORY — when the request OFFERS tools.
     #[test]
     fn the_named_tool_is_forced_while_nothing_has_been_called() {
         let msgs = vec![Message::user().with_text("write it")];
-        let p = req(&cfg("write"), &msgs);
+        let p = req(&cfg("write"), &msgs, &[write_tool()]);
         // "required", not the named object: the live server rejects the object form with HTTP 400.
         assert_eq!(p["tool_choice"], json!("required"));
+    }
+
+    /// K7: the force key rides ModelConfig.request_params, and the SAME config serves the session's
+    /// auxiliary calls — compaction and tool-pair summaries go through `complete_fast` with an EMPTY
+    /// tools array and a single user message, so `already_acted` is false by construction. Before
+    /// this guard, switching a force_write arm on poisoned every such call with a demand for a tool
+    /// the request never offered — a failure that would have read as "compaction broke", one layer
+    /// away from the lever that caused it.
+    #[test]
+    fn the_force_never_leaks_into_a_toolless_request() {
+        let msgs = vec![Message::user().with_text("summarize this")];
+        let p = req(&cfg("write"), &msgs, &[]);
+        assert!(
+            p.get("tool_choice").is_none(),
+            "tool_choice demanded from a request offering no tools: {p}"
+        );
     }
 
     /// ...and it RELEASES ITSELF once an assistant turn carries a tool call. Without this half the
@@ -4248,7 +4279,7 @@ mod force_tool_until_act_tests {
                 Ok(CallToolRequestParams::new("write").with_arguments(object!({}))),
             ),
         ];
-        let p = req(&cfg("write"), &msgs);
+        let p = req(&cfg("write"), &msgs, &[write_tool()]);
         assert!(
             p.get("tool_choice").is_none(),
             "a worker that has acted must be free to finish: {p}"
@@ -4259,7 +4290,7 @@ mod force_tool_until_act_tests {
     #[test]
     fn absent_key_sets_no_tool_choice() {
         let msgs = vec![Message::user().with_text("hi")];
-        let p = req(&ModelConfig::new("m"), &msgs);
+        let p = req(&ModelConfig::new("m"), &msgs, &[write_tool()]);
         assert!(p.get("tool_choice").is_none());
     }
 }
