@@ -18066,3 +18066,14 @@ With the fleet still 2/3 and S3 deferred by design, the pause went to the upstre
   split-request_msg variant) and upstream's accumulates-and-drops-standalones differently.
   Two solutions to one problem = a semantic merge decision, aborted per the triage's
   conflict-risk rule and recorded here for a deliberate session, not a tick.
+
+## F763b — U-batch continued: two more in, structured compaction conflicts with K4
+
+- **8f1590b75** (silent extension-skip elimination): clean pick, gate GREEN. A worker losing
+  `developer` no longer proceeds tool-less in silence.
+- **d5785a367** (session-manager for tool summaries): clean pick, gate GREEN — the concurrency
+  corruption class for K3's summarization path.
+- **ad87dd4c3** (structured compaction): CONFLICT, 5 hunks across agent.rs, reply_parts.rs and
+  context_mgmt/mod.rs — the last being K4's home. Upstream restructures the same summarize
+  path our keep-tail change threads through; merging is a K4-aware decision, aborted and
+  recorded beside 1e03bbb56 in the deliberate-merge queue.
