@@ -128,6 +128,15 @@ print("A score delta below the replicate spread is not a result; read the mechan
 PY
     ;;
   check)
+    # WATCHDOG ALARMS FIRST. The standing watchdog (launchd, watchdog.sh) appends here when
+    # health goes BAD with nobody looking — the 18:35 death was silent for 75 minutes because
+    # detection lived only in a check nobody ran. An un-cleared alarm is the loudest thing on
+    # every tick until the operator acts and clears it; clearing without acting is the one move
+    # this line cannot prevent and the one the discipline forbids.
+    if [ -s ALARM ]; then
+      echo "  🔴 WATCHDOG ALARM(S) PENDING — act, then clear with: rm ALARM"
+      sed 's/^/     /' ALARM
+    fi
     python3 "$PWD/health.py"
     # HELD-COMMIT PRESSURE, made visible every tick instead of left to my judgement.
     #
