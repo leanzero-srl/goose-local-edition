@@ -40,7 +40,14 @@ if [ "$RC" -lt 2 ]; then
 fi
 
 BADLINE=$(echo "$HEALTH_OUT" | grep -m1 "BAD" || echo "health.py exit $RC")
-SWEEP=$(pgrep -f 'nodeloop/sweep.py' | head -1)
+# END-ANCHORED, because `pgrep -f` matches any process whose COMMAND LINE contains the pattern —
+# measured on this watchdog's own first firing: an operator shell that merely QUOTED the pattern
+# ('...pgrep -f nodeloop/sweep.py...' inside a verification one-liner) read as a live sweep, the
+# restart branch was skipped, and the fleet stayed down a full extra interval. The real supervisor's
+# command line ENDS with the script path (Popen([python, '-u', 'nodeloop/sweep.py'])); a shell
+# quoting it keeps talking afterwards. The engine pattern cannot be end-anchored (the prompt trails
+# it) — a false engine match only delays the restart one interval, which is the safe direction.
+SWEEP=$(pgrep -f 'nodeloop/sweep\.py$' | head -1)
 ENGINES=$(pgrep -f 'goose swarm run' | wc -l | tr -d ' ')
 
 if [ -z "$SWEEP" ] && [ "$ENGINES" = "0" ]; then
@@ -48,7 +55,7 @@ if [ -z "$SWEEP" ] && [ "$ENGINES" = "0" ]; then
   alarm "supervisor dead, fleet empty — auto-restarting the sweep"
   ./loop.sh start >> "$LOG" 2>&1
   sleep 5
-  NEW=$(pgrep -f 'nodeloop/sweep.py' | head -1)
+  NEW=$(pgrep -f 'nodeloop/sweep\.py$' | head -1)
   if [ -n "$NEW" ]; then
     say "restarted: sweep pid $NEW"
   else
@@ -56,6 +63,10 @@ if [ -z "$SWEEP" ] && [ "$ENGINES" = "0" ]; then
   fi
 elif [ -z "$SWEEP" ]; then
   alarm "supervisor DEAD with $ENGINES live engine(s) — orphaned run. Not restarting (fleet contention); operator must decide. ${BADLINE}"
-else
+elif echo "$HEALTH_OUT" | grep "BAD" | grep -qiE "heartbeat|wedged|did not get the pool"; then
+  # Supervisor AND engine alive: only a WEDGE-class BAD is the watchdog's business. The other BAD
+  # lines (last-unit age, consecutive failures) are progress states the 5-minute operator tick
+  # reads and acts on — alarming every 120s on a condition a healthy run clears by itself is the
+  # alarm-that-cannot-clear (L193), and it trains the reader to ignore the one that matters.
   alarm "${BADLINE}"
 fi
