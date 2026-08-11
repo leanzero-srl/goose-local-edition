@@ -947,6 +947,10 @@ impl State {
             owned_files: files.clone(),
             context_slice_len: slice.len(),
             description_chars: description.len(),
+            difficulty: match self.dag.tasks[&tid].spec.difficulty {
+                Difficulty::Hard => "hard".to_string(),
+                _ => "easy".to_string(),
+            },
         });
         let owned_files = files.clone();
         let mut all_files: Vec<String> = self
