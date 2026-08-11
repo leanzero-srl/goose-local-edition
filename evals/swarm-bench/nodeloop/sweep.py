@@ -569,6 +569,17 @@ ARMS = [
                 "the arm has failed no matter what the number does.",
     },
     {
+        "name": "sink_shard",
+        "env": {"GOOSE_SWARM_SINK_SHARD": "1", "GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
+        "gate": "S1 increment 1 (S1-DESIGN.md). Two full race waves died at the per-fix cap with "
+                "findings unchanged — monolithic twins re-derive whole-app context. This arm prefers "
+                "the per-file fan when a round's findings partition into 2+ file groups; probe_post "
+                "rides along so multi-finding rounds exist to shard. MECHANISM, n=1: "
+                "complete_fix_wave{shards>=2} on a multi-finding round (absent => the arm examined "
+                "NOTHING). SAFETY: round findings never rise after a promote. FALSIFIER: stable-24 "
+                "score below the baseline spread reverts the arm on that alone.",
+    },
+    {
         "name": "doc_examples",
         "env": {"GOOSE_SWARM_DOC_FETCH": "1", "GOOSE_SWARM_DOC_EXAMPLES": "1"},
         "gate": "THE THIRD DELIVERY MECHANISM, and the parked doc_fetch entry asked for exactly this "
@@ -613,6 +624,10 @@ QUESTIONS: list[dict] = [
     # FLIPPED 0 -> 3 at the 2026-08-11 17:49 rebuild: `probe.py --verify` confirmed every new
     # literal flipped absent -> present (probed_post + the Q2 detector family + PREREVIEW_DIMS +
     # straggler_deferred), which is exactly the condition the ⏸ note above this line demanded.
+    {"arm": "sink_shard", "nodes": 3, "reps": 1,
+     "asks": "whether sharding a multi-file repair round by the existing file partition lands the "
+             "substance two monolithic race waves could not — read complete_fix_wave{shards>=2} "
+             "first; a run whose rounds never partition examined nothing and says so."},
     {"arm": "doc_examples", "nodes": 3, "reps": 3,
      "asks": "whether SHRINKING the payload rescues the document that two delivery mechanisms have "
              "failed to deliver. Established today and the reason this arm exists: spec-build.md "
