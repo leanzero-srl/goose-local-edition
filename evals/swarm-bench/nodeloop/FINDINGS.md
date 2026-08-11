@@ -18077,3 +18077,14 @@ With the fleet still 2/3 and S3 deferred by design, the pause went to the upstre
   context_mgmt/mod.rs — the last being K4's home. Upstream restructures the same summarize
   path our keep-tail change threads through; merging is a K4-aware decision, aborted and
   recorded beside 1e03bbb56 in the deliberate-merge queue.
+
+## F764 — U-batch pause-work closes: 2 more clean, 1 more conflict; the deliberate-merge queue is final at three
+
+- **bf332b983** (exact extension-owner match) and **dc7798483** (command-pattern
+  normalization): clean picks, gate GREEN after each.
+- **8e54bad4e** (session-resume provider overrides): conflict in session/builder.rs —
+  diverged locally; joins the deliberate-merge queue.
+- Ratchet updated: all nine of tonight's processed commits marked triaged. The
+  deliberate-merge queue stands at THREE (1e03bbb56 reasoning-preservation vs our variant;
+  ad87dd4c3 structured compaction vs K4; 8e54bad4e builder divergence) — each needs a session
+  that reads both sides, none is tick-work. Clean-pick pause-work is EXHAUSTED.
