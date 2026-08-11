@@ -8073,6 +8073,57 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn q2_query_templates_probe_and_bodies_assert() {
+        // Q2(a) BOTH DIRECTIONS. A templated QUERY is filled and kept — the measured blindness:
+        // the payments row (18% of all score loss) was silently dropped for the `<` in its token.
+        assert_eq!(
+            probeable_get_path("/api/payments?limit=<int>&offset=<int>").as_deref(),
+            Some("/api/payments?limit=1&offset=1")
+        );
+        // A templated PATH still refuses — it legitimately 404s under a blind GET.
+        assert_eq!(probeable_get_path("/api/payments/<id>"), None);
+        assert_eq!(probeable_get_path("/api/payments/{id}"), None);
+        // Plain paths and literal queries pass through untouched.
+        assert_eq!(
+            probeable_get_path("/api/health").as_deref(),
+            Some("/api/health")
+        );
+        assert_eq!(
+            probeable_get_path("/x?limit=25").as_deref(),
+            Some("/x?limit=25")
+        );
+        // End to end through the table parser: the payments endpoint is now IN the probe set.
+        let table = "| Method | Path | Response |\n|---|---|---|\n\
+                     | `GET` | `/api/payments?limit=<int>&offset=<int>` | `{\"data\": [...], \"total\": <int>, \"limit\": <int>, \"offset\": <int>}` |\n\
+                     | `GET` | `/api/summary` | `{\"count\": <int>, \"total_minor\": <int>, \"oldest\": <str or null>}` |\n";
+        let got = spec_get_endpoints(table);
+        assert!(
+            got.contains(&"/api/payments?limit=1&offset=1".to_string()),
+            "the query-templated GET must be probeable: {got:?}"
+        );
+
+        // Q2(b): the documented keys come from the ADVERTISING ROW, scoped per endpoint.
+        let keys = spec_documented_keys(table, "/api/payments?limit=1&offset=1");
+        assert_eq!(keys, vec!["data", "total", "limit", "offset"]);
+        let keys = spec_documented_keys(table, "/api/summary");
+        assert_eq!(keys, vec!["count", "total_minor", "oldest"]);
+        // No documented shape -> no assertion (fail-open; prose/HTML rows must not invent checks).
+        assert!(spec_documented_keys("| `GET` | `/` | the HTML page |", "/").is_empty());
+
+        // Q2(c): the POST's own acquired count, both directions.
+        assert_eq!(
+            post_reports_acquired(r#"{"fetched": 247, "inserted": 10, "total": 247}"#),
+            Some(247)
+        );
+        assert_eq!(
+            post_reports_acquired(r#"{"fetched": 0, "inserted": 0, "total": 0}"#),
+            Some(0)
+        );
+        assert_eq!(post_reports_acquired(r#"{"status": "ok"}"#), None);
+        assert_eq!(post_reports_acquired("not json"), None);
+    }
+
+    #[test]
     fn spec_get_endpoints_does_not_scrape_across_a_backtick() {
         // The exact sentence from the real spec that produced "GET /`".
         let spec =
@@ -17912,6 +17963,92 @@ fn spec_python_entry(spec: &str) -> Option<String> {
 /// GET endpoints the spec advertises with a CONCRETE path (no path parameter), deduped, order-preserving. A
 /// param'd route (`{id}`, `:id`, `<id>`) is excluded: a bare GET of it legitimately 404s/422s, so it can't be
 /// a clean finding. Only a concrete advertised path returning 5xx/404/405 is unambiguously broken. Pure/testable.
+/// Q2(a): turn an advertised GET path token into a PROBEABLE url path, or None when it cannot be
+/// probed blind. The measured blindness this closes: `GET /api/payments?limit=<int>&offset=<int>`
+/// carries its query TEMPLATE in the path token, so the param-route exclusion (`<` in the token)
+/// silently dropped the one endpoint whose documented body carries data/total/limit/offset — four
+/// Tier-B checks, 18% of all measured score loss, structurally outside the gate and never even
+/// named as unprobed. A placeholder in the PATH legitimately 404s under a blind GET (excluded, as
+/// before); a placeholder in the QUERY STRING is just an optional parameter — fill it with a benign
+/// literal and the endpoint is as probeable as any other.
+fn probeable_get_path(path: &str) -> Option<String> {
+    let (base, query) = match path.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (path, None),
+    };
+    if base.is_empty() || base.contains(['{', '<', ':']) {
+        return None;
+    }
+    let Some(query) = query else {
+        return Some(base.to_string());
+    };
+    let filled: Vec<String> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|pair| match pair.split_once('=') {
+            // A templated value (`limit=<int>`, `page={n}`) becomes a benign literal 1 — small,
+            // positive, valid for every count/offset/page parameter a spec documents.
+            Some((k, v)) if v.contains(['{', '<', ':']) => format!("{k}=1"),
+            _ => pair.to_string(),
+        })
+        .collect();
+    if filled.is_empty() {
+        Some(base.to_string())
+    } else {
+        Some(format!("{base}?{}", filled.join("&")))
+    }
+}
+
+/// Q2(b): the top-level JSON keys the spec DOCUMENTS for an endpoint's response, extracted from the
+/// markdown table row that advertises it (the response-shape cell: `{"data": [...], "total": <int>,
+/// ...}`). Empty when the spec documents no JSON shape for the path — the caller then asserts
+/// nothing (fail-open; a row whose response cell is prose or an HTML page must not invent a check).
+/// Matching is on the PATH PART (query stripped both sides) so a filled probe path finds its row.
+fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
+    let base = path.split('?').next().unwrap_or(path);
+    let key_re = match regex::Regex::new(r#""(\w+)"\s*:"#) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    for line in spec.lines() {
+        if !line.trim_start().starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // A row advertises the path when some cell's backtick-stripped content starts with it
+        // (query template and trailing prose tolerated) — and the ROW, not the whole spec, scopes
+        // the key extraction so /api/health's keys are never asserted against /api/summary.
+        let advertises = cells.iter().any(|c| {
+            let c = c.trim_matches('`');
+            c.split(['?', '`', ' ']).next().unwrap_or("") == base && !base.is_empty()
+        });
+        if !advertises {
+            continue;
+        }
+        let mut keys: Vec<String> = key_re
+            .captures_iter(line)
+            .map(|c| c[1].to_string())
+            .collect();
+        keys.dedup();
+        if !keys.is_empty() {
+            return keys;
+        }
+    }
+    Vec::new()
+}
+
+/// Q2(c): what the POST's own response says it acquired — the max of its documented count-like
+/// fields. None when the body carries none of them (an app that reports nothing cannot be held to
+/// a persistence promise; the Unreadable arm already names that gap).
+fn post_reports_acquired(body: &str) -> Option<i64> {
+    let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
+    let o = v.as_object()?;
+    ["fetched", "inserted", "total", "count"]
+        .iter()
+        .filter_map(|k| o.get(*k).and_then(|x| x.as_i64()))
+        .max()
+}
+
 fn spec_get_endpoints(spec: &str) -> Vec<String> {
     // Capture the WHOLE path token (up to whitespace) so a param'd route's delimiter is INCLUDED and can be
     // excluded below — a narrower char-class would stop before `<`/`{`/`:` and wrongly keep the base path.
@@ -17945,10 +18082,11 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
         if path.is_empty() {
             continue;
         }
-        // A param'd route (`{id}`, `:id`, `<id>`) legitimately 404s/422s under a bare GET — exclude it.
-        if path.contains('{') || path.contains('<') || path.contains(':') {
+        // A param'd PATH (`{id}`, `:id`, `<id>`) legitimately 404s/422s under a bare GET — exclude
+        // it. A templated QUERY STRING is probeable with its placeholders filled (Q2a).
+        let Some(path) = probeable_get_path(&path) else {
             continue;
-        }
+        };
         if seen.insert(path.clone()) {
             out.push(path);
         }
@@ -17980,15 +18118,13 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
         let path = raw_path
             .trim_end_matches([';', ',', ')', '.', '/'])
             .to_string();
-        // Same param-route exclusion as above: a placeholder route legitimately 404s under a bare GET.
-        if path.is_empty()
-            || !path.starts_with('/')
-            || path.contains('{')
-            || path.contains('<')
-            || path.contains(':')
-        {
+        if path.is_empty() || !path.starts_with('/') {
             continue;
         }
+        // Same param'd-PATH exclusion as above; a templated query string is filled and kept (Q2a).
+        let Some(path) = probeable_get_path(&path) else {
+            continue;
+        };
         if seen.insert(path.clone()) {
             out.push(path);
         }
@@ -18018,7 +18154,16 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
         let (Some(method), Some(path)) = (it.next(), it.next()) else {
             continue;
         };
-        if method.eq_ignore_ascii_case("GET") {
+        // A GET is skipped only when it is actually PROBEABLE (Q2a). A GET with a param'd PATH is
+        // still dropped by spec_get_endpoints, and until now it was dropped SILENTLY — the same
+        // blindness this function exists to name for non-GET methods.
+        if method.eq_ignore_ascii_case("GET")
+            && probeable_get_path(
+                path.trim_matches('`')
+                    .trim_end_matches([';', ',', ')', '.']),
+            )
+            .is_some()
+        {
             continue;
         }
         let entry = format!("{} {}", method.to_uppercase(), path.trim_matches('`'));
@@ -18280,29 +18425,23 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             probed_post: 0,
         };
     }
-    for path in gets {
+    for path in &gets {
         let url = format!("http://127.0.0.1:{port}{path}");
         let mut cmd = tokio::process::Command::new("curl");
-        cmd.args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-m",
-            "5",
-            &url,
-        ]);
+        // THE BODY, NOT ONLY THE STATUS (Q2b). Every archived probe read `-o /dev/null` and asserted
+        // the status code alone — so /api/summary was "probed" while its documented total_minor and
+        // UTC bounds were never read, and a 200 with an empty shell counted the same as a correct
+        // response. The spec's response-shape cell documents the top-level keys; a 2xx whose body is
+        // missing them is a FINDING with the exact keys named, which is what the fix loop can act on.
+        cmd.args(["-s", "-w", "\n%{http_code}", "-m", "5", &url]);
         let Some(out) = smoke_output(cmd, 8).await else {
             inconclusive.push(format!(
                 "spec-contract: curl of GET {path} did not complete"
             ));
             continue;
         };
-        let code: u16 = String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0);
+        let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+        let (body, code) = split_curl_status(&raw);
         if code >= 500 {
             findings.push(format!(
                 "GET {path} returned {code} — the advertised endpoint errors (server 5xx)"
@@ -18315,6 +18454,35 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // AFFIRMATIVE: the advertised endpoint answered with a real 2xx. This is the signal a consumer can
             // require (verified>=1) to tell a genuine pass from "checked nothing".
             verified += 1;
+            let documented = spec_documented_keys(spec, path);
+            if !documented.is_empty() {
+                match serde_json::from_str::<serde_json::Value>(body.trim()) {
+                    Ok(v) => {
+                        let missing: Vec<&String> = documented
+                            .iter()
+                            .filter(|k| v.get(k.as_str()).is_none())
+                            .collect();
+                        if !missing.is_empty() {
+                            findings.push(format!(
+                                "GET {path} answered {code} but its JSON body is missing the \
+                                 documented key(s) {} — the spec's response shape for this endpoint \
+                                 names them exactly. Serve every documented key, spelled as \
+                                 documented.",
+                                missing
+                                    .iter()
+                                    .map(|k| format!("`{k}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
+                    }
+                    Err(_) => findings.push(format!(
+                        "GET {path} answered {code} but the body is not JSON, while the spec \
+                         documents a JSON response shape ({}) for it",
+                        documented.join(", ")
+                    )),
+                }
+            }
         }
         // 3xx / other 4xx (a route that needs a body/auth) -> neither a finding nor verified (fail-open)
     }
@@ -18399,6 +18567,48 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                     "spec-contract: POST {path} answered, but neither response carried an \
                      `inserted` or `total` field, so idempotency could not be decided from the body"
                 )),
+            }
+            // Q2(c): ACQUIRED BUT NOT PERSISTED — the single largest unguarded score family.
+            // MEASURED across 182 archived verdicts: "did the advertised POST actually land rows
+            // where the GETs read them" is worth +0.160 mean score, false in 106 of 165 booting
+            // builds, and 41% of those runs ended GREEN. The store/API disconnect fails a
+            // different way each time (F753: wrong JSON key, cross-thread sqlite, cursor 5xx), so
+            // the detector asserts the CONTRACT, not any one bug: when the POST's own response
+            // claims it acquired rows, every advertised GET whose documented shape carries a
+            // `total`/`count` must stop reading 0. Fires only on that conjunction — a vendor with
+            // no rows stays Vacuous/inconclusive above, and an app that reports no counts is the
+            // Unreadable arm — so a legitimate empty sync can never be blamed.
+            if let Some(acquired) = post_reports_acquired(a_body).filter(|&n| n > 0) {
+                for gpath in &gets {
+                    let dk = spec_documented_keys(spec, gpath);
+                    if !dk.iter().any(|k| k == "total" || k == "count") {
+                        continue;
+                    }
+                    let gurl = format!("http://127.0.0.1:{port}{gpath}");
+                    let mut cmd = tokio::process::Command::new("curl");
+                    cmd.args(["-s", "-m", "5", &gurl]);
+                    let Some(gout) = smoke_output(cmd, 8).await else {
+                        continue;
+                    };
+                    let gb = String::from_utf8_lossy(&gout.stdout).into_owned();
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(gb.trim()) else {
+                        continue;
+                    };
+                    let reads_zero = ["total", "count"]
+                        .iter()
+                        .filter_map(|k| v.get(*k).and_then(|x| x.as_i64()))
+                        .max()
+                        == Some(0);
+                    if reads_zero {
+                        findings.push(format!(
+                            "POST {path}'s own response reports acquiring {acquired} row(s), but \
+                             GET {gpath}'s documented `total` still reads 0 — the fetched data is \
+                             not reaching the store the GET reads. Persist through the SAME store \
+                             instance the API serves from; check the response key spelling and \
+                             that the writer and reader share one database path/connection."
+                        ));
+                    }
+                }
             }
         }
     }
