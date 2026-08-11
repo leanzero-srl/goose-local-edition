@@ -15983,7 +15983,7 @@ impl GooseAgentDispatcher {
                 );
             }
         }
-        let items: Vec<(usize, String, String, String)> = v
+        let items: Vec<(usize, String, String, String, bool)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
@@ -16037,11 +16037,21 @@ impl GooseAgentDispatcher {
                             .join(", ")
                     })
                     .unwrap_or_default();
+                // S3 i2 (the missing half found during i3's wiring read): only a prompt that ASKS
+                // for the line ever produces one — parser + field without this ask was the F105
+                // dark-mechanism pattern, a consumer whose producer never fires. Hard tasks owning
+                // exactly one .py file are the fill fan's whole domain.
+                let subsplit_ok = st["difficulty"].as_str() == Some("hard")
+                    && st["files"]
+                        .as_array()
+                        .map(|a| a.len() == 1 && a[0].as_str().is_some_and(|f| f.ends_with(".py")))
+                        .unwrap_or(false);
                 (
                     i,
                     st["id"].as_str().unwrap_or("").to_string(),
                     st["description"].as_str().unwrap_or("").to_string(),
                     files,
+                    subsplit_ok,
                 )
             })
             .collect();
@@ -16064,18 +16074,18 @@ impl GooseAgentDispatcher {
         // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
         let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
             std::collections::HashMap::new();
-        let items: Vec<(usize, String, String, String)> = if self.detail_memo_on {
+        let items: Vec<(usize, String, String, String, bool)> = if self.detail_memo_on {
             let cache = self.detail_memo.lock().unwrap();
             let mut remaining = Vec::with_capacity(items.len());
             let mut reused = 0usize;
-            for (idx, id, brief, files) in items {
+            for (idx, id, brief, files, subsplit_ok) in items {
                 let key = detail_memo_key(&goal, &id, &brief, &files, &findings);
                 if let Some(desc) = cache.get(&key) {
                     v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
                     reused += 1;
                 } else {
                     memo_keys.insert(idx, (key, brief.clone()));
-                    remaining.push((idx, id, brief, files));
+                    remaining.push((idx, id, brief, files, subsplit_ok));
                 }
             }
             drop(cache);
@@ -16108,7 +16118,7 @@ impl GooseAgentDispatcher {
         // behind the first. Each item grabs the next free node, so the fleet stays busy without
         // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
         let results =
-            fanout_over_fleet_straggler(wm, items, detail_grace, "detail", move |(idx, id, brief, files), model| {
+            fanout_over_fleet_straggler(wm, items, detail_grace, "detail", move |(idx, id, brief, files, subsplit_ok), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -16137,6 +16147,16 @@ impl GooseAgentDispatcher {
                     never the thing to cut. Output ONLY the spec prose; do NOT write code files or restate the \
                     whole project."
                     .to_string();
+                let system = if subsplit_ok {
+                    format!(
+                        "{system}\n\nIf this module naturally decomposes, END your spec with ONE line \
+                         `SUBSPLIT: name1, name2` — 2-4 top-level function/class names, each independently \
+                         implementable against the module's interface; OMIT the line when the module is one \
+                         coherent piece. Never list more than 4."
+                    )
+                } else {
+                    system
+                };
                 let files_line = if files.is_empty() {
                     String::new()
                 } else {
