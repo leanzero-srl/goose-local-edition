@@ -64,7 +64,7 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_NO_TOOLS_MEANS_ASK | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_OCCUPANCY | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_OMNI_JUDGE | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_OVERVIEW | config-default gate [swarm.rs] |  |  |
+| GOOSE_SWARM_OVERVIEW | config-default gate [swarm.rs] | session-read | desktop-panel feed toggle — operational, KEEP |
 | GOOSE_SWARM_OWNED_FILE_FENCE | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_PARALLEL_TESTS | assured-bundle gate (in_bundle=true) [swarm.rs]; config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_PERSONA | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
@@ -76,27 +76,27 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_READ_ON_FIX | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_RELAX_CONTRACTED_DEPS | config-default gate [swarm.rs] | DELETE | inert on 12-run corpus (0 code->code edges) AND empties ALL deps when live — C2 verdict |
 | GOOSE_SWARM_REPEAT_BREAK | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_REQUIRE_SERVABLE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_REQUIRE_SERVABLE | raw env read [swarm.rs] | session-read | pool guard (abort when no device servable) — safety, KEEP |
 | GOOSE_SWARM_REQUIRE_TESTS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_RESEARCH_TOOLS | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_RESUME | assured-bundle gate (in_bundle=false) [swarm.rs] | session-read | operational (resume a stopped run) — KEEP, not a tuning lever |
 | GOOSE_SWARM_RETARGET | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_RETARGET_DRAFT_STEP | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_RETARGET_DRAFT_STEP | raw env read [swarm.rs] | session-read | raw env, ladder growth step clamp[1,3] — B5/G1 changed the ladder's economics; re-evaluate with the next laddering cell; QUEUED |
 | GOOSE_SWARM_RETARGET_ROUNDS | raw env read [swarm.rs] |  | resolved=4 (live run, engine-emitted) |
 | GOOSE_SWARM_RETARGET_STALL_GUARD | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_RETARGET_STALL_TOLERANCE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_RETARGET_STALL_TOLERANCE | raw env read [swarm.rs] | session-read | stall-guard tuning for the ladder — same family as above; QUEUED |
 | GOOSE_SWARM_REVIEW | assured-bundle gate (in_bundle=true) [swarm.rs]; config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL | raw env read [scheduler.rs]; raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_SALVAGE_SPIN | raw env read [scheduler.rs]; raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SCOPED_CONTRACTS | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_SCOUT_DOC_URLS | assured-bundle gate (in_bundle=false) [swarm.rs] | session-read | arm lever, one cell run (0.6236 unit family) — QUEUED with the doc-wire family readouts |
-| GOOSE_SWARM_SINK_CAP_REF_BYTES | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_SINK_CAP_REF_BYTES | raw env read [swarm.rs] | session-read | sink-cap scaling reference (F425 verified live: 1.87x scaling) — KEEP, measured-good |
 | GOOSE_SWARM_SINK_CAP_SECS | raw env read [swarm.rs] |  | resolved=1800 (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_LEAN_PREFILL | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_MAX_TURNS | raw env read [swarm.rs] |  | resolved=120 (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_PREBUILD | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_REVIEW | raw env read [scheduler.rs]; raw env read [swarm.rs] | session-read | default OFF; switchability fixed a3fdfce02; its idle-fill is a QUALITY play (adversarial verdict) — arm queued in earlier session's sweep; QUEUED |
-| GOOSE_SWARM_SKELETON_FIRST | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_SKELETON_FIRST | raw env read [swarm.rs] | session-read | worker skeleton-first note gate — S3 subsumes it when skeleton-fill lands; KEEP until S3, then re-verdict |
 | GOOSE_SWARM_SMOKE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SPECULATE | raw env read [swarm.rs] | session-read | default OFF; Speculated fired 0x in 75+ logs — S7 replaces the rung with test generation; DELETE candidate after S7 lands |
 | GOOSE_SWARM_SPEC_CONTRACT | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
@@ -107,15 +107,15 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_SPIRAL_THINKING_CHARS | raw env read [swarm.rs] |  | resolved=0 (live run, engine-emitted) |
 | GOOSE_SWARM_SPLIT | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SPLIT_FAT | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_SPLIT_FAT_FILES | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_SPLIT_FAT_FILES | raw env read [swarm.rs] | session-read | reachable, config-backed — evidence via levers_resolved |
 | GOOSE_SWARM_SPLIT_INHERIT_SPEC | raw env read [scheduler.rs]; raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_SPLIT_SECS | raw env read [swarm.rs] |  | resolved=null (live run, engine-emitted) |
 | GOOSE_SWARM_STRAGGLER_GRACE_SECS | raw env read [swarm.rs] |  | resolved=null (live run, engine-emitted) |
 | GOOSE_SWARM_STRAGGLER_STOP | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_STRAGGLER_STOP_DEGRADE | raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_STREAM_RETRY | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_STREAM_RETRY | raw env read [swarm.rs] | session-read | reachable, config-backed — evidence via levers_resolved |
 | GOOSE_SWARM_STRUCT_STOP | raw env read [swarm.rs] |  | resolved=80 (live run, engine-emitted) |
-| GOOSE_SWARM_THINK_OFF | config-default gate [swarm.rs] |  |  |
+| GOOSE_SWARM_THINK_OFF | config-default gate [swarm.rs] | session-read | reachable, config-backed — evidence via levers_resolved |
 | GOOSE_SWARM_TS_SMOKE_TESTS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_USER_NOTES | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
