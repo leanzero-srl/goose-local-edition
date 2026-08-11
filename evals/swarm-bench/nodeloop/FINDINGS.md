@@ -17882,3 +17882,27 @@ replicates; the score half needs the sweep.
 📌 Note also that this cell's sink was **CAPPED** at 3371s (F425) and it still scored 0.9343 — which
 is the second time the archive says a capped sink costs the arm nothing (F387: the capped cell scored
 above the arm mean).
+
+## F755 — the Q2 gate fired live on rank 1 of all remaining loss, and the fix loop is holding it
+
+First post-rebuild unit (`swarm-3node-r0`, binary 2026-08-11 17:49), gate round 0:
+
+    spec_contract     verified: 3   findings: 1   probed_post: 1
+    complete_verify   passed: FALSE findings: 2
+    complete_fix_dispatched x3
+
+The blocking finding is the NotCheap idempotency verdict — "the second sync re-fetched 247
+row(s) it already had ... the app re-downloads the whole collection every sync" — with the
+page-ETag remediation attached. That is `vendor_conditional`/`resync_conditional_ratio`, rank 1
+and rank 2 of ALL remaining weighted loss on the current-binary corpus, CAUGHT by a
+deterministic gate and HANDED TO REPAIR for the first time on any run. Note also: the sync
+itself worked (247 rows landed — the +0.160 acquire fact is TRUE here) and the Q2 persist
+detector correctly stayed SILENT; the second finding is a pytest cross-module collect error,
+also blocking. Whether round 1 clears them is the unit's own readout — registered, not assumed.
+
+Also live from this unit and this batch: `skeleton_drafts{straggler_deferred: true,
+straggler_aborted: 0}` — B5's arming gate deferred the abort below the floor and the full pool
+was awaited, exactly as registered.
+
+(F-number continues the commit-stream sequence past F754; the ledger file's own tail predates
+the split ledgers.)
