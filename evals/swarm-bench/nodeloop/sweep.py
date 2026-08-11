@@ -569,6 +569,16 @@ ARMS = [
                 "the arm has failed no matter what the number does.",
     },
     {
+        "name": "aux_slim",
+        "env": {"GOOSE_TOOL_PAIR_SUMMARIZATION": "false"},
+        "gate": "K3. Tool-pair summarization defaults ON and burns up to 10 SERIALIZED 27B calls at "
+                "the end of a long worker's turn, on the worker's own node, in no budget — minutes "
+                "of wall per long worker that appear nowhere. This arm turns it off and relies on "
+                "compaction (which now keeps the last 3 turns verbatim, K4). WALL readout: unit wall "
+                "vs the current-binary baseline mean. QUALITY falsifier: stable-24 below spread "
+                "reverts — summaries may be load-bearing for the sink's long context even with K4.",
+    },
+    {
         "name": "sink_shard",
         "env": {"GOOSE_SWARM_SINK_SHARD": "1", "GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
         "gate": "S1 increment 1 (S1-DESIGN.md). Two full race waves died at the per-fix cap with "
@@ -624,6 +634,10 @@ QUESTIONS: list[dict] = [
     # FLIPPED 0 -> 3 at the 2026-08-11 17:49 rebuild: `probe.py --verify` confirmed every new
     # literal flipped absent -> present (probed_post + the Q2 detector family + PREREVIEW_DIMS +
     # straggler_deferred), which is exactly the condition the ⏸ note above this line demanded.
+    {"arm": "aux_slim", "nodes": 3, "reps": 1,
+     "asks": "whether cutting the invisible end-of-turn 27B summarization calls (up to 10 serialized "
+             "per long worker) buys measurable wall at no stable-24 cost, now that K4's keep-tail "
+             "carries the recent turns verbatim through compaction."},
     {"arm": "sink_shard", "nodes": 3, "reps": 1,
      "asks": "whether sharding a multi-file repair round by the existing file partition lands the "
              "substance two monolithic race waves could not — read complete_fix_wave{shards>=2} "
