@@ -18243,7 +18243,7 @@ fn utc_bounds_violation(value: &serde_json::Value) -> Option<String> {
     let date_shaped = s.len() >= 10
         && s.as_bytes().get(4) == Some(&b'-')
         && s.as_bytes().get(7) == Some(&b'-')
-        && s[..4].chars().all(|c| c.is_ascii_digit());
+        && s.bytes().take(4).all(|c| c.is_ascii_digit());
     if !date_shaped {
         return None;
     }
