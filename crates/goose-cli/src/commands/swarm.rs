@@ -10523,6 +10523,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn skeleton_comes_from_the_contract_and_fails_loudly_when_unfilled() {
+        let bundle = "### module: client\ndef fetch(url: str) -> dict: ...\n\n\nclass Pager:\n    def next_page(self) -> list: ...\n\n### module: store\ndef save(row: dict) -> None: ...\n\n### missing module: broken\n# CONTRACT UNAVAILABLE\n";
+        // Section lookup: the right module, header stripped; a D1-dropped module yields None.
+        let stub = module_stub(bundle, "client").unwrap();
+        assert!(stub.contains("def fetch") && stub.contains("class Pager"));
+        assert!(!stub.contains("### module:") && !stub.contains("def save"));
+        assert_eq!(module_stub(bundle, "broken"), None);
+        assert_eq!(module_stub(bundle, "absent"), None);
+        // Anchoring: only contract-defined top-level names survive, and <2 collapses to none.
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            anchor_subsplit(&stub, &names(&["fetch", "Pager", "invented"])),
+            ["fetch", "Pager"]
+        );
+        assert_eq!(
+            anchor_subsplit(&stub, &names(&["fetch", "invented"])),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            anchor_subsplit("not ( python", &names(&["a", "b"])),
+            Vec::<String>::new()
+        );
+        // Skeleton: every body raises — a silent `...` would let tests pass on an unfilled slot.
+        let skel = skeleton_from_stub(&stub).unwrap();
+        assert_eq!(skel.matches("raise NotImplementedError").count(), 2);
+        assert!(!skel.contains("..."));
+        let spans = py_module_spans(&skel).unwrap();
+        let got: Vec<&str> = spans.defs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(got, ["fetch", "Pager"]);
+        assert_eq!(skeleton_from_stub("def broken(: ..."), None);
+    }
+
+    #[test]
     fn subsplit_takes_two_to_four_identifiers_or_nothing() {
         use goose_swarm::extract_subsplit;
         let spec = "Build the client.\nSUBSPLIT: fetch_page, parse_rows, total_count";
@@ -25061,6 +25094,94 @@ print(json.dumps({"defs": defs, "imports": imports}))
         return None;
     }
     serde_json::from_str(text.trim()).ok()
+}
+
+/// S3 i3, anchor half: the module's stub text from the contracts bundle — the section
+/// scope_contract_bundle keeps for exactly this id, header line removed. None when no section
+/// survives for the module (D1 renames a dropped stub's heading to `### missing module:`,
+/// which scope_contract_bundle correctly does not match — an unparseable contract can never
+/// become a skeleton).
+#[allow(dead_code)] // S3 i3 lands in halves; the fan half (next commit) is the caller.
+fn module_stub(bundle: &str, module_id: &str) -> Option<String> {
+    let section = goose_swarm::scope_contract_bundle(bundle, &[module_id.to_string()]);
+    let body: String = section
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("### module:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let t = body.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// S3 i3: subsplit names the contract stub actually defines at top level. The prompt is a
+/// hope; the contract is the truth — and fewer than 2 survivors is no split at all.
+#[allow(dead_code)] // S3 i3 lands in halves (see module_stub).
+fn anchor_subsplit(stub: &str, names: &[String]) -> Vec<String> {
+    let Some(spans) = py_module_spans(stub) else {
+        return Vec::new();
+    };
+    let have: std::collections::HashSet<&str> =
+        spans.defs.iter().map(|d| d.name.as_str()).collect();
+    let kept: Vec<String> = names
+        .iter()
+        .filter(|n| have.contains(n.as_str()))
+        .cloned()
+        .collect();
+    if kept.len() >= 2 {
+        kept
+    } else {
+        Vec::new()
+    }
+}
+
+/// S3 i3, skeleton half: the stub with every function body replaced by
+/// `raise NotImplementedError`, via the interpreter's own ast — deterministic, zero model
+/// calls. The stub's own `...` bodies would return None SILENTLY, letting some tests pass on
+/// an unfilled slot and poisoning the fix loop's attribution; an unfilled slot must fail
+/// loudly the moment anything exercises it.
+#[allow(dead_code)] // S3 i3 lands in halves (see module_stub).
+fn skeleton_from_stub(stub: &str) -> Option<String> {
+    use std::io::Write;
+    let script = r#"
+import ast, sys
+src = sys.stdin.read()
+try:
+    tree = ast.parse(src)
+except SyntaxError:
+    print("PARSE_ERROR"); sys.exit(0)
+class T(ast.NodeTransformer):
+    def _fix(self, node):
+        node.body = [ast.Raise(exc=ast.Call(func=ast.Name(id="NotImplementedError", ctx=ast.Load()), args=[], keywords=[]), cause=None)]
+        return node
+    def visit_ClassDef(self, node):
+        self.generic_visit(node)
+        return node
+    def visit_FunctionDef(self, node):
+        return self._fix(node)
+    def visit_AsyncFunctionDef(self, node):
+        return self._fix(node)
+tree = T().visit(tree)
+ast.fix_missing_locations(tree)
+print(ast.unparse(tree))
+"#;
+    let mut child = std::process::Command::new("python3")
+        .args(["-c", script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(stub.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() || text.trim() == "PARSE_ERROR" || text.trim().is_empty() {
+        return None;
+    }
+    Some(text.trim_end().to_string() + "\n")
 }
 
 /// S3's merge: the CURRENT module with ONLY the named slots' bodies replaced from one filler's
