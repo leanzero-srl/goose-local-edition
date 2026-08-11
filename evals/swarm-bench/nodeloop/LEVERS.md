@@ -58,9 +58,9 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_GROUNDED_RESEARCH_ONLY | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_INCREMENTAL_REPLAN | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_INHERIT_HINTS | raw env read [swarm.rs] | code-read | raw/gate default OFF — reachable via env; QUEUED unless an arm claims it |
-| GOOSE_SWARM_JUDGE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_JUDGE | raw env read [swarm.rs] | session-read | default ON (unwrap_or(true) at attach) — the judge does NOT scale with the fleet (F670: verdict ratio 0.9); re-aim work done via PREREVIEW_DIMS; KEEP |
 | GOOSE_SWARM_KIND_PROMPT | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_MAX_NODES | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_MAX_NODES | raw env read [swarm.rs] | session-read | the bench's pool cap (curve instrument) — KEEP, harness-side lever |
 | GOOSE_SWARM_NO_TOOLS_MEANS_ASK | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_OCCUPANCY | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_OMNI_JUDGE | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
@@ -69,9 +69,9 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_PARALLEL_TESTS | assured-bundle gate (in_bundle=true) [swarm.rs]; config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_PERSONA | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_PLANNER_ALSO_WORKS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_PREREVIEW | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_PREREVIEW | raw env read [swarm.rs] | session-read | default ON (unwrap_or(true)) — the ONLY fleet-scaling idle mechanism (5.1x/run, F670); carries the per-node quality target; BAKED in practice |
 | GOOSE_SWARM_PREREVIEW_DIMS | config-default gate [swarm.rs] | ON (new) | Q2 re-aim; registered check = dimension field on findings |
-| GOOSE_SWARM_PROBE_ADVERTISED_POST | assured-bundle gate (in_bundle=false) [swarm.rs] |  |  |
+| GOOSE_SWARM_PROBE_ADVERTISED_POST | assured-bundle gate (in_bundle=false) [swarm.rs] | session-read | default OFF, armed by probe_post arm — FIRED LIVE (F755/F758: rank-1 catch); BAKE-ON candidate after one more armed rep |
 | GOOSE_SWARM_PROGRESS_WATCHDOG_SECS | raw env read [swarm.rs] |  | resolved=900 (live run, engine-emitted) |
 | GOOSE_SWARM_READ_ON_FIX | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_RELAX_CONTRACTED_DEPS | config-default gate [swarm.rs] | DELETE | inert on 12-run corpus (0 code->code edges) AND empties ALL deps when live — C2 verdict |
@@ -79,7 +79,7 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_REQUIRE_SERVABLE | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_REQUIRE_TESTS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_RESEARCH_TOOLS | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_RESUME | assured-bundle gate (in_bundle=false) [swarm.rs] |  |  |
+| GOOSE_SWARM_RESUME | assured-bundle gate (in_bundle=false) [swarm.rs] | session-read | operational (resume a stopped run) — KEEP, not a tuning lever |
 | GOOSE_SWARM_RETARGET | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_RETARGET_DRAFT_STEP | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_RETARGET_ROUNDS | raw env read [swarm.rs] |  | resolved=4 (live run, engine-emitted) |
@@ -89,16 +89,16 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL | raw env read [scheduler.rs]; raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_SALVAGE_SPIN | raw env read [scheduler.rs]; raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SCOPED_CONTRACTS | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_SCOUT_DOC_URLS | assured-bundle gate (in_bundle=false) [swarm.rs] |  |  |
+| GOOSE_SWARM_SCOUT_DOC_URLS | assured-bundle gate (in_bundle=false) [swarm.rs] | session-read | arm lever, one cell run (0.6236 unit family) — QUEUED with the doc-wire family readouts |
 | GOOSE_SWARM_SINK_CAP_REF_BYTES | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_SINK_CAP_SECS | raw env read [swarm.rs] |  | resolved=1800 (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_LEAN_PREFILL | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_MAX_TURNS | raw env read [swarm.rs] |  | resolved=120 (live run, engine-emitted) |
 | GOOSE_SWARM_SINK_PREBUILD | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_SINK_REVIEW | raw env read [scheduler.rs]; raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_SINK_REVIEW | raw env read [scheduler.rs]; raw env read [swarm.rs] | session-read | default OFF; switchability fixed a3fdfce02; its idle-fill is a QUALITY play (adversarial verdict) — arm queued in earlier session's sweep; QUEUED |
 | GOOSE_SWARM_SKELETON_FIRST | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_SMOKE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_SPECULATE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_SPECULATE | raw env read [swarm.rs] | session-read | default OFF; Speculated fired 0x in 75+ logs — S7 replaces the rung with test generation; DELETE candidate after S7 lands |
 | GOOSE_SWARM_SPEC_CONTRACT | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SPEC_REPAIR | raw env read [swarm.rs] | BAKED ON | d91fd8b96 — the one use of three nodes this bench found |
 | GOOSE_SWARM_SPEC_SIZED_PLAN | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
