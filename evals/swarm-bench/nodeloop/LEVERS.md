@@ -28,36 +28,36 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_CLI_CONTRACT | raw env read [swarm.rs] | code-read | default ON, entry-worker injection — reachable; BAKE candidate with C3 family |
 | GOOSE_SWARM_COMPILE_GATE | raw env read [swarm.rs] | code-read | raw env default OFF — reachability confirmed; QUEUED (Rust/TS beds only) |
 | GOOSE_SWARM_COMPLETE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_COMPLETE_CAP_SECS | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_COMPLETE_PARALLEL | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_COMPLETE_ROUNDS | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_COMPLETE_STALL_ROUNDS | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_COMPLETE_CAP_SECS | raw env read [swarm.rs] | code-read | config-backed or default ON — reachable; evidence via levers_resolved |
+| GOOSE_SWARM_COMPLETE_PARALLEL | raw env read [swarm.rs] | code-read | raw/gate default OFF — reachable via env; QUEUED unless an arm claims it |
+| GOOSE_SWARM_COMPLETE_ROUNDS | raw env read [swarm.rs] | code-read | code-read pending (context ambiguous) — do not decide from this line |
+| GOOSE_SWARM_COMPLETE_STALL_ROUNDS | raw env read [swarm.rs] | code-read | code-read pending (context ambiguous) — do not decide from this line |
 | GOOSE_SWARM_CONTRACTS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_CONTRACT_RETRY | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_CONTRACT_VALIDATE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_CONVERGE | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_CROSS_MODULE_CHECK | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_DEGRADE_ON_STALL | config-default gate [swarm.rs]; raw env read [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_DELEGATED_OK | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_DELEGATED_OK | raw env read [swarm.rs] | code-read | code-read pending (context ambiguous) — do not decide from this line |
 | GOOSE_SWARM_DELIVERY | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_DEP_SIGNATURES | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_DETAIL_BUDGET_SECS | raw env read [swarm.rs] |  | resolved=420 (live run, engine-emitted) |
 | GOOSE_SWARM_DETAIL_MEMO | raw env read [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_DIVERSE_PLAN | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_DOC_EXAMPLES | assured-bundle gate (in_bundle=false) [swarm.rs] |  |  |
+| GOOSE_SWARM_DOC_EXAMPLES | assured-bundle gate (in_bundle=false) [swarm.rs] | code-read | raw/gate default OFF — reachable via env; QUEUED unless an arm claims it |
 | GOOSE_SWARM_DOC_FETCH | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_DOC_PREFETCH | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_DONE_GATE | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_DONE_GATE | raw env read [swarm.rs] | code-read | code-read pending (context ambiguous) — do not decide from this line |
 | GOOSE_SWARM_DRAFT_TEMP | raw env read [swarm.rs] |  | resolved=null (live run, engine-emitted) |
 | GOOSE_SWARM_DRAFT_TIMEOUT_SECS | raw env read [swarm.rs] |  | resolved=null (live run, engine-emitted) |
 | GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_FAN_VERIFY | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
-| GOOSE_SWARM_FIX_CAP_SECS | raw env read [swarm.rs] |  |  |
-| GOOSE_SWARM_FORCE_WRITE | config-default gate [swarm.rs] |  |  |
+| GOOSE_SWARM_FIX_CAP_SECS | raw env read [swarm.rs] | code-read | code-read pending (context ambiguous) — do not decide from this line |
+| GOOSE_SWARM_FORCE_WRITE | config-default gate [swarm.rs] | code-read | config-backed or default ON — reachable; evidence via levers_resolved |
 | GOOSE_SWARM_GOALS | assured-bundle gate (in_bundle=true) [swarm.rs]; config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
 | GOOSE_SWARM_GROUNDED_RESEARCH_ONLY | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_INCREMENTAL_REPLAN | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
-| GOOSE_SWARM_INHERIT_HINTS | raw env read [swarm.rs] |  |  |
+| GOOSE_SWARM_INHERIT_HINTS | raw env read [swarm.rs] | code-read | raw/gate default OFF — reachable via env; QUEUED unless an arm claims it |
 | GOOSE_SWARM_JUDGE | raw env read [swarm.rs] |  |  |
 | GOOSE_SWARM_KIND_PROMPT | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_MAX_NODES | raw env read [swarm.rs] |  |  |
