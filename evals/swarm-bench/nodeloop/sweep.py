@@ -610,11 +610,10 @@ NODE_LEVELS = (3, 1, 2)
 # `reps` is the replicate count for THIS cell; `asks` is the question, printed in the log so an
 # operator reading it knows why the fleet is spending two hours.
 QUESTIONS: list[dict] = [
-    # ⏸ reps 0 UNTIL THE NEXT BUILD. `GOOSE_SWARM_DOC_EXAMPLES` is committed to swarm.rs and is NOT
-    # in the running binary, so an arm run now would set an env var nothing reads and score a plain
-    # doc_fetch replicate under a different name — the INERT-as-FIRED trap, with two hours of fleet
-    # time attached. Flip to reps 3 only after `probe.py --verify` confirms the rebuild landed.
-    {"arm": "doc_examples", "nodes": 3, "reps": 0,
+    # FLIPPED 0 -> 3 at the 2026-08-11 17:49 rebuild: `probe.py --verify` confirmed every new
+    # literal flipped absent -> present (probed_post + the Q2 detector family + PREREVIEW_DIMS +
+    # straggler_deferred), which is exactly the condition the ⏸ note above this line demanded.
+    {"arm": "doc_examples", "nodes": 3, "reps": 3,
      "asks": "whether SHRINKING the payload rescues the document that two delivery mechanisms have "
              "failed to deliver. Established today and the reason this arm exists: spec-build.md "
              "documents the APP's own api and NOT the vendor's response shape, so the fetched "
