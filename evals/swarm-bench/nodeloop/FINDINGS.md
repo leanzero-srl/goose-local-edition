@@ -18052,3 +18052,17 @@ root-anchored byte-fence — the first test run corrected the CONTRACT: fence ag
 current) + inc2 (subsplit stamped at plan parse, observable via detail_completed.subsplit,
 dispatch byte-identical) both in. Fleet still 2/3 — gabee down since ~23:20, terminal
 notification sent 00:50; STOP stays.
+
+## F763 — U-batch pause-work: one already-ours, one landed, one real conflict recorded
+
+With the fleet still 2/3 and S3 deferred by design, the pause went to the upstream ADOPT queue:
+- **ee61c7c49** (O(n²) streaming render): cherry-pick came up EMPTY — the fix is already in our
+  tree (stable_scan_limit/find_safe_end present in streaming_buffer.rs; adopted earlier,
+  ratchet not updated). Skipped, no change.
+- **d5a8a3fb9** (atomic inventory-table init): clean pick, greengate GREEN, held as 8ed0d99d7.
+  Six concurrent workers ARE our startup — this closes a real race class.
+- **1e03bbb56** (preserve reasoning_content across tool turns): REAL CONFLICT in
+  agents/agent.rs 2334-2450 — our tree carries its OWN thinking-reuse implementation (the
+  split-request_msg variant) and upstream's accumulates-and-drops-standalones differently.
+  Two solutions to one problem = a semantic merge decision, aborted per the triage's
+  conflict-risk rule and recorded here for a deliberate session, not a tick.
