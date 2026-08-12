@@ -55,6 +55,21 @@ pub fn sink_review_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// F779: the tail idle-fill (GOOSE_SWARM_TAIL_REVIEW). DEFAULT ON — read-only, cannot corrupt,
+/// and it IS the ratio lever: when the DAG tail leaves nodes idle (a long test task, an e2e
+/// shard, the sink), the free devices run read-only dimension review instead of sitting idle
+/// while the busy node grinds. Set GOOSE_SWARM_TAIL_REVIEW=0 to restore the pre-F779 silence.
+pub fn tail_review_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_TAIL_REVIEW")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
 /// The ONE resolution of GOOSE_SWARM_TESTGEN (S7): idle slots generate contract-derived tests.
 /// Default OFF — an arm, not a silent flip. Shared with goose-cli's dispatcher for the same
 /// reason as sink_review_enabled above: two halves reading different answers is the measured
@@ -548,6 +563,11 @@ const SPECULATION_CAP: u32 = 8;
 /// unbounded generations on one app.
 const TESTGEN_CAP: u32 = 3;
 
+/// F779: total tail-review jobs per run. The tail can be long, so this is generous — but a cap
+/// keeps a pathological multi-hour tail from unbounded review spawns. Read-only, so the ceiling
+/// is about noise/CPU, not correctness.
+const TAIL_REVIEW_CAP: u32 = 40;
+
 struct State {
     dag: Dag,
     ready: BinaryHeap<Ranked>,
@@ -652,6 +672,9 @@ struct State {
     spec_count: u32,
     /// S7 (GOOSE_SWARM_TESTGEN): generated-test jobs fired this run, capped at TESTGEN_CAP.
     testgen_count: u32,
+    /// F779: tail-review jobs fired this run (capped at TAIL_REVIEW_CAP) + its rotating dimension.
+    tail_review_count: u32,
+    tail_review_dim: usize,
 }
 
 impl State {
@@ -1558,6 +1581,35 @@ impl State {
         let model_id = self.devices[claimed_device].cfg.model_id.clone();
         let dim = self.sink_review_dim;
         self.sink_review_dim = self.sink_review_dim.wrapping_add(1);
+        self.idle_jobs += 1;
+        self.devices[claimed_device].in_flight += 1;
+        Some((model_id, dim, self.goal.clone(), claimed_device))
+    }
+
+    /// F779: claim an idle device for one READ-ONLY dimension review during the DAG TAIL. Unlike
+    /// pick_sink_review this is NOT gated on sink_in_flight — it fires whenever `ready` is empty
+    /// (no dispatchable build work waiting) AND a device is genuinely free AND the run has
+    /// started dispatching (there is something built to review). This is the answer to the
+    /// measured idle-tail waste: a long test task or e2e shard grinding on one node while the
+    /// others sit idle now gets those idle nodes doing quality work. Read-only (the consumer runs
+    /// the reviewer with no write tools), so N run concurrently over the tree with no race and no
+    /// possible corruption. Mirrors pick_sink_review's claim discipline (idle_jobs + in_flight,
+    /// released by the IdleSlotGuard) and its rotating dimension.
+    fn pick_tail_review(&mut self) -> Option<(String, usize, String, usize)> {
+        if !tail_review_enabled() || self.tail_review_count >= TAIL_REVIEW_CAP {
+            return None;
+        }
+        // The tail: nothing dispatchable is waiting, and at least one task has been dispatched
+        // (so there is produced code to review). During the active build `ready` is rarely empty;
+        // when it is AND a node is free, that node would otherwise idle.
+        if !self.ready.is_empty() || self.dispatched_per_device.is_empty() {
+            return None;
+        }
+        let claimed_device = self.least_loaded_free_device()?;
+        let model_id = self.devices[claimed_device].cfg.model_id.clone();
+        let dim = self.tail_review_dim;
+        self.tail_review_dim = self.tail_review_dim.wrapping_add(1);
+        self.tail_review_count += 1;
         self.idle_jobs += 1;
         self.devices[claimed_device].in_flight += 1;
         Some((model_id, dim, self.goal.clone(), claimed_device))
@@ -2540,6 +2592,8 @@ impl Scheduler {
             speculating: HashSet::new(),
             spec_count: 0,
             testgen_count: 0,
+            tail_review_count: 0,
+            tail_review_dim: 0,
         }));
         let notify = Arc::new(Notify::new());
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
@@ -2857,6 +2911,40 @@ impl Scheduler {
                     });
                 }
             }
+            // F779 TAIL IDLE-FILL (GOOSE_SWARM_TAIL_REVIEW, default ON): the answer to the measured
+            // idle-tail waste. Unlike sink-review this is NOT sink-gated — whenever `ready` is empty
+            // and a node is free (a long test task or e2e shard grinding solo while the others idle),
+            // the free nodes run READ-ONLY dimension review. Saturates ALL free nodes each tick, same
+            // as sink-review. Read-only, so it never races the busy node's writes and cannot corrupt.
+            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
+                loop {
+                    let pick = {
+                        let mut s = state.lock().await;
+                        // A3 last-slot yield: never take the final free slot while dispatchable work
+                        // waits (inert on a real tail where `ready` is empty by construction).
+                        if !s.ready.is_empty() && s.idle_capacity() <= 1 {
+                            None
+                        } else {
+                            s.pick_tail_review()
+                        }
+                    };
+                    let Some((model_id, dim, goal, claimed_device)) = pick else {
+                        break;
+                    };
+                    let pr = pr.clone();
+                    let st = state.clone();
+                    let nt = notify.clone();
+                    tokio::spawn(async move {
+                        let _slot = IdleSlotGuard {
+                            state: st.clone(),
+                            is_judge: false,
+                            claimed_device: Some(claimed_device),
+                            notify: Some(nt),
+                        };
+                        pr.idle_dimension_review(&model_id, &goal, dim).await;
+                    });
+                }
+            }
             // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and
             // sink-review got first refusal, spend it generating contract-derived tests — the one
             // idle job with ZERO merge surface (new files, pytest-collected). Same last-slot yield
@@ -2960,6 +3048,21 @@ mod salvage_tests {
     /// The split used to hand a child a ~40-char label as its ENTIRE task statement, discarding the
     /// implementation spec PLAN had just spent 40% of the run's wall-clock writing (loop-04: a 2038-char
     /// spec -> "(split of data-model-persistence) note-store", 43 chars). These pin both arms.
+    #[test]
+    fn tail_review_gate_defaults_on_and_respects_the_env() {
+        // F779: read-only, IS the ratio lever -> default ON (unlike sink_review/testgen).
+        // The env var is process-global; set/clear around the assertions.
+        std::env::remove_var("GOOSE_SWARM_TAIL_REVIEW");
+        assert!(tail_review_enabled(), "default is ON");
+        std::env::set_var("GOOSE_SWARM_TAIL_REVIEW", "0");
+        assert!(!tail_review_enabled(), "0 turns it off");
+        std::env::set_var("GOOSE_SWARM_TAIL_REVIEW", "off");
+        assert!(!tail_review_enabled());
+        std::env::set_var("GOOSE_SWARM_TAIL_REVIEW", "1");
+        assert!(tail_review_enabled());
+        std::env::remove_var("GOOSE_SWARM_TAIL_REVIEW");
+    }
+
     #[test]
     fn split_child_description_off_is_byte_identical() {
         let child = crate::judge::ChildSpec {
