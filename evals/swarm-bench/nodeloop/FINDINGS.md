@@ -18228,3 +18228,21 @@ validity before any number is believed. Reference vector published in controls.j
 HIGH threshold's measured sb-4 value is 0.955-class (leave the gate at 0.85 with the vector
 recorded — re-tighten after a few production runs, not before). Bridge ledger (task #6) fills
 from archived trees as units land.
+
+## F771 — first validated-sb-4 score: 0.8756 in 67 min; the re-exercise bridge is dead (systematically) and the analytic bridge replaces it
+
+**The score.** baseline-n3-r0 (the queue re-sorted at the 13:12 restart — the run I narrated as
+a probe_post replicate was this cell): **0.8756 under the GRADER-TRUSTED sb-4, 67 minutes,
+pool 3/3, 1 retry.** A strong first datum on the harder bar — and the archiving harness's
+first live save landed (_sb4trees/swarm-3node-r0-1786533530, the tree that scored it).
+
+**The bridge verdict.** dualscore on the ARCHIVED copy self-voided BOTH legs exactly as
+designed: vendor_reqs_seen=false — the app that synced perfectly during its own run makes
+ZERO vendor requests at re-exercise. F768 is therefore SYSTEMATIC (current-era trees too),
+strongly suggesting apps bake the vendor URL observed during their run rather than re-reading
+MERIDIAN_BASE_URL — logged as a spec-derived check candidate (env rebinding) for a future
+sb-5, and as a possible engine prompt nudge. Consequence: bridge-by-re-exercise is DEAD.
+The replacement is ANALYTIC and deterministic: archived trees carry their run's recorded
+per-check vectors; sb-3's aggregation recomputes from those rows (the two removed checks are
+reconstructible from second_sync_cost's recorded detail — cond>0&304>0 for the old binary
+check, 304/reqs for the old ratio). Task #6 completes with that calculator.
