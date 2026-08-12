@@ -579,6 +579,22 @@ ARMS = [
                 "reverts — summaries may be load-bearing for the sink's long context even with K4.",
     },
     {
+        "name": "fix_sched",
+        "env": {"GOOSE_SWARM_FIX_SCHED": "1", "GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
+        "gate": "F781/#16 c7 LIVE VERIFY (FIX-SCHED-DESIGN.json, adversarially verified). The fix "
+                "round runs as a REAL scheduler over fix::r{N}::{file} DAG tasks on a fresh "
+                "dispatcher — judge (probing SHADOWS) + tail-review supervise repair itself. "
+                "MECHANISM, n=1: complete_fix_dispatched{path:'sched'} on a multi-file round, AND "
+                "judge/tail events referencing fix::r ids, AND no BrokenCode storm at ~90s on a "
+                "syntax-error fix (c5's probe-root proof). SAFETY: the real tree changes ONLY via "
+                "promoted strictly-better shards (complete_fix_completed{path:'sched',promoted:true} "
+                "with verified<baseline); round findings never rise after a promote. FALSIFIER: "
+                "stable-24 below the replicate spread, or wall above the fan arm's on the same "
+                "binary, kills the lever before any default-ON talk.",
+        "asks": "does scheduler-run repair match the fan's quality at no worse wall, with "
+                "supervision catching what the fan cannot?",
+    },
+    {
         "name": "sink_shard",
         "env": {"GOOSE_SWARM_SINK_SHARD": "1", "GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
         "gate": "S1 increment 1 (S1-DESIGN.md). Two full race waves died at the per-fix cap with "
