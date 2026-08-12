@@ -18460,3 +18460,16 @@ tasks via splice_specs behind a lever (the safe first dynamic-creation case — 
 (c) generalize dynamic emission to contracts/detail; (d) fold F779's read-only review under the
 same "idle node, directed work" umbrella. F779 (passive review) + F778 (spin fix) shipped tonight
 as the down-payment; this is the build-out.
+
+## F780 — boundary 10 (23:16 binary): F778 spin fix + F779 tail idle-fill LIVE; n1-r3 0.6565
+
+baseline-n1-r3 scored 0.6565 (100 min, 1 node) — the F778 judge hot-spin ran its whole life on
+this unit (38MB+ trace) but did not corrupt the result, as predicted. n1 series now
+0.0167/0.819/0.6646/0.6565 (mean ~0.539, the volatility signature intact). Boundary 10: STOP →
+gate GREEN → build 23:16:10 → GOOSE_SWARM_TAIL_REVIEW flipped absent→present (controls held). In
+the binary: F779 tail idle-fill (GOOSE_SWARM_TAIL_REVIEW default ON — idle nodes run read-only
+review during ANY tail, not just the sink) + F778 root fix (the idle-slot guard notifies only
+when a DEVICE was freed, killing the ~40/sec device-less-judge spin). THE LIVE PROOF, to watch on
+the next n3 tail: judge_observed count drops from ~8000+/run to near-zero, and pre_review/review
+events fire on the idle devices during the tail. F781 (tail-emits-tasks orchestration + judge-in-
+all-phases) remains the top build-out.

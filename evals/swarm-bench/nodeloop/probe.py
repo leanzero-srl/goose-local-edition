@@ -44,7 +44,9 @@ BASELINE = HERE / "probe-baseline.json"
 # every subsequent run report it "present before AND after — vacuous", which is true, useless, and
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
-NEW = {}
+NEW = {
+    "GOOSE_SWARM_TAIL_REVIEW": "F779 — the tail idle-fill gate (idle nodes review during ANY tail, default ON)",
+}
 # The 10:2x boundary's ONE change (hermetic scratch db per gate invocation) is LITERAL-LESS: it
 # alters a filename format string whose distinctive part ("goose-spec-contract-") pre-exists.
 # Per this probe's own docstring the honest move is to NOT run --verify and say so plainly
