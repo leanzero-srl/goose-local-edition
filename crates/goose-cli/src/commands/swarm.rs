@@ -10720,6 +10720,61 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn fix_mode_only_arms_with_an_active_round() {
+        // c3: a fix::-named plan task with NO active round passes through as an ordinary task —
+        // the fill_fan gate's rule, applied to fix mode.
+        assert!(!fix_mode_applies("fix::r0::app/api.py", false));
+        assert!(fix_mode_applies("fix::r0::app/api.py", true));
+        assert!(!fix_mode_applies("build-api", true), "prefix required");
+        assert!(
+            !fix_mode_applies("prefix::fix::x", true),
+            "prefix, not substring"
+        );
+    }
+
+    #[test]
+    fn fix_shadow_guard_discards_only_while_armed() {
+        // c3: judge kills run ONLY Drop. Armed drop removes the entry (TempDir cleanup);
+        // a disarmed guard leaves the epilogue's decision alone.
+        let shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>> =
+            Mutex::new(HashMap::new());
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+        shadows
+            .lock()
+            .unwrap()
+            .insert("fix::r0::a.py".into(), (dir, vec!["a.py".into()]));
+        {
+            let _g = FixShadowGuard {
+                shadows: &shadows,
+                task_id: "fix::r0::a.py".into(),
+                armed: true,
+            };
+        }
+        assert!(
+            !shadows.lock().unwrap().contains_key("fix::r0::a.py"),
+            "armed drop discards the shadow"
+        );
+        assert!(!path.exists(), "the TempDir is gone with the entry");
+
+        let dir2 = tempfile::TempDir::new().unwrap();
+        shadows
+            .lock()
+            .unwrap()
+            .insert("fix::r0::b.py".into(), (dir2, vec!["b.py".into()]));
+        let g2 = FixShadowGuard {
+            shadows: &shadows,
+            task_id: "fix::r0::b.py".into(),
+            armed: true,
+        };
+        g2.disarm();
+        assert!(
+            shadows.lock().unwrap().contains_key("fix::r0::b.py"),
+            "a disarmed guard leaves the shadow to the epilogue"
+        );
+    }
+
+    #[test]
     fn fix_round_specs_disjoint_roots_and_collision_proof_join() {
         // F781/#16 commit 4: two file groups + one file-less finding -> two Ready roots owning
         // one file each, plus a #join owning everything and depending on both.
@@ -13172,6 +13227,8 @@ pub struct GooseAgentDispatcher {
     /// task_id. A twin's agent is rooted here (NOT the real tree); on a twin win the scheduler calls
     /// `promote_speculative` which copies only these owned files back. Empty unless the flag is on.
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
+    /// F781/#16 c3: Some(_) while a fix round runs — arms the `fix::` dispatch path.
+    fix_round: Mutex<Option<FixRound>>,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
@@ -13305,6 +13362,7 @@ impl GooseAgentDispatcher {
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
+            fix_round: Mutex::new(None),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             clarity_fail: Mutex::new(None),
@@ -23334,48 +23392,185 @@ fn multifile_stub_note(owned_files: &[String], enabled: bool) -> String {
         .to_string()
 }
 
-#[async_trait]
-impl TaskDispatcher for GooseAgentDispatcher {
-    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
-        // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
-        // normalization. Gate first so a coincidentally-named plan task can never trip these
-        // paths on an ordinary run — with the gate off this block is byte-identical to absent.
-        if goose_swarm::fill_fan_enabled() {
-            if let Some(module) = req.task_id.strip_prefix("skeleton::") {
-                return self.run_skeleton_step(module.to_string(), &req).await;
-            }
-            if let Some(module) = req.task_id.strip_prefix("join::") {
-                return self.run_join_step(module.to_string(), &req).await;
+/// F781/#16 c3: the active fix round's shared context — the round-opening baseline every
+/// per-file fix is graded against, the language for the shadow gate, and the real file list a
+/// fix req is normalized to.
+#[derive(Clone)]
+struct FixRound {
+    baseline: usize,
+    lang: TargetLang,
+    all_files: Vec<String>,
+    round: usize,
+}
+
+/// Pure trigger for fix mode: an ACTIVE round and the fix:: prefix, both. With no active round a
+/// fix::-named plan task passes through as an ordinary task (tested).
+fn fix_mode_applies(task_id: &str, round_active: bool) -> bool {
+    round_active && task_id.starts_with("fix::")
+}
+
+/// Judge kills are JoinHandle aborts: cancellation lands at an await point and runs NO epilogue
+/// code — only Drop runs. Armed, this discards the task's shadow (HashMap::remove drops the
+/// TempDir); the grade epilogue disarms it once promote/discard has decided. A kill therefore
+/// forfeits that attempt's salvage (discard, never promote) — the verified design's stated trade,
+/// measured before any default-ON decision.
+struct FixShadowGuard<'a> {
+    shadows: &'a Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
+    task_id: String,
+    armed: bool,
+}
+
+impl FixShadowGuard<'_> {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for FixShadowGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Ok(mut g) = self.shadows.lock() {
+                g.remove(&self.task_id);
             }
         }
-        let req = if goose_swarm::fill_fan_enabled() && req.task_id.starts_with("fill::") {
-            // A fill's SCHEDULER identity is the virtual `<file>#<slot>` (held_files stays
-            // disjoint while N fillers target one real file); its AGENT identity must be the
-            // real file — the owned-file completion check and the K5 single-file pin both read
-            // owned_files, and a worker told to write `api.py#handle_get` writes garbage.
-            // Forced speculative: the fill works a shadow the JOIN reads later; nothing
-            // promotes it (promote/discard stay explicit, and the join discards).
-            let mut r = req;
-            r.owned_files = r
-                .owned_files
-                .iter()
-                .map(|f| f.split('#').next().unwrap_or(f).to_string())
-                .collect();
-            r.all_files = {
-                let mut a: Vec<String> = r
-                    .all_files
-                    .iter()
-                    .map(|f| f.split('#').next().unwrap_or(f).to_string())
-                    .collect();
-                a.sort();
-                a.dedup();
-                a
-            };
-            r.speculative = true;
-            r
+    }
+}
+
+impl GooseAgentDispatcher {
+    /// F781/#16 c3: open a fix round — every `fix::` task dispatched while this is set runs the
+    /// fix path (forced speculative, capped, graded, promote-iff-strictly-better).
+    #[allow(dead_code)]
+    fn begin_fix_round(
+        &self,
+        baseline: usize,
+        lang: TargetLang,
+        all_files: Vec<String>,
+        round: usize,
+    ) {
+        *self.fix_round.lock().unwrap() = Some(FixRound {
+            baseline,
+            lang,
+            all_files,
+            round,
+        });
+    }
+
+    /// Close the round and drain every leftover shadow. A judge-aborted fix's Drop guard already
+    /// removed its entry; the drain bounds the TempDir leak for any abort that lands outside the
+    /// guard's lifetime. Safe on the fix run's FRESH dispatcher — run 1's shadows live on run 1's
+    /// dispatcher and are untouched.
+    #[allow(dead_code)]
+    fn end_fix_round(&self) {
+        *self.fix_round.lock().unwrap() = None;
+        self.spec_shadows.lock().unwrap().clear();
+    }
+
+    /// One fix task under GOOSE_SWARM_FIX_SCHED. The whole point in four rules, each measured on
+    /// the hand-rolled fan this replaces: (1) the agent works a SHADOW (forced speculative), the
+    /// real tree is untouchable; (2) GRADE THE TREE, NOT THE AGENT'S EXIT — a timed-out or errored
+    /// agent's partial shadow still competes (three historical rounds went red-to-green AT the
+    /// cap); (3) promote ONLY strictly-better than the round baseline (shard_beats_baseline — the
+    /// vacuous-pass trap is `None` and never promotes); (4) never a scheduler retry — an Err would
+    /// re-shadow from a CURRENT tree against a STALE baseline, so the graded verdict returns Ok
+    /// and the next round's gate regenerates fix tasks for still-red files.
+    async fn run_fix_task(
+        &self,
+        req: DispatchRequest,
+        fr: FixRound,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let is_join = req.task_id.ends_with("::#join");
+        let baseline = if is_join {
+            // The join owns the whole tree, so its baseline is the REAL tree as the root fixes
+            // left it — re-gated NOW, after their promotions. If the gate cannot run there is no
+            // baseline to beat and the agent is not spent (the wave's own skip rule).
+            let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+            let g = run_smoke_gate(&real_root, fr.lang).await;
+            if !g.ran {
+                self.events.write_value(serde_json::json!({
+                    "event": "complete_fix_completed", "path": "sched",
+                    "round": fr.round, "task_id": req.task_id,
+                    "skipped": "real-tree gate cannot run — no baseline to beat, agent not spent",
+                }));
+                return Ok("fix join skipped: the real-tree gate cannot run"
+                    .to_string()
+                    .into());
+            }
+            g.findings.len()
         } else {
-            req
+            fr.baseline
         };
+        let mut req = req;
+        req.speculative = true;
+        req.all_files = fr.all_files.clone();
+        self.events.write_value(serde_json::json!({
+            "event": "complete_fix_dispatched", "path": "sched",
+            "round": fr.round, "task_id": req.task_id, "baseline_findings": baseline,
+        }));
+        let started = std::time::Instant::now();
+        let guard = FixShadowGuard {
+            shadows: &self.spec_shadows,
+            task_id: req.task_id.clone(),
+            armed: true,
+        };
+        let ran = tokio::time::timeout(
+            std::time::Duration::from_secs(fix_cap_secs()),
+            self.run_task_inner(req.clone()),
+        )
+        .await;
+        // A shadow that was never built grades nothing: keep the Transient bail (re-shadow is
+        // safe — make_shadow's insert overwrites) instead of minting a vacuous verdict.
+        if self.speculative_root(&req.task_id).is_none() {
+            if let Ok(Err(DispatchError::Transient(e))) = ran {
+                guard.disarm();
+                return Err(DispatchError::Transient(e));
+            }
+        }
+        let verified = match self.speculative_root(&req.task_id) {
+            Some(root) => {
+                let g = run_smoke_gate(&root, fr.lang).await;
+                if g.ran {
+                    Some(g.findings.len())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        let promoted = shard_beats_baseline(verified, baseline);
+        if promoted {
+            self.promote_speculative(&req.task_id).await;
+        } else {
+            self.discard_speculative(&req.task_id).await;
+        }
+        guard.disarm();
+        let agent_ok = matches!(&ran, Ok(Ok(_)));
+        self.events.write_value(serde_json::json!({
+            "event": "complete_fix_completed", "path": "sched",
+            "round": fr.round, "task_id": req.task_id,
+            "secs": started.elapsed().as_secs(),
+            "agent_ok": agent_ok,
+            "verified_findings": verified,
+            "baseline_findings": baseline,
+            "promoted": promoted,
+        }));
+        match ran {
+            Ok(Ok(mut out)) => {
+                out.output = format!(
+                    "{}\n[fix graded: verified={verified:?} baseline={baseline} promoted={promoted}]",
+                    out.output
+                );
+                Ok(out)
+            }
+            _ => Ok(format!(
+                "fix attempt graded without agent completion: verified={verified:?} baseline={baseline} promoted={promoted}"
+            )
+            .into()),
+        }
+    }
+
+    /// The ordinary task body — everything run() did after kind-normalization, extracted verbatim
+    /// (F781/#16 c3) so the fix path can wrap it in a cap and a grade epilogue.
+    async fn run_task_inner(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
         // Detect the target language from this subtask's manifest (extensions are language-correct after the
         // architect plans them) + its description. Python (the no-cue / .py default) keeps every prompt arm
         // below byte-identical; other languages get the right scaffolding via the TargetLang profile.
@@ -24656,6 +24851,66 @@ impl TaskDispatcher for GooseAgentDispatcher {
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl TaskDispatcher for GooseAgentDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
+        // normalization. Gate first so a coincidentally-named plan task can never trip these
+        // paths on an ordinary run — with the gate off this block is byte-identical to absent.
+        if goose_swarm::fill_fan_enabled() {
+            if let Some(module) = req.task_id.strip_prefix("skeleton::") {
+                return self.run_skeleton_step(module.to_string(), &req).await;
+            }
+            if let Some(module) = req.task_id.strip_prefix("join::") {
+                return self.run_join_step(module.to_string(), &req).await;
+            }
+        }
+        let req = if goose_swarm::fill_fan_enabled() && req.task_id.starts_with("fill::") {
+            // A fill's SCHEDULER identity is the virtual `<file>#<slot>` (held_files stays
+            // disjoint while N fillers target one real file); its AGENT identity must be the
+            // real file — the owned-file completion check and the K5 single-file pin both read
+            // owned_files, and a worker told to write `api.py#handle_get` writes garbage.
+            // Forced speculative: the fill works a shadow the JOIN reads later; nothing
+            // promotes it (promote/discard stay explicit, and the join discards).
+            let mut r = req;
+            r.owned_files = r
+                .owned_files
+                .iter()
+                .map(|f| f.split('#').next().unwrap_or(f).to_string())
+                .collect();
+            r.all_files = {
+                let mut a: Vec<String> = r
+                    .all_files
+                    .iter()
+                    .map(|f| f.split('#').next().unwrap_or(f).to_string())
+                    .collect();
+                a.sort();
+                a.dedup();
+                a
+            };
+            r.speculative = true;
+            r
+        } else {
+            req
+        };
+        // F781/#16 c3 (GOOSE_SWARM_FIX_SCHED): FIX MODE. Gated on an ACTIVE round, never on the
+        // prefix alone — a coincidentally-named plan task can never trip it (the fill_fan gate's
+        // rule). The fix path wraps the ordinary task body in the fix cap, then ALWAYS grades the
+        // shadow and promotes only strictly-better (the fan's measured salvage rule) — see
+        // run_fix_task.
+        if fix_mode_applies(&req.task_id, self.fix_round.lock().unwrap().is_some()) {
+            let fr = self
+                .fix_round
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("checked is_some under the same lock pattern");
+            return self.run_fix_task(req, fr).await;
+        }
+        self.run_task_inner(req).await
     }
 
     /// The twin WON: copy ONLY its owned files from its shadow into the real tree, then drop the shadow
