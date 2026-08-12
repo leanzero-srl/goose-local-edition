@@ -177,8 +177,16 @@ impl Dag {
 
     /// Build from the planner recipe's JSON output:
     /// `{ "subtasks": [ {id, description, difficulty?, model?, depends_on?, files?} ], "integration"? }`
+    /// S3 fill fan: the subsplit expansion applies HERE — the one chokepoint every DAG build
+    /// shares — so eligible hard modules become skeleton/fills/join uniformly (no-op with the
+    /// gate off). Plan-time contract ANCHORING is impossible in the run's order (the DAG exists
+    /// before the stub pass); the skeleton step's Terminal guard and the splice's
+    /// SlotMissingInSkeleton refusals are the anchor, each honest and observable. The dynamic
+    /// REPLANNER path deliberately does NOT expand (splice_specs takes specs directly):
+    /// mid-run fills against a live tree are unproven, and a replanned module simply builds
+    /// serially as before.
     pub fn from_planner_json(json: &str) -> Result<Self> {
-        Dag::from_specs(specs_from_plan_json(json)?)
+        Dag::from_specs(expand_subsplits(specs_from_plan_json(json)?))
     }
 
     /// Splice additional specs into a LIVE dag at an idle point (the dynamic replanner). Validated

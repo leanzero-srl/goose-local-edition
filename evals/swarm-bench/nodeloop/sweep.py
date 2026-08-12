@@ -599,6 +599,16 @@ ARMS = [
                 "shard_beats_baseline (pinned by test).",
     },
     {
+        "name": "fill_fan",
+        "env": {"GOOSE_SWARM_FILL_FAN": "1"},
+        "gate": "S3 i3 (S3-DESIGN.md FINAL SHAPE): eligible hard modules (one .py file, "
+                "detailer subsplit>=2) expand at plan parse into skeleton::<M> (deterministic "
+                "contract-skeleton write) -> fill::<M>::<slot> xN (shadow fillers, one slot "
+                "each, fence-enforced) -> join::<M> (deterministic splice; refusals keep "
+                "skeleton bodies; complete gate judges). Downstream deps re-wired to the join. "
+                "Read skeleton_written / join_spliced / the refusal list.",
+    },
+    {
         "name": "testgen",
         "env": {"GOOSE_SWARM_TESTGEN": "1"},
         "gate": "S7 (S7-DESIGN.md): idle slots generate contract-derived pytest files — the one "
@@ -664,6 +674,15 @@ QUESTIONS: list[dict] = [
      "asks": "whether cutting the invisible end-of-turn 27B summarization calls (up to 10 serialized "
              "per long worker) buys measurable wall at no stable-24 cost, now that K4's keep-tail "
              "carries the recent turns verbatim through compaction."},
+    {"arm": "fill_fan", "nodes": 3, "reps": 1,
+     "asks": "whether a hard module with a contract-anchored subsplit builds FASTER as "
+             "skeleton->fills->join without losing quality — MECHANISM n=1: skeleton_written + "
+             "join_spliced{spliced>=1} on an expanded module (absent => the fan examined "
+             "NOTHING); WALL: the expanded module's dispatch-to-join span vs the 1522s corpus "
+             "p90 for hard modules; SAFETY: join_spliced.refused stays low and every refusal "
+             "names its slot (a fence refusal is the mechanism working, a majority refused "
+             "means the slot discipline is not reaching the fillers); FALSIFIER: stable-24 "
+             "below the baseline spread reverts the arm on that alone"},
     {"arm": "testgen", "nodes": 3, "reps": 1,
      "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
              "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
