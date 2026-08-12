@@ -18246,3 +18246,24 @@ The replacement is ANALYTIC and deterministic: archived trees carry their run's 
 per-check vectors; sb-3's aggregation recomputes from those rows (the two removed checks are
 reconstructible from second_sync_cost's recorded detail — cond>0&304>0 for the old binary
 check, 304/reqs for the old ratio). Task #6 completes with that calculator.
+
+## F772 — sb-4 discriminates where the engine gate cannot; the bridge ledger opens with its first real pair
+
+**The run (baseline-n3-r1, 84 min, pool 3/3, zero retries).** The ENGINE's gate went fully
+green on round 0 — zero findings, no repair rounds — and the sb-4 score still read **0.6561**
+(hard block 0.8333): exactly the separation the hardening was built for. The gate's own POST
+probe examined NOTHING this run (probed_post=0 — its advertised-argv precondition did not
+trigger; per the arm's own rule that is 'examined nothing', never a pass), while the scorer's
+independent client probe and hard block measured the deficits anyway. The engine gate and the
+scorer now disagree in the direction that TEACHES: the delta names the next detector work.
+
+**The ledger's first complete pair:** sb4 0.6561 ↔ sb3-analytic 0.7167 (Δ −0.061 for this
+vector; reconstructed=False — this run's second_sync_cost detail carried the guard wording,
+so the two legacy checks were not reconstructable and the sb3 figure is the floor of the
+mapping, noted). The pair is in bridge-ledger.jsonl; every future unit adds one for free.
+
+**Also on the tape:** baseline-n1-r0 died in 7 minutes at **0.0167** (single node, fast
+collapse) — against n3's 0.8756/0.6561 today. n=1 per cell, but the first sb-4-era node-count
+readings point the familiar direction. Its archive predates the verdict-carrying harness by
+minutes (no sb4-verdict.json inside — the gap class F771 named, now closed for all future
+archives).
