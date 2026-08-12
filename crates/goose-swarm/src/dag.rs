@@ -346,3 +346,222 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
         })
         .collect())
 }
+
+/// The ONE resolution of GOOSE_SWARM_FILL_FAN (S3 i3, DAG-native): expand a hard module with a
+/// contract-anchored subsplit into skeleton -> parallel fills -> deterministic join. Default
+/// OFF — an arm, not a silent flip.
+pub fn fill_fan_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_FILL_FAN")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// S3's fill fan as a PLAN POST-PASS: each eligible task (Hard, one .py owned file, subsplit
+/// with 2+ names) is rewritten into
+///   skeleton::<M>            — deterministic dispatcher step (writes the contract skeleton),
+///   fill::<M>::<slot> × N    — one filler per slot, depending on the skeleton; each owns the
+///                              VIRTUAL name `<file>#<slot>` so held_files stays disjoint by
+///                              construction while every filler works the same real file in a
+///                              shadow,
+///   join::<M>                — deterministic dispatcher step (splices verified fills),
+///                              depending on every fill and owning the real file,
+/// and every OTHER task that depended on <M> now depends on join::<M> — downstream work must
+/// wait for the assembled module, not the skeleton. Non-eligible tasks pass through untouched;
+/// with the gate off the input returns unchanged. Pure (gate applied by the public wrapper) so
+/// the expansion shape is testable without an environment.
+pub fn expand_subsplits(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
+    if !fill_fan_enabled() {
+        return specs;
+    }
+    expand_subsplits_inner(specs)
+}
+
+fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
+    let eligible: std::collections::HashSet<String> = specs
+        .iter()
+        .filter(|t| {
+            t.difficulty == Difficulty::Hard
+                && t.owned_files.len() == 1
+                && t.owned_files[0].ends_with(".py")
+                && t.subsplit.len() >= 2
+        })
+        .map(|t| t.id.clone())
+        .collect();
+    if eligible.is_empty() {
+        return specs;
+    }
+    let mut out = Vec::with_capacity(specs.len());
+    for mut t in specs {
+        if !eligible.contains(&t.id) {
+            // Downstream rewiring: an edge onto an expanded module now waits for its JOIN —
+            // depending on the skeleton would release consumers against an unfilled file.
+            for d in t.deps.iter_mut() {
+                if eligible.contains(d) {
+                    *d = format!("join::{d}");
+                }
+            }
+            out.push(t);
+            continue;
+        }
+        let file = t.owned_files[0].clone();
+        let skeleton_id = format!("skeleton::{}", t.id);
+        let join_id = format!("join::{}", t.id);
+        out.push(TaskSpec {
+            id: skeleton_id.clone(),
+            description: format!(
+                "SKELETON STEP for [{}]: write the frozen-contract skeleton of `{file}` — \
+                 every top-level def/class from the module's contract stub with \
+                 `raise NotImplementedError` bodies. Deterministic; the dispatcher \
+                 short-circuits this task without a model call.",
+                t.id
+            ),
+            difficulty: Difficulty::Easy,
+            preferred_model: t.preferred_model.clone(),
+            owned_files: vec![file.clone()],
+            deps: t.deps.clone(),
+            subsplit: Vec::new(),
+        });
+        let mut fill_ids = Vec::new();
+        for slot in &t.subsplit {
+            let fid = format!("fill::{}::{slot}", t.id);
+            fill_ids.push(fid.clone());
+            out.push(TaskSpec {
+                id: fid,
+                description: format!(
+                    "{}\n\nYOU IMPLEMENT ONLY `{slot}` in `{file}`. Every other def stays \
+                     EXACTLY as the skeleton gives it — the merge REFUSES your whole \
+                     contribution if anything outside `{slot}` changes.",
+                    t.description
+                ),
+                difficulty: Difficulty::Hard,
+                preferred_model: t.preferred_model.clone(),
+                owned_files: vec![format!("{file}#{slot}")],
+                deps: vec![skeleton_id.clone()],
+                subsplit: Vec::new(),
+            });
+        }
+        out.push(TaskSpec {
+            id: join_id,
+            description: format!(
+                "JOIN STEP for [{}]: splice each verified fill's `{file}` back into the real \
+                 tree by its owned slot (splice_functions; refusals fall back serially). \
+                 Deterministic; the dispatcher short-circuits this task without a model call.",
+                t.id
+            ),
+            difficulty: Difficulty::Easy,
+            preferred_model: t.preferred_model,
+            owned_files: vec![file],
+            deps: fill_ids,
+            subsplit: Vec::new(),
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod expand_tests {
+    use super::*;
+
+    fn spec(id: &str, diff: Difficulty, files: &[&str], deps: &[&str], sub: &[&str]) -> TaskSpec {
+        TaskSpec {
+            id: id.into(),
+            description: format!("{id} module"),
+            difficulty: diff,
+            preferred_model: None,
+            owned_files: files.iter().map(|s| s.to_string()).collect(),
+            deps: deps.iter().map(|s| s.to_string()).collect(),
+            subsplit: sub.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_eligible_module_expands_and_its_consumers_wait_for_the_join() {
+        let specs = vec![
+            spec("store", Difficulty::Easy, &["store.py"], &[], &[]),
+            spec(
+                "api",
+                Difficulty::Hard,
+                &["api.py"],
+                &["store"],
+                &["handle_get", "handle_post"],
+            ),
+            spec("cli", Difficulty::Easy, &["cli.py"], &["api"], &[]),
+        ];
+        let out = expand_subsplits_inner(specs);
+        let ids: Vec<&str> = out.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "store",
+                "skeleton::api",
+                "fill::api::handle_get",
+                "fill::api::handle_post",
+                "join::api",
+                "cli"
+            ]
+        );
+        // Ownership stays DISJOINT: fills own virtual names, never the real file.
+        let mut owned: Vec<&str> = out
+            .iter()
+            .flat_map(|t| t.owned_files.iter())
+            .map(|s| s.as_str())
+            .collect();
+        let n = owned.len();
+        owned.sort();
+        owned.dedup();
+        // skeleton::api and join::api both own api.py by design — they are serial by deps, so
+        // the ONE allowed duplicate is the real file between those two.
+        assert_eq!(
+            n - owned.len(),
+            1,
+            "only the skeleton/join pair shares the real file"
+        );
+        // Wiring: fills depend on the skeleton; the join on every fill; cli on the JOIN.
+        let get = |id: &str| out.iter().find(|t| t.id == id).unwrap();
+        assert_eq!(get("fill::api::handle_get").deps, ["skeleton::api"]);
+        assert_eq!(
+            get("join::api").deps,
+            ["fill::api::handle_get", "fill::api::handle_post"]
+        );
+        assert_eq!(get("cli").deps, ["join::api"]);
+        assert_eq!(
+            get("skeleton::api").deps,
+            ["store"],
+            "the skeleton inherits the module's deps"
+        );
+        // Fill prompts carry the one-slot discipline; virtual ownership is file#slot.
+        assert!(get("fill::api::handle_post")
+            .description
+            .contains("ONLY `handle_post`"));
+        assert_eq!(
+            get("fill::api::handle_get").owned_files,
+            ["api.py#handle_get"]
+        );
+    }
+
+    #[test]
+    fn non_eligible_shapes_pass_through_byte_identical() {
+        let cases = vec![
+            spec("easy", Difficulty::Easy, &["a.py"], &[], &["x", "y"]),
+            spec(
+                "two-files",
+                Difficulty::Hard,
+                &["a.py", "b.py"],
+                &[],
+                &["x", "y"],
+            ),
+            spec("one-slot", Difficulty::Hard, &["a.py"], &[], &["x"]),
+            spec("not-py", Difficulty::Hard, &["a.rs"], &[], &["x", "y"]),
+            spec("no-subsplit", Difficulty::Hard, &["a.py"], &[], &[]),
+        ];
+        let before: Vec<String> = cases.iter().map(|t| format!("{t:?}")).collect();
+        let out = expand_subsplits_inner(cases);
+        let after: Vec<String> = out.iter().map(|t| format!("{t:?}")).collect();
+        assert_eq!(before, after);
+    }
+}
