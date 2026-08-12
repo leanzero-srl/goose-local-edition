@@ -189,6 +189,7 @@ class Ctx:
         self.restart_before: int = 0
         self.restart_after: int = -1
         self.val_matrix: List = []
+        self.raw_pages: List = []
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -490,6 +491,75 @@ def _(c: Ctx):
              "rows that vanish on restart mean the SQLite file was decoration, not persistence")
 
 
+class _FloatSeen(float):
+    pass
+
+
+def _rows_from_raw(raw) -> tuple:
+    """(rows, float_seen) parsed from wire bytes with a float sentinel — detection is a
+    property of the BYTES, not of python's numeric view after the fact."""
+    seen = {"f": False}
+
+    def _pf(x):
+        seen["f"] = True
+        return float(x)
+
+    try:
+        body = json.loads(raw if isinstance(raw, str) else raw.decode(errors="replace"),
+                          parse_float=_pf)
+    except Exception:
+        return [], False
+    rows = body.get("payments") if isinstance(body, dict) else body
+    return (rows if isinstance(rows, list) else []), seen["f"]
+
+
+@check("row_integrity", "B")
+def _(c: Ctx):
+    """BENCH2 rank 8: every row of all three pages — exact documented keys 0.35, integer
+    amounts ON THE WIRE 0.25 (parse_float sentinel), parseable timestamps 0.15, id coverage
+    of the full collection 0.25."""
+    all_rows, float_seen = [], False
+    for st, raw in c.raw_pages:
+        rows, f = _rows_from_raw(raw)
+        all_rows.extend(rows)
+        float_seen = float_seen or f
+    if not all_rows:
+        return g(0.0, "no rows on the wire", "n/a")
+    keys_ok = sum(1 for r in all_rows if isinstance(r, dict) and set(r) >= PAYMENT_KEYS)
+    ints_ok = 0 if float_seen else sum(
+        1 for r in all_rows if isinstance(r.get("amount_minor"), int))
+    times_ok = sum(1 for r in all_rows
+                   if isinstance(r.get("created_at"), str) and len(r["created_at"]) >= 19)
+    ids = {r.get("id") for r in all_rows if isinstance(r, dict)}
+    n = len(all_rows)
+    score = (0.35 * keys_ok / n + 0.25 * ints_ok / n + 0.15 * times_ok / n
+             + 0.25 * min(len(ids) / EXPECTED_TOTAL, 1.0))
+    return g(score,
+             f"{n} rows: keys {keys_ok}/{n}, int-amounts {ints_ok}/{n}"
+             + (" (FLOAT ON WIRE)" if float_seen else "")
+             + f", times {times_ok}/{n}, ids {len(ids)}/{EXPECTED_TOTAL}",
+             "malformed rows poison every consumer downstream of the API")
+
+
+@check("chronological_order_full", "B")
+def _(c: Ctx):
+    """BENCH2 rank 8: ordered-pair fraction across the FULL collection against the vendor's
+    single-source truth — 246 adjacent pairs of resolution where the old check had 24."""
+    all_rows = []
+    for st, raw in c.raw_pages:
+        rows, _f = _rows_from_raw(raw)
+        all_rows.extend(rows)
+    ids = [r.get("id") for r in all_rows if isinstance(r, dict)]
+    truth = {pid: i for i, pid in enumerate(vendor_service.true_order_ids())}
+    known = [i for i in ids if i in truth]
+    if len(known) < 2:
+        return g(0.0, "too few known rows to order", "n/a")
+    pairs = list(zip(known, known[1:]))
+    ok = sum(1 for a, b2 in pairs if truth[a] < truth[b2])
+    return g(ok / len(pairs), f"{ok}/{len(pairs)} adjacent pairs in true instant order",
+             "mixed UTC offsets make lexicographic order wrong — payments appear out of sequence")
+
+
 # ── D: finesse (deliberately hard to max) ─────────────────────────────────────────────────────
 
 @check("request_efficiency", "D")
@@ -700,6 +770,11 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
             _s, c.page5, _r, _h = _get(f"{base}/api/payments?limit=5&offset=5")
             _s, c.capped, _r, _h = _get(f"{base}/api/payments?limit=500")
             _s, c.summary, _r, _h = _get(f"{base}/api/summary")
+            # BENCH2 rank 8: three RAW pages for wire-byte inspection (row_integrity's float
+            # sentinel must see the bytes, not python's post-parse floats-become-ints view).
+            for off in (0, 100, 200):
+                st8, _b8, raw8, _h8 = _get(f"{base}/api/payments?limit=100&offset={off}")
+                c.raw_pages.append((st8, raw8))
             c.bad_limit, _b, _r, _h = _get(f"{base}/api/payments?limit=-1")
             c.bad_offset, _b, _r, _h = _get(f"{base}/api/payments?offset=abc")
             c.notfound, c.notfound_body, _r, _h = _get(f"{base}/api/nope")
