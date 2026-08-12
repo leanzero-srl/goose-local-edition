@@ -148,6 +148,18 @@ def _etag_for(offset: int, limit: int) -> str:
     return f'"{digest}"'
 
 
+def restore_payments() -> None:
+    """Undo mutate_statuses for the NEXT scoring run in this process — PAYMENTS is module
+    state, and a mutation that leaks across reps would corrupt every later unit's totals.
+    Bumps the generation again: the restored state is a THIRD data generation, and an ETag
+    that claims it matches the mutated one would lie."""
+    global PAYMENTS
+    PAYMENTS[:] = _build_payments()
+    if STATE is not None:
+        with STATE.lock:
+            STATE.generation = getattr(STATE, "generation", 0) + 1
+
+
 def mutate_statuses() -> int:
     """BENCH2 rank 5's control surface (DORMANT until update_propagation wires it): flip every
     10th payment's status to "refunded" — field edits only on the module-level PAYMENTS rows,
