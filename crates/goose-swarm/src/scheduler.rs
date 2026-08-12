@@ -2494,6 +2494,22 @@ impl Scheduler {
     /// Attach an idle-model judge: when a node would otherwise sit idle while tasks are still in
     /// flight, it inspects a busy worker and may kill + re-dispatch one that is looping, over-reading,
     /// or producing broken code. OFF by default — with no judge attached the scheduler is unchanged.
+    /// F779 i3: append SUPERVISION devices — machines the build pool excluded (the
+    /// GOOSE_SWARM_MAX_NODES tail) that carry read-only idle work only. Forced supervision=true
+    /// regardless of input; an entry whose model_id collides with an existing device (worker or
+    /// pushed planner) is DROPPED, not bailed — the model is already reachable, and a capped run
+    /// must not die because its borrowed node duplicates one it kept.
+    pub fn with_supervision_devices(mut self, cfgs: Vec<DeviceCfg>) -> Self {
+        for mut c in cfgs {
+            if self.devices.iter().any(|d| d.model_id == c.model_id) {
+                continue;
+            }
+            c.supervision = true;
+            self.devices.push(c);
+        }
+        self
+    }
+
     pub fn with_judge(mut self, judge: Arc<dyn Judge>, cfg: JudgeConfig) -> Self {
         self.judge = Some(judge);
         self.judge_cfg = cfg;
