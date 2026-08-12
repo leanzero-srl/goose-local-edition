@@ -521,8 +521,16 @@ impl Drop for IdleSlotGuard {
                         }
                     }
                 }
-                if let Some(n) = notify {
-                    n.notify_one();
+                // F779/F778: wake the loop ONLY when this release actually freed a DEVICE — a
+                // device-less idle job (the judge running with no idle node to catch a stuck
+                // worker) frees nothing dispatchable, so notifying just re-wakes the loop into an
+                // immediate re-pick of the same task: the measured ~40/sec judge_observed/skipped
+                // spin. Intervention has its own explicit notify; the 15s tick still fires the
+                // device-less judge, just not at CPU speed.
+                if claimed.is_some() {
+                    if let Some(n) = notify {
+                        n.notify_one();
+                    }
                 }
             });
         }
