@@ -3,3 +3,4 @@
 {"unit": "baseline-n1-r1", "t": 1786542868.2, "sb4": 0.819, "sb4_hard": 1.0, "sb3_analytic": 0.8391, "sb3_tiers": {"A": 1.0, "B": 0.6171, "C": 1.0, "D": 0.77}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "baseline-n3-r2", "t": 1786546768.0, "sb4": 0.6172, "sb4_hard": 0.5, "sb3_analytic": 0.6917, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 0.8333, "D": 0.8333}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "baseline-n1-r2", "t": 1786551092.1, "sb4": 0.6646, "sb4_hard": 0.8333, "sb3_analytic": 0.7208, "sb3_tiers": {"A": 0.8333, "B": 0.3194, "C": 1.0, "D": 0.8333}, "reconstructed": false, "legacy_checks": 33}
+{"unit": "baseline-n3-r3", "t": 1786559445.9, "sb4": 0.8164, "sb4_hard": 1.0, "sb3_analytic": 0.8385, "sb3_tiers": {"A": 0.8333, "B": 0.7004, "C": 1.0, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}

@@ -18338,3 +18338,21 @@ scoring death minutes after an engine-green verify (evidence archived, diffable)
 MERIDIAN_BASE_URL spec sentence + redirect check (task-change discipline); (3) the engine-vs-
 scorer delta as the next detector roadmap; (4) testgen + fill_fan arms when the queue reaches
 them; (5) the deliberate-merge trio; (6) probed_post=0 precondition pattern (2 occurrences).
+
+## F777 — n3-r3 0.8164 (140 min); n3 mean firms up above n1, and probed_post=0 is a runtime-precondition class (3x)
+
+baseline-n3-r3: **0.8164, 140 min, pool 3/3.** The gate caught 2 findings (generated-test
+failures + a urlopen no-timeout), the repair race fixed the timeout (2→1) with agreement 1=1
+holding (hermetic substrate solid), the tests residual capped the run at round 1. This is a
+FULL n3 build with the sync family WORKING — 0.8164 with a hard block reading (bridge pair in
+ledger). Updated n3 series: **0.8756 / 0.6561 / 0.6172 / 0.8164** (mean ~0.741); the two lows
+remain the F774 scoring-time-sync-death cells, so n3's TRUE build-quality band clusters ~0.82-0.88
+once that harness artifact is fixed. n1: 0.0167 / 0.819 / 0.6646 (mean ~0.500). The
+consistency gap the whole campaign predicted is now visible on the hardened scale even at small n.
+
+probed_post=0 on THREE runs (12:31, and both of today's late n3 units) is now classed:
+the advertised-POST probe's precondition (the app's README advertising a POST in the parseable
+argv shape the gate greps) is RUNTIME-dependent, not a code regression — it fires when the app
+documents its sync endpoint the expected way and skips otherwise, correctly reporting 0 rather
+than a false pass. Bumped in the next-session queue as a precondition-robustness item (widen the
+advertised-POST detection to more README shapes), not a bug.
