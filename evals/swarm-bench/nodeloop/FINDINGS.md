@@ -18203,3 +18203,28 @@ runs/nodeloop/_sb4trees/<cell>-<ts> at score time, making every scored artifact 
 archived copies — pending one open question F768 left: whether CURRENT-era apps re-exercise
 against a fresh vendor (the first archived tree answers it). Sweep bounced at the successor's
 1-minute mark to load the archiving harness; the cell re-runs.
+
+## F770 — GRADER TRUSTED: the sb-4 hardening program is complete and self-validated
+
+**The verdict.** Controls round 3: known-good 90.2%→(envelope fix)→**0.955 total, hard block
+1.0**; run-twice determinism **0 drifting checks**; all SEVEN isolation defects break exactly
+their own checks — including the three new ones (409-unrecognized → client_create_replay only;
+per-PID db → restart_persistence only; no-op status upsert → update_propagation only).
+
+**The saga that got here, because it is the method's best advertisement:** round 1 failed 3
+ways and every failure was a CONTROL defect (membership-blind comparator, a pre-rank-4
+expectation set, a :memory: sledgehammer — sqlite gives each connection its own memory db and
+the reference connects per request); round 2 caught the biggest catch of the day — THREE new
+checks guard-zeroing on a KNOWN-GOOD app (my checks read "payments" where the documented
+envelope is "data") — before a single production score was affected. One matrix cell dropped
+under the design's own drop-never-rebase rule (empty limit defensibly treated as default).
+
+**sb-4 final state (all ten BENCH2 ranks):** foundations (4 bench bugs), second_sync_cost
+ladder, six awakened client-contract checks, update_propagation, restart_persistence, the
+7→6-cell graded validation matrix, wire-byte row_integrity, 246-pair chronological order,
+json_everywhere, health_semantics quarters, the 0.90/0.10 core/hard split (0.996-by-saturation
+structurally impossible), and a trust suite that now proves determinism + both-direction
+validity before any number is believed. Reference vector published in controls.json; the
+HIGH threshold's measured sb-4 value is 0.955-class (leave the gate at 0.85 with the vector
+recorded — re-tighten after a few production runs, not before). Bridge ledger (task #6) fills
+from archived trees as units land.
