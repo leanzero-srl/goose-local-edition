@@ -45,7 +45,8 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "END your spec with ONE line": "S3i2's producer — the SUBSPLIT ask in the detail prompt (live path, bytes-verified absent pre-build)",
+    "skeleton written:": "S3 fill fan — the skeleton step's output format (live path)",
+    "created file(s) from the winning twin": "F766 promote fix — the widened-promotion eprintln (live path)",
 }
 # The five adopted upstream commits carry no probeable literal (8f1590b75's distinctive
 # strings are all in #[cfg(test)] code — the F762 dead-code rule): their rebuild evidence is
@@ -93,6 +94,8 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # GRADUATED from NEW after the 2026-08-12 02:16 rebuild (watched flipping absent -> present):
+    "END your spec with ONE line": "S3i2 producer — landed 2026-08-12",
     # "subsplit" was here 2026-08-12 02:11-02:15 and is REMOVED: the binary's one occurrence
     # is the mangled SYMBOL extract_subsplit (which does prove compilation), invisible to this
     # probe's `strings` haystack — a control verified with a different instrument (bytes.count)
