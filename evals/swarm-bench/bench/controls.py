@@ -80,6 +80,31 @@ DEFECTS: List[Dict] = [
             _sub(pkg / "store.py", r"INSERT INTO payments", "INSERT OR REPLACE INTO payments")
             and _sub(pkg / "store.py", r"ON CONFLICT\(id\)[^\"]*?(?=\"\"\")", "")),
     },
+    {
+        # BENCH2 rank 10: the client stops recognizing 409-as-success — ONLY the replay check
+        # may move (create_first still succeeds; the replay raises inside the probe driver).
+        "name": "replay_as_error",
+        "expect": {"client_create_replay"},
+        "apply": lambda pkg: _sub(pkg / "meridian.py", r"409", "499"),
+    },
+    {
+        # BENCH2 rank 10: memory dressed as a database — persistence dies at the SIGKILL, and
+        # ONLY restart_persistence may notice (within one process lifetime :memory: is correct).
+        "name": "store_in_memory",
+        "expect": {"restart_persistence"},
+        "apply": lambda pkg: _sub(pkg / "store.py", r"sqlite3\.connect\(\s*[^,)]+",
+                                  'sqlite3.connect(":memory:"'),
+    },
+    {
+        # BENCH2 rank 10: the upsert's STATUS assignment becomes a no-op (old value kept):
+        # every other field updates, no duplicates, counts right - ONLY update_propagation
+        # may notice. (A DO NOTHING rewrite was rejected: the multi-line SET block would
+        # break the SQL outright and cascade - a bad control, not a grader test.)
+        "name": "update_ignored",
+        "expect": {"update_propagation"},
+        "apply": lambda pkg: _sub(pkg / "store.py", r"status=excluded\.status",
+                                  "status=payments.status"),
+    },
 ]
 
 
@@ -99,6 +124,9 @@ def main() -> int:
     ap.add_argument("--good", type=Path, default=ROOT / "runs/build/opus-5-r0")
     ap.add_argument("--out", type=Path, default=ROOT / "runs/controls")
     ap.add_argument("--port", type=int, default=8990)
+    # BENCH2 rank 10: the HIGH threshold is MEASURED, not guessed — 0.85 was sb-3's number;
+    # the first sb-4 controls run publishes the known-good vector and this default follows it.
+    ap.add_argument("--high", type=float, default=0.85)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -114,8 +142,23 @@ def main() -> int:
     good_fail = {c["check"] for c in good["checks"] if c["score"] < 1.0}
     print(f"  known-good scored {100 * good['score']:.1f}%   "
           f"({len(good_fail)} check(s) below full: {sorted(good_fail) or 'none'})")
-    ok_high = good["score"] >= 0.85
-    print(f"  {'PASS' if ok_high else 'FAIL'} — needs >= 85%\n")
+    ok_high = good["score"] >= args.high
+    print(f"  {'PASS' if ok_high else 'FAIL'} — needs >= {100 * args.high:.0f}%\n")
+
+    # BENCH2 rank 10: RUN-TWICE DETERMINISM. The same tree scored twice must produce an
+    # IDENTICAL per-check vector — any drift means a check depends on state the harness does
+    # not control, and the repair loop that consumes findings cannot tolerate that.
+    print("CONTROL determinism — the same tree scored twice must match check-for-check\n")
+    (good_dir / "control.db").unlink(missing_ok=True)
+    good2 = run_control("good-again", good_dir, args.port + 50, args.out)
+    v1 = {c["check"]: c["score"] for c in good["checks"]}
+    v2 = {c["check"]: c["score"] for c in good2["checks"]}
+    drift = {k: (v1.get(k), v2.get(k)) for k in set(v1) | set(v2) if v1.get(k) != v2.get(k)}
+    ok_det = not drift
+    if drift:
+        for k, (a, b) in sorted(drift.items()):
+            print(f"  DRIFT {k}: {a} vs {b}")
+    print(f"  {'PASS' if ok_det else 'FAIL'} — {len(drift)} drifting check(s)\n")
 
     print("CONTROL 2/2 — each injected defect must fail ONLY its own checks\n")
     failures = 0
@@ -146,13 +189,15 @@ def main() -> int:
         if not hit:
             print(f"      expected to break : {sorted(expected)}")
 
-    verdict = "GRADER TRUSTED" if ok_high and not failures else \
-              f"GRADER NOT TRUSTED — {failures + (0 if ok_high else 1)} control failure(s)"
+    trusted = ok_high and ok_det and not failures
+    verdict = "GRADER TRUSTED" if trusted else \
+              f"GRADER NOT TRUSTED — {failures + (0 if ok_high else 1) + (0 if ok_det else 1)} control failure(s)"
     print(f"\n{verdict}")
     (args.out / "controls.json").write_text(json.dumps(
-        {"known_good": good["score"], "failures": failures, "trusted": ok_high and not failures},
-        indent=2))
-    return 0 if ok_high and not failures else 1
+        {"known_good": good["score"], "known_good_vector": v1,
+         "determinism_drift": drift, "failures": failures, "trusted": trusted},
+        indent=2, default=str))
+    return 0 if trusted else 1
 
 
 if __name__ == "__main__":
