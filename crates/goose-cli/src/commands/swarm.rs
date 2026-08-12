@@ -649,6 +649,11 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
     #[serde(default)]
     pub cross_module_check: bool,
+    /// F779 i3 (GOOSE_SWARM_SUPERVISION_POOL env overrides): a MAX_NODES-capped run borrows the
+    /// EXCLUDED machines for read-only idle work (judge, reviews, testgen) — never build
+    /// dispatch. Default OFF: the borrow changes what an arm measures and must be attributed.
+    #[serde(default)]
+    pub supervision_pool: bool,
     /// F781/#16 (GOOSE_SWARM_FIX_SCHED env overrides): run each multi-file fix round as a REAL
     /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with judge +
     /// tail-review supervision) instead of the hand-rolled fan. Default OFF until the campaign
@@ -1257,6 +1262,7 @@ impl Default for SwarmConfig {
             answers_win_floor: Some(true),
             cross_module_check: true,
             fix_sched: false,
+            supervision_pool: false,
             ask_max_q: Some(3),
             split: Some(true),
             smoke: true,
@@ -25818,6 +25824,14 @@ fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
 
 /// F781/#16: the fix-round-as-scheduler-run lever. Env wins, config falls back, default OFF —
 /// the campaign attributes it per arm before any default flip.
+/// F779 i3: the supervision-pool lever. Env wins, config falls back, default OFF.
+fn supervision_pool_on() -> bool {
+    swarm_gate_cfg(
+        "GOOSE_SWARM_SUPERVISION_POOL",
+        load_config().supervision_pool,
+    )
+}
+
 fn fix_sched() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_FIX_SCHED", load_config().fix_sched)
 }
@@ -26424,6 +26438,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         ));
     }
     let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
+    // F779 i3: filled inside the MAX_NODES cap arm when the lever is on; consumed after
+    // Scheduler::new via with_supervision_devices (invisible to worker_count and every fleet_*
+    // capture — those are BUILD-device counts by contract).
+    let mut supervision_pool_devices: Vec<DeviceCfg> = Vec::new();
     let enabled: Vec<SwarmDevice> = if !fleet_pool.is_empty() {
         if let Some(p) = fleet_planner {
             cfg.planner_model = p;
@@ -26502,6 +26520,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         .cmp(&configured_speed_weight(&cfg.speed_weights, &a.id))
                         .then_with(|| a.model_id.cmp(&b.model_id))
                 });
+                // F779 i3: the excluded tail IS the supervision pool — already servability-checked
+                // (the intersect runs before this cap) and resident, with distinct model_ids. Captured
+                // before truncate drops it on the floor; empty unless the lever is on.
+                if supervision_pool_on() && capped.len() > max {
+                    supervision_pool_devices = capped[max..]
+                        .iter()
+                        .map(|d| DeviceCfg {
+                            id: d.id.clone(),
+                            model_id: d.model_id.clone(),
+                            weight: d.weight,
+                            enabled: true,
+                            speed_weight: configured_speed_weight(&cfg.speed_weights, &d.id),
+                            supervision: true,
+                        })
+                        .collect();
+                }
                 capped.truncate(max);
                 eprintln!(
                     "{}",
@@ -26831,6 +26865,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         })).collect::<Vec<_>>(),
         "worker_count": devices.len(),
         "planner_pushed": devices.iter().any(|d| d.id == "planner"),
+        // F779 i3: NEVER folded into worker_count — the harness reads that as node-count ground
+        // truth, and supervision devices build nothing.
+        "supervision_devices": supervision_pool_devices.iter().map(|d| d.id.clone()).collect::<Vec<_>>(),
     }));
 
     let mut ext_names = cfg.worker_extensions.clone();
@@ -27352,6 +27389,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
             // in the same log is a complete mechanism proof.
             "fix_sched": fix_sched(),
+            "supervision_pool": supervision_pool_on(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
                 "GOOSE_SWARM_CLARIFY_SPEC_BOUND",
                 load_config().clarify_spec_bound,
@@ -28858,6 +28896,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let fix_devices: Vec<DeviceCfg> = devices.clone();
     let _ = &fix_devices;
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
+        // F779 i3: borrowed machines for read-only idle work — appended AFTER the fleet_* captures
+        // above so nothing derived from `devices` (race width, fan permits, occupancy, planner
+        // sizing) can see them; the scheduler drops any model_id collision instead of bailing.
+        .with_supervision_devices(supervision_pool_devices.clone())
         .with_sink(sink.clone())
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).

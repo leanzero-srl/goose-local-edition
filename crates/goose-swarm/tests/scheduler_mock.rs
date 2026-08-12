@@ -1727,3 +1727,26 @@ async fn supervision_only_pool_refuses_to_run() {
     let err = sched.run(dag, mock(&rec, 10), String::new()).await;
     assert!(err.is_err(), "supervision-only pool must refuse to run");
 }
+
+#[tokio::test]
+async fn supervision_devices_append_flagged_and_drop_collisions() {
+    // F779 i3: appended entries are forced supervision=true and take no build work; a model_id
+    // collision (worker or pushed planner) drops the entry instead of bailing the run.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..6).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2)], 3)
+        .with_supervision_devices(vec![dev("s", "m-s", 2), dev("dup", "m-a", 2)]);
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(
+        report.done.len(),
+        6,
+        "the run completes with the borrow attached"
+    );
+    let r = rec.lock().unwrap();
+    assert!(
+        !r.total_per_device.contains_key("s") && !r.total_per_device.contains_key("dup"),
+        "no supervision or collision-dropped device ever built: {:?}",
+        r.total_per_device
+    );
+}
