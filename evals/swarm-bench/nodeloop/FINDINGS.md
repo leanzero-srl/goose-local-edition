@@ -18267,3 +18267,12 @@ collapse) — against n3's 0.8756/0.6561 today. n=1 per cell, but the first sb-4
 readings point the familiar direction. Its archive predates the verdict-carrying harness by
 minutes (no sb4-verdict.json inside — the gap class F771 named, now closed for all future
 archives).
+
+## F773 — the n1 control RECOVERS: 0.819 in 63 min (vs 0.0167 the rep before) — the volatility axis measured on sb-4
+
+baseline-n1-r1: **0.819, 63 minutes, zero retries** — a clean serial run one rep after the
+cell collapsed at 0.0167 in 7 minutes. The single-node spread (0.0167 ↔ 0.819) against the
+3-node day (0.8756 / 0.6561) is the consistency story in miniature on the harder scale:
+n1's variance swamps its mean; the excellent/solid RUN-RATE axis (built into sb-4's verdicts)
+is the readout that will separate the arms as replicates accumulate. Bridge pair recorded in
+the ledger automatically.
