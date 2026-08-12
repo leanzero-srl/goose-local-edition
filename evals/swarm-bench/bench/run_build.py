@@ -136,6 +136,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
         dest.parent.mkdir(exist_ok=True)
         shutil.copytree(workdir, dest, ignore=shutil.ignore_patterns(
             ".swarm", "__pycache__", ".pytest_cache", "*.pyc"))
+        # The verdict rides WITH its tree — nodeloop-result.json is written to the workdir
+        # AFTER this block and dies in the next wipe; the first archive proved it (F771's
+        # ledger gap). The archive is only a forensic object if it carries its own scoring.
+        (dest / "sb4-verdict.json").write_text(json.dumps(verdict, indent=1, default=str))
     except Exception as e:
         print(f"tree-archive failed (non-fatal): {e}", file=sys.stderr)
     # The pool the run REALLY used, straight from run_started. A label like "swarm-3node" is an
