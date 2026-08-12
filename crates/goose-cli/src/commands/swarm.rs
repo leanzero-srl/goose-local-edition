@@ -25360,6 +25360,30 @@ fn tree_fingerprint(root: &std::path::Path) -> (usize, u64) {
     (count, newest)
 }
 
+/// F781/#15: ONE sampler for both repair fans (race twins AND file shards) — same signal, same
+/// cadence, one implementation, so the two paths can never drift apart the way the two fix caps
+/// once did. Abort the returned handle when the attempt ends, then read `progress`.
+fn spawn_fix_progress_sampler(
+    dispatcher: Arc<GooseAgentDispatcher>,
+    task_id: String,
+    progress: Arc<std::sync::Mutex<FixAttemptProgress>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let t0 = std::time::Instant::now();
+        let mut last: Option<(usize, u64)> = None;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(FIX_PROGRESS_SAMPLE_SECS)).await;
+            if let Some(root) = dispatcher.speculative_root(&task_id) {
+                let fp = tree_fingerprint(&root);
+                progress
+                    .lock()
+                    .unwrap()
+                    .note_sample(t0.elapsed().as_secs(), fp, &mut last);
+            }
+        }
+    })
+}
+
 /// Pure: does this round shard instead of race? (Pinned by test — the decision, not the env.)
 fn prefer_shard_over_race(shard_on: bool, distinct_file_groups: usize) -> bool {
     shard_on && distinct_file_groups >= 2
@@ -29089,29 +29113,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // derives its threshold from. Observer only: it never kills.
                             let progress =
                                 Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
-                            let sampler = {
-                                let me = me.clone();
-                                let tid = task_id.clone();
-                                let progress = progress.clone();
-                                tokio::spawn(async move {
-                                    let t0 = std::time::Instant::now();
-                                    let mut last: Option<(usize, u64)> = None;
-                                    loop {
-                                        tokio::time::sleep(std::time::Duration::from_secs(
-                                            FIX_PROGRESS_SAMPLE_SECS,
-                                        ))
-                                        .await;
-                                        if let Some(root) = me.speculative_root(&tid) {
-                                            let fp = tree_fingerprint(&root);
-                                            progress.lock().unwrap().note_sample(
-                                                t0.elapsed().as_secs(),
-                                                fp,
-                                                &mut last,
-                                            );
-                                        }
-                                    }
-                                })
-                            };
+                            let sampler = spawn_fix_progress_sampler(
+                                me.clone(),
+                                task_id.clone(),
+                                progress.clone(),
+                            );
                             let ran = tokio::time::timeout(
                                 std::time::Duration::from_secs(fix_cap_secs()),
                                 me.run(req),
@@ -29260,11 +29266,30 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // to 120..=3600. Same default, same purpose, and only one of them
                                 // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
                                 // path and silently left the fanned path at 20 minutes.
+                                let progress =
+                                    Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
+                                let sampler = spawn_fix_progress_sampler(
+                                    me.clone(),
+                                    task_id.clone(),
+                                    progress.clone(),
+                                );
                                 let ran = tokio::time::timeout(
                                     std::time::Duration::from_secs(fix_cap_secs()),
                                     me.run(req),
                                 )
                                 .await;
+                                sampler.abort();
+                                {
+                                    let st = progress.lock().unwrap().clone();
+                                    sink_r.write_value(serde_json::json!({
+                                        "event": "fix_attempt_progress",
+                                        "round": round, "shard": g.file,
+                                        "samples": st.samples,
+                                        "changed_samples": st.changed,
+                                        "first_change_secs": st.first_change_secs,
+                                        "longest_still_secs": st.longest_still_secs,
+                                    }));
+                                }
                                 // GRADE THE TREE, NOT THE AGENT'S EXIT — the twin race's rule, for the
                                 // same measured reasons: a shard killed at the cap may still hold the
                                 // fix in its shadow, and an agent's "done" may not survive the gate.
