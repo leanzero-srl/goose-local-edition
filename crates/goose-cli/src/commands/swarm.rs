@@ -10720,35 +10720,62 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn fix_tasks_from_findings_are_disjoint_one_file_each_depending_on_the_join() {
-        // F781/#16: findings across two files + one file-less finding -> two disjoint fix tasks,
-        // each owning exactly its file and depending on the join; the file-less one is dropped
-        // here (it has no owned file to make a safe concurrent task — the serial rescue owns it).
+    fn fix_round_specs_disjoint_roots_and_collision_proof_join() {
+        // F781/#16 commit 4: two file groups + one file-less finding -> two Ready roots owning
+        // one file each, plus a #join owning everything and depending on both.
         let findings = vec![
             "app/api.py:12: TypeError in handler".to_string(),
             "app/api.py:40: missing timeout".to_string(),
             "app/store.py:5: bad upsert".to_string(),
-            "the second sync re-fetched 247 rows".to_string(), // no file -> unassigned
+            "the second sync re-fetched 247 rows".to_string(),
         ];
         let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
-        let tasks = fix_tasks_from_findings(&findings, &all, "integrate-verify");
-        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let specs = fix_round_specs(&findings, &all, 2, TargetLang::Python);
+        let ids: Vec<&str> = specs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["fix::app/api.py", "fix::app/store.py"],
-            "one disjoint task per file"
+            [
+                "fix::r2::app/api.py",
+                "fix::r2::app/store.py",
+                "fix::r2::#join"
+            ]
         );
-        // Each owns exactly its own single file (no two race) and waits for the join.
-        for t in &tasks {
-            assert_eq!(t.owned_files.len(), 1);
-            assert_eq!(t.deps, ["integrate-verify"]);
-            assert!(t.owned_files[0].ends_with(".py"));
-        }
-        // api.py's task carries BOTH its findings in the description.
-        let api = tasks.iter().find(|t| t.id == "fix::app/api.py").unwrap();
-        assert!(api.description.contains("TypeError") && api.description.contains("timeout"));
-        // No findings at all -> no tasks (nothing to orchestrate).
-        assert!(fix_tasks_from_findings(&[], &all, "integrate-verify").is_empty());
+        assert_eq!(specs[0].owned_files, ["app/api.py"]);
+        assert!(specs[0].deps.is_empty(), "fix tasks are roots — born Ready");
+        assert_eq!(specs[2].owned_files, all, "the join owns every smoke file");
+        assert_eq!(
+            specs[2].deps,
+            ["fix::r2::app/api.py", "fix::r2::app/store.py"],
+            "the join waits for every fix"
+        );
+        // The DAG accepts the specs; roots are Ready, the join is Pending.
+        let dag = goose_swarm::Dag::from_specs(specs).unwrap();
+        assert_eq!(
+            dag.tasks["fix::r2::app/api.py"].state,
+            goose_swarm::TaskState::Ready
+        );
+        assert_eq!(
+            dag.tasks["fix::r2::#join"].state,
+            goose_swarm::TaskState::Pending
+        );
+        // A source file whose name is exactly `join` (with any matchable extension) cannot
+        // collide with the join id — '#' never appears in a normalized file id.
+        let tricky = vec!["join.py:1: broken".to_string(), "no file here".to_string()];
+        let all2 = vec!["join.py".to_string()];
+        let specs2 = fix_round_specs(&tricky, &all2, 0, TargetLang::Python);
+        let ids2: Vec<&str> = specs2.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids2, ["fix::r0::join.py", "fix::r0::#join"]);
+        assert!(
+            goose_swarm::Dag::from_specs(specs2).is_ok(),
+            "no id collision"
+        );
+        // No file-less findings -> no join at all.
+        let only_file = vec!["app/api.py:1: x".to_string()];
+        let specs3 = fix_round_specs(&only_file, &all, 1, TargetLang::Python);
+        assert_eq!(specs3.len(), 1);
+        assert!(!specs3.iter().any(|t| t.id.ends_with("#join")));
+        // No findings -> no tasks.
+        assert!(fix_round_specs(&[], &all, 0, TargetLang::Python).is_empty());
     }
 
     #[test]
@@ -22787,34 +22814,52 @@ fn group_findings_by_file(
 }
 
 /// F781/#16 (deterministic core, not yet wired): turn the sink gate's findings into DISJOINT
-/// `fix::<file>` DAG task specs so idle nodes claim them like any work — the sink becomes an
-/// ORCHESTRATOR emitting tasks instead of fixing every file inline on one node. Reuses
-/// group_findings_by_file's normalized disjoint partition (each fix task owns exactly one file,
-/// so two never race), each depending on the JOIN target `join_dep` (the re-verify runs after
-/// all fixes land). Pure — tested without a fleet. The runtime wiring (splice_specs into the
-/// live DAG mid-completion) is the increment that follows, behind a lever with a mutation-count
-/// check, because runtime DAG mutation is unproven in this engine (S4's flag).
+/// F781/#16 (GOOSE_SWARM_FIX_SCHED, design commit 4): a fix ROUND as a DAG. One `fix::r{N}::{file}`
+/// root per file group from group_findings_by_file's normalized disjoint partition (each task owns
+/// exactly one file, so N run concurrently with no race; roots are born Ready via from_specs), plus
+/// — only when file-less findings exist — a `fix::r{N}::#join` that owns every smoke file and
+/// depends on all the fixes. '#' cannot appear in a normalized file id, so a source file literally
+/// named `join` can never collide with the join task. `lang` is threaded (the earlier draft
+/// hardcoded Python — a non-Python run would have gotten Python fix instructions in every task).
+/// Pure — tested without a fleet. The consumer (a second scheduler run behind fix_sched()) is
+/// design commit 6.
 #[allow(dead_code)]
-fn fix_tasks_from_findings(
+fn fix_round_specs(
     findings: &[String],
     all_files: &[String],
-    join_dep: &str,
+    round: usize,
+    lang: TargetLang,
 ) -> Vec<goose_swarm::TaskSpec> {
-    let (groups, _unassigned) = group_findings_by_file(findings, all_files);
-    groups
+    let (groups, unassigned) = group_findings_by_file(findings, all_files);
+    let fix_ids: Vec<String> = groups
+        .iter()
+        .map(|g| format!("fix::r{round}::{}", g.file))
+        .collect();
+    let mut specs: Vec<goose_swarm::TaskSpec> = groups
         .into_iter()
-        .map(|g| goose_swarm::TaskSpec {
-            id: format!("fix::{}", g.file),
-            description: smoke_fix_description(&g.findings, TargetLang::Python),
+        .zip(fix_ids.iter())
+        .map(|(g, id)| goose_swarm::TaskSpec {
+            id: id.clone(),
+            description: smoke_fix_description(&g.findings, lang),
             difficulty: goose_swarm::Difficulty::Hard,
             preferred_model: None,
             owned_files: vec![g.file],
-            // Each fix depends on the completed build (join_dep) and the JOIN depends on all
-            // fixes — the disjoint file ownership is what makes them safe to run concurrently.
-            deps: vec![join_dep.to_string()],
+            deps: Vec::new(),
             subsplit: Vec::new(),
         })
-        .collect()
+        .collect();
+    if !unassigned.is_empty() {
+        specs.push(goose_swarm::TaskSpec {
+            id: format!("fix::r{round}::#join"),
+            description: smoke_fix_description(&unassigned, lang),
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: None,
+            owned_files: all_files.to_vec(),
+            deps: fix_ids,
+            subsplit: Vec::new(),
+        });
+    }
+    specs
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
