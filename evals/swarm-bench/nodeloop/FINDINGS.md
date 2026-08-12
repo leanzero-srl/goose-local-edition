@@ -18377,3 +18377,40 @@ last_judged is within cooldown, or hold the 15s wait when the only judgeable tas
 within cooldown. Queued alongside F774 (scoring-sync death) and the advertised-POST width item.
 This is the operator loop finding an engine inefficiency purely from instrumentation — the
 model the campaign is built on.
+
+
+## F779 — Mihai is right: the tail with idle nodes is the whole ratio thesis, and the idle-fill is OFF/mis-scoped (F778 reclassified)
+
+Mihai, watching swarm-1node-r3's tail (one node grinding test-api/test-meridian, two IDLE, the
+judge hot-spinning): "when the tail happens and 2 nodes are idle, why are you not adding judge
+logic here too?" Correct, and it reframes F778 from cosmetic to the core defect. Verified in
+source: pick_sink_review (scheduler.rs:1541) exists but (a) gated on sink_review_enabled()
+DEFAULT OFF and (b) fires ONLY when sink_in_flight() — the integrate-verify sink, NOT the
+test-task / e2e-shard tail. pick_prereview (:1504) is default ON but only picks COMPLETED
+file-owning tasks, so it runs DRY the moment the remaining work is Done-and-under-test. testgen
+(idle-slot contract-derived tests) is built but DEFAULT OFF and unrun. Net: at a tail with free
+devices and empty `ready`, NOTHING fills the idle nodes, and the judge spins uselessly on the
+busy one (F778) — the exact inverse of the thesis.
+
+TWO gaps his question exposes:
+1. IDLE-FILL IS SINK-SCOPED, NOT TAIL-SCOPED. The trigger should be structural — `ready` empty
+   AND a device genuinely free (the A3 last-slot yield already exists) — covering EVERY tail
+   (test, e2e-shard, sink), running read-only dimension review + testgen on the idle nodes, and
+   RECLAIMING the judge's wasted spin budget into that work rather than emitting skip events.
+2. THE n1 ARM CAN'T BORROW IDLE NODES EVEN FOR SUPERVISION. Its pool is 1 device by construction,
+   so the other two are unreachable — the build correctly stays single-node, but read-only
+   SUPERVISION (review, testgen; no owned-file writes) has no reason to be pool-locked. A
+   stronger 1-node control keeps the build serial and lets quality work spill onto idle nodes.
+
+DESIGN (top engine item, lands at the next boundary — no mid-run rebuild):
+- `pick_tail_review`: fire when `ready.is_empty()` AND `least_loaded_free_device()` is Some AND
+  the run is past first-dispatch — not gated on sink_in_flight; default ON (it is read-only,
+  cannot corrupt, and IS the ratio lever). Rotate REVIEW_DIMENSIONS + emit contract-derived
+  tests, capped per run.
+- Fold the judge's cooldown-skip path into it: when the only judgeable task is within cooldown,
+  the tick spends the idle device on tail-review instead of emitting a skip event — F778's spin
+  becomes productive by construction.
+- A `supervision_pool` distinct from the dispatch pool so read-only idle-fill can use devices the
+  build arm excludes (unblocks n1 supervision without changing what n1 BUILDS).
+Registered check: on a tail, `pre_review`/`sink_review`/`testgen` events fire on the idle devices
+and judge_observed spam drops to ~0; stable-24 unaffected (read-only), wall not worse.
