@@ -53,7 +53,7 @@ TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
 # not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
 # scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
 # cheaper model appeared to beat a stronger one.
-SCORER_VERSION = "sb-3"
+SCORER_VERSION = "sb-4"
 
 # ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
 #
@@ -422,7 +422,6 @@ for _n, _f in [
     ("vendor_retry_secs", vendor_trace.check_retry_after_honoured),
     ("vendor_retry_date", vendor_trace.check_httpdate_retry_after),
     ("vendor_cursor_expiry", vendor_trace.check_cursor_expiry_recovery),
-    ("vendor_conditional", vendor_trace.check_conditional_request),
 ]:
     _vendor_check(_n, _f)
 
@@ -431,7 +430,7 @@ for _n, _f in [
 
 @check("request_efficiency", "D")
 def _(c: Ctx):
-    """The collection is 47 rows and the documented max limit is 100 — one page is achievable.
+    """247 rows at the documented max limit of 100 — three pages plus the trap chain is optimal.
 
     Graded against the theoretical optimum rather than a threshold, so there is always headroom: a
     client that pages at the default 25 is correct but not efficient, and says so.
@@ -454,12 +453,26 @@ def _(c: Ctx):
              "not using the documented maximum page size costs avoidable round trips")
 
 
-@check("resync_conditional_ratio", "D")
+@check("second_sync_cost", "C")
 def _(c: Ctx):
-    if not c.sync2_reqs:
-        return g(0.0, "no second-sync requests", "n/a")
-    return g(c.sync2_304 / c.sync2_reqs,
-             f"{c.sync2_304}/{c.sync2_reqs} of the re-sync answered 304",
+    """BENCH2 rank 3 (sb-4): vendor_conditional (C) and resync_conditional_ratio (D) merged —
+    the board's one CONFIRMED adjudication, the same mechanism double-counted as 16.3% of all
+    remaining loss. A graded ladder replaces both. The GUARD is the vacuous-pass rule: a second
+    sync that never ran, reported nothing, or issued no vendor requests is not cheap — it is
+    absent, and absence scores zero."""
+    ran = isinstance(c.sync2, dict) and any(k in c.sync2 for k in ("inserted", "total", "fetched"))
+    if not ran or not c.sync2_reqs:
+        return g(0.0, "second sync absent or reported nothing", "cheap-by-absence is the vacuous trap")
+    if c.sync2_304 == c.sync2_reqs:
+        score = 1.0  # every page answered 304 — the documented optimum
+    elif c.sync2_cond == c.sync2_reqs:
+        score = 0.7  # every request conditional, but stale tags cost re-downloads
+    elif c.sync2_cond and c.sync2_304:
+        score = 0.4  # the mechanism exists somewhere — today's easy 'kinda works' rung
+    else:
+        score = 0.0
+    return g(score,
+             f"{c.sync2_cond}/{c.sync2_reqs} conditional, {c.sync2_304}/{c.sync2_reqs} answered 304",
              "re-downloading unchanged pages is the documented top cause of quota exhaustion")
 
 
@@ -569,7 +582,8 @@ def _trace_split(trace: List[Dict]) -> tuple:
     limits = [int(e["query"]["limit"]) for e in lists(trace)
               if str(e.get("query", {}).get("limit", "")).isdigit()]
     return (len(lists(first)), len(lists(second)),
-            sum(1 for e in lists(second) if e.get("status") == 304), max(limits or [0]))
+            sum(1 for e in lists(second) if e.get("status") == 304),
+            sum(1 for e in lists(second) if e.get("if_none_match")), max(limits or [0]))
 
 
 def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
@@ -649,7 +663,7 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
 
     if trace_path.is_file():
         c.trace = [json.loads(l) for l in trace_path.read_text().splitlines() if l.strip()]
-        c.sync1_reqs, c.sync2_reqs, c.sync2_304, c.max_limit_used = _trace_split(c.trace)
+        c.sync1_reqs, c.sync2_reqs, c.sync2_304, c.sync2_cond, c.max_limit_used = _trace_split(c.trace)
     return c
 
 
