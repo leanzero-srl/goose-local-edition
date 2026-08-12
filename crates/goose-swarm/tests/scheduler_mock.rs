@@ -129,6 +129,7 @@ fn dev(id: &str, model: &str, weight: u32) -> DeviceCfg {
         weight,
         enabled: true,
         speed_weight: 1,
+        supervision: false,
     }
 }
 
@@ -1680,4 +1681,49 @@ async fn no_ask_means_no_decisions_and_run_is_unchanged() {
             "worker {task_id} must get an EMPTY decisions field when the run never asked"
         );
     }
+}
+
+#[tokio::test]
+async fn supervision_device_never_takes_build_work() {
+    // F779 i3: a supervision device (the MAX_NODES-excluded machine a capped run borrows for
+    // read-only idle work) must be INVISIBLE to build dispatch — every task lands on the build
+    // device even while the supervision device sits enabled and idle beside it.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let specs: Vec<_> = (0..8).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
+    let dag = Dag::from_specs(specs).unwrap();
+    let sup = DeviceCfg {
+        supervision: true,
+        ..dev("s", "m-s", 2)
+    };
+    let sched = Scheduler::new(vec![dev("a", "m-a", 2), sup], 3);
+    let report = sched.run(dag, mock(&rec, 10), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 8, "all tasks done");
+    let r = rec.lock().unwrap();
+    for (tid, devs) in &r.run_devices {
+        for d in devs {
+            assert_eq!(
+                d, "a",
+                "task {tid} landed on the supervision device — build dispatch must never do that"
+            );
+        }
+    }
+    assert!(
+        !r.total_per_device.contains_key("s") && !r.total_per_device.contains_key("m-s"),
+        "the supervision device took build work: {:?}",
+        r.total_per_device
+    );
+}
+
+#[tokio::test]
+async fn supervision_only_pool_refuses_to_run() {
+    // A pool with no BUILD device cannot build anything — bail loudly, never hang.
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let dag = Dag::from_specs(vec![spec("t0", &[], &[])]).unwrap();
+    let sup = DeviceCfg {
+        supervision: true,
+        ..dev("s", "m-s", 2)
+    };
+    let sched = Scheduler::new(vec![sup], 3);
+    let err = sched.run(dag, mock(&rec, 10), String::new()).await;
+    assert!(err.is_err(), "supervision-only pool must refuse to run");
 }
