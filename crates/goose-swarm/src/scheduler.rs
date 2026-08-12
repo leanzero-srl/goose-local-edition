@@ -417,6 +417,12 @@ pub struct DeviceCfg {
     /// gets proportionally fewer). Default 1 = equal. On an identical-model fleet this is the lever for
     /// skewing load toward the quicker machines instead of splitting evenly.
     pub speed_weight: u32,
+    /// F779 i3: a SUPERVISION device carries read-only idle work only (judge, pre/tail-review,
+    /// testgen) — never build dispatch, speculation twins, or replan-injected work — and is
+    /// invisible to every node-count reader (worker_count, fleet_models/slots, occupancy, planner
+    /// sizing all count build devices). This is how a capped run (the n1 arm) borrows its excluded
+    /// idle machines for quality work without changing what it BUILDS.
+    pub supervision: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -732,11 +738,34 @@ impl State {
         self.devices.iter().map(|d| d.in_flight).sum()
     }
 
-    /// Free worker slots across enabled devices (how much parallel work could start right now).
+    /// In-flight on BUILD devices only. The stuck-bail and the judge's nothing-running gate must
+    /// key on this: a supervision device grinding a review while the DAG is blocked would
+    /// otherwise mask the stall (the reader's constraint — a masked stall never bails).
+    fn build_in_flight(&self) -> u32 {
+        self.devices
+            .iter()
+            .filter(|d| !d.cfg.supervision)
+            .map(|d| d.in_flight)
+            .sum()
+    }
+
+    /// Any enabled supervision device with a free slot? The A3 last-slot yield protects BUILD
+    /// slots; when the free device is a supervision one the yield must not veto the pick (the
+    /// preference in least_loaded_free_device guarantees that device is the one claimed).
+    fn has_free_supervision_device(&self) -> bool {
+        self.devices
+            .iter()
+            .any(|d| d.cfg.enabled && d.cfg.supervision && d.in_flight < d.cfg.weight)
+    }
+
+    /// Free BUILD worker slots across enabled devices (how much parallel build work could start
+    /// right now). Supervision devices are excluded: they can never take build work, and counting
+    /// them would (a) open the replan gate (>=2) on a 1-node run and (b) defeat the A3 last-slot
+    /// yield — both node-count semantics, both build-only by contract.
     fn idle_capacity(&self) -> u32 {
         self.devices
             .iter()
-            .filter(|d| d.cfg.enabled)
+            .filter(|d| d.cfg.enabled && !d.cfg.supervision)
             .map(|d| d.cfg.weight.saturating_sub(d.in_flight))
             .sum()
     }
@@ -831,11 +860,13 @@ impl State {
     /// failed it on a transient retry; otherwise the least-loaded enabled device with free capacity.
     fn pick_device(&self, tid: &str) -> Option<usize> {
         let n = &self.dag.tasks[tid];
+        // Build dispatch NEVER lands on a supervision device — that is the capped-out set
+        // GOOSE_SWARM_MAX_NODES excluded from building; borrowing it is for read-only work only.
         let free: Vec<usize> = self
             .devices
             .iter()
             .enumerate()
-            .filter(|(_, d)| d.cfg.enabled && d.in_flight < d.cfg.weight)
+            .filter(|(_, d)| d.cfg.enabled && !d.cfg.supervision && d.in_flight < d.cfg.weight)
             .map(|(i, _)| i)
             .collect();
         if free.is_empty() {
@@ -1384,11 +1415,14 @@ impl State {
     /// (CONFIRMED live), and concurrent generations on one Apple host degrade each other (F623).
     /// Ties break by index for determinism, matching the old behavior on an evenly-loaded fleet.
     fn least_loaded_free_device(&self) -> Option<usize> {
+        // Supervision devices sort FIRST (false < true): idle work lands on the borrowed machines
+        // before it ever claims a build slot, so on a capped run the lone build node keeps
+        // building while the excluded machines carry the reviews.
         self.devices
             .iter()
             .enumerate()
             .filter(|(_, d)| d.cfg.enabled && d.in_flight < d.cfg.weight)
-            .min_by_key(|(i, d)| (d.in_flight, *i))
+            .min_by_key(|(i, d)| (!d.cfg.supervision, d.in_flight, *i))
             .map(|(i, _)| i)
     }
 
@@ -1650,7 +1684,15 @@ impl State {
     /// but `speculative: true`, and claims the twin's OWN device slot + spec_* maps WITHOUT touching
     /// held_files / claimed_device / the task's Claimed state (only the primary holds the real files).
     fn pick_speculation_target(&mut self) -> Option<(DispatchRequest, usize)> {
-        let dev = self.least_loaded_free_device()?;
+        // A twin is BUILD work (it can be promoted into the real tree) — never on a supervision
+        // device. Inline build-only variant of least_loaded_free_device.
+        let dev = self
+            .devices
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.cfg.enabled && !d.cfg.supervision && d.in_flight < d.cfg.weight)
+            .min_by_key(|(i, d)| (d.in_flight, *i))
+            .map(|(i, _)| i)?;
         let mut best: Option<(TaskId, u64)> = None;
         for (tid, n) in &self.dag.tasks {
             if n.state != TaskState::Claimed || self.speculating.contains(tid) {
@@ -2527,8 +2569,8 @@ impl Scheduler {
         goal: String,
         user_decisions: String,
     ) -> Result<RunReport> {
-        if !self.devices.iter().any(|d| d.enabled) {
-            bail!("no enabled devices in the pool");
+        if !self.devices.iter().any(|d| d.enabled && !d.supervision) {
+            bail!("no enabled BUILD devices in the pool");
         }
         // model-id uniqueness invariant across enabled devices (LM Link routes by id alone).
         let mut seen = HashSet::new();
@@ -2659,7 +2701,7 @@ impl Scheduler {
                 if s.all_terminal() {
                     return Ok(s.build_report());
                 }
-                if !paused && !dispatched_now && s.total_in_flight() == 0 {
+                if !paused && !dispatched_now && s.build_in_flight() == 0 {
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
                     // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can
@@ -2787,7 +2829,7 @@ impl Scheduler {
                     // The judge is NOT capacity-bounded: it must fire even on a SATURATED fleet to kill a
                     // stuck worker and free a slot (that is unblocking, not idle-node work). It still counts
                     // toward idle_jobs so pre-review (below) knows one slot is taken.
-                    if s.judge_running || s.total_in_flight() == 0 {
+                    if s.judge_running || s.build_in_flight() == 0 {
                         None
                     } else {
                         s.pick_judge_target(&self.judge_cfg)
@@ -2845,7 +2887,10 @@ impl Scheduler {
                     // exist that could not be placed — a review claiming the final slot would make the
                     // fleet supervise instead of build at exactly the moment building is possible. With
                     // 2+ slots free (or nothing waiting) the review proceeds as before.
-                    if s.idle_capacity() == 0 || (!s.ready.is_empty() && s.idle_capacity() <= 1) {
+                    if !s.has_free_supervision_device()
+                        && (s.idle_capacity() == 0
+                            || (!s.ready.is_empty() && s.idle_capacity() <= 1))
+                    {
                         None
                     } else {
                         s.pick_prereview_request()
@@ -2896,7 +2941,10 @@ impl Scheduler {
                         // A3: same last-slot yield as pre-review — inert during a normal sink window
                         // (ready is empty by construction) but load-bearing if a replan injects work
                         // mid-sink.
-                        if !s.ready.is_empty() && s.idle_capacity() <= 1 {
+                        if !s.ready.is_empty()
+                            && s.idle_capacity() <= 1
+                            && !s.has_free_supervision_device()
+                        {
                             None
                         } else {
                             s.pick_sink_review()
@@ -2930,7 +2978,10 @@ impl Scheduler {
                         let mut s = state.lock().await;
                         // A3 last-slot yield: never take the final free slot while dispatchable work
                         // waits (inert on a real tail where `ready` is empty by construction).
-                        if !s.ready.is_empty() && s.idle_capacity() <= 1 {
+                        if !s.ready.is_empty()
+                            && s.idle_capacity() <= 1
+                            && !s.has_free_supervision_device()
+                        {
                             None
                         } else {
                             s.pick_tail_review()
@@ -2961,7 +3012,10 @@ impl Scheduler {
             if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
                 let pick = {
                     let mut s = state.lock().await;
-                    if s.idle_capacity() == 0 || (!s.ready.is_empty() && s.idle_capacity() <= 1) {
+                    if !s.has_free_supervision_device()
+                        && (s.idle_capacity() == 0
+                            || (!s.ready.is_empty() && s.idle_capacity() <= 1))
+                    {
                         None
                     } else {
                         s.pick_testgen()

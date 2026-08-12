@@ -9220,6 +9220,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             weight,
             enabled: true,
             speed_weight: 1,
+            supervision: false,
         }
     }
 
@@ -19832,6 +19833,7 @@ mod shipped_defaults_tests {
                 weight: 2,
                 enabled: true,
                 speed_weight: 1,
+                supervision: false,
             },
             DeviceCfg {
                 id: "fast-but-off".into(),
@@ -19839,6 +19841,7 @@ mod shipped_defaults_tests {
                 weight: 2,
                 enabled: false,
                 speed_weight: 9,
+                supervision: false,
             },
             DeviceCfg {
                 id: "workhorse".into(),
@@ -19846,6 +19849,7 @@ mod shipped_defaults_tests {
                 weight: 2,
                 enabled: true,
                 speed_weight: 3,
+                supervision: false,
             },
         ];
         let picked = devices
@@ -26358,6 +26362,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             weight: d.weight,
             enabled: true,
             speed_weight: speed_weight_for(&d.id),
+            supervision: false,
         })
         .collect();
     // The planner model also pitches in as a worker after planning, so the smartest model isn't idle
@@ -26381,6 +26386,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             weight: w,
             enabled: true,
             speed_weight: speed_weight_for(&cfg.planner_model),
+            supervision: false,
         });
         eprintln!(
             "planner also working: {} (weight {})",
