@@ -183,6 +183,9 @@ class Ctx:
         self.sync1: Dict = {}
         self.sync2: Dict = {}
         self.client: Dict = {"results": {}, "trace": []}
+        self.sync3: Dict = {}
+        self.update_changed: int = 0
+        self.update_seen: int = 0
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -449,6 +452,20 @@ for _n, _f in [
     _client_check(_n, _f)
 
 
+@check("update_propagation", "C")
+def _(c: Ctx):
+    """BENCH2 rank 5: after the vendor changes 25 statuses, a third sync must bring them home.
+    Graded as the fraction that propagated — 25 distinct rows of resolution. The guard is the
+    vacuous rule: no sync3 response, or a mutation that never happened, scores 0, never 'no
+    updates to miss'."""
+    ran = isinstance(c.sync3, dict) and any(k in c.sync3 for k in ("inserted", "total", "fetched"))
+    if not c.update_changed or not ran:
+        return g(0.0, "mutation pass not exercised or sync3 absent", "n/a")
+    return g(min(c.update_seen / c.update_changed, 1.0),
+             f"{c.update_seen}/{c.update_changed} mutated statuses visible locally after sync3",
+             "an app that only INSERTS shows stale statuses forever — refunds never appear")
+
+
 # ── D: finesse (deliberately hard to max) ─────────────────────────────────────────────────────
 
 @check("request_efficiency", "D")
@@ -673,6 +690,29 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                 t.join(timeout=240)
             _s, health2, _r, _h = _get(f"{base}/api/health")
             c.concurrent_total = (health2 or {}).get("payments")
+
+            # BENCH2 rank 5: UPDATE PROPAGATION. The spec's own sentence — "a payment already
+            # present must be UPDATED" — has never been exercised: no run ever changed vendor
+            # data. mutate_statuses flips 25 rows (length unchanged, so every total-based check
+            # upstream stays valid), sync3 runs with continuation semantics (traps stay spent,
+            # the marker-bounded windows attribute it correctly), and the LOCAL store is paged
+            # to count how many of the 25 arrived. restore_payments() in the finally puts the
+            # module state back for the next rep in this process.
+            if mark_phase:
+                try:
+                    c.update_changed = vendor_service.mutate_statuses()
+                    mark_phase("sync3")
+                    _s, c.sync3, _r, _h = _post(f"{base}/api/sync")
+                    refunded = 0
+                    for off in (0, 100, 200):
+                        _s, page, _r, _h = _get(f"{base}/api/payments?limit=100&offset={off}")
+                        rows = page.get("payments") if isinstance(page, dict) else page
+                        if isinstance(rows, list):
+                            refunded += sum(1 for r in rows
+                                            if isinstance(r, dict) and r.get("status") == "refunded")
+                    c.update_seen = refunded
+                finally:
+                    vendor_service.restore_payments()
 
             for attr in ("payments", "page5", "capped", "summary", "sync1", "sync2"):
                 if getattr(c, attr) is None:
