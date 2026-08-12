@@ -18133,3 +18133,28 @@ applied), controls held. In the binary: the COMPLETE fill fan (subsplit producer
 live — api=2/test-store=4 this run — now expansion + skeleton/join kinds + fence merge), the
 promote-creations fix, spec_promote instrumentation. Next-unit watches: spec_promote.created_copied
 on any race; testgen{landed}; fill_fan's skeleton_written/join_spliced when their arms run.
+
+## F767 — 0.996: the best score ever recorded, and the day's second engine fix ships (boundary 9)
+
+**THE SCORE.** probe_post-n3-r0 confirmation run: **0.996 in 91 minutes** — the highest score in
+campaign history (previous best 0.95), on the 08:52 binary, zero task retries, pool 3/3. The
+cell's own history tells the conversion story in one line: 0.6236 → 0.9153 → 0.268 → 0.7386 →
+**0.996** as the detector family and the repair plumbing successively landed. This run: the POST
+probe caught the true rank-1/2 defect (second sync re-fetched 247 rows — the cheapness
+requirement), three twins raced, the winning conditional-request fix was promoted with every
+manifest file carried (spec_promote: owned 10, created 0), round-1 re-raced under the old noisy
+shadow gates, and the final promotion stuck. Tier-B conversion at the biggest remaining family,
+END TO END.
+
+**The instrument's first firing killed a theory and convicted the culprit.** spec_promote's
+created_copied=0 ruled OUT the F766 creation gap for round-1's re-failure; inspection then
+convicted suspect two: ONE scratch db per engine process (goose-spec-contract-<pid>.db), never
+deleted, shared across every gate invocation, and written CONCURRENTLY by the three twin gates'
+servers. A shadow's cheapness pass could be manufactured by inherited rows/ETag state. Fixed
+this tick: unique file per gate invocation (+pre-spawn remove). LITERAL-LESS — probe --verify
+deliberately skipped per its own docstring; the behavioural check is pre-registered in probe.py:
+twin verdicts must agree with the post-promotion round gate on the next unit.
+
+**Boundary 9:** stale successor killed at ~1.5 min (its 08:48 3-min phantom row self-voids by
+engine_build mismatch — the F694 discipline holding); gate GREEN; build 10:29. Watches for the
+next unit: twin/round-gate AGREEMENT, spec_promote on every race, testgen + fill_fan arms queued.

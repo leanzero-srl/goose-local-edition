@@ -44,10 +44,13 @@ BASELINE = HERE / "probe-baseline.json"
 # every subsequent run report it "present before AND after — vacuous", which is true, useless, and
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
-NEW = {
-    "skeleton written:": "S3 fill fan — the skeleton step's output format (live path)",
-    "created file(s) from the winning twin": "F766 promote fix — the widened-promotion eprintln (live path)",
-}
+NEW = {}
+# The 10:2x boundary's ONE change (hermetic scratch db per gate invocation) is LITERAL-LESS: it
+# alters a filename format string whose distinctive part ("goose-spec-contract-") pre-exists.
+# Per this probe's own docstring the honest move is to NOT run --verify and say so plainly
+# (F767). The BEHAVIOURAL check, pre-registered: on the next unit, twin shadow verdicts must
+# AGREE with the round gate that follows promotion — a twin verified 0 whose promoted tree
+# re-fails the identical finding was the shared-db signature and must not recur.
 # The five adopted upstream commits carry no probeable literal (8f1590b75's distinctive
 # strings are all in #[cfg(test)] code — the F762 dead-code rule): their rebuild evidence is
 # greengate's debug suite, which ran their own tests green at each pick.
@@ -94,6 +97,9 @@ NEW = {
 # Literals that exist in BOTH binaries. If one of these reads absent, the probe itself is broken
 # (wrong path, wrong tool, stripped binary) and NO conclusion may be drawn from the NEW readings.
 POSITIVE_CONTROLS = {
+    # GRADUATED from NEW after the 2026-08-12 08:52 rebuild (watched flipping absent -> present):
+    "skeleton written:": "S3 fill fan — landed 2026-08-12",
+    "created file(s) from the winning twin": "F766 promote fix — landed 2026-08-12",
     # GRADUATED from NEW after the 2026-08-12 02:16 rebuild (watched flipping absent -> present):
     "END your spec with ONE line": "S3i2 producer — landed 2026-08-12",
     # "subsplit" was here 2026-08-12 02:11-02:15 and is REMOVED: the binary's one occurrence
