@@ -935,6 +935,23 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
     return c
 
 
+# BENCH2 rank 9: THE HARD BLOCK. These checks are the last 0.10 of any score — a core-perfect
+# build caps at 0.90, so 0.996-by-saturation is structurally impossible: the final tenth is
+# earnable only from the checks that stay hard by construction (a measured request optimum, a
+# graded conditional-refetch ladder, a surface no run had ever exercised, an update pass, a
+# crash-restart). Membership per BENCH2-DESIGN #9: request_efficiency (formula unchanged,
+# optimum still the measured 7), second_sync_cost, the create-replay PAIR (both halves of the
+# double-charge defense), update_propagation, restart_persistence.
+HARD_BLOCK = {
+    "request_efficiency",
+    "second_sync_cost",
+    "client_create_replay",
+    "client_idempotency_key",
+    "update_propagation",
+    "restart_persistence",
+}
+
+
 def evaluate(c: Ctx) -> Dict:
     rows = []
     for name, tier, fn in CHECKS:
@@ -945,13 +962,24 @@ def evaluate(c: Ctx) -> Dict:
         rows.append({"check": name, "tier": tier, **outcome})
 
     tiers = {}
-    weighted = 0.0
+    core_weighted = 0.0
     for tier, weight in TIER_WEIGHT.items():
-        sub = [r for r in rows if r["tier"] == tier]
+        # Core = the tier-weighted mean over everything OUTSIDE the hard block, renormalized
+        # into 0.90 of the total. Hard-block members are excluded from their home tier's mean
+        # so their difficulty cannot be diluted by tier-mates.
+        sub = [r for r in rows if r["tier"] == tier and r["check"] not in HARD_BLOCK]
         mean = sum(r["score"] for r in sub) / len(sub) if sub else 0.0
         tiers[tier] = {"mean": round(mean, 4), "checks": len(sub), "weight": weight}
-        weighted += mean * weight
-    return {"score": round(weighted, 4), "scorer_version": SCORER_VERSION,
+        core_weighted += mean * weight
+    hard_rows = [r for r in rows if r["check"] in HARD_BLOCK]
+    hard_mean = sum(r["score"] for r in hard_rows) / len(hard_rows) if hard_rows else 0.0
+    tiers["HARD"] = {"mean": round(hard_mean, 4), "checks": len(hard_rows), "weight": 0.10}
+    score = 0.90 * core_weighted + 0.10 * hard_mean
+    return {"score": round(score, 4), "scorer_version": SCORER_VERSION,
+            "core": round(core_weighted, 4), "hard": round(hard_mean, 4),
+            # Per-run quality bands — the ARM-level k/n rates aggregate these in the reporter:
+            # consistency, not any single score, is the campaign's real battleground.
+            "excellent": score >= 0.90, "solid": score >= 0.75,
             "tiers": tiers, "checks": rows,
             "root_causes": attribute_root_causes(rows)}
 
@@ -959,7 +987,8 @@ def evaluate(c: Ctx) -> Dict:
 def format_report(result: Dict, title: str = "") -> str:
     t = result["tiers"]
     head = (f"{title}  {100 * result['score']:.1f}%   " +
-            " · ".join(f"{k} {100 * t[k]['mean']:.0f}%" for k in ("A", "B", "C", "D")))
+            " · ".join(f"{k} {100 * t[k]['mean']:.0f}%"
+                       for k in ("A", "B", "C", "D", "HARD") if k in t))
     lines = [head, ""]
     # THE LINE THAT STOPS A TIER MEAN BEING READ AS BREADTH. Without it, "B 36%" is indistinguishable
     # from twelve half-working behaviours, and that reading cost this campaign real work.
