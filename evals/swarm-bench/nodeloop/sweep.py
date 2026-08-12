@@ -2386,6 +2386,16 @@ def main() -> int:
                       "engine_build": build_at_attempt, "audit": {}}
 
         unit_secs = time.time() - started
+        # F784: a unit whose engine was killed by a boundary STOP is a KILL ARTIFACT, not a datum.
+        # The wrapper used to score the half-born tree (0.0225/4min, 0.0394/3min made the ledger,
+        # void=False) and any naive mean read them as catastrophic n3 scores. If the STOP sentinel
+        # exists when the unit ends, the run was cut by the operator boundary — void it. The score
+        # is preserved under kill_artifact_score for forensics, never under score.
+        if (HERE / "STOP").exists() and result.get("score") is not None:
+            result["kill_artifact_score"] = result.pop("score")
+            result["score"] = None
+            result["void"] = True
+            result["void_reason"] = "boundary STOP killed the engine mid-unit (F784)"
         if is_real_unit({**result, "wall_secs": result.get("wall_secs") or unit_secs}):
             durations.append(unit_secs)
         result_path(arm["name"], nodes, rep).parent.mkdir(parents=True, exist_ok=True)
