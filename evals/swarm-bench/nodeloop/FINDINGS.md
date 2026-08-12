@@ -18107,3 +18107,29 @@ the S3 trio (anchor+skeleton, SUBSPLIT ask, DispatchRequest plumb) + 5 upstream 
 (atomic table init, extension-skip elimination, tool-summary session-manager, exact
 extension-owner match, command normalization). Nothing held. Fleet still 2/3; STOP stays;
 WATCH MODE begins — tonight's engineering queue is done by design.
+
+## F766 — boundary 8 (08:52 binary): the POST probe's first firing catches the rank-1/2 class; FIVE verified fixes lost to the promote-creations gap; both now in the binary
+
+**The catch.** probe_post-n3-r0 re-run (101 min, 0.7386, pool 3/3, zero task retries — mechanically
+the cleanest run in the corpus): the FIRST POST probe the contract gate has ever issued
+(probed_post=1, both rounds) found `POST /api/sync returned 500` — the headline endpoint erroring,
+the defect family measured at 16.3% of remaining weighted loss and upstream of half the Tier-B
+surface. Green was blocked both rounds. The detector is stable across rounds, not a fluke.
+
+**The gap, reproduced five times in one run.** Rounds 0+1 raced twins: FIVE independent shadows
+re-verified at 0 findings (653s/748s/814s; 722s/+1 more at the cap), winners promoted — and the
+next gate re-found the IDENTICAL 500 each time. Diagnosis from the code: promote_speculative
+copies ONLY manifest files; a fix living in a CREATED file verifies green in the shadow and never
+reaches the real tree. Fixed same tick (whole-tree twins now promote shadow-created source files;
+single-file shards keep their strict fence) + instrumented: spec_promote{owned_copied,
+created_copied} on every promotion — if created_copied=0 and a defect persists, suspect two is
+the SHARED SCRATCH DB (goose-spec-contract-<pid>.db, one path per engine process, state carried
+across gate invocations) and the event will say so. The score still landed 0.7386 mid-spread with
+the sync family broken — consistent with the family's measured weight.
+
+**Boundary 8:** stale-binary successor unit killed at 3 min (latest-build rule; 5 commits held),
+gate GREEN, build 08:52:28, both live-path literals flipped (strings-instrument, rule three
+applied), controls held. In the binary: the COMPLETE fill fan (subsplit producer was already
+live — api=2/test-store=4 this run — now expansion + skeleton/join kinds + fence merge), the
+promote-creations fix, spec_promote instrumentation. Next-unit watches: spec_promote.created_copied
+on any race; testgen{landed}; fill_fan's skeleton_written/join_spliced when their arms run.

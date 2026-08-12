@@ -1,10 +1,12 @@
 {
-  "mtime": 1786485716.8315828,
-  "size": 235942464,
+  "mtime": 1786490166.19737,
+  "size": 235876640,
   "new": {
-    "END your spec with ONE line": false
+    "skeleton written:": false,
+    "created file(s) from the winning twin": false
   },
   "controls": {
+    "END your spec with ONE line": true,
     "GOOSE_SWARM_TESTGEN": true,
     "tests/generated/test_gen_": true,
     "no landable fenced test block": true,
