@@ -18158,3 +18158,22 @@ twin verdicts must agree with the post-promotion round gate on the next unit.
 **Boundary 9:** stale successor killed at ~1.5 min (its 08:48 3-min phantom row self-voids by
 engine_build mismatch — the F694 discipline holding); gate GREEN; build 10:29. Watches for the
 next unit: twin/round-gate AGREEMENT, spec_promote on every race, testgen + fill_fan arms queued.
+
+## F768 — the 3-tree bridge is INVALID as run, and the reason is itself a finding: archived trees cannot be re-scored
+
+The step-0 bridge (3 archived trees × both scorer legs) returned byte-identical tier vectors
+(~0.43, A 0.8333 / B 0.3611 / C 0.0) for trees recorded at 0.9283, 0.7226 and 0.4784 — three
+different apps cannot share a check vector, so the harness was interrogated before recording
+anything. Fresh-process diagnosis on the 0.93 tree: the app BOOTS (health ok) but sync1
+returns {} with ZERO vendor requests and zero docs fetches — the re-exercised app never
+reaches the bridge's fresh vendor instance. The recorded score was earned against the
+ORIGINAL run's vendor; at re-exercise the app does not pick up the new MERIDIAN_BASE_URL
+(cached/hardcoded at build time, or a contract drift since that era). Consequences:
+(a) NO archived tree is re-scoreable — forensics and controls plans that assumed re-scoring
+must use recorded check vectors instead; (b) the sb-3→sb-4 BRIDGE is redefined to the sound
+method: at each live unit's end, run the frozen sb-3 leg on the fresh tree alongside the
+sweep's own sb-4 scoring, and record both — the dir-reuse wipe makes this a
+same-tick-at-unit-end duty; (c) the bridge numbers from this attempt are recorded as VOID.
+Incidental but real: the legs DID differ arithmetically on the degenerate vectors
+(sb-4 ~+0.011 — removing a 0-scoring D check raises a broken tree's D mean), a reminder that
+sb-4 is not uniformly harsher; the core/hard split (rank 9) is what moves the ceiling.
