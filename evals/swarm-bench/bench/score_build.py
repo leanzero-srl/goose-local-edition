@@ -42,9 +42,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from probes import vendor_trace  # noqa: E402
 
-EXPECTED_TOTAL = 247
+# BENCH2 rank 1: the totals live in fixtures.py so probes/vendor_trace.py (which carried a
+# stale 47) can never disagree with the scorer again. Imported by the same name ~10 checks use.
+from fixtures import EXPECTED_SUM, EXPECTED_TOTAL  # noqa: E402
+
 PAYMENT_KEYS = {"id", "amount_minor", "currency", "created_at", "status"}
-EXPECTED_SUM = sum(1000 + i * 137 for i in range(EXPECTED_TOTAL))
 TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
 
 # Bump on ANY change to a check, a weight, or the fixture. A verdict carrying a different version is
@@ -554,12 +556,16 @@ def _trace_split(trace: List[Dict]) -> tuple:
     """(first-sync requests, second-sync requests, second-sync 304s, largest limit seen)."""
     marks = [i for i, e in enumerate(trace) if e.get("__phase__", "").startswith("sync")]
     lists = lambda seg: [e for e in seg if e.get("path") == "/v1/payments" and e.get("method") == "GET"]
-    if len(marks) >= 2:
-        first, second = trace[marks[0] + 1:marks[1]], trace[marks[1] + 1:]
-    elif len(marks) == 1:
-        first, second = trace[marks[0] + 1:], []
-    else:
-        first, second = trace, []
+    # BENCH2 rank 1: MARKER-BOUNDED windows. sync2's window used to run to end-of-trace, so any
+    # LATER phase (a sync3 mutation pass, a probe's own traffic) would be silently credited to
+    # sync2. Each phase now ends at the next marker; byte-identical for today's two-marker
+    # traces and correct the day a third phase exists.
+    segs = []
+    for k, m in enumerate(marks):
+        end = marks[k + 1] if k + 1 < len(marks) else len(trace)
+        segs.append(trace[m + 1:end])
+    first = segs[0] if segs else trace
+    second = segs[1] if len(segs) > 1 else []
     limits = [int(e["query"]["limit"]) for e in lists(trace)
               if str(e.get("query", {}).get("limit", "")).isdigit()]
     return (len(lists(first)), len(lists(second)),
