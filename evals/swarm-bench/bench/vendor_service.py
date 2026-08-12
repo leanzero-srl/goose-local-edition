@@ -148,6 +148,12 @@ def _etag_for(offset: int, limit: int) -> str:
     return f'"{digest}"'
 
 
+def true_order_ids() -> list:
+    """The ground-truth chronological order (by instant, not string) — the ONE source every
+    order check reads (BENCH2 rank 8)."""
+    return [p["id"] for p in sorted(PAYMENTS, key=lambda p: p["_instant"])]
+
+
 def restore_payments() -> None:
     """Undo mutate_statuses for the NEXT scoring run in this process — PAYMENTS is module
     state, and a mutation that leaks across reps would corrupt every later unit's totals.
