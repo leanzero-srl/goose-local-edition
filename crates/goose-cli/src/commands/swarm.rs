@@ -649,6 +649,12 @@ pub struct SwarmConfig {
     /// GOOSE_SWARM_CROSS_MODULE_CHECK env overrides.
     #[serde(default)]
     pub cross_module_check: bool,
+    /// F781/#16 (GOOSE_SWARM_FIX_SCHED env overrides): run each multi-file fix round as a REAL
+    /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with judge +
+    /// tail-review supervision) instead of the hand-rolled fan. Default OFF until the campaign
+    /// measures quality parity.
+    #[serde(default)]
+    pub fix_sched: bool,
     /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
     /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
     /// launched via `open` and never receives the caller's environment. None = the previous behaviour
@@ -1250,6 +1256,7 @@ impl Default for SwarmConfig {
             retarget_stall_guard: true,
             answers_win_floor: Some(true),
             cross_module_check: true,
+            fix_sched: false,
             ask_max_q: Some(3),
             split: Some(true),
             smoke: true,
@@ -10671,6 +10678,20 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             "an unverifiable shadow is UNKNOWN, never clean — the vacuous-pass trap"
         );
         assert!(!shard_beats_baseline(Some(0), 0));
+    }
+
+    #[test]
+    fn fix_sched_lever_defaults_off_env_wins() {
+        std::env::remove_var("GOOSE_SWARM_FIX_SCHED");
+        assert!(
+            !fix_sched(),
+            "default OFF — arms attribute it before any flip"
+        );
+        std::env::set_var("GOOSE_SWARM_FIX_SCHED", "1");
+        assert!(fix_sched());
+        std::env::set_var("GOOSE_SWARM_FIX_SCHED", "off");
+        assert!(!fix_sched());
+        std::env::remove_var("GOOSE_SWARM_FIX_SCHED");
     }
 
     #[test]
@@ -25404,6 +25425,12 @@ fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
     verified.is_some_and(|v| v < baseline)
 }
 
+/// F781/#16: the fix-round-as-scheduler-run lever. Env wins, config falls back, default OFF —
+/// the campaign attributes it per arm before any default flip.
+fn fix_sched() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_FIX_SCHED", load_config().fix_sched)
+}
+
 fn spec_repair() -> bool {
     std::env::var("GOOSE_SWARM_SPEC_REPAIR")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
@@ -26928,6 +26955,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // "unobservable" — on + precondition met, and no way to tell whether anything happened. The
             // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
             // in the same log is a complete mechanism proof.
+            "fix_sched": fix_sched(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
                 "GOOSE_SWARM_CLARIFY_SPEC_BOUND",
                 load_config().clarify_spec_bound,
