@@ -190,6 +190,8 @@ class Ctx:
         self.restart_after: int = -1
         self.val_matrix: List = []
         self.raw_pages: List = []
+        self.json_probe: List = []
+        self.health_post: Dict = {}
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -560,6 +562,41 @@ def _(c: Ctx):
              "mixed UTC offsets make lexicographic order wrong — payments appear out of sequence")
 
 
+@check("json_everywhere", "B")
+def _(c: Ctx):
+    """BENCH2 rank 8: 'Every response is JSON' — the spec's own sentence, graded per response
+    (success and error paths alike): half parses, half declares an application/json type."""
+    if not c.json_probe:
+        return g(0.0, "no responses sampled", "n/a")
+    total = 0.0
+    bad = []
+    for path, st, parses, ctype in c.json_probe:
+        cell = (0.5 if parses else 0.0) + (0.5 if "json" in (ctype or "").lower() else 0.0)
+        total += cell
+        if cell < 1.0:
+            bad.append(f"{path}({'no-parse' if not parses else ''}{'/' if not parses and 'json' not in (ctype or '').lower() else ''}{'no-ctype' if 'json' not in (ctype or '').lower() else ''})")
+    score = total / len(c.json_probe)
+    return g(score, f"{total:.1f}/{len(c.json_probe)} responses fully JSON" +
+             (f"; failing: {', '.join(bad[:3])}" if bad else ""),
+             "an HTML error page mid-API breaks every client that trusted the contract")
+
+
+@check("health_semantics", "B")
+def _(c: Ctx):
+    """BENCH2 rank 8: /api/health graded in quarters — ok status, a FRESH boot state (0 rows,
+    null last_sync on a new db), the post-sync count, and a UTC-designated last_sync.
+    Deliberately NOT root-blocked (the local_pagination partial-independence precedent)."""
+    boot, post = c.health or {}, c.health_post or {}
+    q1 = 0.25 if boot.get("status") == "ok" else 0.0
+    q2 = 0.25 if boot.get("payments") == 0 and boot.get("last_sync") in (None, "") else 0.0
+    q3 = 0.25 if post.get("payments") == EXPECTED_TOTAL else 0.0
+    ls = str(post.get("last_sync") or "")
+    q4 = 0.25 if ls and (ls.endswith("Z") or "+00:00" in ls) else 0.0
+    return g(q1 + q2 + q3 + q4,
+             f"ok={boot.get('status')} fresh={q2 > 0} post_count={post.get('payments')} last_sync={ls or None}",
+             "a health endpoint that misreports state misleads every operator and monitor")
+
+
 # ── D: finesse (deliberately hard to max) ─────────────────────────────────────────────────────
 
 @check("request_efficiency", "D")
@@ -809,6 +846,20 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                 t.join(timeout=240)
             _s, health2, _r, _h = _get(f"{base}/api/health")
             c.concurrent_total = (health2 or {}).get("payments")
+            c.health_post = health2 if isinstance(health2, dict) else {}
+            # BENCH2 rank 8: json_everywhere sample — the spec's "Every response is JSON"
+            # graded across success AND error paths: half parses-as-JSON, half declares a JSON
+            # content type. Issued-but-unanswered counts 0.
+            for jp in ("/api/health", "/api/payments", "/api/payments?limit=5&offset=5",
+                       "/api/summary", "/api/nope", "/api/payments?limit=-1"):
+                stj, _bj, rawj, hj = _get(f"{base}{jp}")
+                try:
+                    json.loads(rawj if isinstance(rawj, str) else rawj.decode(errors="replace"))
+                    parses = True
+                except Exception:
+                    parses = False
+                c.json_probe.append((jp, stj, parses,
+                                     (hj.get("Content-Type", "") if hj else "")))
 
             # BENCH2 rank 5: UPDATE PROPAGATION. The spec's own sentence — "a payment already
             # present must be UPDATED" — has never been exercised: no run ever changed vendor
