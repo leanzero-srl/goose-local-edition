@@ -127,6 +127,17 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
         server.shutdown()
 
     verdict = score_build.evaluate(ctx)
+    # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
+    # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
+    # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent
+    # forensic object (and the sb-3/sb-4 bridge feasible offline).
+    try:
+        dest = workdir.parent / "_sb4trees" / f"{workdir.name}-{int(time.time())}"
+        dest.parent.mkdir(exist_ok=True)
+        shutil.copytree(workdir, dest, ignore=shutil.ignore_patterns(
+            ".swarm", "__pycache__", ".pytest_cache", "*.pyc"))
+    except Exception as e:
+        print(f"tree-archive failed (non-fatal): {e}", file=sys.stderr)
     # The pool the run REALLY used, straight from run_started. A label like "swarm-3node" is an
     # intention; this is the fact, and a mismatch invalidates any node-scaling claim.
     actual_pool = None

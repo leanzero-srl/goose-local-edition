@@ -18177,3 +18177,29 @@ same-tick-at-unit-end duty; (c) the bridge numbers from this attempt are recorde
 Incidental but real: the legs DID differ arithmetically on the degenerate vectors
 (sb-4 ~+0.011 — removing a 0-scoring D check raises a broken tree's D mean), a reminder that
 sb-4 is not uniformly harsher; the core/hard split (rank 9) is what moves the ceiling.
+
+## F769 — the first sb-4 score: 0.8561; hermetic verification CONFIRMED live; the dual-score race is unwinnable by an operator and moves into the harness
+
+**The unit (probe_post cell, 158 min, pool 3/3).** First score under the hardened scorer:
+**0.8561** — and its story validates both eras at once. The engine-side POST probe passed CLEAN
+on round 0 (probed_post=1, findings=0 — the ladder's third rung: two runs ago a 500, one run
+ago the cheapness defect, this run built RIGHT first try). The one blocking finding (the app's
+own edge-case tests failing on offset-beyond-end) survived two full twin rounds — all six twins
+capped or failed with the finding intact, and the wave correctly promoted NOTHING (tree
+untouched, the strictly-better rule). The run ended honestly red on it; the 0.8561 reflects a
+strong app minus that class plus sb-4's new teeth (this score is NOT comparable to the 0.996 —
+different scorer generation, pending the bridge).
+
+**HERMETIC CONFIRMED.** The boundary-9 behavioural check observed live: twin shadows said 1
+finding, the round gate said 1 finding — AGREEMENT, where the shared-db era produced
+verified-0-then-round-fails five times in one run. The verification substrate now tells the
+truth.
+
+**The dual-score miss and its structural fix.** The sweep scored and wiped the tree within
+~30 seconds of [done] — a 5-minute-cadence operator cannot win that race, twice proven today.
+Fixed at the root: run_build.py now ARCHIVES every scored tree (~100KB, junk-dirs excluded) to
+runs/nodeloop/_sb4trees/<cell>-<ts> at score time, making every scored artifact permanent
+(closing the F767 lost-0.996-tree class too) and the sb-3/sb-4 bridge an offline job over
+archived copies — pending one open question F768 left: whether CURRENT-era apps re-exercise
+against a fresh vendor (the first archived tree answers it). Sweep bounced at the successor's
+1-minute mark to load the archiving harness; the cell re-runs.
