@@ -22210,6 +22210,69 @@ fn write_frozen_bytes(root: &Path, files: &[(String, Vec<u8>)]) -> std::io::Resu
 /// into the real tree `to`. SAFETY: rejects any absolute or parent-escaping (`..`) path so it can NEVER write
 /// outside `to`; creates parent dirs; NEVER deletes; touches nothing but the listed owned files. Returns the
 /// count promoted. This is the only place a twin's work reaches the real tree.
+/// F766's gap: a whole-tree repair twin whose fix CREATED a file verified green in its shadow
+/// and then promoted nothing but manifest files — the fix never reached the real tree, the
+/// next round's gate re-found the identical defect, and three independently-verified twins in
+/// a row were thrown away. Promotion for a twin that owns the whole tree must also carry its
+/// CREATIONS: source-class files present in the shadow and absent in real. Modifications are
+/// already covered (whole-tree owned = every plan file); junk dirs and non-source extensions
+/// stay behind. Single-file shards deliberately do NOT get this — their fence is single-file
+/// by design.
+fn copy_created_source_files(from: &Path, to: &Path) -> usize {
+    const SRC_EXT: &[&str] = &[
+        "py", "md", "txt", "html", "js", "css", "json", "toml", "cfg", "ini",
+    ];
+    const SKIP_DIRS: &[&str] = &[
+        "__pycache__",
+        ".git",
+        ".swarm",
+        "node_modules",
+        ".venv",
+        ".pytest_cache",
+    ];
+    fn walk(dir: &Path, from: &Path, to: &Path, copied: &mut usize) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if !SKIP_DIRS.contains(&name.as_ref()) && !name.starts_with('.') {
+                    walk(&path, from, to, copied);
+                }
+                continue;
+            }
+            let ext_ok = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| SRC_EXT.contains(&e));
+            if !ext_ok {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(from) else {
+                continue;
+            };
+            let dst = to.join(rel);
+            if dst.exists() {
+                continue;
+            }
+            if let Some(parent) = dst.parent() {
+                if std::fs::create_dir_all(parent).is_err() {
+                    continue;
+                }
+            }
+            if std::fs::copy(&path, &dst).is_ok() {
+                *copied += 1;
+            }
+        }
+    }
+    let mut copied = 0;
+    walk(from, from, to, &mut copied);
+    copied
+}
+
 fn copy_owned_files(from: &Path, to: &Path, files: &[String]) -> usize {
     let mut promoted = 0;
     for f in files {
@@ -24380,7 +24443,21 @@ impl TaskDispatcher for GooseAgentDispatcher {
         if let Some((shadow, owned)) = entry {
             let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
             let n = copy_owned_files(shadow.path(), &real_root, &owned);
-            eprintln!("speculative: promoted {n} owned file(s) from the winning twin of {task_id}");
+            // Whole-tree twins (owning 2+ files) also promote their CREATIONS — see
+            // copy_created_source_files for the measured gap this closes. Single-file shards
+            // keep their strict fence.
+            let created = if owned.len() > 1 {
+                copy_created_source_files(shadow.path(), &real_root)
+            } else {
+                0
+            };
+            self.events.write_value(serde_json::json!({
+                "event": "spec_promote",
+                "task_id": task_id, "owned_copied": n, "created_copied": created,
+            }));
+            eprintln!(
+                "speculative: promoted {n} owned + {created} created file(s) from the winning twin of {task_id}"
+            );
             // `shadow` (TempDir) drops here -> the shadow workspace is removed from disk.
         }
     }
