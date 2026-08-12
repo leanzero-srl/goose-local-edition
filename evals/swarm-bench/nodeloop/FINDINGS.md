@@ -18317,3 +18317,24 @@ with a REDIRECTED env URL pointing at a second vendor instance; traffic must arr
 That closes the gap at the contract level, makes every archive re-exercisable, and turns the
 env-binding class into a scored behavior. Until then: archives remain analytic-bridge-only,
 and the env assumption is documented as unfounded.
+
+## F776 — the day closes: six scores on the validated sb-4 scale, and the shape of the next campaign
+
+baseline-n1-r2: **0.6646, 72 min** (bridge pair auto-recorded). The sb-4 day's full tape:
+  n3: 0.8756 / 0.6561 / 0.6172   (mean ~0.716; both lows carry the F774 scoring-time sync death)
+  n1: 0.0167 / 0.8190 / 0.6646   (mean ~0.500; spread 0.80 — the volatility signature)
+Small n, but the arms already separate on CONSISTENCY exactly as the run-rate axis was built
+to show: n3's worst real run (0.6172) sits above n1's mean.
+
+**The day in one paragraph (2026-08-12):** morning — the 0.996 ceiling, the promote-creations
+gap caught live (five verified fixes lost), hermetic gate DBs, the POST probe's first catches;
+midday — Mihai commissioned the harder bench, the 8-agent workflow designed sb-4, all ten
+ranks implemented and GRADER TRUSTED by 13:45 (three self-debugging controls rounds, including
+three of my own checks caught guard-zeroing on a known-good app BEFORE any production score);
+afternoon — archives with verdicts, the analytic bridge, and three mysteries solved from
+archives alone (F771 re-exercise death → F775 hardcoded-port smoking gun → the spec gap that
+produced it). OPEN for the next session, in priority order: (1) F774's residual — same-port
+scoring death minutes after an engine-green verify (evidence archived, diffable); (2) the
+MERIDIAN_BASE_URL spec sentence + redirect check (task-change discipline); (3) the engine-vs-
+scorer delta as the next detector roadmap; (4) testgen + fill_fan arms when the queue reaches
+them; (5) the deliberate-merge trio; (6) probed_post=0 precondition pattern (2 occurrences).
