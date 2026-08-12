@@ -18805,8 +18805,23 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         .ok()
         .and_then(|l| l.local_addr().ok())
         .map(|a| a.port());
-    let scratch_db =
-        std::env::temp_dir().join(format!("goose-spec-contract-{}.db", std::process::id()));
+    // UNIQUE PER INVOCATION, not per process. One path per engine pid meant every gate run in
+    // the process shared one sqlite file: state accumulated across rounds (a "second sync" could
+    // be cheap because a PREVIOUS gate already populated the db / warmed the app's stored ETags),
+    // and the three twin gates run CONCURRENTLY — three servers writing one sqlite file, which
+    // is contention plus inherited rows. Measured live (F767): a twin's shadow verified 0
+    // findings, promotion copied every manifest file (spec_promote created_copied=0 ruling out
+    // the F766 creation gap), and the round gate re-found the identical cheapness finding — the
+    // shadow's pass was manufactured by shared db state, not by the fix. A fresh file per
+    // invocation makes every gate hermetic; the few KB of tmp litter per run is the cheap side
+    // of that trade.
+    static SPEC_DB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let scratch_db = std::env::temp_dir().join(format!(
+        "goose-spec-contract-{}-{}.db",
+        std::process::id(),
+        SPEC_DB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&scratch_db);
     let advertised = free_port
         .map(|p| spec_run_argv(spec, &pkg, &scratch_db.to_string_lossy(), p))
         .unwrap_or_default();
