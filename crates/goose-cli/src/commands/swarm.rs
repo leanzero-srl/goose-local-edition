@@ -10673,6 +10673,31 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn fix_attempt_progress_fold_tracks_first_change_and_longest_still() {
+        // F781/#15: 5 samples — still, change, still, still, change. First change at 120s;
+        // longest still window = 2 consecutive still samples after a change = 120s.
+        let mut st = FixAttemptProgress::default();
+        let mut last = None;
+        st.note_sample(60, (3, 100), &mut last); // baseline — no prior, not "changed"
+        st.note_sample(120, (4, 200), &mut last); // first change
+        st.note_sample(180, (4, 200), &mut last);
+        st.note_sample(240, (4, 200), &mut last);
+        st.note_sample(300, (5, 290), &mut last);
+        assert_eq!(st.samples, 5);
+        assert_eq!(st.changed, 2);
+        assert_eq!(st.first_change_secs, Some(120));
+        assert_eq!(st.longest_still_secs, 2 * FIX_PROGRESS_SAMPLE_SECS);
+        // An attempt that never writes: no first change, still window grows the whole run.
+        let mut idle = FixAttemptProgress::default();
+        let mut last2 = None;
+        for k in 1..=4u64 {
+            idle.note_sample(60 * k, (3, 100), &mut last2);
+        }
+        assert_eq!(idle.first_change_secs, None);
+        assert_eq!(idle.longest_still_secs, 3 * FIX_PROGRESS_SAMPLE_SECS);
+    }
+
+    #[test]
     fn fix_tasks_from_findings_are_disjoint_one_file_each_depending_on_the_join() {
         // F781/#16: findings across two files + one file-less finding -> two disjoint fix tasks,
         // each owning exactly its file and depending on the join; the file-less one is dropped
@@ -25248,9 +25273,91 @@ fn complete_parallel() -> bool {
 /// while the fan hands each shard ONE file's findings under the same shadow discipline. The race
 /// stays for single-group rounds, where a partition cannot help and racing is the designed win.
 fn sink_shard() -> bool {
+    // DEFAULT ON (Mihai, 2026-08-12: "the tail could easily produce tasks ... so the final tail
+    // isn't done by one node alone"). This is that mechanism, already built and gated: a round
+    // whose findings span >=2 files fans one specific fix task per file across the fleet instead
+    // of one node taking the whole set. Quality-safe by construction — each shard promotes only
+    // if its re-verified shadow strictly beats the round baseline (shard_beats_baseline), so the
+    // worst case is "nothing promoted, tree unchanged". Single-file rounds still race twins.
     std::env::var("GOOSE_SWARM_SINK_SHARD")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
+        .unwrap_or(true)
+}
+
+/// F781/#15 (the judge's eye for the repair phase — OBSERVER first, kill rule later): a fix
+/// attempt's only bound today is fix_cap_secs; a stalled 27B twin burns the whole cap invisibly.
+/// Before any early-kill can be trusted (a false kill deletes a healthy twin — the measured
+/// red-to-green-at-the-cap rounds), measure the real progress distributions: this accumulates
+/// per-attempt samples of the shadow tree's fingerprint and reports time-to-first-change and the
+/// longest still window. Pure so the fold is testable without a fleet or a filesystem.
+#[derive(Default, Clone)]
+struct FixAttemptProgress {
+    samples: u32,
+    changed: u32,
+    first_change_secs: Option<u64>,
+    longest_still_secs: u64,
+    current_still_secs: u64,
+}
+
+impl FixAttemptProgress {
+    fn note_sample(
+        &mut self,
+        elapsed_secs: u64,
+        fp: (usize, u64),
+        last: &mut Option<(usize, u64)>,
+    ) {
+        self.samples += 1;
+        let changed = last.map(|l| l != fp).unwrap_or(false);
+        if changed {
+            self.changed += 1;
+            if self.first_change_secs.is_none() {
+                self.first_change_secs = Some(elapsed_secs);
+            }
+            self.current_still_secs = 0;
+        } else if last.is_some() {
+            self.current_still_secs = self
+                .current_still_secs
+                .saturating_add(FIX_PROGRESS_SAMPLE_SECS);
+            self.longest_still_secs = self.longest_still_secs.max(self.current_still_secs);
+        }
+        *last = Some(fp);
+    }
+}
+
+const FIX_PROGRESS_SAMPLE_SECS: u64 = 60;
+
+/// (source file count, newest mtime secs) over a shadow tree — the cheapest deterministic "is the
+/// twin writing anything" signal. The shadow starts as a fresh copy, so the newest mtime advances
+/// exactly when the agent writes.
+fn tree_fingerprint(root: &std::path::Path) -> (usize, u64) {
+    let mut count = 0usize;
+    let mut newest = 0u64;
+    fn walk(dir: &std::path::Path, count: &mut usize, newest: &mut u64) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if !name.starts_with('.') && name != "__pycache__" && name != "node_modules" {
+                    walk(&path, count, newest);
+                }
+            } else {
+                *count += 1;
+                if let Ok(md) = e.metadata() {
+                    if let Ok(m) = md.modified() {
+                        if let Ok(d) = m.duration_since(std::time::UNIX_EPOCH) {
+                            *newest = (*newest).max(d.as_secs());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    walk(root, &mut count, &mut newest);
+    (count, newest)
 }
 
 /// Pure: does this round shard instead of race? (Pinned by test — the decision, not the env.)
@@ -28976,11 +29083,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 doc_facts: facts,
                                 neighborhood: Vec::new(),
                             };
+                            // F781/#15: the repair-phase observer. Samples the twin's shadow
+                            // fingerprint once a minute while the attempt runs and reports the
+                            // progress shape when it ends — the data the future early-cut rule
+                            // derives its threshold from. Observer only: it never kills.
+                            let progress =
+                                Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
+                            let sampler = {
+                                let me = me.clone();
+                                let tid = task_id.clone();
+                                let progress = progress.clone();
+                                tokio::spawn(async move {
+                                    let t0 = std::time::Instant::now();
+                                    let mut last: Option<(usize, u64)> = None;
+                                    loop {
+                                        tokio::time::sleep(std::time::Duration::from_secs(
+                                            FIX_PROGRESS_SAMPLE_SECS,
+                                        ))
+                                        .await;
+                                        if let Some(root) = me.speculative_root(&tid) {
+                                            let fp = tree_fingerprint(&root);
+                                            progress.lock().unwrap().note_sample(
+                                                t0.elapsed().as_secs(),
+                                                fp,
+                                                &mut last,
+                                            );
+                                        }
+                                    }
+                                })
+                            };
                             let ran = tokio::time::timeout(
                                 std::time::Duration::from_secs(fix_cap_secs()),
                                 me.run(req),
                             )
                             .await;
+                            sampler.abort();
+                            {
+                                let st = progress.lock().unwrap().clone();
+                                sink_r.write_value(serde_json::json!({
+                                    "event": "fix_attempt_progress",
+                                    "round": round, "twin": i,
+                                    "samples": st.samples,
+                                    "changed_samples": st.changed,
+                                    "first_change_secs": st.first_change_secs,
+                                    "longest_still_secs": st.longest_still_secs,
+                                }));
+                            }
                             // RE-VERIFY THE SHADOW, not the real tree. `run_smoke_gate` already takes its root
                             // as a parameter, so the twin is graded by the same deterministic gate that opened
                             // the round — no model gets a vote on which fix is better.
