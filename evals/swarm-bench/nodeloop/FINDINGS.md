@@ -18482,3 +18482,19 @@ idle devices, trace 0.16MB. The prior unit (pre-fix binary) at the same lifecycl
 judge_observed in the tens of thousands and a 38MB trace. The guard's notify-only-on-device-free
 fix (F778) and the tail idle-fill (F779) are both live and behaving exactly as designed. Tail
 readout (tail_review events on idle devices during the test/sink tail) pending the unit's tail.
+
+## F783 — boundary 11 (00:54 binary): sink_shard ON + observer + supervision pool (sched) + fix_sched commits 1/2/4 live; n3 0.6864 with judge spam DEAD
+
+probe_post-n3-r0: 0.6864 / 90 min / 3 nodes — the FIRST full unit on the F778/F779 binary, and
+the proof held end-to-end (F782: judge_observed 58 vs 36,000; trace 0.16MB vs 38MB; pre_review
+11). Boundary 11: gate GREEN → 00:54:41 binary → GOOSE_SWARM_FIX_SCHED flipped absent→present,
+controls held. NOW LIVE: sink_shard default ON (multi-file repair rounds fan one specific fix
+task per file — Mihai's directive), fix_attempt_progress observer on BOTH repair fans (the
+early-cut threshold's data), supervision-device scheduler side (build dispatch can never land on
+a borrowed node; contract pinned by mock-fleet tests), fix_sched lever (default OFF). The
+fix-round-as-scheduler-run design (FIX-SCHED-DESIGN.json, adversarially verified) is 3/7
+committed: lever (c1), DispatcherRecipe + fix_devices capture (c2), fix_round_specs DAG builder
+(c4). Remaining: c3 (dispatcher fix:: branch + Drop-guard shadow close), c5 (shadow-aware judge
+probe), c6 (the wiring), c7 (regression + live verify). WATCH on this binary: complete_fix_wave
+events on multi-file rounds (sink_shard now ON) + fix_attempt_progress events populating the
+stall distributions.
