@@ -22823,6 +22823,56 @@ fn group_findings_by_file(
 /// hardcoded Python — a non-Python run would have gotten Python fix instructions in every task).
 /// Pure — tested without a fleet. The consumer (a second scheduler run behind fix_sched()) is
 /// design commit 6.
+/// F781/#16 (design commit 2): everything needed to construct a GooseAgentDispatcher, BY VALUE,
+/// so a second dispatcher with identical semantics can be built later (the fix-round scheduler
+/// run builds a FRESH one — reusing run 1's would re-arm its OnceLock no-op, stale
+/// owner_snapshots restore and sink_review_findings carryover). Clone the recipe per build.
+#[derive(Clone)]
+struct DispatcherRecipe {
+    working_dir: PathBuf,
+    notes_since_ms: i64,
+    worker_max_turns: u32,
+    worker_extensions: Vec<ExtensionConfig>,
+    planner_model: String,
+    worker_timeout_secs: u64,
+    planner_timeout_secs: u64,
+    allow_model_load: bool,
+    sampling: SamplingParams,
+    stream_decode_retry: bool,
+    straggler_stop: bool,
+    straggler_grace_secs: Option<u64>,
+    straggler_stop_degrade: bool,
+    detail_memo_on: bool,
+    repeat_break: bool,
+}
+
+async fn build_swarm_dispatcher(
+    r: DispatcherRecipe,
+    events: Arc<dyn EventSink>,
+) -> Result<Arc<GooseAgentDispatcher>> {
+    Ok(Arc::new(
+        GooseAgentDispatcher::new(
+            r.working_dir,
+            events,
+            r.notes_since_ms,
+            r.worker_max_turns,
+            r.worker_extensions,
+            r.planner_model,
+            r.worker_timeout_secs,
+            r.planner_timeout_secs,
+            r.allow_model_load,
+            r.sampling,
+            r.stream_decode_retry,
+            r.straggler_stop,
+            r.straggler_grace_secs,
+            r.straggler_stop_degrade,
+            r.detail_memo_on,
+            r.repeat_break,
+        )
+        .await?,
+    ))
+}
+
 #[allow(dead_code)]
 fn fix_round_specs(
     findings: &[String],
@@ -26499,33 +26549,35 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         eprintln!("worker MCP extensions: {}", ext_names.join(", "));
     }
 
-    let dispatcher = Arc::new(
-        GooseAgentDispatcher::new(
-            working_dir.clone(),
-            sink.clone(),
-            run_started_ms,
-            worker_max_turns,
-            worker_extensions,
-            cfg.planner_model.clone(),
-            cfg.worker_timeout_secs,
-            cfg.planner_timeout_secs,
-            cfg.allow_model_load,
-            SamplingParams {
-                temperature: cfg.temperature,
-                top_p: cfg.top_p,
-                top_k: cfg.top_k,
-                min_p: cfg.min_p,
-                repeat_penalty: cfg.repeat_penalty,
-            },
-            stream_decode_retry_enabled(cfg.stream_decode_retry),
-            straggler_stop_enabled(cfg.straggler_stop),
-            straggler_grace_secs(cfg.straggler_grace_secs),
-            straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
-            detail_memo_enabled(cfg.detail_memo),
-            repeat_break_enabled(cfg.repeat_break),
-        )
-        .await?,
-    );
+    // The recipe is the ONE resolution of every dispatcher constructor arg. run 1 consumes a
+    // clone; `dispatcher_recipe` stays available so the fix-round scheduler (fix_sched, design
+    // commit 6) can build a FRESH dispatcher with byte-identical semantics — same resolved
+    // levers, same notes epoch (run-notes deliberately reach fix workers).
+    let dispatcher_recipe = DispatcherRecipe {
+        working_dir: working_dir.clone(),
+        notes_since_ms: run_started_ms,
+        worker_max_turns,
+        worker_extensions,
+        planner_model: cfg.planner_model.clone(),
+        worker_timeout_secs: cfg.worker_timeout_secs,
+        planner_timeout_secs: cfg.planner_timeout_secs,
+        allow_model_load: cfg.allow_model_load,
+        sampling: SamplingParams {
+            temperature: cfg.temperature,
+            top_p: cfg.top_p,
+            top_k: cfg.top_k,
+            min_p: cfg.min_p,
+            repeat_penalty: cfg.repeat_penalty,
+        },
+        stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
+        straggler_stop: straggler_stop_enabled(cfg.straggler_stop),
+        straggler_grace_secs: straggler_grace_secs(cfg.straggler_grace_secs),
+        straggler_stop_degrade: straggler_stop_degrade_enabled(cfg.straggler_stop_degrade),
+        detail_memo_on: detail_memo_enabled(cfg.detail_memo),
+        repeat_break: repeat_break_enabled(cfg.repeat_break),
+    };
+    let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
+    let _ = &dispatcher_recipe;
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
@@ -28500,6 +28552,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Fleet size for the honest dispatch-occupancy metric (§1-#10): captured before the scheduler consumes
     // `devices`. Used only inside the GOOSE_SWARM_OCCUPANCY-gated block at run_finished.
     let fleet_size = devices.len();
+    // F781/#16 (design commit 2): the fix-round scheduler (fix_sched, commit 6) runs over the
+    // SAME fleet — captured before Scheduler::new moves `devices`, like its three siblings above.
+    let fix_devices: Vec<DeviceCfg> = devices.clone();
+    let _ = &fix_devices;
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
         .with_sink(sink.clone())
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
