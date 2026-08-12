@@ -18513,3 +18513,16 @@ bridge_calc must match archive↔[done] row by SCORE+cell, never by "newest matc
 names repeat per cell — F694's trap, new face). HARNESS FIX QUEUED: the sweep wrapper must mark a
 unit killed by STOP as void=True instead of scoring the stub (the row should never look like a
 datum). Real datum recorded properly: probe_post-n3-r0 sb4 0.6864 (archive ...210 verified).
+
+## F785 — the observer's FIRST LIVE DISTRIBUTION kills the naive stall-cut: a WINNING-SIDE twin was still for 540s and wrote first at 660s
+
+First fix_attempt_progress data (swarm-3node-r0, round 0, 3 racing twins, baseline 3 findings):
+twin 1 — first change 180s, 6/14 samples changed, reached 0 findings, PROMOTED (the app went
+green); twin 2 — first change 360s, verified 1; twin 0 — FIRST CHANGE AT 660s with a 540s
+longest-still window, and still verified strictly-better (3→1). The verdict for the early-cut
+rule: any wall-stillness kill below ~11 minutes would have executed twin 0, a twin that improved
+the tree — the guessed 300-420s thresholds under consideration were all fatal. The cut rule must
+either use a floor >= the fix cap's neighborhood (near-worthless) or key on a richer signal than
+tree-stillness (e.g. stillness AND no session-trace growth). Exactly why the observer shipped
+before the mechanism. Also on display: the twin race working at strength — 3 twins, one fully
+green, promoted.
