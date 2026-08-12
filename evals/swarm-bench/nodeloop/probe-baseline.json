@@ -1,11 +1,12 @@
 {
-  "mtime": 1786490166.19737,
-  "size": 235876640,
+  "mtime": 1786519812.696145,
+  "size": 236009664,
   "new": {
-    "skeleton written:": false,
-    "created file(s) from the winning twin": false
+    "GOOSE_SWARM_TAIL_REVIEW": false
   },
   "controls": {
+    "skeleton written:": true,
+    "created file(s) from the winning twin": true,
     "END your spec with ONE line": true,
     "GOOSE_SWARM_TESTGEN": true,
     "tests/generated/test_gen_": true,
