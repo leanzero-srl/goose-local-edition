@@ -18297,3 +18297,23 @@ against the finding. This is the top engine-side item for the next working sessi
 n3's day now reading 0.8756 / 0.6561 / 0.6172 — the two low runs BOTH carry scoring-time sync
 deaths, meaning the true build-quality band may be tighter and higher than the scores show,
 gated on this one mechanism.
+
+## F775 — the smoking gun and the spec gap behind it: apps hardcode the vendor port because NOTHING ever told them not to
+
+The archived F774 tree's entry point constructs its client with base_url="http://127.0.0.1:8932"
+HARDCODED — the run's own vendor port, baked from research. And the deeper finding: **the spec
+never mentions MERIDIAN_BASE_URL.** The env contract exists only in the HARNESS's assumptions
+(gather sets the variable expecting apps to read it); the reference build honors it by good
+practice, which is exactly why controls re-exercise and swarm archives do not. Consequences,
+now all one mechanism: F768 entirely explained (re-exercise calls a dead port); scoring works
+BY ACCIDENT (it reuses the run's vendor port); the bridge/dualscore self-voids are correct
+behavior; and the remaining F774 question narrows to why the SAME port + re-armed traps
+failed at scoring (the timeout-fix diff vs the trap chain — still open, evidence archived).
+
+DECISION FOR THE NEXT SESSION (task-change discipline — not a unilateral evening edit): add
+ONE sentence to spec-build.md ("the client reads the vendor's base URL from the
+MERIDIAN_BASE_URL environment variable") + the matching deterministic check (spawn the app
+with a REDIRECTED env URL pointing at a second vendor instance; traffic must arrive there).
+That closes the gap at the contract level, makes every archive re-exercisable, and turns the
+env-binding class into a scored behavior. Until then: archives remain analytic-bridge-only,
+and the env assumption is documented as unfounded.
