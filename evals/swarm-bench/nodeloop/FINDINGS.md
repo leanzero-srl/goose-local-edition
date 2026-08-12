@@ -18276,3 +18276,24 @@ cell collapsed at 0.0167 in 7 minutes. The single-node spread (0.0167 ↔ 0.819)
 n1's variance swamps its mean; the excellent/solid RUN-RATE axis (built into sb-4's verdicts)
 is the readout that will separate the arms as replicates accumulate. Bridge pair recorded in
 the ledger automatically.
+
+## F774 — 0.6172 with the full forensic chain preserved: engine-green → scorer-dead-sync on an unchanged tree, THE open mystery
+
+baseline-n3-r2 (63 min, zero task retries): the gate caught ONE finding (HTTPConnection
+no-timeout), all three twins fixed it in 104-184s (verified 0 each), promotion carried 10/10
+files, **round-1 re-verify PASSED (findings 0 — the engine's own probe saw a WORKING sync on
+the promoted tree)**, complete_result green. Minutes later the sweep's scoring gather — same
+tree, fresh db — got 0/247 rows from sync and the F752 zero-cluster took the score to 0.6172
+(hard 0.5). The sb-3 analytic pair (0.6917) is in the ledger.
+
+Same-tree sync works-then-dies within minutes is now OBSERVED with full evidence in hand for
+the first time (_sb4trees/swarm-3node-r2-1786546564 holds the tree, its verdict, and the run
+log). Candidate mechanisms for the fresh-session investigation: (a) the scoring gather reuses
+the RUN's original vendor instance (traps re-armed by mark_phase sync1 reset) vs the engine
+gate's own fresh vendor — a trap-handling regression introduced by the timeout fix would show
+exactly this signature (works against a spent chain, dies against a re-armed one); (b) the
+F768 URL-baking class in a subtler form. The timeout-fix diff is IN the archive — diffable
+against the finding. This is the top engine-side item for the next working session, with
+n3's day now reading 0.8756 / 0.6561 / 0.6172 — the two low runs BOTH carry scoring-time sync
+deaths, meaning the true build-quality band may be tighter and higher than the scores show,
+gated on this one mechanism.
