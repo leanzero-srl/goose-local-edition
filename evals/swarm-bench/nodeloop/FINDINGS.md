@@ -18356,3 +18356,24 @@ argv shape the gate greps) is RUNTIME-dependent, not a code regression — it fi
 documents its sync endpoint the expected way and skips otherwise, correctly reporting 0 rather
 than a false pass. Bumped in the next-session queue as a precondition-robustness item (widen the
 advertised-POST detection to more README shapes), not a bug.
+
+## F778 — the judge HOT-SPINS on a long single-node task: 8000+ observe/skip cycles, ~40/sec
+
+Caught by the operator loop's own event-count watch: swarm-1node-r3's trace jumped 151 → 23,526
+events in ~9 minutes — 8,145 judge_observed + 8,145 judge_verdict + 8,143 judge_skipped, all
+targeting ONE task (`test-api`, a long-running test on the sole busy node), at ~40 events/sec
+against the intended 15s tick. The JUDGE_REJUDGE_COOLDOWN correctly prevents the model call
+(judge_skipped ≈ judge_observed, so near-zero inference spent), but the OBSERVE + SKIP still
+EMIT trace events every hot iteration — so the tick loop is spinning near-freely instead of
+waiting its ~15s, writing ~3 JSON lines/iteration. Cause (to confirm at the fix): on a single
+busy node the loop's wake condition degenerates — with one in-flight task and one idle-capable
+slot, notify/tick fires without the intended debounce. NOT corrupting the result (the run is
+healthy — heartbeat 2s, the node is GENERATING the real task) and NOT burning model budget, but
+it (a) bloats the trace (~6MB and growing, will hit ~20MB+ on a long sink), (b) pollutes
+occupancy accounting, (c) wastes CPU on the node that should be dedicated to the task's
+generation. FIX (next session, engine-side): the judge tick must honor its cooldown at the WAIT
+boundary, not just at the model-call gate — either skip the observe-event emission when
+last_judged is within cooldown, or hold the 15s wait when the only judgeable task was judged
+within cooldown. Queued alongside F774 (scoring-sync death) and the advertised-POST width item.
+This is the operator loop finding an engine inefficiency purely from instrumentation — the
+model the campaign is built on.
