@@ -18473,3 +18473,12 @@ when a DEVICE was freed, killing the ~40/sec device-less-judge spin). THE LIVE P
 the next n3 tail: judge_observed count drops from ~8000+/run to near-zero, and pre_review/review
 events fire on the idle devices during the tail. F781 (tail-emits-tasks orchestration + judge-in-
 all-phases) remains the top build-out.
+
+## F782 — F778/F779 LIVE PROOF: judge spam 36,000 → 55; trace 38MB → 0.16MB, same phase of run
+
+The registered check fired on the first post-boundary unit. swarm-3node-r0 (23:16 binary) at
+17/21 tasks: judge_observed=55, judge_skipped=46 (healthy ~15s polling), pre_review=9 firing on
+idle devices, trace 0.16MB. The prior unit (pre-fix binary) at the same lifecycle stage carried
+judge_observed in the tens of thousands and a 38MB trace. The guard's notify-only-on-device-free
+fix (F778) and the tail idle-fill (F779) are both live and behaving exactly as designed. Tail
+readout (tail_review events on idle devices during the test/sink tail) pending the unit's tail.
