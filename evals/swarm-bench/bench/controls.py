@@ -58,7 +58,7 @@ DEFECTS: List[Dict] = [
         # the server then crashed and 24 checks cascaded. That was a badly designed control, not a
         # grader fault: a defect that breaks the app at runtime SHOULD break everything downstream.
         "name": "declared_iface_incomplete",
-        "expect": {"interfaces_declared"},
+        "expect": {"interfaces_declared", "client_total_count"},
         "apply": lambda pkg: _sub(pkg / "meridian.py", r"def total_count\(",
                                   "def _total_count_renamed("),
     },
@@ -85,15 +85,17 @@ DEFECTS: List[Dict] = [
         # may move (create_first still succeeds; the replay raises inside the probe driver).
         "name": "replay_as_error",
         "expect": {"client_create_replay"},
-        "apply": lambda pkg: _sub(pkg / "meridian.py", r"409", "499"),
+        "apply": lambda pkg: _sub(pkg / "meridian.py", "== 409", "== 499"),
     },
     {
         # BENCH2 rank 10: memory dressed as a database — persistence dies at the SIGKILL, and
         # ONLY restart_persistence may notice (within one process lifetime :memory: is correct).
-        "name": "store_in_memory",
+        "name": "store_forgets_on_restart",
         "expect": {"restart_persistence"},
-        "apply": lambda pkg: _sub(pkg / "store.py", r"sqlite3\.connect\(\s*[^,)]+",
-                                  'sqlite3.connect(":memory:"'),
+        "apply": lambda pkg: (
+            _sub(pkg / "store.py", "import sqlite3", "import os, sqlite3")
+            and _sub(pkg / "store.py", "sqlite3.connect(self.path)",
+                     "sqlite3.connect(str(self.path) + str(os.getpid()))")),
     },
     {
         # BENCH2 rank 10: the upsert's STATUS assignment becomes a no-op (old value kept):
@@ -175,8 +177,13 @@ def main() -> int:
 
         got = run_control(defect["name"], wd, port, args.out)
         port += 1
-        broke = {c["check"] for c in got["checks"] if c["score"] < 1.0}
-        newly = broke - good_fail
+        # BENCH2 rank 10 fix (from the suite's own first red run): DELTA-based, not
+        # membership-based. A GRADED check that WORSENS under a defect was invisible when the
+        # known-good already scored it below 1.0 — update_ignored went "undetected" exactly
+        # that way. Newly-broken = the score DROPPED against the known-good's own vector.
+        gv = {c["check"]: c["score"] for c in good["checks"]}
+        newly = {c["check"] for c in got["checks"]
+                 if c["score"] < gv.get(c["check"], 1.0) - 1e-9}
         expected, cascade = defect["expect"], newly - defect["expect"]
         hit = newly & expected
 
