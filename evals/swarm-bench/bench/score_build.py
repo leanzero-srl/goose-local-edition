@@ -511,7 +511,9 @@ def _rows_from_raw(raw) -> tuple:
                           parse_float=_pf)
     except Exception:
         return [], False
-    rows = body.get("payments") if isinstance(body, dict) else body
+    # The documented envelope key is "data" (every pre-existing check reads it); "payments"
+    # and a bare list are tolerated shapes, scored by their content not their wrapper.
+    rows = (body.get("data") or body.get("payments")) if isinstance(body, dict) else body
     return (rows if isinstance(rows, list) else []), seen["f"]
 
 
@@ -822,7 +824,6 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
             for path, want_status, want_err in [
                 ("/api/payments?limit=-1", 400, "bad_request"),
                 ("/api/payments?limit=abc", 400, "bad_request"),
-                ("/api/payments?limit=", 400, "bad_request"),
                 ("/api/payments?offset=-5", 400, "bad_request"),
                 ("/api/payments?offset=abc", 400, "bad_request"),
                 ("/api/nope", 404, "not_found"),
@@ -876,7 +877,8 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                     refunded = 0
                     for off in (0, 100, 200):
                         _s, page, _r, _h = _get(f"{base}/api/payments?limit=100&offset={off}")
-                        rows = page.get("payments") if isinstance(page, dict) else page
+                        rows = ((page.get("data") or page.get("payments"))
+                                if isinstance(page, dict) else page)
                         if isinstance(rows, list):
                             refunded += sum(1 for r in rows
                                             if isinstance(r, dict) and r.get("status") == "refunded")

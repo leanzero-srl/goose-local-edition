@@ -94,7 +94,7 @@ DEFECTS: List[Dict] = [
         "expect": {"restart_persistence"},
         "apply": lambda pkg: (
             _sub(pkg / "store.py", "import sqlite3", "import os, sqlite3")
-            and _sub(pkg / "store.py", "sqlite3.connect(self.path)",
+            and _sub(pkg / "store.py", r"sqlite3\.connect\(self\.path\)",
                      "sqlite3.connect(str(self.path) + str(os.getpid()))")),
     },
     {
