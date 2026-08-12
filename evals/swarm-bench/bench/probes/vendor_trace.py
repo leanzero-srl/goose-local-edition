@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-RETRY_AFTER_SECS = 2
-EXPECTED_TOTAL = 47
-PHASE_MARKER = "__phase__"
+try:
+    from ..fixtures import EXPECTED_TOTAL, PHASE_MARKER, RETRY_AFTER_SECS
+except ImportError:  # invoked as a top-level module (the driver's sys.path shape)
+    from fixtures import EXPECTED_TOTAL, PHASE_MARKER, RETRY_AFTER_SECS  # type: ignore
 
 
 def exercise_phase(trace: List[Dict]) -> List[Dict]:

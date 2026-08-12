@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -138,8 +139,31 @@ def _cursor_for_offset(offset: int) -> str:
 
 
 def _etag_for(offset: int, limit: int) -> str:
-    digest = hashlib.sha256(f"meridian-{offset}-{limit}".encode()).hexdigest()[:16]
+    # BENCH2 rank 2 (enabling half): the collection GENERATION is part of the tag. Hashing only
+    # offset+limit taught clients that ETags lie — after any data mutation the mock would still
+    # answer 304 to a correct conditional request. Generation stays 0 until a mutation pass
+    # (mutate_statuses) bumps it, so today's tags differ in value but not in behaviour.
+    gen = getattr(STATE, "generation", 0) if STATE is not None else 0
+    digest = hashlib.sha256(f"meridian-{gen}-{offset}-{limit}".encode()).hexdigest()[:16]
     return f'"{digest}"'
+
+
+def mutate_statuses() -> int:
+    """BENCH2 rank 5's control surface (DORMANT until update_propagation wires it): flip every
+    10th payment's status to "refunded" — field edits only on the module-level PAYMENTS rows,
+    the collection LENGTH asserted unchanged so EXPECTED_TOTAL/EXPECTED_SUM stay valid — and
+    bump the generation so conditional requests correctly re-fetch. Returns rows changed."""
+    assert STATE is not None
+    with STATE.lock:
+        n_before = len(PAYMENTS)
+        changed = 0
+        for i, row in enumerate(PAYMENTS):
+            if i % 10 == 3:
+                row["status"] = "refunded"
+                changed += 1
+        assert len(PAYMENTS) == n_before
+        STATE.generation = getattr(STATE, "generation", 0) + 1
+    return changed
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -328,7 +352,12 @@ def mark_phase(name: str, reset: bool = None) -> None:
     # has already thrown its one-shot 429 and 410, or the conditional-refetch ratio measures a
     # re-run of the throttle chain instead of the caching behaviour it is meant to grade.
     if reset is None:
-        reset = not name.endswith("2")
+        # BENCH2 rank 1: explicit, not a suffix heuristic — `not name.endswith("2")` would have
+        # RE-ARMED the one-shot traps for a future "sync3" mutation pass, grading the third
+        # sync against a throttle chain it should never see. Any phase numbered >= 2 is a
+        # continuation; unnamed/first phases reset.
+        _m = re.search(r"(\d+)$", name)
+        reset = not (_m and int(_m.group(1)) >= 2)
     with STATE.lock:
         if reset:
             STATE.list_requests = 0
