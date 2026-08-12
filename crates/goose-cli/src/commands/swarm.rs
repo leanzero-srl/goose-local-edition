@@ -10673,6 +10673,38 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn fix_tasks_from_findings_are_disjoint_one_file_each_depending_on_the_join() {
+        // F781/#16: findings across two files + one file-less finding -> two disjoint fix tasks,
+        // each owning exactly its file and depending on the join; the file-less one is dropped
+        // here (it has no owned file to make a safe concurrent task — the serial rescue owns it).
+        let findings = vec![
+            "app/api.py:12: TypeError in handler".to_string(),
+            "app/api.py:40: missing timeout".to_string(),
+            "app/store.py:5: bad upsert".to_string(),
+            "the second sync re-fetched 247 rows".to_string(), // no file -> unassigned
+        ];
+        let all = vec!["app/api.py".to_string(), "app/store.py".to_string()];
+        let tasks = fix_tasks_from_findings(&findings, &all, "integrate-verify");
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["fix::app/api.py", "fix::app/store.py"],
+            "one disjoint task per file"
+        );
+        // Each owns exactly its own single file (no two race) and waits for the join.
+        for t in &tasks {
+            assert_eq!(t.owned_files.len(), 1);
+            assert_eq!(t.deps, ["integrate-verify"]);
+            assert!(t.owned_files[0].ends_with(".py"));
+        }
+        // api.py's task carries BOTH its findings in the description.
+        let api = tasks.iter().find(|t| t.id == "fix::app/api.py").unwrap();
+        assert!(api.description.contains("TypeError") && api.description.contains("timeout"));
+        // No findings at all -> no tasks (nothing to orchestrate).
+        assert!(fix_tasks_from_findings(&[], &all, "integrate-verify").is_empty());
+    }
+
+    #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
             "tests/test_a.py:5: in test_x\n    assert foo() == 1\nE   AssertionError".to_string(),
@@ -22702,6 +22734,37 @@ fn group_findings_by_file(
         })
         .collect();
     (groups, unassigned)
+}
+
+/// F781/#16 (deterministic core, not yet wired): turn the sink gate's findings into DISJOINT
+/// `fix::<file>` DAG task specs so idle nodes claim them like any work — the sink becomes an
+/// ORCHESTRATOR emitting tasks instead of fixing every file inline on one node. Reuses
+/// group_findings_by_file's normalized disjoint partition (each fix task owns exactly one file,
+/// so two never race), each depending on the JOIN target `join_dep` (the re-verify runs after
+/// all fixes land). Pure — tested without a fleet. The runtime wiring (splice_specs into the
+/// live DAG mid-completion) is the increment that follows, behind a lever with a mutation-count
+/// check, because runtime DAG mutation is unproven in this engine (S4's flag).
+#[allow(dead_code)]
+fn fix_tasks_from_findings(
+    findings: &[String],
+    all_files: &[String],
+    join_dep: &str,
+) -> Vec<goose_swarm::TaskSpec> {
+    let (groups, _unassigned) = group_findings_by_file(findings, all_files);
+    groups
+        .into_iter()
+        .map(|g| goose_swarm::TaskSpec {
+            id: format!("fix::{}", g.file),
+            description: smoke_fix_description(&g.findings, TargetLang::Python),
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: None,
+            owned_files: vec![g.file],
+            // Each fix depends on the completed build (join_dep) and the JOIN depends on all
+            // fixes — the disjoint file ownership is what makes them safe to run concurrently.
+            deps: vec![join_dep.to_string()],
+            subsplit: Vec::new(),
+        })
+        .collect()
 }
 
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
