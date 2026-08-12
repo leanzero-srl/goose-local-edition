@@ -40,7 +40,9 @@ from typing import Callable, Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from probes import vendor_trace  # noqa: E402
+from probes import client_probe, vendor_trace  # noqa: E402
+
+import vendor_service  # noqa: E402
 
 # BENCH2 rank 1: the totals live in fixtures.py so probes/vendor_trace.py (which carried a
 # stale 47) can never disagree with the scorer again. Imported by the same name ~10 checks use.
@@ -180,6 +182,7 @@ class Ctx:
         self.summary: Dict = {}
         self.sync1: Dict = {}
         self.sync2: Dict = {}
+        self.client: Dict = {"results": {}, "trace": []}
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -426,6 +429,26 @@ for _n, _f in [
     _vendor_check(_n, _f)
 
 
+# BENCH2 rank 4: the client-contract checks — the dormant results-consuming vendor_trace checks,
+# awake for the first time in campaign history, fed by the direct-invocation probe.
+def _client_check(name: str, fn):
+    @check(name, "C")
+    def _(c: Ctx, _fn=fn):
+        r = _fn(c.client.get("trace") or [], c.client.get("results") or {})
+        return g(1.0 if r["ok"] else 0.0, r["detail"], r.get("consequence", ""))
+
+
+for _n, _f in [
+    ("client_all_payments", vendor_trace.check_all_payments_returned),
+    ("client_total_count", vendor_trace.check_total_semantics),
+    ("client_true_order", vendor_trace.check_chronological_order),
+    ("client_create_replay", vendor_trace.check_replay_treated_as_success),
+    ("client_idempotency_key", vendor_trace.check_idempotency_key_sent),
+    ("client_integer_amounts", vendor_trace.check_amounts_are_integer_minor),
+]:
+    _client_check(_n, _f)
+
+
 # ── D: finesse (deliberately hard to max) ─────────────────────────────────────────────────────
 
 @check("request_efficiency", "D")
@@ -664,6 +687,13 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
     if trace_path.is_file():
         c.trace = [json.loads(l) for l in trace_path.read_text().splitlines() if l.strip()]
         c.sync1_reqs, c.sync2_reqs, c.sync2_304, c.sync2_cond, c.max_limit_used = _trace_split(c.trace)
+    # BENCH2 rank 4: the direct-invocation client probe — its OWN vendor instance, so it can
+    # never contaminate the main exercise's trace or trap state. create_payment is REQ-1's
+    # previously-dead surface; a probe failure is an honest per-step error, never an exception.
+    try:
+        c.client = client_probe.run_client_probe(c.root, vendor_service)
+    except Exception as e:
+        c.client = {"results": {"_errors": {"probe": str(e)[:200]}}, "trace": []}
     return c
 
 
