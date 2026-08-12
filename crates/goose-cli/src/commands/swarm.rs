@@ -13220,6 +13220,132 @@ impl GooseAgentDispatcher {
     /// excluded) into a fresh TempDir, stored in `spec_shadows[task_id]` with the twin's owned files so a
     /// later `promote_speculative` can copy exactly those back. Returns the shadow path. On any IO error the
     /// caller MUST bail the twin (never fall back to the real tree — that would let two writers collide).
+    /// S3 fill fan, SKELETON step: write the module's contract skeleton to its real file —
+    /// deterministic, zero model calls. Failure is honest and Terminal: a missing or
+    /// unparseable stub cannot improve on retry, and the fills depending on this task then
+    /// never dispatch (their deps never satisfy), which is the correct dead-end — the
+    /// complete gate's findings drive repair of the missing module from there.
+    async fn run_skeleton_step(
+        &self,
+        module: String,
+        req: &DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let file = req
+            .owned_files
+            .first()
+            .cloned()
+            .ok_or_else(|| DispatchError::Terminal("skeleton step owns no file".into()))?;
+        let bundle = self.contracts.get().cloned().unwrap_or_default();
+        let skel = module_stub(&bundle, &module)
+            .as_deref()
+            .and_then(skeleton_from_stub);
+        let Some(src) = skel else {
+            self.events.write_value(serde_json::json!({
+                "event": "skeleton_failed", "module": module,
+                "detail": "no parseable contract stub for this module — the fan should not have fired",
+            }));
+            return Err(DispatchError::Terminal(format!(
+                "no parseable contract stub for `{module}`"
+            )));
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let abs = cwd.join(&file);
+        if let Some(dir) = abs.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| DispatchError::Transient(e.to_string()))?;
+        }
+        std::fs::write(&abs, &src).map_err(|e| DispatchError::Transient(e.to_string()))?;
+        let defs = py_module_spans(&src).map(|sp| sp.defs.len()).unwrap_or(0);
+        self.events.write_value(serde_json::json!({
+            "event": "skeleton_written", "module": module, "file": file, "defs": defs,
+        }));
+        Ok(TaskRunOutput::from(format!(
+            "skeleton written: {file} ({defs} top-level defs, all raising NotImplementedError)"
+        )))
+    }
+
+    /// S3 fill fan, JOIN step: splice each fill shadow's version of the module back into the
+    /// real file by its owned slot, refusing foreign touches (splice_functions' byte-fence
+    /// against the re-derived skeleton ROOT). Deterministic, zero model calls. Refusals are
+    /// recorded and the slot keeps its NotImplementedError body — the complete gate owns the
+    /// consequence; a join with zero fills or all refusals still returns Ok with honest
+    /// events, because the tree state (skeleton) is valid and the gate is the judge.
+    async fn run_join_step(
+        &self,
+        module: String,
+        req: &DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let file = req
+            .owned_files
+            .first()
+            .cloned()
+            .ok_or_else(|| DispatchError::Terminal("join step owns no file".into()))?;
+        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let abs = cwd.join(&file);
+        let current0 = std::fs::read_to_string(&abs)
+            .map_err(|e| DispatchError::Transient(format!("join: real file unreadable: {e}")))?;
+        // The fence ROOT is the skeleton every fill was fanned from — re-derived, not stored:
+        // module_stub + skeleton_from_stub are deterministic, so this is byte-identical to
+        // what the skeleton step wrote, with no new dispatcher state to keep consistent.
+        let bundle = self.contracts.get().cloned().unwrap_or_default();
+        let root_src = module_stub(&bundle, &module)
+            .as_deref()
+            .and_then(skeleton_from_stub)
+            .unwrap_or_else(|| current0.clone());
+        let prefix = format!("fill::{module}::");
+        let mut fills: Vec<(String, String, PathBuf)> = {
+            let shadows = self.spec_shadows.lock().unwrap();
+            shadows
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .map(|k| {
+                    let slot = k[prefix.len()..].to_string();
+                    (k.clone(), slot, shadows[k].0.path().join(&file))
+                })
+                .collect()
+        };
+        fills.sort();
+        let mut current = current0;
+        let mut spliced = 0usize;
+        let mut refusals: Vec<String> = Vec::new();
+        for (_, slot, shadow_file) in &fills {
+            let Ok(shadow_src) = std::fs::read_to_string(shadow_file) else {
+                refusals.push(format!("{slot}: shadow file missing"));
+                continue;
+            };
+            match splice_functions(&current, &root_src, &shadow_src, &[slot.clone()]) {
+                Ok(composed) => {
+                    current = composed;
+                    spliced += 1;
+                }
+                Err(e) => refusals.push(format!("{slot}: {e:?}")),
+            }
+        }
+        if spliced > 0 {
+            std::fs::write(&abs, &current)
+                .map_err(|e| DispatchError::Transient(format!("join: write failed: {e}")))?;
+        }
+        for (tid, _, _) in &fills {
+            self.discard_speculative(tid).await;
+        }
+        self.events.write_value(serde_json::json!({
+            "event": "join_spliced", "module": module, "file": file,
+            "slots": fills.len(), "spliced": spliced,
+            "refused": refusals.len(), "refusals": refusals,
+        }));
+        Ok(TaskRunOutput::from(format!(
+            "join: {spliced}/{} fill(s) spliced into {file}{}",
+            fills.len(),
+            if refusals.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ({} refused — slots keep their skeleton bodies)",
+                    refusals.len()
+                )
+            }
+        )))
+    }
+
     fn make_shadow(
         &self,
         task_id: &str,
@@ -22926,6 +23052,45 @@ fn multifile_stub_note(owned_files: &[String], enabled: bool) -> String {
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
+        // normalization. Gate first so a coincidentally-named plan task can never trip these
+        // paths on an ordinary run — with the gate off this block is byte-identical to absent.
+        if goose_swarm::fill_fan_enabled() {
+            if let Some(module) = req.task_id.strip_prefix("skeleton::") {
+                return self.run_skeleton_step(module.to_string(), &req).await;
+            }
+            if let Some(module) = req.task_id.strip_prefix("join::") {
+                return self.run_join_step(module.to_string(), &req).await;
+            }
+        }
+        let req = if goose_swarm::fill_fan_enabled() && req.task_id.starts_with("fill::") {
+            // A fill's SCHEDULER identity is the virtual `<file>#<slot>` (held_files stays
+            // disjoint while N fillers target one real file); its AGENT identity must be the
+            // real file — the owned-file completion check and the K5 single-file pin both read
+            // owned_files, and a worker told to write `api.py#handle_get` writes garbage.
+            // Forced speculative: the fill works a shadow the JOIN reads later; nothing
+            // promotes it (promote/discard stay explicit, and the join discards).
+            let mut r = req;
+            r.owned_files = r
+                .owned_files
+                .iter()
+                .map(|f| f.split('#').next().unwrap_or(f).to_string())
+                .collect();
+            r.all_files = {
+                let mut a: Vec<String> = r
+                    .all_files
+                    .iter()
+                    .map(|f| f.split('#').next().unwrap_or(f).to_string())
+                    .collect();
+                a.sort();
+                a.dedup();
+                a
+            };
+            r.speculative = true;
+            r
+        } else {
+            req
+        };
         // Detect the target language from this subtask's manifest (extensions are language-correct after the
         // architect plans them) + its description. Python (the no-cue / .py default) keeps every prompt arm
         // below byte-identical; other languages get the right scaffolding via the TargetLang profile.
