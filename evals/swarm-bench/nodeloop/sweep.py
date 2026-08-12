@@ -665,7 +665,9 @@ QUESTIONS: list[dict] = [
              "per long worker) buys measurable wall at no stable-24 cost, now that K4's keep-tail "
              "carries the recent turns verbatim through compaction."},
     {"arm": "testgen", "nodes": 3, "reps": 1,
-     "note": "S7 mechanism probe — testgen{landed} + generated files + stable-24 guard"},
+     "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
+             "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
+             "unit tree, and the stable-24 guard"},
     {"arm": "sink_shard", "nodes": 3, "reps": 1,
      "asks": "whether sharding a multi-file repair round by the existing file partition lands the "
              "substance two monolithic race waves could not — read complete_fix_wave{shards>=2} "
