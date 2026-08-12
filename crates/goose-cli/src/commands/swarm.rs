@@ -13296,10 +13296,9 @@ impl GooseAgentDispatcher {
             let shadows = self.spec_shadows.lock().unwrap();
             shadows
                 .keys()
-                .filter(|k| k.starts_with(&prefix))
-                .map(|k| {
-                    let slot = k[prefix.len()..].to_string();
-                    (k.clone(), slot, shadows[k].0.path().join(&file))
+                .filter_map(|k| {
+                    k.strip_prefix(&prefix)
+                        .map(|slot| (k.clone(), slot.to_string(), shadows[k].0.path().join(&file)))
                 })
                 .collect()
         };
@@ -13312,7 +13311,7 @@ impl GooseAgentDispatcher {
                 refusals.push(format!("{slot}: shadow file missing"));
                 continue;
             };
-            match splice_functions(&current, &root_src, &shadow_src, &[slot.clone()]) {
+            match splice_functions(&current, &root_src, &shadow_src, std::slice::from_ref(slot)) {
                 Ok(composed) => {
                     current = composed;
                     spliced += 1;
