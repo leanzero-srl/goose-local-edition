@@ -18498,3 +18498,18 @@ committed: lever (c1), DispatcherRecipe + fix_devices capture (c2), fix_round_sp
 probe), c6 (the wiring), c7 (regression + live verify). WATCH on this binary: complete_fix_wave
 events on multi-file rounds (sink_shard now ON) + fix_attempt_progress events populating the
 stall distributions.
+
+## F784 — boundary kills mint PHANTOM scored rows (two in the ledger tonight); the kill artifact's signature and the rule
+
+Caught by refusing a mismatch: bridge_calc on "the newest 3node-r0 archive" returned 0.0225
+against the live 0.6864 — because there were TWO r0 archives 4 minutes apart. The newest was the
+SUCCESSOR unit (scout_doc_urls-n3-r0) my boundary STOP killed ~3 minutes into planning; the sweep
+wrapper still scored its half-born tree, archived it, and wrote a [done] row: score=0.0225,
+void=False, wall 4 min. Same signature one boundary earlier: baseline-n3-r4 0.0394 / 3 min at
+23:11. THE LEDGER NOW CARRIES TWO PHANTOM ROWS — and both read as catastrophic n3 scores to any
+naive mean. RULES: (1) a [done] row with minutes-scale wall born at a boundary STOP is a KILL
+ARTIFACT, excluded from every aggregate (prefix=None is the tell — planning never finished); (2)
+bridge_calc must match archive↔[done] row by SCORE+cell, never by "newest matching dir" (dir
+names repeat per cell — F694's trap, new face). HARNESS FIX QUEUED: the sweep wrapper must mark a
+unit killed by STOP as void=True instead of scoring the stub (the row should never look like a
+datum). Real datum recorded properly: probe_post-n3-r0 sb4 0.6864 (archive ...210 verified).
