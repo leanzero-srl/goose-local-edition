@@ -186,6 +186,8 @@ class Ctx:
         self.sync3: Dict = {}
         self.update_changed: int = 0
         self.update_seen: int = 0
+        self.restart_before: int = 0
+        self.restart_after: int = -1
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -466,6 +468,21 @@ def _(c: Ctx):
              "an app that only INSERTS shows stale statuses forever — refunds never appear")
 
 
+@check("restart_persistence", "C")
+def _(c: Ctx):
+    """BENCH2 rank 6: SIGKILL the app, reboot it on the same --db, and the ledger must still be
+    there — through the app's own API. The guard is the vacuous rule: no pre-kill rows means
+    there was nothing to persist and the check reports that as 0, never as survival."""
+    if not c.restart_before:
+        return g(0.0, "no rows before the kill — nothing to prove persistence with", "n/a")
+    if c.restart_after < 0:
+        return g(0.0, f"app did not come back after SIGKILL (had {c.restart_before} rows)",
+                 "a crash loses the ledger — the store was memory dressed as a database")
+    return g(min(c.restart_after / c.restart_before, 1.0),
+             f"{c.restart_after}/{c.restart_before} rows survived kill+reboot on the same db",
+             "rows that vanish on restart mean the SQLite file was decoration, not persistence")
+
+
 # ── D: finesse (deliberately hard to max) ─────────────────────────────────────────────────────
 
 @check("request_efficiency", "D")
@@ -713,6 +730,34 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                     c.update_seen = refunded
                 finally:
                     vendor_service.restore_payments()
+
+            # BENCH2 rank 6: RESTART PERSISTENCE. The spec's "run repeatedly against the same
+            # database" has only ever been tested within one process lifetime. Kill the app
+            # (SIGKILL — a crash, not a courtesy shutdown), respawn on the SAME db, and count
+            # rows through the app's OWN API (never a raw sqlite open — the judge's WAL
+            # warning: a read-only URI open after SIGKILL can miss WAL-committed rows and
+            # false-flag a correct app). An in-memory store dies here by construction.
+            _s, before_page, _r, _h = _get(f"{base}/api/health")
+            c.restart_before = (before_page or {}).get("payments") or 0
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                proc.kill()
+            proc.wait(timeout=10)
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "vendorsync", "--db", str(db), "--port", str(port)],
+                cwd=c.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, start_new_session=True)
+            deadline2 = time.time() + 20
+            c.restart_after = -1
+            while time.time() < deadline2:
+                if proc.poll() is not None:
+                    break
+                _s, h3, _r, _h = _get(f"{base}/api/health", timeout=2)
+                if _s == 200 and isinstance(h3, dict):
+                    c.restart_after = h3.get("payments") if isinstance(h3.get("payments"), int) else -1
+                    break
+                time.sleep(0.4)
 
             for attr in ("payments", "page5", "capped", "summary", "sync1", "sync2"):
                 if getattr(c, attr) is None:
