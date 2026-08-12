@@ -10720,6 +10720,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn judge_probes_the_shadow_only_in_an_active_fix_round() {
+        let cwd = PathBuf::from("/real");
+        let shadow = PathBuf::from("/shadow");
+        // No round: always the real tree, even when a shadow exists (speculation twins keep
+        // today's judge semantics byte-identical).
+        assert_eq!(
+            judge_probe_root_for(false, Some(shadow.clone()), cwd.clone()),
+            cwd
+        );
+        // Active round + shadow: probe what the fix agent actually edits.
+        assert_eq!(
+            judge_probe_root_for(true, Some(shadow.clone()), cwd.clone()),
+            shadow
+        );
+        // Active round, no shadow (yet): the real tree, never a panic.
+        assert_eq!(judge_probe_root_for(true, None, cwd.clone()), cwd);
+    }
+
+    #[test]
     fn fix_mode_only_arms_with_an_active_round() {
         // c3: a fix::-named plan task with NO active round passes through as an ordinary task —
         // the fill_fan gate's rule, applied to fix mode.
@@ -20269,7 +20288,13 @@ impl Judge for GooseAgentDispatcher {
                 .unwrap_or_else(|| load_config().spiral_thinking_chars),
             ..JudgeConfig::default()
         };
-        let cwd = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        // c5: the owned-file loop AND the activity-digest read below both derive from this one
+        // binding — a fix-mode task is probed at its SHADOW, everything else at the real tree.
+        let cwd = judge_probe_root_for(
+            self.fix_round.lock().unwrap().is_some(),
+            self.speculative_root(&req.task_id),
+            std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone()),
+        );
         let mut file_contents: Vec<(String, String)> = Vec::new();
         let mut compile_errors: Vec<(String, String)> = Vec::new();
         let mut any_owned_written = false;
@@ -23407,6 +23432,22 @@ struct FixRound {
 /// fix::-named plan task passes through as an ordinary task (tested).
 fn fix_mode_applies(task_id: &str, round_active: bool) -> bool {
     round_active && task_id.starts_with("fix::")
+}
+
+/// F781/#16 c5 (the graft the adversarial verify demanded): pick the tree the judge PROBES. A
+/// fix-mode task writes ONLY its shadow — heartbeats included — so probing the real tree would
+/// deterministically BrokenCode-kill every syntax-error fix at first inspection (the syntax error
+/// is in the real tree BY DEFINITION; that is why the fix task exists) and deterministic-Accept
+/// compiling-tree fixes at ~420s (stale real-tree mtime + no digest = "not producing"). Pure so
+/// the selection is testable without a dispatcher; gated on an ACTIVE round, so run-1 judge
+/// behavior (fill:: tasks, speculation twins) is byte-identical.
+fn judge_probe_root_for(round_active: bool, shadow: Option<PathBuf>, cwd: PathBuf) -> PathBuf {
+    if round_active {
+        if let Some(root) = shadow {
+            return root;
+        }
+    }
+    cwd
 }
 
 /// Judge kills are JoinHandle aborts: cancellation lands at an await point and runs NO epilogue
