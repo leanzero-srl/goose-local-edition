@@ -188,6 +188,7 @@ class Ctx:
         self.update_seen: int = 0
         self.restart_before: int = 0
         self.restart_after: int = -1
+        self.val_matrix: List = []
         self.concurrent_total: Optional[int] = None
         self.bad_limit: Optional[int] = None
         self.bad_offset: Optional[int] = None
@@ -379,10 +380,16 @@ def _(c: Ctx):
 
 @check("input_validation", "B")
 def _(c: Ctx):
-    parts = [c.bad_limit == 400, c.bad_offset == 400,
-             c.notfound == 404 and (c.notfound_body or {}).get("error") == "not_found"]
-    return g(sum(parts) / 3, f"bad-limit={c.bad_limit} bad-offset={c.bad_offset} 404={c.notfound}",
-             "invalid input is accepted or crashes instead of being rejected cleanly")
+    """BENCH2 rank 7: 3 binary cells -> a 7-cell matrix, each cell half status + half the
+    DOCUMENTED error body. A 500 on garbage input, a 400 with an empty body, and a correct
+    rejection now score differently instead of collapsing into one bit."""
+    if not c.val_matrix:
+        return g(0.0, "matrix not exercised", "n/a")
+    score = sum(cell for (_p, _s, cell) in c.val_matrix) / len(c.val_matrix)
+    worst = [f"{p}={st}" for (p, st, cell) in c.val_matrix if cell < 1.0]
+    return g(score, f"{score * len(c.val_matrix):.1f}/{len(c.val_matrix)} cells clean" +
+             (f"; failing: {', '.join(worst[:3])}" if worst else ""),
+             "invalid input accepted or crashing instead of the documented rejection")
 
 
 @check("ui_states", "B")
@@ -696,6 +703,26 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
             c.bad_limit, _b, _r, _h = _get(f"{base}/api/payments?limit=-1")
             c.bad_offset, _b, _r, _h = _get(f"{base}/api/payments?offset=abc")
             c.notfound, c.notfound_body, _r, _h = _get(f"{base}/api/nope")
+            # BENCH2 rank 7: the 7-cell validation matrix — each cell is (status is 400/404) +
+            # (body is the DOCUMENTED error JSON), graded half each. The spec's own sentence:
+            # non-numeric or negative limit/offset -> 400 {"error":"bad_request"}; unknown path
+            # -> 404 {"error":"not_found"}. Every response JSON.
+            for path, want_status, want_err in [
+                ("/api/payments?limit=-1", 400, "bad_request"),
+                ("/api/payments?limit=abc", 400, "bad_request"),
+                ("/api/payments?limit=", 400, "bad_request"),
+                ("/api/payments?offset=-5", 400, "bad_request"),
+                ("/api/payments?offset=abc", 400, "bad_request"),
+                ("/api/nope", 404, "not_found"),
+                ("/api/payments/deep/unknown", 404, "not_found"),
+            ]:
+                st, body, _raw, _hh = _get(f"{base}{path}")
+                cell = 0.0
+                if st == want_status:
+                    cell += 0.5
+                if isinstance(body, dict) and body.get("error") == want_err:
+                    cell += 0.5
+                c.val_matrix.append((path, st, cell))
 
             # two overlapping syncs must not duplicate or lose rows
             results: List = []
