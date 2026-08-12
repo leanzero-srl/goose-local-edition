@@ -18414,3 +18414,49 @@ DESIGN (top engine item, lands at the next boundary — no mid-run rebuild):
   build arm excludes (unblocks n1 supervision without changing what n1 BUILDS).
 Registered check: on a tail, `pre_review`/`sink_review`/`testgen` events fire on the idle devices
 and judge_observed spam drops to ~0; stable-24 unaffected (read-only), wall not worse.
+
+
+## F781 — Mihai's architecture direction: the tail is an ORCHESTRATOR that emits tasks; the judge supervises EVERY phase (the top item now)
+
+Mihai, on the monolithic tail: "the tail node — why is it not producing tasks? why is it taking
+all on its own? ... the final tail could easily produce tasks similar to a workflow Claude Code
+does, creating specific, very specific tasks for what is happening, so the final tail isn't done
+by one node alone. The tail task is sort of orchestration to create more tasks — similar to how
+ALL phases should work. In all phases the judge should be present whenever a node is available,
+to avoid loops or mistakes and cut it short."
+
+This is the correct and deepest form of the ratio thesis, and it exceeds F779 (which is only the
+PASSIVE half — idle nodes doing read-only review). Two pieces:
+
+### 1. DYNAMIC TASK CREATION — the tail (and every phase) emits DAG tasks at runtime
+Today's hard limit (verified while designing S4): the DAG is FROZEN at plan end; a running task
+CANNOT create tasks. `TaskSplit` fires in ZERO of 75+ archived runs. So the sink, on finding N
+defects, fixes them ITSELF inline on ONE node. The fix-sharding I built (sink_shard,
+complete_fix_wave, group_findings_by_file) is a hardcoded fanout INSIDE the sink — not the sink
+emitting tasks. The machinery to do it right EXISTS and is unused: `splice_specs` already mutates
+a live DAG (the replanner path), `group_findings_by_file` already yields a disjoint file
+partition, expand_subsplits already rewrites a module into skeleton/fills/join. The missing wire:
+when the sink's gate produces findings, emit `fix::<file-group>` (and `verify::<cmd>`,
+`testgen::<contract>`) as REAL DAG tasks via splice_specs, so idle nodes claim them like any
+work — the sink becomes an ORCHESTRATOR, not a worker. Generalize: any phase that discovers
+parallelizable work (contracts finding gaps, detail finding sub-modules, the sink finding fixes)
+splices tasks the fleet picks up. This is the Claude-Code-workflow shape Mihai names, and it is
+the real "more nodes = faster tail". Flagged risk (from S4): runtime DAG mutation is UNPROVEN
+here — ship behind a lever with the mutation-count in its registered check, one phase at a time
+(the sink first, its file-partition is already disjoint-by-construction and safe).
+
+### 2. JUDGE IN EVERY PHASE whenever a node is free
+The judge today only targets in-flight WORKER tasks; during the sink/tail it goes inert
+(no_idle_device), which is exactly how the F408 repair-loop-at-cap cases slipped through
+unsupervised. Extend pick_judge_target to supervise the sink/tail/repair phases too whenever a
+device is free — catch a spinning repair loop or a stuck orchestrator early and cut it. Small
+change (the judge exists; it is scoped to build). Pairs with F779: idle nodes do productive work
+AND are watched.
+
+PRIORITY: this is now the TOP engine item, above the deliberate-merge trio, S3-fill wiring, and
+the F774/advertised-POST harness items — because it is the direct mechanism for the campaign's
+whole goal. Sequence: (a) judge-in-all-phases (small, safe, immediate value); (b) sink-emits-fix-
+tasks via splice_specs behind a lever (the safe first dynamic-creation case — disjoint partition);
+(c) generalize dynamic emission to contracts/detail; (d) fold F779's read-only review under the
+same "idle node, directed work" umbrella. F779 (passive review) + F778 (spin fix) shipped tonight
+as the down-payment; this is the build-out.
