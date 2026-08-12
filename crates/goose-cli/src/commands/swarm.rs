@@ -26873,7 +26873,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
-    let _ = &dispatcher_recipe;
+    // F781/#16 c6: the fix-round dispatcher is seeded with the SAME frozen contracts + pillars the
+    // run-1 dispatcher got — captured at their set sites below (set_contracts takes ownership).
+    let mut fix_contracts_bundle = String::new();
+    let mut fix_pillars_block = String::new();
 
     // #136 — FREEZE THE OPERATOR'S SPEC, right here, before a single model call can touch it. Research
     // findings are appended to opts.prompt at :19660 and clarify Q&A at :19799, and a retarget round then
@@ -28632,6 +28635,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .map(|id| id.trim().to_string())
                     .collect();
                 let frozen_n = injected.len();
+                fix_contracts_bundle = bundle.clone();
                 dispatcher.set_contracts(bundle);
                 if frozen_n == 0 {
                     eprintln!(
@@ -28700,7 +28704,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "  pillars: {} distilled and injected into every worker",
                 pillars.pillars.len()
             );
-            dispatcher.set_pillars(render_pillars_block(&pillars));
+            fix_pillars_block = render_pillars_block(&pillars);
+            dispatcher.set_pillars(fix_pillars_block.clone());
         }
     }
 
@@ -29634,6 +29639,117 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                          rather than damaged by an unverified edit"
                     },
                 }));
+            } else if fix_sched() && shard_this_round && !fleet_models.is_empty() {
+                // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
+                // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
+                // Scheduler dispatches over the same fleet — so a fix round gets claims, capacity
+                // discipline, judge supervision (probing SHADOWS, c5) and tail-review for free,
+                // instead of the hand-rolled fan below. The FRESH dispatcher is load-bearing:
+                // reusing run 1's would re-arm its OnceLock silent no-op, stale owner_snapshots
+                // restore, and sink_review_findings carryover. max_attempts=1 is one-shot parity
+                // with the fan — a retry would re-shadow from a CURRENT tree against a STALE
+                // baseline. The round loop's next real-tree gate stays the sole authority on
+                // green; this path never touches green_blocking.
+                let baseline = verdict.findings.len();
+                let specs = fix_round_specs(
+                    &verdict.findings,
+                    &smoke_all_files,
+                    round as usize,
+                    complete_lang,
+                );
+                match goose_swarm::Dag::from_specs(specs) {
+                    Err(e) => {
+                        // NEVER `?` out of run_swarm from the advisory fix path — an unbuildable
+                        // fix DAG skips the round exactly like the stuck-bail Err.
+                        sink.write_value(serde_json::json!({
+                            "event": "complete_fix_sched_result", "round": round,
+                            "error": format!("fix DAG build failed: {e}"),
+                        }));
+                    }
+                    Ok(fix_dag) => {
+                        match build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await
+                        {
+                            Err(e) => {
+                                sink.write_value(serde_json::json!({
+                                    "event": "complete_fix_sched_result", "round": round,
+                                    "error": format!("fresh dispatcher build failed: {e}"),
+                                }));
+                            }
+                            Ok(fresh) => {
+                                *fresh.spec_frozen.lock().unwrap() = opts.prompt.clone();
+                                if !fix_contracts_bundle.is_empty() {
+                                    fresh.set_contracts(fix_contracts_bundle.clone());
+                                }
+                                if !fix_pillars_block.is_empty() {
+                                    fresh.set_pillars(fix_pillars_block.clone());
+                                }
+                                fresh.begin_fix_round(
+                                    baseline,
+                                    complete_lang,
+                                    smoke_all_files.clone(),
+                                    round as usize,
+                                );
+                                let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
+                                    .with_sink(sink.clone())
+                                    .with_doc_facts(doc_facts.clone())
+                                    .with_pause_file(working_dir.join(".swarm").join("pause"));
+                                // The judge/pre-review mirror run 1's env resolution — an
+                                // env-disabled judge must NOT reappear for fix rounds. No
+                                // replanner, no speculation: a fix round neither replans nor
+                                // races twins of its own tasks.
+                                if judge_on {
+                                    fix_run = fix_run.with_judge(
+                                        fresh.clone() as Arc<dyn Judge>,
+                                        JudgeConfig::default(),
+                                    );
+                                }
+                                if prereview_on {
+                                    fix_run = fix_run
+                                        .with_pre_reviewer(fresh.clone() as Arc<dyn PreReviewer>);
+                                }
+                                let report = fix_run
+                                    .run_with_decisions(
+                                        fix_dag,
+                                        fresh.clone() as Arc<dyn TaskDispatcher>,
+                                        opts.prompt.clone(),
+                                        user_decisions.clone(),
+                                    )
+                                    .await;
+                                fresh.end_fix_round();
+                                // The fix run's review findings have no consumer yet — drained to
+                                // an informational event so they are visible, never green-blocking.
+                                let dropped = fresh.drain_sink_review();
+                                match report {
+                                    Ok(r) => {
+                                        sink.write_value(serde_json::json!({
+                                            "event": "complete_fix_sched_result", "round": round,
+                                            "done": r.done.len(), "failed": r.failed.len(),
+                                            "review_findings_dropped": dropped.len(),
+                                        }));
+                                    }
+                                    Err(e) => {
+                                        sink.write_value(serde_json::json!({
+                                            "event": "complete_fix_sched_result", "round": round,
+                                            "error": e.to_string(),
+                                            "review_findings_dropped": dropped.len(),
+                                        }));
+                                    }
+                                }
+                                // A desktop Pause (shared pause file) can hold the fix run past
+                                // the completion cap, which is only enforced at round heads —
+                                // emit the overrun so the next round-head cap check is legible.
+                                if let Some(dl) = cap_deadline {
+                                    if std::time::Instant::now() >= dl {
+                                        sink.write_value(serde_json::json!({
+                                            "event": "complete_cap_overrun_after_fix_sched",
+                                            "round": round,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
                 let (groups, unassigned) =
                     group_findings_by_file(&verdict.findings, &smoke_all_files);
