@@ -703,6 +703,12 @@ QUESTIONS: list[dict] = [
      "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
              "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
              "unit tree, and the stable-24 guard"},
+    {"arm": "fix_sched", "nodes": 3, "reps": 1,
+     "asks": "whether repair-as-a-real-scheduler-run (fix::r{N} DAG tasks on a fresh dispatcher, "
+             "judge probing SHADOWS, tail-review live) matches the fan's quality at no worse wall "
+             "— read complete_fix_dispatched{path:'sched'} FIRST (absent on a multi-file round = "
+             "the lever examined nothing), then no BrokenCode storm at ~90s, then promoted shards "
+             "strictly-better only; stable-24 below spread or wall above the fan arm kills it."},
     {"arm": "sink_shard", "nodes": 3, "reps": 1,
      "asks": "whether sharding a multi-file repair round by the existing file partition lands the "
              "substance two monolithic race waves could not — read complete_fix_wave{shards>=2} "
