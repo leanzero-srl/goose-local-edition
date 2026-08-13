@@ -23857,6 +23857,19 @@ impl GooseAgentDispatcher {
                     .to_string()
                     .into());
             }
+            // F799 polish: a CLEAN post-wave tree means nothing can promote (strictly-better
+            // than 0 is impossible) — observed live on the first proof run, where the join
+            // spent a full agent generation on work that was discarded by construction.
+            if g.findings.is_empty() {
+                self.events.write_value(serde_json::json!({
+                    "event": "complete_fix_completed", "path": "sched",
+                    "round": fr.round, "task_id": req.task_id,
+                    "skipped": "the real tree is already clean after the wave — nothing can beat 0",
+                }));
+                return Ok("fix join skipped: the post-wave tree is clean"
+                    .to_string()
+                    .into());
+            }
             g.findings.len()
         } else {
             fr.baseline
