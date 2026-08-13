@@ -18763,3 +18763,22 @@ comment block documented this failure mode and its new code path had recreated i
 
 Queue state: testgen running (since 15:04), then judge_nudge, then fix_sched — the two open
 proofs land within ~3 hours.
+
+## F797 — the probe_post lows are sync-acquisition variance, not probe damage; resync_idempotent fails in 4/4 recent cells
+
+Check-vector comparison across four recent archives (0.4759, 0.4833 vs 0.7733, 0.7247): the two
+low cells fail 28-29 checks dominated by the SYNC-DOWNSTREAM family (sync_completeness,
+payment_row_shape, total_field, chronological, summaries — all 0.0) — the classic "the app never
+acquired the collection" signature, the same +0.160-class failure Q2 identified, striking 2 of 4
+builds. The probe itself is not the cause: the high cells carry the same probe and pass the sync
+family. THE CONSTANT instead: resync_idempotent fails 0.0 in ALL FOUR cells (second_sync_cost in
+3 of 4) — the conditional-request family the probe_post arm exists to expose is a PERSISTENT,
+UNREPAIRED loss across every recent build. The arm's premise is confirmed (the loss is real and
+the gate now reports it); what has not happened yet is the repair loop cracking it — the findings
+reach the fix loop but the fix never lands the conditional-request behavior. That is the next
+quality frontier after the proof arms: a repair-directed hint for the ETag/If-None-Match keying
+(the arm gate already names the fix: key each page ETag by path+offset+limit).
+
+Also: testgen-n3-r0 landed 0.5774/76min with its MECHANISM FULLY FIRING — 3/3 generated test
+files landed (tests/generated/test_gen_0/1/2.py), the first live proof of S7 idle-slot test
+generation. Score effect needs replicates; the n=1 mechanism question is answered YES.
