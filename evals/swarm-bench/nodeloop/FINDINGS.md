@@ -18577,3 +18577,15 @@ normally installs it) — untriaged. The gate is REVERTED to its proven two-crat
 gap documented in-file: freezing the gate red on old debt would block every boundary, and a gate
 that cannot go green gates nothing. Core-triage is a working-session item; until then core
 changes get targeted lib-test runs at their commit (tonight's two adoptions each did).
+
+## F785b — fixstats over ALL joined attempts: stillness has ZERO discriminating power; the early-cut is dead as designed
+
+nodeloop/fixstats.py (new; joins every fix_attempt_progress to its complete_fix_completed) over
+the corpus so far: 6 joined attempts, 6/6 IMPROVED the tree, and 5/6 had a >=300s still window —
+including one with a 780s still and first write at 900s that still verified to 0 findings. One
+improved attempt never registered a fingerprint change at all (writes invisible at 60s/mtime-secs
+granularity — the instrument under-reads). VERDICT: on every datum available, tree-stillness
+predicts NOTHING — every attempt a naive stall-cut would have killed was productive. The
+early-cut-on-stillness mechanism is closed, not deferred: fix_cap_secs already bounds the cost of
+a truly dead attempt, and any future cut must use a different signal (session-trace growth) AND
+first show a population of long-still WORTHLESS attempts, which so far does not exist.
