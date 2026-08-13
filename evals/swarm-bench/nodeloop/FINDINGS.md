@@ -18681,3 +18681,19 @@ the queue reaches the judge_nudge arm — running that arm against a binary with
 would have produced exactly the fabricated no-effect row the preflight exists to prevent, just
 at the binary layer where the preflight cannot see it. The kill victim of this crossing was
 voided mechanically (second clean crossing since F784's fix).
+
+## F792 — the acp red is a REAL-REGRESSION CANDIDATE, not test drift: the turn-context block is absent from the outbound request
+
+Triaged the remaining core integration red (acp test_close_session). Established: the mock
+expects the user message to carry the injected `</turn-context>\nwhat is 1+1` block; the ACTUAL
+outbound body contains NO injected turn-context anywhere (its only "Turn Context" text is the
+system-prompt documentation ABOUT the block). The injection site is live on the main reply loop
+(agent.rs:2027 → inject_moim), and inject_moim has exactly three ways to produce nothing: the
+SKIP thread-local, a sub-32k context limit (gpt-4.1 is not), or the silent
+has_unexpected_issues REVERT after fix_conversation. The revert path is the suspect — it drops
+the block by design with only a tracing::warn, and this test proves the drop can fire on a real
+conversation shape. If it fires on live acp desktop sessions, every turn loses its
+context block (time, workdir, compaction status, turn budget) silently. This is now a DELIBERATE
+working-session item: reproduce with the warn visible, identify which fix_conversation issue
+fires, and decide revert-vs-repair. NOT patching the test expectation — the test may be the only
+thing telling the truth here.
