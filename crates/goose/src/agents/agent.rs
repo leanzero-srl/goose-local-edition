@@ -2331,38 +2331,72 @@ impl Agent {
                                     })
                                     .cloned()
                                     .collect();
-                                if !direct_thinking.is_empty() {
-                                    let thinking_msg = Message::new(
-                                        response.role.clone(),
-                                        response.created,
-                                        direct_thinking.clone(),
+                                // When thinking arrived in earlier stream chunks it was stored as
+                                // standalone thinking-only messages; reuse that thinking on the
+                                // tool-call messages and drop the standalone messages so the
+                                // thinking isn't duplicated.
+                                // Always accumulate ALL prior thinking — even when
+                                // direct_thinking is non-empty (reasoning arrived on the same
+                                // chunk as tool_calls) — because otherwise only the last chunk's
+                                // reasoning ends up on split tool-call messages.
+                                // Also extract thinking from mixed (thinking+text) messages,
+                                // not just pure-thinking-only ones.
+                                // ADAPTED from upstream 1e03bbb56: our Conversation is a
+                                // validated newtype with no in-place mutation, so the
+                                // accumulate/strip pass rebuilds the list functionally instead
+                                // of using messages_mut()/remove().
+                                let is_thinking = |c: &MessageContent| {
+                                    matches!(
+                                        c,
+                                        MessageContent::Thinking(_)
+                                            | MessageContent::RedactedThinking(_)
                                     )
-                                    .with_id(format!("msg_{}", Uuid::new_v4()));
-                                    messages_to_add.push(thinking_msg);
-                                }
-                                // When thinking arrived in an earlier stream chunk (stored as a
-                                // thinking-only message) and this chunk has only tool calls,
-                                // reuse that thinking so each split request_msg carries it.
+                                };
+                                let mut accumulated_prior: Vec<MessageContent> = Vec::new();
+                                let rebuilt: Vec<Message> = messages_to_add
+                                    .messages()
+                                    .iter()
+                                    .filter_map(|m| {
+                                        if m.role != response.role || m.content.is_empty() {
+                                            return Some(m.clone());
+                                        }
+                                        let thinking_only = m.content.iter().all(is_thinking);
+                                        let has_thinking = m.content.iter().any(is_thinking);
+                                        let is_split_request = m.content.iter().any(|c| {
+                                            matches!(c, MessageContent::ToolRequest(_))
+                                        });
+                                        // Prior-split request_msg items already carry their own
+                                        // thinking copy — never re-accumulate or strip those.
+                                        if has_thinking && !is_split_request {
+                                            accumulated_prior.extend(
+                                                m.content
+                                                    .iter()
+                                                    .filter(|c| is_thinking(c))
+                                                    .cloned(),
+                                            );
+                                        }
+                                        if thinking_only {
+                                            // Dropped: its thinking rides the split tool-call
+                                            // messages below instead of duplicating here.
+                                            None
+                                        } else if has_thinking && !is_split_request {
+                                            let mut m2 = m.clone();
+                                            m2.content.retain(|c| !is_thinking(c));
+                                            Some(m2)
+                                        } else {
+                                            Some(m.clone())
+                                        }
+                                    })
+                                    .collect();
+                                messages_to_add = Conversation::new_unvalidated(rebuilt);
                                 let response_thinking = if direct_thinking.is_empty() {
-                                    messages_to_add
-                                        .messages()
-                                        .iter()
-                                        .rev()
-                                        .find(|m| {
-                                            m.role == response.role
-                                                && !m.content.is_empty()
-                                                && m.content.iter().all(|c| {
-                                                    matches!(
-                                                        c,
-                                                        MessageContent::Thinking(_)
-                                                            | MessageContent::RedactedThinking(_)
-                                                    )
-                                                })
-                                        })
-                                        .map(|m| m.content.clone())
-                                        .unwrap_or_default()
-                                } else {
+                                    accumulated_prior
+                                } else if accumulated_prior.is_empty() {
                                     direct_thinking
+                                } else {
+                                    let mut merged = accumulated_prior;
+                                    merged.extend(direct_thinking);
+                                    merged
                                 };
 
                                 for request in frontend_requests.iter().chain(remaining_requests.iter()) {
