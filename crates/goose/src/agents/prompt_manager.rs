@@ -481,8 +481,16 @@ mod tests {
             use_login_shell_path: false,
         };
 
+        // FEATURE-STABLE enumeration (F787): code_execution registers only under the
+        // `code-mode` cargo feature, and feature UNIFICATION flips it on whenever goose-cli
+        // builds in the same invocation — so a snapshot that includes it passes or fails
+        // depending on which crates build alongside. Filter it out so the snapshot is identical
+        // under every feature set.
         let mut extensions: Vec<ExtensionInfo> = PLATFORM_EXTENSIONS
             .values()
+            // By literal name: the module itself is cfg-gated, so its EXTENSION_NAME const
+            // is unreachable in the very builds this filter exists to make identical.
+            .filter(|def| def.name != "code_execution")
             .map(|def| {
                 let client = (def.client_factory)(context.clone());
                 let instructions = client.get_instructions().unwrap_or_default();

@@ -18561,3 +18561,19 @@ the turn-context prefix-cache commit). The greengate's 8 suites do not include i
 regen can mask a real system-prompt regression; a working session should diff the snapshot delta
 deliberately. Queued. (The greengate's suite list should also grow this lib target once the
 snapshot is resolved — a gate that skips a red suite is the F718 class again.)
+
+## F787b — the core test surface holds THREE classes of pre-existing red; gate widening reverted deliberately
+
+Attempting to close F787 by adding core to the greengate surfaced the full picture: (1) the
+feature-UNSTABLE snapshot — code_execution registers only under the code-mode feature and cargo
+feature unification flips it on whenever goose-cli builds in the same invocation, so
+test_all_platform_extensions passed solo and failed beside goose-cli — FIXED tonight (the test
+enumeration filters code_execution by literal name; snapshot regenerated for the stable output,
+verified to differ only by that section). (2) The acp integration suite: test_close_session
+fails on a mock-provider body-shape expectation (turn-context suffix absent) — untriaged.
+(3) The bare lib suite: chatgpt_codex jwt + gcpauth tests panic without a process-level
+CryptoProvider (jsonwebtoken 10.x wants rust_crypto/aws_lc_rs chosen; some feature combo
+normally installs it) — untriaged. The gate is REVERTED to its proven two-crate scope with the
+gap documented in-file: freezing the gate red on old debt would block every boundary, and a gate
+that cannot go green gates nothing. Core-triage is a working-session item; until then core
+changes get targeted lib-test runs at their commit (tonight's two adoptions each did).
