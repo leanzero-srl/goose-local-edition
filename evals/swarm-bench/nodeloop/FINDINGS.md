@@ -18632,3 +18632,39 @@ string) — present-controls verified instead: complete_fix_sched_result + GOOSE
 (adapted), 8e54bad4e resume-overrides + user-only implicit resume, the feature-stable snapshot
 fix. The F784 void-on-STOP fix marks this crossing's kill victim void mechanically — first
 boundary with zero phantom risk.
+
+## F790 — Mihai's judge-evolution directive: nudge with direction, more instruments, and the judge as the user's mid-run interlocutor
+
+Mihai, on the omnipresent judge (2026-08-13 ~08:05): "if it's idle then observing is not bad. One
+thing we could use it for is questions from the user — while the process is going the user may
+ask questions and the judge's perspective is quite good. Alternatively give the judge more
+instruments to carry out better inspections and support the tail-end model. My opinion though is
+that the judge should probably nudge with direction or improvement in direction too if it sees
+something going wrong."
+
+Mapped to the machinery:
+1. NUDGE WITH DIRECTION (his emphasis — build first). The omni-judge already inspects a RUNNING
+   call's reasoning mid-stream, and its reply format is VERDICT|CONFIDENCE|hint — the hint is
+   PARSED-PAST TODAY (only the verdict is read) and its sole lever is abort-at-2-corroborated-
+   looks. The nudge: at the point where it would abort, CANCEL the in-flight generation, append
+   the judge's hint as a supervisor message to the SAME session, and continue the turn loop —
+   an in-place redirect that preserves the worker's context instead of burning the attempt
+   (kill+redispatch loses the session; the measured misread-kill class F165/omni-corroboration
+   history is exactly why in-place is safer than kill). Bounded redirects per call (e.g. 2),
+   then the existing abort. Same mailbox mechanism serves the scheduler-side judge: trouble
+   verdict below the kill threshold → note lands at the worker's next turn. Lever
+   GOOSE_SWARM_JUDGE_NUDGE, default OFF, arm + registered check (nudge event fires; the nudged
+   call's post-nudge behavior changes — tool call within N turns; stable-24 guard).
+2. MORE INSTRUMENTS. The judge's probe today: owned-file mtimes/syntax, activity digest,
+   reasoning tail. Add the cheap deterministic set: pytest --collect-only on the worker's tree
+   (import health), the fix-progress fingerprint (already built, F785), and the last tool
+   ERRORS from the digest — each folded into the judge context so verdicts and hints cite
+   evidence, which is also what "supporting the tail-end model" needs (its findings feed the
+   sink).
+3. USER QUESTIONS MID-RUN. The judge's context assembly (DAG state + digests + events tail) is
+   the right base for answering an operator's question DURING a run. Channel: a
+   .swarm/questions/ inbox the engine polls at judge cadence; an idle/supervision node answers
+   with judge context; answer lands in .swarm/answers/ + an event the desktop can render. The
+   supervision pool (F779 i3) gives this a home that never steals a build slot.
+Sequence: (1) is the top engine item after the c7 proof; (2) folds into (1)'s context build;
+(3) is its own increment behind a lever, desktop surface later.
