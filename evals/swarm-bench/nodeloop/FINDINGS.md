@@ -18782,3 +18782,17 @@ quality frontier after the proof arms: a repair-directed hint for the ETag/If-No
 Also: testgen-n3-r0 landed 0.5774/76min with its MECHANISM FULLY FIRING — 3/3 generated test
 files landed (tests/generated/test_gen_0/1/2.py), the first live proof of S7 idle-slot test
 generation. Score effect needs replicates; the n=1 mechanism question is answered YES.
+
+## F798 — the judge-nudge proof: an HONEST NULL on the mechanism, a strong result on the safety half
+
+judge_nudge-n3-r0: 0.8193 / 58 min (bridge sb3 0.8194) — the FASTEST full unit of the batch and a
+top-quartile score, with the lever ON the whole run. judge_nudge events: ZERO — no call crossed
+the omni-judge's corroborated-looping threshold, so the redirect never had a loop to redirect.
+Per the arm's own gate that is "examined nothing on the mechanism, and says so" — an honest null,
+NOT a pass. What the run DOES establish is the safety half: the lever armed changes nothing on a
+healthy run (no spurious nudges, no BrokenCode storm, judge quiet at 65 observations, score at
+the high end). The mechanism proof needs a run containing a genuine loop-class call — those
+arrive at base rates (~1 in 3-4 runs historically), so the arm's future replicates will meet one.
+#17 CLOSES: the mechanism is built, unit-tested, live in the binary, safety-proven live, and
+arm-gated for the replicate that meets a real loop. The lever stays default OFF until that
+observation lands.
