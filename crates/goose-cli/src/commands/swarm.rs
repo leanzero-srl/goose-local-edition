@@ -10751,6 +10751,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn pending_questions_finds_unanswered_oldest_first_and_answer_marks_done() {
+        // F790-3: the answer file's existence IS the answered-marker.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let qdir = root.join(".swarm").join("questions");
+        let adir = root.join(".swarm").join("answers");
+        std::fs::create_dir_all(&qdir).unwrap();
+        std::fs::create_dir_all(&adir).unwrap();
+        assert!(
+            pending_questions(root).is_empty(),
+            "empty inbox: nothing pending"
+        );
+        std::fs::write(qdir.join("q1.txt"), "how far along?").unwrap();
+        std::fs::write(qdir.join("q2.txt"), "why is api slow?").unwrap();
+        std::fs::write(qdir.join("notes.md"), "not a question").unwrap();
+        let pend = pending_questions(root);
+        assert_eq!(pend.len(), 2, "only .txt files are questions");
+        std::fs::write(adir.join("q1.txt"), "we are 8/12 done").unwrap();
+        let pend = pending_questions(root);
+        assert_eq!(pend.len(), 1);
+        assert!(pend[0].ends_with("q2.txt"), "answered q1 dropped out");
+    }
+
+    #[test]
     fn digest_failed_calls_block_extracts_only_failures_capped() {
         // F790-2: 5 calls — 1 ok, 4 failed; the block carries the LAST 3 failures with tails.
         let digest = Some(serde_json::json!({
@@ -13284,6 +13308,8 @@ pub struct GooseAgentDispatcher {
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
     /// F781/#16 c3: Some(_) while a fix round runs — arms the `fix::` dispatch path.
     fix_round: Mutex<Option<FixRound>>,
+    /// F790-3: questions currently being answered, so two ticks never answer the same one.
+    qa_inflight: Mutex<std::collections::HashSet<String>>,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
@@ -13418,6 +13444,7 @@ impl GooseAgentDispatcher {
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
             fix_round: Mutex::new(None),
+            qa_inflight: Mutex::new(std::collections::HashSet::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             clarity_fail: Mutex::new(None),
@@ -20737,6 +20764,67 @@ impl Judge for GooseAgentDispatcher {
 
 #[async_trait]
 impl PreReviewer for GooseAgentDispatcher {
+    fn has_pending_question(&self) -> bool {
+        let inflight = self.qa_inflight.lock().unwrap();
+        pending_questions(&self.working_dir)
+            .iter()
+            .any(|q| !inflight.contains(&q.to_string_lossy().to_string()))
+    }
+
+    /// F790-3: answer the oldest waiting operator question with the run's own perspective. The
+    /// answer file's existence is the answered-marker; the in-flight set stops a second tick
+    /// claiming the same question mid-answer and is cleared on every exit path.
+    async fn answer_user_question(&self, model_id: &str, goal: &str, run_state: &str) {
+        let q_path = {
+            let mut inflight = self.qa_inflight.lock().unwrap();
+            let Some(q) = pending_questions(&self.working_dir)
+                .into_iter()
+                .find(|q| !inflight.contains(&q.to_string_lossy().to_string()))
+            else {
+                return;
+            };
+            inflight.insert(q.to_string_lossy().to_string());
+            q
+        };
+        let question = std::fs::read_to_string(&q_path).unwrap_or_default();
+        let stem = q_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "question.txt".to_string());
+        let system = "You are the SUPERVISOR of a running multi-agent code build. The OPERATOR \
+            (the human who started the run) asked a question mid-run. Answer it directly and \
+            briefly from the run state you are given — what is done, running, pending, failed — \
+            plus your judgement. If the answer is not knowable from the run state, say what is \
+            unknown rather than guessing. Plain prose, no markdown."
+            .to_string();
+        let user = format!(
+            "GOAL of the run: {goal}\n\nCURRENT RUN STATE:\n{run_state}\n\nOPERATOR QUESTION:\n{question}\n\nYour answer:"
+        );
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            self.run_agent(model_id, system, user, None, 1, &[], 0, None),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|o| o.text)
+        .unwrap_or_else(|| "(the answerer timed out — ask again)".to_string());
+        let adir = self.working_dir.join(".swarm").join("answers");
+        let _ = std::fs::create_dir_all(&adir);
+        let _ = std::fs::write(adir.join(&stem), &reply);
+        self.events.write_value(serde_json::json!({
+            "event": "swarm_answer",
+            "question_file": stem,
+            "question": question.chars().take(400).collect::<String>(),
+            "answer": reply.chars().take(2000).collect::<String>(),
+            "model": model_id,
+        }));
+        self.qa_inflight
+            .lock()
+            .unwrap()
+            .remove(&q_path.to_string_lossy().to_string());
+    }
+
     async fn pre_review(&self, req: PreReviewRequest) -> PreReviewOutput {
         let none = PreReviewOutput {
             had_findings: false,
@@ -23638,6 +23726,34 @@ async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
     } else {
         Some(tail)
     }
+}
+
+/// F790-3: the operator questions waiting in `<root>/.swarm/questions/*.txt` that have no
+/// answer in `<root>/.swarm/answers/<same-stem>.txt` yet, oldest first. Pure over the
+/// filesystem so the discovery rule is testable: the answer file's existence IS the
+/// answered-marker — no separate state to desync.
+fn pending_questions(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let qdir = root.join(".swarm").join("questions");
+    let adir = root.join(".swarm").join("answers");
+    let Ok(rd) = std::fs::read_dir(&qdir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(std::time::SystemTime, std::path::PathBuf)> = rd
+        .flatten()
+        .filter(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("txt")
+                && !adir.join(e.path().file_name().unwrap_or_default()).exists()
+        })
+        .map(|e| {
+            let t = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (t, e.path())
+        })
+        .collect();
+    out.sort();
+    out.into_iter().map(|(_, p)| p).collect()
 }
 
 /// Judge kills are JoinHandle aborts: cancellation lands at an await point and runs NO epilogue
@@ -27583,6 +27699,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // in the same log is a complete mechanism proof.
             "fix_sched": fix_sched(),
             "judge_nudge": judge_nudge_on(),
+            "qa": goose_swarm::qa_enabled(),
             "supervision_pool": supervision_pool_on(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
                 "GOOSE_SWARM_CLARIFY_SPEC_BOUND",

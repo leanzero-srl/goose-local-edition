@@ -70,6 +70,20 @@ pub fn tail_review_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// F790-3: the operator-question channel (GOOSE_SWARM_QA). DEFAULT ON — it is read-only, costs
+/// nothing while the inbox is empty, and exists precisely so the operator can ask the run
+/// questions while it works. Set 0/off to silence it.
+pub fn qa_enabled() -> bool {
+    std::env::var("GOOSE_SWARM_QA")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            )
+        })
+        .unwrap_or(true)
+}
+
 /// The ONE resolution of GOOSE_SWARM_TESTGEN (S7): idle slots generate contract-derived tests.
 /// Default OFF — an arm, not a silent flip. Shared with goose-cli's dispatcher for the same
 /// reason as sink_review_enabled above: two halves reading different answers is the measured
@@ -1657,6 +1671,51 @@ impl State {
         Some((model_id, dim, self.goal.clone(), claimed_device))
     }
 
+    /// F790-3: one-string run state for the Q&A answerer — the judge's perspective, cheaply.
+    fn run_state_brief(&self) -> String {
+        let mut done: Vec<&str> = Vec::new();
+        let mut running: Vec<&str> = Vec::new();
+        let mut pending = 0usize;
+        let mut failed: Vec<&str> = Vec::new();
+        for (id, n) in &self.dag.tasks {
+            match n.state {
+                TaskState::Done => done.push(id),
+                TaskState::Claimed => running.push(id),
+                TaskState::Failed => failed.push(id),
+                _ => pending += 1,
+            }
+        }
+        done.sort();
+        running.sort();
+        failed.sort();
+        format!(
+            "done ({}): {}\nrunning ({}): {}\npending: {}\nfailed ({}): {}",
+            done.len(),
+            done.join(", "),
+            running.len(),
+            running.join(", "),
+            pending,
+            failed.len(),
+            if failed.is_empty() {
+                "none".to_string()
+            } else {
+                failed.join(", ")
+            },
+        )
+    }
+
+    /// F790-3: claim a device for one operator answer. Mirrors the idle-fill claim discipline;
+    /// the supervision-first preference in least_loaded_free_device means a borrowed node
+    /// answers when one exists.
+    fn pick_qa(&mut self) -> Option<(String, String, usize)> {
+        let claimed_device = self.least_loaded_free_device()?;
+        let model_id = self.devices[claimed_device].cfg.model_id.clone();
+        let brief = self.run_state_brief();
+        self.idle_jobs += 1;
+        self.devices[claimed_device].in_flight += 1;
+        Some((model_id, brief, claimed_device))
+    }
+
     /// S7 (GOOSE_SWARM_TESTGEN): claim an idle device for one contract-derived test-generation
     /// job. Fires only when at least one task is DONE — before that there is no agreed contract
     /// worth testing against and the fan needs every slot. Mirrors pick_prereview's claim
@@ -3018,6 +3077,40 @@ impl Scheduler {
                         };
                         pr.idle_dimension_review(&model_id, &goal, dim).await;
                     });
+                }
+            }
+            // F790-3 Q&A (GOOSE_SWARM_QA, default ON): an operator question in the inbox is
+            // answered on an idle node with the run's own state as context. One at a time (the
+            // in-flight set inside the dispatcher dedups), read-only for the build, and the
+            // has_pending_question check keeps the empty-inbox cost at one fs metadata call.
+            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
+                if qa_enabled() && pr.has_pending_question() {
+                    let pick = {
+                        let mut s = state.lock().await;
+                        if !s.ready.is_empty()
+                            && s.idle_capacity() <= 1
+                            && !s.has_free_supervision_device()
+                        {
+                            None
+                        } else {
+                            s.pick_qa()
+                        }
+                    };
+                    if let Some((model_id, brief, claimed_device)) = pick {
+                        let pr = pr.clone();
+                        let st = state.clone();
+                        let nt = notify.clone();
+                        let goal = { state.lock().await.goal.clone() };
+                        tokio::spawn(async move {
+                            let _slot = IdleSlotGuard {
+                                state: st.clone(),
+                                is_judge: false,
+                                claimed_device: Some(claimed_device),
+                                notify: Some(nt),
+                            };
+                            pr.answer_user_question(&model_id, &goal, &brief).await;
+                        });
+                    }
                 }
             }
             // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and

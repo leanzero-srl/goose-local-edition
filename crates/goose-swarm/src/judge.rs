@@ -356,6 +356,17 @@ pub trait PreReviewer: Send + Sync {
     /// and the collect-only landing guard. Default no-op so mocks and thin implementors are
     /// untouched.
     async fn generate_tests(&self, _model_id: &str, _goal: &str, _seq: u32) {}
+
+    /// F790-3 (GOOSE_SWARM_QA): is there an operator question waiting in the run's inbox? Cheap
+    /// sync check the tick loop may call every pass. Default false so mocks are untouched.
+    fn has_pending_question(&self) -> bool {
+        false
+    }
+
+    /// F790-3: answer ONE pending operator question on an idle node, with the judge's run-state
+    /// perspective supplied by the scheduler. Read-only with respect to the build; the answer
+    /// lands in the run's answers outbox + an event. Default no-op.
+    async fn answer_user_question(&self, _model_id: &str, _goal: &str, _run_state: &str) {}
 }
 
 /// A verdict derivable from cheap, unambiguous signals alone — no model required. The scheduler trusts
