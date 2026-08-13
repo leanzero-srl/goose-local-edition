@@ -18526,3 +18526,16 @@ either use a floor >= the fix cap's neighborhood (near-worthless) or key on a ri
 tree-stillness (e.g. stillness AND no session-trace growth). Exactly why the observer shipped
 before the mechanism. Also on display: the twin race working at strength — 3 twins, one fully
 green, promoted.
+
+## F786 — boundary 12 (03:24 binary): the ENTIRE fix-scheduler design + supervision pool live; n3 0.7247 (best of batch)
+
+probe_post-n3-r0 #2: 0.7247 / 120 min / 3 nodes (bridge sb3 0.7723) — the unit whose round-0 twin
+race promoted a fully-green tree (F785's data). n3 series on the post-F778 binaries: 0.6864,
+0.7247 — both with judge spam dead and pre-review live. Boundary 12: gate GREEN → 03:24:14
+binary → 'complete_fix_sched_result' flipped absent→present, controls held. NOW LIVE: the
+complete FIX-SCHED-DESIGN (c2 recipe, c3 dispatcher fix mode + Drop-guard, c4 fix_round_specs,
+c5 shadow-aware judge probe, c6 the second-scheduler wiring) behind GOOSE_SWARM_FIX_SCHED
+(default OFF), plus the COMPLETE supervision pool (GOOSE_SWARM_SUPERVISION_POOL, default OFF).
+The restart picks up the F784 void-on-STOP sweep fix AND the queued fix_sched live-verify arm
+(the design's c7). One more F784 phantom was minted by this crossing (the running loop predated
+the fix) — excluded per the rule; it is the LAST one.

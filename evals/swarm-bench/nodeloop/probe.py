@@ -45,7 +45,7 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "GOOSE_SWARM_FIX_SCHED": "F781/#16 — the fix-round-as-scheduler-run lever (default OFF, commit 1 of the verified design)",
+    "complete_fix_sched_result": "F781/#16 c6 — the fix-round-as-scheduler-run result event (the design live in the binary)",
 }
 # The 10:2x boundary's ONE change (hermetic scratch db per gate invocation) is LITERAL-LESS: it
 # alters a filename format string whose distinctive part ("goose-spec-contract-") pre-exists.
