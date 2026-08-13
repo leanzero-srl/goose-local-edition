@@ -18725,3 +18725,16 @@ judge_nudge, fix_sched. OPERATIONAL RULE UNTIL THEY LAND: no boundaries — noth
 held, and a rebuild would reset the very completeness these five need to accumulate. The running
 loop restarts (without rebuild — no invalidation) at the current unit's end to pick up the new
 order.
+
+## F795 — the first live Q&A smoke found a real starvation: pre-review won nine consecutive slots while the question waited 65+ min
+
+The registered check for F790-3 did its job by FAILING usefully: smoke-q.txt (dropped 11:19 into
+the live run's inbox, lever confirmed ON in its levers echo) went unanswered for 65+ minutes
+while pre_review fired 9 times — every freed slot went to background review because the QA
+consumer sat after pre-review/tail-review in the tick loop, and the review target list refills as
+tasks complete. A human-blocking question could wait indefinitely on a busy run. FIX (held per
+the F794 no-rebuild rule): the QA consumer moves AHEAD of pre-review — an operator question is
+rare, one turn, and human-blocking; background review is continuous and loses nothing by
+yielding one slot on the rare tick a question exists. The smoke question stays in the inbox as
+the standing test: it should be answered promptly by the first post-rebuild run that inherits it,
+closing the loop on the mechanism proof.
