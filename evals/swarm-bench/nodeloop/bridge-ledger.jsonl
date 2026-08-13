@@ -6,3 +6,5 @@
 {"unit": "baseline-n3-r3", "t": 1786559445.9, "sb4": 0.8164, "sb4_hard": 1.0, "sb3_analytic": 0.8385, "sb3_tiers": {"A": 0.8333, "B": 0.7004, "C": 1.0, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "baseline-n1-r3", "t": 1786565791.1, "sb4": 0.6565, "sb4_hard": 0.5778, "sb3_analytic": 0.6183, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 0.8571, "D": 0.4367}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "probe_post-n3-r0", "t": 1786571701.4, "sb4": 0.0225, "sb4_hard": 0.0, "sb3_analytic": 0.0417, "sb3_tiers": {"A": 0.0, "B": 0.0, "C": 0.1667, "D": 0.0}, "reconstructed": false, "legacy_checks": 33}
+{"unit": "probe_post-n3-r0", "t": 1786571778.1, "sb4": 0.6864, "sb4_hard": 1.0, "sb3_analytic": 0.7583, "sb3_tiers": {"A": 1.0, "B": 0.3611, "C": 1.0, "D": 0.75}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "probe_post-n3-r0", "t": 1786580435.9, "sb4": 0.7247, "sb4_hard": 1.0, "sb3_analytic": 0.7723, "sb3_tiers": {"A": 1.0, "B": 0.3611, "C": 1.0, "D": 0.82}, "reconstructed": true, "legacy_checks": 35}
