@@ -18616,3 +18616,19 @@ equivalent — stronger than a recipe mention — is what the campaign already e
 ships with a sweep ARM whose gate names its mechanism events, a registered question (the
 preflight REFUSES a question-less arm — proven live tonight on fix_sched), and a levers_resolved
 echo in every run. Recorded here so the rule reads as satisfied by design, not skipped.
+
+## F789 — boundary 13 (06:59 binary): 0.9949 — the HIGHEST sb-4 SCORE EVER, on the hardened scorer, 3 nodes, 100 min
+
+scout_doc_urls-n3-r0: 0.9949 / 100 min / 3 nodes (bridge sb3 0.9925). This is the first
+approach to the ceiling since sb-4 was built to make saturation structurally hard (0.90 core +
+0.10 hard-blocks, GRADER TRUSTED controls) — and it comes from the doc-URLs-to-scouts arm on the
+post-F778 binary with sink_shard ON. n3 series on the fixed binaries: 0.6864, 0.7247, 0.701,
+0.9949. STANDING DIRECTIVE ARMED: Mihai's rule is that scores approaching 1.0 mean the game gets
+harder — one excellent run is not saturation, but if the next units cluster >0.95 the BENCH2
+rank-3..10 backlog (the committed harder-scoring program) moves to the top of the harness queue.
+Boundary 13: gate GREEN → 06:59 binary; no new probe literal (adoptions carry no unique binary
+string) — present-controls verified instead: complete_fix_sched_result + GOOSE_SWARM_TAIL_REVIEW
++ GOOSE_SWARM_FIX_SCHED all present post-rebuild. NOW LIVE: 1e03bbb56 reasoning-preservation
+(adapted), 8e54bad4e resume-overrides + user-only implicit resume, the feature-stable snapshot
+fix. The F784 void-on-STOP fix marks this crossing's kill victim void mechanically — first
+boundary with zero phantom risk.
