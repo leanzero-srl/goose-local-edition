@@ -18539,3 +18539,14 @@ c5 shadow-aware judge probe, c6 the second-scheduler wiring) behind GOOSE_SWARM_
 The restart picks up the F784 void-on-STOP sweep fix AND the queued fix_sched live-verify arm
 (the design's c7). One more F784 phantom was minted by this crossing (the running loop predated
 the fix) — excluded per the rule; it is the LAST one.
+
+## F784b — the kill-artifact signature is BROADER than prefix=None: a 25-min mid-build kill scored 0.4055 with real prefix data
+
+The 03:24 boundary's kill victim (scout_doc_urls-n3-r0, [done] 03:20:29) ran 25 minutes, FINISHED
+planning (prefix=1150.2s/plan744.4s), had a partial tree — and the pre-fix wrapper scored it
+0.4055 with void=False. F784's original tell (minutes-wall + prefix=None) misses it: a mid-build
+kill looks like a fast bad run, not a stub. THE RULE, AMENDED: any [done] row whose timestamp
+coincides with a boundary STOP is a kill artifact regardless of prefix or wall — the full
+exclusion set for this batch is {23:11 0.0394, 00:50 0.0225, 03:20 0.4055}. The void-on-STOP fix
+(live since the 03:30 restart) marks all future ones void=True mechanically; these three are the
+complete pre-fix set, listed here so no aggregate ever reads them.
