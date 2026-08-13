@@ -18914,3 +18914,11 @@ fenced test block in the reply" — the extraction is format-fragile in exactly 
 the Q10 grammar-forcing design predicted. The honest-miss path reported correctly each time
 (nothing landed as garbage). If the split persists across further reps, the standing answer is
 grammar-forced output on the testgen call (LM Studio structured output), not a bigger prompt.
+
+## Ledger — judge_nudge rep 2: 0.7089/73min, honest null again (0 nudges; 1 fallback on meridian)
+
+judge_nudge rep 2: 0.7089 / 73 min, zero judge_nudge events — the second healthy run in a row
+with no loop-class call, so the mechanism stays observed-never-fired. At n=2 the arm reads
+0.8193/0.7089 at 58-73 min: consistently mid-high and FAST with the lever armed and silent —
+the safety half keeps strengthening. One detail fallback (meridian) this run, first in the
+recent series.
