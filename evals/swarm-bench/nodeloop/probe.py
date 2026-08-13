@@ -45,7 +45,8 @@ BASELINE = HERE / "probe-baseline.json"
 # trains the reader to skim past the one line that might say STILL ABSENT. Move it to
 # POSITIVE_CONTROLS instead, where being present is exactly the job.
 NEW = {
-    "the run's judge inspected this call": "F790-1 — the judge-nudge supervisor note (in-session redirect live in the binary)",
+    "INSTRUMENT READINGS (deterministic": "F790-2 — the judge's evidence block (instruments live)",
+    "OPERATOR QUESTION": "F790-3 — the mid-run Q&A prompt (the question channel live)",
 }
 # The 10:2x boundary's ONE change (hermetic scratch db per gate invocation) is LITERAL-LESS: it
 # alters a filename format string whose distinctive part ("goose-spec-contract-") pre-exists.
