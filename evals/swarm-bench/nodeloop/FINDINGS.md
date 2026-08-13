@@ -18856,3 +18856,17 @@ stays gated and its replicates accumulate on the normal schedule. The discipline
 excellent run after a mechanism change is exactly the anecdote-vs-distribution trap F785 caught
 at the attempt level — the same rule applies at the arm level, and this replicate is why the
 proposal waited for it.
+
+## F803 — F792 RESOLVED: not a regression — the fork tail-appends turn-context and the tests encoded upstream's order; the whole core crate is now green and gates every hold
+
+The diagnosis chain, each step eliminating a suspect: debug logs showed NO revert warn (the
+has_unexpected_issues path never fired); the SKIP thread-local is declared but never set (dead
+switch); a probe printed context_limit=1,047,576, skip=false (moim injected). The block WAS on
+the wire all along — the fork's cache-safe assembly (affd1cea1 ADAPT) extracts the volatile
+turn-context from mid-history and RE-APPENDS it at the request TAIL, so the body reads
+"what is 1+1\n<turn-context>..." — and the panic message truncates the body before its tail,
+which is what made F792's "absent" read wrong. The acp tests encoded upstream's
+block-before-prompt order; updated to a user_then_turn_context(prompt) helper asserting the
+fork-order signature. RESULT: the acp suite 7/5 → 12/0, the ENTIRE goose crate green (lib +
+every integration target), and the greengate widens from core-lib to full core — F787b's last
+recorded red is closed and nothing in the core crate escapes the gate anymore.
