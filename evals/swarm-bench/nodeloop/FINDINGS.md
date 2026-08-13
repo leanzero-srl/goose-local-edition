@@ -18589,3 +18589,30 @@ predicts NOTHING — every attempt a naive stall-cut would have killed was produ
 early-cut-on-stillness mechanism is closed, not deferred: fix_cap_secs already bounds the cost of
 a truly dead attempt, and any future cut must use a different signal (session-trace growth) AND
 first show a population of long-still WORTHLESS attempts, which so far does not exist.
+
+## F788 — #15 (judge in every phase) scope review: CLOSED, with the evidence for each phase
+
+Mihai's directive was "in all phases the judge should be present whenever a node is available to
+avoid loops or mistakes and cut it short." Where that stands, phase by phase, after tonight:
+(1) BUILD phase — always was covered (the judge's original scope). (2) DAG TAIL/SINK — covered
+since F779: tail-review fills idle nodes on ANY tail, and the judge already reaches the
+owns-nothing sink via its Accept branch. (3) REPAIR, lever ON — fully covered by fix_sched c6:
+fix rounds run under a real scheduler with the judge (probing SHADOWS, c5) and tail-review.
+(4) REPAIR, lever OFF (today's default) — covered in the OBSERVE sense (fix_attempt_progress on
+both fans) and deliberately NOT in the kill sense: F785b measured every long-still attempt as
+productive (6/6 improved, one wrote first at 900s), so a judge-kill here would destroy salvage
+while fix_cap_secs already bounds a truly dead attempt. "Cut it short" is therefore implemented
+where cutting is safe (scheduler-run fix rounds, where the Drop-guard makes kills harmless) and
+refused where the data says cutting destroys value — which is the directive's INTENT (avoid
+mistakes) applied to the judge itself. (5) VERIFY stretches — deterministic local pytest/probe
+work; no model generation to supervise. Task #15 closes on this record; #16 stays open solely for
+the c7 live proof (arm queued).
+
+## The goose-self-test.yaml rule, applied to swarm levers: the sweep IS the self-test
+
+AGENTS.md says features update goose-self-test.yaml. For swarm levers that recipe cannot serve:
+it runs fleet-less, and every swarm mechanism's truth is a fleet behavior. The operative
+equivalent — stronger than a recipe mention — is what the campaign already enforces: every lever
+ships with a sweep ARM whose gate names its mechanism events, a registered question (the
+preflight REFUSES a question-less arm — proven live tonight on fix_sched), and a levers_resolved
+echo in every run. Recorded here so the rule reads as satisfied by design, not skipped.
