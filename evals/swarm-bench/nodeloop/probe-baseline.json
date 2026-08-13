@@ -1,9 +1,8 @@
 {
-  "mtime": 1786600506.9823232,
-  "size": 236143056,
+  "mtime": 1786607278.1063643,
+  "size": 236226064,
   "new": {
-    "INSTRUMENT READINGS (deterministic": false,
-    "OPERATOR QUESTION": false
+    "(path, offset, limit)": false
   },
   "controls": {
     "skeleton written:": true,

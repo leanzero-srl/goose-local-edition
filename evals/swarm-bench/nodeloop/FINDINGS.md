@@ -18818,3 +18818,14 @@ ALL FIVE never-seen arms are now LANDED: aux_slim 0.9411/80min (STRONG — defau
 fill_fan honest-null (no subsplit), testgen 0.5774 (mechanism proven 3/3), judge_nudge 0.8193/58min
 (honest-null on mechanism, safety proven), fix_sched 0.6601 (MECHANISM PROVEN). The F794
 no-rebuild rule lifts; normal cadence resumes with this boundary.
+
+## F800 — boundary 16 (19:28 binary): the held pair ships; normal cadence resumes with every mechanism proven or honest-nulled
+
+Boundary 16, the first since the F794 no-rebuild freeze: gate GREEN → 19:28:00 binary → the F797
+hint literal flipped absent→present, controls held. NOW LIVE: the QA-priority fix (an operator
+question claims a freed slot ahead of background review — F795's measured 65-minute starvation
+closed; the standing smoke question in swarm-3node-r0/.swarm/questions is the live test) and the
+repair-directed ETag finding (the 4/4 persistent conditional-request loss now reaches fix workers
+with its prescription attached). The never-seen queue is satisfied; the normal backlog resumes —
+aux_slim's replicate (the strongest signal: 0.9411/80min) ranks naturally near the head as the
+score cells re-earn current-engine rows.
