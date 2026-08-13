@@ -12,3 +12,5 @@
 {"unit": "probe_post-n3-r0", "t": 1786600239.8, "sb4": 0.4759, "sb4_hard": 0.1667, "sb3_analytic": 0.485, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 0.1667, "D": 0.6333}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "probe_post-n3-r0", "t": 1786607029.3, "sb4": 0.7733, "sb4_hard": 0.6667, "sb3_analytic": 0.7708, "sb3_tiers": {"A": 0.6667, "B": 0.6694, "C": 1.0, "D": 0.7667}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "probe_post-n3-r0", "t": 1786613433.2, "sb4": 0.4833, "sb4_hard": 0.3333, "sb3_analytic": 0.4666, "sb3_tiers": {"A": 1.0, "B": 0.2639, "C": 0.1667, "D": 0.4789}, "reconstructed": false, "legacy_checks": 33}
+{"unit": "judge_nudge-n3-r0", "t": 1786631816.5, "sb4": 0.8193, "sb4_hard": 0.8333, "sb3_analytic": 0.8194, "sb3_tiers": {"A": 0.8333, "B": 0.875, "C": 0.7143, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "fix_sched-n3-r0", "t": 1786638194.8, "sb4": 0.6601, "sb4_hard": 0.5778, "sb3_analytic": 0.6858, "sb3_tiers": {"A": 1.0, "B": 0.4583, "C": 0.7143, "D": 0.5987}, "reconstructed": true, "legacy_checks": 35}
