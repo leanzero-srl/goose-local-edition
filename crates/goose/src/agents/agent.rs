@@ -1311,6 +1311,20 @@ impl Agent {
             }
         };
 
+        let manages_own_context = self
+            .provider()
+            .await
+            .map(|p| p.manages_own_context())
+            .unwrap_or(false);
+        let (skipped_configs, enabled_configs): (Vec<_>, Vec<_>) =
+            enabled_configs.into_iter().partition(|config| {
+                manages_own_context
+                    && matches!(
+                        config,
+                        ExtensionConfig::Stdio { .. } | ExtensionConfig::StreamableHttp { .. }
+                    )
+            });
+
         let session_id = session.id.clone();
 
         let extension_futures = enabled_configs
@@ -1361,8 +1375,7 @@ impl Agent {
 
         let results = futures::future::join_all(extension_futures).await;
 
-        // Persist once after all extensions are loaded
-        if results.iter().any(|r| r.success) {
+        if results.iter().any(|r| r.success) && skipped_configs.is_empty() {
             if let Err(e) = self.persist_extension_state(&session_id).await {
                 warn!("Failed to persist extension state after bulk load: {}", e);
             }
