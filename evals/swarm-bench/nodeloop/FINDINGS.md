@@ -18870,3 +18870,20 @@ block-before-prompt order; updated to a user_then_turn_context(prompt) helper as
 fork-order signature. RESULT: the acp suite 7/5 → 12/0, the ENTIRE goose crate green (lib +
 every integration target), and the greengate widens from core-lib to full core — F787b's last
 recorded red is closed and nothing in the core crate escapes the gate anymore.
+
+## F804 — the S3 fan's first live exercise: the expansion fires BEFORE the stub precondition exists; the refusal path held (0.6423/59min, no damage)
+
+fill_fan rep 2: 0.6423 / 59 min. The planner DID emit subsplits this time (skeleton::meridian-
+client, skeleton::test-api dispatched) — and BOTH skeletons refused with the engine's own
+message: "no parseable contract stub for this module — the fan should not have fired." The
+structural cause: expand_subsplits runs at PLAN LOAD, before the contracts phase produces the
+frozen stubs the skeleton step builds from — the precondition is unknowable at expansion time,
+and for both modules the stub later proved unparseable. What the exercise PROVES: the refusal
+path is safe (clean event, fallback build, mid-band score at the fastest wall of the day — the
+failed fan cost approximately nothing). What it did NOT yet exercise: an actual skeleton→fills→
+join splice (needs a run where the subsplit modules get parseable stubs). DESIGN QUESTION for a
+working session, not a tick hack: on skeleton refusal, the fills/join downstream are dead weight
+— either the refusal should convert the skeleton into an ordinary full-module task and no-op its
+fills/join, or the expansion should be deferred until after contracts freeze (the cleaner shape:
+expansion at contract time knows stub parseability). The arm keeps accumulating replicates; a
+parseable-stub case will exercise the splice naturally.
