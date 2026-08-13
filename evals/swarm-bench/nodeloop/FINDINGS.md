@@ -18550,3 +18550,14 @@ coincides with a boundary STOP is a kill artifact regardless of prefix or wall �
 exclusion set for this batch is {23:11 0.0394, 00:50 0.0225, 03:20 0.4055}. The void-on-STOP fix
 (live since the 03:30 restart) marks all future ones void=True mechanically; these three are the
 complete pre-fix set, listed here so no aggregate ever reads them.
+
+## F787 — pre-existing red test OUTSIDE the greengate's suites: prompt_manager all_platform_extensions snapshot
+
+Found while verifying the 1e03bbb56 adoption: `cargo test -p goose --lib` has ONE failing test —
+agents::prompt_manager::tests::test_all_platform_extensions (insta snapshot) — and it fails with
+tonight's changes STASHED too, so it predates this session (snapshot last touched by d43c69212,
+the turn-context prefix-cache commit). The greengate's 8 suites do not include it, which is why
+600+ green gate runs never saw it. NOT regenerating the snapshot blind — a prompt-text snapshot
+regen can mask a real system-prompt regression; a working session should diff the snapshot delta
+deliberately. Queued. (The greengate's suite list should also grow this lib target once the
+snapshot is resolved — a gate that skips a red suite is the F718 class again.)
