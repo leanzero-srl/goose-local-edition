@@ -654,6 +654,11 @@ pub struct SwarmConfig {
     /// dispatch. Default OFF: the borrow changes what an arm measures and must be attributed.
     #[serde(default)]
     pub supervision_pool: bool,
+    /// F790-1 (GOOSE_SWARM_JUDGE_NUDGE env overrides): when the omni-judge corroborates a loop,
+    /// REDIRECT the call in-session with the judge's own hint instead of aborting it — context
+    /// preserved, attempt not burned; bounded redirects, then the abort remains the backstop.
+    #[serde(default)]
+    pub judge_nudge: bool,
     /// F781/#16 (GOOSE_SWARM_FIX_SCHED env overrides): run each multi-file fix round as a REAL
     /// scheduled DAG (fix::r{N}::{file} tasks through a second scheduler run with judge +
     /// tail-review supervision) instead of the hand-rolled fan. Default OFF until the campaign
@@ -1262,6 +1267,7 @@ impl Default for SwarmConfig {
             answers_win_floor: Some(true),
             cross_module_check: true,
             fix_sched: false,
+            judge_nudge: false,
             supervision_pool: false,
             ask_max_q: Some(3),
             split: Some(true),
@@ -13815,7 +13821,7 @@ impl GooseAgentDispatcher {
         };
 
         let mut stream = agent
-            .reply(user_message, session_config, None)
+            .reply(user_message, session_config.clone(), None)
             .await
             .map_err(|e| anyhow!("agent.reply: {e}"))?;
 
@@ -14006,6 +14012,8 @@ impl GooseAgentDispatcher {
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
         let mut omni_prev_looping_tail: Option<u64> = None;
+        // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
+        let mut nudges_used: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
@@ -14090,6 +14098,15 @@ impl GooseAgentDispatcher {
                             .hash(&mut h);
                         h.finish()
                     };
+                    let omni_hint = {
+                        let h = parse_judge_reply(&o.text).hint;
+                        let h = h.trim();
+                        if h.is_empty() {
+                            None
+                        } else {
+                            Some(h.chars().take(300).collect::<String>())
+                        }
+                    };
                     if omni_judge_says_looping(&o.text) {
                         if omni_prev_looping_tail == Some(tail_hash) {
                             omni_looping_streak += 1;
@@ -14109,6 +14126,55 @@ impl GooseAgentDispatcher {
                         );
                     }
                     if omni_looping_streak >= 2 {
+                        // F790-1 (GOOSE_SWARM_JUDGE_NUDGE): REDIRECT before the abort. Dropping
+                        // the old stream cancels the spinning turn; the session keeps every prior
+                        // turn, so a fresh reply with the judge's own hint continues the work
+                        // in place — the attempt is not burned and no context is lost (a kill +
+                        // re-dispatch loses the session, and the measured misread-kill class
+                        // makes that expensive on healthy-but-slow calls). Per-call judge state
+                        // resets so the redirected call is watched fresh; the abort stays as the
+                        // backstop once JUDGE_NUDGE_MAX redirects are spent.
+                        if judge_nudge_on() && nudges_used < JUDGE_NUDGE_MAX {
+                            nudges_used += 1;
+                            let direction = omni_hint.clone().unwrap_or_else(|| {
+                                "stop restating your plan; take the next concrete action on your \
+                                 owned files now"
+                                    .to_string()
+                            });
+                            self.events.write_value(serde_json::json!({
+                                "event": "judge_nudge",
+                                "task_id": activity_key,
+                                "nudge": nudges_used,
+                                "looks": omni_looks,
+                                "thinking_chars": thinking_chars,
+                                "hint": direction,
+                            }));
+                            eprintln!(
+                                "  {} omni-judge (look {omni_looks}): looping after {thinking_chars} reasoning chars — nudging with direction instead of stopping (nudge {nudges_used}/{JUDGE_NUDGE_MAX})",
+                                style("→").yellow()
+                            );
+                            let nudge_text = format!(
+                                "SUPERVISOR NOTE (the run's judge inspected this call): your last \
+                                 stretch of reasoning is repeating without new information. {direction}\n\
+                                 Continue the SAME task; do not restart work you have already done."
+                            );
+                            stream = agent
+                                .reply(
+                                    Message::user().with_text(nudge_text),
+                                    session_config.clone(),
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
+                            thinking_chars = 0;
+                            last_thinking.clear();
+                            omni_looks = 0;
+                            omni_looping_streak = 0;
+                            omni_prev_looping_tail = None;
+                            omni_next_look = tokio::time::Instant::now()
+                                + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
+                            continue;
+                        }
                         eprintln!(
                             "  {} omni-judge (look {omni_looks}): this call is LOOPING after {thinking_chars} reasoning chars — stopping it",
                             style("↯").yellow()
@@ -25832,6 +25898,15 @@ fn supervision_pool_on() -> bool {
     )
 }
 
+/// F790-1: the judge-nudge lever. Default OFF — the arm attributes it before any flip.
+fn judge_nudge_on() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_JUDGE_NUDGE", load_config().judge_nudge)
+}
+
+/// F790-1: in-session redirects per call before the abort backstop. Two mirrors the omni-judge's
+/// own corroboration count — a call that ignores two directed supervisor notes has earned the cut.
+const JUDGE_NUDGE_MAX: u32 = 2;
+
 fn fix_sched() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_FIX_SCHED", load_config().fix_sched)
 }
@@ -27389,6 +27464,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // variant here is a PURE function of this gate, so the gate's value plus a low_confidence_ask
             // in the same log is a complete mechanism proof.
             "fix_sched": fix_sched(),
+            "judge_nudge": judge_nudge_on(),
             "supervision_pool": supervision_pool_on(),
             "clarify_spec_bound": swarm_gate_cfg_bundle(
                 "GOOSE_SWARM_CLARIFY_SPEC_BOUND",

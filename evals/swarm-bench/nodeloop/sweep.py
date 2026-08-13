@@ -579,6 +579,21 @@ ARMS = [
                 "reverts — summaries may be load-bearing for the sink's long context even with K4.",
     },
     {
+        "name": "judge_nudge",
+        "env": {"GOOSE_SWARM_JUDGE_NUDGE": "1"},
+        "gate": "F790-1 (Mihai's direction: the judge should nudge with direction, not just kill). "
+                "At 2 corroborated LOOPING looks the omni-judge now REDIRECTS the call in-session "
+                "with its own hint — context preserved, attempt not burned — bounded at 2, then the "
+                "abort backstop. MECHANISM, n=1: judge_nudge event fires AND the nudged call "
+                "subsequently makes a tool call (read the activity digest after the nudge "
+                "timestamp); a run with no loop-class call examined nothing and says so. SAFETY: "
+                "nudged tasks complete at least as often as the abort era's re-dispatches. "
+                "FALSIFIER: stable-24 below spread, or nudged calls that ignore both notes and eat "
+                "2x wall before the backstop, kills the lever.",
+        "asks": "does an in-session directed nudge convert looping calls into productive ones "
+                "cheaper than kill+redispatch?",
+    },
+    {
         "name": "fix_sched",
         "env": {"GOOSE_SWARM_FIX_SCHED": "1", "GOOSE_SWARM_PROBE_ADVERTISED_POST": "1"},
         "gate": "F781/#16 c7 LIVE VERIFY (FIX-SCHED-DESIGN.json, adversarially verified). The fix "
@@ -703,6 +718,10 @@ QUESTIONS: list[dict] = [
      "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
              "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
              "unit tree, and the stable-24 guard"},
+    {"arm": "judge_nudge", "nodes": 3, "reps": 1,
+     "asks": "whether the judge's in-session nudge (redirect with its own hint, context kept) "
+             "beats the abort it replaces — read judge_nudge events first (absent on a run with "
+             "no loop-class call = examined nothing), then post-nudge tool activity."},
     {"arm": "fix_sched", "nodes": 3, "reps": 1,
      "asks": "whether repair-as-a-real-scheduler-run (fix::r{N} DAG tasks on a fresh dispatcher, "
              "judge probing SHADOWS, tail-review live) matches the fan's quality at no worse wall "
