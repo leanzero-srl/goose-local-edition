@@ -18829,3 +18829,18 @@ repair-directed ETag finding (the 4/4 persistent conditional-request loss now re
 with its prescription attached). The never-seen queue is satisfied; the normal backlog resumes —
 aux_slim's replicate (the strongest signal: 0.9411/80min) ranks naturally near the head as the
 score cells re-earn current-engine rows.
+
+## F801 — the Q&A channel end-to-end proof: 57 seconds from question to answer, and the answer is right
+
+q-live.txt dropped into the RUNNING aux_slim replicate at 19:59:42; answered 20:00:39 — 57
+SECONDS, against the 65-minute starvation the pre-F795 ordering produced. The answer (verbatim,
+by the workhorse node): "Done: cli (__main__.py entry point), docs (README.md), store (SQLite
+persistence), test-store, and verification steps for those three. Running right now: api (HTTP
+backend), meridian (Meridian client), and web (frontend page). Ten tasks still pending... No
+failures so far. The app is on track — core pieces are done, and the three remaining major
+components are all being worked on concurrently." Cross-checked against the trace: accurate on
+every named task and state. Plain prose, no markdown, honest scope — the supervisor-brief design
+behaving as specified. Mihai's third judge direction is now proven end-to-end in production:
+question in, run-grounded answer out, in under a minute, on a fleet mid-build. SEMANTIC NOTE:
+the workdir wipe at unit start deletes pending questions — questions are per-run by design;
+a question outliving its run gets no answer, which is correct (the run it asked about is gone).
