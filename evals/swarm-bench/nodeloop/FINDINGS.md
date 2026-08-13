@@ -18796,3 +18796,25 @@ arrive at base rates (~1 in 3-4 runs historically), so the arm's future replicat
 #17 CLOSES: the mechanism is built, unit-tested, live in the binary, safety-proven live, and
 arm-gated for the replicate that meets a real loop. The lever stays default OFF until that
 observation lands.
+
+## F799 — the c7 verdict: the tail-orchestrator is PROVEN live, with numbers
+
+fix_sched-n3-r0: 0.6601 / 106 min (bridge sb3 ~0.66), lever ON. The mechanism arc, read from the
+trace as it happened: round-0 verify found 6 findings across 2 files → fix_round_specs emitted a
+REAL DAG (fix::r0::vendorsync/api.py, fix::r0::vendorsync/meridian.py, fix::r0::#join + 3 more —
+6 tasks total) → a FRESH scheduler dispatched them across the fleet → BOTH file fixes verified
+0-vs-6 STRICTLY BETTER in their shadows and promoted → the join re-gated the REAL tree at
+baseline 0 (clean) → complete_fix_sched_result: done 6, failed 0, review_findings_dropped 11 —
+meaning tail-review actively supervised DURING repair, the property the whole design promised →
+round-1 verify: 6 findings → 1. Zero BrokenCode storms (c5's shadow-probe held), zero unverified
+promotions, the real tree changed only through strictly-better shards. Mihai's directive — "the
+final tail isn't done by one node alone; the tail task is orchestration to create more tasks" —
+is now an observed production behavior, not a design. #16 CLOSES. Score 0.6601 is mid-band at
+n=1; the arm's quality-parity question (vs the fan) needs replicates, which the normal queue now
+accumulates. POLISH QUEUED: the #join dispatches its agent even at baseline 0 where nothing can
+promote — skip the agent when the join's re-gate is already clean.
+
+ALL FIVE never-seen arms are now LANDED: aux_slim 0.9411/80min (STRONG — default-flip candidate),
+fill_fan honest-null (no subsplit), testgen 0.5774 (mechanism proven 3/3), judge_nudge 0.8193/58min
+(honest-null on mechanism, safety proven), fix_sched 0.6601 (MECHANISM PROVEN). The F794
+no-rebuild rule lifts; normal cadence resumes with this boundary.
