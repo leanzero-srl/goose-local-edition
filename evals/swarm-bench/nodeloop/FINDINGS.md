@@ -18887,3 +18887,20 @@ working session, not a tick hack: on skeleton refusal, the fills/join downstream
 fills/join, or the expansion should be deferred until after contracts freeze (the cleaner shape:
 expansion at contract time knows stub parseability). The arm keeps accumulating replicates; a
 parseable-stub case will exercise the splice naturally.
+
+## F805 — Mihai's brownfield directive: BENCH3 amend mode registered (design + parked arm)
+
+"This has mostly built apps from scratch, correct? Consider adding a new feature to one of these
+already existing apps — add it to the backlog to test as part of the benchmark and improve goose
+swarm's proven ability to implement new features in existing code bases." Confirmed: every unit
+to date is greenfield (the workdir wipe guarantees it), and the engine's amendment concept
+(is_amendment via working_dir_has_sources) has never once been exercised by the benchmark.
+BENCH3-AMEND.md carries the full design: seed the controls' known-good app as the base tree, a
+multi-file currency-summary feature spec, and a two-half score — REGRESSION (the amended tree
+must hold the known-good's sb-4 level minus spread; the distinctive brownfield risk is breaking
+what worked) + FEATURE (new checks folded into the BENCH2 ranks 3-10 scorer change so both
+backlogs land together). The amend_feature arm is REGISTERED with its question and PARKED at
+reps 0 — visible in every restart banner, burning no fleet time until seed_tree + the scorer
+halves land (task #20). The four engine questions it will answer are each potential findings:
+delta-planning, contracts-from-existing-code, owned_files on pre-existing files, and whether
+promote-only-strictly-better protects the base.
