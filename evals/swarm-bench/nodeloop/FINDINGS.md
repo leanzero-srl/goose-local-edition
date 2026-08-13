@@ -18708,3 +18708,20 @@ LIVE, completing Mihai's F790 directive in the binary: judge-nudge (lever), inst
 verdicts, and the mid-run operator Q&A channel (default ON — drop a question file into a run's
 .swarm/questions/, read .swarm/answers/ + the swarm_answer event). The queue's judge_nudge and
 fix_sched proof arms now run against a binary carrying every mechanism they test.
+
+## F794 — the new arms were STRUCTURALLY STARVED: rebuild-invalidation × the wire hoist re-ran old arms first after every boundary
+
+Mihai asked whether the new arms are included in the current tests — and the honest answer was
+"registered, visible in every restart banner, and NEVER RUN." Cause, measured in the picker
+itself: complete() requires a row from the CURRENT engine (correct by design), so each of
+tonight's 7 boundaries invalidated everything; backlog()'s wire partition then hoisted
+probe_post/scout_doc_urls/doc_fetch rep-0 to the front each restart. Net: probe_post accumulated
+12 rows while judge_nudge, fix_sched, testgen, fill_fan and aux_slim — mechanisms with ZERO
+observations — never reached the head of the queue. FIX (committed): a never-seen partition
+hoisted ABOVE wire — the wire rationale ("cheapest decisive experiment first") ranks a
+never-observed mechanism above a 12th re-verification; rep-0 only, self-limiting like its
+siblings. Verified by running backlog(): the head is now aux_slim, fill_fan, testgen,
+judge_nudge, fix_sched. OPERATIONAL RULE UNTIL THEY LAND: no boundaries — nothing engine-side is
+held, and a rebuild would reset the very completeness these five need to accumulate. The running
+loop restarts (without rebuild — no invalidation) at the current unit's end to pick up the new
+order.
