@@ -17,3 +17,4 @@
 {"unit": "aux_slim-n3-r0", "t": 1786644278.6, "sb4": 0.6564, "sb4_hard": 0.6667, "sb3_analytic": 0.7333, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 1.0, "D": 0.8333}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "fill_fan-n3-r0", "t": 1786649124.0, "sb4": 0.6423, "sb4_hard": 0.6667, "sb3_analytic": 0.7139, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 0.8333, "D": 0.9444}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "testgen-n3-r0", "t": 1786654708.8, "sb4": 0.7314, "sb4_hard": 1.0, "sb3_analytic": 0.7783, "sb3_tiers": {"A": 1.0, "B": 0.3611, "C": 1.0, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "judge_nudge-n3-r0", "t": 1786660227.2, "sb4": 0.7089, "sb4_hard": 1.0, "sb3_analytic": 0.7783, "sb3_tiers": {"A": 1.0, "B": 0.3611, "C": 1.0, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
