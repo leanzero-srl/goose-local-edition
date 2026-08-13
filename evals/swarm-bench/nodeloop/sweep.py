@@ -579,6 +579,17 @@ ARMS = [
                 "reverts — summaries may be load-bearing for the sink's long context even with K4.",
     },
     {
+        "name": "amend_feature",
+        "env": {},
+        "gate": "BENCH3 (BENCH3-AMEND.md, Mihai 2026-08-13): add a feature to the EXISTING known-good "
+                "app instead of building from scratch — the brownfield axis nothing has tested. PARKED "
+                "(reps 0) until sweep seed_tree support + the feature/regression scorer halves land; "
+                "the design doc carries the full spec. REGRESSION half: the amended tree must hold the "
+                "known-good's sb-4 level minus spread. FEATURE half: by-currency endpoint + CSV export "
+                "checks (folded into the BENCH2 ranks 3-10 scorer change).",
+        "asks": "can the swarm add a multi-file feature to an existing app without regressing it?",
+    },
+    {
         "name": "judge_nudge",
         "env": {"GOOSE_SWARM_JUDGE_NUDGE": "1"},
         "gate": "F790-1 (Mihai's direction: the judge should nudge with direction, not just kill). "
@@ -718,6 +729,10 @@ QUESTIONS: list[dict] = [
      "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
              "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
              "unit tree, and the stable-24 guard"},
+    {"arm": "amend_feature", "nodes": 3, "reps": 0,
+     "asks": "BENCH3 brownfield: can the swarm add a multi-file feature to the existing known-good "
+             "app without regressing it? PARKED at reps 0 until seed_tree + the feature scorer land "
+             "(BENCH3-AMEND.md); reps 0 keeps it visible in every banner without burning fleet time."},
     {"arm": "judge_nudge", "nodes": 3, "reps": 1,
      "asks": "whether the judge's in-session nudge (redirect with its own hint, context kept) "
              "beats the abort it replaces — read judge_nudge events first (absent on a run with "
