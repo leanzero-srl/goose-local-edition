@@ -50,11 +50,11 @@ else
   fail=1
 fi
 
-# F787b: the core (-p goose) test surface is NOT in this gate, and that is a KNOWN, RECORDED
-# gap, not an oversight: it holds >=3 classes of pre-existing red (see FINDINGS F787/F787b)
-# that must be triaged deliberately before core can gate. Until then, core changes get
-# targeted `cargo test -p goose --lib <module>` runs at their commit.
-if cargo test "${CRATES[@]}" >/tmp/gg_test 2>&1; then
+# F787b closed for the LIB surface: the feature-unstable snapshot and the 4 CryptoProvider
+# jwt tests are fixed/gated, so core's 1376 lib tests now gate every hold (they are where
+# prompt/agent logic and upstream adoptions land). The crate's INTEGRATION suites stay out —
+# one recorded red (acp test_close_session body-shape) awaits deliberate triage.
+if cargo test "${CRATES[@]}" >/tmp/gg_test 2>&1 && cargo test -p goose --lib >>/tmp/gg_test 2>&1; then
   note "✅" "tests    $(grep -hoE '[0-9]+ passed' /tmp/gg_test | awk '{s+=$1} END{print s}') passed across $(grep -c 'test result: ok' /tmp/gg_test) suites"
 else
   note "🔴" "tests    FAILED"
