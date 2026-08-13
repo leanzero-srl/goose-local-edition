@@ -2945,6 +2945,44 @@ impl Scheduler {
                     });
                 }
             }
+            // F790-3 Q&A (GOOSE_SWARM_QA, default ON) — DELIBERATELY AHEAD of pre-review: an
+            // operator question is rare, one turn, and HUMAN-BLOCKING, while pre-review is
+            // continuous background. MEASURED (F795): behind pre-review, a live question
+            // starved 65+ minutes while reviews won nine freed slots in a row. An operator
+            // question in the inbox is
+            // answered on an idle node with the run's own state as context. One at a time (the
+            // in-flight set inside the dispatcher dedups), read-only for the build, and the
+            // has_pending_question check keeps the empty-inbox cost at one fs metadata call.
+            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
+                if qa_enabled() && pr.has_pending_question() {
+                    let pick = {
+                        let mut s = state.lock().await;
+                        if !s.ready.is_empty()
+                            && s.idle_capacity() <= 1
+                            && !s.has_free_supervision_device()
+                        {
+                            None
+                        } else {
+                            s.pick_qa()
+                        }
+                    };
+                    if let Some((model_id, brief, claimed_device)) = pick {
+                        let pr = pr.clone();
+                        let st = state.clone();
+                        let nt = notify.clone();
+                        let goal = { state.lock().await.goal.clone() };
+                        tokio::spawn(async move {
+                            let _slot = IdleSlotGuard {
+                                state: st.clone(),
+                                is_judge: false,
+                                claimed_device: Some(claimed_device),
+                                notify: Some(nt),
+                            };
+                            pr.answer_user_question(&model_id, &goal, &brief).await;
+                        });
+                    }
+                }
+            }
             // M5: put any STILL-idle node (beyond the one the judge took) on a correctness PRE-REVIEW of a
             // completed-but-unreviewed task (findings feed integrate-verify). Judge + pre-review now run
             // CONCURRENTLY, bounded by idle_capacity() so each free node gets one idle job and none is
@@ -3077,40 +3115,6 @@ impl Scheduler {
                         };
                         pr.idle_dimension_review(&model_id, &goal, dim).await;
                     });
-                }
-            }
-            // F790-3 Q&A (GOOSE_SWARM_QA, default ON): an operator question in the inbox is
-            // answered on an idle node with the run's own state as context. One at a time (the
-            // in-flight set inside the dispatcher dedups), read-only for the build, and the
-            // has_pending_question check keeps the empty-inbox cost at one fs metadata call.
-            if let Some(pr) = self.pre_reviewer.as_ref().filter(|_| !paused) {
-                if qa_enabled() && pr.has_pending_question() {
-                    let pick = {
-                        let mut s = state.lock().await;
-                        if !s.ready.is_empty()
-                            && s.idle_capacity() <= 1
-                            && !s.has_free_supervision_device()
-                        {
-                            None
-                        } else {
-                            s.pick_qa()
-                        }
-                    };
-                    if let Some((model_id, brief, claimed_device)) = pick {
-                        let pr = pr.clone();
-                        let st = state.clone();
-                        let nt = notify.clone();
-                        let goal = { state.lock().await.goal.clone() };
-                        tokio::spawn(async move {
-                            let _slot = IdleSlotGuard {
-                                state: st.clone(),
-                                is_judge: false,
-                                claimed_device: Some(claimed_device),
-                                notify: Some(nt),
-                            };
-                            pr.answer_user_question(&model_id, &goal, &brief).await;
-                        });
-                    }
                 }
             }
             // S7 TESTGEN (GOOSE_SWARM_TESTGEN): when a node is STILL idle after pre-review and
