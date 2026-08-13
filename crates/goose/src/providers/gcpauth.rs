@@ -576,6 +576,7 @@ impl GcpAuth {
 mod tests {
     use super::*;
     use mockall::predicate::eq;
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     use tokio::time::sleep;
     use wiremock::matchers::{header, method, path};
     // Only import what we need
@@ -723,6 +724,11 @@ iXVBc2YmAuU8hiOFUPxtyQfNzG5fQ0rhJSewdtyWxIadJSLj6fsK+AEsNQ==
         assert_eq!(token2.token_value, "cached_token");
     }
 
+    // F787b: jwt signing needs jsonwebtoken's crypto backend, which rides the TLS feature
+    // (rustls-tls -> aws_lc_rs, native-tls -> rust_crypto). Every SHIPPED build picks one; a
+    // bare `cargo test -p goose --lib` picks neither and this test can only panic in the
+    // dependency. Gate the test to the configurations where the code under test can exist.
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     #[tokio::test]
     async fn test_token_expiration() {
         let auth = GcpAuth {
@@ -792,6 +798,11 @@ iXVBc2YmAuU8hiOFUPxtyQfNzG5fQ0rhJSewdtyWxIadJSLj6fsK+AEsNQ==
         }
     }
 
+    // F787b: jwt signing needs jsonwebtoken's crypto backend, which rides the TLS feature
+    // (rustls-tls -> aws_lc_rs, native-tls -> rust_crypto). Every SHIPPED build picks one; a
+    // bare `cargo test -p goose --lib` picks neither and this test can only panic in the
+    // dependency. Gate the test to the configurations where the code under test can exist.
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     #[tokio::test]
     async fn test_token_refresh_race_condition() {
         let auth = Arc::new(GcpAuth {
@@ -862,6 +873,11 @@ iXVBc2YmAuU8hiOFUPxtyQfNzG5fQ0rhJSewdtyWxIadJSLj6fsK+AEsNQ==
         }
     }
 
+    // F787b: jwt signing needs jsonwebtoken's crypto backend, which rides the TLS feature
+    // (rustls-tls -> aws_lc_rs, native-tls -> rust_crypto). Every SHIPPED build picks one; a
+    // bare `cargo test -p goose --lib` picks neither and this test can only panic in the
+    // dependency. Gate the test to the configurations where the code under test can exist.
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     #[tokio::test]
     async fn test_service_account_jwt_creation() {
         let auth = GcpAuth {

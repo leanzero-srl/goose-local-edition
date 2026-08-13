@@ -1046,6 +1046,7 @@ mod tests {
     use super::*;
     use crate::conversation::message::Message;
     use goose_test_support::TEST_IMAGE_B64;
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     use jsonwebtoken::{Algorithm, EncodingKey, Header};
     use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData};
     use rmcp::object;
@@ -1339,11 +1340,17 @@ mod tests {
     }
 
     #[derive(Serialize)]
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     struct TestClaims {
         exp: usize,
         chatgpt_account_id: Option<String>,
     }
 
+    // F787b: jwt signing needs jsonwebtoken's crypto backend, which rides the TLS feature
+    // (rustls-tls -> aws_lc_rs, native-tls -> rust_crypto). Every SHIPPED build picks one; a
+    // bare `cargo test -p goose --lib` picks neither and this test can only panic in the
+    // dependency. Gate the test to the configurations where the code under test can exist.
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
     #[tokio::test]
     async fn test_parse_jwt_claims_verified_with_issuer() {
         let server = MockServer::start().await;
