@@ -3759,8 +3759,16 @@ fn repeated_post_verdict(first: &str, second: &str) -> RepeatedPost {
         b.get("fetched").and_then(|v| v.as_u64()),
     ) {
         if f1 > 0 && f2 >= f1 {
+            // F797: 4 of 4 recent builds fail this and the repair loop has never cracked it from
+            // the bare symptom — the finding now CARRIES the named fix (repair-directed, the same
+            // measured pattern as smoke_fix_description's root-cause ask): conditional requests
+            // keyed per page, not one ETag replayed against every page.
             return RepeatedPost::NotCheap(format!(
-                "the second sync re-fetched {f2} row(s) it already had"
+                "the second sync re-fetched {f2} row(s) it already had. FIX: make the client send \
+                 If-None-Match per page — store each page's ETag keyed by (path, offset, limit) \
+                 from the first sync and replay THAT page's ETag on the matching request; treat \
+                 304 as 'page unchanged, keep local rows'. One ETag replayed on every page never \
+                 matches and re-fetches everything"
             ));
         }
         return RepeatedPost::Idempotent;
@@ -7998,11 +8006,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // ⚠️ THE REGRESSION THAT MATTERS. The first version of this function returned Idempotent
         // here — on the exact signature of the defect it exists to catch. Rows are correct
         // (inserted 0, total flat) and the app still re-pulled all 247 pages.
-        assert_eq!(
-            repeated_post_verdict(sync, r#"{"fetched":247,"inserted":0,"total":247}"#),
-            RepeatedPost::NotCheap("the second sync re-fetched 247 row(s) it already had".into()),
-            "correct rows do NOT excuse re-downloading the collection — the spec asks for both"
-        );
+        match repeated_post_verdict(sync, r#"{"fetched":247,"inserted":0,"total":247}"#) {
+            // correct rows do NOT excuse re-downloading the collection — the spec asks for both
+            RepeatedPost::NotCheap(f) => {
+                assert!(f.starts_with("the second sync re-fetched 247 row(s) it already had"));
+                // F797: the finding is repair-directed — the per-page ETag fix rides it.
+                assert!(
+                    f.contains("(path, offset, limit)"),
+                    "the named fix rides the finding"
+                );
+            }
+            other => panic!("expected NotCheap, got {other:?}"),
+        }
         assert_eq!(
             repeated_post_verdict(sync, r#"{"fetched":247,"inserted":247,"total":494}"#),
             RepeatedPost::Duplicates("the second call inserted 247 more row(s)".into()),
