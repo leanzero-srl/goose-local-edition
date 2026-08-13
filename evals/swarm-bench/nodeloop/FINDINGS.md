@@ -18697,3 +18697,14 @@ context block (time, workdir, compaction status, turn budget) silently. This is 
 working-session item: reproduce with the warn visible, identify which fix_conversation issue
 fires, and decide revert-vs-repair. NOT patching the test expectation — the test may be the only
 thing telling the truth here.
+
+## F793 — boundary 15 (10:47 binary): the FULL F790 judge evolution live; n3 0.7733
+
+probe_post-n3-r0 #4: 0.7733 / 107 min (bridge sb3 0.7708). n3 series on fixed binaries:
+0.6864 / 0.7247 / 0.701 / 0.9949 / 0.4759 / 0.7733 — mean ~0.75 with one excursion each way;
+no >0.95 clustering, ceiling rule stays unarmed. Boundary 15: gate GREEN → 10:47:58 binary →
+both new literals flipped absent→present (instruments block + Q&A prompt), controls held. NOW
+LIVE, completing Mihai's F790 directive in the binary: judge-nudge (lever), instrument-cited
+verdicts, and the mid-run operator Q&A channel (default ON — drop a question file into a run's
+.swarm/questions/, read .swarm/answers/ + the swarm_answer event). The queue's judge_nudge and
+fix_sched proof arms now run against a binary carrying every mechanism they test.
