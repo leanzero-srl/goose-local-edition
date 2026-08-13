@@ -18738,3 +18738,28 @@ rare, one turn, and human-blocking; background review is continuous and loses no
 yielding one slot on the rare tick a question exists. The smoke question stays in the inbox as
 the standing test: it should be answered promptly by the first post-rebuild run that inherits it,
 closing the loop on the mechanism proof.
+
+## F796 — the first two never-seen arms land: aux_slim is the night's strongest arm signal; fill_fan an honest null; plus the unclearable-alarm class fixed
+
+aux_slim-n3-r0: 0.9411 / 80.1 min — the second-highest sb-4 score ever, at ~20% LESS wall than
+the recent baseline band (~100-107 min). The mechanism is a removal (GOOSE_SWARM_AUX_SLIM kills
+the up-to-10 serialized end-of-turn 27B summarization calls per long worker, K3), so the readout
+IS the wall drop + no quality cost — and n=1 shows both. The strongest single-arm signal of the
+batch; if a replicate holds, this is a default-flip candidate (its falsifier: stable-24 below
+spread reverts, not tripped here).
+
+fill_fan-n3-r0: 0.673 / 74.1 min with ZERO skeleton::/fill::/join:: tasks dispatched — the
+planner emitted no subsplit, so the S3 machinery was never exercised. Per the arm's own gate this
+is "examined NOTHING and says so": an honest null, not a failure. Iteration note for a future
+arm: the SUBSPLIT ask is advisory; a forced-subsplit variant (or a spec with a known-hard module)
+is needed to actually observe the fan.
+
+Also fixed this tick (F795b, in the same class as the comment above the code predicted): the
+health checker alarmed BAD every 2 minutes for 3.5 hours on the loop-restart's CORRECTLY-VOIDED
+kill victim — a void row from the CURRENT engine tripped the pool-shortfall check even though the
+void mechanism (F784) had done exactly its job. Boundary-STOP voids are now excluded from that
+alarm; health reads OK again. An unclearable alarm drowns every real one — the checker's own
+comment block documented this failure mode and its new code path had recreated it.
+
+Queue state: testgen running (since 15:04), then judge_nudge, then fix_sched — the two open
+proofs land within ~3 hours.

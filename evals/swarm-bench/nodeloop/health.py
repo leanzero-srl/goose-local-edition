@@ -190,7 +190,13 @@ def main() -> int:
     #    Scoped by `engine_build`, which the row carries and which no file copy can alter — NOT by
     #    file mtime, which `cp -R` rewrites (F338/L183).
     cur = sweep.engine_build()
-    voids = [r for r in rs if r.get("void") and r.get("engine_build") == cur]
+    # F784/F795b: a row the sweep itself voided at a boundary STOP is the void MECHANISM WORKING,
+    # not a pool shortfall — alarming on it re-creates the exact unclearable-alarm failure this
+    # comment block documents (measured: 100+ BAD ticks over 3.5 hours for one correctly-voided
+    # kill victim, drowning every real alarm the whole time).
+    voids = [r for r in rs
+             if r.get("void") and r.get("engine_build") == cur
+             and "boundary STOP" not in str(r.get("void_reason", ""))]
     stale_voids = [r for r in rs if r.get("void") and r.get("engine_build") != cur]
     if voids:
         rep.add("BAD", "unit(s) did not get the pool they asked for: "
