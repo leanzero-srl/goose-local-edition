@@ -18844,3 +18844,15 @@ behaving as specified. Mihai's third judge direction is now proven end-to-end in
 question in, run-grounded answer out, in under a minute, on a fleet mid-build. SEMANTIC NOTE:
 the workdir wipe at unit start deletes pending questions — questions are per-run by design;
 a question outliving its run gets no answer, which is correct (the run it asked about is gone).
+
+## F802 — the aux_slim replicate does NOT hold the record: 0.6564/88min; the arm stays gated, honestly
+
+aux_slim rep 2: 0.6564 / 88 min against rep 1's 0.9411 / 80 min. The 0.9411 was an n=1 excursion,
+not the arm's level — at n=2 aux_slim reads mean ~0.80 with wall ~84 min vs the ~100-107 baseline
+band: NO quality cost visible, a plausible but unproven wall gain. That is a GOOD arm profile
+(the mechanism removes unbudgeted work and quality did not drop) but nowhere near the
+default-flip bar the rep-1 number suggested. NO proposal goes to Mihai on this evidence; the arm
+stays gated and its replicates accumulate on the normal schedule. The discipline note: one
+excellent run after a mechanism change is exactly the anecdote-vs-distribution trap F785 caught
+at the attempt level — the same rule applies at the arm level, and this replicate is why the
+proposal waited for it.
