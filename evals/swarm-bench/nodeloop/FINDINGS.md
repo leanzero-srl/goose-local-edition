@@ -18668,3 +18668,16 @@ Mapped to the machinery:
    supervision pool (F779 i3) gives this a home that never steals a build slot.
 Sequence: (1) is the top engine item after the c7 proof; (2) folds into (1)'s context build;
 (3) is its own increment behind a lever, desktop surface later.
+
+## F791 — boundary 14 (08:55 binary): the judge-nudge is LIVE; n3 0.4759 keeps the spread honest
+
+probe_post-n3-r0 #3: 0.4759 / 83 min (bridge sb3 0.485) — the low end returns, so no >0.95
+clustering and the ceiling rule stays un-triggered; the n3 series on fixed binaries is
+0.6864 / 0.7247 / 0.701 / 0.9949 / 0.4759. Boundary 14: gate GREEN → 08:55:06 binary → the
+nudge's supervisor-note literal flipped absent→present, controls held. NOW LIVE: F790-1
+judge-nudge (default OFF; its arm + registered question are queued BEHIND fix_sched), the
+jwt-test gating and the gate-widened-to-core-lib change. Boundary crossed deliberately BEFORE
+the queue reaches the judge_nudge arm — running that arm against a binary without the mechanism
+would have produced exactly the fabricated no-effect row the preflight exists to prevent, just
+at the binary layer where the preflight cannot see it. The kill victim of this crossing was
+voided mechanically (second clean crossing since F784's fix).
