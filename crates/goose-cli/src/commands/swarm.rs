@@ -10751,6 +10751,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn digest_failed_calls_block_extracts_only_failures_capped() {
+        // F790-2: 5 calls — 1 ok, 4 failed; the block carries the LAST 3 failures with tails.
+        let digest = Some(serde_json::json!({
+            "calls": [
+                {"name": "shell", "summary": "pytest", "ok": false, "result": "fail-1"},
+                {"name": "write", "summary": "api.py", "ok": true, "result": "ok"},
+                {"name": "shell", "summary": "pytest", "ok": false, "result": "fail-2"},
+                {"name": "edit", "summary": "store.py", "ok": false, "result": "fail-3"},
+                {"name": "shell", "summary": "run", "ok": false, "result": "fail-4"},
+            ]
+        }));
+        let b = digest_failed_calls_block(&digest).unwrap();
+        assert!(b.contains("fail-2") && b.contains("fail-3") && b.contains("fail-4"));
+        assert!(!b.contains("fail-1"), "capped to the last 3 failures");
+        assert!(!b.contains("api.py"), "successful calls are not evidence");
+        // In-flight calls (ok: null) are not failures.
+        let pending = Some(serde_json::json!({
+            "calls": [{"name": "shell", "summary": "x", "ok": null, "result": ""}]
+        }));
+        assert!(digest_failed_calls_block(&pending).is_none());
+        assert!(digest_failed_calls_block(&None).is_none());
+    }
+
+    #[test]
     fn fix_mode_only_arms_with_an_active_round() {
         // c3: a fix::-named plan task with NO active round passes through as an ordinary task —
         // the fill_fan gate's rule, applied to fix mode.
@@ -20645,10 +20669,35 @@ impl Judge for GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // F790-2 INSTRUMENTS: deterministic evidence the verdict/hint can CITE. Failed tool
+        // calls come from the digest already in hand; import health runs only when this worker
+        // owns Python files and only after the cheap early-returns above, so a healthy young
+        // worker never pays for it.
+        let failed_calls = digest_failed_calls_block(&digest);
+        let import_health = if req.owned_files.iter().any(|f| f.ends_with(".py")) {
+            collect_only_import_health(&cwd).await
+        } else {
+            None
+        };
+        let instruments_block = match (&failed_calls, &import_health) {
+            (None, None) => String::new(),
+            _ => format!(
+                "\n\nINSTRUMENT READINGS (deterministic — cite these in your hint when relevant):\n\
+                 {}{}",
+                failed_calls
+                    .as_deref()
+                    .map(|f| format!("recent FAILED tool calls:\n{f}\n"))
+                    .unwrap_or_default(),
+                import_health
+                    .as_deref()
+                    .map(|h| format!("pytest --collect-only FAILS (the tree cannot import):\n{h}\n"))
+                    .unwrap_or_default(),
+            ),
+        };
         let user = format!(
             "GOAL: {goal}{pillars_block}\n\nRUN STATE:\n  done:\n{done}\n  still running: {rem}\n  failed: {fail}\n\n\
              THIS WORKER's subtask: {desc}\n  owns files: {owns}\n\nFiles produced so far:\n{files}\n\n\
-             Worker activity log:\n{trace}\n\nYour one-line verdict:",
+             Worker activity log:\n{trace}{instruments}\n\nYour one-line verdict:",
             goal = req.goal,
             done = done_block,
             rem = remaining_str,
@@ -20657,6 +20706,7 @@ impl Judge for GooseAgentDispatcher {
             owns = owns_str,
             files = files_block,
             trace = trace_block,
+            instruments = instruments_block,
         );
         match tokio::time::timeout(
             std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
@@ -23520,6 +23570,74 @@ fn judge_probe_root_for(round_active: bool, shadow: Option<PathBuf>, cwd: PathBu
         }
     }
     cwd
+}
+
+/// F790-2: the worker's FAILED tool calls, from the activity digest's `calls` records — the
+/// evidence a supervisor verdict should cite. Pure over the parsed digest, capped to the last 3
+/// failures with result tails, so a noisy worker cannot flood the judge prompt.
+fn digest_failed_calls_block(digest: &Option<serde_json::Value>) -> Option<String> {
+    let calls = digest.as_ref()?.get("calls")?.as_array()?;
+    let fails: Vec<String> = calls
+        .iter()
+        .filter(|c| c.get("ok").and_then(|o| o.as_bool()) == Some(false))
+        .rev()
+        .take(3)
+        .map(|c| {
+            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let summary = c.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let result: String = c
+                .get("result")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(300)
+                .collect();
+            format!("  - {name} {summary}: {result}")
+        })
+        .collect();
+    if fails.is_empty() {
+        None
+    } else {
+        Some(fails.join("\n"))
+    }
+}
+
+/// F790-2: import health via `pytest --collect-only -q` on the probe root. A collect failure
+/// means the tree cannot even be imported — the strongest cheap "broken" fact a supervisor can
+/// cite, and invisible to per-file syntax checks (it catches cross-file import breakage). 20s
+/// cap; None = healthy, not installed, or timed out (a missing instrument is never evidence).
+async fn collect_only_import_health(root: &std::path::Path) -> Option<String> {
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new("python3")
+            .args(["-m", "pytest", "--collect-only", "-q"])
+            .current_dir(root)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if out.status.success() {
+        return None;
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(500)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    if tail.trim().is_empty() {
+        None
+    } else {
+        Some(tail)
+    }
 }
 
 /// Judge kills are JoinHandle aborts: cancellation lands at an await point and runs NO epilogue
