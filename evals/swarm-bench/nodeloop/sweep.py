@@ -2277,6 +2277,26 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     if wire:
         picked = {id(u) for u in wire}
         units = wire + [u for u in units if id(u) not in picked]
+    # F794: NEVER-OBSERVED MECHANISMS FIRST — ahead even of the wire partition.
+    #
+    # MEASURED starvation: every rebuild invalidates completeness (by design — a row must come
+    # from the current engine), and the wire hoist then re-runs probe_post/scout_doc_urls rep-0
+    # FIRST after every boundary. Under an active build session (7 boundaries in one night) the
+    # queue never advanced past them: probe_post accumulated 12 rows while judge_nudge/fix_sched/
+    # testgen/fill_fan/aux_slim — mechanisms that have NEVER BEEN OBSERVED AT ALL — sat queued and
+    # unreached the whole time. The wire partition's own rationale ("cheapest decisive experiment
+    # first") ranks a never-observed mechanism ABOVE a re-verification: probe_post's mechanism has
+    # 12 historical observations, judge_nudge has zero. Rep 0 only, self-limiting exactly like its
+    # siblings: once each lands one current-engine unit this partition is empty.
+    never_seen = [
+        u
+        for u in units
+        if u[0]["name"] in ("judge_nudge", "fix_sched", "testgen", "fill_fan", "aux_slim")
+        and u[2] == 0
+    ]
+    if never_seen:
+        picked = {id(u) for u in never_seen}
+        units = never_seen + [u for u in units if id(u) not in picked]
     return units
 
 
