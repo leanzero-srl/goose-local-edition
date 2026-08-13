@@ -18904,3 +18904,13 @@ reps 0 — visible in every restart banner, burning no fleet time until seed_tre
 halves land (task #20). The four engine questions it will answer are each potential findings:
 delta-planning, contracts-from-existing-code, owned_files on pre-existing files, and whether
 promote-only-strictly-better protects the base.
+
+## Ledger — testgen rep 2: 0.7314/115min, and the landing mechanism split 3/3 → 0/3
+
+testgen rep 2: 0.7314 / 115 min (bridge sb3 ~0.75) vs rep 1's 0.5774 / 76 min — the arm's score
+band is wide and uninformative at n=2, as expected for a score cell. THE MECHANISM DELTA is the
+real datum: rep 1 landed 3/3 generated test files; rep 2 landed 0/3, all three "no landable
+fenced test block in the reply" — the extraction is format-fragile in exactly the weak-model way
+the Q10 grammar-forcing design predicted. The honest-miss path reported correctly each time
+(nothing landed as garbage). If the split persists across further reps, the standing answer is
+grammar-forced output on the testgen call (LM Studio structured output), not a bigger prompt.
