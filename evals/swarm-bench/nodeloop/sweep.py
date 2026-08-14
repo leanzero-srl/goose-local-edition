@@ -1849,6 +1849,12 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         except Exception:
             pass
     prev = dict(os.environ)
+    # F812 (Mihai: "check the node count used in LM Studio too"): GROUND-TRUTH the pool against
+    # the independent 30s fleet sampler — goose's actual_nodes is the ENGINE'S OWN claim, and the
+    # node curve deserves an oracle goose cannot influence. Window by FILE OFFSET, not
+    # timestamps (the tsv carries time-of-day only).
+    _fleet_tsv = OUT / "fleet-samples.tsv"
+    _fleet_off = _fleet_tsv.stat().st_size if _fleet_tsv.is_file() else 0
     dog = Watchdog(unit_name(arm["name"], nodes, rep), OUT / f"{entrant}-r{rep}", arm, nodes)
     dog.start()
     try:
@@ -1945,6 +1951,30 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         harness = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
         log(f"[HARNESS] audit could not run: {harness['detail']}")
 
+    # F812: which identifiers did LM STUDIO see active during this unit's window?
+    lms_ids: set = set()
+    try:
+        if _fleet_tsv.is_file():
+            with open(_fleet_tsv) as fh:
+                fh.seek(_fleet_off)
+                for line in fh:
+                    if "IDENT=STATUS" not in line:
+                        continue
+                    for tok in line.split("IDENT=STATUS", 1)[1].split():
+                        name, _, st = tok.partition("=")
+                        if st in ("GENERATING", "PROCESSINGPROMPT"):
+                            lms_ids.add(name)
+        verdict["lms_observed_ids"] = sorted(lms_ids)
+        verdict["lms_observed_nodes"] = len(lms_ids)
+        verdict["lms_node_mismatch"] = len(lms_ids) > nodes
+        if len(lms_ids) > nodes:
+            log(f"[LMS-MISMATCH] {unit_name(arm['name'], nodes, rep)} intended {nodes} node(s) "
+                f"but LM Studio saw {len(lms_ids)} active: {sorted(lms_ids)} — either goose "
+                f"dispatched beyond its pool or something else used the fleet; this row is "
+                f"FLAGGED and the curve reporter must exclude it")
+    except Exception as exc:  # noqa: BLE001 — a broken oracle must be visible, not fatal
+        verdict["lms_observed_nodes"] = None
+        verdict["lms_observe_error"] = f"{type(exc).__name__}: {exc}"
     actual = verdict.get("actual_nodes")
     # The label is an intention; run_started.pool is the fact. A mismatch has silently voided a
     # whole campaign before, so it voids the unit here rather than being averaged in.
