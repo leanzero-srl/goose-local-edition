@@ -19181,3 +19181,22 @@ stayed idle (its one exercised round remains the F799 proof: 6→1 findings, 6/6
 rounds, which arrive at base rates. LM oracle: 3 observed, no mismatch — third clean row.
 Queue: probe_post single running NOW (the F806 conditional-fix proof), then scout_doc_urls, then
 THE CURVE (16 runs).
+
+## F816 — the F806 proof run: the missing-counter path never triggered because THIS app's counters LIE; the remaining gap is named
+
+probe_post single: 0.5189 / 75 min. The verdict is a miss with a precise lesson. The probe ran
+(probed_post=1) and reported "satisfied" BOTH rounds while the scorer failed resync_idempotent
+AND second_sync_cost at 0.0 — but NOT via the fail-open F806 closed: this app ADVERTISED the
+documented counters, and its second sync self-reported cheap (fetched=0-class), so the engine's
+repeated-POST verdict read Idempotent honestly from the body. The SCORER measures actual vendor
+traffic (the trace ladder), not self-reports — and the app actually re-fetches. So the taxonomy
+is now three cases: (1) counters missing → F806's shape finding fires (fixed, untriggered here);
+(2) counters honest → the NotCheap finding + ETag hint fire (the designed path); (3) counters
+PRESENT BUT FALSE → the engine cannot see the lie without observing real vendor traffic, which
+does not exist at engine-gate time (F775: apps hardcode the vendor base_url; nothing serves it
+during the gate). THE DURABLE FIX (post-verdict batch, design item): the engine's completion
+gate spins a minimal VENDOR STUB serving the documented API from fixtures, so POST probes
+exercise reality — cheapness then reads from the stub's request count, immune to self-report.
+That also closes the F775 testability thread. Engine verify round 1 PASSED (green) vs scorer
+0.5189 — the engine-green/scorer-red separation again, and the vendor stub is precisely what
+narrows it. Singles 6/7 done; scout_doc_urls next, then THE CURVE.
