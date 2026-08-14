@@ -19164,3 +19164,11 @@ testgen events fired (the idle consumer never picked test generation — review 
 idle window), so the grammar-fallback landed-rate question stays open for a run where generation
 actually triggers. Queue: judge_nudge single running, then fix_sched, probe_post (the F806
 proof), scout_doc_urls — then the CURVE.
+
+## Ledger — singles 4/7 done: judge_nudge 0.9411/84min (honest null again on the mechanism; the arm's scores keep landing high)
+
+judge_nudge single: 0.9411 / 84 min (bridge sb3 ~0.93) — the arm's THIRD run with the lever
+armed and zero nudges (no call has looped since the lever exists), and its runs read
+0.8193/0.7089/0.9411 — armed-and-silent keeps costing nothing while landing high. LM oracle: 3
+observed, no mismatch. Queue: fix_sched single running, then probe_post (the F806 proof), then
+scout_doc_urls — then THE CURVE.
