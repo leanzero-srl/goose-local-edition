@@ -18995,3 +18995,9 @@ exercisable) + the testgen whole-reply fallback (the 0/3 bare-reply landing clas
 collect-only guard remains the safety property). THE BINARY FREEZE IS IN EFFECT per SCHEDULE.md:
 no rebuilds until the node-ratio verdict — any urgent fix must weigh the full-reset cost
 explicitly. The counts clock restarts now: singles 7, curve 16, treatments 50.
+
+## Ledger — singles 1/7: aux_slim (final binary) 0.7404/95min; arm at n=4 mean 0.818
+
+aux_slim on the frozen 10:03 binary: 0.7404 / 95 min. The arm across binaries: 0.9411, 0.6564,
+0.9355, 0.7404 — mean 0.818, still no quality cost visible vs the historical baseline band, wall
+80-95. The flip decision waits on the current-binary baseline denominator as planned.
