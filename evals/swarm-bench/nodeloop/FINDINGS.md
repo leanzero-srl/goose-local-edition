@@ -19142,3 +19142,13 @@ could inspect it was counted as an engine, which is precisely the population the
 to discard. Detector now: 2s resample + exact release-binary match + vanished-means-not-orphan.
 Health OK with a single verified engine (the sweep's own child). The testgen single restarted
 clean at 19:13 rides on.
+
+## F815 — #27 complete: the website posting pipeline is real, modern, and proven end-to-end
+
+The sb-4-shaped proof post (hard/excellent/wallSecs included) returned {"ok":true,
+"status":"pending_review"} against the DEPLOYED endpoint — the full chain now: desktop builds
+the sb-4 row → the endpoint validates and stores every field → Studio promote → the ranked
+leaderboard renders score badges, tier columns, hard-block mean, wall minutes, nodes and scorer.
+TWO test drafts sit in Studio for Mihai (the audit draft + the sb-4 proof draft): promote one to
+see the leaderboard live with data, or discard both. Remaining on the shipping track: #28
+desktop parity (post-verdict, verified in the running app) and #29 the release on his go.
