@@ -118,6 +118,26 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True)
+    # F811 (Mihai: "next time we pause we won't lose anything"): RESUME A KILLED UNIT. When the
+    # sweep points BENCH_RESUME_FROM at the voided unit's dir (same engine binary only — the
+    # sweep enforces that), restore the partial tree + the run's own .swarm logs and arm the
+    # engine's GOOSE_SWARM_RESUME: the engine reloads the plan from its log (skipping the
+    # ~20-min prologue) and re-runs tasks against the warm tree. Deliberately re-runs rather
+    # than trusts unfinished tasks — the engine's own resume semantics.
+    resume_from = os.environ.get("BENCH_RESUME_FROM", "")
+    if resume_from:
+        prev = Path(resume_from)
+        if prev.is_dir():
+            for child in prev.iterdir():
+                if child.name in {"graded.db", "verdict.json", "process.json",
+                                  "nodeloop-result.json", "heartbeat", "vendor-trace.jsonl",
+                                  "run.jsonl", "__pycache__"}:
+                    continue
+                if child.is_dir():
+                    shutil.copytree(child, workdir / child.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(child, workdir / child.name)
+            os.environ["GOOSE_SWARM_RESUME"] = "1"
     # BENCH3 (BENCH3-AMEND.md): the brownfield mode. When the arm exports BENCH_SEED_TREE, the
     # unit starts from a COPY of that base app instead of an empty directory — the engine's
     # amendment path (working_dir_has_sources) then sees real sources. Greenfield arms are
