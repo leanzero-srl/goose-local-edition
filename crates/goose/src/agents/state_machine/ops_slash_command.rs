@@ -74,6 +74,7 @@ impl Operation<Session, GooseEffect> for SlashCommandOperation<'_> {
                 applied @ OperationResult::Applied(_) => return Ok(applied),
             }
         }
+
         not_applicable()
     }
 }

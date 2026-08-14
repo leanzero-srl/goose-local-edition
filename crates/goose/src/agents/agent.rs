@@ -1633,19 +1633,24 @@ impl Agent {
             .unwrap_or_else(|_| {
                 crate::context_mgmt::compute_tool_call_cutoff(context_limit, compaction_threshold)
             });
-        let tool_pair_compaction_enabled = crate::context_mgmt::tool_pair_summarization_enabled()
-            && !provider.manages_own_context();
+        let manages_own_context = provider.manages_own_context();
+        let tool_pair_compaction_enabled =
+            crate::context_mgmt::tool_pair_summarization_enabled() && !manages_own_context;
 
-        let operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
+        let mut operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
             Arc::new(SteerOperation::new(steer_queue, self.hook_manager.clone())),
             Arc::new(MaxTurnsOperation::new(max_turns)),
             Arc::new(BangShellOperation::new()),
-            Arc::new(CompactionOperation::new(
+        ];
+        if !manages_own_context {
+            operations.push(Arc::new(CompactionOperation::new(
                 provider.clone(),
                 model_config.clone(),
                 context_limit,
                 compaction_threshold,
-            )),
+            )));
+        }
+        let remaining_operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
             Arc::new(ToolPairCompactionOperation::new(
                 provider.clone(),
                 model_config.clone(),
@@ -1678,6 +1683,7 @@ impl Agent {
             )),
             Arc::new(ExitOnErrorOperation),
         ];
+        operations.extend(remaining_operations);
         let inference = Arc::new(InferenceRunner::new(
             provider,
             model_config,

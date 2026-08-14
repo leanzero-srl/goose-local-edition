@@ -114,24 +114,28 @@ impl TestPipeline {
             self.model_config.context_limit(),
             COMPACTION_THRESHOLD,
         );
-        let operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
+        let mut operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
             Arc::new(SteerOperation::new(
                 self.steer_queue.clone(),
                 self.hook_manager.clone(),
             )),
             Arc::new(MaxTurnsOperation::new(self.max_turns)),
             Arc::new(BangShellOperation::new()),
-            Arc::new(CompactionOperation::new(
+        ];
+        if !self.provider_features.manages_own_context {
+            operations.push(Arc::new(CompactionOperation::new(
                 provider.clone(),
                 self.model_config.clone(),
                 self.model_config.context_limit(),
                 COMPACTION_THRESHOLD,
-            )),
+            )));
+        }
+        let remaining_operations: Vec<Arc<dyn Operation<Session, GooseEffect> + '_>> = vec![
             Arc::new(ToolPairCompactionOperation::new(
                 provider.clone(),
                 self.model_config.clone(),
                 tool_call_cutoff,
-                true,
+                !self.provider_features.manages_own_context,
             )),
             Arc::new(ToolApprovalOperation::new(
                 &self.goose_mode,
@@ -159,6 +163,7 @@ impl TestPipeline {
             )),
             Arc::new(ExitOnErrorOperation),
         ];
+        operations.extend(remaining_operations);
         let inference = Arc::new(InferenceRunner::new(
             provider,
             self.model_config.clone(),
