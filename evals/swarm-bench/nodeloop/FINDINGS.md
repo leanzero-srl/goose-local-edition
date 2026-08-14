@@ -19152,3 +19152,15 @@ leaderboard renders score badges, tier columns, hard-block mean, wall minutes, n
 TWO test drafts sit in Studio for Mihai (the audit draft + the sb-4 proof draft): promote one to
 see the leaderboard live with data, or discard both. Remaining on the shipping track: #28
 desktop parity (post-verdict, verified in the running app) and #29 the release on his go.
+
+## Ledger — singles 3/7 done (testgen 0.7465/95min); THE F812 ORACLE IS PROVEN ON DISK
+
+testgen single: 0.7465 / 95 min (bridge sb3 0.7766). THE ROW IS THE FIRST WITH COMPLETE
+INSTRUMENTATION, and both new fields prove out: lms_observed_nodes: 3 with ids
+[gabee, mihai, workh] and mismatch: False on an intended-3-node unit — Mihai's LM Studio
+ground-truth check is live and persisting, exactly what the curve's exclusions read. resumed:
+True is marked too (the F811 field). The arm's own mechanism was an honest null this run: ZERO
+testgen events fired (the idle consumer never picked test generation — review work won every
+idle window), so the grammar-fallback landed-rate question stays open for a run where generation
+actually triggers. Queue: judge_nudge single running, then fix_sched, probe_post (the F806
+proof), scout_doc_urls — then the CURVE.
