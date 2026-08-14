@@ -18942,3 +18942,20 @@ and the last five units across all arms now read 0.7089/0.9792/0.7314/0.6423/0.8
 ~0.79). The floor since the sync-acquisition class last struck: five consecutive units above
 0.64. The high end is frequent, the low tail thinning — the engine trend is real; the scorer
 hardening stays the top working-session item so the instrument keeps discriminating.
+
+## F806 — WHY the conditional-request loss survived 5 scored runs: the engine probe fails OPEN on the missing documented field, so the repair loop never hears about it
+
+The 0.8849 run carried the answer: probed_post=1 and "every advertised check that bound was
+satisfied" from the engine, while the scorer failed the same app 0.0 on resync_idempotent AND
+second_sync_cost. The engine's repeated-POST verdict reads cheapness from the app's own `fetched`
+counter and files a missing-field response as INCONCLUSIVE — silence — even though the spec's
+endpoint table DOCUMENTS the sync response as {"fetched", "inserted", "total"}. Apps that omit
+the counters (most of them) are therefore unjudgeable engine-side, the finding never fires, and
+the F797 repair hint rides a finding that never existed. FIX (held): Unreadable becomes a
+DIRECTED SHAPE FINDING — "return the three documented counters; without them cheapness and
+idempotency cannot be verified by anyone, including this gate" — the observed-violation
+principle, not a guess. The intended two-round repair path: round N lands the counters, round
+N+1's probe can finally bind cheapness, and the ETag hint fires if it fails. Registered check:
+on a post-rebuild run whose app omits the counters, the gate goes RED with the shape finding
+(today it passes green); resync_idempotent moving off 0.0 anywhere in the following cells is the
+score-level confirmation.
