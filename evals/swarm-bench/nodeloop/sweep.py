@@ -1832,13 +1832,35 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     # carries it: a mid-cell rebuild can still mix binaries, but it can no longer LIE about which one
     # ran, and the mismatch shows up as a stale `engine_build` that `is_done()` re-runs.
     engine_build_at_dispatch = engine_build()
+    # F811: a SAME-BINARY boundary-STOP void is resumable — hand its dir to run_build so the
+    # engine reloads the plan and re-runs against the warm tree instead of from scratch. Marked
+    # via resumed_from in the result so wall aggregates can exclude it (the prologue skip makes
+    # its wall incomparable); the SCORE stays valid — the app is judged as built. Different
+    # binary => no resume (a plan from another engine is a different experiment).
+    resume_from = ""
+    _prev_dir = unit_dir(arm["name"], nodes, rep)
+    _prev_res = _prev_dir / "nodeloop-result.json"
+    if _prev_res.is_file():
+        try:
+            _r = json.loads(_prev_res.read_text())
+            if (_r.get("void") and "boundary STOP" in str(_r.get("void_reason", ""))
+                    and _r.get("engine_build") == engine_build_at_dispatch):
+                resume_from = str(_prev_dir)
+        except Exception:
+            pass
     prev = dict(os.environ)
     dog = Watchdog(unit_name(arm["name"], nodes, rep), OUT / f"{entrant}-r{rep}", arm, nodes)
     dog.start()
     try:
         for k, v in arm["env"].items():
             os.environ[k] = v
+        if resume_from:
+            os.environ["BENCH_RESUME_FROM"] = resume_from
+            log(f"[resume] {now()} {unit_name(arm['name'], nodes, rep)} resumes from its "
+                f"boundary-STOP void (same binary) — plan reloads, tasks re-run warm")
         verdict = run_build.run(entrant, rep, OUT, TIMEOUT, port)
+        if resume_from:
+            verdict["resumed_from"] = resume_from
     finally:
         dog.done()
         os.environ.clear()

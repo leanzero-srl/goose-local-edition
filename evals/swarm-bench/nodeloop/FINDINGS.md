@@ -19032,3 +19032,17 @@ void (the third instance of this exact class); with the check added, the restart
 fill_fan-n3-r0 first, exactly the row that would have been silently lost. Separately verified on
 request: goose's session-resume adoption — all 8 resume tests green (user-only implicit resume;
 the provider/model override matrix). Fleet resumed: loop pid 31614, engine live, freeze intact.
+
+## F811 — hard stops become resumable: the sweep re-arms the engine's own resume for same-binary boundary-STOP voids
+
+Mihai: "is this fixed so that next time we pause we won't lose anything?" The soft pause (pause
+file) already loses nothing. The hard stop now loses only unfinished-task re-execution: the
+engine has always had a tested resume (GOOSE_SWARM_RESUME — reload the plan from the run's own
+.swarm log, skip the ~20-min prologue, deliberately RE-RUN tasks rather than trust unfinished
+ones), and the harness wipe was defeating it. Now: run_build restores the partial tree + .swarm
+logs and arms the engine resume when BENCH_RESUME_FROM is set; the sweep sets it exactly when
+the cell's existing result is a SAME-BINARY boundary-STOP void (a plan from another binary is a
+different experiment — no cross-binary resume). Resumed results carry resumed_from so wall
+aggregates can exclude them (the prologue skip makes their wall incomparable); the score stays
+valid — the app is judged as built. Live proof pending the next hard stop; the engine half is
+pinned by resume_skips_only_what_provably_finished + the 8 green resume tests.
