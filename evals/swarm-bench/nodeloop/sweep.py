@@ -580,7 +580,7 @@ ARMS = [
     },
     {
         "name": "amend_feature",
-        "env": {},
+        "env": {"BENCH_SEED_TREE": "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/build/opus-5-r0"},
         "gate": "BENCH3 (BENCH3-AMEND.md, Mihai 2026-08-13): add a feature to the EXISTING known-good "
                 "app instead of building from scratch — the brownfield axis nothing has tested. PARKED "
                 "(reps 0) until sweep seed_tree support + the feature/regression scorer halves land; "
