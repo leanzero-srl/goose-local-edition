@@ -19098,3 +19098,19 @@ cherry-picking NEW dict — neither field survived to disk. Fixed (the assembly 
 four fields); loop restarted onto the complete instrumentation, and the restart itself exercised
 the F811 path again ([resume] fired for testgen's planless stub — correct cheap re-plan). Every
 curve row will now carry the oracle fields ON DISK, which curve.py's exclusions read.
+
+## F813 — the website pipeline audit (Mihai: "make sure it's not a dud — bound to be fictional implementations")
+
+Audited every link empirically. REAL: the benchmarkRun Sanity schema exists AND is registered;
+the /api/benchmark-runs endpoint validates strictly (scalar allowlist, unknown-key rejection,
+draft-only writes) AND the DEPLOYED endpoint works — a clearly-marked test draft posted live
+returned {"ok":true,"status":"pending_review"} (discard it in Studio at leisure); the desktop's
+benchmark-publish IPC posts the right shape. FICTIONAL/MISSING, exactly one piece: NO QUERY
+ANYWHERE READS benchmarkRun documents — the page renders only the curated agenticBenchmark prose
+type, so even a PROMOTED run displays nowhere. The pipeline is post→draft→promote→VOID. The #27
+build therefore is: (1) the runs LEADERBOARD (query published benchmarkRun ordered by score,
+render per Mihai's UI rules — solid colors, no left-rails, no native primitives) integrated into
+the agentic-benchmarks page; (2) sb-4 fields end-to-end (schema + endpoint + desktop row + table:
+HARD tier, excellent band, wall, engine build) with backward compat; (3) the desktop
+run-the-bench flow verification lands with #28. Unverified-by-design left: none on the posting
+path.
