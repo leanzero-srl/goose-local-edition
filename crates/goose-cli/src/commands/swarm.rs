@@ -10626,18 +10626,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // (1) Two fillers, disjoint slots: each edited ONLY its own body.
         let fill_a = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
         let fill_b = "import json\n\n\ndef alpha():\n    raise NotImplementedError\n\n\ndef beta():\n    return json.dumps([2])\n\n\ndef gamma():\n    return 3\n";
-        let after_a = splice_functions(skeleton, skeleton, fill_a, &["alpha".into()]).unwrap();
+        let (after_a, _) = splice_functions(skeleton, skeleton, fill_a, &["alpha".into()]).unwrap();
         assert!(after_a.contains("return {\"a\": 1}"));
         assert!(after_a.contains("def beta():\n    raise NotImplementedError"));
-        let done = splice_functions(&after_a, skeleton, fill_b, &["beta".into()]).unwrap();
+        let (done, _) = splice_functions(&after_a, skeleton, fill_b, &["beta".into()]).unwrap();
         assert!(done.contains("return {\"a\": 1}") && done.contains("json.dumps([2])"));
         assert!(done.contains("def gamma():\n    return 3"));
-        // (2) A filler that ALSO edited a sibling's body: refused whole, tree untouched.
+        // (2) POLICY CHANGE (F809, measured on the first live join — 2 of 5 fills were
+        // whole-file rewrites and the fatal fence landed NOTHING): a filler that also edited a
+        // sibling's body now contributes ITS OWN slot only — the sibling edit is IGNORED by
+        // construction (only owned spans are copied), and the fact is reported.
         let overreach = "import json\n\n\ndef alpha():\n    return {\"a\": 1}\n\n\ndef beta():\n    return \"sneaky\"\n\n\ndef gamma():\n    return 3\n";
-        assert!(matches!(
-            splice_functions(skeleton, skeleton, overreach, &["alpha".into()]),
-            Err(SpliceRefusal::ShadowTouchedForeignSlot(_))
-        ));
+        let (soft, foreign) =
+            splice_functions(skeleton, skeleton, overreach, &["alpha".into()]).unwrap();
+        assert!(foreign, "the foreign edit is recorded");
+        assert!(soft.contains("return {\"a\": 1}"), "the owned slot lands");
+        assert!(
+            !soft.contains("sneaky"),
+            "the sibling edit NEVER reaches the file"
+        );
         // (3) A filler that deleted its own slot.
         let deleted = "import json\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
         assert!(matches!(
@@ -10650,7 +10657,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ));
         // (4) Import ADD merges once and lands above the defs; import CONFLICT refuses.
         let with_import = "import json\nimport hashlib\n\n\ndef alpha():\n    return hashlib.sha256(b\"x\").hexdigest()\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
-        let merged = splice_functions(skeleton, skeleton, with_import, &["alpha".into()]).unwrap();
+        let (merged, _) =
+            splice_functions(skeleton, skeleton, with_import, &["alpha".into()]).unwrap();
         assert_eq!(merged.matches("import hashlib").count(), 1);
         assert!(merged.find("import hashlib").unwrap() < merged.find("def alpha").unwrap());
         let conflict = "import json as j\n\n\ndef alpha():\n    return j.dumps(1)\n\n\ndef beta():\n    raise NotImplementedError\n\n\ndef gamma():\n    return 3\n";
@@ -13589,12 +13597,21 @@ impl GooseAgentDispatcher {
         let mut current = current0;
         let mut spliced = 0usize;
         let mut refusals: Vec<String> = Vec::new();
+        // F809: slots salvaged from whole-file-rewriting shadows — recorded so the arm can
+        // measure how often the soft extraction (vs the old fatal fence) actually pays.
+        let mut foreign_touched_slots: Vec<String> = Vec::new();
         for (_, slot, shadow_file) in &fills {
             let Ok(shadow_src) = std::fs::read_to_string(shadow_file) else {
                 refusals.push(format!("{slot}: shadow file missing"));
                 continue;
             };
-            match splice_functions(&current, &root_src, &shadow_src, std::slice::from_ref(slot)) {
+            match splice_functions(&current, &root_src, &shadow_src, std::slice::from_ref(slot))
+                .map(|(src, foreign)| {
+                    if foreign {
+                        foreign_touched_slots.push(slot.clone());
+                    }
+                    src
+                }) {
                 Ok(composed) => {
                     current = composed;
                     spliced += 1;
@@ -13611,6 +13628,7 @@ impl GooseAgentDispatcher {
         }
         self.events.write_value(serde_json::json!({
             "event": "join_spliced", "module": module, "file": file,
+            "foreign_touched": foreign_touched_slots,
             "slots": fills.len(), "spliced": spliced,
             "refused": refusals.len(), "refusals": refusals,
         }));
@@ -26500,7 +26518,7 @@ fn splice_functions(
     root_src: &str,
     shadow_src: &str,
     slots: &[String],
-) -> Result<String, SpliceRefusal> {
+) -> Result<(String, bool), SpliceRefusal> {
     let cur = py_module_spans(current_src).ok_or(SpliceRefusal::Unparseable("current"))?;
     let root = py_module_spans(root_src).ok_or(SpliceRefusal::Unparseable("root"))?;
     let shad = py_module_spans(shadow_src).ok_or(SpliceRefusal::Unparseable("shadow"))?;
@@ -26549,11 +26567,15 @@ fn splice_functions(
         .map(|(_, _, h)| *h)
         .chain(shad.imports.iter().map(|s| (s.start, s.end)))
         .collect();
-    if strip(&root_lines, &root_cut) != strip(&shad_lines, &shad_cut) {
-        return Err(SpliceRefusal::ShadowTouchedForeignSlot(
-            "the shadow differs from its root outside its owned slots".to_string(),
-        ));
-    }
+    // F809 (measured on the first live exercise): the hard refusal here cost EVERY contribution
+    // from a whole-file-rewriting worker — the commonest weak-model behavior (2 of 5 fills died
+    // this way, and the other 3 died on slot names, so the first exercised join landed nothing).
+    // The fence's purpose — foreign edits must never reach the real file — is preserved by
+    // CONSTRUCTION below: only the owned slots' spans are copied out of the shadow, so a foreign
+    // rewrite is IGNORED rather than fatal. The residual risk (a slot body that depends on the
+    // shadow's foreign edits) is exactly what the join's post-splice verify exists to catch.
+    // The condition is kept only as a RECORDED fact for the join_spliced event.
+    let foreign_touched = strip(&root_lines, &root_cut) != strip(&shad_lines, &shad_cut);
     // Import rules: every root import must survive in the shadow with identical text (a dropped
     // or re-aimed import changes what foreign code MEANS); shadow-only imports merge into
     // current unless current already carries the name (identical text -> dedupe, different ->
@@ -26624,7 +26646,7 @@ fn splice_functions(
     if py_module_spans(&composed).is_none() {
         return Err(SpliceRefusal::Unparseable("composed"));
     }
-    Ok(composed)
+    Ok((composed, foreign_touched))
 }
 
 /// Hard wall-clock cap (seconds) for a SERIAL push-to-completion / review fix agent. The dispatcher's own
@@ -29301,10 +29323,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // ordinary serial task; fill_fan_enabled still gates inside the expansion.
     let dag = if goose_swarm::fill_fan_enabled() {
         match goose_swarm::Dag::from_planner_json_with(&plan_json, &|m: &str| {
-            module_stub(&fix_contracts_bundle, m)
+            // F809: the slots ARE the stub's own definition names — the skeleton is generated
+            // from this same stub, so every slot exists in it by construction.
+            let skel = module_stub(&fix_contracts_bundle, m)
                 .as_deref()
-                .and_then(skeleton_from_stub)
-                .is_some()
+                .and_then(skeleton_from_stub)?;
+            let spans = py_module_spans(&skel)?;
+            let names: Vec<String> = spans.defs.iter().map(|d| d.name.clone()).collect();
+            (!names.is_empty()).then_some(names)
         }) {
             Ok(d) => d,
             Err(_) => dag,
