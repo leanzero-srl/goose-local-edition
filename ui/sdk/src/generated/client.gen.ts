@@ -146,6 +146,8 @@ import type {
   ProviderConfigSaveRequest_unstable,
   ProviderConfigStatusRequest_unstable,
   ProviderConfigStatusResponse_unstable,
+  ProviderReadinessCheckRequest_unstable,
+  ProviderReadinessCheckResponse_unstable,
   ProviderSecretDeleteRequest_unstable,
   ProviderSecretsListRequest_unstable,
   ProviderSecretsListResponse_unstable,
@@ -251,6 +253,7 @@ import {
   zProviderConfigChangeResponse_unstable,
   zProviderConfigReadResponse_unstable,
   zProviderConfigStatusResponse_unstable,
+  zProviderReadinessCheckResponse_unstable,
   zProviderSecretsListResponse_unstable,
   zProviderSetupCatalogListResponse_unstable,
   zProviderSupportedModelsListResponse_unstable,
@@ -626,6 +629,18 @@ export class GooseExtClient {
     return zRefreshProviderInventoryResponse_unstable.parse(
       raw,
     ) as RefreshProviderInventoryResponse_unstable;
+  }
+
+  async providersReadinessCheck_unstable(
+    params: ProviderReadinessCheckRequest_unstable,
+  ): Promise<ProviderReadinessCheckResponse_unstable> {
+    const raw = await this.conn.request(
+      "_goose/unstable/providers/readiness/check",
+      params,
+    );
+    return zProviderReadinessCheckResponse_unstable.parse(
+      raw,
+    ) as ProviderReadinessCheckResponse_unstable;
   }
 
   async providersConfigRead_unstable(

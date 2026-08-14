@@ -156,6 +156,12 @@ impl goose_providers::base::ProviderDescriptor for OpenRouterProvider {
                 ConfigKey::new(OPENROUTER_PARAMETERS_CONFIG_KEY, false, false, None, false),
             ],
         )
+        .with_setup(
+            crate::providers::catalog::ProviderSetupMetadata::api_key(
+                crate::providers::catalog::ProviderSetupGroup::Default,
+            )
+            .with_docs_url("https://openrouter.ai/keys"),
+        )
         .with_setup_steps(vec![
             "Go to https://openrouter.ai/settings/keys",
             "Click 'Create' or use an existing API key",
