@@ -194,16 +194,26 @@ impl Dag {
         Dag::from_specs(specs_from_plan_json(json)?)
     }
 
-    /// F804: parse AND expand, keeping a module's subsplit only where `stub_parses` says the
-    /// frozen contract stub for that module is buildable — the precondition the skeleton step
-    /// enforces at execution, now enforced at expansion so the fan fires exactly when it can
-    /// succeed. `fill_fan_enabled` still gates inside `expand_subsplits`.
-    pub fn from_planner_json_with(json: &str, stub_parses: &dyn Fn(&str) -> bool) -> Result<Self> {
+    /// F804/F809: parse AND expand, with each module's slots taken FROM ITS OWN STUB. The
+    /// mapper returns the stub's definition names when the frozen contract stub parses (None
+    /// otherwise) — so the fan fires exactly when it can succeed AND the slot names match the
+    /// skeleton BY CONSTRUCTION. The first live exercise proved why: detailer free-text slots
+    /// (`_VendorSyncHandler`) missed the stub-derived skeleton's names and every fill died
+    /// SlotMissingInSkeleton. `fill_fan_enabled` still gates inside `expand_subsplits`.
+    pub fn from_planner_json_with(
+        json: &str,
+        stub_slots: &dyn Fn(&str) -> Option<Vec<String>>,
+    ) -> Result<Self> {
         let specs = specs_from_plan_json(json)?
             .into_iter()
             .map(|mut t| {
-                if !t.subsplit.is_empty() && !stub_parses(&t.id) {
-                    t.subsplit = Vec::new();
+                if !t.subsplit.is_empty() {
+                    match stub_slots(&t.id) {
+                        Some(names) if names.len() >= 2 => {
+                            t.subsplit = names.into_iter().take(6).collect();
+                        }
+                        _ => t.subsplit = Vec::new(),
+                    }
                 }
                 t
             })
@@ -610,7 +620,10 @@ mod expand_tests {
             "bare parse must not expand: {:?}",
             bare.tasks.keys().collect::<Vec<_>>()
         );
-        let gated = Dag::from_planner_json_with(plan, &|m| m == "api").unwrap();
+        let gated = Dag::from_planner_json_with(plan, &|m| {
+            (m == "api").then(|| vec!["handle_get".to_string(), "handle_post".to_string()])
+        })
+        .unwrap();
         assert!(
             gated.tasks.keys().any(|k| k == "skeleton::api"),
             "api's stub parses -> its fan fires: {:?}",
