@@ -32,3 +32,14 @@ if beneficial; keep the task list current; hold this plan judiciously.
   second half; its registered check is the next fill_fan single after that boundary:
   join_spliced with spliced>0.
 - (add future held engine commits here as they land — this list IS the boundary's contents)
+
+## THE SHIPPING PHASES (Mihai, Fri ~18:40 — after the verdict, in order)
+7. **WEBSITE READY-TO-POST** (parallel-safe now, own repo ~/Projects/LeanZero-website): the
+   agentic-benchmarks pipeline exists end-to-end (desktop benchmark-publish → /api/benchmark-runs
+   draft → promote → page); extend both ends for sb-4 (HARD tier, excellent band, wall, engine
+   build), prove with a marked test draft, page polish. Honor that repo's own CLAUDE.md.
+8. **DESKTOP PARITY** (post-verdict, ships the FINAL engine): same binary + every fix in the
+   desktop app, benchmark flow exercised IN THE RUNNING APP, levers per the golden-formula strip.
+9. **FIRST STABLE RELEASE** (gated on the clear-and-undeniable verdict + Mihai's explicit go):
+   tag + GitHub release on the fork, notes distilled from FINDINGS, release-fork build stamped.
+   Then Mihai swaps models and benchmarks on the stable base.
