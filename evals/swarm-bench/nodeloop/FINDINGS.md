@@ -19074,3 +19074,16 @@ never see the history it needs. run_build's restore now bridges the voided run.j
 task list, no run_finished — exactly what resume_state_from_log extracts. The in-flight resumed
 unit re-planned honestly (marked resumed_from; wall excluded); the next hard stop is the live
 proof of the bridged path.
+
+## F811c — correction to F811b: the tested void was a PLANLESS STUB, so the re-plan was correct for it either way
+
+Checking the offline proof against the actual voided log corrected the story: the resume source
+at 16:15 was the SECOND kill's 13-minute stub (killed mid-planning — no plan_loaded with tasks,
+0 completed), for which resume_state_from_log correctly returns None and a full re-plan is the
+RIGHT outcome. The rich 2-hour history from the first kill had already been re-homed to
+_superseded by then. So F811b's "single root cause" overstated: the name mismatch is REAL and
+the bridge NECESSARY (the reader can never see a --log-file-named run.jsonl), but this instance
+would have re-planned even with the bridge. The live proof of the full chain therefore needs a
+hard stop against a unit that has PASSED planning — which is also the only case where resume
+saves anything. Rule of thumb now recorded: resume pays from plan_loaded onward; a mid-planning
+kill re-plans correctly and cheaply.
