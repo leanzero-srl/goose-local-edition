@@ -19020,3 +19020,15 @@ slot and the byte-fence refused the shadow, exactly its job; the fix is fill-pro
 zero corrupt bytes reached the real tree through five refused fills — and the two named defects
 are the whole remaining distance to a working splice. Both queued for the post-verdict engine
 batch; the freeze holds.
+
+## F810 — the stop/resume cycle flushed two real defects; both fixed, resume proven live
+
+Mihai's pause→stop→resume exercise was itself a test, and it failed usefully twice: (1) the
+preflight refused the restart over BENCH3's three harness-side BENCH_ keys — its oracle
+(`strings` on the engine binary) is right for engine levers and wrong for keys the bench python
+reads; BENCH_ keys now validate against the bench sources, keeping the guard's teeth. (2) The
+voided fill_fan single counted COMPLETE — complete() checked abandoned/aborted/None-pool but not
+void (the third instance of this exact class); with the check added, the restarted queue picked
+fill_fan-n3-r0 first, exactly the row that would have been silently lost. Separately verified on
+request: goose's session-resume adoption — all 8 resume tests green (user-only implicit resume;
+the provider/model override matrix). Fleet resumed: loop pid 31614, engine live, freeze intact.

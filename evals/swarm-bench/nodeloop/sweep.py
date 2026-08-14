@@ -1118,6 +1118,14 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     # never enforced HERE, which is the only place that decides whether to re-run.
     if r.get("abandoned") or r.get("aborted"):
         return False
+    # ⚠ THE THIRD INSTANCE OF THIS EXACT CLASS (after F227's abandoned and F665's None-pool): the
+    # F784 void-on-STOP fix mints rows with void=True, score=None, FULL pool and CURRENT engine —
+    # and nothing here knew. Measured 2026-08-14: fill_fan-n3-r0, killed by Mihai's fleet stop and
+    # correctly voided, counted COMPLETE and the queue skipped straight to testgen — the voided
+    # single would have been skipped forever, its mechanism question silently unanswered. A VOID
+    # ROW IS NOT A MEASUREMENT.
+    if r.get("void"):
+        return False
     want, got = r.get("nodes"), r.get("actual_nodes")
     # ⚠ THE SAME `None`-EXEMPTION AS THE VOID GUARD, IN THE ONE PLACE THAT DECIDES RE-RUNS (F665).
     # `isinstance(None, int)` is False, so a unit that NEVER REPORTED A POOL sailed past the
