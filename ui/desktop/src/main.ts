@@ -2311,6 +2311,11 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number) => {
           nodes: v.actual_nodes ?? nodes,
           mine: true,
           scorerVersion: v.scorer_version ?? 'unknown',
+          // sb-4 additions — the site's endpoint stores these when present and older
+          // scorers simply omit them (the allowlist tolerates absence, never unknowns).
+          ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
+          ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
+          ...(typeof v.agent?.secs === 'number' ? { wallSecs: v.agent.secs } : {}),
         };
         await fs.mkdir(BENCH_DIR, { recursive: true });
         await fs.writeFile(BENCH_RESULT, JSON.stringify(row, null, 2));
