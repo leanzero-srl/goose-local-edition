@@ -14,7 +14,7 @@ the GRADER controls inject defects into, so its score level is measured and its 
 what production units produce. Seeded into the workdir BEFORE the run (sweep.py gains a
 `seed_tree` field on the arm; the wipe step copies the base in instead of leaving empty).
 
-**Feature spec (v1):** "Add a currency-summary view: a new GET /api/summary/by-currency endpoint
+**Feature spec (v1):** "Add a status-summary view: a new GET /api/summary/by-status endpoint
 returning {currency: {count, total_minor}} from the local store; a UI section showing it; and a
 CSV export at /api/export.csv streaming all payments." Deliberately multi-file (api + store +
 web) so the fan/ownership machinery is exercised on existing files, with deterministically
@@ -25,7 +25,7 @@ checkable outcomes.
   known-good; an amend run that drops it below (known-good − spread) FAILED the brownfield test
   regardless of the new feature. This is the half that measures "did the swarm break what
   worked" — the distinctive brownfield risk.
-- FEATURE: new checks (by-currency shape/accuracy vs seeded fixtures, CSV row count + header,
+- FEATURE: new checks (by-status shape + count reconciliation, CSV row count + header,
   UI section presence) — folded into the BENCH2 ranks 3-10 program so both backlogs land in one
   scorer change.
 
