@@ -252,9 +252,34 @@ def main() -> int:
 
     # 10. Strays. An orphaned engine contends for the one addressable worker and skews everything
     #     after it, silently — measured at 33 minutes once.
+    #
+    # F814b: DEBOUNCED + EXACT. The raw pattern also matched EPHEMERAL processes (worker shell
+    # tool-calls whose command line happens to contain similar text) — measured: three
+    # consecutive checks each named a DIFFERENT second pid that was dead moments later, while
+    # the true count was one. A real orphan persists; a match that cannot survive a two-second
+    # resample was never an engine. Only processes running the actual release binary count.
     if len(engine_pids) > 1:
-        rep.add("BAD", f"{len(engine_pids)} engines running at once {engine_pids} — an orphan is "
-                       f"contending for the single addressable worker")
+        import time as _time
+        _time.sleep(2)
+        resample = set(pgrep("goose swarm run"))
+        persistent = []
+        for pid in engine_pids:
+            if pid not in resample:
+                continue
+            try:
+                cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                                     capture_output=True, text=True).stdout
+                if "target/release/goose" in cmd or "target/debug/goose" in cmd:
+                    persistent.append(pid)
+            except Exception:
+                # A pid that vanished before ps could look at it is BY DEFINITION not a
+                # persistent orphan — fail-open here counted the checker's own dead
+                # transients as engines (measured: three alarms, three different pids,
+                # each gone within seconds; the real count was one throughout).
+                continue
+        if len(persistent) > 1:
+            rep.add("BAD", f"{len(persistent)} engines running at once {persistent} — an orphan "
+                           f"is contending for the single addressable worker")
 
     print(rep.render())
     return rep.worst
