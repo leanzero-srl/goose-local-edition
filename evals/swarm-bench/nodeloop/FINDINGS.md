@@ -19061,3 +19061,16 @@ exclude it. Sampler-absent ⇒ observed None (a missing instrument is never evid
 from the CURRENT unit forward — every curve row will carry the oracle. NOTE: the running loop
 predates this edit; it takes effect at the next loop pass restart — the curve cells all run
 after at least one more restart, so coverage of the decisive set is guaranteed.
+
+## F811b — the first live resume RE-PLANNED (23.4-min prologue): the log-name mismatch, found and bridged
+
+The controlled stop/restart was the right test: the sweep half worked ([resume] fired, tree
+restored, GOOSE_SWARM_RESUME exported and inherited via {**os.environ, **env}), and the engine
+STILL re-drafted the full prologue — first dispatch at 23.4 min, worse than the normal ~18-19.
+Root cause, single and mechanical: the bench invokes the engine with --log-file run.jsonl, while
+resume_state_from_dir globs .swarm/run-swarm-*.jsonl — under the bench the resume reader can
+never see the history it needs. run_build's restore now bridges the voided run.jsonl into
+.swarm/run-swarm-00-resumed.jsonl. Offline proof against the real voided log: plan_loaded with a
+task list, no run_finished — exactly what resume_state_from_log extracts. The in-flight resumed
+unit re-planned honestly (marked resumed_from; wall excluded); the next hard stop is the live
+proof of the bridged path.
