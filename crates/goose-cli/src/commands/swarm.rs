@@ -19408,9 +19408,19 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 RepeatedPost::Vacuous(why) => inconclusive.push(format!(
                     "spec-contract: POST {path} was issued twice and {why}"
                 )),
-                RepeatedPost::Unreadable => inconclusive.push(format!(
-                    "spec-contract: POST {path} answered, but neither response carried an \
-                     `inserted` or `total` field, so idempotency could not be decided from the body"
+                // F806: this was INCONCLUSIVE and that silence is exactly why the
+                // conditional-request loss persisted 5-for-5 while the repair hint sat unused —
+                // the spec DOCUMENTS the sync response as {"fetched", "inserted", "total"}
+                // (spec-build.md, the endpoint table), so a response missing them is an OBSERVED
+                // shape violation, not an unknowable. Filing it as a finding gives the fix loop a
+                // concrete first step, and once `fetched` lands the cheapness check binds on the
+                // next round — where the NotCheap hint above takes over.
+                RepeatedPost::Unreadable => findings.push(format!(
+                    "POST {path}'s response does not carry the documented fields — the spec's \
+                     endpoint table defines this response as {{\"fetched\": <int>, \
+                     \"inserted\": <int>, \"total\": <int>}}. Return those three counters \
+                     from the sync handler; without them a repeat sync's cheapness and \
+                     idempotency cannot be verified by anyone, including this gate."
                 )),
             }
             // Q2(c): ACQUIRED BUT NOT PERSISTED — the single largest unguarded score family.
