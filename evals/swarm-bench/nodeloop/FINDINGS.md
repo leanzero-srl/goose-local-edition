@@ -19046,3 +19046,18 @@ different experiment — no cross-binary resume). Resumed results carry resumed_
 aggregates can exclude them (the prologue skip makes their wall incomparable); the score stays
 valid — the app is judged as built. Live proof pending the next hard stop; the engine half is
 pinned by resume_skips_only_what_provably_finished + the 8 green resume tests.
+
+## F812 — the node count gets an oracle goose cannot influence: LM Studio's own activity, per unit
+
+Mihai: "when running for various intended nodes, check the node count used in LM Studio too to
+ensure goose isn't making some mistake." Right concern for the curve: actual_nodes is the
+ENGINE'S self-report, and every n-labeled row feeds the ratio verdict. Now each unit's result
+also carries lms_observed_ids / lms_observed_nodes — the distinct identifiers the INDEPENDENT
+30s fleet sampler saw GENERATING/PROCESSINGPROMPT during the unit's window (windowed by file
+offset, immune to the tsv's time-of-day-only stamps). observed > intended ⇒ lms_node_mismatch
+flag + a loud [LMS-MISMATCH] log line — either goose dispatched beyond its claimed pool or
+something else used the fleet; the row is flagged either way and the curve reporter must
+exclude it. Sampler-absent ⇒ observed None (a missing instrument is never evidence). Applies
+from the CURRENT unit forward — every curve row will carry the oracle. NOTE: the running loop
+predates this edit; it takes effect at the next loop pass restart — the curve cells all run
+after at least one more restart, so coverage of the decisive set is guaranteed.
