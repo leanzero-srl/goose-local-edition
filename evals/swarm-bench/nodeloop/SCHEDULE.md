@@ -25,3 +25,10 @@ if beneficial; keep the task list current; hold this plan judiciously.
   weighed against the reset cost EXPLICITLY in the tick report.
 - Kill artifacts: void=True rows + the F784b set never enter any count or aggregate.
 - Task-board counts refresh at every unit end; the tick report carries the current "X of Y".
+
+## The POST-VERDICT boundary batch (held commits inventory — ships when the ratio verdict lands)
+- F809 fix pair: stub-derived slots (SlotMissingInSkeleton closed by construction) + the
+  soft-extraction splice (foreign edits recorded, owned slots salvaged) — the S3 unlock's
+  second half; its registered check is the next fill_fan single after that boundary:
+  join_spliced with spliced>0.
+- (add future held engine commits here as they land — this list IS the boundary's contents)
