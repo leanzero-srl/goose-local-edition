@@ -31,6 +31,17 @@ if beneficial; keep the task list current; hold this plan judiciously.
   soft-extraction splice (foreign edits recorded, owned slots salvaged) — the S3 unlock's
   second half; its registered check is the next fill_fan single after that boundary:
   join_spliced with spliced>0.
+- sb-5 scorer hardening: BENCH2 ranks 3-10 + the BENCH3 feature fold (registry exists, checks
+  land per-benchmark).
+- F814 lineage hardening: the engine-count detector's exact-binary match extended to a
+  lineage check (parent chain), so a foreign goose binary can never wash a unit again.
+- F816 VENDOR-STUB GATE (design item, engine): the completion gate spins a minimal vendor stub
+  serving the documented API from fixtures, so spec_contract POST probes exercise real traffic —
+  cheapness/idempotency read from the STUB'S request count, immune to lying self-reported
+  counters (the third case in F816's taxonomy; also closes the F775 vendorless-gate thread).
+  Registered check: a probe_post single where the engine's cheapness verdict cites stub-observed
+  request counts, and the resync_idempotent/second_sync_cost scorer family stops separating
+  from engine-green.
 - (add future held engine commits here as they land — this list IS the boundary's contents)
 
 ## THE SHIPPING PHASES (Mihai, Fri ~18:40 — after the verdict, in order)

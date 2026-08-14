@@ -51,5 +51,12 @@ ranked leaderboard with tiers, hard-block mean, and wall-clock).
 
 ## Known limits (honest)
 
-- [fill from the final ledger: the splice's first live exercise, testgen firing rate, the
-  conditional-fix proof state, treatment-arm verdicts at n=5]
+- The skeleton-fill splice has not yet had a clean live exercise: its first firing hit two
+  real defects (slot naming, foreign-edit refusal) — both fixed and held for the next boundary
+  (F809); the byte-fence held throughout.
+- Idle-slot test generation shipped and ran a full unit without firing once (an honest null —
+  the idle windows it targets were absorbed by review work that run); firing rate unproven.
+- The conditional-request loss family is fixed for missing counters and prescribed for honest
+  ones, but an app that self-reports FALSE counters still passes the engine gate — the
+  vendor-stub gate that closes this is designed and queued (F816), not yet shipped.
+- [treatment-arm verdicts at n=5 — fill when the extended phase concludes]
