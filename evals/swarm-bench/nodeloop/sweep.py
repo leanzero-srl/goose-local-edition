@@ -2015,6 +2015,13 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "abandon_reasons": dog.abandon_reasons,
         "timed_out": (verdict.get("agent") or {}).get("timed_out"),
         "wall_secs": (verdict.get("agent") or {}).get("secs"),
+        # F811/F812: the resume mark + the LM Studio node oracle — set on `verdict` in run_unit
+        # and LOST here until this line existed (the result dict cherry-picks; measured: the
+        # first resumed unit persisted neither field).
+        "resumed_from": verdict.get("resumed_from"),
+        "lms_observed_ids": verdict.get("lms_observed_ids"),
+        "lms_observed_nodes": verdict.get("lms_observed_nodes"),
+        "lms_node_mismatch": verdict.get("lms_node_mismatch"),
         # The engine's own exit and stderr tail. Kept because the retry loop can only see an
         # EXCEPTION, and a fleet-down is not one — the engine refuses cleanly, run_unit returns a
         # perfectly-formed verdict scoring 0.0, and the loop breaks having "succeeded" (F666).

@@ -19087,3 +19087,14 @@ would have re-planned even with the bridge. The live proof of the full chain the
 hard stop against a unit that has PASSED planning — which is also the only case where resume
 saves anything. Rule of thumb now recorded: resume pays from plan_loaded onward; a mid-planning
 kill re-plans correctly and cheaply.
+
+## Ledger — singles 2/7 (fill_fan 0.4142/92min, old splice refused as expected); F811/F812 persistence bug found+fixed the same tick
+
+fill_fan single: 0.4142 / 92 min (bridge sb3 0.4628) — one module fanned (meridian), its join
+refused 3/3 on the OLD splice semantics; the held F809 pair is exactly the fix and ships at the
+post-verdict boundary. The instrumentation check on this row caught a real persistence bug: the
+F811 resume-mark and F812 LM-oracle fields were set on `verdict` while the persisted result is a
+cherry-picking NEW dict — neither field survived to disk. Fixed (the assembly now carries all
+four fields); loop restarted onto the complete instrumentation, and the restart itself exercised
+the F811 path again ([resume] fired for testgen's planless stub — correct cheap re-plan). Every
+curve row will now carry the oracle fields ON DISK, which curve.py's exclusions read.
