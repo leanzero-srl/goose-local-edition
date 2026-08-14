@@ -24,3 +24,4 @@
 {"unit": "aux_slim-n3-r0", "t": 1786683449.5, "sb4": 0.9355, "sb4_hard": 0.8333, "sb3_analytic": 0.8843, "sb3_tiers": {"A": 1.0, "B": 0.8333, "C": 0.8571, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "fill_fan-n3-r0", "t": 1786691045.2, "sb4": 0.967, "sb4_hard": 0.8333, "sb3_analytic": 0.9268, "sb3_tiers": {"A": 1.0, "B": 0.975, "C": 0.8571, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "aux_slim-n3-r0", "t": 1786697140.7, "sb4": 0.7404, "sb4_hard": 0.85, "sb3_analytic": 0.7114, "sb3_tiers": {"A": 1.0, "B": 0.6587, "C": 0.4286, "D": 0.7833}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "fill_fan-n3-r0", "t": 1786719798.8, "sb4": 0.4142, "sb4_hard": 0.0, "sb3_analytic": 0.4628, "sb3_tiers": {"A": 0.8333, "B": 0.3611, "C": 0.1667, "D": 0.5222}, "reconstructed": false, "legacy_checks": 33}
