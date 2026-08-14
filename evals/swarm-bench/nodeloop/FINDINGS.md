@@ -18922,3 +18922,15 @@ with no loop-class call, so the mechanism stays observed-never-fired. At n=2 the
 0.8193/0.7089 at 58-73 min: consistently mid-high and FAST with the lever armed and silent —
 the safety half keeps strengthening. One detail fallback (meridian) this run, first in the
 recent series.
+
+## Ledger — fix_sched rep 2: 0.9792/114min (2nd-highest ever); the sched path idle this run (single-file round → race, by design)
+
+fix_sched rep 2: 0.9792 / 114 min (bridge sb3 0.9785). Round-0 verify found 3 findings in ONE
+file group, so the race handled them (the sched DAG correctly requires >=2 groups); round-1
+verify PASSED clean — a fully green engine verdict that the scorer agreed with. Arm at n=2:
+0.6601 (sched exercised, 6→1) and 0.9792 (sched idle) — the lever armed harms nothing and the
+one exercised round worked; quality attribution needs more multi-file rounds. The broader
+signal: THREE of the last five units scored 0.94+ (aux_slim 0.9411, scout_doc_urls 0.9949,
+fix_sched 0.9792) — the high end is getting FREQUENT. The ceiling rule's threshold (>0.95
+clustering) is not formally tripped, but BENCH2 ranks 3-10 + BENCH3's feature half should move
+up the working-session queue together.
