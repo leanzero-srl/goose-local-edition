@@ -137,6 +137,14 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
                     shutil.copytree(child, workdir / child.name, dirs_exist_ok=True)
                 else:
                     shutil.copy2(child, workdir / child.name)
+            # The bench names the engine log run.jsonl (--log-file), but the engine's resume
+            # reader globs .swarm/run-swarm-*.jsonl — bridge the name or resume NEVER finds its
+            # history (measured: the first live resume re-planned the full 23-minute prologue).
+            prev_log = prev / "run.jsonl"
+            if prev_log.is_file():
+                sw = workdir / ".swarm"
+                sw.mkdir(exist_ok=True)
+                shutil.copy2(prev_log, sw / "run-swarm-00-resumed.jsonl")
             os.environ["GOOSE_SWARM_RESUME"] = "1"
     # BENCH3 (BENCH3-AMEND.md): the brownfield mode. When the arm exports BENCH_SEED_TREE, the
     # unit starts from a COPY of that base app instead of an empty directory — the engine's
