@@ -116,6 +116,24 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True)
+    # BENCH3 (BENCH3-AMEND.md): the brownfield mode. When the arm exports BENCH_SEED_TREE, the
+    # unit starts from a COPY of that base app instead of an empty directory — the engine's
+    # amendment path (working_dir_has_sources) then sees real sources. Greenfield arms are
+    # byte-identical: no env, no copy.
+    seed = os.environ.get("BENCH_SEED_TREE", "")
+    if seed:
+        base = Path(seed)
+        if not base.is_dir():
+            raise SystemExit(f"BENCH_SEED_TREE does not exist: {seed}")
+        for child in base.iterdir():
+            if child.name in {"__pycache__", ".swarm", "graded.db", "verdict.json",
+                              "process.json", "run.jsonl", "vendor-trace.jsonl",
+                              "nodeloop-result.json", "heartbeat"}:
+                continue
+            if child.is_dir():
+                shutil.copytree(child, workdir / child.name)
+            else:
+                shutil.copy2(child, workdir / child.name)
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     server = vendor_service.serve(port, trace)
