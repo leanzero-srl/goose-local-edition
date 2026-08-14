@@ -18934,3 +18934,11 @@ signal: THREE of the last five units scored 0.94+ (aux_slim 0.9411, scout_doc_ur
 fix_sched 0.9792) — the high end is getting FREQUENT. The ceiling rule's threshold (>0.95
 clustering) is not formally tripped, but BENCH2 ranks 3-10 + BENCH3's feature half should move
 up the working-session queue together.
+
+## Ledger — probe_post 7th datum: 0.8849/96min; the recent mean keeps climbing
+
+probe_post: 0.8849 / 96 min. The arm's series: 0.6864/0.7247/0.701/0.4759/0.7733/0.4833/0.8849 —
+and the last five units across all arms now read 0.7089/0.9792/0.7314/0.6423/0.8849 (mean
+~0.79). The floor since the sync-acquisition class last struck: five consecutive units above
+0.64. The high end is frequent, the low tail thinning — the engine trend is real; the scorer
+hardening stays the top working-session item so the instrument keeps discriminating.
