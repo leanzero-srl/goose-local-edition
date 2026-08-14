@@ -19001,3 +19001,22 @@ explicitly. The counts clock restarts now: singles 7, curve 16, treatments 50.
 aux_slim on the frozen 10:03 binary: 0.7404 / 95 min. The arm across binaries: 0.9411, 0.6564,
 0.9355, 0.7404 — mean 0.818, still no quality cost visible vs the historical baseline band, wall
 80-95. The flip decision waits on the current-binary baseline denominator as planned.
+
+## F809 — the S3 pipeline's first END-TO-END exercise: the shape works, the fence held, and the two remaining defects have names
+
+fill_fan single on the frozen 10:03 binary (unit interrupted by Mihai's fleet stop pre-score;
+the MECHANISM data stands): with the F804 deferred expansion live, the fan fired ONLY on
+parseable stubs — skeleton::api + skeleton::store dispatched, ZERO skeleton_failed (three
+refusals-for-nothing last binary, none now). Both skeletons completed; FIVE fills dispatched in
+parallel across both modules; both join:: tasks ran the AST splice. The splice REFUSED all five
+fills — correctly, with two diagnostic classes: (1) api, SlotMissingInSkeleton ×3 — the subsplit
+slot names come from the detailer's free text (e.g. `_VendorSyncHandler`) and do not match the
+stub-derived skeleton's definition names, so the splice cannot find the slots it is filling; the
+fix is to derive slots FROM the stub's own definition names at expansion (they then match by
+construction); (2) store, ShadowTouchedForeignSlot ×2 — fill workers edited beyond their owned
+slot and the byte-fence refused the shadow, exactly its job; the fix is fill-prompt fencing
+("edit ONLY the body of X") and/or slot-scoped shadow diffing. CONCLUSION: the pipeline
+(skeleton → parallel fills → splice-join) is structurally sound and its safety layer is proven —
+zero corrupt bytes reached the real tree through five refused fills — and the two named defects
+are the whole remaining distance to a working splice. Both queued for the post-verdict engine
+batch; the freeze holds.
