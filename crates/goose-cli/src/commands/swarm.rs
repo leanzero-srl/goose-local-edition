@@ -10677,12 +10677,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             extract_generated_tests("```python\nprint('hello world, this is long')\n```"),
             None
         );
-        // No fence at all: raw prose never lands, even when it mentions def test_.
-        assert_eq!(extract_generated_tests("def test_x(): pass"), None);
-        // Unclosed fence: nothing landable.
+        // POLICY CHANGE (F804-batch, measured 0/3 bare-reply landings): a bare reply carrying a
+        // test function now lands via the whole-reply fallback — the collect-only landing guard
+        // is the safety property, the fence was only ever a delimiter. Same for an unclosed
+        // fence: the fallback strips to the first import/def line.
         assert_eq!(
-            extract_generated_tests("```python\ndef test_x(): pass"),
-            None
+            extract_generated_tests("def test_x(): pass").as_deref(),
+            Some("def test_x(): pass")
+        );
+        assert_eq!(
+            extract_generated_tests("```python\ndef test_x(): pass").as_deref(),
+            Some("def test_x(): pass")
         );
         // Untagged fences count too — the 27B frequently omits the language tag.
         assert!(extract_generated_tests("```\ndef test_y():\n    assert True\n```").is_some());
@@ -10811,6 +10816,23 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }));
         assert!(digest_failed_calls_block(&pending).is_none());
         assert!(digest_failed_calls_block(&None).is_none());
+    }
+
+    #[test]
+    fn generated_tests_extract_fenced_or_bare_but_never_garbage() {
+        // Fenced: unchanged behavior.
+        let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n    assert 1\n```";
+        assert!(extract_generated_tests(fenced)
+            .unwrap()
+            .starts_with("import pytest"));
+        // F804-batch: a BARE reply (the measured 0/3 class) lands via the fallback — reasoning
+        // preamble stripped to the first import/def line.
+        let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n    assert 2";
+        let got = extract_generated_tests(bare).unwrap();
+        assert!(got.starts_with("import pytest") && got.contains("def test_b"));
+        // No test function anywhere: nothing to land.
+        assert!(extract_generated_tests("just prose, no code").is_none());
+        assert!(extract_generated_tests("def helper(): pass").is_none());
     }
 
     #[test]
@@ -26222,7 +26244,7 @@ fn pick_repair_winner(
 /// dropped, never landed half-open.
 fn extract_generated_tests(reply: &str) -> Option<String> {
     let parts: Vec<&str> = reply.split("```").collect();
-    parts
+    let fenced = parts
         .iter()
         .enumerate()
         .skip(1)
@@ -26231,7 +26253,34 @@ fn extract_generated_tests(reply: &str) -> Option<String> {
         .map(|(_, fence)| fence.split_once('\n').map(|(_, body)| body).unwrap_or(""))
         .filter(|b| b.contains("def test_"))
         .max_by_key(|b| b.len())
-        .map(|b| b.trim().to_string())
+        .map(|b| b.trim().to_string());
+    // F804-batch: WHOLE-REPLY FALLBACK. Measured split — one run landed 3/3 fenced replies, the
+    // next 0/3 with "no landable fenced test block" three times: the model emitted the test file
+    // BARE. The fence was only ever a delimiter, not a safety property — the landing guard
+    // collect-onlys every candidate and removes what does not parse — so a bare reply that looks
+    // like a pytest file is landable on the same terms. Reasoning tails are stripped to the
+    // first import/def line.
+    fenced.or_else(|| {
+        if !reply.contains("def test_") {
+            return None;
+        }
+        let start = reply.lines().position(|l| {
+            let t = l.trim_start();
+            t.starts_with("import ") || t.starts_with("from ") || t.starts_with("def ")
+        })?;
+        let body: String = reply
+            .lines()
+            .skip(start)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        if body.contains("def test_") {
+            Some(body)
+        } else {
+            None
+        }
+    })
 }
 
 /// Land a generated test body only if pytest can COLLECT it from the tree root — a SyntaxError
@@ -29244,6 +29293,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // SAME fleet — captured before Scheduler::new moves `devices`, like its three siblings above.
     let fix_devices: Vec<DeviceCfg> = devices.clone();
     let _ = &fix_devices;
+    // F804: SUBSPLIT EXPANSION, DEFERRED TO HERE — after the contracts freeze, where "does this
+    // module's stub parse" is finally answerable. Plan-time expansion manufactured skeleton::
+    // tasks that could only refuse at execution (measured 3-for-3 across two runs). Re-parsing
+    // from the same plan JSON loses nothing: detail specs are per-dispatch state and nothing
+    // mutates the dag between build and here. A module whose stub does not parse keeps its
+    // ordinary serial task; fill_fan_enabled still gates inside the expansion.
+    let dag = if goose_swarm::fill_fan_enabled() {
+        match goose_swarm::Dag::from_planner_json_with(&plan_json, &|m: &str| {
+            module_stub(&fix_contracts_bundle, m)
+                .as_deref()
+                .and_then(skeleton_from_stub)
+                .is_some()
+        }) {
+            Ok(d) => d,
+            Err(_) => dag,
+        }
+    } else {
+        dag
+    };
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
         // F779 i3: borrowed machines for read-only idle work — appended AFTER the fleet_* captures
         // above so nothing derived from `devices` (race width, fan permits, occupancy, planner

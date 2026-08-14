@@ -185,8 +185,30 @@ impl Dag {
     /// REPLANNER path deliberately does NOT expand (splice_specs takes specs directly):
     /// mid-run fills against a live tree are unproven, and a replanned module simply builds
     /// serially as before.
+    /// F804: expansion is NO LONGER done here. The skeleton step builds from a module's frozen
+    /// contract stub, and stubs do not exist at plan-load — expanding here manufactured
+    /// skeleton:: tasks that could only refuse at execution (measured 3-for-3 across two runs).
+    /// Callers that can answer "does this module's stub parse" expand via
+    /// `from_planner_json_with` AFTER the contracts freeze; this bare form parses only.
     pub fn from_planner_json(json: &str) -> Result<Self> {
-        Dag::from_specs(expand_subsplits(specs_from_plan_json(json)?))
+        Dag::from_specs(specs_from_plan_json(json)?)
+    }
+
+    /// F804: parse AND expand, keeping a module's subsplit only where `stub_parses` says the
+    /// frozen contract stub for that module is buildable — the precondition the skeleton step
+    /// enforces at execution, now enforced at expansion so the fan fires exactly when it can
+    /// succeed. `fill_fan_enabled` still gates inside `expand_subsplits`.
+    pub fn from_planner_json_with(json: &str, stub_parses: &dyn Fn(&str) -> bool) -> Result<Self> {
+        let specs = specs_from_plan_json(json)?
+            .into_iter()
+            .map(|mut t| {
+                if !t.subsplit.is_empty() && !stub_parses(&t.id) {
+                    t.subsplit = Vec::new();
+                }
+                t
+            })
+            .collect();
+        Dag::from_specs(expand_subsplits(specs))
     }
 
     /// Splice additional specs into a LIVE dag at an idle point (the dynamic replanner). Validated
@@ -571,5 +593,34 @@ mod expand_tests {
         let out = expand_subsplits_inner(cases);
         let after: Vec<String> = out.iter().map(|t| format!("{t:?}")).collect();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn deferred_expansion_keeps_only_parseable_stub_modules() {
+        // F804: from_planner_json no longer expands; from_planner_json_with expands only where
+        // the stub predicate says the module is buildable.
+        std::env::set_var("GOOSE_SWARM_FILL_FAN", "1");
+        let plan = r#"{"subtasks":[
+            {"id":"api","description":"build api\nSUBSPLIT: handle_get, handle_post","difficulty":"hard","files":["api.py"],"depends_on":[]},
+            {"id":"store","description":"build store\nSUBSPLIT: upsert, query","difficulty":"hard","files":["store.py"],"depends_on":[]}
+        ]}"#;
+        let bare = Dag::from_planner_json(plan).unwrap();
+        assert!(
+            bare.tasks.keys().all(|k| !k.starts_with("skeleton::")),
+            "bare parse must not expand: {:?}",
+            bare.tasks.keys().collect::<Vec<_>>()
+        );
+        let gated = Dag::from_planner_json_with(plan, &|m| m == "api").unwrap();
+        assert!(
+            gated.tasks.keys().any(|k| k == "skeleton::api"),
+            "api's stub parses -> its fan fires: {:?}",
+            gated.tasks.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            gated.tasks.contains_key("store")
+                && !gated.tasks.keys().any(|k| k == "skeleton::store"),
+            "store's stub does not parse -> ordinary serial task"
+        );
+        std::env::remove_var("GOOSE_SWARM_FILL_FAN");
     }
 }
