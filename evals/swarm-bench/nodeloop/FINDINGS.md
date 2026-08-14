@@ -19114,3 +19114,17 @@ the agentic-benchmarks page; (2) sb-4 fields end-to-end (schema + endpoint + des
 HARD tier, excellent band, wall, engine build) with backward compat; (3) the desktop
 run-the-bench flow verification lands with #28. Unverified-by-design left: none on the posting
 path.
+
+## F814 — the orphan-contention aftermath: an engine outlived its unit's bookkeeping; recovered by controlled restart
+
+Timeline: the 18:04 restart's engine ran; at ~18:45 the health check went BAD with TWO engines
+alive (an orphan from an earlier pass contending for the fleet — the loop's own reaper had
+killed one stray pgroup already). The orphan died, health cleared — but the surviving engine
+(68 min old) was WASHED: heartbeat an hour stale, no run.jsonl anywhere fresh, workdir holding
+only the restored tree, while LM Studio still showed 3 generations (server-side tails). The
+sweep's bookkeeping had voided the unit (wall 958s row) while the engine lived on. Recovery:
+controlled STOP + restart — cheap by design now (the void re-runs, F811 resume applies where a
+plan exists). HARDENING QUEUED (post-verdict batch): the sweep should refuse to dispatch a new
+unit while ANY engine process from its own lineage is still alive — the reaper catches strays at
+unit START, but an engine that survives its own unit's bookkeeping window is invisible until the
+next health tick. Loop healthy post-restart (pid 38910), testgen single running again.
