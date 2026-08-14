@@ -18970,3 +18970,14 @@ arms now: an app omitting the documented sync counters must turn the engine gate
 passed green before, and resync_idempotent moving off 0.0 in coming cells is the score-level
 confirmation of the two-round repair path (counters land → cheapness binds → ETag hint fires).
 (2) The join clean-skip (no agent spent when the post-wave tree is already clean).
+
+## Ledger — aux_slim n=3: 0.9411/0.6564/0.9355 (mean 0.844, two of three ≥0.93); resync_idempotent's first 1.0 in six runs (not yet attributable)
+
+aux_slim rep 3: 0.9355 / 91 min (bridge sb3 0.8843), engine gate green round 0. Arm at n=3: mean
+0.844 at 80-91 min — consistently high-band quality with a modest wall edge; the flip case
+strengthens but waits for the current-binary baseline cells to land for an honest denominator.
+Separate readout: resync_idempotent scored 1.0 — the FIRST non-zero in six runs — but
+probed_post=0 (this arm does not arm the POST probe), so the F806 chain was NOT exercised; the
+app did idempotency right on its own while second_sync_cost stayed 0.0 (still no working
+conditional requests). The F806 registered check reads out only on probe-armed runs
+(probe_post's next rep).
