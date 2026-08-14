@@ -22,3 +22,4 @@
 {"unit": "probe_post-n3-r0", "t": 1786671452.1, "sb4": 0.8849, "sb4_hard": 0.8333, "sb3_analytic": 0.8417, "sb3_tiers": {"A": 1.0, "B": 0.75, "C": 0.6667, "D": 1.0}, "reconstructed": false, "legacy_checks": 33}
 {"unit": "scout_doc_urls-n3-r0", "t": 1786677452.2, "sb4": 0.8207, "sb4_hard": 0.95, "sb3_analytic": 0.8311, "sb3_tiers": {"A": 1.0, "B": 0.6726, "C": 0.8571, "D": 0.825}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "aux_slim-n3-r0", "t": 1786683449.5, "sb4": 0.9355, "sb4_hard": 0.8333, "sb3_analytic": 0.8843, "sb3_tiers": {"A": 1.0, "B": 0.8333, "C": 0.8571, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "fill_fan-n3-r0", "t": 1786691045.2, "sb4": 0.967, "sb4_hard": 0.8333, "sb3_analytic": 0.9268, "sb3_tiers": {"A": 1.0, "B": 0.975, "C": 0.8571, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}

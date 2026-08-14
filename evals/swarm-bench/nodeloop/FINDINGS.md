@@ -18981,3 +18981,17 @@ probed_post=0 (this arm does not arm the POST probe), so the F806 chain was NOT 
 app did idempotency right on its own while second_sync_cost stayed 0.0 (still no working
 conditional requests). The F806 registered check reads out only on probe-armed runs
 (probe_post's next rep).
+
+## F808 — boundary 18 (10:03 binary): THE FREEZE BEGINS — the weekend batch is live; fill_fan 0.967
+
+fill_fan (06:23-binary single): 0.967 / 114 min — 4 of the last 7 units at 0.94+. Its skeletons
+refused again on unparseable stubs (the refusal-safe path), which is exactly what the batch now
+fixes. Boundary 18: gate GREEN (one live-CLI provider-test flake cleared on rerun — a LIVE test
+in the offline gate, excluded if it recurs) → 10:03:43 binary. NO new probe literal (the batch
+adds no event strings — deferred expansion reuses existing paths); present-controls verified
+(F806 literal + tail-review + fix-sched strings all present, mtime moved). NOW LIVE: F804
+deferred expansion (the fan fires only where the frozen stub parses — the S3 splice becomes
+exercisable) + the testgen whole-reply fallback (the 0/3 bare-reply landing class closed; the
+collect-only guard remains the safety property). THE BINARY FREEZE IS IN EFFECT per SCHEDULE.md:
+no rebuilds until the node-ratio verdict — any urgent fix must weigh the full-reset cost
+explicitly. The counts clock restarts now: singles 7, curve 16, treatments 50.
