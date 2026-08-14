@@ -19128,3 +19128,17 @@ plan exists). HARDENING QUEUED (post-verdict batch): the sweep should refuse to 
 unit while ANY engine process from its own lineage is still alive — the reaper catches strays at
 unit START, but an engine that survives its own unit's bookkeeping window is invisible until the
 next health tick. Loop healthy post-restart (pid 38910), testgen single running again.
+
+## F814b — the "recurring orphan contention" was three defects wearing one alarm; all closed
+
+The full unwind: (1) F814's washed engine was REAL (stale heartbeat, no log) — recovered by
+restart. (2) My OWN stop procedure was an orphan factory: it killed `pgrep | head -1` — ONE pid
+— so whenever two matched, one survived every restart; the procedure is now pkill-all (and the
+next-tick prompts carry it). (3) The recurring "2 engines" alarms after the clean restart were
+FALSE POSITIVES twice over: the raw pattern matched the checking machinery's own transient
+processes (each alarm named a different pid, dead within seconds, true count one throughout),
+and my first hardening pass fail-OPENED in its exception branch — a pid that vanished before ps
+could inspect it was counted as an engine, which is precisely the population the debounce exists
+to discard. Detector now: 2s resample + exact release-binary match + vanished-means-not-orphan.
+Health OK with a single verified engine (the sweep's own child). The testgen single restarted
+clean at 19:13 rides on.
