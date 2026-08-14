@@ -18959,3 +18959,14 @@ N+1's probe can finally bind cheapness, and the ETag hint fires if it fails. Reg
 on a post-rebuild run whose app omits the counters, the gate goes RED with the shape finding
 (today it passes green); resync_idempotent moving off 0.0 anywhere in the following cells is the
 score-level confirmation.
+
+## F807 — boundary 17 (06:23 binary): the F806 shape finding + join clean-skip live; scout_doc_urls 0.8207
+
+scout_doc_urls rep: 0.8207 / 82 min (bridge sb3 0.8311) — six consecutive units above 0.64, last
+six mean ~0.80. Boundary 17: gate GREEN → 06:23:52 binary → the F806 literal flipped
+absent→present, controls held. NOW LIVE: (1) the missing-counters SHAPE FINDING — the fail-open
+that let the conditional-request loss survive five scored runs is closed; the registered check
+arms now: an app omitting the documented sync counters must turn the engine gate RED where it
+passed green before, and resync_idempotent moving off 0.0 in coming cells is the score-level
+confirmation of the two-round repair path (counters land → cheapness binds → ETag hint fires).
+(2) The join clean-skip (no agent spent when the post-wave tree is already clean).
