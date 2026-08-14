@@ -580,7 +580,11 @@ ARMS = [
     },
     {
         "name": "amend_feature",
-        "env": {"BENCH_SEED_TREE": "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/build/opus-5-r0"},
+        "env": {
+            "BENCH_SEED_TREE": "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/runs/build/opus-5-r0",
+            "BENCH_AMEND": "1",
+            "BENCH_AMEND_SPEC": "/Users/mihaiperdum/Projects/goose/evals/swarm-bench/spec-amend.md",
+        },
         "gate": "BENCH3 (BENCH3-AMEND.md, Mihai 2026-08-13): add a feature to the EXISTING known-good "
                 "app instead of building from scratch — the brownfield axis nothing has tested. PARKED "
                 "(reps 0) until sweep seed_tree support + the feature/regression scorer halves land; "
@@ -729,10 +733,6 @@ QUESTIONS: list[dict] = [
      "asks": "whether idle slots convert into contract-derived tests that pytest can collect — "
              "read testgen{landed} vs testgen{reason} (honest misses), generated files in the "
              "unit tree, and the stable-24 guard"},
-    {"arm": "amend_feature", "nodes": 3, "reps": 0,
-     "asks": "BENCH3 brownfield: can the swarm add a multi-file feature to the existing known-good "
-             "app without regressing it? PARKED at reps 0 until seed_tree + the feature scorer land "
-             "(BENCH3-AMEND.md); reps 0 keeps it visible in every banner without burning fleet time."},
     {"arm": "judge_nudge", "nodes": 3, "reps": 1,
      "asks": "whether the judge's in-session nudge (redirect with its own hint, context kept) "
              "beats the abort it replaces — read judge_nudge events first (absent on a run with "
@@ -1013,6 +1013,10 @@ QUESTIONS: list[dict] = [
              "EXECUTE is critical-path bound in 13 of 14 — and skeleton_count_clause derives its "
              "target from worker_count, which is SLOTS. Same worker_count-is-SLOTS confusion as the "
              "e2e fan's clamp(worker_count,2,4). MECHANISM: plan_loaded depth and root width."},
+    {"arm": "amend_feature", "nodes": 3, "reps": 1,
+     "asks": "BENCH3 brownfield: can the swarm add a multi-file feature to the existing known-good "
+             "app without regressing it? UNPARKED (seed_tree + scorer halves + spec landed); deliberately LAST in the queue — it must never jump the decisive set "
+             "(BENCH3-AMEND.md); reps 0 keeps it visible in every banner without burning fleet time."},
 ]
 
 # THE NODE CURVE IS GOAL ONE AND IT RUNS THIRD, not last.
