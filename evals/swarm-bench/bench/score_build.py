@@ -183,6 +183,10 @@ class Ctx:
         self.sync1: Dict = {}
         self.sync2: Dict = {}
         self.client: Dict = {"results": {}, "trace": []}
+        # BENCH3 (amend arms only): pre-fetched while the app lives — evaluate() runs after
+        # the SIGKILL, so feature checks must read Ctx, never the wire.
+        self.feat_by_status: Dict = {}
+        self.feat_csv: bytes = b""
         self.sync3: Dict = {}
         self.update_changed: int = 0
         self.update_seen: int = 0
@@ -210,6 +214,19 @@ class Ctx:
 # ── check registry ────────────────────────────────────────────────────────────────────────────
 
 CHECKS: List[tuple] = []
+
+# BENCH3 (BENCH3-AMEND.md): the brownfield FEATURE half. Registered separately and evaluated
+# ONLY when BENCH_AMEND is set at evaluate() time (env-at-import would miss the sweep's per-arm
+# env), so greenfield scoring and the GRADER controls are byte-identical with the list present.
+FEATURE_CHECKS: List[tuple] = []
+
+
+def feature_check(name: str) -> Callable:
+    def deco(fn):
+        FEATURE_CHECKS.append((name, "F", fn))
+        return fn
+
+    return deco
 
 
 def check(name: str, tier: str) -> Callable:
@@ -886,6 +903,23 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                 finally:
                     vendor_service.restore_payments()
 
+            # BENCH3: FEATURE PRE-FETCH (BENCH_AMEND arms only) — grabbed while the app is
+            # still alive; greenfield runs skip both requests entirely.
+            if os.environ.get("BENCH_AMEND"):
+                st, body, _r, _h = _req(
+                    urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/summary/by-status"
+                    ),
+                    10,
+                )
+                c.feat_by_status = (
+                    body if st == 200 and isinstance(body, dict) else {"_code": st}
+                )
+                st2, _b, raw2, _h2 = _req(
+                    urllib.request.Request(f"http://127.0.0.1:{port}/api/export.csv"), 15
+                )
+                c.feat_csv = raw2 if st2 == 200 else b""
+
             # BENCH2 rank 6: RESTART PERSISTENCE. The spec's "run repeatedly against the same
             # database" has only ever been tested within one process lifetime. Kill the app
             # (SIGKILL — a crash, not a courtesy shutdown), respawn on the SAME db, and count
@@ -954,6 +988,55 @@ HARD_BLOCK = {
 }
 
 
+@feature_check("feat_summary_by_status")
+def feat_summary_by_status(c: Ctx):
+    body = c.feat_by_status
+    if not body or "_code" in body:
+        return {"score": 0.0,
+                "detail": f"GET /api/summary/by-status -> {body.get('_code', 'no fetch')}",
+                "consequence": "the new feature endpoint is absent or broken"}
+    buckets = body.get("by_status") if isinstance(body.get("by_status"), dict) else body
+    if not isinstance(buckets, dict) or not buckets:
+        return {"score": 0.0, "detail": "no status buckets in the response",
+                "consequence": "feature shape wrong"}
+    shaped = all(isinstance(v, dict) and "count" in v and "total_minor" in v
+                 for v in buckets.values())
+    count_sum = sum(v.get("count", 0) for v in buckets.values() if isinstance(v, dict))
+    total = c.payments.get("total") or c.payments.get("total_count") or EXPECTED_TOTAL
+    accurate = shaped and count_sum == total
+    return {"score": 1.0 if accurate else (0.33 if shaped else 0.0),
+            "detail": f"buckets={list(buckets)[:4]} count_sum={count_sum} vs total={total}",
+            "consequence": "" if accurate else "bucket counts do not reconcile with the collection"}
+
+
+@feature_check("feat_export_csv")
+def feat_export_csv(c: Ctx):
+    raw = c.feat_csv
+    if not raw:
+        return {"score": 0.0, "detail": "GET /api/export.csv returned nothing",
+                "consequence": "the export endpoint is absent or broken"}
+    lines = [l for l in raw.decode(errors="replace").strip().splitlines() if l.strip()]
+    if not lines:
+        return {"score": 0.0, "detail": "empty csv", "consequence": "no export"}
+    header = lines[0].lower()
+    has_header = "id" in header and "amount" in header and "status" in header
+    total = c.payments.get("total") or c.payments.get("total_count") or EXPECTED_TOTAL
+    rows_ok = len(lines) - 1 == total
+    score = 1.0 if (has_header and rows_ok) else (0.33 if has_header or rows_ok else 0.0)
+    return {"score": score,
+            "detail": f"rows={len(lines) - 1} vs total={total}; header_ok={has_header}",
+            "consequence": "" if score == 1.0 else "export incomplete or unlabeled"}
+
+
+@feature_check("feat_ui_by_status")
+def feat_ui_by_status(c: Ctx):
+    page = c.html.lower()
+    present = "by-status" in page or "by status" in page
+    return {"score": 1.0 if present else 0.0,
+            "detail": "page carries a by-status section" if present else "no by-status section",
+            "consequence": "" if present else "the feature is invisible in the UI"}
+
+
 def evaluate(c: Ctx) -> Dict:
     rows = []
     for name, tier, fn in CHECKS:
@@ -977,7 +1060,26 @@ def evaluate(c: Ctx) -> Dict:
     hard_mean = sum(r["score"] for r in hard_rows) / len(hard_rows) if hard_rows else 0.0
     tiers["HARD"] = {"mean": round(hard_mean, 4), "checks": len(hard_rows), "weight": 0.10}
     score = 0.90 * core_weighted + 0.10 * hard_mean
-    return {"score": round(score, 4), "scorer_version": SCORER_VERSION,
+    # BENCH3: the amend arms carry a FEATURE half alongside the unchanged sb-4 score (which IS
+    # the regression half — the amended tree must hold the known-good's level). Env-gated at
+    # call time; greenfield results carry no amend fields at all.
+    amend: Dict = {}
+    if os.environ.get("BENCH_AMEND"):
+        feat_rows = []
+        for name, tier, fn in FEATURE_CHECKS:
+            try:
+                outcome = fn(c)
+            except Exception as exc:
+                outcome = {"score": 0.0, "detail": f"PROBE ERROR: {exc}",
+                           "consequence": "probe bug"}
+            feat_rows.append({"check": name, "tier": tier, **outcome})
+        feat_mean = (sum(r["score"] for r in feat_rows) / len(feat_rows)
+                     if feat_rows else 0.0)
+        amend = {"feature": round(feat_mean, 4), "feature_checks": feat_rows,
+                 # One number for the arm's [done] row: regression and feature weighted
+                 # evenly — breaking the base is as disqualifying as not landing the feature.
+                 "amend_score": round(0.5 * score + 0.5 * feat_mean, 4)}
+    return {"score": round(score, 4), "scorer_version": SCORER_VERSION, **amend,
             "core": round(core_weighted, 4), "hard": round(hard_mean, 4),
             # Per-run quality bands — the ARM-level k/n rates aggregate these in the reporter:
             # consistency, not any single score, is the campaign's real battleground.
