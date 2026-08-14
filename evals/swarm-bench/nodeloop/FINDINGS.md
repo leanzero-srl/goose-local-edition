@@ -19172,3 +19172,12 @@ armed and zero nudges (no call has looped since the lever exists), and its runs 
 0.8193/0.7089/0.9411 — armed-and-silent keeps costing nothing while landing high. LM oracle: 3
 observed, no mismatch. Queue: fix_sched single running, then probe_post (the F806 proof), then
 scout_doc_urls — then THE CURVE.
+
+## Ledger — singles 5/7 done: fix_sched 0.586/93min (single-file rounds again — sched path honest-idle); oracle clean
+
+fix_sched single: 0.586 / 93 min. No multi-file round occurred, so the sched DAG correctly
+stayed idle (its one exercised round remains the F799 proof: 6→1 findings, 6/6 tasks). Arm reads
+0.6601/0.9792/0.586 at n=3 — armed costs nothing; quality attribution still needs multi-file
+rounds, which arrive at base rates. LM oracle: 3 observed, no mismatch — third clean row.
+Queue: probe_post single running NOW (the F806 conditional-fix proof), then scout_doc_urls, then
+THE CURVE (16 runs).
