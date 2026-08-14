@@ -221,6 +221,13 @@ spec = importlib.util.spec_from_file_location("sweep", "sweep.py")
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 import run_build
 out = subprocess.run(["strings", str(run_build.GOOSE)], capture_output=True, text=True).stdout
+# BENCH3: BENCH_-prefixed keys are HARNESS-side levers — read by run_build/score_build (python),
+# never by the engine binary, so `strings <binary>` is the wrong oracle for them. Their oracle is
+# the bench sources: a BENCH_ key nobody reads there is exactly as dead as an engine lever the
+# binary lacks. (Measured 2026-08-14: the first amend_feature restart was refused on its three
+# perfectly-live BENCH_ keys.)
+bench_dir = pathlib.Path('../bench').resolve()
+bench_src = "".join(f.read_text() for f in bench_dir.glob("*.py"))
 print(f"engine_build {m.engine_build()}")
 bad = []
 
@@ -259,8 +266,13 @@ for a in m.arms_now():
         print(f"  {a['name']:<20} (no lever — baseline)")
         continue
     for var in a["env"]:
-        ok = var in out
-        print(f"  {a['name']:<20} {var:<36} {'present' if ok else 'ABSENT — arm cannot fire'}")
+        if var.startswith("BENCH_"):
+            ok = var in bench_src
+            print(f"  {a['name']:<20} {var:<36} "
+                  f"{'harness-side: read by bench' if ok else 'BENCH_ key NOTHING reads — arm cannot fire'}")
+        else:
+            ok = var in out
+            print(f"  {a['name']:<20} {var:<36} {'present' if ok else 'ABSENT — arm cannot fire'}")
         if not ok:
             bad.append((a["name"], var))
 if bad:
