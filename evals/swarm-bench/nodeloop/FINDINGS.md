@@ -19283,3 +19283,21 @@ tight, n1 wild: n1's historical spread 0.4499). If that pattern holds through th
 verdict may hinge on CONSISTENCY vs peak — the excellent-run-rate axis — rather than mean.
 Pair 2 forms when baseline-n1-r1 lands (running, ~09:59). Curve: n1 1 of 8, n3 2 of 8 done;
 quality pairs 0/1 for n3. aux_slim flip inputs: 2 of 3 n3 rows in (0.7314, 0.7342 vs arm 0.7404).
+
+## F822 — sb-5 PRODUCT TIER integrated and DISCRIMINATING: the 0.9704 app re-scores 0.893, losing exactly the product points Mihai's screenshot predicted
+
+score_build.py now carries the product tier behind BENCH_PRODUCT=1 (sb-4 path byte-identical;
+SCORER_VERSION flips to sb-5 under the gate): J journeys 15% (browser truth via
+product_probe.mjs — load reconcile, console errors, sync click-through, error state via
+--block-api route-abort, empty state on a fresh-db second instance), V visual 10% (rendered
+dates, computed status colors, pagination controls, filter, 375px responsive, styling), P perf
+5% (spec-documented budget ladders, quantized quarters), core 60%, hard 10%. Visual outweighs
+perf deliberately: localhost saturates every latency budget while the rendered page is where
+builds die. PROOF ON THE CAMPAIGN-BEST APP (patched copy honoring MERIDIAN_BASE_URL — the
+hardcoded-8931 F775 class bit the first attempt): J 1.0 P 1.0 (honest credit — its flows and
+speed are real) but V 0.333: v_dates_readable 0 (raw "2026-03-01T14:00:00+02:00" rendered),
+v_status_distinct 0 (plain text), v_pagination 0 (100 rows, no controls), v_filter 0. Total
+0.9704 → 0.893: the excellent band is no longer reachable by a non-product. Remaining to run
+the regime: v2 reference app + product defects in controls (high/determinism/isolation),
+sweep wiring (BENCH_PRODUCT + spec-build-v2), the boundary restart. Mihai's directive ~09:00:
+implement and USE it — the old-regime curve keeps burning only until controls prove.
