@@ -58,6 +58,19 @@ OUT = HERE.parent / "runs" / "nodeloop"
 STOP = HERE / "STOP"
 QUEUE = HERE / "QUEUE"
 PORT_BASE = 8930
+
+# THE REGIME FILE (sb-5 product tier). The scoring regime must survive a WATCHDOG restart,
+# which runs with a clean environment — an env-only switch would silently revert the campaign
+# to sb-4 on the first auto-restart (the F817 night proved watchdog restarts are real).
+# KEY=VALUE lines, applied at IMPORT so every consumer of this module (the supervisor,
+# health.py, run_build/score_build imported in-process) sees one consistent regime. Committed
+# to git; main() logs it at startup. Flipping the file IS the boundary switch.
+if (HERE / "REGIME.env").is_file():
+    for _line in (HERE / "REGIME.env").read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ[_k.strip()] = _v.strip()
 TIMEOUT = 16200          # 4.5h. A cap that truncates the work measures the cap, not the entrant.
 # n=1 is uninterpretable against a measured 46-point spread — and n=3 turns out to be barely better.
 #
@@ -1139,6 +1152,14 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     if isinstance(want, int) and isinstance(got, int) and got < want:
         return False
     if r.get("harness_ok") is False:
+        return False
+    # THE REGIME GATE (sb-5 product tier, Mihai 2026-08-15). A row scored by a different grader
+    # answers a different question — the row's own scorer_version is compared to the version the
+    # CURRENT regime produces (REGIME.env → BENCH_PRODUCT → sb-5). Same class as the engine_build
+    # check below: after the regime flips, every old-regime row re-runs rather than standing as a
+    # silent answer measured by the wrong instrument.
+    expected_scorer = "sb-5" if os.environ.get("BENCH_PRODUCT") else "sb-4"
+    if r.get("scorer_version") != expected_scorer:
         return False
     return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION
             and r.get("engine_build") == engine_build())
@@ -2433,6 +2454,10 @@ def summarise() -> None:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
+    if (HERE / "REGIME.env").is_file():
+        log("[regime] " + "; ".join(
+            l for l in (HERE / "REGIME.env").read_text().splitlines()
+            if l.strip() and not l.strip().startswith("#")))
     # SINGLE-INSTANCE LOCK (F817). Two supervisors over one results dir is not a race, it is a
     # shredder: each treats the other's engine as a stray orphan and kills it every ~10 s, every
     # kill scores a dead or seed tree as a real [done] row, the phantom completions drain the

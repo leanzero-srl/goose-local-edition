@@ -47,8 +47,9 @@ def load_env(path: str = "~/.config/agent-board/bedrock.env") -> Dict[str, str]:
 
 
 def build_prompt(port: int) -> str:
-    # BENCH3: an amend arm points BENCH_AMEND_SPEC at the brownfield spec; greenfield unchanged.
-    spec_file = os.environ.get("BENCH_AMEND_SPEC", "")
+    # BENCH3: an amend arm points BENCH_AMEND_SPEC at the brownfield spec; BENCH_SPEC is the
+    # regime-level override (sb-5 product: spec-build-v2.md via REGIME.env); greenfield default.
+    spec_file = os.environ.get("BENCH_AMEND_SPEC", "") or os.environ.get("BENCH_SPEC", "")
     spec = (Path(spec_file) if spec_file else ROOT / "spec-build.md").read_text()
     return (spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}/v1/docs")
                 .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
