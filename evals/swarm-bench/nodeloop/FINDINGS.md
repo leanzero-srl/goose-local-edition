@@ -19573,3 +19573,18 @@ minutes (a swarm prologue alone runs 15+); (3) corpse rows wiped, block relaunch
 Cost: ~40 min of fleet time and the lesson that a phase which legitimately runs engines
 without the sweep must disarm the sweep's guardians FIRST — the guardians are good at their
 job.
+
+## F840 — THE THREE-FILE FRONTEND FIX WORKS: n1-r1 renders a real product (V 0.17→0.87, J 0.20→0.65) and lands 0.8283 — above fresh-Haiku, closing on Sonnet
+
+Parallel-n1 batch 1 under spec v2.1 + sb-5.2: r0 0.5666 (gabee), r1 0.8283 (mihai), r2 0.724
+VOIDED by the young-death gate (engine exit 1 at 128 min — honest hole, retry queued after
+batch 3). THE HEADLINE: r1's page RENDERS in a real browser — 25 rows behind working Prev/Next
+pagination, "Mar 1, 2026, 2:00 PM" dates, badge-styled statuses, a filter control, responsive
+at 375px, actionable error AND empty states. Every swarm run before tonight shipped a dead
+page (V 0.17 ceiling); splitting the deliverable into index.html + styles.css + app.js moved
+V to 0.87 and J to 0.65 in one step — the truncation hypothesis confirmed: the 27B could
+always BUILD this product, it could never write it as one 400-line file. 0.8283 puts the
+1-node swarm ABOVE fresh-Haiku (0.786) on the same spec and scorer; sonnet's 0.969 is the
+remaining gap (residuals: partial sync journey, single-status page-1 badge cap, styling
+depth, and B 0.80's remaining sync losses). Batch spread note: 0.57 / 0.83 / (0.72 void) —
+per-host variance is alive and the curve's job. Batch 2 (reps 3-5) launched automatically.
