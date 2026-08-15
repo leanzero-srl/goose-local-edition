@@ -19509,3 +19509,16 @@ state verifies WORSE than a prior snapshot, restore the best — ship-best-verif
 ship-last-edited. n3 product-regime sequence so far: 0.514, 0.5065, 0.3074 — all dead
 frontends, now a dead backend too; the fleet is being stretched past repair capability and
 the regression protection is the missing rail. Curve: n3 1/8 (0.3074), n1 0/8, n1-r0 running.
+
+## F836 — SHIP-BEST-VERIFIED ships (default ON): the run now ends on the best tree any verify round measured, never the last edit
+
+Engine rail per F835: every RAN verify round with the fewest findings yet snapshots the tree
+(rsync, .swarm excluded); at any non-green exit where the final state verified worse — or its
+verify never ran — the best snapshot is restored and `best_tree_restored` records
+from_round/best/final. ran:false never snapshots (the vacuous-pass rule the speculative-twin
+path already enforces, applied here). GOOSE_SWARM_SHIP_BEST=0 is the escape. Greengate green,
+clippy 0, marker in the release binary; boundary executed; the curve re-restarts with the full
+rail stack: vendor-truth + render gate + fix scheduler + ship-best-verified. The engine's own
+serial-fix event had documented this hole for weeks ("nothing re-verifies the edit before it
+lands... findings ROSE in 3 of 13") — F835's served-mid-run/dead-at-scoring row was the cost
+of leaving a documented hole open.

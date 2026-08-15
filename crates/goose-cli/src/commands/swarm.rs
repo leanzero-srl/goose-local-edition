@@ -29674,6 +29674,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
         let mut final_verified = false;
         let mut last_findings: Vec<String> = Vec::new();
+        // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
+        // into the real tree (its own event admits findings ROSE in 3 of 13 archived rounds),
+        // and when the round budget exhausts, the run ships whatever the LAST edit left —
+        // measured 2026-08-15: an app that SERVED mid-run (the render probe read its page)
+        // scored "server_runs: never bound" minutes later; late repairs had regressed it below
+        // every verified state and the engine had no memory of the best tree it ever checked.
+        // The verify rounds already measure every state, so the rail is bookkeeping: snapshot
+        // the tree whenever a RAN verify posts the fewest findings yet, and at a non-green exit
+        // restore that snapshot if the final state verified worse (or never ran).
+        let ship_best = swarm_gate("GOOSE_SWARM_SHIP_BEST", true);
+        let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
+        let mut last_verify_ran = false;
+        let mut last_verify_count = 0usize;
         // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS, default 0 = OFF).
         let stall_cap = complete_stall_rounds();
         let mut stall = 0u32;
@@ -30022,6 +30035,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .map(|r| elide_middle(r, 150, 650))
                     .collect::<Vec<_>>(),
             }));
+            // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
+            // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
+            // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
+            last_verify_ran = verdict.ran;
+            last_verify_count = verdict.findings.len();
+            if ship_best
+                && verdict.ran
+                && best_verified.is_none_or(|(_, c)| verdict.findings.len() < c)
+            {
+                let best_dir = cwd.join(".swarm/best-tree");
+                let _ = std::fs::create_dir_all(&best_dir);
+                let ok = tokio::process::Command::new("rsync")
+                    .args(["-a", "--delete", "--exclude", ".swarm"])
+                    .arg(format!("{}/", cwd.display()))
+                    .arg(format!("{}/", best_dir.display()))
+                    .status()
+                    .await
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    best_verified = Some((round, verdict.findings.len()));
+                    sink.write_value(serde_json::json!({
+                        "event": "best_tree_snapshot",
+                        "round": round,
+                        "findings": verdict.findings.len(),
+                    }));
+                }
+            }
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
             if verdict.findings.is_empty() {
@@ -30683,6 +30724,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "baseline_findings": verdict.findings.len(),
                     "path": "serial",
                 }));
+            }
+        }
+        // F835 RESTORE: at a non-green exit, if the final tree verified WORSE than the best
+        // snapshot (or its last verify never ran), ship the best verified state instead of the
+        // last edit. A green exit never restores — final_passed means the current tree is the
+        // best by definition.
+        if ship_best && !final_passed {
+            if let Some((best_round, best_count)) = best_verified {
+                if !last_verify_ran || last_verify_count > best_count {
+                    let best_dir = cwd.join(".swarm/best-tree");
+                    if best_dir.is_dir() {
+                        let restored = tokio::process::Command::new("rsync")
+                            .args(["-a", "--delete", "--exclude", ".swarm"])
+                            .arg(format!("{}/", best_dir.display()))
+                            .arg(format!("{}/", cwd.display()))
+                            .status()
+                            .await
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+                        sink.write_value(serde_json::json!({
+                            "event": "best_tree_restored",
+                            "from_round": best_round,
+                            "best_findings": best_count,
+                            "final_findings": last_verify_count,
+                            "final_ran": last_verify_ran,
+                            "restored": restored,
+                        }));
+                        eprintln!(
+                            "{}",
+                            style(format!(
+                                "complete: SHIP-BEST-VERIFIED — restored round {best_round}'s tree \
+                                 ({best_count} finding(s)) over the final state ({} finding(s), \
+                                 ran={})",
+                                last_verify_count, last_verify_ran
+                            ))
+                            .yellow()
+                        );
+                    }
+                }
             }
         }
         complete_failed = !final_passed;
