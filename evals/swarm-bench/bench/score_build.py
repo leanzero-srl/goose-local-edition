@@ -48,14 +48,25 @@ import vendor_service  # noqa: E402
 # stale 47) can never disagree with the scorer again. Imported by the same name ~10 checks use.
 from fixtures import EXPECTED_SUM, EXPECTED_TOTAL  # noqa: E402
 
+import perf_probe  # noqa: E402
+
 PAYMENT_KEYS = {"id", "amount_minor", "currency", "created_at", "status"}
 TIER_WEIGHT = {"A": 0.25, "B": 0.30, "C": 0.25, "D": 0.20}
+
+# THE PRODUCT TIER (sb-5, Mihai 2026-08-15: "the benchmark should also review the end product…
+# performs well, looks good"). Gated so the sb-4 path stays bit-identical: J (user journeys,
+# browser truth), P (measured performance against SPEC-DOCUMENTED budgets), V (rendered visual
+# quality). Visual outweighs perf deliberately: on localhost every stdlib server saturates the
+# latency budgets, while the rendered page is where these builds actually fail as products.
+PRODUCT = bool(os.environ.get("BENCH_PRODUCT"))
+PRODUCT_WEIGHT = {"J": 0.15, "V": 0.10, "P": 0.05}
+PRODUCT_CORE = 0.60  # core keeps the majority; hard-block keeps its 0.10
 
 # Bump on ANY change to a check, a weight, or the fixture. A verdict carrying a different version is
 # not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
 # scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
-# cheaper model appeared to beat a stronger one.
-SCORER_VERSION = "sb-4"
+# cheaper model appeared to beat a stronger one. The product gate IS a version change.
+SCORER_VERSION = "sb-5" if PRODUCT else "sb-4"
 
 # ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
 #
@@ -148,6 +159,31 @@ def _post(url: str, timeout: float = 240):
     return _req(urllib.request.Request(url, data=b"", method="POST"), timeout)
 
 
+def _product_probe(scenario: str, base: str, *flags: str) -> Dict:
+    """Browser truth via product_probe.mjs (node + playwright). A returned dict carrying
+    `_probe_error` is a HARNESS failure, not app evidence — the checks score it 0 with a loud
+    detail, and the controls' HIGH gate catches any systemic probe breakage (the reference
+    would zero too, and the grader refuses to be trusted)."""
+    cmd = ["node", str(HERE / "product_probe.mjs"), scenario, base, *flags]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return json.loads(r.stdout)
+    except Exception as e:
+        return {"_probe_error": f"{scenario}: {type(e).__name__}: {e}"[:300]}
+
+
+def _ladder(value, budgets) -> float:
+    """Quantized quarters against SPEC-DOCUMENTED budgets (never invented constants — the
+    builder read the same numbers). Quantization keeps the determinism control honest:
+    localhost margins are enormous, so a bucket boundary flip is vanishingly unlikely."""
+    if value is None:
+        return 0.0
+    for score, bound in budgets:
+        if value <= bound:
+            return score
+    return 0.0
+
+
 def _classes(path: Path) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
     try:
@@ -209,6 +245,12 @@ class Ctx:
         self.sync2_reqs = 0
         self.sync2_304 = 0
         self.max_limit_used = 0
+        # PRODUCT tier (sb-5): browser scenarios + clock measurements, gathered app-alive.
+        self.probe_load: Dict = {}
+        self.probe_sync: Dict = {}
+        self.probe_error: Dict = {}
+        self.probe_empty: Dict = {}
+        self.perf: Dict = {}
 
 
 # ── check registry ────────────────────────────────────────────────────────────────────────────
@@ -232,6 +274,18 @@ def feature_check(name: str) -> Callable:
 def check(name: str, tier: str) -> Callable:
     def deco(fn):
         CHECKS.append((name, tier, fn))
+        return fn
+    return deco
+
+
+# PRODUCT tier (sb-5): registered separately, evaluated only when BENCH_PRODUCT is set, same
+# pattern as FEATURE_CHECKS so the sb-4 path stays byte-identical with the list present.
+PRODUCT_CHECKS: List[tuple] = []
+
+
+def product_check(name: str, tier: str) -> Callable:
+    def deco(fn):
+        PRODUCT_CHECKS.append((name, tier, fn))
         return fn
     return deco
 
@@ -920,6 +974,50 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
                 )
                 c.feat_csv = raw2 if st2 == 200 else b""
 
+            # PRODUCT TIER (sb-5): browser truth + clock truth, gathered while the app is
+            # alive. Placed AFTER every trace-window-dependent gather (sync1/sync2 markers,
+            # update_propagation's sync3) so the browser's own Sync click and the timed sync
+            # cannot contaminate a window — and BEFORE the SIGKILL below.
+            if PRODUCT:
+                c.perf = {
+                    "payments": perf_probe.measure_endpoint(base, "/api/payments?limit=25"),
+                    "page": perf_probe.measure_page(base),
+                    "sync": perf_probe.measure_sync(base),
+                }
+                c.probe_load = _product_probe("load", base)
+                c.probe_sync = _product_probe("sync", base)
+                c.probe_error = _product_probe("error", base, "--block-api")
+                # EMPTY state wants a fresh db: a second instance, probed, then killed.
+                eport = _free_port()
+                eproc = None
+                try:
+                    eproc = subprocess.Popen(
+                        [sys.executable, "-m", "vendorsync", "--db",
+                         str(c.root / "empty-probe.db"), "--port", str(eport)],
+                        cwd=c.root, env=env, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                    edeadline = time.time() + 15
+                    while time.time() < edeadline:
+                        if eproc.poll() is not None:
+                            c.probe_empty = {"_probe_error": "empty-instance died at boot"}
+                            break
+                        es, _eb, _er, _eh = _get(f"http://127.0.0.1:{eport}/api/health",
+                                                 timeout=2)
+                        if es == 200:
+                            c.probe_empty = _product_probe(
+                                "empty", f"http://127.0.0.1:{eport}")
+                            break
+                        time.sleep(0.4)
+                    else:
+                        c.probe_empty = {"_probe_error": "empty-instance never became healthy"}
+                finally:
+                    if eproc and eproc.poll() is None:
+                        try:
+                            os.killpg(os.getpgid(eproc.pid), signal.SIGKILL)
+                        except Exception:
+                            eproc.kill()
+                    (c.root / "empty-probe.db").unlink(missing_ok=True)
+
             # BENCH2 rank 6: RESTART PERSISTENCE. The spec's "run repeatedly against the same
             # database" has only ever been tested within one process lifetime. Kill the app
             # (SIGKILL — a crash, not a courtesy shutdown), respawn on the SAME db, and count
@@ -969,6 +1067,196 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
     except Exception as e:
         c.client = {"results": {"_errors": {"probe": str(e)[:200]}}, "trace": []}
     return c
+
+
+# ── PRODUCT TIER (sb-5): J journeys / P performance / V visual — browser and clock truth ─────
+# Every check reads Ctx fields the gather phase filled from product_probe.mjs (a real headless
+# chromium over the RENDERED page) and perf_probe (wall-clock measurements). A `_probe_error`
+# dict is a harness failure: scored 0 with a loud detail, and systemic breakage is caught by the
+# controls' HIGH gate (the reference zeros too and the grader refuses trust).
+
+
+def _pe(p: Dict):
+    return p.get("_probe_error") if isinstance(p, dict) else "probe returned nothing"
+
+
+@product_check("j_loads_data", "J")
+def j_loads_data(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    rows = p.get("renderedRowCount") or 0
+    claimed = p.get("totalClaimedInDom")
+    reconciles = claimed == EXPECTED_TOTAL or rows == EXPECTED_TOTAL
+    return g((0.5 if rows > 0 else 0) + (0.5 if reconciles else 0),
+             f"{rows} rows rendered, DOM claims {claimed} of {EXPECTED_TOTAL}",
+             "the page under-reports the collection" if not reconciles else "",
+             parts={"rendered_rows": rows > 0, "total_reconciles": reconciles})
+
+
+@product_check("j_console_clean", "J")
+def j_console_clean(c):
+    errs = []
+    for p in (c.probe_load, c.probe_sync):
+        if isinstance(p, dict) and not _pe(p):
+            ce = p.get("consoleErrors") or {}
+            errs += ce.get("texts") or [""] * (ce.get("count") or 0)
+    n = len(errs)
+    return g(1.0 if n == 0 else (0.5 if n == 1 else 0.0),
+             f"{n} console error(s) across load+sync" + (f": {errs[0][:120]}" if errs else ""),
+             "JS errors in normal use" if n else "")
+
+
+@product_check("j_sync_journey", "J")
+def j_sync_journey(c):
+    p = c.probe_sync
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    parts = {"button_found": bool(p.get("found")),
+             "disabled_while_syncing": bool(p.get("disabledDuringSync")),
+             "completed": bool(p.get("completed")),
+             "view_refreshed": bool(p.get("viewRefreshed"))}
+    return g(sum(parts.values()) / 4,
+             ", ".join(k for k, v in parts.items() if v) or "sync button never found",
+             "the spec's one interactive flow fails in a real browser" if not all(parts.values()) else "",
+             parts=parts)
+
+
+@product_check("j_error_state", "J")
+def j_error_state(c):
+    p = c.probe_error
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    visible = bool(p.get("errorStateVisible"))
+    return g(1.0 if visible else 0.0,
+             f"error state {'shown: ' + str(p.get('actionableText'))[:80] if visible else 'NOT shown'}"
+             f" (api blocked, bodyText {p.get('bodyTextLength')})",
+             "" if visible else "backend failure leaves the user with no actionable message")
+
+
+@product_check("j_empty_state", "J")
+def j_empty_state(c):
+    p = c.probe_empty
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    visible = bool(p.get("emptyStateVisible"))
+    rows = p.get("renderedRowCount") or 0
+    if rows > 0:
+        return g(0, f"{rows} rows rendered on an EMPTY db", "phantom data on first run")
+    return g(1.0 if visible else 0.0,
+             f"empty state {'shown: ' + str(p.get('emptyStateText'))[:60] if visible else 'NOT shown'}",
+             "" if visible else "a fresh install shows a blank page")
+
+
+@product_check("p_list_latency", "P")
+def p_list_latency(c):
+    m = (c.perf.get("payments") or {})
+    return g(_ladder(m.get("p95_ms"), [(1.0, 150), (0.75, 300), (0.5, 600), (0.25, 1200)]),
+             f"GET /api/payments limit=25 p95 {m.get('p95_ms')} ms (budget 150)",
+             "", parts={"p95_ms": m.get("p95_ms"), "errors": len(m.get("errors") or [])})
+
+
+@product_check("p_page_interactive", "P")
+def p_page_interactive(c):
+    v = None if _pe(c.probe_load) else c.probe_load.get("timeToFirstDataMs")
+    return g(_ladder(v, [(1.0, 2000), (0.75, 3000), (0.5, 4500), (0.25, 8000)]),
+             f"first data rows rendered at {v} ms (budget 2000)")
+
+
+@product_check("p_sync_wall", "P")
+def p_sync_wall(c):
+    m = (c.perf.get("sync") or {})
+    return g(_ladder(m.get("wall_ms"), [(1.0, 60000), (0.75, 90000), (0.5, 120000), (0.25, 180000)]),
+             f"POST /api/sync wall {m.get('wall_ms')} ms (budget 60000)")
+
+
+@product_check("v_dates_readable", "V")
+def v_dates_readable(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    texts = [t for t in (p.get("dateTexts") or []) if t and t.strip()]
+    if not texts:
+        return g(0, "no date cells rendered", "the Date column is empty in a real browser")
+    iso = [t for t in texts if re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", t)]
+    if iso:
+        return g(0, f"raw ISO-8601 shown to users: {iso[0][:60]}",
+                 "the spec forbids machine timestamps in the rendered page")
+    human = any(re.search(r"[A-Za-z]{3}", t) or re.search(r"\d{1,2}[./]\d{1,2}", t) for t in texts)
+    return g(1.0 if human else 0.5, f"rendered dates like {texts[0][:60]}",
+             "" if human else "formatted but not recognizably locale-readable")
+
+
+@product_check("v_status_distinct", "V")
+def v_status_distinct(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    styles = p.get("statusStyles") or {}
+    if len(styles) >= 2:
+        pairs = {(v.get("color"), v.get("backgroundColor")) for v in styles.values()}
+        ok = len(pairs) == len(styles)
+        return g(1.0 if ok else 0.0,
+                 f"{len(styles)} statuses rendered, {len(pairs)} distinct style(s): {sorted(styles)}",
+                 "" if ok else "statuses are indistinguishable at a glance")
+    if len(styles) == 1:
+        (name, s), = styles.items()
+        styled = (s.get("backgroundColor") or "rgba(0, 0, 0, 0)") not in ("rgba(0, 0, 0, 0)", "transparent")
+        return g(0.5 if styled else 0.0,
+                 f"only '{name}' rendered on page 1; {'badge-styled' if styled else 'plain text'}",
+                 "cannot verify distinctness with one status; plain text scores 0")
+    return g(0, "no status cells rendered", "the Status column is empty in a real browser")
+
+
+@product_check("v_pagination", "V")
+def v_pagination(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    controls = bool(p.get("paginationControls"))
+    rows = p.get("renderedRowCount") or 0
+    bounded = 0 < rows <= 50
+    return g((0.6 if controls else 0) + (0.4 if bounded else 0),
+             f"controls={controls}, {rows} rows in one view (spec: never all {EXPECTED_TOTAL})",
+             "" if controls and bounded else "the finance team scrolls an unpaginated dump",
+             parts={"controls": controls, "bounded_view": bounded})
+
+
+@product_check("v_filter", "V")
+def v_filter(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    return g(1.0 if p.get("filterControl") else 0.0,
+             "status filter control present" if p.get("filterControl") else "no status filter control")
+
+
+@product_check("v_responsive_375", "V")
+def v_responsive_375(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    vp = p.get("viewport375") or {}
+    ok = vp.get("horizontalScroll") is False
+    return g(1.0 if ok else 0.0,
+             f"375px horizontal scroll: {vp.get('horizontalScroll')}",
+             "" if ok else "the page breaks on a phone-width viewport")
+
+
+@product_check("v_styling", "V")
+def v_styling(c):
+    p = c.probe_load
+    if _pe(p):
+        return g(0, f"PROBE UNAVAILABLE: {_pe(p)}", "harness failure, not app evidence")
+    s = p.get("styling") or {}
+    font = (s.get("bodyFontFamily") or "").strip()
+    parts = {"stylesheet": bool(s.get("hasStylesheet")),
+             "layered_backgrounds": (s.get("distinctBackgroundCount") or 0) >= 3,
+             "non_default_font": bool(font) and not font.lower().startswith("times")}
+    return g(0.4 * parts["stylesheet"] + 0.3 * parts["layered_backgrounds"]
+             + 0.3 * parts["non_default_font"],
+             f"stylesheet={parts['stylesheet']}, {s.get('distinctBackgroundCount')} distinct "
+             f"backgrounds, font '{font[:40]}'", "", parts=parts)
 
 
 # BENCH2 rank 9: THE HARD BLOCK. These checks are the last 0.10 of any score — a core-perfect
@@ -1059,7 +1347,27 @@ def evaluate(c: Ctx) -> Dict:
     hard_rows = [r for r in rows if r["check"] in HARD_BLOCK]
     hard_mean = sum(r["score"] for r in hard_rows) / len(hard_rows) if hard_rows else 0.0
     tiers["HARD"] = {"mean": round(hard_mean, 4), "checks": len(hard_rows), "weight": 0.10}
-    score = 0.90 * core_weighted + 0.10 * hard_mean
+    if PRODUCT:
+        # sb-5: core renormalizes to 0.60 and the product tiers carry 0.30 — the functional
+        # majority holds, and the product axes are big enough to move a build.
+        prows = []
+        for name, tier, fn in PRODUCT_CHECKS:
+            try:
+                outcome = fn(c)
+            except Exception as exc:
+                outcome = {"score": 0.0, "detail": f"PROBE ERROR: {exc}",
+                           "consequence": "probe bug"}
+            prows.append({"check": name, "tier": tier, **outcome})
+        rows += prows
+        product_weighted = 0.0
+        for tier, weight in PRODUCT_WEIGHT.items():
+            sub = [r for r in prows if r["tier"] == tier]
+            mean = sum(r["score"] for r in sub) / len(sub) if sub else 0.0
+            tiers[tier] = {"mean": round(mean, 4), "checks": len(sub), "weight": weight}
+            product_weighted += mean * weight
+        score = PRODUCT_CORE * core_weighted + product_weighted + 0.10 * hard_mean
+    else:
+        score = 0.90 * core_weighted + 0.10 * hard_mean
     # BENCH3: the amend arms carry a FEATURE half alongside the unchanged sb-4 score (which IS
     # the regression half — the amended tree must hold the known-good's level). Env-gated at
     # call time; greenfield results carry no amend fields at all.
@@ -1092,7 +1400,7 @@ def format_report(result: Dict, title: str = "") -> str:
     t = result["tiers"]
     head = (f"{title}  {100 * result['score']:.1f}%   " +
             " · ".join(f"{k} {100 * t[k]['mean']:.0f}%"
-                       for k in ("A", "B", "C", "D", "HARD") if k in t))
+                       for k in ("A", "B", "C", "D", "J", "P", "V", "HARD") if k in t))
     lines = [head, ""]
     # THE LINE THAT STOPS A TIER MEAN BEING READ AS BREADTH. Without it, "B 36%" is indistinguishable
     # from twelve half-working behaviours, and that reading cost this campaign real work.
