@@ -19200,3 +19200,28 @@ exercise reality — cheapness then reads from the stub's request count, immune 
 That also closes the F775 testability thread. Engine verify round 1 PASSED (green) vs scorer
 0.5189 — the engine-green/scorer-red separation again, and the vendor stub is precisely what
 narrows it. Singles 6/7 done; scout_doc_urls next, then THE CURVE.
+
+## F817 — OPERATOR INCIDENT: `sweep.py backlog` started a second supervisor; 24 minutes of dueling engines; corpus cleaned, two refusal gates shipped
+
+MY ERROR, fully owned. Wanting a read-only queue preview I ran `python3 sweep.py backlog` —
+but sweep.py had NO argv handling: the argument was ignored and the invocation started a FULL
+second supervisor over the live results dir. Each supervisor then treated the other's engine as
+a stray orphan (the F814 reaper doing its job with the wrong worldview) and killed it, every
+~10 s, for 24 minutes (03:14–03:38). Every kill scored a dead or reused tree as a real [done]
+row — 141 PHANTOM ROWS sprayed across the whole campaign inventory, including all 16 curve
+cells and a fake amend_feature 0.955 (the scorer grading the untouched known-good SEED tree).
+The phantom completions drained the backlog, and the never-end-on-a-counter rule then walked
+the rep target up to 11, re-queueing retired arms (doc_examples-n3-r10, scoped_contracts-n3-r10)
+— the whole "9 in backlog / amend_feature NOW" derangement explained by one wrong shell command.
+Casualties: scout_doc_urls-n3-r0 at 68 min (tree preserved in _superseded), 24 min of fleet
+time, zero real rows — all six completed singles survived untouched (verified by direct scan:
+only they are non-void, correct scores, current build). All 141 phantoms voided in place with
+this finding as void_reason. THE WATCHDOG WORKED: it flagged BAD at 03:36 and auto-restarted a
+single supervisor at 03:40 — the F-batch noisy-supervisor design paying for itself. GATES
+SHIPPED (gates, not memory — both PROVEN by invocation): (1) sweep.py REFUSES any argument,
+exit 2, pointing at the read-only paths; (2) a single-instance flock on runs/nodeloop/sweep.lock
+— a second supervisor now refuses at startup naming the holder pid. The reaper never faces a
+peer again by construction. Wrinkle checked: the watchdog's restart runs under Python 3.9
+(launchd PATH); every module on the sweep's import path compiles clean under 3.9 (only the
+standalone repaircensus.py doesn't, no importers). Queue verified correct after restart:
+scout_doc_urls re-running first, NEXT baseline-n3-r0 — THE CURVE. Rep target back at 5.
