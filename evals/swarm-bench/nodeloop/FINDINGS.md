@@ -19463,3 +19463,15 @@ the release binary; boundary executed immediately (every pre-rebuild row was doo
 engine_build gate anyway — waiting had negative value). The curve re-restarts with the fleet
 now able to SEE and REPAIR the defect class that cost n3-r1 half its score. F822's three legs
 are now all real: the spec asks, the scorer grades, the gate converts.
+
+## F827b — the FINAL sb-5 ladder, one table (frozen scorer; fresh spec-v2 builds vs free re-scored v1 trees)
+
+Fresh spec-v2 builds: opus-5 0.975 (19.5 min), sonnet-5 0.969 (6.8 min), haiku-4.5 0.786
+(5.3 min). Re-scored v1 trees (built before the product asks existed — labeled, not hidden):
+opus 0.914/0.934, sonnet 0.497/0.478, haiku 0.458/0.462, bare-local-27B 0.352. The swarm's
+product-regime baseline enters at 0.514 pre-render-gate; the gated curve now decides what the
+fleet does once it can see its own frontend. Total ladder spend ≈ $30-40 (two duds included)
+vs $657 last month; the scorer is FROZEN so every future comparison is free until sb-5.1.
+HOUSEKEEPING NOTE (no action taken): 64 parked trees ≈ 90 GB — every boundary/watchdog start
+parks a 1.4 GB copy; the post-verdict boundary should dedupe parks (keep F817 forensics + the
+latest), and loop.sh park could skip when the tree is unchanged since the last park.
