@@ -19522,3 +19522,19 @@ rail stack: vendor-truth + render gate + fix scheduler + ship-best-verified. The
 serial-fix event had documented this hole for weeks ("nothing re-verifies the edit before it
 lands... findings ROSE in 3 of 13") — F835's served-mid-run/dead-at-scoring row was the cost
 of leaving a documented hole open.
+
+## F837 — 0.7033: the backend is SOLVED IN-RUN (B 0.19→0.88, C 1.00 — vendor-truth + fix_sched converting), the frontend still never repairs, and the ship-best rail was silently OFF (wrong gate function)
+
+Full-rail row baseline-n3-r0: 0.7033/128min — the best product-regime row, +0.40 over the worst.
+The conversion story is now measured per-family: the vendor-truth gate + fix scheduler drove the
+API to A 1.00 / B 0.88 / C 1.00 / HARD 0.83 (the sync family that cost every earlier run is
+being REPAIRED IN-RUN); the render gate fired 3× and blocked, but the frontend again shipped
+dead (J 0.20, V 0.17 — the fix worker cannot rewrite the v2 index.html; the skeleton-fill class
+problem, queued as the frontend-repair mechanism question). THE RAIL BUG: zero best_tree events
+— swarm_gate()'s second argument is ASSURED-BUNDLE MEMBERSHIP, not a default; the rail resolved
+OFF with the var unset, and the failure was silent because only success emitted. Fixed:
+swarm_gate_cfg (real default-ON), the snapshot event now emits ok:true/false always, and
+REGIME.env pins GOOSE_SWARM_SHIP_BEST=1 explicitly. No regression occurred this run (findings
+3→3→3) so nothing was lost to the dormant rail. Boundary executed; the curve re-restarts on the
+corrected binary. Sequence: 0.514 → 0.5065 → 0.3074 → 0.7033; sonnet bar 0.969; the remaining
+gap is almost entirely THE FRONTEND.
