@@ -19274,3 +19274,12 @@ formed (n3-r0's wall excluded as resumed). find_tree picked the archive mechanic
 1-node arm's historical spread (0.0116 vs 0.4499 — the variance signal from the handoff) is
 exactly why a single loud n1 row must not be read as the curve. Nothing to act on; the next
 pair-mate is baseline-n3-r1 (running, ends ~08:17). Curve: n1 1 of 8, n3 1 of 8 done.
+
+## F821 — baseline-n3-r1: 0.7342/81min — the n3 arm is strikingly consistent (spread 0.003 at n=2)
+
+Second n3 curve row: sb-4 0.7342 (bridge 0.7758), pool 3/3, oracle clean, not resumed, 81 min.
+n3 so far: 0.7314, 0.7342 — a 0.003 spread, echoing the campaign's oldest variance signal (n3
+tight, n1 wild: n1's historical spread 0.4499). If that pattern holds through the curve, the
+verdict may hinge on CONSISTENCY vs peak — the excellent-run-rate axis — rather than mean.
+Pair 2 forms when baseline-n1-r1 lands (running, ~09:59). Curve: n1 1 of 8, n3 2 of 8 done;
+quality pairs 0/1 for n3. aux_slim flip inputs: 2 of 3 n3 rows in (0.7314, 0.7342 vs arm 0.7404).
