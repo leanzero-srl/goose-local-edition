@@ -19558,3 +19558,18 @@ fallback). THE SHORTER PLAN: n1 block tonight (~5 h, fleet otherwise idle), n3 s
 (8 × ~2 h), verdict SATURDAY NIGHT with early-call armed; treatments trimmed post-verdict.
 One operational note: the greengate read RED once through a pipe and GREEN on direct exit —
 the pipe-exit sin again, caught; the direct exit is the authority.
+
+## F839 — the watchdog killed the first n1 block (all 8 rows corpses at 0.045): the batch-boundary window read as "nothing running", the revived sweep evicted the pinned engines; HOLD disarm + young-death row gate shipped
+
+Mechanism, fully explained: the watchdog's one "safe" restart condition (sweep dead AND zero
+engines) is TRUE at every parallel-n1 batch boundary (engines exit, scoring runs) — it revived
+the sweep mid-block, the sweep dispatched an n3 unit onto the fleet, and its intruder-evict
+machinery killed every pinned n1 engine it did not own. All 8 rows assembled at 0.045 with
+void=False (the row gate checked the pin, not whether the engine LIVED — the kill-artifact
+class, fifth appearance, first in MY harness code). FIXES: (1) watchdog.sh honors a HOLD file
+(loud disarm — it logs "HOLD present" every pass); the n1 phase runs under HOLD, rm HOLD
+re-arms; (2) assemble_row voids any row whose agent exited non-zero or returned in under 10
+minutes (a swarm prologue alone runs 15+); (3) corpse rows wiped, block relaunched clean.
+Cost: ~40 min of fleet time and the lesson that a phase which legitimately runs engines
+without the sweep must disarm the sweep's guardians FIRST — the guardians are good at their
+job.

@@ -47,6 +47,15 @@ BADLINE=$(echo "$HEALTH_OUT" | grep -m1 "BAD" || echo "health.py exit $RC")
 # command line ENDS with the script path (Popen([python, '-u', 'nodeloop/sweep.py'])); a shell
 # quoting it keeps talking afterwards. The engine pattern cannot be end-anchored (the prompt trails
 # it) — a false engine match only delays the restart one interval, which is the safe direction.
+# F839 HOLD: an operator phase that legitimately runs engines WITHOUT the sweep (the
+# parallel-n1 block) hits the "nothing is running" window at batch boundaries, and the
+# auto-restart then revives a sweep whose evict machinery kills the phase's engines as
+# intruders — measured: all 8 n1 rows died at 0.045 in one night. touch HOLD to disarm;
+# rm HOLD to re-arm. The hold is loud, not silent.
+if [ -f "$(dirname "$0")/HOLD" ]; then
+  say "HOLD present — watchdog disarmed by operator"
+  exit 0
+fi
 SWEEP=$(pgrep -f 'nodeloop/sweep\.py$' | head -1)
 ENGINES=$(pgrep -f 'goose swarm run' | wc -l | tr -d ' ')
 
