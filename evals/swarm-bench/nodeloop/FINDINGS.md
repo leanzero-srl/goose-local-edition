@@ -19492,3 +19492,20 @@ finding, not a guess. Also fixed in the same commit: the sweep's expected-scorer
 PARALLEL LITERAL ("sb-5" hardcoded) that went stale the moment sb-5.1 existed — it now reads
 score_build.SCORER_VERSION, the one source of truth. Supervisor restarted under sb-5.1; the
 0.5065 row re-queues by version; controls re-running for the sb-5.1 trust stamp.
+
+## F835 — the first TRUE sb-5.1 row (0.3074) exposes SHIP-LAST-EDITED: the app served mid-run and is DEAD at scoring — late fix rounds regress the tree and nothing restores the best verified state
+
+baseline-n3-r0 under sb-5.1: 0.3074/111min, probes fully operational (real details, no probe
+errors — the sb-5.1 fix held). The readout: modules 5/5, interfaces 8/8, but server_runs
+"never bound" AT SCORING while the engine's render probe read the served page DURING the run —
+the tree that was gate-checked is not the tree that shipped. Three verify rounds failed
+(render finding fired 3×, blocked 3× — correct), and the fix rounds in between kept editing;
+when the round budget exhausted, the run ended with whatever the LAST edit left, which no
+longer boots. THE MECHANISM: the base fix loop edits in place and ships last-edited, not
+last-verified — under the product regime's harder asks, late repairs regress below the
+entry state and the engine has no memory of "the best tree I ever verified". THE FIX (next
+engine batch, top slot): snapshot the tree at each verify round; at run end, if the final
+state verifies WORSE than a prior snapshot, restore the best — ship-best-verified, never
+ship-last-edited. n3 product-regime sequence so far: 0.514, 0.5065, 0.3074 — all dead
+frontends, now a dead backend too; the fleet is being stretched past repair capability and
+the regression protection is the missing rail. Curve: n3 1/8 (0.3074), n1 0/8, n1-r0 running.
