@@ -2596,6 +2596,20 @@ def main() -> int:
             result["score"] = None
             result["void"] = True
             result["void_reason"] = "boundary STOP killed the engine mid-unit (F784)"
+        # F830 — THE FOURTH KILL-ARTIFACT INSTANCE, from the one direction F784 couldn't see: an
+        # engine killed by something that leaves NO STOP file (measured 2026-08-15: two -9s,
+        # most plausibly macOS memory pressure during a concurrent harness burst) scored its
+        # half-built tree as a REAL row — 0.454 and 0.045 landed void=False in the curve. The
+        # engine's own exit code was in the row the whole time. A killed engine is never a
+        # measurement, whoever sent the signal.
+        _exit = result.get("engine_exit")
+        if (isinstance(_exit, int) and _exit < 0 and not result.get("void")
+                and result.get("score") is not None):
+            result["kill_artifact_score"] = result.pop("score")
+            result["score"] = None
+            result["void"] = True
+            result["void_reason"] = (f"engine killed (exit {_exit}) — kill artifact, not a "
+                                     f"measurement (F830)")
         if is_real_unit({**result, "wall_secs": result.get("wall_secs") or unit_secs}):
             durations.append(unit_secs)
         result_path(arm["name"], nodes, rep).parent.mkdir(parents=True, exist_ok=True)
