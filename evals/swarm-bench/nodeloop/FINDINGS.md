@@ -19225,3 +19225,25 @@ peer again by construction. Wrinkle checked: the watchdog's restart runs under P
 (launchd PATH); every module on the sweep's import path compiles clean under 3.9 (only the
 standalone repaircensus.py doesn't, no importers). Queue verified correct after restart:
 scout_doc_urls re-running first, NEXT baseline-n3-r0 — THE CURVE. Rep target back at 5.
+
+## F818 — scout_doc_urls single: 0.782 (2nd best of the 7), guard passes, quality signal positive — but the mechanism itself is UNVERIFIABLE from artifacts, an instrument gap now queued
+
+scout_doc_urls-n3-r0 re-run (post-F817): sb-4 0.782 / hard 0.95 / 82 min / pool 3/3; bridge
+sb-3-analytic 0.8233. Second-best single on the final binary (behind judge_nudge 0.9411).
+THE HONEST MECHANISM VERDICT: the registered readout — the literal "The spec names these
+documents" in a scout's SYSTEM prompt — cannot be checked from what the harness keeps. The
+SpecDocs branch (swarm.rs:14976) formats the clause into the scout system prompt and emits NO
+event; run.jsonl carries no scout prompts; the .swarm transcripts are not archived and the
+workdir is recycled by the next unit. All three branch preconditions are PROVEN true (env flag
+in the unit row, the spec names http://127.0.0.1:8935/v1/docs, scouts run MCP-less), so the
+branch firing is PLAUSIBLE — but plausible is not the standard, and the arm's registered check
+was designed against evidence the pipeline does not retain. INSTRUMENT FIX queued to the
+post-verdict batch: the SpecDocs branch emits a run.jsonl event (urls + lens) when it fires.
+QUALITY signal, n=1: doc-only vendor tokens in finding_texts (next_cursor 4, 429 5, Retry-After
+2, ETag 1, Idempotency-Key 1 = 13) sit at/above the top of the measured 4-9 per-run spread.
+HARD GUARD passes decisively: research_secs 5.84 min vs the six singles' 4.97-7.37 (the ledger
+mean "7.49 sd 2.51" is in MINUTES — units pinned here to stop a future 137-sigma misread of
+350 s). Ledger correction folded in: one F817 straggler voided — the post-restart supervisor
+scored the leftover seed tree as amend_feature 0.955 at 03:41:53, AFTER the main voiding pass;
+corpus re-verified to exactly the seven real singles non-void. SINGLES COMPLETE: 7 of 7. THE
+CURVE IS RUNNING: baseline-n3-r0 dispatched 05:03.
