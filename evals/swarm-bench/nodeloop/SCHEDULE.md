@@ -32,7 +32,9 @@ if beneficial; keep the task list current; hold this plan judiciously.
   second half; its registered check is the next fill_fan single after that boundary:
   join_spliced with spliced>0.
 - sb-5 scorer hardening: BENCH2 ranks 3-10 + the BENCH3 feature fold (registry exists, checks
-  land per-benchmark).
+  land per-benchmark) — SCOPE EXPANDED 2026-08-15 per Mihai: + THE PRODUCT TIER (journey via
+  headless browser, measured perf budgets, rendered-visual checks, gate-side render smoke) —
+  full design in PRODUCT-TIER.md; archived corpus re-scores under sb-5 retroactively.
 - F814 lineage hardening: the engine-count detector's exact-binary match extended to a
   lineage check (parent chain), so a foreign goose binary can never wash a unit again.
 - F816 VENDOR-STUB GATE (design item, engine): the completion gate spins a minimal vendor stub
