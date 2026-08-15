@@ -19377,3 +19377,19 @@ its page doesn't even render data in a real browser. CONTEXT: the swarm's own sb
 r0/r1 + opus-5-r1 re-scoring in a second batch. Fresh spec-v2 Bedrock builds (one per model,
 Mihai's token, only after GRADER TRUSTED freezes the scorer) are the clean comparison — the
 $657 lesson stands as a hard rule: no cloud spend while the instrument can still move.
+
+## F828 — THE PRODUCT REGIME IS LIVE: sb-5 + spec-v2 + vendor-truth + fix-scheduler, GRADER TRUSTED, curve restarted and leading
+
+Controls round 4: GRADER TRUSTED — high 86.3% (v2 reference), determinism clean, all 13 defects
+isolate (rounds 1-3 caught four REAL harness defects on the way: a WAL-sidecar reset hole, two
+vacuous-pass paths in the filter probe, and the relative-path cascade that faked both the drift
+and a dead client probe). THE BOUNDARY: REGIME.env (BENCH_PRODUCT, spec-build-v2,
+PROBE_ADVERTISED_POST=1 for F825, FIX_SCHED=1 as the F826 findings-consumer) — applied at sweep
+import, watchdog-restart-proof; greengate 2182 tests green; release rebuilt shipping the held
+F809 splice pair + the F825 vendor-truth gate (both MARKERS verified in the binary). Two
+boundary wrinkles, both handled: the watchdog auto-restarted DURING the rebuild and its unit ran
+the old binary image on the new spec (killed — engine_build would have self-voided the row
+anyway), and the regime flip made every row incomplete at once so the never_seen hoist swallowed
+the queue — curve_first now has the FINAL word (structurally un-jumpable). RUNNING:
+baseline-n3-r0 under the product regime, 88 in backlog, curve 16 leading. Every future row
+carries scorer_version sb-5; the old-regime corpus stays readable and re-queued nothing is lost.

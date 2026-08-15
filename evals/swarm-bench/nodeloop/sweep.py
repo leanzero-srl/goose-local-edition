@@ -2405,6 +2405,13 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
     if never_seen:
         picked = {id(u) for u in never_seen}
         units = never_seen + [u for u in units if id(u) not in picked]
+    # CURVE_FIRST HAS THE FINAL WORD (F828). At the sb-5 regime flip every row in the corpus
+    # went incomplete at once (scorer-version gate), which made the never_seen partition above
+    # swallow the whole inventory and put a mechanism single at the head of a queue whose plan
+    # of record says the 16-run curve leads. Re-applying the curve hoist AFTER every other
+    # partition preserves each hoist's intent among the non-curve units while making the
+    # decisive question structurally un-jumpable.
+    units = curve_first(units, full)
     return units
 
 
