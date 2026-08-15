@@ -32,6 +32,7 @@ Operating rules below each cost a real overnight run at some point:
 """
 from __future__ import annotations
 
+import fcntl
 import itertools
 import json
 import os
@@ -2432,6 +2433,26 @@ def summarise() -> None:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
+    # SINGLE-INSTANCE LOCK (F817). Two supervisors over one results dir is not a race, it is a
+    # shredder: each treats the other's engine as a stray orphan and kills it every ~10 s, every
+    # kill scores a dead or seed tree as a real [done] row, the phantom completions drain the
+    # backlog, and the never-end-on-a-counter rule then re-queues the whole campaign at rep+1.
+    # A second instance must REFUSE, not duel. The fd is held for the process lifetime.
+    global _LOCK_FH
+    _LOCK_FH = open(OUT / "sweep.lock", "a+")
+    try:
+        fcntl.flock(_LOCK_FH, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        _LOCK_FH.seek(0)
+        sys.stderr.write(
+            f"REFUSING to start: another sweep supervisor already holds {OUT / 'sweep.lock'} "
+            f"(pid file says {_LOCK_FH.read().strip() or 'unknown'}). "
+            f"There is never a reason to run two.\n")
+        return 2
+    _LOCK_FH.seek(0)
+    _LOCK_FH.truncate()
+    _LOCK_FH.write(str(os.getpid()))
+    _LOCK_FH.flush()
     log("=" * 78)
     log(f"nodeloop starting {datetime.now().isoformat(timespec='seconds')}  "
         f"pid={os.getpid()}  audit={dispatch_audit.AUDIT_VERSION}")
@@ -2583,4 +2604,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # NO ARGUMENTS, EVER (F817). This file IS the supervisor — running it starts a sweep. There
+    # is no read-only subcommand here; `sweep.py backlog` once launched a second supervisor that
+    # duelled the live one for 24 minutes. A wrong invocation must refuse, not run.
+    if len(sys.argv) > 1:
+        sys.stderr.write(
+            f"sweep.py takes NO arguments (got {sys.argv[1:]}) — running it STARTS a sweep "
+            f"supervisor. For a read-only view use `loop.sh check` or read "
+            f"runs/nodeloop/loop.log.\n")
+        sys.exit(2)
     sys.exit(main())
