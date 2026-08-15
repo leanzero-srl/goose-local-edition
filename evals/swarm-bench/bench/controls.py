@@ -109,6 +109,71 @@ DEFECTS: List[Dict] = [
     },
 ]
 
+# ── sb-5 PRODUCT defects (run only under BENCH_PRODUCT; patterns target the v2 reference) ─────
+if score_build.PRODUCT:
+    DEFECTS += [
+        {
+            # whenText's formatter path returns the raw ISO string — the exact sin spec v2
+            # forbids. Only the rendered-date check may notice.
+            "name": "iso_dates",
+            "expect": {"v_dates_readable"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r"if \(fmt\) \{ return fmt\.format\(d\); \}",
+                                      "if (fmt) { return iso; }"),
+        },
+        {
+            # Badges lose their class: statuses render as plain text. v_styling is adjacent by
+            # construction (badge backgrounds count toward the design-effort signal).
+            "name": "plain_status",
+            "expect": {"v_status_distinct", "v_styling"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r'span\.className = "badge " \+ \(KNOWN\[key\] \|\| "b-other"\);',
+                                      'span.className = "";'),
+        },
+        {
+            # The page asks the API for everything at once — the unpaginated dump. The summary
+            # bar still claims 247, so j_loads_data must NOT drop (reconciliation holds).
+            "name": "drop_pagination",
+            "expect": {"v_pagination"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r"var LIMIT = 25;", "var LIMIT = 1000;"),
+        },
+        {
+            # The status filter group never renders. Only v_filter may notice.
+            "name": "drop_filter",
+            "expect": {"v_filter"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r'<div class="filter-group"',
+                                      '<div hidden class="filter-group"'),
+        },
+        {
+            # The Sync click handler returns immediately: button found, nothing happens. The
+            # source still carries the disabled/refresh code, so the ui_polish regexes hold.
+            "name": "break_sync_button",
+            "expect": {"j_sync_journey"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r'el\("sync"\)\.addEventListener\("click", function \(\) \{',
+                                      'el("sync").addEventListener("click", function () { return;'),
+        },
+        {
+            # A deferred throw on load: the console is no longer clean, everything else works.
+            "name": "console_error",
+            "expect": {"j_console_clean"},
+            "apply": lambda pkg: _sub(pkg / "web/index.html",
+                                      r"</body>",
+                                      '<script>setTimeout(function(){ throw new Error('
+                                      '"control-defect: injected"); }, 50);</script></body>'),
+        },
+    ]
+    # The frontend-deleting defect legitimately collapses every browser check with it.
+    for _d in DEFECTS:
+        if _d["name"] == "no_frontend":
+            _d["expect"] |= {
+                "j_loads_data", "j_console_clean", "j_sync_journey", "j_error_state",
+                "j_empty_state", "p_page_interactive", "v_dates_readable",
+                "v_status_distinct", "v_pagination", "v_filter", "v_responsive_375",
+                "v_styling"}
+
 
 def run_control(name: str, workdir: Path, port: int, out: Path) -> Dict:
     trace = out / f"trace-control-{name}.jsonl"
