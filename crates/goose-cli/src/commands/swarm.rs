@@ -29683,7 +29683,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // The verify rounds already measure every state, so the rail is bookkeeping: snapshot
         // the tree whenever a RAN verify posts the fewest findings yet, and at a non-green exit
         // restore that snapshot if the final state verified worse (or never ran).
-        let ship_best = swarm_gate("GOOSE_SWARM_SHIP_BEST", true);
+        // swarm_gate_cfg, NOT swarm_gate: the latter's second arg is assured-bundle membership,
+        // not a default — the first build of this rail resolved OFF with the var unset and
+        // zero snapshots fired on a live unit before anyone noticed (silently, because the
+        // failure path emitted nothing — also fixed below).
+        let ship_best = swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true);
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
         let mut last_verify_ran = false;
         let mut last_verify_count = 0usize;
@@ -30056,12 +30060,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .unwrap_or(false);
                 if ok {
                     best_verified = Some((round, verdict.findings.len()));
-                    sink.write_value(serde_json::json!({
-                        "event": "best_tree_snapshot",
-                        "round": round,
-                        "findings": verdict.findings.len(),
-                    }));
                 }
+                sink.write_value(serde_json::json!({
+                    "event": "best_tree_snapshot",
+                    "round": round,
+                    "findings": verdict.findings.len(),
+                    "ok": ok,
+                }));
             }
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
