@@ -199,6 +199,14 @@ def main() -> int:
     # the first sb-4 controls run publishes the known-good vector and this default follows it.
     ap.add_argument("--high", type=float, default=0.85)
     args = ap.parse_args()
+    # ABSOLUTE, ALWAYS. A relative --good/--out cascades into two silent failures measured on
+    # 2026-08-15: the app subprocess resolves its relative --db against ITS OWN cwd and mints a
+    # phantom nested tree (good/runs/.../control.db) that the determinism reset can't see — the
+    # second score reopens the first run's data and reads as drift; and the client-probe driver
+    # receives a relative PYTHONPATH that resolves against the DRIVER'S cwd to nowhere —
+    # ModuleNotFoundError, every client check zero, and replay_as_error undetectable on top.
+    args.good = args.good.resolve()
+    args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
 
     if not (args.good / "vendorsync").is_dir():
