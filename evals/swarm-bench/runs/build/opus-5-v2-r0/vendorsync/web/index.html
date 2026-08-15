@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vendor Sync — Payments</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a3fd4'/%3E%3Ctext x='16' y='22' font-family='Helvetica,Arial,sans-serif' font-size='14' font-weight='bold' fill='%23fff' text-anchor='middle'%3EVS%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #101623;
+    --paper: #ffffff;
+    --canvas: #eef1f6;
+    --line: #d4d9e3;
+    --muted: #5b6577;
+    --brand: #1a3fd4;
+    --brand-deep: #122d9b;
+    --green: #15803d;
+    --red: #dc2626;
+    --amber: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  /* ---------- branded header bar ---------- */
+  .topbar { background: var(--brand); color: #fff; }
+  .topbar-inner {
+    max-width: 920px; margin: 0 auto; padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px;
+    background: #fff; color: var(--brand);
+    font-size: 13px; font-weight: 800; letter-spacing: .02em;
+  }
+  .brand-name { font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+  .topbar-sub {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .12em; color: #c7d2ff;
+  }
+
+  .wrap { max-width: 920px; margin: 0 auto; padding: 24px 20px 64px; }
+
+  .panel {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(16, 22, 35, .07);
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+
+  /* ---------- summary ---------- */
+  .bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .label {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  .total { font-size: 33px; font-weight: 800; letter-spacing: -.02em; }
+  .count { font-size: 22px; font-weight: 700; }
+  button {
+    font: 700 13px/1 inherit; letter-spacing: .03em;
+    background: var(--brand); color: #fff; border: none;
+    border-radius: 8px; padding: 12px 22px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--brand-deep); }
+  button:disabled { background: var(--muted); cursor: progress; }
+  .sync-line { font-size: 13px; color: var(--muted); margin-top: 12px; }
+  .sync-note { font-size: 13px; font-weight: 600; color: var(--red); margin-top: 8px; }
+
+  /* ---------- toolbar / status filter ---------- */
+  .toolbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 16px;
+  }
+  .toolbar-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .filter-group { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+  .filter-btn {
+    background: var(--paper); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 15px;
+    font-size: 13px; font-weight: 600; letter-spacing: .01em; cursor: pointer;
+  }
+  .filter-btn:hover:not(.active) { background: var(--canvas); color: var(--ink); border-color: var(--muted); }
+  .filter-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .filter-btn.active:hover { background: var(--brand); }
+
+  /* ---------- table ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+    text-align: left; padding: 0 12px 10px; border-bottom: 2px solid var(--ink);
+  }
+  td { padding: 11px 12px; border-bottom: 1px solid var(--line); }
+  th.num, td.num { text-align: right; }
+  td.amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-block; padding: 4px 11px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .07em;
+    text-transform: uppercase; color: #fff;
+  }
+  .b-settled { background: var(--green); }
+  .b-refunded { background: var(--red); }
+  .b-pending { background: var(--amber); }
+  .b-other { background: var(--muted); }
+
+  .filter-empty { padding: 24px 8px; text-align: center; color: var(--muted); font-size: 14px; }
+
+  /* ---------- states ---------- */
+  .state { padding: 40px 12px; text-align: center; }
+  .state h2 { margin: 0 0 8px; font-size: 18px; }
+  .state p { margin: 0 auto; max-width: 460px; color: var(--muted); }
+  .state.error h2 { color: var(--red); }
+  .state code { background: var(--canvas); border-radius: 4px; padding: 2px 6px; font-size: 13px; }
+  .state .retry-row { margin-top: 16px; }
+  .hidden { display: none !important; }
+
+  /* ---------- pagination ---------- */
+  .pagination {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap; margin-top: 16px;
+  }
+  .pagination .range { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .pagination button {
+    background: var(--paper); color: var(--brand);
+    border: 1px solid var(--line); padding: 9px 18px;
+  }
+  .pagination button:hover:not(:disabled) { background: var(--canvas); border-color: var(--brand); }
+  .pagination button:disabled { background: var(--paper); color: var(--line); border-color: var(--line); cursor: default; }
+
+  /* ---------- small screens ---------- */
+  @media (max-width: 480px) {
+    .topbar-inner { padding: 12px 14px; }
+    .topbar-sub { display: none; }
+    .wrap { padding: 16px 12px 48px; }
+    .panel { padding: 14px; border-radius: 10px; }
+    .total { font-size: 26px; }
+    .count { font-size: 19px; }
+    th, td { padding: 8px 6px; }
+    .badge { padding: 3px 8px; font-size: 10px; }
+    .filter-btn { padding: 8px 11px; font-size: 12px; }
+    .pagination button { padding: 8px 13px; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">VS</span>
+      <span class="brand-name">Vendor Sync</span>
+    </div>
+    <div class="topbar-sub">Meridian payments</div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="bar">
+      <div>
+        <div class="label">Total value</div>
+        <div class="total" id="total">—</div>
+      </div>
+      <div>
+        <div class="label">Payments</div>
+        <div class="count" id="count">—</div>
+      </div>
+      <div>
+        <button id="sync" type="button">Sync now</button>
+      </div>
+    </div>
+    <div class="sync-line" id="lastSync">Loading…</div>
+    <div class="sync-note hidden" id="syncNote"></div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <span class="toolbar-label" id="filterLabel">Status</span>
+      <div class="filter-group" role="group" aria-labelledby="filterLabel">
+        <button type="button" class="filter-btn active" data-status="all">All</button>
+        <button type="button" class="filter-btn" data-status="settled">Settled</button>
+        <button type="button" class="filter-btn" data-status="refunded">Refunded</button>
+        <button type="button" class="filter-btn" data-status="pending">Pending</button>
+      </div>
+    </div>
+
+    <div id="loading" class="state">
+      <h2>Loading payments…</h2>
+      <p>Reading from the local database. This should only take a moment.</p>
+    </div>
+
+    <div id="error" class="state error hidden">
+      <h2>Unable to reach server</h2>
+      <p id="errorDetail"></p>
+      <p style="margin-top:10px">Check that the backend is running (<code>python -m vendorsync</code>), then retry.</p>
+      <p class="retry-row"><button id="retry" type="button">Retry</button></p>
+    </div>
+
+    <div id="empty" class="state hidden">
+      <h2>No payments yet.</h2>
+      <p>Nothing has been synced into this database so far. Press <strong>Sync now</strong> above to pull payments from Meridian.</p>
+    </div>
+
+    <div id="tableWrap" class="hidden">
+      <table>
+        <thead>
+          <tr><th>Date</th><th class="num">Amount</th><th>Status</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="filter-empty hidden" id="filterEmpty"></div>
+      <nav class="pagination" aria-label="Pagination">
+        <button id="prev" type="button" aria-label="Previous page">Prev</button>
+        <span class="range" id="range"></span>
+        <button id="next" type="button" aria-label="Next page">Next</button>
+      </nav>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var LIMIT = 25;
+  var offset = 0;
+  var total = 0;
+  var filter = "all";
+  var pageRows = [];
+  var KNOWN = { settled: "b-settled", refunded: "b-refunded", pending: "b-pending" };
+
+  var el = function (id) { return document.getElementById(id); };
+  var states = ["loading", "error", "empty", "tableWrap"];
+
+  var dateFmt, syncFmt;
+  try {
+    dateFmt = new Intl.DateTimeFormat(undefined, {
+      day: "numeric", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    });
+    syncFmt = new Intl.DateTimeFormat(undefined, {
+      day: "numeric", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+  } catch (e) { dateFmt = null; syncFmt = null; }
+
+  function show(which) {
+    states.forEach(function (name) {
+      el(name).classList.toggle("hidden", name !== which);
+    });
+  }
+
+  function money(minor, currency) {
+    var units = minor / 100;
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency", currency: currency || "EUR"
+      }).format(units);
+    } catch (e) {
+      var sign = (currency === "EUR" || !currency) ? "€" : currency + " ";
+      return sign + units.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+  }
+
+  function whenText(iso, withSeconds) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) { return "unknown time"; }
+    var fmt = withSeconds ? syncFmt : dateFmt;
+    if (fmt) { return fmt.format(d); }
+    return d.toLocaleString();
+  }
+
+  function getJSON(path, options) {
+    return fetch(path, options).then(function (resp) {
+      return resp.json().catch(function () {
+        throw new Error("HTTP " + resp.status + " — response was not JSON");
+      }).then(function (body) {
+        if (!resp.ok) {
+          throw new Error((body && (body.detail || body.error)) || ("HTTP " + resp.status));
+        }
+        return body;
+      });
+    });
+  }
+
+  function badgeFor(status) {
+    var key = String(status || "").toLowerCase();
+    var span = document.createElement("span");
+    span.className = "badge " + (KNOWN[key] || "b-other");
+    span.textContent = key || "unknown";
+    return span;
+  }
+
+  function renderRows() {
+    var tbody = el("rows");
+    tbody.textContent = "";
+    var shown = 0;
+    pageRows.forEach(function (p) {
+      if (filter !== "all" && String(p.status || "").toLowerCase() !== filter) { return; }
+      shown += 1;
+      var tr = document.createElement("tr");
+
+      var date = document.createElement("td");
+      date.textContent = whenText(p.created_at, false);
+      tr.appendChild(date);
+
+      var amount = document.createElement("td");
+      amount.className = "num amount";
+      amount.textContent = money(p.amount_minor, p.currency);
+      tr.appendChild(amount);
+
+      var status = document.createElement("td");
+      status.appendChild(badgeFor(p.status));
+      tr.appendChild(status);
+
+      tbody.appendChild(tr);
+    });
+
+    var note = el("filterEmpty");
+    if (filter !== "all" && shown === 0) {
+      note.textContent = "No " + filter + " payments on this page. Try Prev / Next, or switch back to All.";
+      note.classList.remove("hidden");
+    } else {
+      note.textContent = "";
+      note.classList.add("hidden");
+    }
+    return shown;
+  }
+
+  function renderPager(shown) {
+    el("prev").disabled = offset <= 0;
+    el("next").disabled = offset + LIMIT >= total;
+    var from = total === 0 ? 0 : offset + 1;
+    var to = Math.min(offset + pageRows.length, total);
+    var text = "Showing " + from + "–" + to + " of " + total;
+    if (filter !== "all") {
+      text += " · " + shown + " " + filter + " on this page";
+    }
+    el("range").textContent = text;
+  }
+
+  function showError(message) {
+    el("errorDetail").textContent = message;
+    el("total").textContent = "—";
+    el("count").textContent = "—";
+    el("lastSync").textContent = "Server unavailable";
+    show("error");
+  }
+
+  function repaint() {
+    var shown = renderRows();
+    renderPager(shown);
+    show("tableWrap");
+  }
+
+  function load(isFirst) {
+    if (isFirst) { show("loading"); }
+    return Promise.all([
+      getJSON("/api/summary"),
+      getJSON("/api/health"),
+      getJSON("/api/payments?limit=" + LIMIT + "&offset=" + offset)
+    ]).then(function (results) {
+      var summary = results[0], health = results[1], page = results[2];
+
+      el("total").textContent = money(summary.total_minor, summary.currency);
+      el("count").textContent = summary.count.toLocaleString();
+      el("lastSync").textContent = health.last_sync
+        ? "Last synced " + whenText(health.last_sync, true)
+        : "Never synced";
+
+      total = page.total;
+      if (total === 0) { show("empty"); return; }
+
+      if (offset >= total) {
+        offset = Math.max(0, (Math.ceil(total / LIMIT) - 1) * LIMIT);
+        return load(false);
+      }
+      pageRows = page.data;
+      repaint();
+    }).catch(function (err) {
+      showError(err && err.message ? err.message : "Unknown error");
+    });
+  }
+
+  function setSyncNote(message) {
+    var note = el("syncNote");
+    if (message) {
+      note.textContent = message;
+      note.classList.remove("hidden");
+    } else {
+      note.textContent = "";
+      note.classList.add("hidden");
+    }
+  }
+
+  el("sync").addEventListener("click", function () {
+    var btn = el("sync");
+    if (btn.disabled) { return; }
+    var started = Date.now();
+    btn.disabled = true;
+    btn.textContent = "Syncing…";
+    setSyncNote(null);
+    getJSON("/api/sync", { method: "POST" }).then(function () {
+      return load(false);
+    }).catch(function (err) {
+      setSyncNote("Sync failed — " + (err && err.message ? err.message : "unknown error")
+        + ". The table still shows the last synced data; try again in a moment.");
+    }).then(function () {
+      var hold = Math.max(0, 600 - (Date.now() - started));
+      setTimeout(function () {
+        btn.disabled = false;
+        btn.textContent = "Sync now";
+      }, hold);
+    });
+  });
+
+  el("retry").addEventListener("click", function () { load(true); });
+
+  el("prev").addEventListener("click", function () {
+    if (offset <= 0) { return; }
+    offset = Math.max(0, offset - LIMIT);
+    load(false);
+  });
+
+  el("next").addEventListener("click", function () {
+    if (offset + LIMIT >= total) { return; }
+    offset = offset + LIMIT;
+    load(false);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".filter-btn"), function (btn) {
+    btn.addEventListener("click", function () {
+      filter = btn.getAttribute("data-status");
+      Array.prototype.forEach.call(document.querySelectorAll(".filter-btn"), function (b) {
+        b.classList.toggle("active", b === btn);
+      });
+      if (total > 0) { repaint(); }
+    });
+  });
+
+  load(true);
+})();
+</script>
+</body>
+</html>
