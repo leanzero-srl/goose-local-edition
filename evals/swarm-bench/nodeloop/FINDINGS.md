@@ -19449,3 +19449,17 @@ THE RENDER GATE is hereby the TOP engine item (with the F826 batch): a headless 
 rendered rows > 0 + console-clean at complete time, feeding the fix loop. Positive mechanism
 evidence from the same run: F825 vendor-truth notes present (6), fix_sched active (6 fix
 attempts). Curve: n3 1 of 8 (0.514), n1 0 of 8; the two F830 corpse cells re-running.
+
+## F833 — THE RENDER GATE ships same-day: the completion gate now opens the page in a real browser via a pluggable probe, and a blank frontend becomes a blocking, repairable finding
+
+Engine: at the end of run_spec_contract, with the app live, the gate shells to the executable
+named by GOOSE_SWARM_RENDER_PROBE (`load <url>` → one JSON object). renderedRowCount 0 → a
+FINDING carrying the first console error and the exact remediation; rows>0 with console errors
+→ a finding; clean render → verified+1. Probe failures are inconclusive — only what the browser
+SAW blames the app; unset var = inert (the engine stays generic, the bench supplies the
+browser). REGIME.env points it at product_probe.mjs — the same battle-proven probe the scorer
+trusts, so gate and grader see the same truth. Greengate green, clippy 0, marker verified in
+the release binary; boundary executed immediately (every pre-rebuild row was doomed by the
+engine_build gate anyway — waiting had negative value). The curve re-restarts with the fleet
+now able to SEE and REPAIR the defect class that cost n3-r1 half its score. F822's three legs
+are now all real: the spec asks, the scorer grades, the gate converts.

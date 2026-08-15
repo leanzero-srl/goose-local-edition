@@ -19590,6 +19590,71 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             }
         }
     }
+    // THE RENDER GATE (F832). The gate's fifth phantom class, measured the day the product
+    // scorer went live: an app with a perfect API served a page that renders NOTHING in a real
+    // browser — zero rows, no controls, 10 chars of body — and every curl-shaped check above
+    // passed it green, so the fix loop never heard about the one defect class that now costs
+    // the most score. The engine stays generic by taking the browser as a PLUGIN: point
+    // GOOSE_SWARM_RENDER_PROBE at any executable that accepts `load <baseUrl>` and prints one
+    // JSON object with renderedRowCount / totalClaimedInDom / consoleErrors{count,texts};
+    // unset or missing, this block is inert. Every failure of the PROBE is inconclusive —
+    // only what the browser SAW becomes a finding.
+    if up {
+        if let Ok(probe) = std::env::var("GOOSE_SWARM_RENDER_PROBE") {
+            if std::path::Path::new(&probe).is_file() {
+                let mut cmd = tokio::process::Command::new("node");
+                cmd.args([&probe, "load", &format!("http://127.0.0.1:{port}")]);
+                match smoke_output(cmd, 100).await {
+                    Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                        Ok(v) => {
+                            let rows = v
+                                .get("renderedRowCount")
+                                .and_then(|x| x.as_i64())
+                                .unwrap_or(0);
+                            let console = v
+                                .pointer("/consoleErrors/count")
+                                .and_then(|x| x.as_i64())
+                                .unwrap_or(0);
+                            if rows == 0 {
+                                let first_err = v
+                                    .pointer("/consoleErrors/texts/0")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("no console error captured");
+                                findings.push(format!(
+                                    "the served page renders NO data rows in a real browser — \
+                                     the API works but the frontend shows a user nothing. First \
+                                     console error: {first_err}. Open web/index.html end to end: \
+                                     the page must fetch the documented endpoints and render the \
+                                     rows, and every fetch failure must surface a visible state, \
+                                     not a blank page."
+                                ));
+                            } else if console > 0 {
+                                let first_err = v
+                                    .pointer("/consoleErrors/texts/0")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("");
+                                findings.push(format!(
+                                    "the page renders but the browser console carries {console} \
+                                     error(s) in normal use (first: {first_err}) — fix the JS \
+                                     errors; users hit them as broken interactions."
+                                ));
+                            } else {
+                                verified += 1;
+                            }
+                        }
+                        Err(_) => inconclusive.push(
+                            "render-gate: probe output was not JSON — nothing proven either way"
+                                .to_string(),
+                        ),
+                    },
+                    None => inconclusive.push(
+                        "render-gate: probe did not complete — nothing proven either way"
+                            .to_string(),
+                    ),
+                }
+            }
+        }
+    }
     let _ = child.kill().await;
     // NO SILENT CAPS. Reported here, at the one exit where the check actually ran, because this is the
     // only path that produces a `verified` a consumer will read as coverage. It is `inconclusive`, never
