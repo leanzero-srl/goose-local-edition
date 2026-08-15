@@ -19538,3 +19538,23 @@ REGIME.env pins GOOSE_SWARM_SHIP_BEST=1 explicitly. No regression occurred this 
 3→3→3) so nothing was lost to the dormant rail. Boundary executed; the curve re-restarts on the
 corrected binary. Sequence: 0.514 → 0.5065 → 0.3074 → 0.7033; sonnet bar 0.969; the remaining
 gap is almost entirely THE FRONTEND.
+
+## F838 — THE STRATEGY SHIFT (Mihai: ship everything, restart once, go faster): spec v2.1 splits the frontend, sb-5.2 follows, the engine grows a device pin, and the n1 arm now runs THREE-AT-A-TIME
+
+Mihai's new standing rule (saved to memory): never sit on fixes — two or three accumulated
+means ship and restart. Tonight's batch, all shipped at once: (1) SPEC v2.1 — the frontend is
+THREE files (index.html structure, styles.css, app.js), because a 400-line single page is
+exactly what a 27B truncates and three ~130-line owned files are what it writes well; the
+planner naturally makes them three tasks; cloud baselines stand (single-file still satisfies
+v2.1). (2) sb-5.2 — gather appends served /styles.css + /app.js to the source blob so the ui_*
+greps keep working; GRADER TRUSTED stamped. (3) GOOSE_SWARM_PIN_DEVICE — pool pinned to one
+named device, hard-error on a bad pin (a silently ignored pin is the F227 class); this is what
+makes concurrent n1 units honest. (4) parallel_n1.py — the n1 curve arm runs 3 pinned units
+concurrently (VERIFIED LIVE: first batch resolved three distinct hosts), with a per-row pin
+gate that refuses any run whose own pool_resolved disagrees; sweep skips n1 cells
+(BENCH_SKIP_N1); curve.py reads parallel rows as the n1 source. Checked and NOT needed:
+retry-different-device already exists (avoid_device; the F826 case was the only-free-node
+fallback). THE SHORTER PLAN: n1 block tonight (~5 h, fleet otherwise idle), n3 sweep after
+(8 × ~2 h), verdict SATURDAY NIGHT with early-call armed; treatments trimmed post-verdict.
+One operational note: the greengate read RED once through a pipe and GREEN on direct exit —
+the pipe-exit sin again, caught; the direct exit is the authority.
