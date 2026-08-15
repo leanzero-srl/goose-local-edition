@@ -33,6 +33,11 @@ case "${1:-status}" in
     #
     # `cp -R "$RUNDIR" "$PARK"` copies the TREE. The trailing `/*/` was the whole bug.
     # F329 is the downstream symptom: those duplicate run_ids are what made one run look like four.
+    # F830: REFUSE BEFORE PARKING. The watchdog's redundant start call raced a live
+    # supervisor: the park ran first, duplicating the tree under a running engine while
+    # the instance-lock refusal came only later. An already-running supervisor must end
+    # the start attempt before ANY side effect.
+    if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
     RUNDIR="$(cd "$(dirname "$0")" && pwd)/../runs/nodeloop"
     if [ -d "$RUNDIR" ] && [ -n "$(find "$RUNDIR" -mindepth 2 -name run.jsonl -print -quit 2>/dev/null)" ]; then
       PARK="$RUNDIR-parked-$(date +%s)"
@@ -43,7 +48,6 @@ case "${1:-status}" in
       echo "parked previous run tree -> $(basename "$PARK")  ($DST of $SRC run logs)"
       [ "$DST" != "$SRC" ] && echo "  !! PARK LOST $((SRC-DST)) RUN LOG(S) — evidence loss, do NOT proceed blind"
     fi
-    if [ -n "$(pid)" ]; then echo "already running (pid $(pid))"; exit 0; fi
     # A check nobody runs is not a check. Refuse to launch a campaign whose arms cannot fire on this
     # binary — an absent lever produces a confident "no effect" that looks exactly like data.
     if ! "$0" preflight >/dev/null 2>&1; then

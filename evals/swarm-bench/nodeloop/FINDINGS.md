@@ -19393,3 +19393,29 @@ anyway), and the regime flip made every row incomplete at once so the never_seen
 the queue — curve_first now has the FINAL word (structurally un-jumpable). RUNNING:
 baseline-n3-r0 under the product regime, 88 in backlog, curve 16 leading. Every future row
 carries scorer_version sb-5; the old-regime corpus stays readable and re-queued nothing is lost.
+
+## F829 — Haiku 4.5 under spec-v2: 0.786 in 317 s — the spec-v2 effect measured (+0.33 over its v1 tree)
+
+The pathfinder proves the whole cloud pipeline AND the product thesis in one shot: haiku-4.5-r2
+(fresh Bedrock build against spec-build-v2, sb-5 scored) lands 78.6% — J 95 · P 100 · V 92 —
+against 0.46 for its own v1-built trees re-scored under the same grader. When the spec ASKS for
+readable dates, badges, pagination, filter and states, Haiku BUILDS them, in five minutes.
+Product quality was never a capability gap — it was an asking gap, exactly the F822 diagnosis.
+What still separates tiers at the top: C 50 / HARD 50 (the vendor-protocol and durability
+families). First attempt was a $0.01-class no-op — my key install dropped AWS_REGION and the
+SDK hung; restored, liveness-proven. Cost of the real run: ~$1-2. Sonnet next, Opus last.
+
+## F830 — two curve engines died -9 and their corpses briefly entered the curve as real rows; three gates shipped
+
+baseline-n3-r0 (0.454, killed at 34 min) and baseline-n1-r0 (0.045, killed at 2 min) landed
+void=False with engine_exit -9 in the row THE WHOLE TIME. Killer: no STOP file, reaper
+exonerated (ancestry-protected), watchdog quiet at the timestamps — the plausible mechanism is
+macOS memory pressure during my own 12:24-12:33 burst (chromium probes + release build +
+cloud-run apps concurrently). GATES: (1) sweep voids any row whose engine_exit < 0 — a killed
+engine is never a measurement, whoever sent the signal (fourth instance of the kill-artifact
+class, first from a killer that leaves no sentinel); (2) loop.sh start REFUSES-before-PARKING
+(the watchdog's redundant start raced the live supervisor and duplicated the tree under a
+running engine); (3) operator rule: heavy side-work staggered away from live units, and cloud
+entrants will run with --out OUTSIDE runs/ — the sweep's cwd-reaper treats anything under
+runs/ with ppid 1 as prey, and only Haiku's 5-minute wall kept it under the short floor. Both
+corpse rows voided; their cells re-run.
