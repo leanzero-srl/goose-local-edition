@@ -19419,3 +19419,16 @@ running engine); (3) operator rule: heavy side-work staggered away from live uni
 entrants will run with --out OUTSIDE runs/ — the sweep's cwd-reaper treats anything under
 runs/ with ppid 1 as prey, and only Haiku's 5-minute wall kept it under the short floor. Both
 corpse rows voided; their cells re-run.
+
+## F831 — Sonnet 5 under spec-v2: 0.969 in 410 s — the bench's near-ceiling, and the product regime's target bar
+
+sonnet-5-r2 (fresh Bedrock build, spec-v2, sb-5): 96.9% — A/B/C/HARD all 1.00, D 88, J 95,
+V 92. The cloud ladder under the product regime now reads: sonnet 0.969, haiku 0.786 (both
+fresh v2 builds), opus v2 running (its v1 trees re-score 0.914/0.934). Two readings: (1) the
+bench discriminates cleanly across the model ladder under sb-5 — controls trusted, spreads
+sensible; (2) the swarm's product-regime bar is explicit now — the local-27B fleet has to close
+toward sonnet's 0.969-in-7-minutes on quality while its wall stays honest. Cost so far:
+single-digit dollars (haiku ~$1-2, sonnet ~$2-5); opus (~$10-25) is the last spend, then the
+scorer stays frozen and everything else re-scores free. Health note: the two F830 corpse rows
+re-alarmed the pool-shortfall detector every 2 min — "kill artifact" is now the third acted-on
+void class the retrospective detectors exclude (F795b, F817b lineage).
