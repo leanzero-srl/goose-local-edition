@@ -18774,6 +18774,60 @@ fn spec_python_entry(spec: &str) -> Option<String> {
         .map(|c| c[1].to_string())
 }
 
+/// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
+/// Parsed from the spec's own idiom — "documentation is at `URL`", "Base URL `URL`",
+/// "API key `KEY`" — so this is spec-derived, never benchmark-specific; a spec that names no
+/// vendor yields Nones and every consumer stays inert. Pure/testable.
+fn spec_vendor(spec: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let grab = |pat: &str| {
+        regex::Regex::new(pat)
+            .ok()
+            .and_then(|re| re.captures(spec))
+            .map(|c| c[1].to_string())
+    };
+    (
+        grab(r"documentation is at\s+`(https?://[^`]+)`"),
+        grab(r"[Bb]ase URL\s+`(https?://[^`]+)`"),
+        grab(r"API key\s+`([^`]+)`"),
+    )
+}
+
+/// Ask the VENDOR how many items exist — the ground truth the Vacuous arm was missing (F823).
+///
+/// The Vacuous verdict exists so an EMPTY vendor is never blamed on the app; that mercy was the
+/// escape hatch for the single largest measured defect class: a sync acquiring NOTHING
+/// (fetched:0, twice) read as "legitimately empty" while the vendor held the full fixture —
+/// measured live as `sync_completeness 0/247` on two consecutive 3-node builds whose gate went
+/// green. The spec names the vendor's docs and base URL; the docs document the collection
+/// endpoint; the collection response documents `total`. Chaining those three facts turns
+/// "empty twice" from unknowable into decidable. Every step fails HONEST: a spec with no
+/// vendor, an unreachable vendor, undocumented paths, or an unparseable body all yield None,
+/// which keeps the old inconclusive path exactly as it was.
+async fn vendor_truth_total(spec: &str) -> Option<(i64, String)> {
+    let (docs_url, base_url, api_key) = spec_vendor(spec);
+    let (docs_url, base_url) = (docs_url?, base_url?);
+    let auth = api_key.map(|k| format!("Bearer {k}"));
+    let curl = |url: String, auth: Option<String>| {
+        let mut cmd = tokio::process::Command::new("curl");
+        cmd.args(["-s", "-m", "10", &url]);
+        if let Some(a) = auth {
+            cmd.args(["-H", &format!("Authorization: {a}")]);
+        }
+        cmd
+    };
+    let docs = smoke_output(curl(docs_url, auth.clone()), 12).await?;
+    let docs_text = String::from_utf8_lossy(&docs.stdout).into_owned();
+    let path = regex::Regex::new(r"GET\s+(/[A-Za-z0-9_./-]+)")
+        .ok()?
+        .captures(&docs_text)
+        .map(|c| c[1].to_string())?;
+    let sep = if path.contains('?') { '&' } else { '?' };
+    let out = smoke_output(curl(format!("{base_url}{path}{sep}limit=1"), auth), 12).await?;
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let total = body.get("total").and_then(|t| t.as_i64())?;
+    Some((total, path))
+}
+
 /// GET endpoints the spec advertises with a CONCRETE path (no path parameter), deduped, order-preserving. A
 /// param'd route (`{id}`, `:id`, `<id>`) is excluded: a bare GET of it legitimately 404s/422s, so it can't be
 /// a clean finding. Only a concrete advertised path returning 5xx/404/405 is unambiguously broken. Pure/testable.
@@ -19383,6 +19437,20 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // emitted either way so the arm's OFF state is measurable rather than assumed.
     let mut post_probed = 0usize;
     if swarm_gate("GOOSE_SWARM_PROBE_ADVERTISED_POST", false) {
+        // F825: vendor ground truth, fetched ONCE. Recorded as a note either way so the
+        // mechanism is verifiable from the run log (the F818 lesson: an unobservable
+        // mechanism's readout is permanently unverifiable).
+        let vendor_total = vendor_truth_total(spec).await;
+        match &vendor_total {
+            Some((n, vpath)) => inconclusive.push(format!(
+                "vendor-truth: the vendor's own {vpath} reports total={n}"
+            )),
+            None => inconclusive.push(
+                "vendor-truth: unavailable (no spec vendor line, vendor unreachable, or \
+                 undocumented collection) — zero-acquisition syncs stay inconclusive"
+                    .to_string(),
+            ),
+        }
         for path in spec_post_endpoints(spec) {
             let url = format!("http://127.0.0.1:{port}{path}");
             // THE STATUS, NOT ONLY THE BODY. The GET arm above has treated `code >= 500` as a
@@ -19442,12 +19510,27 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                      If-None-Match only when re-issuing THAT SAME request. A single stored ETag \
                      replayed on the following page can never match — it is the previous page's tag."
                 )),
-                // INCONCLUSIVE, NOT A FINDING, AND CRUCIALLY NOT `verified`. A vendor with no rows
-                // is a legitimate empty sync, so this never blames the app; what it must never do
-                // again is bank the affirmative pass that `Idempotent` used to hand it.
-                RepeatedPost::Vacuous(why) => inconclusive.push(format!(
-                    "spec-contract: POST {path} was issued twice and {why}"
-                )),
+                // INCONCLUSIVE ONLY WHEN THE VENDOR'S STATE IS UNKNOWN. A vendor with no rows is
+                // a legitimate empty sync — but when the vendor ITSELF reports a non-empty
+                // collection (F825's ground truth above), "nothing happened twice" is the single
+                // largest measured defect class wearing a mercy it no longer deserves: two
+                // consecutive 3-node builds shipped sync_completeness 0/247 through this exact
+                // arm while their gates went green (F823).
+                RepeatedPost::Vacuous(why) => match &vendor_total {
+                    Some((n, _)) if *n > 0 => findings.push(format!(
+                        "POST {path} acquired NOTHING while the vendor itself reports {n} \
+                         item(s) ({why}). The collection was not acquired. The measured cause \
+                         family is a feature interaction in the client's pagination or \
+                         conditional-request path — e.g. an ETag kept across a cursor-expiry \
+                         restart is answered 304 Not Modified with nothing cached, and the \
+                         client returns an empty collection. On a RESTARTED pass fetch \
+                         unconditionally; send If-None-Match only when a cached result exists \
+                         to serve as the 304 body."
+                    )),
+                    _ => inconclusive.push(format!(
+                        "spec-contract: POST {path} was issued twice and {why}"
+                    )),
+                },
                 // F806: this was INCONCLUSIVE and that silence is exactly why the
                 // conditional-request loss persisted 5-for-5 while the repair hint sat unused —
                 // the spec DOCUMENTS the sync response as {"fetched", "inserted", "total"}
@@ -20195,6 +20278,24 @@ mod shipped_defaults_tests {
             from_empty.kind_prompt,
             "a config.yaml omitting kind_prompt must KEEP the baked default, not serde's false"
         );
+    }
+
+    #[test]
+    fn spec_vendor_parses_the_spec_idiom_and_stays_inert_without_it() {
+        // The exact idiom both spec-build.md versions use — the F825 vendor-truth chain
+        // starts here, so the parse is pinned against silent drift.
+        let spec = "The Meridian API documentation is at `http://127.0.0.1:8935/v1/docs`. \
+                    Read it before you start. Base URL `http://127.0.0.1:8935`,\n\
+                    API key `sk_test_meridian`.";
+        let (docs, base, key) = spec_vendor(spec);
+        assert_eq!(docs.as_deref(), Some("http://127.0.0.1:8935/v1/docs"));
+        assert_eq!(base.as_deref(), Some("http://127.0.0.1:8935"));
+        assert_eq!(key.as_deref(), Some("sk_test_meridian"));
+
+        // A spec naming no vendor must yield Nones — the whole chain stays inert, and the
+        // Vacuous arm keeps its original never-blame-the-app behavior.
+        let (d2, b2, k2) = spec_vendor("Build a todo app. No vendor here.");
+        assert!(d2.is_none() && b2.is_none() && k2.is_none());
     }
 }
 
