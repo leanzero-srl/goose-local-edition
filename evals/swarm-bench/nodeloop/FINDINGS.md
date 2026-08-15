@@ -19247,3 +19247,20 @@ mean "7.49 sd 2.51" is in MINUTES — units pinned here to stop a future 137-sig
 scored the leftover seed tree as amend_feature 0.955 at 03:41:53, AFTER the main voiding pass;
 corpus re-verified to exactly the seven real singles non-void. SINGLES COMPLETE: 7 of 7. THE
 CURVE IS RUNNING: baseline-n3-r0 dispatched 05:03.
+
+## F819 — THE CURVE OPENS: baseline-n3-r0 0.7314 in 51 min on a resumed tree; the resume re-planned (correctly) and the row's wall is excluded from the speed axis by design
+
+First curve row: sb-4 0.7314 (bridge sb-3-analytic in curve-verdict trail), pool 3/3, F812
+oracle clean (3 nodes observed, no mismatch), 51 min wall. F811d readout, honest: planning_secs
+693.6 ≈ the ~633s norm — the resume did NOT skip planning, and SHOULD not have: the killed
+attempt died mid-draft-round-2, before any plan existed (same shape as F811b; the post-plan
+resume proof still wants a post-plan kill, none is scheduled — the machinery's value tonight was
+the warm workdir + bridged log, delivered without operator work). The 51-min wall (vs ~85
+typical) cannot be attributed: warm-tree reuse and natural variance are confounded on a resumed
+row — which is exactly why curve.py excludes resumed rows from the SPEED axis while keeping the
+score; the design absorbed its first real case unmodified. resumed_from and lms_* fields
+verified persisted on the row (the F811/F812 persistence fix holding). Curve counts: n3 1 of 8
+done, n1 0 of 8 (baseline-n1-r0 dispatched 06:11, the first pair-mate). Note for the archive
+protocol: TWO _sb4trees entries score 0.7314 for this cell name (one from the pre-freeze era) —
+score+cell alone no longer disambiguates; the unit-end TIMESTAMP picked 1786763475. Match rule
+tightened: score+cell+mtime-window.
