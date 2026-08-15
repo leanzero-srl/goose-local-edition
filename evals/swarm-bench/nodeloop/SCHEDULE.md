@@ -42,6 +42,10 @@ if beneficial; keep the task list current; hold this plan judiciously.
   Registered check: a probe_post single where the engine's cheapness verdict cites stub-observed
   request counts, and the resync_idempotent/second_sync_cost scorer family stops separating
   from engine-green.
+- F818 SCOUT-DOC-URLS EVENT (instrument, engine, small): the SpecDocs branch (swarm.rs:14976)
+  emits a run.jsonl event (urls + lens) when it fires — the arm's registered mechanism check was
+  designed against scout system prompts, which the pipeline does not retain; without the event
+  the readout is permanently unverifiable.
 - (add future held engine commits here as they land — this list IS the boundary's contents)
 
 ## THE SHIPPING PHASES (Mihai, Fri ~18:40 — after the verdict, in order)
