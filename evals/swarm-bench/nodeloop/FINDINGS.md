@@ -19341,3 +19341,39 @@ n1 98 min — 1/1 for n3. These are the LAST old-regime rows before the sb-5 bou
 as such. Curve: n1 2 of 8, n3 2 of 8 done. aux_slim inputs complete-in-kind but old-regime
 (0.7404 vs n3 0.7314/0.7342) — the flip decision is DEFERRED to product-regime data, since
 both sides of it are bug-lottery numbers.
+
+## F826 — THE DEFICIENCY HUNT (Mihai's directive): 44 measured findings across the 4 fresh runs + the gate; the through-line is that ONLY DETERMINISTIC MECHANISMS EVER ACTED
+
+Five agents, full run.jsonl forensics + a gate-code audit; complete structured findings in
+deficiency-map.json. The convergent story: (1) THE LLM JUDGE IS PURE COST in both arms — 59/59
+"ok" at confidence 1.0 with zero hints on n3 (its only useful acts were 3 deterministic
+staleness-accepts), 62/62 skipped (no idle device) on n1; every intervention that ever worked
+this campaign was deterministic. (2) FINDINGS WITHOUT CONSUMERS: pre_review burned 2346s of
+fleet time on n3-r0 producing had_findings=true on 3 tasks — zero fix tasks resulted
+(fix_sched OFF in baseline), one pre_review even completed 47s AFTER the gate it could have
+informed. (3) THE GATE'S MERCY CLASSES: pytest port-collision → inconclusive → PASS-THROUGH;
+"passed=true, verified=false" doesn't trigger the second verify round the cap already budgeted;
+the POST probe (and thus F825's vendor truth) sits behind a default-OFF env gate. (4) DEAD
+HOLDS: ~24.5 min of device time on two stall shapes (post-deliverable rumination; dead session)
+— the retry re-lands on the SAME device that just stalled and the 420s detector never arms for
+retry attempts. (5) SILENT DOWNGRADES: contract parse failures freeze modules contract-less
+with no retry and no flag, on BOTH arms. (6) The gate-blindspot audit maps 12 structural
+invisibilities (GET bodies asserted for presence not values, GET / dropped by a trailing-slash
+trim, rendered UI unreachable, perf unclocked, error paths unexercised, restart untested) —
+each one now has a scorer-side sb-5 check that will catch it AFTER the fact; the engine-side
+render/value gates are the conversion path. NEXT ENGINE BATCH (in order of measured cost):
+retry-to-different-device + stall-detector-on-retries; pre_review findings wired to the gate's
+finding list (or pre_review off); inconclusive-legs block the free verify round; contract-parse
+retry-or-flag; pytest ephemeral-port retry; GET / probe (trailing-slash fix).
+
+## F827 — the FREE cloud leaderboard under sb-5 (archived v1-built trees re-scored; zero Bedrock spend)
+
+opus-5-r0 0.9142 (J .95 P 1.0 V .52) — even Opus loses the visual tier (no filter, no status
+colors, partial pagination): v1 never asked, which is the fairness caveat this table carries.
+haiku-4.5 r0/r1: 0.4581/0.4615 — replicate-consistent, core B 0.36 (the sync class) plus
+across-the-board product losses. local-single-r0 (bare 27B single agent): 0.3518 with J 0.10 —
+its page doesn't even render data in a real browser. CONTEXT: the swarm's own sb-4-era range
+(0.73-0.97) sits far above raw Haiku and the bare local agent on the same task family. Sonnet
+r0/r1 + opus-5-r1 re-scoring in a second batch. Fresh spec-v2 Bedrock builds (one per model,
+Mihai's token, only after GRADER TRUSTED freezes the scorer) are the clean comparison — the
+$657 lesson stands as a hard rule: no cloud spend while the instrument can still move.
