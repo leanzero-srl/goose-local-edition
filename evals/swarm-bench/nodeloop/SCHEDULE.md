@@ -3,6 +3,14 @@
 Mihai: counts first ("how many of how many"), time estimates second; longer than Sunday is fine
 if beneficial; keep the task list current; hold this plan judiciously.
 
+## STATE 2026-08-15 EVENING — THE PRODUCT REGIME SUPERSEDES PHASES 2-5 BELOW
+Mihai's directives today: the benchmark grades the END PRODUCT (spec-v2 + sb-5 scorer + render
+gate, all live: F822-F834); hunt deficiencies (F826, 44 findings); test n1-vs-n3 quicker
+(early-call shipped, parallel-n1 queued); cloud ladder on Bedrock (DONE, frozen: opus 0.975 /
+sonnet 0.969 / haiku 0.786 fresh v2 — the swarm's bar). CURRENT PHASE: the 16-run curve under
+sb-5.1 + render gate (n1 vs n3, early-call armed), then treatments n=5 under the same regime.
+NEXT ENGINE BATCH: F826 high-severity items + parallel-n1 harness + parks dedupe.
+
 ## Phases, in queue order (counts live in the session task board, updated at every unit end)
 
 1. **TODAY'S FINAL BUILD** (one batch at the next unit end, then BINARY FREEZE):
