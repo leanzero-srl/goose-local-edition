@@ -84,8 +84,26 @@ def main() -> int:
         k = sum(1 for a, b in pairs if better(a, b))
         entry = {"pairs": n, "n3_better": k}
         if n < 8:
-            entry["verdict"] = f"PENDING — {n} of 8 pairs"
-            print(f"\n{name}: {k}/{n} favour 3 nodes — VERDICT PENDING ({n} of 8 pairs)")
+            # EARLY CALL (Mihai 2026-08-15: "think of a way to test n1 versus n3 quicker").
+            # Zero-assumption sequential stopping: call the verdict early ONLY when the 8-pair
+            # outcome is already GUARANTEED whatever the remaining pairs do. p(7,8)=0.0352 and
+            # p(6,8)=0.1445 pin the thresholds: 7 wins before 8 pairs guarantees BETTER; 2
+            # losses guarantee NOT-ESTABLISHED. No alpha is spent — this is arithmetic, not
+            # peeking — so the pre-registered n=8 test is untouched when no bound is hit.
+            losses = n - k
+            if k >= 7:
+                entry["verdict"] = "n3 BETTER (early call — guaranteed at 8)"
+                entry["early_call"] = True
+                print(f"\n{name}: {k}/{n} favour 3 nodes — EARLY CALL: BETTER is guaranteed "
+                      f"regardless of the remaining {8 - n} pair(s)")
+            elif losses >= 2:
+                entry["verdict"] = "NOT ESTABLISHED (early call — guaranteed at 8)"
+                entry["early_call"] = True
+                print(f"\n{name}: {k}/{n} favour 3 nodes — EARLY CALL: with {losses} losses, "
+                      f"p can never reach 0.05 at 8 pairs; remaining runs answer nothing")
+            else:
+                entry["verdict"] = f"PENDING — {n} of 8 pairs"
+                print(f"\n{name}: {k}/{n} favour 3 nodes — VERDICT PENDING ({n} of 8 pairs)")
         else:
             p = binom_p_one_sided(k, n)
             entry["p_one_sided"] = round(p, 4)
