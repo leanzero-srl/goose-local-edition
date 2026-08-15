@@ -61,6 +61,17 @@ def assemble_row(rep: int, pin: str, wall_secs: float) -> dict:
         row["score"] = v.get("score")
         row["scorer_version"] = v.get("scorer_version")
         row["verdict_tiers"] = {k: t.get("mean") for k, t in (v.get("tiers") or {}).items()}
+        agent = v.get("agent") or {}
+        row["engine_exit"] = agent.get("exit")
+        row["agent_secs"] = agent.get("secs")
+        # KILL/YOUNG-DEATH GATE (F839): all 8 first-attempt rows scored 0.045 in minutes —
+        # the revived sweep's evictor killed every pinned engine and the corpses assembled as
+        # void=False. A swarm prologue alone runs 15+ min; an agent that exited non-zero or
+        # returned in under 10 minutes did not run a unit, whatever it left on disk.
+        if agent.get("exit") not in (0, None) or (agent.get("secs") or 0) < 600:
+            row["void_reason"] = (f"engine died young (exit {agent.get('exit')}, "
+                                  f"{agent.get('secs')}s) — kill artifact, not a measurement")
+            return row
     except Exception as e:
         row["void_reason"] = f"no readable verdict: {e}"
         return row
