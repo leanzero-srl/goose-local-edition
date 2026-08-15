@@ -48,6 +48,18 @@ if beneficial; keep the task list current; hold this plan judiciously.
   emits a run.jsonl event (urls + lens) when it fires — the arm's registered mechanism check was
   designed against scout system prompts, which the pipeline does not retain; without the event
   the readout is permanently unverifiable.
+- F825 VENDOR-TRUTH GATE: BUILT 2026-08-15 (supersedes the F816 stub design — the vendor is
+  already live during runs; the gate now asks it how many items exist and blocks
+  zero-acquisition syncs). Ships in the regime boundary. Needs
+  GOOSE_SWARM_PROBE_ADVERTISED_POST=1 (REGIME.env).
+- F826 ENGINE BATCH (the deficiency hunt's high-severity fixes, next rebuild after the regime
+  boundary): retry-to-different-device + stall-detector-armed-on-retries (~24.5 min/run
+  measured); pre_review findings wired into the gate's finding list or pre_review off
+  (2346s/run producing discarded output); inconclusive verify legs consume the budgeted second
+  round instead of passing through; contract-parse failure retries or flags (silent
+  contract-less freeze on both arms); pytest ephemeral-port retry; GET / probed (trailing-slash
+  trim drops it); judge: LLM verdict path OFF by default or nudge-armed (59/59 rubber-stamp
+  measured) — the deterministic accepter is the only judge component that ever acted.
 - (add future held engine commits here as they land — this list IS the boundary's contents)
 
 ## THE SHIPPING PHASES (Mihai, Fri ~18:40 — after the verdict, in order)
