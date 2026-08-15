@@ -56,11 +56,16 @@ keys `id`, `amount_minor`, `currency`, `created_at`, `status`. `oldest` and `new
 An unknown path returns 404 with `{"error": "not_found"}`. A bad `limit` or `offset` — non-numeric or
 negative — returns 400 with `{"error": "bad_request"}`. Every response is JSON.
 
-### 4. `vendorsync/web/index.html` — the frontend
+### 4. `vendorsync/web/` — the frontend
 
 A single page, served by the backend at `GET /`. Plain HTML/CSS/JS, no build step, no CDN — it must
 work offline. This page is what the finance team uses every day. Build it as a product, not as a
 debug view over the API.
+
+Ship it as THREE files, each owned and written separately: `web/index.html` (structure only),
+`web/styles.css` (all styling), and `web/app.js` (all behavior). The backend serves all three —
+`GET /` returns the page, and `GET /styles.css` / `GET /app.js` return the assets with correct
+content types. Keep each file focused and complete; the page references them with relative paths.
 
 It reads the backend API and shows:
 

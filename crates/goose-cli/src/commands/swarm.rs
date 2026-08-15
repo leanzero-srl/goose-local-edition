@@ -27075,6 +27075,41 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .green()
             .bold()
         );
+        // PARALLEL-N1 (F838): pin the pool to one named device so three 1-node units can run
+        // CONCURRENTLY on distinct machines. Without this, the speed-sorted cap below hands every
+        // capped unit the same fastest node, and concurrent n1 runs would silently share one
+        // device — the same experiment wearing three names. Substring match on the device id; a
+        // pin that matches nothing is a HARD ERROR, because a silently ignored pin runs the wrong
+        // experiment under the right label (the F227 class).
+        let fleet_pool = match std::env::var("GOOSE_SWARM_PIN_DEVICE")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        {
+            Some(pin) => {
+                let pin = pin.trim().to_string();
+                let pinned: Vec<_> = fleet_pool
+                    .iter()
+                    .filter(|d| d.id.contains(&pin))
+                    .cloned()
+                    .collect();
+                if pinned.is_empty() {
+                    anyhow::bail!(
+                        "GOOSE_SWARM_PIN_DEVICE={pin} matches no resident device — refusing to \
+                         run a mislabeled experiment"
+                    );
+                }
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "GOOSE_SWARM_PIN_DEVICE={pin} — pool pinned to {} device(s)",
+                        pinned.len()
+                    ))
+                    .yellow()
+                );
+                pinned
+            }
+            None => fleet_pool,
+        };
         // GOOSE_SWARM_MAX_NODES caps the auto-pool. The pool is built from `lms ps`, so a device
         // disabled via `swarm pool disable` is silently re-added the moment it is resident — which
         // makes node-count experiments impossible from outside the engine (measured: a 1-node and a

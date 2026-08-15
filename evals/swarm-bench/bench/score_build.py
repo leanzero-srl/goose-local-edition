@@ -66,7 +66,7 @@ PRODUCT_CORE = 0.60  # core keeps the majority; hard-block keeps its 0.10
 # not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
 # scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
 # cheaper model appeared to beat a stronger one. The product gate IS a version change.
-SCORER_VERSION = "sb-5.1" if PRODUCT else "sb-4"
+SCORER_VERSION = "sb-5.2" if PRODUCT else "sb-4"
 
 # ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
 #
@@ -884,6 +884,15 @@ def gather(root: Path, vendor_port: int, db: Path, trace_path: Path,
             c.root_status, _b, raw, _h = _get(f"{base}/")
             if raw:
                 c.html = raw.decode(errors="replace") or c.html
+            # sb-5.2: spec v2.1 splits the frontend into index.html + styles.css + app.js (a
+            # 400-line single page is exactly what a 27B truncates; three small files are what
+            # it writes well). The ui_* source checks grep c.html — with split files the state
+            # strings and formatters live in the assets, so the served assets JOIN the source
+            # blob. Single-file apps are unaffected: the extra fetches 404 and append nothing.
+            for asset in ("styles.css", "app.js"):
+                ast_status, _ab, araw, _ah = _get(f"{base}/{asset}")
+                if ast_status == 200 and araw:
+                    c.html += "\n" + araw.decode(errors="replace")
 
             if mark_phase:
                 mark_phase("sync1")

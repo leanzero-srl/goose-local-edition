@@ -36,13 +36,21 @@ def usable(r: dict, axis: str) -> bool:
 
 
 def load(nodes: int, rep: int) -> dict | None:
-    p = sweep.result_path("baseline", nodes, rep)
-    if not p.is_file():
-        return None
-    try:
-        return json.loads(p.read_text())
-    except Exception:
-        return None
+    # F838: the n1 arm runs three-at-a-time via parallel_n1.py with device pins; its rows land
+    # under runs/parallel-n1 and take precedence. The sweep path stays the n3 source (and the
+    # n1 fallback if the parallel driver was never used for a rep).
+    candidates = []
+    if nodes == 1:
+        candidates.append(HERE.parent / "runs" / "parallel-n1"
+                          / f"swarm-1node-r{rep}" / "nodeloop-result.json")
+    candidates.append(sweep.result_path("baseline", nodes, rep))
+    for p in candidates:
+        if p.is_file():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                continue
+    return None
 
 
 def binom_p_one_sided(k: int, n: int) -> float:

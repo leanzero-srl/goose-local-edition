@@ -2210,6 +2210,12 @@ def backlog(target_reps: int) -> list[tuple[dict, int, int]]:
             # decision justifies. So the target is scoped to the two arms the curve actually compares.
             is_curve = c["arm"]["name"] == "baseline" and c["nodes"] in (NODE_LEVELS[0], 1)
             floor = CURVE_REPS if is_curve else target_reps
+            # F838: the n1 arm runs OUTSIDE this sweep (parallel_n1.py, three pinned units at a
+            # time) — with the flag set, this sweep never spends the whole fleet's window on a
+            # one-node unit. curve.py reads the parallel rows as the n1 source.
+            if (os.environ.get("BENCH_SKIP_N1")
+                    and c["arm"]["name"] == "baseline" and c["nodes"] == 1):
+                continue
             # ⛔ reps == 0 MEANS PARKED, AND IT DID NOT.
             #
             # MEASURED 2026-08-10: I parked `doc_fetch` at reps 0 after its falsifier fired, verified
