@@ -520,8 +520,15 @@ for _n, _f in [
 def _client_check(name: str, fn):
     @check(name, "C")
     def _(c: Ctx, _fn=fn):
-        r = _fn(c.client.get("trace") or [], c.client.get("results") or {})
-        return g(1.0 if r["ok"] else 0.0, r["detail"], r.get("consequence", ""))
+        res = c.client.get("results") or {}
+        r = _fn(c.client.get("trace") or [], res)
+        detail = r["detail"]
+        # A dead PROBE must not masquerade as a dead APP: "returned None" hid a whole
+        # controls-failure class behind an uninformative detail. The probe's own error
+        # report travels with the verdict so the next reader diagnoses instead of guessing.
+        if not r["ok"] and res.get("_errors"):
+            detail += f"  [probe errors: {str(res['_errors'])[:180]}]"
+        return g(1.0 if r["ok"] else 0.0, detail, r.get("consequence", ""))
 
 
 for _n, _f in [

@@ -220,7 +220,11 @@ def main() -> int:
     # IDENTICAL per-check vector — any drift means a check depends on state the harness does
     # not control, and the repair loop that consumes findings cannot tolerate that.
     print("CONTROL determinism — the same tree scored twice must match check-for-check\n")
-    (good_dir / "control.db").unlink(missing_ok=True)
+    # db PLUS -wal/-shm: after the gather's SIGKILL the WAL survives, and a re-score on a
+    # resurrected db reads fresh=False at boot — measured as the health_semantics 1.0-vs-0.75
+    # determinism drift. The sidecars ARE the state; unlinking only the db is not a reset.
+    for p in good_dir.glob("control.db*"):
+        p.unlink(missing_ok=True)
     good2 = run_control("good-again", good_dir, args.port + 50, args.out)
     # Drift diagnosis needs the DETAIL strings, not just the score vectors — persist both.
     (args.out / "good-verdict.json").write_text(json.dumps(good, indent=2, default=str))

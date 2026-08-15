@@ -277,7 +277,12 @@ function pageAnalyzeLoad() {
       const wrap = el.closest('label');
       if (wrap) name += ' ' + (wrap.innerText || '');
       const parent = el.parentElement;
-      if (parent && (parent.innerText || '').length < 60) name += ' ' + parent.innerText;
+      // Buttons match only on their OWN text/label/class. The parent-text heuristic let ANY
+      // visible button near the words "filter"/"status" count (measured: the Sync button next
+      // to a "Filter by status" label passed v_filter while the actual controls were
+      // display:none) — a hole a real app could ride to a vacuous pass.
+      if (el.tagName !== 'BUTTON' && parent && (parent.innerText || '').length < 60)
+        name += ' ' + parent.innerText;
       if (re.test(name)) return true;
       if (
         el.tagName === 'SELECT' &&
@@ -289,7 +294,9 @@ function pageAnalyzeLoad() {
       )
         return true;
     }
-    return !!document.querySelector('[class*="filter" i]');
+    // The class-name fallback must see a VISIBLE element — an invisible .filter-group is
+    // exactly what the drop_filter control injects, and what a broken app would ship.
+    return Array.from(document.querySelectorAll('[class*="filter" i]')).some(visible);
   })();
 
   const nav = performance.getEntriesByType('navigation')[0];
