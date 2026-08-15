@@ -66,7 +66,7 @@ PRODUCT_CORE = 0.60  # core keeps the majority; hard-block keeps its 0.10
 # not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
 # scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
 # cheaper model appeared to beat a stronger one. The product gate IS a version change.
-SCORER_VERSION = "sb-5" if PRODUCT else "sb-4"
+SCORER_VERSION = "sb-5.1" if PRODUCT else "sb-4"
 
 # ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
 #
@@ -164,10 +164,20 @@ def _product_probe(scenario: str, base: str, *flags: str) -> Dict:
     `_probe_error` is a HARNESS failure, not app evidence — the checks score it 0 with a loud
     detail, and the controls' HIGH gate catches any systemic probe breakage (the reference
     would zero too, and the grader refuses to be trusted)."""
-    cmd = ["node", str(HERE / "product_probe.mjs"), scenario, base, *flags]
+    # sb-5.1: the node binary comes from the regime (a supervisor's env is not a login shell —
+    # F834 measured all four scenarios returning empty stdout in-sweep while the same probe ran
+    # clean from a shell), and a parse failure carries the exit code and stderr so the NEXT
+    # environmental failure names itself instead of reading as bare JSONDecodeError.
+    node = os.environ.get("GOOSE_SWARM_RENDER_NODE", "node")
+    cmd = [node, str(HERE / "product_probe.mjs"), scenario, base, *flags]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        return json.loads(r.stdout)
+        try:
+            return json.loads(r.stdout)
+        except Exception as e:
+            return {"_probe_error":
+                    f"{scenario}: {type(e).__name__} (exit {r.returncode}, "
+                    f"stderr: {(r.stderr or '')[:200]})"[:400]}
     except Exception as e:
         return {"_probe_error": f"{scenario}: {type(e).__name__}: {e}"[:300]}
 
