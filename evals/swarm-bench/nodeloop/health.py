@@ -155,7 +155,12 @@ def main() -> int:
     # closed — the unclearable-alarm failure documented below, third instance. Excluded from every
     # retrospective detector; NOT from anything that watches the live system.
     def op_incident(r: dict) -> bool:
-        return r.get("void") and "operator incident" in str(r.get("void_reason", ""))
+        # "kill artifact" joined 2026-08-15 (F830): the third void class that is already
+        # acted-on by construction — alarming on it re-created the unclearable alarm within
+        # minutes of the class being minted.
+        reason = str(r.get("void_reason", ""))
+        return bool(r.get("void")) and ("operator incident" in reason
+                                        or "kill artifact" in reason)
 
     recent_dead = [r for r in rs[-8:] if r.get("harness_ok") is False and not op_incident(r)]
     if recent_dead:
