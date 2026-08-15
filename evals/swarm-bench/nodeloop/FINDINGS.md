@@ -19264,3 +19264,13 @@ done, n1 0 of 8 (baseline-n1-r0 dispatched 06:11, the first pair-mate). Note for
 protocol: TWO _sb4trees entries score 0.7314 for this cell name (one from the pre-freeze era) —
 score+cell alone no longer disambiguates; the unit-end TIMESTAMP picked 1786763475. Match rule
 tightened: score+cell+mtime-window.
+
+## F820 — first curve pair: the SINGLE NODE takes it, 0.9704 vs 0.7314
+
+baseline-n1-r0: sb-4 0.9704 (bridge 0.9278) in 67 min, pool 1/1, the best baseline score of the
+campaign — and it lands the first quality pair AGAINST the goal (n3-r0 0.7314). Speed pair: not
+formed (n3-r0's wall excluded as resumed). find_tree picked the archive mechanically
+(1786767494). One pair of eight; the pre-registered sign test does not speak until 8, and the
+1-node arm's historical spread (0.0116 vs 0.4499 — the variance signal from the handoff) is
+exactly why a single loud n1 row must not be read as the curve. Nothing to act on; the next
+pair-mate is baseline-n3-r1 (running, ends ~08:17). Curve: n1 1 of 8, n3 1 of 8 done.
