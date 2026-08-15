@@ -19602,7 +19602,12 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     if up {
         if let Ok(probe) = std::env::var("GOOSE_SWARM_RENDER_PROBE") {
             if std::path::Path::new(&probe).is_file() {
-                let mut cmd = tokio::process::Command::new("node");
+                // A watchdog restart runs with launchd's clean env — a bare "node" vanishes
+                // with the user's PATH and the gate silently degrades to inconclusive forever.
+                // The regime names the binary absolutely; bare "node" is only the fallback.
+                let node =
+                    std::env::var("GOOSE_SWARM_RENDER_NODE").unwrap_or_else(|_| "node".to_string());
+                let mut cmd = tokio::process::Command::new(node);
                 cmd.args([&probe, "load", &format!("http://127.0.0.1:{port}")]);
                 match smoke_output(cmd, 100).await {
                     Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
