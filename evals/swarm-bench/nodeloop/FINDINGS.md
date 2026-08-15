@@ -19301,3 +19301,27 @@ v_status_distinct 0 (plain text), v_pagination 0 (100 rows, no controls), v_filt
 the regime: v2 reference app + product defects in controls (high/determinism/isolation),
 sweep wiring (BENCH_PRODUCT + spec-build-v2), the boundary restart. Mihai's directive ~09:00:
 implement and USE it — the old-regime curve keeps burning only until controls prove.
+
+## F823 — Mihai's challenge answered with code, not theory: both n3 losses are ONE bug — the cursor-expiry restart sends a kept ETag, gets 304 with an empty cache, and returns ZERO payments; the n1 build dodged it by implementing LESS
+
+The check-vector diff (n1-r0 0.9704 vs n3-r0 0.7314 vs n3-r1 0.7342) shows the n3 arm losing
+the ENTIRE sync family identically in both runs — 16 checks, same zeros. Not diffuse mediocrity:
+one defect. The wire trace proves the n3 client paged the vendor PERFECTLY (docs read, cursors
+followed, all pages, reached end) and still returned 0 items. The code (n3-r1 meridian.py:88-115)
+shows why: the vendor's cursor-expiry trap fires mid-pass → the client restarts the pass
+(correct per spec) → but it KEPT the ETag captured on pass 1 (line 91's comment shows the
+author explicitly deciding this) → the restart's first page sends If-None-Match → vendor
+answers 304 → `self._cached_payments is None` (no pass ever completed) → `return []`. Sync 1
+reports fetched 0, the store holds 0, sixteen checks die. DETERMINISTIC — the trap chain fires
+every first sync, which is why two independent n3 builds produced 0.7314 and 0.7342 (the 0.003
+"consistency" was consistent FAILURE). The n1 build implemented NO conditional requests at all
+(its second_sync_cost=0 proves it) — dumber client, no feature interaction, perfect sync.
+WHY THE SWARM SPECIFICALLY: the swarm's doc-grounded scouts and contracts push workers to
+implement the FULL documented vendor protocol (ETag, 410 recovery, Retry-After) — more surface,
+more feature-interaction bugs — while NOTHING in the engine can see this class: the tests mock
+the happy path, and the completion gate has no vendor to sync against (F775), so the engine
+self-verified green both times. The judge/nudge/arms all worked as designed; the run was blind
+at exactly this seam. THE CONSEQUENCE: the F816 VENDOR-STUB GATE is promoted from
+"queued post-verdict" to the NEXT ENGINE BATCH — with a fixture vendor at gate time, sync
+returning 0/247 becomes a blocking finding the fix loop repairs, and BOTH n3 runs would have
+caught this in-run. This is the single biggest lever for making the swarm beat the single node.
