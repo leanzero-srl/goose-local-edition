@@ -139,12 +139,16 @@ if score_build.PRODUCT:
                                       r"var LIMIT = 25;", "var LIMIT = 1000;"),
         },
         {
-            # The status filter group never renders. Only v_filter may notice.
+            # The status filter group never renders. Only v_filter may notice. Inline style,
+            # not the `hidden` attribute: the reference's own `.filter-group { display:
+            # inline-flex }` author rule overrides the UA's [hidden] display:none (author
+            # origin wins at equal specificity) — the first version of this defect stayed
+            # visible and the control correctly reported it undetected.
             "name": "drop_filter",
             "expect": {"v_filter"},
             "apply": lambda pkg: _sub(pkg / "web/index.html",
                                       r'<div class="filter-group"',
-                                      '<div hidden class="filter-group"'),
+                                      '<div style="display:none" class="filter-group"'),
         },
         {
             # The Sync click handler returns immediately: button found, nothing happens. The
@@ -218,6 +222,9 @@ def main() -> int:
     print("CONTROL determinism — the same tree scored twice must match check-for-check\n")
     (good_dir / "control.db").unlink(missing_ok=True)
     good2 = run_control("good-again", good_dir, args.port + 50, args.out)
+    # Drift diagnosis needs the DETAIL strings, not just the score vectors — persist both.
+    (args.out / "good-verdict.json").write_text(json.dumps(good, indent=2, default=str))
+    (args.out / "good-again-verdict.json").write_text(json.dumps(good2, indent=2, default=str))
     v1 = {c["check"]: c["score"] for c in good["checks"]}
     v2 = {c["check"]: c["score"] for c in good2["checks"]}
     drift = {k: (v1.get(k), v2.get(k)) for k in set(v1) | set(v2) if v1.get(k) != v2.get(k)}
