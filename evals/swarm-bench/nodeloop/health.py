@@ -149,7 +149,15 @@ def main() -> int:
     #     log says verbatim "the numbers from this unit are NOT evidence". The verdict existed and
     #     this check simply did not read it. That is the third alarm defect today — F330 rang above
     #     the line it guarded, F339 could never clear, and this one could never fire.
-    recent_dead = [r for r in rs[-8:] if r.get("harness_ok") is False]
+    # F817: a row voided as an OPERATOR INCIDENT is already marked, ledgered and acted on — it is
+    # the void mechanism working, exactly like F795b's boundary-STOP class. Feeding 141 such rows
+    # back through these detectors raised BAD every 2 minutes for hours after the incident was
+    # closed — the unclearable-alarm failure documented below, third instance. Excluded from every
+    # retrospective detector; NOT from anything that watches the live system.
+    def op_incident(r: dict) -> bool:
+        return r.get("void") and "operator incident" in str(r.get("void_reason", ""))
+
+    recent_dead = [r for r in rs[-8:] if r.get("harness_ok") is False and not op_incident(r)]
     if recent_dead:
         rep.add("BAD", f"{len(recent_dead)} of the last {min(len(rs), 8)} unit(s) recorded "
                        f"harness_ok=False — the scorer says their numbers are NOT evidence: "
@@ -158,7 +166,8 @@ def main() -> int:
 
     #     And the shape that produced it, stated independently of the flag: a unit is a full build
     #     measured in HOURS. Anything returning in under a minute did not run, whatever it recorded.
-    instant = [r for r in rs[-8:] if (r.get("wall_secs") or 0) < 60 and not r.get("aborted")]
+    instant = [r for r in rs[-8:] if (r.get("wall_secs") or 0) < 60 and not r.get("aborted")
+               and not op_incident(r)]
     if len(instant) >= 2:
         rep.add("BAD", f"{len(instant)} of the last {min(len(rs), 8)} unit(s) finished in under 60s "
                        f"(a unit takes ~2h) — they never ran; check the fleet has models loaded "
@@ -196,7 +205,8 @@ def main() -> int:
     # kill victim, drowning every real alarm the whole time).
     voids = [r for r in rs
              if r.get("void") and r.get("engine_build") == cur
-             and "boundary STOP" not in str(r.get("void_reason", ""))]
+             and "boundary STOP" not in str(r.get("void_reason", ""))
+             and not op_incident(r)]
     stale_voids = [r for r in rs if r.get("void") and r.get("engine_build") != cur]
     if voids:
         rep.add("BAD", "unit(s) did not get the pool they asked for: "
