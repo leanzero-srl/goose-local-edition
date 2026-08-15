@@ -19325,3 +19325,19 @@ at exactly this seam. THE CONSEQUENCE: the F816 VENDOR-STUB GATE is promoted fro
 "queued post-verdict" to the NEXT ENGINE BATCH — with a fixture vendor at gate time, sync
 returning 0/247 becomes a blocking finding the fix loop repairs, and BOTH n3 runs would have
 caught this in-run. This is the single biggest lever for making the swarm beat the single node.
+
+## F824 — pair 2: n1 0.7924 vs n3 0.7342 (n1 leads 2-0 on quality, 0-1 on speed) — and the arms are playing a SYNC-BUG LOTTERY, not a node economy
+
+baseline-n1-r1: 0.7924 (bridge 0.84), 98 min, pool 1/1. It lost the SAME family n3 loses —
+sync_completeness 0.10 (25 of 247: stopped after ONE page, uses_max_limit 0, a different
+manifestation than n3's ETag/expiry interaction), client family zeroed. So the historically
+measured sync-acquisition class (+0.160, the biggest Tier-B killer) strikes BOTH arms; n1-r0's
+0.9704 was the lucky draw, and n1's swing (0.97 → 0.79) against n3's 0.003 spread is the
+variance signal again. THE STRATEGIC READ: with the class striking both arms at random
+severity, the curve currently measures WHICH SYNC BUG EACH BUILD SHIPPED more than what nodes
+buy — the F816 VENDOR-STUB GATE (next engine batch) would catch the class in-run in BOTH arms,
+collapse this noise floor, and let the curve finally measure nodes. Speed pair 1: n3 81 min vs
+n1 98 min — 1/1 for n3. These are the LAST old-regime rows before the sb-5 boundary; ledgered
+as such. Curve: n1 2 of 8, n3 2 of 8 done. aux_slim inputs complete-in-kind but old-regime
+(0.7404 vs n3 0.7314/0.7342) — the flip decision is DEFERRED to product-regime data, since
+both sides of it are bug-lottery numbers.
