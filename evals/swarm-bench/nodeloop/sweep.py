@@ -1158,7 +1158,12 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     # CURRENT regime produces (REGIME.env → BENCH_PRODUCT → sb-5). Same class as the engine_build
     # check below: after the regime flips, every old-regime row re-runs rather than standing as a
     # silent answer measured by the wrong instrument.
-    expected_scorer = "sb-5" if os.environ.get("BENCH_PRODUCT") else "sb-4"
+    # THE SCORER'S OWN CONSTANT, never a parallel literal: the first sb-5.1 bump left a
+    # hardcoded "sb-5" here for eight minutes — two versions of one rule, the exact
+    # drift class this file documents everywhere else. Imported late so a scorer syntax
+    # error cannot stop the loop from starting.
+    import score_build
+    expected_scorer = score_build.SCORER_VERSION
     if r.get("scorer_version") != expected_scorer:
         return False
     return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION

@@ -19475,3 +19475,20 @@ vs $657 last month; the scorer is FROZEN so every future comparison is free unti
 HOUSEKEEPING NOTE (no action taken): 64 parked trees ≈ 90 GB — every boundary/watchdog start
 parks a 1.4 GB copy; the post-verdict boundary should dedupe parks (keep F817 forensics + the
 latest), and loop.sh park could skip when the tree is unchanged since the last park.
+
+## F834 — the render gate WORKS (fired 3×, blocked green 3×) and the fleet could not repair its frontend; the scorer's probe died environmentally and sb-5.1 makes such deaths name themselves
+
+First render-gated row: baseline-n3-r0 0.5065/107min. THE MACHINERY: "renders NO data rows"
+fired in all three verify rounds and complete_verify read passed:false ×3 — the dead-frontend
+lie is over; the run ended honestly UNVERIFIED after the budgeted rounds. THE CAPABILITY: the
+27B fleet burned three fix rounds and never produced a rendering page — frontend repair is now
+the measured weakest skill, and plan time stretched to 1112 s (the v2 spec's bigger ask).
+THE HARNESS DEFECT: every scorer-side probe scenario returned EMPTY stdout in-sweep (all J/V
+checks "PROBE UNAVAILABLE: JSONDecodeError") while the identical probe runs clean from a shell
+against the same tree — environmental, unnamed because the error carried no stderr. sb-5.1:
+the probe resolves node from GOOSE_SWARM_RENDER_NODE (the supervisor is not a login shell) and
+a parse failure now records exit code + stderr, so the next environmental death is a named
+finding, not a guess. Also fixed in the same commit: the sweep's expected-scorer check was a
+PARALLEL LITERAL ("sb-5" hardcoded) that went stale the moment sb-5.1 existed — it now reads
+score_build.SCORER_VERSION, the one source of truth. Supervisor restarted under sb-5.1; the
+0.5065 row re-queues by version; controls re-running for the sb-5.1 trust stamp.
