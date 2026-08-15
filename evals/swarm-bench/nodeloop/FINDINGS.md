@@ -19432,3 +19432,20 @@ single-digit dollars (haiku ~$1-2, sonnet ~$2-5); opus (~$10-25) is the last spe
 scorer stays frozen and everything else re-scores free. Health note: the two F830 corpse rows
 re-alarmed the pool-shortfall detector every 2 min — "kill artifact" is now the third acted-on
 void class the retrospective detectors exclude (F795b, F817b lineage).
+
+## F832 — the cloud ladder completes (Opus 0.975 / Sonnet 0.969 / Haiku 0.786; scorer FROZEN) and the first clean sb-5 swarm row exposes the render gap: 0.514 with a page that renders NOTHING
+
+OPUS RETRY: 97.5% in 1170 s (first attempt was transient Bedrock throttling — 650 s of empty
+responses; the retry cleared it). THE LADDER, all spec-v2 + sb-5: opus 0.975, sonnet 0.969,
+haiku 0.786. Total cloud spend for the whole ladder: roughly $25-40 including the two duds —
+against $657 last month — and the scorer now FREEZES (any change is sb-5.1 + full controls).
+THE SWARM'S FIRST CLEAN PRODUCT-REGIME ROW: baseline-n3-r1 0.514/99min — A 1.00, HARD 0.83,
+but J 0.20 / V 0.17: the served page renders ZERO rows in a real browser — no table, no sync
+button, no stylesheet, Times font, bodyText 10 chars. The fleet built a working API and a DEAD
+FRONTEND against spec-v2's bigger ask, and the completion gate — which still never renders —
+passed it green. This is F822's leg-3 prediction landing precisely: the scorer now sees what
+the engine cannot, and the check→block→repair chain cannot close a gap its gate is blind to.
+THE RENDER GATE is hereby the TOP engine item (with the F826 batch): a headless load asserting
+rendered rows > 0 + console-clean at complete time, feeding the fix loop. Positive mechanism
+evidence from the same run: F825 vendor-truth notes present (6), fix_sched active (6 fix
+attempts). Curve: n3 1 of 8 (0.514), n1 0 of 8; the two F830 corpse cells re-running.
