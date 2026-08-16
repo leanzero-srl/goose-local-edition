@@ -14906,8 +14906,7 @@ impl GooseAgentDispatcher {
         // THE DOCUMENTS THE SPEC ITSELF NAMES, hoisted out of the per-lens closure so every scout is
         // told the same truth. `spec_doc_urls` is pure and cheap; computing it per lens would just be
         // the same parse three times.
-        let doc_urls = spec_doc_urls(user_prompt);
-        let scout_doc_urls = swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", false);
+        let (scout_doc_urls, doc_urls) = scout_docs_decision(user_prompt);
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
         fanout_over_fleet_straggler(worker_models, lenses, scout_grace, "scout", move |lens, model| {
             let me = me.clone();
@@ -17064,6 +17063,13 @@ enum TestRunVerdict {
 /// a failure); a missing pytest module is inconclusive; any other non-zero is a real test failure/error
 /// (the finding). Mirrors `interpret_pytest_collect`'s "missing/none is never a failure" rule so the gate
 /// only ever fails on a genuine, reproducible runtime failure.
+/// The STRUCTURAL port-collision test, shared by the verdict classifier and the F846 retry —
+/// one predicate, so rewording the operator-facing prose can never silently disarm the retry
+/// (the adversarial review's string-coupling finding).
+fn pytest_port_collision(low: &str) -> bool {
+    low.contains("address already in use") || low.contains("errno 48")
+}
+
 fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     let low = output.to_lowercase();
     if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
@@ -17084,7 +17090,7 @@ fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     // leaves the real state unknown. The engine already has the right verdict for this — the pytest
     // path records a timeout as INCONCLUSIVE, "not a failure and NOT a pass either" — so an
     // infrastructure collision gets the same treatment rather than being suppressed or believed.
-    if low.contains("address already in use") || low.contains("errno 48") {
+    if pytest_port_collision(&low) {
         return TestRunVerdict::Inconclusive(
             "`pytest -q` could not bind a port (Address already in use) — another task in this run \
              was serving the app at the same time. This is a COLLISION IN THE HARNESS, not a defect \
@@ -17702,7 +17708,26 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
         match smoke_output(run_cmd, 120).await {
             Some(out) => {
                 let combined = combined_output(&out);
-                let v = interpret_pytest_run(out.status.code(), &combined);
+                let mut v = interpret_pytest_run(out.status.code(), &combined);
+                // F846: ONE retry after a harness port collision — keyed on the STRUCTURAL
+                // predicate over the raw output (never the prose), with a STAGGERED backoff:
+                // concurrent gates that collide with each other would otherwise all sleep the
+                // same fixed interval and re-collide in lockstep (the review's herd finding).
+                // The process-global counter fans retries 5/12/19/26 s apart deterministically.
+                if pytest_port_collision(&combined.to_lowercase())
+                    && !matches!(v, TestRunVerdict::Pass)
+                {
+                    static RETRY_STAGGER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let slot = RETRY_STAGGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tokio::time::sleep(std::time::Duration::from_secs(5 + 7 * (slot % 4))).await;
+                    let mut retry_cmd = tokio::process::Command::new("python3");
+                    retry_cmd.args(["-m", "pytest", "-q"]).current_dir(root);
+                    if let Some(out2) = smoke_output(retry_cmd, 120).await {
+                        let combined2 = combined_output(&out2);
+                        v = interpret_pytest_run(out2.status.code(), &combined2);
+                    }
+                }
                 if let TestRunVerdict::Failures(ref t) = v {
                     findings.push(format!(
                         "`pytest -q` failed — the generated tests exercise runtime paths that \
@@ -18772,6 +18797,16 @@ fn spec_python_entry(spec: &str) -> Option<String> {
         .ok()?
         .captures(spec)
         .map(|c| c[1].to_string())
+}
+
+/// ONE resolution of the scout-docs condition, shared by the per-scout prompt builder and the
+/// F818 scout_docs_mode event — two independent computations of the same condition is the
+/// sink_review_enabled drift class this file documents (adversarial-review finding).
+fn scout_docs_decision(prompt: &str) -> (bool, Vec<String>) {
+    (
+        swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", false),
+        spec_doc_urls(prompt),
+    )
 }
 
 /// The VENDOR the spec tells the builder to integrate against: (docs_url, base_url, api_key).
@@ -27653,6 +27688,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 lenses.len()
             );
             sink.write_value(serde_json::json!({"event": "scouts_planned", "lenses": lenses}));
+            // F818: the SpecDocs prompt branch fires deep inside the per-scout builder where no
+            // sink reaches, which left its arm's registered mechanism check PERMANENTLY
+            // unverifiable (the transcripts are not retained). The same condition is computed
+            // here at orchestration level so the run log carries the ground truth.
+            {
+                let (gate_on, urls) = scout_docs_decision(&opts.prompt);
+                sink.write_value(serde_json::json!({
+                    "event": "scout_docs_mode",
+                    "gate_on": gate_on,
+                    "spec_named_docs": urls,
+                }));
+            }
             dispatcher
                 .run_scouts(
                     &opts.prompt,
@@ -30241,6 +30288,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let facts = doc_facts.clone();
                 let desc = smoke_fix_description(&verdict.findings, complete_lang);
                 let sink_r = sink.clone();
+                // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
+                // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
+                // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
+                // a twin whose shadow re-verifies STRICTLY better than baseline claims the round
+                // and notifies the rest, which cancel their own runs and clean up after themselves
+                // (their sampler, their event, their shadow discard below). The trade is explicit
+                // and intended: the FIRST better twin wins, not the BEST of all — wall-time is the
+                // axis this wave exists to buy. With no claimant, pick_repair_winner decides
+                // exactly as before.
+                // REVIEWED (adversarial, 2026-08-16) and reworked on its findings: the claim's
+                // ONLY job is to fire the cancellation — winner selection stays the proven
+                // minimum-pick over ALL graded shadows (cancelled ones included), so a dead
+                // claimant can never discard the round and a slower-but-greener sibling still
+                // wins. The token is level-triggered (a twin not yet parked in its select still
+                // sees the cancellation), and a claim requires an ESTABLISHED gate — a re-verify
+                // blinded by an inconclusive leg (port collision) cannot kill its siblings.
+                let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+                let wave_cancel = tokio_util::sync::CancellationToken::new();
+                let win_claim_outer = win_claim.clone();
                 let outcomes =
                     fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
                         let me = me.clone();
@@ -30250,6 +30316,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let facts = facts.clone();
                         let desc = desc.clone();
                         let sink_r = sink_r.clone();
+                        let win_claim = win_claim.clone();
+                        let wave_cancel = wave_cancel.clone();
                         async move {
                             let task_id = format!("complete-fix::twin{i}");
                             // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
@@ -30291,11 +30359,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 task_id.clone(),
                                 progress.clone(),
                             );
-                            let ran = tokio::time::timeout(
-                                std::time::Duration::from_secs(fix_cap_secs()),
-                                me.run(req),
-                            )
-                            .await;
+                            let ran = tokio::select! {
+                                r = tokio::time::timeout(
+                                    std::time::Duration::from_secs(fix_cap_secs()),
+                                    me.run(req),
+                                ) => Some(r),
+                                // A sibling twin already landed a strictly-better tree; stop
+                                // generating. The shadow still gets GRADED below — a cancelled
+                                // twin's partial tree has historically gone red-to-green and the
+                                // minimum-pick must be able to see it.
+                                _ = wave_cancel.cancelled() => None,
+                            };
                             sampler.abort();
                             {
                                 let st = progress.lock().unwrap().clone();
@@ -30308,6 +30382,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "longest_still_secs": st.longest_still_secs,
                                 }));
                             }
+                            let cancelled = ran.is_none();
                             // RE-VERIFY THE SHADOW, not the real tree. `run_smoke_gate` already takes its root
                             // as a parameter, so the twin is graded by the same deterministic gate that opened
                             // the round — no model gets a vote on which fix is better.
@@ -30322,37 +30397,60 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // regression dressed as a safety improvement. A shadow holds whatever its agent
                             // wrote before it was stopped, so the honest question is whether the TREE is
                             // better, never whether the agent got to say so.
-                            let verified = match me.speculative_root(&task_id) {
+                            let (verified, gate_established) = match me.speculative_root(&task_id) {
                                 Some(root) => {
                                     let g = run_smoke_gate(&root, complete_lang).await;
                                     // `ran: false` means the gate could not run in this shadow at all. That is
                                     // not a clean twin — scoring it 0 findings would promote an UNCHECKED tree
                                     // over a checked one, which is the vacuous-pass trap in its most damaging
                                     // form: it would land on the real app.
+                                    let est = g.established();
                                     if g.ran {
-                                        Some(g.findings.len())
+                                        (Some(g.findings.len()), est)
                                     } else {
-                                        None
+                                        (None, false)
                                     }
                                 }
-                                None => None,
+                                None => (None, false),
                             };
                             sink_r.write_value(serde_json::json!({
                                 "event": "complete_fix_completed",
                                 "round": round, "twin": i, "model": model,
                                 "secs": started.elapsed().as_secs(),
-                                // Recorded, but NOT what decides the twin: a timed-out agent whose partial
-                                // writes verify better still wins. Kept so the two can be compared later —
-                                // "how often does a killed agent's tree beat a finished one" is a real
-                                // question and this is the only place it can be answered from.
-                                "agent_ok": matches!(ran, Ok(Ok(_))),
+                                // Recorded, but NOT what decides the twin: a timed-out or
+                                // early-close-cancelled agent whose partial writes verify better
+                                // still wins — the tree is graded, never the agent's exit.
+                                "agent_ok": matches!(ran, Some(Ok(Ok(_)))),
+                                "cancelled_by_early_close": cancelled,
                                 "verified_findings": verified,
                                 "baseline_findings": baseline,
                             }));
+                            // A claim KILLS siblings, so it demands the strictest evidence: a
+                            // fully-established gate (ran, zero inconclusive legs) strictly under
+                            // baseline. A blinded gate (port collision voiding the pytest leg)
+                            // can still WIN via the minimum-pick, but it cannot cancel anyone.
+                            if !cancelled && gate_established {
+                                if let Some(v) = verified.filter(|v| *v < baseline) {
+                                    let mut claim = win_claim.lock().unwrap();
+                                    if claim.is_none() {
+                                        *claim = Some(task_id.clone());
+                                        wave_cancel.cancel();
+                                        eprintln!(
+                                            "complete: EARLY-CLOSE — twin {i} re-verified {v} < {baseline} \
+                                             (established); cancelling the remaining attempt(s)"
+                                        );
+                                    }
+                                }
+                            }
                             (task_id, verified)
                         }
                     })
                     .await;
+                // The claim only CANCELLED; the winner is the original minimum-findings pick
+                // over every graded shadow — cancelled twins included, so the documented
+                // red-to-green class (a stopped agent's partial tree verifying best) survives,
+                // and a claimant that died after claiming can never discard the round.
+                let claimed = win_claim_outer.lock().unwrap().clone();
                 let winner = pick_repair_winner(&outcomes, baseline);
                 for (task_id, _) in &outcomes {
                     if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
@@ -30364,6 +30462,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 sink.write_value(serde_json::json!({
                     "event": "spec_repair_wave",
                     "round": round,
+                    "early_close": claimed.is_some(),
                     "twins": outcomes.len(),
                     "verified": outcomes.iter().filter(|(_, v)| v.is_some()).count(),
                     "baseline_findings": baseline,

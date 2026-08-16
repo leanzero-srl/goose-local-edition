@@ -38,3 +38,19 @@ Post-verdict engine batch, in order: (1) fix-wave early-close, (2) earlier drift
 guided retry, (3) tail speculation or test-split. Then the free lever flips as arms in the
 trimmed treatment phase. This attacks the measured 42% non-conversion directly and every item
 scales WITH node count — the exact axis Mihai named.
+
+## Batch F846 (Sunday afternoon) — what shipped and what was deliberately deferred
+SHIPPED: (1) fix-wave EARLY-CLOSE — first strictly-better twin claims the round via
+first-past-the-post, siblings cancel and clean up themselves; no-claim rounds keep the old
+minimum-findings pick byte-identical. (2) pytest port-collision RETRY — one 20-s-delayed rerun
+before the leg abstains (collision measured in 8 of 13 runs). (3) scout_docs_mode event — the
+F818 observability gap closed at orchestration level.
+DEFERRED WITH REASONS: drift-detection timing — guided retry already exists (killed tasks
+carry the judge's diagnosis, test-pinned); the LATE part is architectural (semantic reviews
+only run on idle devices; forcing them onto busy nodes trades the F623 contention tax for
+earlier kills) → measured as a treatment arm (SUPERVISION_POOL / judge-on-planner), not
+hardcoded. Stall-on-retries — re-read showed a NON-BUG (336 s stall vs the 420 s threshold;
+the deterministic accept simply won the race). Inconclusive-consumes-round and contract-parse
+retry — smaller value post-ship-best, medium risk; next boundary.
+KNOWN FLAKE: goose-core test test_create_langfuse_observer races env vars under the parallel
+runner (two red-gate blinks, passes alone every time) — upstream test hygiene, noted.

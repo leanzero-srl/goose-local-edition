@@ -28,7 +28,15 @@ def usable(r: dict, axis: str) -> bool:
         return False
     if r.get("lms_node_mismatch"):
         return False
-    if r.get("engine_build") != sweep.engine_build():
+    # F846: the n1 arm's 8 rows ran on build 1786817447 and are ACCEPTED under the F846 binary
+    # by explicit argument (Mihai, Sunday 2026-08-16): the batch's only behavioral change that
+    # could touch a 1-node run is the pytest-collision retry — the early-close race cannot
+    # engage with one model (fleet_models.len() > 1 gate). Whitelisting the build for n1 rows
+    # only; every other row still requires the current binary exactly.
+    accepted = {sweep.engine_build()}
+    if r.get("nodes") == 1:
+        accepted.add("1786817447-236358400")
+    if r.get("engine_build") not in accepted:
         return False
     if axis == "wall" and r.get("resumed_from"):
         return False
