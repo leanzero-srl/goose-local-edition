@@ -20,3 +20,15 @@ Seeded from the first two audited runs (r1 old binary / r0-redo F851 binary):
   S5 pipelined prologue is the structural fix
 - repair_phase: 1487 / 1919+s — progress-based rounds + fix-wave early-close are the queued fixes
 - dag occupancy 2.2-2.4 of 6 slots
+
+## Batch F859 strikes (2026-08-16 ~23:20)
+- ~~dead_attempt_node_secs (partial)~~ — F857a no_first_write->split ships (the 1037s web-assets
+  class); the LLM-latency drift kills (444-983s) remain open — deterministic first-write
+  contract probe is the queued design (lowest-confidence hunt item, needs its own evidence).
+- ~~repair_phase: flat rounds + serial join + accept-bypass~~ — progress-based rounds, join
+  skip/composite, accept exclusion, scaled caps at all sites (F859).
+- ~~prologue: pillars bubble~~ — spawned concurrent with contracts. Remaining prologue floor
+  ~20 min = research 7 + skeleton 7 + detail 6-7 (saturated-fleet phases; detail+contracts
+  merge (~3 min) is the recorded next step; full pipelining NO-GO with reasons in F859).
+- OPEN: e2e twin straggler tail (re-measure on the 2-shard cut before touching); no-claimant
+  wave cap (bounded to one wave by progress-rounds; conservative design recorded).

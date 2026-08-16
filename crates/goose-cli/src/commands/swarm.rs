@@ -1593,7 +1593,7 @@ fn show_pool(cfg: &SwarmConfig) {
     );
     {
         let mut parts: Vec<String> = Vec::new();
-        if let Some(v) = cfg.temperature {
+        if let Some(v) = swarm_temp_resolved(cfg.temperature) {
             parts.push(format!("temp={v}"));
         }
         if let Some(v) = cfg.top_p {
@@ -10154,9 +10154,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn complete_stall_rounds_defaults_off_and_clamps() {
-        // The default is 2 AND AT 2 THE LEVER CANNOT FIRE — complete_rounds is also 2, so the
-        // loop runs rounds 0 and 1, the check needs round>0, `stall` tops out at 1, and firing
-        // needs 2. This assert pins the VALUE; the impossibility is documented on the fn.
+        // F859: the value is a boolean in effect — >=1 arms the one-flat-round stop, 0 opts out.
+        // The default 2 therefore ARMS it (it used to be arithmetically unfireable; see the fn
+        // doc for the history). These asserts pin the parse/clamp behavior only.
         assert_eq!(complete_stall_rounds_from(None), 2);
         assert_eq!(complete_stall_rounds_from(Some("2".to_string())), 2);
         assert_eq!(complete_stall_rounds_from(Some("99".to_string())), 6); // clamped high
@@ -13392,6 +13392,10 @@ pub struct GooseAgentDispatcher {
     spec_shadows: Mutex<HashMap<String, (tempfile::TempDir, Vec<String>)>>,
     /// F781/#16 c3: Some(_) while a fix round runs — arms the `fix::` dispatch path.
     fix_round: Mutex<Option<FixRound>>,
+    /// Promotions landed in the CURRENT fix round (reset by begin_fix_round). The join skip reads
+    /// it: residuals are deferred to the next round's race only when THIS round made progress —
+    /// a flat round would hit the one-flat-round stall exit before the promised race ever runs.
+    fix_promotions: std::sync::atomic::AtomicUsize,
     /// F790-3: questions currently being answered, so two ticks never answer the same one.
     qa_inflight: Mutex<std::collections::HashSet<String>>,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
@@ -13528,6 +13532,7 @@ impl GooseAgentDispatcher {
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
             fix_round: Mutex::new(None),
+            fix_promotions: std::sync::atomic::AtomicUsize::new(0),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
@@ -18538,6 +18543,7 @@ async fn smoke_go(root: &Path) -> SmokeResult {
     // 2) TESTS — the app's OWN suite must pass (the runtime oracle). Only when the build was clean, so a test
     // step failure is a genuine test failure, not the same compile error re-surfaced. `go test` exits 0 for a
     // package with no test files, so absence of a suite is never invented as a defect.
+    let mut inconclusive: Vec<String> = Vec::new();
     if findings.is_empty() {
         let mut c = tokio::process::Command::new("go");
         c.args(["test", "./..."]).current_dir(root);
@@ -18550,8 +18556,57 @@ async fn smoke_go(root: &Path) -> SmokeResult {
                     tail_lines(&combined, 40)
                 ));
             }
-            _ => {} // pass, or `go test` timed out -> not a finding (build already established runnability)
+            Some(_) => {}
+            // Lang-generality audit 2026-08-16: a swallowed timeout here shipped verified:true
+            // having executed nothing conclusive — the exact false-green class the Python arm
+            // closes. Every abstention narrows `verified` via established().
+            None => inconclusive.push(
+                "`go test ./...` never finished (timed out) — test verdict UNMEASURED".into(),
+            ),
         }
+    }
+    // ENTRY PROBE (parity with the Rust/TS arms — audit finding: a Go CLI that compiles with zero
+    // tests produced findings-empty + ran:true, i.e. verified, without ONE execution of the program).
+    let mut entry_ok = None;
+    if findings.is_empty() {
+        let mut run = tokio::process::Command::new("go");
+        run.args(["run", ".", "--help"]).current_dir(root);
+        entry_ok = match smoke_output(run, 60).await {
+            Some(out) => {
+                let combined = combined_output(&out);
+                // Go needs its OWN crash detector (review: looks_like_runtime_crash keys on
+                // Node-style `at file:line` frames, which a Go panic never prints — a real panic
+                // landed in the Some(true) arm). And `go run .` on a cmd/ layout fails without
+                // running anything — that is an abstention, never an affirmation.
+                let go_panic = !out.status.success()
+                    && (combined.contains("panic: ") || combined.contains("goroutine "));
+                let never_ran = !out.status.success()
+                    && (combined.contains("is not a main package")
+                        || combined.contains("no Go files"));
+                if go_panic {
+                    findings.push(format!(
+                        "running the entry `go run . --help` PANICS at runtime:\n{}",
+                        tail_lines(&combined, 40)
+                    ));
+                    Some(false)
+                } else if never_ran {
+                    inconclusive.push(
+                        "`go run . --help` could not resolve a main package — entry health \
+                         UNMEASURED"
+                            .into(),
+                    );
+                    None
+                } else {
+                    Some(true)
+                }
+            }
+            None => {
+                inconclusive.push(
+                    "`go run . --help` never answered (timed out) — entry health UNMEASURED".into(),
+                );
+                None
+            }
+        };
     }
     SmokeResult {
         ran: true,
@@ -18559,9 +18614,9 @@ async fn smoke_go(root: &Path) -> SmokeResult {
         collect: None,
         tests: None,
         entry_package: None,
-        entry_ok: None,
+        entry_ok,
         findings,
-        inconclusive: vec![],
+        inconclusive,
     }
 }
 
@@ -18575,6 +18630,7 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
         Err(_) => return SmokeResult::skipped(),
     };
     let mut findings: Vec<String> = Vec::new();
+    let mut inconclusive: Vec<String> = Vec::new();
     // 1) build (only if a build script is declared — many tiny TS CLIs run via tsx with no build step).
     let has_build = pkg
         .get("scripts")
@@ -18687,10 +18743,23 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
                             Some(true)
                         }
                     }
-                    None => None, // node missing / timed out -> inconclusive
+                    None => {
+                        // Audit 2026-08-16: swallowed timeouts here shipped verified:true on a
+                        // hanging entry — push the abstention so established() narrows verified.
+                        inconclusive.push(format!(
+                            "`node {entry_rel} --help` never answered (node missing or timed out) \
+                             — entry health UNMEASURED"
+                        ));
+                        None
+                    }
                 }
             } else {
-                None // a .ts/.tsx entry: present, but not run with bare node (inconclusive)
+                inconclusive.push(
+                    "the entry is .ts/.tsx and was not executed with bare node — entry health \
+                     UNMEASURED"
+                        .into(),
+                );
+                None
             }
         }
         None => {
@@ -18725,7 +18794,11 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
                 Some(TestRunVerdict::Failures(tail))
             }
             Some(_) => Some(TestRunVerdict::Pass),
-            None => None,
+            None => {
+                inconclusive
+                    .push("`npm test` never finished (timed out) — test verdict UNMEASURED".into());
+                None
+            }
         }
     } else {
         None
@@ -18738,7 +18811,7 @@ async fn smoke_typescript(root: &Path) -> SmokeResult {
         entry_package: None,
         entry_ok,
         findings,
-        inconclusive: vec![],
+        inconclusive,
     }
 }
 
@@ -19261,8 +19334,22 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // #120/#119: affirmative-pass count (advertised GETs that returned a genuine 2xx). Stays 0 at every early
     // return (they checked nothing / are inconclusive); incremented per 2xx in the curl loop below.
     let mut verified = 0usize;
-    // Python/FastAPI beds only for now; other stacks keep the existing smoke gate untouched.
+    // Python entry-spawn only for now; other stacks keep the existing smoke gate untouched.
+    // Lang-generality audit 2026-08-16: this used to return empty/empty — off-Python the RUN
+    // failed SILENT (no finding, no inconclusive, nothing narrowing verified), so a TS/Go server
+    // whose spec-advertised endpoints all 404 shipped verified:true. The abstention is recorded —
+    // but ONLY when the spec actually advertises endpoints to probe (review: an unconditional
+    // push made every non-Python CLI permanently unverifiable while the identical Python CLI
+    // stayed establishable — the Python arm's own silence rules are the parity target). The curl
+    // half of this gate is language-agnostic; the per-lang entry spawn is queued.
     if !matches!(lang, TargetLang::Python) {
+        if !spec_get_endpoints(spec).is_empty() {
+            inconclusive.push(format!(
+                "spec-contract not run for {} — advertised-endpoint behavior UNMEASURED \
+                 (entry spawn is Python-only today)",
+                lang.name()
+            ));
+        }
         return SpecContractResult {
             findings,
             inconclusive,
@@ -19779,6 +19866,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         return SmokeResult::skipped();
     }
     let mut findings: Vec<String> = Vec::new();
+    let mut inconclusive: Vec<String> = Vec::new();
     let mut build = tokio::process::Command::new("cargo");
     build.args(["build", "--quiet"]).current_dir(root);
     match smoke_output(build, 240).await {
@@ -19825,11 +19913,18 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
                 Some(true)
             }
         }
-        None => None,
+        None => {
+            // Audit 2026-08-16: the swallowed timeout is the false-green class — a server entry
+            // that ignores --help and hangs shipped verified:true. Abstentions must narrow verified.
+            inconclusive.push(
+                "`cargo run -- --help` never answered (timed out) — entry health UNMEASURED".into(),
+            );
+            None
+        }
     };
     // Run the test suite (parity with the Python pytest path): a failing or non-compiling test is a
-    // finding COMPLETE will fix. Fail-OPEN — cargo missing / timeout is inconclusive (None), never a false
-    // finding. `cargo test` with zero tests exits 0 => Pass, so a test-less app is not false-flagged.
+    // finding COMPLETE will fix. Fail-OPEN — cargo missing / timeout is inconclusive (recorded), never a
+    // false finding. `cargo test` with zero tests exits 0 => Pass, so a test-less app is not false-flagged.
     let mut test = tokio::process::Command::new("cargo");
     test.args(["test", "--quiet"]).current_dir(root);
     let tests = match smoke_output(test, 240).await {
@@ -19839,7 +19934,11 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
             Some(TestRunVerdict::Failures(tail))
         }
         Some(_) => Some(TestRunVerdict::Pass),
-        None => None,
+        None => {
+            inconclusive
+                .push("`cargo test` never finished (timed out) — test verdict UNMEASURED".into());
+            None
+        }
     };
     SmokeResult {
         ran: true,
@@ -19849,7 +19948,7 @@ async fn smoke_rust(root: &Path) -> SmokeResult {
         entry_package: None,
         entry_ok,
         findings,
-        inconclusive: vec![],
+        inconclusive,
     }
 }
 
@@ -20763,9 +20862,13 @@ impl Judge for GooseAgentDispatcher {
                 file_contents.push((f.clone(), contents));
             }
         }
+        // CLAMPED TO THE ATTEMPT'S OWN AGE (speed hunt 2026-08-16): a task cannot have been
+        // "still" longer than it has existed. Fix shadows are created by a copy that preserves
+        // source mtimes, so the raw value read the ORIGINAL tree's age — a 434s-old fix attempt
+        // was accepted as "nothing has changed for 3685s" and its shadow was never graded.
         let secs_since_last_write = newest_mtime
             .and_then(|mt| mt.elapsed().ok())
-            .map(|d| d.as_secs());
+            .map(|d| d.as_secs().min(req.elapsed_secs));
         // The worker's live activity digest (.swarm/activity/<task_id>.json): action count, error count,
         // recent tool calls, and last reasoning. tool_calls feeds the deterministic over-read check; the
         // whole digest is the worker's "log" that the semantic review reads below.
@@ -23226,7 +23329,12 @@ impl TargetLang {
         match self {
             TargetLang::Python => f.ends_with(".py"),
             TargetLang::TypeScript => {
-                f.ends_with(".ts") || f.ends_with(".tsx") || f.ends_with(".js")
+                f.ends_with(".ts")
+                    || f.ends_with(".tsx")
+                    || f.ends_with(".js")
+                    || f.ends_with(".jsx")
+                    || f.ends_with(".mjs")
+                    || f.ends_with(".cjs")
             }
             TargetLang::Rust => f.ends_with(".rs"),
             TargetLang::Go => f.ends_with(".go"),
@@ -23255,6 +23363,14 @@ impl TargetLang {
                     || base.ends_with(".spec.ts")
                     || base.ends_with(".test.js")
                     || base.ends_with(".spec.js")
+                    || base.ends_with(".test.tsx")
+                    || base.ends_with(".spec.tsx")
+                    || base.ends_with(".test.jsx")
+                    || base.ends_with(".spec.jsx")
+                    || base.ends_with(".test.mjs")
+                    || base.ends_with(".spec.mjs")
+                    || base.ends_with(".test.cjs")
+                    || base.ends_with(".spec.cjs")
             }
             TargetLang::Rust => base.ends_with("_test.rs"),
             TargetLang::Go => base.ends_with("_test.go"),
@@ -23955,6 +24071,19 @@ struct FixRound {
     lang: TargetLang,
     all_files: Vec<String>,
     round: usize,
+    /// The run's user prompt — the composite shadow grade (smoke + spec_contract, the F848 ruler)
+    /// needs it; a smoke-only grade certified "0 findings" twice while the gate read 2.
+    prompt: String,
+    /// Whether a multi-model race path exists to cover residual findings next round (fleet > 1
+    /// AND spec_repair armed — review: fleet width alone lied under a flipped lever). Decides the
+    /// join skip: a serial #join at <=1 finding measured 981s on one node, promoted nothing, while
+    /// two nodes idled — the next round's race re-covers the same finding on every node.
+    race_next: bool,
+    /// Whether the round's verify ruler includes spec_contract (delivery_on || spec_contract gate).
+    /// The shadow grade must use the SAME ruler — review: an unconditional spec_contract term
+    /// graded shadows at >=k against a baseline that excluded those k findings when the gate was
+    /// off, discarding genuine fixes.
+    composite: bool,
 }
 
 /// Pure trigger for fix mode: an ACTIVE round and the fix:: prefix, both. With no active round a
@@ -24106,19 +24235,10 @@ impl GooseAgentDispatcher {
     /// F781/#16 c3: open a fix round — every `fix::` task dispatched while this is set runs the
     /// fix path (forced speculative, capped, graded, promote-iff-strictly-better).
     #[allow(dead_code)]
-    fn begin_fix_round(
-        &self,
-        baseline: usize,
-        lang: TargetLang,
-        all_files: Vec<String>,
-        round: usize,
-    ) {
-        *self.fix_round.lock().unwrap() = Some(FixRound {
-            baseline,
-            lang,
-            all_files,
-            round,
-        });
+    fn begin_fix_round(&self, fr: FixRound) {
+        self.fix_promotions
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        *self.fix_round.lock().unwrap() = Some(fr);
     }
 
     /// Close the round and drain every leftover shadow. A judge-aborted fix's Drop guard already
@@ -24161,10 +24281,23 @@ impl GooseAgentDispatcher {
                     .to_string()
                     .into());
             }
+            // COMPOSITE baseline (speed hunt 2026-08-16): the join's grade below is now
+            // smoke + spec_contract (the F848 ruler); a smoke-only baseline here would bias
+            // strictly-better against every promotion by the spec_contract findings it omits.
+            // Gated on fr.composite so shadow grade and round baseline always share ONE ruler.
+            let sc_count = if fr.composite {
+                run_spec_contract(&real_root, &fr.prompt, fr.lang)
+                    .await
+                    .findings
+                    .len()
+            } else {
+                0
+            };
+            let base = g.findings.len() + sc_count;
             // F799 polish: a CLEAN post-wave tree means nothing can promote (strictly-better
             // than 0 is impossible) — observed live on the first proof run, where the join
             // spent a full agent generation on work that was discarded by construction.
-            if g.findings.is_empty() {
+            if base == 0 {
                 self.events.write_value(serde_json::json!({
                     "event": "complete_fix_completed", "path": "sched",
                     "round": fr.round, "task_id": req.task_id,
@@ -24174,7 +24307,33 @@ impl GooseAgentDispatcher {
                     .to_string()
                     .into());
             }
-            g.findings.len()
+            // SPEED (measured): the serial #join ran 981s on ONE node at baseline 1 and promoted
+            // nothing — 61% of the round's wall while two nodes idled. At <=1 residual finding on
+            // a multi-model fleet, the NEXT round's race re-attempts the same finding on every
+            // node under early-close; the serial tail buys nothing the race does not. On a
+            // 1-model fleet the join stays — it is the only fixer for cross-file findings there.
+            // AND only when this round PROMOTED something (review): a flat round hits the
+            // one-flat-round stall exit before the promised race ever dispatches, so skipping
+            // the join there would orphan the residual — no progress means the join keeps its
+            // honest (historically futile) attempt.
+            let promoted_this_round = self
+                .fix_promotions
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 0;
+            if fr.race_next && base <= 1 && promoted_this_round {
+                self.events.write_value(serde_json::json!({
+                    "event": "complete_fix_completed", "path": "sched",
+                    "round": fr.round, "task_id": req.task_id,
+                    "skipped": format!(
+                        "join skipped at {base} residual finding(s) — the next round's race \
+                         covers residuals on every node; the serial join measured 981s/1 node/\
+                         promoted nothing"),
+                }));
+                return Ok("fix join skipped: residuals go to the next round's race"
+                    .to_string()
+                    .into());
+            }
+            base
         } else {
             fr.baseline
         };
@@ -24215,7 +24374,20 @@ impl GooseAgentDispatcher {
             Some(root) => {
                 let g = run_smoke_gate(&root, fr.lang).await;
                 if g.ran {
-                    Some(g.findings.len())
+                    // COMPOSITE grade (F848 parity for the sched path — speed hunt 2026-08-16):
+                    // smoke-only certified "0 findings" twice in one run while the gate then read
+                    // 2; the shadow must be judged by the same ruler that decides the round —
+                    // including the ruler's WIDTH: the spec_contract term applies exactly when
+                    // the round's verify includes it (fr.composite), never unconditionally.
+                    let sc_count = if fr.composite {
+                        run_spec_contract(&root, &fr.prompt, fr.lang)
+                            .await
+                            .findings
+                            .len()
+                    } else {
+                        0
+                    };
+                    Some(g.findings.len() + sc_count)
                 } else {
                     None
                 }
@@ -24224,6 +24396,8 @@ impl GooseAgentDispatcher {
         };
         let promoted = shard_beats_baseline(verified, baseline);
         if promoted {
+            self.fix_promotions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.promote_speculative(&req.task_id).await;
         } else {
             self.discard_speculative(&req.task_id).await;
@@ -26270,26 +26444,18 @@ fn complete_rounds() -> u32 {
     complete_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_ROUNDS").ok())
 }
 
-/// GOOSE_SWARM_COMPLETE_STALL_ROUNDS: early-exit the push-to-completion fix loop after N consecutive
-/// fix rounds that made NO change to the deterministic oracle's findings (i.e. the fix is not moving
-/// the app). Clamped to [0,6]. Grounded in the observation that every fix that ever landed dropped
-/// findings on the FIRST fix round — no run ever showed findings go flat-then-drop — so exiting after
-/// N no-progress rounds cannot cut a fix that would have landed.
-///
-/// ⚠️ THE DEFAULT IS 2, AND AT 2 THIS LEVER CANNOT FIRE. THAT IS ARITHMETIC, NOT A RARE CASE.
-/// `complete_rounds` also defaults to 2, so the loop runs rounds 0 and 1. The check below requires
-/// `round > 0`, so it can only ever evaluate on round 1 — exactly ONE round-to-round comparison — so
-/// `stall` reaches at most 1. Firing requires `stall >= stall_cap == 2`. ONE CAN NEVER REACH TWO.
-/// MEASURED: `complete_stall_exit` fires 0 times across 54 run logs, on a reader that finds
-/// `complete_verify` 94 times and `complete_fix_completed` 71 times in the same files — a PROVEN
-/// zero, not a blind one.
-///
-/// THREE COMMENTS IN THIS FILE USED TO DESCRIBE A DEFAULT THE CODE DOES NOT HAVE (two said "Default
-/// 0 = OFF", one said "Default ON at 2"), and the only accurate one described a value that cannot
-/// fire. A reader auditing the repair loop would conclude it is protected against no-progress spins.
-/// IT IS NOT. Corrected here rather than silently changing the default: flipping it to 0 or 3 changes
-/// BEHAVIOUR and belongs in a measured arm, whereas the actual harm — a false impression of
-/// protection — is entirely in the documentation and is fixed by telling the truth.
+/// GOOSE_SWARM_COMPLETE_STALL_ROUNDS — since the F859 rewrite this is a BOOLEAN in effect:
+/// any value >= 1 arms the ONE-FLAT-ROUND stop (a fix round whose verify did not REDUCE the
+/// finding COUNT ends the loop before the next wave is bought), 0 opts out. The numeric value no
+/// longer counts rounds; 1..6 are indistinguishable and only kept parseable so existing configs
+/// don't error. History, kept because it is the reason for the shape: the previous semantics ("N
+/// consecutive IDENTICAL rounds") was doubly dead — the round arithmetic made N=2 unreachable
+/// (a PROVEN zero across 54 logs) and the equality compared finding STRINGS, which mutate every
+/// round (the pytest finding embeds the failure list), so even a truly flat app compared unequal.
+/// The count-based one-round rule is grounded in the same observation as ever: every fix that
+/// ever landed dropped findings on its FIRST round; flat-then-drop has never been observed.
+/// Stated trade: an equal-count round with DIFFERENT findings (fixed A, surfaced B) now stops
+/// where the old comparison would have continued.
 fn complete_stall_rounds_from(v: Option<String>) -> u32 {
     v.and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(2)
@@ -26953,6 +27119,22 @@ fn fix_cap_secs() -> u64 {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(1200)
         .clamp(120, 3600)
+}
+
+/// GOOSE_SWARM_TEMP > config > model default (Mihai 2026-08-16: "reduce the temperature to avoid
+/// such disparity"). ONE resolution used by the dispatcher's sampling, the levers_resolved echo
+/// AND the startup banner — the adversarial review caught the first version resolving env only at
+/// the sampling site while the levers event echoed the raw config: the exact echo-vs-gating drift
+/// (F837 class) the event exists to prevent. Cools the single-sample paths (workers, detail,
+/// sink, judges) where low temperature is simply correct for code; skeleton drafts keep their own
+/// draft_temp dial. NaN/inf are rejected (is_finite), the value clamps to [0, 2].
+fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
+    std::env::var("GOOSE_SWARM_TEMP")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.0, 2.0))
+        .or(cfg_temp)
 }
 
 /// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
@@ -27654,7 +27836,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         planner_timeout_secs: cfg.planner_timeout_secs,
         allow_model_load: cfg.allow_model_load,
         sampling: SamplingParams {
-            temperature: cfg.temperature,
+            temperature: swarm_temp_resolved(cfg.temperature),
             top_p: cfg.top_p,
             top_k: cfg.top_k,
             min_p: cfg.min_p,
@@ -28377,7 +28559,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "straggler_grace_secs": load_config().straggler_grace_secs,
             "context_cap": load_config().context_cap,
             "max_tool_response_chars": load_config().max_tool_response_chars,
-            "temperature": load_config().temperature,
+            "temperature": swarm_temp_resolved(load_config().temperature),
             "top_p": load_config().top_p,
             "min_p": load_config().min_p,
             "repeat_penalty": load_config().repeat_penalty,
@@ -29325,6 +29507,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     };
 
+    // PILLARS OFF THE CRITICAL PATH (speed hunt 2026-08-16). This was one serial planner call
+    // wedged BETWEEN two fan phases (contracts fan -> pillars -> dispatch) while every non-planner
+    // device idled — a pure pipeline bubble of ~1-3 min. Its inputs (prompt, research, adopted
+    // plan) are all available here, before CONTRACTS begins, and workers read pillars from a
+    // OnceLock exactly like contracts — the only true requirement is set_pillars before
+    // Scheduler::run, preserved by the await at the old call site below.
+    let pillars_handle = if goals_enabled() {
+        let d = dispatcher.clone();
+        let pm = cfg.planner_model.clone();
+        let pprompt = opts.prompt.clone();
+        let rf = research_findings.clone();
+        let pj = plan_json.clone();
+        Some(tokio::spawn(async move {
+            d.distill_pillars(&pm, &pprompt, &rf, &pj).await
+        }))
+    } else {
+        None
+    };
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
     // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
     let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
@@ -29498,19 +29698,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // chosen plan and inject them into EVERY worker, so modules cohere to one north star through context
     // compaction. Post-plan (grounded in the real decomposition), before EXECUTE (reaches every worker).
     // Off -> never runs; the injection block is then an empty string ⇒ the worker prompt is byte-identical.
-    if goals_enabled() {
+    if let Some(handle) = pillars_handle {
         phase_banner(
             "PILLARS",
             "distill the app's non-negotiable acceptance criteria + inject them into every worker",
         );
-        let pillars = dispatcher
-            .distill_pillars(
-                &cfg.planner_model,
-                &opts.prompt,
-                &research_findings,
-                &plan_json,
-            )
-            .await;
+        // Spawned before CONTRACTS (see pillars_handle above) — by now it usually finished
+        // alongside the contracts fan; a panicked task degrades to empty pillars (the injection
+        // no-ops), exactly the pre-existing any-failure contract.
+        let pillars = handle.await.unwrap_or_default();
         if pillars.pillars.is_empty() {
             eprintln!("  pillars: none distilled — skipping injection");
         } else {
@@ -29811,6 +30007,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             user_decisions.clone(),
         )
         .await?;
+    // F857b (speed hunt 2026-08-16): the pre-run snapshot cannot know files that replan/split added
+    // mid-run, so every post-run scope (orphan check, complete-phase instruments, fix all_files) was
+    // structurally blind to them — ~17 node-min of replan-added tests flagged as orphans and excluded
+    // from every gate. Shadow the snapshot with the FINAL dag's DONE-task files so downstream readers
+    // see the tree the run actually planned and built.
+    let smoke_all_files: Vec<String> = {
+        let mut v = smoke_all_files;
+        for f in &report.planned_files {
+            if !v.contains(f) {
+                v.push(f.clone());
+            }
+        }
+        v
+    };
     let t_exec = std::time::Instant::now();
 
     // GOOSE_SWARM_COMPLETE: push to REAL completion. VERIFY the built app by RUNNING it (reuse the smoke
@@ -29893,11 +30103,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // failure path emitted nothing — also fixed below).
         let ship_best = swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true);
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
-        let mut last_verify_ran = false;
-        let mut last_verify_count = 0usize;
-        // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS, default 0 = OFF).
+                                                            // Definite-init by the loop: every break happens after the round's verify assigns these.
+        let mut last_verify_ran;
+        let mut last_verify_count;
+        // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
+        // one-flat-round stop).
         let stall_cap = complete_stall_rounds();
-        let mut stall = 0u32;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
         // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
@@ -29984,7 +30195,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
             let mut m: Vec<String> = smoke_all_files
                 .iter()
-                .filter(|f| complete_lang.is_source_file(f) && !complete_lang.is_test_file(f))
+                // is_test_file is a BASENAME predicate (its own doc) — passing the full path made
+                // Python's test_* prefix rule miss every pathed test (tests/test_api.py flagged as
+                // a missing source deliverable when empty). Audit 2026-08-16.
+                .filter(|f| {
+                    complete_lang.is_source_file(f)
+                        && !complete_lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
+                })
                 // An empty `__init__.py` / `py.typed` is CORRECT — an empty __init__.py IS the standard
                 // package marker, and a task that leaves it empty did its job. MEASURED: the `entry` task
                 // owns raftkv/__init__.py + __main__.py, writes __main__.py, and correctly leaves
@@ -30020,6 +30237,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         } else {
             DriftResult::default()
         };
+        if !drift.ran {
+            // Lang-generality audit 2026-08-16: off-Python this scan silently did not exist — no
+            // event at all, indistinguishable from "lever disabled". The scan's own doctrine ("0
+            // findings must never be readable without knowing what was in scope") applies one
+            // level up: an un-run scan must SAY so.
+            sink.write_value(serde_json::json!({
+                "event": "cross_module_drift",
+                "checked": 0,
+                "findings": 0,
+                "ran": false,
+                "detail": format!("NOT SCANNED — Python-only scanner, lang is {}", complete_lang.name()),
+            }));
+        }
         if drift.ran {
             sink.write_value(serde_json::json!({
                 "event": "cross_module_drift",
@@ -30040,7 +30270,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 );
             }
         }
-        for round in 0..=rounds {
+        // PROGRESS-BASED ROUNDS (speed hunt, 2026-08-16). The static `for round in 0..=rounds` had
+        // two dead ends: a FLAT round could not stop early (the stall-exit was arithmetically
+        // unreachable at the defaults AND compared finding STRINGS, which mutate every round — the
+        // pytest finding embeds the failure list, so '7 failed' vs '19 failed, 45 passed' reads as
+        // change on an app that stayed red), and a CONVERTING run was cut at the count while budget
+        // remained. The round COUNT of gate findings is the ruler that decides green, so it decides
+        // continuation too: strictly decreasing + budget headroom => keep going (hard ceiling 6, the
+        // config clamp); not decreasing => one flat round is proof enough, stop before buying the
+        // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
+        // rounds it was denied.
+        let mut round: u32 = 0;
+        loop {
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
             // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
@@ -30092,6 +30333,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let skipped_tests = smoke_all_files.len().saturating_sub(app_only.len());
             let no_timeout =
                 http_timeout_scan(&cwd, complete_lang, &app_scope_py(&cwd, &app_only)).await;
+            if !no_timeout.ran {
+                // Same honesty rule as the drift scan above: a TS app's fetch/axios calls default
+                // to NO timeout — exactly the block-forever class this scan hunts — and the log
+                // used to carry no trace that nothing was checked.
+                sink.write_value(serde_json::json!({
+                    "event": "http_timeout_scan",
+                    "round": round,
+                    "checked": 0,
+                    "findings": 0,
+                    "ran": false,
+                    "detail": format!(
+                        "NOT SCANNED — Python-only scanner, lang is {}", complete_lang.name()),
+                }));
+            }
             if no_timeout.ran {
                 sink.write_value(serde_json::json!({
                     "event": "http_timeout_scan",
@@ -30326,39 +30581,40 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
                 break;
             }
-            // Stall early-exit: if this round's deterministic findings are identical to the previous
-            // round's, the last fix made no progress. After `stall_cap` consecutive no-progress rounds,
-            // stop instead of burning the remaining budget on a failure the loop cannot move. Fires only
-            // on round>0 with unchanged non-empty findings; `final_passed` stays false, so a still-red app
-            // is never falsely reported green.
-            //
-            // ⚠️ NOT "OFF by default" — that comment was wrong. `stall_cap` DEFAULTS TO 2, and with
-            // `complete_rounds` also 2 this branch evaluates on round 1 only, so `stall` tops out at
-            // 1 and `stall >= stall_cap` is unreachable. 0 firings in 54 logs. See
-            // `complete_stall_rounds_from` for the full arithmetic.
-            if stall_cap > 0 && round > 0 && verdict.findings == last_findings {
-                stall += 1;
-                if stall >= stall_cap {
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_stall_exit",
-                        "round": round,
-                        "stall_rounds": stall,
-                        "findings": verdict.findings.len(),
-                    }));
-                    eprintln!(
-                        "{}",
-                        style(format!(
-                            "complete: {stall} consecutive fix round(s) made no change to the {} \
-                             finding(s) — early-exit (stall cap)",
-                            verdict.findings.len()
-                        ))
-                        .yellow()
-                    );
-                    break;
-                }
-            } else {
-                stall = 0;
+            // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
+            // STRINGS (never equal in practice — the pytest finding's embedded failure list mutates
+            // while the app stays red) and needed `stall_cap=2` consecutive hits that the round
+            // arithmetic made unreachable: a PROVEN zero across 54 logs. The count is the ruler
+            // that gates green, so it judges progress: a round that did not REDUCE the count made
+            // no progress, and one such round is proof — the next wave would re-attempt the same
+            // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
+            if stall_cap > 0 && round > 0 && verdict.findings.len() >= last_findings.len() {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_stall_exit",
+                    "round": round,
+                    "findings": verdict.findings.len(),
+                    "previous": last_findings.len(),
+                }));
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "complete: fix round made no progress ({} -> {} finding(s)) — stopping \
+                         instead of buying another wave",
+                        last_findings.len(),
+                        verdict.findings.len()
+                    ))
+                    .yellow()
+                );
+                // Refresh before breaking so complete_result reports THIS round's count, not the
+                // previous round's (review: findings rising 3->5 reported remaining 3).
+                last_findings = verdict.findings.clone();
+                break;
             }
+            let prev_count = if round > 0 {
+                Some(last_findings.len())
+            } else {
+                None
+            };
             last_findings = verdict.findings.clone();
             eprintln!(
                 "{} round {round}: {} finding(s)",
@@ -30368,9 +30624,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             for f in &verdict.findings {
                 eprintln!("  - {}", f.lines().next().unwrap_or(""));
             }
-            // No fix budget left after the final verify, or the wall-clock cap has passed.
-            if round == rounds {
-                break;
+            // Round budget: the static count is a FLOOR, not a wall. A run that just STRICTLY
+            // reduced its findings and still holds a full fix-cap of wall budget has earned the
+            // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
+            // count without that proof stops exactly as before.
+            if round >= rounds {
+                let decreasing = prev_count.is_some_and(|p| verdict.findings.len() < p);
+                let headroom = cap_deadline.is_none_or(|dl| {
+                    std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) < dl
+                });
+                if !(decreasing && headroom && round < 6) {
+                    break;
+                }
+                eprintln!(
+                    "complete: findings still falling ({} -> {}) with budget in hand — extending \
+                     past the {rounds}-round floor",
+                    prev_count.unwrap_or(0),
+                    verdict.findings.len()
+                );
             }
             if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
                 eprintln!("complete: wall-clock cap reached — stopping the fix loop");
@@ -30652,12 +30923,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 if !fix_pillars_block.is_empty() {
                                     fresh.set_pillars(fix_pillars_block.clone());
                                 }
-                                fresh.begin_fix_round(
+                                fresh.begin_fix_round(FixRound {
                                     baseline,
-                                    complete_lang,
-                                    smoke_all_files.clone(),
-                                    round as usize,
-                                );
+                                    lang: complete_lang,
+                                    all_files: smoke_all_files.clone(),
+                                    round: round as usize,
+                                    prompt: opts.prompt.clone(),
+                                    race_next: fleet_models.len() > 1 && spec_repair(),
+                                    composite: delivery_on || spec_contract_enabled(),
+                                });
                                 let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
                                     .with_sink(sink.clone())
                                     .with_doc_facts(doc_facts.clone())
@@ -30997,6 +31271,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "path": "serial",
                 }));
             }
+            round += 1;
         }
         // F835 RESTORE: at a non-green exit, if the final tree verified WORSE than the best
         // snapshot (or its last verify never ran), ship the best verified state instead of the
@@ -31203,7 +31478,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     neighborhood: Vec::new(),
                 };
                 let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs()),
+                    std::time::Duration::from_secs(fix_cap_secs_scaled(
+                        &std::env::current_dir().unwrap_or_default(),
+                        &smoke_all_files,
+                    )),
                     smoke_fix_dispatcher.run(fix_req),
                 )
                 .await;
@@ -31411,7 +31689,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     neighborhood: Vec::new(),
                 };
                 let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs()),
+                    std::time::Duration::from_secs(fix_cap_secs_scaled(
+                        &std::env::current_dir().unwrap_or_default(),
+                        &smoke_all_files,
+                    )),
                     smoke_fix_dispatcher.run(fix_req),
                 )
                 .await;

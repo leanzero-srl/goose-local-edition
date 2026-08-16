@@ -485,6 +485,52 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     );
     if owns_code && !input.any_owned_written && input.elapsed_secs >= deadline {
         let read_nothing = input.worker_tool_calls == Some(0);
+        // F857a (speed hunt 2026-08-16): a no-first-write kill on a MULTI-FILE task used to
+        // re-dispatch the same shape, and the retry re-earned split eligibility from zero —
+        // MEASURED: web-assets burned 454s proven-idle, then 583s more before the judge finally
+        // split it; the children then finished in 128-271s each. The attempt has proven the shape
+        // too big to start, the partition is deterministic (one child per owned code file, capped
+        // at 4 by chunking), and apply_split's validator makes a malformed partition a no-op — so
+        // route the verdict straight to the split instead of paying the same 454s again. Same-shape
+        // retry remains for single-file tasks and previously-split children.
+        // Partition ALL owned files, never only the code files (adversarial review: apply_split
+        // requires the children's union to equal the parent's files EXACTLY; a code-only partition
+        // of a task that also owns an .html/.json/.md is refused as a no-op every judge pass, and
+        // the refused verdict replaced the kill — a proven-idle worker with NO intervention, ever).
+        // The >=2 CODE files condition still gates the branch (a partition must have real work on
+        // both sides); the chunking then covers everything the parent owned.
+        let code_files = input
+            .owned_files
+            .iter()
+            .filter(|f| is_code_deliverable(f))
+            .count();
+        if code_files >= 2 && input.split_count == 0 && cfg.split_enabled {
+            let n_children = code_files.min(4);
+            let chunk = input.owned_files.len().div_ceil(n_children);
+            let children: Vec<ChildSpec> = input
+                .owned_files
+                .chunks(chunk)
+                .enumerate()
+                .map(|(i, fs)| ChildSpec {
+                    id: format!("{}-part{}", input.task_id, i + 1),
+                    files: fs.to_vec(),
+                    depends_on: Vec::new(),
+                })
+                .collect();
+            return Some(JudgeOutcome {
+                verdict: Verdict::Split,
+                confidence: 1.0,
+                hint: format!(
+                    "{} Splitting deterministically: {} owned files -> {} children, one worker \
+                     per part.",
+                    no_file_hint(input, read_nothing),
+                    input.owned_files.len(),
+                    n_children
+                ),
+                proposed_split: Some(children),
+                deterministic: true,
+            });
+        }
         return Some(JudgeOutcome {
             // HONEST LABEL. `read_nothing` is computed on the line above and the hint already branches on
             // it, but the verdict was stamped `OverReading` either way — so the run log recorded
@@ -538,6 +584,10 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         && input.worker_tool_calls.is_some_and(|n| n > 0)
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && !is_still_producing(input, cfg)
+        // A fix attempt must end through its own grade+promote tail — a judge Accept completes it
+        // at the scheduler and the shadow is dropped UNGRADED (measured: a 434s fix shard accepted
+        // as done, no grade, no promote, its work silently discarded while the round read done:3).
+        && !input.task_id.starts_with("fix::")
     {
         return Some(JudgeOutcome {
             verdict: Verdict::Accept,
@@ -561,6 +611,9 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     if all_owned_present
         && input.compile_errors.is_empty()
         && input.task_id != "integrate-verify"
+        // Same exclusion as the owns-nothing Accept above: a fix shadow's owned files pre-exist
+        // (they ARE the app), so "all present + still" is true the moment the attempt starts.
+        && !input.task_id.starts_with("fix::")
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
         && !is_still_producing(input, cfg)
@@ -580,6 +633,12 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     }
     if input.any_owned_written
         && input.task_id != "integrate-verify"
+        // Adversarial review: without this guard the fix:: Accept exclusions above just fell
+        // through HERE — a fix shadow's files pre-exist (any_owned_written from t=0) and its
+        // stillness equals its age, so the 434s incident replayed as Looping, whose kill ABORTS
+        // the attempt and discards the shadow ungraded — the exact bypass the exclusions close.
+        // A quiet fix attempt runs to its cap and is graded by run_fix_task's own tail.
+        && !input.task_id.starts_with("fix::")
         && input.elapsed_secs >= cfg.min_age_secs.max(420)
         && input.secs_since_last_write.is_some_and(|s| s >= 420)
         && !is_still_producing(input, cfg)
