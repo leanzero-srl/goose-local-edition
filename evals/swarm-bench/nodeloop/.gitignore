@@ -1,2 +1,5 @@
 autorestart.log
 autorestart.out
+STOP
+HOLD
+PHASE-BEST.json
