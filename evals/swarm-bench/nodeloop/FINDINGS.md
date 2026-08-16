@@ -19588,3 +19588,17 @@ always BUILD this product, it could never write it as one 400-line file. 0.8283 
 remaining gap (residuals: partial sync journey, single-status page-1 badge cap, styling
 depth, and B 0.80's remaining sync losses). Batch spread note: 0.57 / 0.83 / (0.72 void) —
 per-host variance is alive and the curve's job. Batch 2 (reps 3-5) launched automatically.
+
+## F841 — batch 2: one real row (r3 0.4794, at the 150-min cap), two engines SIGTERMed mid-work by an UNIDENTIFIED actor at the identical second (r4 0.7973, r5 0.6962 — both voided honestly)
+
+Facts, no theory dressed as one: r4 (mihai) and r5 (workh) both died exit -15 at 6089.6 s —
+the same second — while healthy and mid-work (one in a judge look, one in fix round 1); r3
+(gabee) kept running 48 more minutes to the run_build timeout. The watchdog was PROVABLY
+disarmed (HOLD logged every 2 min); the sweep and its reaper were down; run_build's timeout
+kills with SIGKILL, not TERM, and hadn't elapsed. The identical timestamps say ONE external
+actor TERMed exactly the two non-gabee engines at 02:05:30. Unresolved — recorded as an open
+forensic with the voided rows preserving the evidence (scores 0.797/0.696 in
+kill_artifact-style fields, trees archived). The young-death gate did its job both times.
+n1 real rows so far: 0.5666, 0.8283, 0.4794 (timed-out cap row, now marked). Voided and
+queued for the retry pass after batch 3: reps 2, 4, 5. Block completion now ~08:30, n3 after,
+verdict still Saturday evening-night.
