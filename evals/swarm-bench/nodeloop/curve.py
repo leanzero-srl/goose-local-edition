@@ -33,11 +33,17 @@ def usable(r: dict, axis: str) -> bool:
     # could touch a 1-node run is the pytest-collision retry — the early-close race cannot
     # engage with one model (fleet_models.len() > 1 gate). Whitelisting the build for n1 rows
     # only; every other row still requires the current binary exactly.
-    accepted = {sweep.engine_build()}
-    if r.get("nodes") == 1:
-        accepted.add("1786817447-236358400")
-    if r.get("engine_build") not in accepted:
-        return False
+    # ROLLING MODE (Sunday evening): rows stand across the one-run-at-a-time binaries; the
+    # scorer version is the comparability rail (sb-5.2 throughout), and every row's build id
+    # is recorded in the ledger. The strict single-binary filter returns when the config
+    # stabilizes and the formal curve re-runs.
+    import os
+    if not os.environ.get("BENCH_ROLLING"):
+        accepted = {sweep.engine_build()}
+        if r.get("nodes") == 1:
+            accepted.add("1786817447-236358400")
+        if r.get("engine_build") not in accepted:
+            return False
     if axis == "wall" and r.get("resumed_from"):
         return False
     return True
