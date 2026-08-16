@@ -19615,3 +19615,18 @@ in 2.5 h, while the 3-node arm completes in ~2 h. DECISION: the cap stays (same 
 arms, the sweep's convention); timed-out rows are real rows with timed_out recorded (driver now
 carries it; r0/r1 marked on disk); the speed axis will say what it says. The -15 pair stays an
 open forensic (the engine-internal-cap theory died with r0/r1 running 9000 s).
+
+## F843-interim — batch 3: the FIRST clean n1 finish is a 0.1867 (gabee), and the -15 killer struck a THIRD time (r7/mihai at 6437 s — the one-off theory dead)
+
+n1 state after three batches: real rows r0 0.5666(cap) r1 0.8283(cap) r3 0.4794(cap)
+r6 0.1867(CLEAN — the only natural finish, and the weakest row); voided -15 kills r4 r5 r7 +
+r2's exit-1 — retries launched for all four (2,4,5 then 7; done ~10:45, n3 after, verdict
+slides to late Saturday night/early Sunday). THE -15 PATTERN, three strikes: 02:05:30 (r4
+mihai + r5 workh, same instant), 04:42:17 (r7 mihai); gabee-pinned units never die; my 04:39
+"discriminator" check preceded the third kill by 3 minutes — a premature verdict, corrected
+here. LEADING SUSPECT: memory pressure on THIS Mac — every engine process lives here, the
+"mihai" node IS this machine's LM Studio, and kills cluster while local inference is hot;
+macOS pressure relief TERMs the fattest processes, which are the engines. If a retry dies -15
+with the local node active, that seals it and the mitigation is pinning the n1 protocol to
+gabee+workh only (2-wide batches). The n1 arm's emerging story either way: 0.19-0.83 spread,
+and the only way it ever finishes inside 150 min is by shipping a weak tree.
