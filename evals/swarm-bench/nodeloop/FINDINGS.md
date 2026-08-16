@@ -19602,3 +19602,16 @@ kill_artifact-style fields, trees archived). The young-death gate did its job bo
 n1 real rows so far: 0.5666, 0.8283, 0.4794 (timed-out cap row, now marked). Voided and
 queued for the retry pass after batch 3: reps 2, 4, 5. Block completion now ~08:30, n3 after,
 verdict still Saturday evening-night.
+
+## F842 — CORRECTION to F840/F841 and the real n1 story: ZERO clean finishes in six attempts — a single node cannot complete the v2.1 product inside 150 minutes, while n3 finishes in ~110-128
+
+Checked instead of trusted: r0 AND r1 also hit run_build's 9000 s cap (timed_out=True, engine
+SIGKILLed at the cap — no ship-best restore). F840's "0.8283 triumph" is a CAP-TREE score; the
+frontend conclusion STANDS (the page renders — tree-truth is tree-truth) but the run never
+finished. Six n1 attempts: four cap/near-cap, two mystery-TERMs, zero completions. THE
+STRATEGIC READ: this is the parallelism dividend surfacing exactly where it should — the
+product-regime build (three web files + rails + fix rounds) exceeds what one 27B does serially
+in 2.5 h, while the 3-node arm completes in ~2 h. DECISION: the cap stays (same protocol both
+arms, the sweep's convention); timed-out rows are real rows with timed_out recorded (driver now
+carries it; r0/r1 marked on disk); the speed axis will say what it says. The -15 pair stays an
+open forensic (the engine-internal-cap theory died with r0/r1 running 9000 s).

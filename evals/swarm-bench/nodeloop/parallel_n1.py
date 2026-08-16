@@ -64,6 +64,7 @@ def assemble_row(rep: int, pin: str, wall_secs: float) -> dict:
         agent = v.get("agent") or {}
         row["engine_exit"] = agent.get("exit")
         row["agent_secs"] = agent.get("secs")
+        row["timed_out"] = bool(agent.get("timed_out"))
         # KILL/YOUNG-DEATH GATE (F839): all 8 first-attempt rows scored 0.045 in minutes —
         # the revived sweep's evictor killed every pinned engine and the corpses assembled as
         # void=False. A swarm prologue alone runs 15+ min; an agent that exited non-zero or
