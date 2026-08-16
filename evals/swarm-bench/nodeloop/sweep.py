@@ -1973,6 +1973,19 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
     except Exception as exc:  # noqa: BLE001
         pre = {"prefix_error": f"{type(exc).__name__}: {exc}"}
 
+    # PHASE POLISH (Mihai 2026-08-16: "start something to CONTINUOUSLY polish the phases"). Every
+    # unit is cut into phases, ratcheted against the campaign's best (PHASE-BEST.json) and its top
+    # segments + regressions appended to PHASE-POLISH.md — the standing queue the operator mines
+    # for the next kaizen. Non-fatal like every instrument here.
+    phases = {}
+    if run_log.is_file():
+        try:
+            import phase_audit
+            phases = phase_audit.audit_phases(run_log)
+            phases.pop("kills", None)  # detail stays in run.jsonl; the row carries the summary
+        except Exception as exc:  # noqa: BLE001
+            phases = {"phase_audit_error": f"{type(exc).__name__}: {exc}"}
+
     # ADVERSARIAL AUDIT OF THE HARNESS, every unit, not just of the swarm. Six instrument failures in
     # one day and two published before being caught; a unit whose own instruments cannot pass their
     # controls and invariants is not evidence, and must be MARKED rather than quietly averaged in.
@@ -2081,6 +2094,7 @@ def run_unit(arm: dict, nodes: int, rep: int, port: int) -> dict:
         "audit_version": audit.get("audit_version") or dispatch_audit.AUDIT_VERSION,
         "audit": audit,
         "prefix": pre,
+        "phase_audit": phases,
         # summarise() excludes rows where this is False. It was computed above — up to 600s of
         # selftest.py per unit — and then never written, so the filter read `None is not False` on
         # every row and was vacuously true: a unit whose own instruments FAILED their controls was
