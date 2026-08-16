@@ -19848,3 +19848,75 @@ slot-capped upward, test pins both directions; the sweep's spec_sized_plan arm i
 env=0 (the old fleet-scaled ask becomes the treatment); comment/doc drift fixed at four
 sites. Residual accepted: smoke-fix and wire-fix (separate phases) keep the static cap —
 different tree context, queued. 236 swarm tests green, clippy clean.
+
+## F859 — the SPEED+GENERALITY batch: the second stop of the night implements the speed hunt's ranked findings, the language audit's blocking holes, and Mihai's temperature directive in one pass
+
+Mihai (22:18-23:00): gather all improvements, cut the 120-min loops, don't start test rounds
+until the fixes are in, cool the temperature, and goose must build ANY app. The first F851-binary
+run itself became the evidence bed (its own phase map: 22.9 min prologue, 74 min DAG at 2.43/6
+occupancy with 37.5 node-min of dead attempts, 32+ min repair) and was STOPPED at ~175 min on
+Mihai's call (engine had outlived its cap; the row voids honestly as a kill artifact — its
+mechanism readouts stand: e2e 2 shards, diverse_plan ENFORCED at 84<85 skipping the exact 756s
+ladder case, labels tailored, fix caps 2400 live). SHIPPED in this batch:
+
+SPEED (the hunt's ranked fixes, each measured on the run's own events):
+- PROGRESS-BASED ROUNDS: the stall-exit was arithmetically dead AND compared finding STRINGS
+  that mutate every round (pytest's embedded failure list) — a proven zero across 54 logs. Now
+  count-based: one round that does not REDUCE findings stops the loop before the next 1,599-
+  2,400s wave; a strictly-decreasing round with a full fix-cap of budget EXTENDS past the static
+  floor (ceiling 6). The round loop is a real loop, not a fixed count.
+- THE SERIAL #JOIN (981s on one node, promoted nothing, 61% of the round's wall): composite
+  baseline + composite grade (F848 ruler parity — smoke-only had certified "0" against a gate
+  reading 2), and SKIPPED at <=1 residual finding on multi-model fleets where the next round's
+  race re-covers residuals on every node (kept on 1-model fleets — it is the only cross-file
+  fixer there).
+- JUDGE-ACCEPT BYPASS CLOSED: a 434s fix shard was accepted as done and its shadow dropped
+  UNGRADED (the round still reported done:3) because the shadow copy preserves source mtimes —
+  "nothing changed for 3685s" was true of the ORIGINAL tree. Two fixes: stillness is clamped to
+  the attempt's own age (an invariant, applied to every path), and fix::* tasks are excluded
+  from both deterministic Accept branches — a fix attempt ends only through its grade+promote
+  tail.
+- NO-FIRST-WRITE -> DETERMINISTIC SPLIT (F857a): a multi-file task that proved it cannot start
+  (454s, zero writes) now splits one-child-per-owned-file at the kill (cap 4, apply_split
+  validates, no idle device needed) instead of re-dispatching the same shape and re-earning the
+  split clock from zero (measured cost: 1037s before children existed; the children then took
+  128-271s each).
+- REPLAN ORPHAN LEAK (F857b): post-run scopes read a PRE-RUN file snapshot, so every
+  replan-added file was structurally an orphan (~17 node-min of bonus tests written off).
+  RunReport now carries the final DAG's DONE-task files and the snapshot is shadowed with the
+  union after the run.
+- PILLARS OFF THE CRITICAL PATH: the serial planner call between two fan phases (~1-3 min of
+  full-fleet idle) is spawned at plan adoption and awaited before Scheduler::run.
+- smoke-fix/wire-fix inherit the scaled fix cap (the last two flat-cap sites).
+- NO-GOs recorded with reasons: full pipelined prologue (flat-fan means the complete contract
+  bundle IS the true dependency — releasing early reintroduces the measured drift class);
+  research/skeleton overlap (work conservation on a saturated fleet — saves ~0); incremental
+  verify (the full oracle re-run costs 28s = 1.7% of a round; scoping it reintroduces the
+  cross-file blindness class).
+
+GENERALITY (the language audit's fail-silent holes, all now honest):
+- TS/Rust/Go smoke arms pushed NO inconclusive on timeouts — a hanging entry or a timed-out
+  test run shipped verified:true having executed nothing. Every abstention now narrows
+  verified via established(), exactly like the Python arm.
+- run_spec_contract off-Python returned empty/empty — a TS/Go server with every advertised
+  endpoint dead shipped verified:true. The abstention is now recorded (findings/inconclusive
+  honest; the curl half is language-agnostic and the per-lang entry spawn is queued).
+- smoke_go gains the entry probe the other arms had (go run . --help with crash detection —
+  a compiling zero-test Go app was verified without ONE execution).
+- http_timeout_scan and cross_module_drift emit ran:false "NOT SCANNED" events off-Python
+  (silence was indistinguishable from a clean scan); TS source set gains .jsx/.mjs/.cjs;
+  the missing-deliverables filter passes basenames to the basename predicate.
+- Queued (recorded, not shipped): per-lang spec_contract entry spawn, a TS timeout scanner,
+  tsc --noEmit for plain-JS drift, and the TypeScript twin of the vendorsync spec as the
+  proving-ground cell after the verification run.
+
+PREDICTABILITY (Mihai: "reduce the temperature... they'll be more predictable"):
+- GOOSE_SWARM_TEMP env > config > model default; REGIME pins 0.2. Cools the single-sample
+  paths where low temperature is simply correct for code; skeleton drafts keep draft_temp.
+  WATCH honestly: repair twins share the default — their diversity now rides sampling seeds;
+  if wave conversion drops, per-twin jitter is the follow-up.
+
+Deferred with reasons: detail+contracts per-module pipeline (GO, ~3 min, design recorded in the
+hunt journal — next boundary); wave stall-kill for no-claimant waves (progress-rounds bounds the
+class to ONE wave; the conservative cancel-and-grade design waits for post-batch wave data);
+weak-bump ask/retarget split (diverse_plan covers the observed path).

@@ -100,13 +100,17 @@ pub fn testgen_enabled() -> bool {
 }
 
 fn split_inherit_spec_enabled() -> bool {
-    matches!(
+    // DEFAULT ON (2026-08-16 review). The deterministic no-first-write split hands each child a
+    // file list; without inheritance its ONLY instruction is "(split of <parent>)" — a child with
+    // no statement builds nothing (the F457 lesson: split children buy +0.036 WITH a 43-char
+    // statement; a stub statement is worse than the parent's full spec). Opt-out stays via env=0.
+    !matches!(
         std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
             .unwrap_or_default()
             .trim()
             .to_lowercase()
             .as_str(),
-        "1" | "on" | "true" | "yes"
+        "0" | "off" | "false" | "no"
     )
 }
 
@@ -445,6 +449,11 @@ pub struct RunReport {
     pub failed: Vec<TaskId>,
     /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
     pub bonus: Vec<TaskId>,
+    /// Owned files of every DONE task in the FINAL dag — including files added by replan/split
+    /// after the caller's pre-run snapshot. Post-run scopes that read only the snapshot were
+    /// structurally blind to replan-added files (every one flagged as an orphan). DONE-only, so a
+    /// failed bonus task's never-written file cannot enter a missing-deliverables gate.
+    pub planned_files: Vec<String>,
     pub results: HashMap<TaskId, String>,
     pub context_json: serde_json::Value,
     /// Total tasks dispatched per device id (counts re-dispatches) — observability + weighting checks.
@@ -2487,6 +2496,18 @@ impl State {
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
         let mut bonus: Vec<TaskId> = self.bonus_ids.iter().cloned().collect();
         bonus.sort();
+        let mut planned_files: Vec<String> = {
+            let mut set = std::collections::BTreeSet::new();
+            for n in self.dag.tasks.values() {
+                if matches!(n.state, TaskState::Done) {
+                    for f in &n.spec.owned_files {
+                        set.insert(f.clone());
+                    }
+                }
+            }
+            set.into_iter().collect()
+        };
+        planned_files.sort();
         RunReport {
             done,
             failed,
@@ -2496,6 +2517,7 @@ impl State {
             dispatched_per_device: self.dispatched_per_device.clone(),
             tasks,
             per_device,
+            planned_files,
         }
     }
 }
