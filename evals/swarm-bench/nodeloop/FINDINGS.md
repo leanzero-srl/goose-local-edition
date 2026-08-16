@@ -19711,3 +19711,18 @@ persists on the backend even with rails; the vendor-truth findings drove the wav
 closegreen the smoke side), J 0.75, V 0.55. TESTGEN: armed and 0 events again — second honest
 null; its idle-window condition may never fire now that tail_review owns the idle slots
 (queued as a treatment question, not re-armed blindly). scout_docs_mode ✓ fired.
+
+## F849 — pair 2: quality to n1 by 0.034 (0.7939 vs 0.8283-cap), speed to n3; quality 1-1 speed 2-0 — and ROLLING MODE becomes real harness policy
+
+n3-r1 (F846 binary): 0.7939/126min — the best n3 product-regime row, THROUGH a redraft
+(redraft1, planning 1885 s — the ladder fired for the first time under the product regime and
+the run still finished strong). The pair vs n1-r1's capped 0.8283: quality to n1 by 0.034 —
+the n1 row is a cap tree from the mihai host (its best draw); the margin is a third of the
+replicate spread. Speed to n3 (finished vs cap). QUALITY IS NOW 1-1: one more n3 quality loss
+early-calls that axis NOT-ESTABLISHED; the next two runs decide. ROLLING-MODE MECHANICS,
+learned live: the F848 rebuild flipped the on-disk build id and the sweep re-queued r0 (its
+F846 row read incomplete) — the one-run-at-a-time cadence needs rows to STAND across rolling
+binaries, so BENCH_ROLLING=1 now gates both complete() and curve usable() (scorer sb-5.2 stays
+the comparability rail; every row records its build). The r0-redo runs on F848 (composite
+shadow grading's first live unit — its waves now measure smoke+contract on one ruler);
+supervisor restart at its end activates rolling for the queue.

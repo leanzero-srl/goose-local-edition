@@ -1166,6 +1166,13 @@ def complete(arm: str, nodes: int, rep: int) -> bool:
     expected_scorer = score_build.SCORER_VERSION
     if r.get("scorer_version") != expected_scorer:
         return False
+    # ROLLING MODE (Mihai, Sunday 2026-08-16 evening: one-run-at-a-time improvement — each
+    # unit may run on a newer binary than the last). BENCH_ROLLING=1 accepts a completed row
+    # from ANY binary (scorer + audit versions still enforced; each row records its build for
+    # the ledger). Without the flag, the strict same-binary rule stands — that mode is how a
+    # formal single-binary curve gets re-run at stabilization.
+    if os.environ.get("BENCH_ROLLING"):
+        return r.get("audit_version") == dispatch_audit.AUDIT_VERSION
     return (r.get("audit_version") == dispatch_audit.AUDIT_VERSION
             and r.get("engine_build") == engine_build())
 
