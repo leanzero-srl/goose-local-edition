@@ -28,7 +28,10 @@ OUT = HERE.parent / "runs" / "parallel-n1"
 sys.path.insert(0, str(HERE))
 import sweep  # noqa: E402  (engine_build; REGIME.env applied at import)
 
-PINS = ["gabee", "mihai", "workh"]
+# Fastest-first (Mihai 2026-08-16): a LONE leftover rep lands on PINS[0], and the
+# first version put the SLOWEST node there by list order. Full batches use all three
+# regardless; only stragglers care, and they deserve the quick host.
+PINS = ["workh", "mihai", "gabee"]
 PORT_BASE = 8600  # clear of the sweep's 8930s and run_build's default 8850
 
 
