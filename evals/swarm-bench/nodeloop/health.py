@@ -92,6 +92,15 @@ def main() -> int:
     # 2. The engine. A loop with no engine and no recent completion is spinning, not working.
     rs = results()
     last_done = max((r["_mtime"] for r in rs), default=None)
+    # F845: the parallel-n1 phase (F838) lands rows OUTSIDE the sweep's cells; a fresh row
+    # there is progress too — without this, the 13-hour n1 block read as "nothing finished"
+    # and the staleness alarm re-raised every 2 minutes into a grind that was perfectly
+    # healthy (the unclearable-alarm class, once more).
+    p1 = sorted((HERE.parent / "runs" / "parallel-n1").glob("*/nodeloop-result.json"),
+                key=lambda p: p.stat().st_mtime)
+    if p1:
+        last_p1 = p1[-1].stat().st_mtime
+        last_done = max(last_done, last_p1) if last_done else last_p1
     since_done = (time.time() - last_done) if last_done else None
     if engine_pids:
         rep.add("OK", f"engine running pid={engine_pids[0]}")
