@@ -19920,3 +19920,18 @@ Deferred with reasons: detail+contracts per-module pipeline (GO, ~3 min, design 
 hunt journal — next boundary); wave stall-kill for no-claimant waves (progress-rounds bounds the
 class to ONE wave; the conservative cancel-and-grade design waits for post-batch wave data);
 weak-bump ask/retarget split (diverse_plan covers the observed path).
+
+## F860 — VERIFICATION RUN VERDICT: every mechanism fired and the wall fell 129→110 min while the repair CONVERTED (3→2→1); quality pair 3 to n3 by +0.20
+
+baseline-n3-r0 on the F859 binary: 0.769 / 109.9 min, valid row. Mechanism-by-mechanism:
+temp 0.2 echoed in levers (one-resolver ✓); diverse_plan ENFORCED at 85 (ladder skipped,
+skeleton 299s vs 1388s laddered ✓); e2e 2 shards ✓; pillars off the path (prologue 1136s —
+new campaign BEST, vs 1375/2277 ✓); dead attempts 1519 node-s vs 3223-3904 (HALVED — split
+routing + cooler workers ✓); BOTH repair waves early-closed AND promoted (3→2→1 strictly
+decreasing — the progress rule correctly bought wave 1 and correctly declined a third when
+headroom failed; no stall exit needed, none misfired ✓); zero judge kills on fix attempts
+(Accept/Looping guards held ✓); honest red finish at 1 remaining finding. Repair phase 2606s
+is LONGER than the old 1919s but the old runs died flat at 2 findings — this one converted
+twice; spend-while-converting is the design. Phase audit rides the row (pa-1's first scored
+entry). THE PAIR: 0.769 vs n1-r0 0.5666 — quality to n3 (+0.20), speed to n3 (finished vs
+cap). CURVE: quality 2-1 n3, speed 3-0 n3. Rolling continues to r1.
