@@ -30287,6 +30287,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let decisions = user_decisions.clone();
                 let facts = doc_facts.clone();
                 let desc = smoke_fix_description(&verdict.findings, complete_lang);
+                let wave_prompt = opts.prompt.clone();
                 let sink_r = sink.clone();
                 // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
                 // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
@@ -30318,6 +30319,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let sink_r = sink_r.clone();
                         let win_claim = win_claim.clone();
                         let wave_cancel = wave_cancel.clone();
+                        let wave_prompt = wave_prompt.clone();
                         async move {
                             let task_id = format!("complete-fix::twin{i}");
                             // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
@@ -30406,7 +30408,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // form: it would land on the real app.
                                     let est = g.established();
                                     if g.ran {
-                                        (Some(g.findings.len()), est)
+                                        // COMPOSITE GRADING (F848): the round's baseline includes the
+                                        // spec_contract findings (vendor-truth, render gate), so a shadow
+                                        // graded on smoke alone is measured against a different ruler —
+                                        // MEASURED: a twin re-verified "6 -> 0" and early-closed while
+                                        // the sync-acquisition finding it never probed persisted, and
+                                        // every round rediscovered the same two findings. The shadow now
+                                        // answers the SAME question the round asks.
+                                        let sc =
+                                            run_spec_contract(&root, &wave_prompt, complete_lang).await;
+                                        (Some(g.findings.len() + sc.findings.len()), est)
                                     } else {
                                         (None, false)
                                     }
