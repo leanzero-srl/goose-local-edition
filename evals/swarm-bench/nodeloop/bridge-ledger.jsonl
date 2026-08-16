@@ -34,3 +34,4 @@
 {"unit": "swarm-3node-r0-1786763475", "t": 1786764176.0, "sb4": 0.7314, "sb4_hard": 1.0, "sb3_analytic": 0.7783, "sb3_tiers": {"A": 1.0, "B": 0.3611, "C": 1.0, "D": 0.85}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "swarm-1node-r0-1786767494", "t": 1786767913.8, "sb4": 0.9704, "sb4_hard": 0.8333, "sb3_analytic": 0.9278, "sb3_tiers": {"A": 1.0, "B": 0.9583, "C": 0.8571, "D": 0.88}, "reconstructed": true, "legacy_checks": 35}
 {"unit": "swarm-3node-r1-1786772325", "t": 1786773194.5, "sb4": 0.7342, "sb4_hard": 1.0, "sb3_analytic": 0.7758, "sb3_tiers": {"A": 1.0, "B": 0.3194, "C": 1.0, "D": 0.9}, "reconstructed": true, "legacy_checks": 35}
+{"unit": "swarm-1node-r1-1786778199", "t": 1786778480.1, "sb4": 0.7924, "sb4_hard": 0.95, "sb3_analytic": 0.84, "sb3_tiers": {"A": 1.0, "B": 0.6501, "C": 1.0, "D": 0.725}, "reconstructed": true, "legacy_checks": 35}
