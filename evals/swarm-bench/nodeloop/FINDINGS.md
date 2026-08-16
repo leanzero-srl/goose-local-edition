@@ -19697,3 +19697,17 @@ lacks collision classification (queued). N1 DECISION: the 8 rows stand — the e
 cannot engage with one model, so the batch is n1-inert; curve.py whitelists their build id
 with the argument in code. THE GRIND: n3-only from 15:36, 8 units on the reviewed binary,
 verdict expected Monday morning, early-call armed.
+
+## F847 — EARLY-CLOSE PROVEN LIVE ON ITS FIRST RUN: two waves, both early-closed (6→0 and 2→0, both promoted, 4 siblings cancelled), wall 95 min vs the comparable 116 — and pair 1 goes to n3 on both axes again
+
+First unit on the reviewed F846 binary: baseline-n3-r0 0.6765/95min vs its n1 twin 0.5666 at
+the cap — quality 1-0, speed 1-0, fresh curve. THE MECHANISM READOUT Mihai asked for:
+spec_repair_wave round 0 {early_close:true, twins:3, 6→0 findings, promoted} and round 1
+{early_close:true, 2→0, promoted}; 4 cancelled twins carried the cancelled_by_early_close
+mark; every claim implies an ESTABLISHED gate (the review's safety condition held). Wall
+95 min against the pre-batch green run's 116 — the projected ~10-20 min recovery, visible on
+run one. Score notes: B 0.36 (the sync family struck this build — the per-run lottery
+persists on the backend even with rails; the vendor-truth findings drove the waves that DID
+closegreen the smoke side), J 0.75, V 0.55. TESTGEN: armed and 0 events again — second honest
+null; its idle-window condition may never fire now that tail_review owns the idle slots
+(queued as a treatment question, not re-armed blindly). scout_docs_mode ✓ fired.
