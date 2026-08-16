@@ -380,12 +380,13 @@ pub struct SwarmConfig {
     /// "usually 2 to 4" on one node against "usually 6 to 12" on three. The small-fleet ask lands below what
     /// the spec needs and the model overrides it (5 modules); the big-fleet ask lands above and the model
     /// drifts into it (7 and 6), so the scaling only ever binds INFLATIONARY: +30% modules and +64% tree
-    /// bytes for +0.0492 score, which is one seventh of the replicate spread. None => OFF (byte-identical).
+    /// bytes for +0.0492 score, which is one seventh of the replicate spread. None => ON (F853).
     /// env GOOSE_SWARM_SPEC_SIZED_PLAN overrides.
     ///
-    /// ARM, NOT A DEFAULT. That the fleet-scaled ask CORRELATES with the bigger plan is measured; that it
-    /// CAUSES it is not, and the model's flat refusal of the ask's upper half argues against a clean causal
-    /// chain. This ships OFF so the sweep can answer it instead of me assuming it.
+    /// DEFAULT FLIPPED TO ON (F853, was an arm). The principle decides even where the causal chain is
+    /// partial: task EXISTENCE is the spec's property, and a prompt that derives module count from slot
+    /// count can only bind inflationary (a floor the model won't go under, a ceiling it drifts toward).
+    /// The clause takes no arguments by construction, so the invariant holds without assertion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec_sized_plan: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
@@ -3841,7 +3842,8 @@ fn e2e_shard_spec(lang: TargetLang, shard: usize, shards: usize, oracle: &[Strin
 /// (26.5 min while two nodes idled). But an app's advertised COMMANDS are embarrassingly parallel: checking
 /// `get` says nothing about checking `compact`, and each only needs the assembled tree, which is read-only.
 ///
-/// This adds `verify-e2e::<i>` shards that split the command list round-robin across the fleet, each
+/// This adds `verify-e2e::<i>` shards that split the command list round-robin (the JOB sizes the cut —
+/// ~2 commands per shard, capped by slots; F852), each
 /// depending on every `verify::<module>` (so the tree is built) and owning no files (so they co-run
 /// race-free, exactly like the per-module verifies). integrate-verify keeps its id and its role as the sole
 /// REPAIR point and final join, and now gates behind the shards instead of running every command itself.
@@ -3853,14 +3855,22 @@ fn fan_e2e_split(
     shards: usize,
     oracle: &[String],
 ) -> usize {
-    // The fleet decides how many ways to CUT; the oracle decides how many pieces EXIST. Taking only
-    // the first left shards that own nothing: the shard prompt's own closing sentence ("if you own no
-    // command ... say so and stop") asks the model to absorb a split the engine could have declined to
-    // make, and an empty shard still costs a fleet slot and a dispatch. Below two real pieces there is
-    // nothing to fan, so the join keeps the end-to-end run itself.
+    // THE JOB DECIDES THE CUT, NOT THE FLEET (F852). The previous rule let the fleet pick the shard
+    // count first (`shards.clamp(2,4)`) with the oracle only capping it — so the SAME 4-command spec
+    // was cut 4 ways on a 6-slot fleet and 2 ways on a 2-slot fleet. MEASURED on the identical spec:
+    // the four 1-command shards cost 1,842-1,856s of fleet task-time (301-758s EACH) while the two
+    // 2-command shards cost 809-870s — and the 4-shard arm's SLOWEST shard (759s) was longer than the
+    // 2-shard arm's (607s). Each shard pays a fixed overhead (read the tree, boot the app) that dwarfs
+    // the per-command work, so more shards is strictly more total work AND no wall gain. The rule that
+    // matches the measured economics: ~two commands per shard (a 1-command remainder shard is allowed;
+    // two 1-command shards at n=2 keep the join lean), fleet-blind DOWNWARD — no fleet size can ever
+    // mint more pieces than commands/2 — and concurrency-capped UPWARD (adversarial-review finding:
+    // a 1-slot fleet must not pay 4 serialized shard overheads on an 8-command oracle; a shard that
+    // cannot run concurrently is pure overhead, so never cut more ways than there are slots to run).
+    // Below two real pieces there is nothing to fan, so the join keeps the end-to-end run itself.
     let shards = match oracle.len() {
         0 => shards.clamp(2, 4),
-        n => shards.clamp(2, 4).min(n),
+        n => n.div_ceil(2).clamp(2, 4).min(n).min(shards.max(2)),
     };
     if shards < 2 {
         return 0;
@@ -8588,13 +8598,16 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(skeleton_count_clause(2, true).contains("usually 2 to 2x 2"));
         assert!(skeleton_count_clause(6, true).contains("usually 6 to 2x 6"));
         assert!(skeleton_count_clause(2, false).contains("about 4-6"));
-        // And the arm ships OFF — the causal claim behind it is measured only as a correlation.
+        // F853: config None now resolves ON (unwrap_or(true) at both gate sites) — the fleet-scaled
+        // ask only ever binds inflationary, so job-sized is the standing default and the env/config
+        // carries the opt-OUT. The serde default stays None so an explicit config choice is visible.
         assert_eq!(SwarmConfig::default().spec_sized_plan, None);
     }
 
-    /// The fleet decides how many ways to CUT; the oracle decides how many pieces EXIST. A shard that
-    /// owns nothing still costs a dispatch and a fleet slot, and makespan is the MAX shard — so cutting
-    /// past the number of real pieces buys idle shards, never a shorter critical path.
+    /// F852: the JOB decides how many pieces exist (~2 commands per shard), the fleet only caps how
+    /// many can run concurrently. A shard that owns nothing still costs a dispatch and a fleet slot,
+    /// and makespan is the MAX shard — so cutting past the number of real pieces buys idle shards,
+    /// never a shorter critical path.
     #[test]
     fn the_fan_never_cuts_into_more_pieces_than_the_oracle_has() {
         let plan_src = r#"{"subtasks":[
@@ -8619,10 +8632,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             4,
             "an empty oracle must behave exactly as before"
         );
-        // The real bed: 4 advertised endpoints, a 6-slot fleet. The clamp already lands on 4, so this
-        // guard is INERT here — it is a guard, not the treatment, and must not be credited as one.
-        assert_eq!(fan(6, &items(4)), 4);
-        // A fleet wider than the surface stops at the surface instead of minting empty shards.
+        // F852: the JOB decides the cut at ~2 commands per shard, fleet-blind DOWNWARD (no fleet
+        // can mint more pieces than commands/2 — the old fleet-first rule cut the same 4-command
+        // oracle 4 ways on 6 slots for 2.2x the task-time and a LONGER slowest shard) and
+        // concurrency-capped UPWARD (a 1-2 slot fleet must not pay 4 serialized shard overheads
+        // on an 8-command oracle — the mirrored quadrant of the same overhead pathology).
+        assert_eq!(fan(6, &items(4)), 2);
+        assert_eq!(
+            fan(2, &items(4)),
+            2,
+            "the measured bed: same cut on 2 or 6 slots"
+        );
+        assert_eq!(fan(6, &items(8)), 4);
+        assert_eq!(
+            fan(2, &items(8)),
+            2,
+            "no more shards than slots to run them"
+        );
+        assert_eq!(
+            fan(1, &items(8)),
+            2,
+            "a 1-slot fleet still gets the lean 2-cut"
+        );
+        assert_eq!(fan(6, &items(6)), 3);
+        // A surface of two still fans (the join stays lean) — one command per shard is the floor.
         assert_eq!(fan(6, &items(2)), 2);
         assert_eq!(fan(3, &items(2)), 2);
         // One advertised command is not a partition at all — decline and let the join run it.
@@ -10345,6 +10378,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // run's cap, or it stops being a repair of a broken value and becomes a silent policy change.
         assert_eq!(complete_cap_fitting_rounds(2400, rounds, fix, def), 2400);
         assert_eq!(complete_cap_fitting_rounds(3000, rounds, fix, def), 3000);
+
+        // F856: a ≥2×-ref tree legally scales the per-fix cap to 2400, and the lift is now fed the
+        // SCALED value — the default 3000 must rise to fit two scaled rounds, or round 1 becomes
+        // unreachable on exactly the trees that need repair most (the guard's original defect, one
+        // scale factor later).
+        assert_eq!(complete_cap_fitting_rounds(3000, rounds, 2400, def), 4800);
 
         // An operator who deliberately raised it keeps their number; lifting is a floor, never a set.
         assert_eq!(complete_cap_fitting_rounds(5000, rounds, fix, def), 5000);
@@ -15360,7 +15399,11 @@ impl GooseAgentDispatcher {
         };
         let count_clause = if swarm_gate_cfg(
             "GOOSE_SWARM_SPEC_SIZED_PLAN",
-            load_config().spec_sized_plan.unwrap_or(false),
+            // DEFAULT ON (F853). The fleet-scaled ask only ever binds in the inflationary direction
+            // (F457: floor the model won't go under, ceiling it drifts toward — +30% modules / +64%
+            // tree bytes on three nodes for +0.05 score) and the serial join then swallows the extra
+            // code. Task existence is the spec's property; the fleet keeps concurrency only.
+            load_config().spec_sized_plan.unwrap_or(true),
         ) {
             spec_sized_count_clause()
         } else {
@@ -16831,10 +16874,11 @@ impl GooseAgentDispatcher {
         let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            There are {worker_count} PARALLEL WORKER SLOTS — decompose into MANY small INDEPENDENT subtasks \
-            (split by file / module / feature) and aim for AT LEAST {worker_count} independent subtasks (one per SLOT; more is better) \
-            with NON-OVERLAPPING files and NO ordering dependency, so no worker sits idle. Only add a dependency when a subtask genuinely \
-            needs another's output; a wide independent set is the goal.\n\
+            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into small INDEPENDENT subtasks \
+            (split by file / module / feature) with NON-OVERLAPPING files and NO ordering dependency, so subtasks can run in parallel. \
+            Size the decomposition to the JOB, never to the fleet: one subtask per distinct concern the spec names — do NOT add \
+            subtasks to fill idle slots, and do NOT merge distinct concerns because the fleet is small. Only add a dependency when a \
+            subtask genuinely needs another's output; an independent set is the goal.\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
             model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
             files (paths it owns; non-overlapping across parallel subtasks).\n\
@@ -20614,17 +20658,21 @@ fn default_complete_cap_secs() -> u64 {
 /// LIFT, do not refuse. A cap too small for its own rounds is a stale value rather than an intent, and by
 /// the time this is known the run is mid-flight holding a red app. Lifting costs at most the rounds the
 /// operator already asked for; refusing throws the build away. It lifts to `default_cap` — the budget the
-/// engine already computed for these rounds, verify headroom included — rather than to a fresh number
-/// invented here. An explicit 0 means "no cap" and is honoured; a cap that already fits is returned
-/// untouched, so this can only ever raise a budget that cannot do its own job.
+/// engine already computed for these rounds, verify headroom included — or to `rounds × fix_cap` when even
+/// the default cannot fit them (F856: the per-fix cap now scales to 2× with tree bytes, so two scaled
+/// rounds can legitimately need 4800s against a 3000s default — budgeting the static value reinstated the
+/// exact unreachable-round defect this function exists to prevent, one scale factor later). An explicit 0
+/// means "no cap" and is honoured; a cap that already fits is returned untouched, so this can only ever
+/// raise a budget that cannot do its own job.
 fn complete_cap_fitting_rounds(resolved: u64, rounds: u64, fix_cap: u64, default_cap: u64) -> u64 {
     if resolved == 0 {
         return 0;
     }
-    if resolved >= rounds.saturating_mul(fix_cap) {
+    let need = rounds.saturating_mul(fix_cap);
+    if resolved >= need {
         resolved
     } else {
-        default_cap.max(resolved)
+        default_cap.max(resolved).max(need)
     }
 }
 
@@ -24133,9 +24181,16 @@ impl GooseAgentDispatcher {
         let mut req = req;
         req.speculative = true;
         req.all_files = fr.all_files.clone();
+        // F856: the twin's cap scales with the tree it must read+repair (fix_cap_secs_scaled —
+        // measured from `fr.all_files`, the exact list in hand, never the OnceCell the fresh
+        // wave dispatcher provably never fills). An empty/unreadable list sums to 0 bytes and
+        // the scale helper returns the base unchanged — old behavior exactly.
+        let root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
+        let fix_cap = fix_cap_secs_scaled(&root, &fr.all_files);
         self.events.write_value(serde_json::json!({
             "event": "complete_fix_dispatched", "path": "sched",
             "round": fr.round, "task_id": req.task_id, "baseline_findings": baseline,
+            "fix_cap_secs": fix_cap,
         }));
         let started = std::time::Instant::now();
         let guard = FixShadowGuard {
@@ -24144,7 +24199,7 @@ impl GooseAgentDispatcher {
             armed: true,
         };
         let ran = tokio::time::timeout(
-            std::time::Duration::from_secs(fix_cap_secs()),
+            std::time::Duration::from_secs(fix_cap),
             self.run_task_inner(req.clone()),
         )
         .await;
@@ -24826,6 +24881,13 @@ impl GooseAgentDispatcher {
             "- DON'T OVER-READ the project, but DO read what you are testing: the SOURCE module under \
              test (to get its real signatures) and YOUR OWN test file after you write it. Do not read \
              the rest of the suite or re-read the whole project.\n"
+        } else if kind_prompt_on && read_only_shard {
+            // A verifier edits nothing, so "read the ONE file you will edit" is wrong-job text for it
+            // (F851: ~10 read-only shards per run carried edit-shaped rules their tailored owned_part
+            // had to override). Same gate as the owned_part subtraction — one predicate, not two.
+            "- READ ONLY WHAT YOUR TASK NAMES. You edit nothing: open the files your task statement \
+             names, run the commands it names, and nothing else. The manifest above is a map, not a \
+             reading list.\n"
         } else if kind_prompt_on {
             "- DON'T OVER-READ. You ALREADY have the file manifest and your dependencies' specs above — \
              that is enough to start. Read AT MOST the ONE file you will edit, then ACT. Read one \
@@ -24889,16 +24951,24 @@ impl GooseAgentDispatcher {
             //
             // So report WHICH VARIANT EACH SECTION TOOK. A reader can then say exactly which sections a
             // kind received generic text for, instead of inferring a rate from one bit.
+            // F851: each label mirrors its section's DELIVERY branch exactly. The old owned_part
+            // label never branched on is_test_author while the delivered owner_body did — so every
+            // test-author dispatch read "generic" over a tailored WRITE-FIRST section, manufacturing
+            // 12 of 23 "mismatches" in one audited run out of the label alone.
             "rules_sections": {
                 "owned_part": if read_only_shard && kind_prompt_on {
                     "read-only-shard"
                 } else if req.owned_files.is_empty() {
                     "owns-nothing"
+                } else if kind_prompt_on && is_test_author {
+                    "test-author"
                 } else {
                     "generic"
                 },
                 "reading_rules": if kind_prompt_on && is_test_author {
                     "test-author"
+                } else if kind_prompt_on && read_only_shard {
+                    "read-only-shard"
                 } else if kind_prompt_on {
                     "kind-generic"
                 } else {
@@ -24906,6 +24976,8 @@ impl GooseAgentDispatcher {
                 },
                 "stopping_rules": if kind_prompt_on && is_test_author {
                     "test-author"
+                } else if kind_prompt_on && read_only_shard {
+                    "read-only-shard"
                 } else if kind_prompt_on {
                     "kind-generic"
                 } else {
@@ -24918,6 +24990,12 @@ impl GooseAgentDispatcher {
             "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
              module. Run it once to prove it collects and executes — a test file with a SyntaxError or \
              a bad import is worse than none. Then finish; do not chase coverage.\n"
+        } else if kind_prompt_on && read_only_shard {
+            // "STOP WHEN GREEN" tells a verifier to chase a pass it must never manufacture (F851).
+            // Its job ends at one honest pass, red or green.
+            "- STOP AFTER ONE HONEST PASS. Run the named checks ONCE, report exactly what each \
+             printed (verbatim output, pass or fail), then call final_output. There is nothing for \
+             you to fix and no green to chase — a failing check reported faithfully IS the job done.\n"
         } else if kind_prompt_on {
             "- STOP WHEN GREEN. The MOMENT your file's tests pass, call final_output and finish. Do NOT \
              re-run pytest more than ~2 times, and pick a sensible default for anything UNSPECIFIED \
@@ -26877,6 +26955,27 @@ fn fix_cap_secs() -> u64 {
         .clamp(120, 3600)
 }
 
+/// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
+/// the file list the fix phase itself carries — NOT from the dispatcher's `sink_tree_files`
+/// OnceCell, which the adversarial review proved is never filled on the fresh fix-wave
+/// dispatcher (set_sink_tree_files has one call site, on the run-1 instance), so an OnceCell
+/// read here is a verified no-op. One helper owns the geometry for every fix dispatch site;
+/// the complete-cap lift budgets rounds against this same value so the later rounds stay
+/// reachable (MEASURED: three twins died at the flat 1200 on a 64KB tree — 1230/1314/1320s,
+/// the winner's first write at 900s — while the sink beside them scaled 1800→3600).
+fn fix_cap_secs_scaled(root: &std::path::Path, files: &[String]) -> u64 {
+    let ref_bytes = std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(|| load_config().sink_cap_ref_bytes);
+    let bytes: u64 = files
+        .iter()
+        .filter_map(|f| std::fs::metadata(root.join(f)).ok())
+        .map(|m| m.len())
+        .sum();
+    scaled_sink_cap(fix_cap_secs(), bytes, ref_bytes)
+}
+
 /// Name a MALFORMED tool call for the digest. There is no parsed call to read a name from — the name may
 /// itself be the invalid part — so recover it from the provider's error text when it quotes one, and fall
 /// back to a marker. Keeps the panel/judge from showing an empty lane for a call that never ran.
@@ -28190,7 +28289,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
             "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(true)),
-            "spec_sized_plan": swarm_gate_cfg("GOOSE_SWARM_SPEC_SIZED_PLAN", load_config().spec_sized_plan.unwrap_or(false)),
+            "spec_sized_plan": swarm_gate_cfg("GOOSE_SWARM_SPEC_SIZED_PLAN", load_config().spec_sized_plan.unwrap_or(true)),
             "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
                 .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
                 .unwrap_or(true),
@@ -28301,6 +28400,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let mut user_decisions = String::new();
     let mut retarget_round = 0u32;
     let mut effective_best_of_n = best_of_n;
+    // F855: how many DISTINCT drafts this fleet can physically produce — the same dedup
+    // `parallel_plan` applies before drafting (planner + slot models, deduped by model name, the
+    // planner IS a worker). The Redraft rung grows `effective_best_of_n`, but the draft fan is
+    // clamped to this number, so growing past it is a plain re-roll of the same models: MEASURED,
+    // a run requested best_of_n 3→4, got `clamped=true`, drafted the same 3 models again, and paid
+    // 756s for a structurally identical plan. `can_grow_drafts` must mean "a draft that does not
+    // exist yet CAN exist", not "the counter is below its ceiling".
+    let distinct_draft_models = {
+        let mut seen = std::collections::HashSet::new();
+        std::iter::once(cfg.planner_model.clone())
+            .chain(fleet_slot_models(&devices))
+            .filter(|m| seen.insert(m.clone()))
+            .count()
+    };
     let mut best_plan: Option<(String, PlanConf)> = None;
     // GOOSE_SWARM_RETARGET_STALL_GUARD: stop the redraft ladder once a round FAILS TO BEAT the best confidence
     // already measured, instead of climbing to RETARGET_MAX_N on faith.
@@ -28609,7 +28722,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         ) || can_research;
                         match retarget_action(
                             &plan_conf,
-                            effective_best_of_n < RETARGET_MAX_N,
+                            effective_best_of_n < RETARGET_MAX_N
+                                && effective_best_of_n < distinct_draft_models,
                             may_research,
                         ) {
                             RetargetAction::Redraft => {
@@ -29716,24 +29830,32 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or_else(|| load_config().complete_cap_secs);
+        // F856 geometry: the phase budget must fit rounds of the SCALED per-fix ceiling, not the
+        // static base — a ≥2× tree's twin may legally run to 2× fix_cap_secs, and budgeting the
+        // static value reinstates the exact "later rounds unreachable" defect the lift exists to
+        // prevent (adversarial-review finding). One value, one helper, engine-side — never a
+        // regime-file patch.
+        let fix_cap_eff = fix_cap_secs_scaled(
+            &std::env::current_dir().unwrap_or_default(),
+            &smoke_all_files,
+        );
         let cap_secs = complete_cap_fitting_rounds(
             cap_requested,
             rounds as u64,
-            fix_cap_secs(),
+            fix_cap_eff,
             default_complete_cap_secs(),
         );
         if cap_secs != cap_requested {
             eprintln!(
                 "complete: repair budget {cap_requested}s cannot fit its own {rounds} fix round(s) of up \
-                 to {}s — raised to {cap_secs}s so the later rounds are reachable",
-                fix_cap_secs()
+                 to {fix_cap_eff}s — raised to {cap_secs}s so the later rounds are reachable",
             );
             sink.write_value(serde_json::json!({
                 "event": "complete_cap_lifted",
                 "requested_secs": cap_requested,
                 "effective_secs": cap_secs,
                 "rounds": rounds,
-                "fix_cap_secs": fix_cap_secs(),
+                "fix_cap_secs": fix_cap_eff,
             }));
         }
         let cap_deadline = Some(cap_secs)
@@ -30363,7 +30485,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             );
                             let ran = tokio::select! {
                                 r = tokio::time::timeout(
-                                    std::time::Duration::from_secs(fix_cap_secs()),
+                                    std::time::Duration::from_secs(fix_cap_eff),
                                     me.run(req),
                                 ) => Some(r),
                                 // A sibling twin already landed a strictly-better tree; stop
@@ -30668,7 +30790,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     progress.clone(),
                                 );
                                 let ran = tokio::time::timeout(
-                                    std::time::Duration::from_secs(fix_cap_secs()),
+                                    std::time::Duration::from_secs(fix_cap_eff),
                                     me.run(req),
                                 )
                                 .await;
@@ -30777,7 +30899,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         neighborhood: Vec::new(),
                     };
                     let ran = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_secs()),
+                        std::time::Duration::from_secs(fix_cap_eff),
                         smoke_fix_dispatcher.run(req),
                     )
                     .await;
@@ -30855,7 +30977,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
                 let fix_started = std::time::Instant::now();
                 let fix_out = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs()),
+                    std::time::Duration::from_secs(fix_cap_eff),
                     smoke_fix_dispatcher.run(fix_req),
                 )
                 .await;

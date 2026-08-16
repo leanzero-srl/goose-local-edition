@@ -472,7 +472,11 @@ ARMS = [
     },
     {
         "name": "spec_sized_plan",
-        "env": {"GOOSE_SWARM_SPEC_SIZED_PLAN": "1"},
+        # F853: the engine default flipped ON — env=1 is now IDENTICAL to baseline, so this arm is
+        # inert as written; the informative direction inverted to env=0 (measures the OLD fleet-
+        # scaled ask as the treatment). Any queued/archived spec_sized_plan rows from before F853
+        # measured the then-treatment against the then-baseline and stay interpretable via build id.
+        "env": {"GOOSE_SWARM_SPEC_SIZED_PLAN": "0"},
         "gate": "BOTH branches of skeleton_count_clause size the plan to the FLEET, not the JOB: the "
                 "target is derived from worker_count, which is SLOTS. The same spec is therefore "
                 "asked for 'usually 2 to 4' modules on one node and 'usually 6 to 12' on three. "

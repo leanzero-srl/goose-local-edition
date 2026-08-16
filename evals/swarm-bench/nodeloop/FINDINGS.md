@@ -19726,3 +19726,125 @@ binaries, so BENCH_ROLLING=1 now gates both complete() and curve usable() (score
 the comparability rail; every row records its build). The r0-redo runs on F848 (composite
 shadow grading's first live unit — its waves now measure smoke+contract on one ruler);
 supervisor restart at its end activates rolling for the queue.
+
+## F850 — r0-redo SACRIFICED at ~20 min for the F851 batch (Mihai: find → stop → implement → restart); no ledger pair — the row re-runs on the new binary under rolling
+
+Mihai's directive ("hunt deeper... once you find something, just stop the fleet, do the
+implementation, restart") landed while r0-redo was 20 min into its F848 unit. The four-hunter
+deep sweep (wf_81e0d1ac) returned enough confirmed structural taxes to supersede the binary
+mid-unit, so the unit was stopped un-scored (kill artifact by design, not measurement loss —
+r0 re-queues on the new build under BENCH_ROLLING). The composite-grading question F848 was
+built to answer transfers to the next wave that fires on any unit of the new binary.
+
+## F851 — kind_mismatch 70-81% DECOMPOSED: a saturated audit predicate + a wrong telemetry label + one real prompt defect; da-4 splits the metric, the engine fixes the label and the defect
+
+The number that rode every [done] line unexplained is three things, none of them "80% of
+dispatches misinstructed": (1) SATURATED METRIC — da-3 counted any non-implementer dispatch
+with any generic-labelled section, and every non-implementer kind always had one, so the
+headline arithmetically equalled the plan's kind mix (verified to the decimal on 10 rows).
+(2) LABEL BUG — the rules_delivered owned_part label never branched on is_test_author while
+the DELIVERED owner_body did: 12 of 23 "mismatches" in the audited run were tailored prompts
+wearing a generic label. (3) THE REAL DEFECT — ~10 read-only verify shards per run received
+edit-shaped reading/stopping rules ("read the ONE file you will edit", "STOP WHEN GREEN")
+contradicting their own owned_part ("you own no file and must WRITE NO file"). SHIPPED:
+da-4 (mismatch = tailored-variant-exists-but-generic-delivered, can reach zero; new
+untailored_sections_pct names the coverage gap; label artifacts counted separately), the
+owned_part/reading/stopping labels now mirror their delivery branches exactly, and read-only
+shards get their own reading rule ("READ ONLY WHAT YOUR TASK NAMES") and stopping rule
+("STOP AFTER ONE HONEST PASS — a failing check reported faithfully IS the job done").
+
+## F852 — fan_e2e_split cut by FLEET SIZE, not job size: the same 4-command spec became 4 shards on n3 vs 2 on n1, ~16 min extra fleet task-time per n3 run for a LONGER slowest shard; the cut is now job-sized and fleet-blind
+
+Measured on the identical spec: n3's four 1-command shards cost 1,842-1,856 s task-time
+(301-758 s EACH — per-shard fixed overhead of reading the tree and booting the app dwarfs the
+per-command work) while n1's two 2-command shards cost 809-870 s, and n3's slowest shard
+(759 s) exceeded n1's (607 s) — more parallelism, more total work, WORSE wall. The engine
+picked the cut from slots (`shards.clamp(2,4)` with the oracle only capping). SHIPPED: the
+oracle decides — `n.div_ceil(2).clamp(2,4).min(n)`, at least two commands per shard, same
+spec ⇒ same cut on one node or a hundred; the no-oracle fallback keeps the fleet heuristic.
+Test updated to pin the invariant (fan(6,4)==fan(2,4)==2; fan(x,8)==4).
+
+## F853 — spec_sized_plan DEFAULT ON: the fleet-scaled module ask ("6 to 12" on n3 vs "2 to 4" on n1, same spec) only ever binds inflationary; task existence is the spec's property
+
+The four freshest product-regime runs happened to converge on 4 modules both arms — but the
+ask was live in all of them (spec_sized_plan false everywhere) and F457 measured what happens
+when it binds: +30% modules, +64% tree bytes, +0.05 score, and the serial join swallowing the
+growth. The fleet-blind clause existed, tested, gated OFF as an arm. Flipped ON at both gate
+sites; the fallback single-planner prompt loses its "AT LEAST {worker_count} subtasks (one
+per SLOT; more is better)" sentence for the same job-sized language. The fleet decides
+concurrency; it no longer decides how many tasks exist.
+
+## F854 — the redraft ladder RE-BOUGHT A PLAN THE RUN ALREADY HELD: 756 s for a structurally identical plan (struct_conv 100 both rounds, best_of_n growth silently clamped); diverse_plan armed — the run's own shadow said skip
+
+n3-r1's ladder anatomy (hunter-verified from events): agreement 82 < effective floor 85 (the
++5 weak-planner bump IS the entire 3-point margin — a heuristic about ASKING that instead
+bought a redraft), remedy "best_of_n 3→4" clamped back to 3 (the fleet has 3 distinct
+models — the rung was a re-roll of the same models at most a notch cooler), round 2 shipped
+the same 8 roles (README task dropped, one rename), and agreement "rose" 82→100 by sampling
+luck on a quantized metric. The run's own shadow instrument said would_skip_ladder=true
+BEFORE the spend. GOOSE_SWARM_DIVERSE_PLAN=1 now in REGIME (structural convergence is
+pool-invariant by construction; the enforce branch runs the same predicate the shadow
+computes). Residual named honestly: the archive's observational read is ladder +0.035 mean
+at 0.39 SE (losing on median) — quality watched on the next pairs.
+
+## F855 — can_grow_drafts now means "a draft that does not exist yet CAN exist": the Redraft rung requires distinct-model headroom, not counter headroom
+
+The ladder's grow condition was `effective_best_of_n < RETARGET_MAX_N` (6) while the draft fan
+clamps at distinct models (3 on this fleet) — so rungs 4-6 could only ever re-roll. The call
+now ANDs `effective_best_of_n < distinct_draft_models` (same dedup parallel_plan applies:
+planner + slot models by name — the planner IS a worker). When no new draft can exist the
+Agreement arm routes to Ask, which is a no-op at the ladder site: the run proceeds with the
+plan it has instead of paying ~12 fleet-minutes for sampling noise. n1-inert (agreement is
+None at one draft; Redraft was already unreachable).
+
+## F856 — the fix-twin cap now scales with the tree it must repair (the sink's own factor): ALL THREE twins died at the flat 1200 s on the 64 KB tree while the sink beside them scaled 1800→3600
+
+n3-r1's wave: twins killed at 1230/1314/1320 s (agent_ok=false, not early-close), the winner's
+first write at 900 s — ~300 s of actual repair fit under the cap and the run survived on zero
+margin. r0's 47 KB tree: fixes closed at 579/661 s, cap untouched. The engine already computes
+a tree-bytes scale for the sink in the same phase; run_fix_task now applies the same factor
+(scaled_sink_cap, ≤2×) to the twin timeout, emits the effective cap on
+complete_fix_dispatched, and REGIME raises GOOSE_SWARM_COMPLETE_CAP_SECS to 5000 so two
+scaled rounds stay reachable (a ceiling, not a spend — measured phase use 1302-1493 s).
+Pre-sink the OnceCell is empty → bytes 0 → base cap unchanged (old behavior exactly).
+
+## F857 — hunted, judged, and DEFERRED with reasons (the hunt's residue, so it is queued and not re-discovered)
+
+(a) no_first_write → same-shape retry RESET the split clock: web-assets burned 1037 s before
+its split children existed (454 s proven-idle attempt, then 583 s re-earning split
+eligibility). Fix shape is judged right (route a no-first-write kill on a multi-file task
+straight to split evaluation / carry elapsed across attempts) but it is n=1 evidence touching
+judge-verdict routing — queued for its own contained change, not this batch. (b) Replanner
+orphan leak: ~17 min of injected edge-case tests landed as 5 files pytest never collects
+(n3-only by construction — idle_capacity≥2 arms it); the tail gate bounded it; the contained
+fix (replan-injected test tasks must extend collected files) queued. (c) complete rounds=2
+stopped with ~1700 s unspent on r0 — but findings were FLAT 2→2 and the twin-vs-gate oracle
+disagreement that made those rounds blind is exactly what F848's composite grading already
+fixed; budget-based continuation only pays when rounds are PROGRESSING out of count, so it
+waits for post-F848 evidence. (d) ask_floor's +5 weak-bump misapplied to the retarget gate:
+real class, but F854+F855 already close the observed path — splitting bump-for-ask from
+bump-for-retarget queued behind their readout. (e) 420 stall kill and 300 split threshold:
+both AFFIRMED by the fresh evidence (the constants the G-batch suspected are, on these runs,
+binding correctly).
+
+## F858 — the adversarial review CAUGHT F856 AS A NO-OP before it shipped: the fresh fix-wave dispatcher's sink_tree_files OnceCell is never filled, so the "scaled" cap always read 0 bytes and fell back to the flat 1200
+
+The review's blocking finding, verified at the call-site level: set_sink_tree_files has ONE
+call site, on the run-1 dispatcher; the fix wave builds a FRESH dispatcher (its comment says
+the freshness is load-bearing) and run_fix_task executes on that instance — my hunk's own
+comment ("reads the OnceCell the sink dispatch filled") was true of the wrong object. The
+measured failure would have reproduced byte-identically, wearing a fix's name — the F816
+class (fixed path, untriggered) prevented at review instead of discovered two runs later.
+REWORKED: one helper (fix_cap_secs_scaled) sums bytes over the file list the fix phase itself
+carries (fr.all_files / smoke_all_files) — no OnceCell, one geometry owner — and now covers
+ALL FOUR complete-phase dispatch sites (sched twin, wave twin, cross-file, serial), not just
+the one the batch had patched. The review's geometry findings landed with it: the complete-cap
+lift is fed the SCALED per-fix value engine-side and lifts to rounds×fix_cap when even the
+default cannot fit (test pins 3000→4800 at scale 2×), so the REGIME COMPLETE_CAP pin was
+REMOVED (a regime pin would have masked the engine mechanism — the F837 lesson, avoided this
+time). Also from review: the F852 cut gains an UPWARD concurrency cap (a 1-slot fleet must
+not pay 4 serialized shard overheads on an 8-command oracle) — fleet-blind downward,
+slot-capped upward, test pins both directions; the sweep's spec_sized_plan arm inverted to
+env=0 (the old fleet-scaled ask becomes the treatment); comment/doc drift fixed at four
+sites. Residual accepted: smoke-fix and wire-fix (separate phases) keep the static cap —
+different tree context, queued. 236 swarm tests green, clippy clean.

@@ -46,7 +46,7 @@ import sys
 # da-2: kind-mismatch is MEASURED from the engine's `rules_delivered` event instead of
 # reading UNMEASURED whenever kind_prompt is ON. A stale row does NOT need its unit re-run —
 # `reaudit.py` recomputes the audit from the stored run.jsonl and rewrites the row in place.
-AUDIT_VERSION = "da-3"
+AUDIT_VERSION = "da-4"
 
 # A dispatch's KIND is decided by the files it owns, because that is what the engine itself keys
 # its behaviour on (owns_nothing, test relaxation, entry wiring). Order matters: a task owning
@@ -238,17 +238,62 @@ def audit(path) -> dict:
     # The engine now emits `rules_sections` {owned_part, reading_rules, stopping_rules} naming the
     # variant each section took. Until a run carries it the honest answer for a lever-ON run is
     # UNMEASURED — never a rate derived from one bit of a three-bit question.
+    extra: dict = {}
     rules_events = [e for e in events if e.get("event") == "rules_delivered"]
     sectioned = [e for e in rules_events if e.get("rules_sections")]
     if sectioned:
+        # da-4 (F851). da-3's any-generic predicate was SATURATED: every non-implementer kind always
+        # carried at least one generic-labelled section (test-authors because the owned_part LABEL
+        # never branched on is_test_author while the delivered text did; read-only shards because no
+        # reading/stopping variant existed), so the headline arithmetically equalled the plan's kind
+        # mix (70-81% on every row, verified to the decimal on 10 rows) and could never move. Third
+        # incarnation of the same trap (da-1 hardcoded 0, da-2 over-counted off one bit).
+        # Two honest numbers instead of one saturated one:
+        #   kind_mismatch_pct     — a tailored variant EXISTS for (kind, section) and a generic one
+        #                           was delivered anyway. Can reach zero; measures the lever.
+        #   untailored_sections_pct — non-implementer sections for which the engine possesses NO
+        #                           variant (an engine coverage gap, not a lever failure).
+        # The (test-author, owned_part)=='generic' reading on builds before F851 is the LABEL bug,
+        # not the prompt (delivery branches on the same predicate as the kind field), so it is
+        # counted as a label artifact, never a mismatch.
         GENERIC = {"generic", "kind-generic", "off-generic"}
-        mismatched = sum(
-            1 for e in sectioned
-            if e.get("kind") != "implementer"
-            and any(v in GENERIC for v in (e["rules_sections"] or {}).values()))
+        TAILORED_EXISTS = {
+            ("test-author", "owned_part"), ("test-author", "reading_rules"),
+            ("test-author", "stopping_rules"),
+            ("read-only-shard", "owned_part"), ("read-only-shard", "reading_rules"),
+            ("read-only-shard", "stopping_rules"),
+            ("owns-nothing", "owned_part"),
+        }
+        mismatched = 0
+        label_artifact_sections = 0
+        untailored_sections = 0
+        noimpl_sections = 0
+        for e in sectioned:
+            kind = e.get("kind")
+            if kind == "implementer":
+                continue
+            hit = False
+            for name, v in (e.get("rules_sections") or {}).items():
+                noimpl_sections += 1
+                if v not in GENERIC:
+                    continue
+                if kind == "test-author" and name == "owned_part":
+                    label_artifact_sections += 1
+                elif (kind, name) in TAILORED_EXISTS:
+                    hit = True
+                else:
+                    untailored_sections += 1
+            if hit:
+                mismatched += 1
         mismatch_n = len(sectioned)
-        basis = ("MEASURED from rules_sections: a dispatch is mismatched when its kind is not "
-                 "implementer and at least one prompt section took a generic variant")
+        extra["untailored_sections_pct"] = (
+            round(100 * untailored_sections / noimpl_sections, 1) if noimpl_sections else None)
+        extra["label_artifact_sections"] = label_artifact_sections
+        basis = ("MEASURED (da-4): mismatched = a tailored variant exists for the kind+section and a "
+                 "generic one was delivered. Sections with no engine variant are untailored_sections_pct "
+                 "(coverage gap, not lever failure); pre-F851 builds mislabel the test-author owned_part "
+                 "as generic (label_artifact_sections) and read-only reading/stopping variants only exist "
+                 "from F851 on, so older builds read mismatched there by vocabulary, not by regression")
     elif rules_events and kind_prompt_on:
         mismatched, mismatch_n = None, len(rules_events)
         basis = ("UNMEASURED: rules_delivered carries only `tailored`, which reports the test-author "
@@ -328,6 +373,7 @@ def audit(path) -> dict:
                               if (mismatch_n and mismatched is not None) else None),
         # Says WHERE the number came from, so a reader never mistakes an inference for a measurement.
         "kind_mismatch_basis": basis,
+        **extra,
         "kind_counts_from_events": event_kinds,
         "kind_source_disagreement": kind_disagreement,
         "test_author_contradiction_count": contradiction,
