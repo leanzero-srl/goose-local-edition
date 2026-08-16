@@ -19656,3 +19656,25 @@ now begins: same binary, same scorer, 8 units; quality pairs form per rep as n3 
 early-call decides an axis at 2 n3 losses or 7 n3 wins. The bar the fleet must clear for the
 "clear and undeniable" verdict: beat these per-rep numbers AND the wall (n1 wall = capped 150
 min in 6 of 8 rows — n3 finishing at ~2h with higher quality would take BOTH axes).
+
+## F845 — PAIR 1: BOTH AXES TO THE SWARM — n3 0.7474 GREEN in 116 min vs n1 0.5666 at the 150-min cap; and the first full wall-anatomy names the next levers
+
+The campaign's first fully-GREEN product-regime run: baseline-n3-r0 passed verify round 2 with
+ZERO findings — all 16 tasks done, two repair waves drove 4→1→0 findings in-run, and the page
+RENDERS (J 0.75, V 0.92, P 1.00; the frontend that n1 built at 0.87-V, n3 now matches with a
+working sync journey on top). Score 0.7474 vs its n1 twin's capped 0.5666: quality pair 1 → n3.
+Wall 116 min finished vs n1's 9000-s cap: speed pair 1 → n3. Curve: 1/1 both axes. (Correction
+folded in: n1-r7 was a CAP row, not clean.) THE FRESH ANATOMY (live-read of this very run):
+prologue 25.6% (mostly 3/3-parallel now), DAG 44.7% at avg 2.32/3 occupancy, gates+fix 29.7%.
+The measured non-conversion, ranked: (1) DEAD ATTEMPTS 2496 node-s = 22.6% of DAG busy — four
+judge spec-drift re-dispatches, first attempts burned 482-854 s before the kill (the judge ACTS
+now; the cost is late detection); (2) FIX-WAVE LATE CLOSE — both waves' winners finished 5-7.5
+min before the wave closed, and two 1200-s capped twins converted nothing (spec_repair races
+close at the SLOWEST twin); (3) the 697-s one-node DAG tail behind the test-vendorsync critical
+path; (4) 290 s of full-fleet prologue idle. Lever truth (code-read): SPEC_REPAIR and
+SINK_SHARD and TAIL_REVIEW already ON; COMPLETE_PARALLEL, TESTGEN, SPECULATE (experimental),
+SUPERVISION_POOL OFF — all runtime env flips, no rebuild; pipelined-prologue DOES NOT EXIST
+(new code); best_of_n_skeletons is config-only (no env). NEXT BIG (evidence-ranked, for the
+post-verdict batch): fix-wave EARLY-CLOSE (first strictly-better twin wins, cancel the rest)
++ EARLIER drift detection with guided retry — together they attack ~4900 non-converting
+node-seconds per run (~27 node-minutes, a fifth of the n3 wall).
