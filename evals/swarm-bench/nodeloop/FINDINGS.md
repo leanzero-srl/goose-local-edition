@@ -19935,3 +19935,19 @@ is LONGER than the old 1919s but the old runs died flat at 2 findings — this o
 twice; spend-while-converting is the design. Phase audit rides the row (pa-1's first scored
 entry). THE PAIR: 0.769 vs n1-r0 0.5666 — quality to n3 (+0.20), speed to n3 (finished vs
 cap). CURVE: quality 2-1 n3, speed 3-0 n3. Rolling continues to r1.
+
+## F861 — pair r1: 0.6085/89.7 min — the FASTEST n3 unit ever and the first live stall-exit save (~25 min); quality loss keeps the curve at 1 win / 1 loss (one more loss early-calls)
+
+n3-r1 on the F859 binary: 0.6085 / 89.7 min — the fastest n3 unit the campaign has ever run,
+and the first live firing of the stall exit: repair rounds went 6→6 flat and the loop stopped
+at 959s instead of buying a second 1,599-2,400s wave (the old binary would have burned it for
+nothing — ~25 min saved on a run that wasn't converting). But the B-family lottery struck (6
+findings held — the vendor/sync class) and the score paid: 0.6085 vs n1-r1's capped 0.8283.
+CURVE ACCOUNTING, stated precisely: under rolling this row REPLACED the old r1 loss (0.7939),
+so the formal test still holds exactly ONE loss — quality 1/2 pending, NOT an early call; a
+second loss among r2-r7 would early-call NOT-ESTABLISHED. SPEED: 2/2 and walls collapsing
+129→110→90 — the speed axis is being crushed exactly as the north star demands. THE QUALITY
+LOTTERY IS NOW THE WHOLE GAME: the findings-held class (vendor/sync family, 6 held here vs 1
+held on r0's 0.769) is the single blocker between the swarm and dominance on both axes — the
+standing #1 on PHASE-POLISH and the next deep hunt: WHY do the fix waves convert these
+findings on some runs (r0: 3→2→1) and go flat on others (r1: 6→6)?
