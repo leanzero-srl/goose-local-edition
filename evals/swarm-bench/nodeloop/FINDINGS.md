@@ -19642,3 +19642,17 @@ deaths (exit < 0) and sub-10-minute returns. The workhorse idles until the rep-7
 single-unit gabee batch) completes ~10:50, then the full fleet engages for n3. The running
 driver holds the old gate in memory and will re-void r5 at batch close — the operator loop
 re-applies the fixed assembly right after.
+
+## F843-FINAL — the n1 arm complete: mean 0.534, spread 0.19-0.83, and a clean host signature
+
+Eight rows (pin, outcome): r0 0.5666 gabee/cap · r1 0.8283 mihai/cap · r2 0.6867 gabee/cap ·
+r3 0.4794 gabee/cap · r4 0.8021 mihai/red-finish · r5 0.5198 workh/red-finish · r6 0.1867
+gabee/clean · r7 0.1998 gabee. Mean 0.5337; range 0.64 — the single-node wildness the campaign
+predicted, now measured under the product regime. THE HOST SIGNATURE: mihai (this Mac, fastest
+tokens) carries both top rows (0.80-0.83); gabee (slowest) owns both ~0.19 rows — the only
+"clean" finishes, because the slowest node ships the thinnest tree inside the window. A
+single-node swarm's score is substantially a function of WHICH host you give it. The n3 grind
+now begins: same binary, same scorer, 8 units; quality pairs form per rep as n3 rows land;
+early-call decides an axis at 2 n3 losses or 7 n3 wins. The bar the fleet must clear for the
+"clear and undeniable" verdict: beat these per-rep numbers AND the wall (n1 wall = capped 150
+min in 6 of 8 rows — n3 finishing at ~2h with higher quality would take BOTH axes).
