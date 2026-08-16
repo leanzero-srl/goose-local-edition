@@ -69,8 +69,14 @@ def assemble_row(rep: int, pin: str, wall_secs: float) -> dict:
         # the revived sweep's evictor killed every pinned engine and the corpses assembled as
         # void=False. A swarm prologue alone runs 15+ min; an agent that exited non-zero or
         # returned in under 10 minutes did not run a unit, whatever it left on disk.
-        if agent.get("exit") not in (0, None) or (agent.get("secs") or 0) < 600:
-            row["void_reason"] = (f"engine died young (exit {agent.get('exit')}, "
+        # SIGNAL deaths (exit < 0) and sub-10-minute returns are kill artifacts. A POSITIVE
+        # exit code is NOT: the engine exits 1 by design on an honest still-red finish
+        # ("push-to-completion: the built app still fails its verify checks") — that tree is
+        # real, scored, and a measurement. The first version of this gate voided two
+        # legitimate red-finish rows (F844).
+        _exit = agent.get("exit")
+        if (isinstance(_exit, int) and _exit < 0) or (agent.get("secs") or 0) < 600:
+            row["void_reason"] = (f"engine killed or died young (exit {_exit}, "
                                   f"{agent.get('secs')}s) — kill artifact, not a measurement")
             return row
     except Exception as e:

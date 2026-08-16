@@ -19630,3 +19630,15 @@ macOS pressure relief TERMs the fattest processes, which are the engines. If a r
 with the local node active, that seals it and the mitigation is pinning the n1 protocol to
 gabee+workh only (2-wide batches). The n1 arm's emerging story either way: 0.19-0.83 spread,
 and the only way it ever finishes inside 150 min is by shipping a weak tree.
+
+## F844 — exit-1 is an HONEST RED FINISH, not a kill: the young-death gate voided two legitimate rows; fixed, r5 reclaimed at 0.5198
+
+The workhorse "idling" Mihai spotted was r5 ending at 127 min with exit 1 — which turns out to
+be the engine's DESIGNED still-red exit ("push-to-completion: the built app still fails its
+verify checks"), a finished, scored, legitimate unit. My gate treated any non-zero exit as a
+kill: it wrongly voided r2's original 0.724 (dir since recycled, unrecoverable) and r5's
+0.5198 (reclaimed — rep 5 is now DONE, no third attempt). The gate now voids only SIGNAL
+deaths (exit < 0) and sub-10-minute returns. The workhorse idles until the rep-7 retry (a
+single-unit gabee batch) completes ~10:50, then the full fleet engages for n3. The running
+driver holds the old gate in memory and will re-void r5 at batch close — the operator loop
+re-applies the fixed assembly right after.
