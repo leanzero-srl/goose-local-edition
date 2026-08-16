@@ -101,7 +101,7 @@ for defaults is the code, never this file.
 | GOOSE_SWARM_SPECULATE | raw env read [swarm.rs] | session-read | default OFF; Speculated fired 0x in 75+ logs — S7 replaces the rung with test generation; DELETE candidate after S7 lands |
 | GOOSE_SWARM_SPEC_CONTRACT | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SPEC_REPAIR | raw env read [swarm.rs] | BAKED ON | d91fd8b96 — the one use of three nodes this bench found |
-| GOOSE_SWARM_SPEC_SIZED_PLAN | config-default gate [swarm.rs] |  | resolved=false (live run, engine-emitted) |
+| GOOSE_SWARM_SPEC_SIZED_PLAN | config-default gate [swarm.rs] |  | resolved=true — DEFAULT ON since F853 (was an arm; the fleet-scaled ask only binds inflationary). The sweep's spec_sized_plan arm (env=1) is now identical to baseline — an informative arm needs env=0. |
 | GOOSE_SWARM_SPEC_WINS | config-default gate [swarm.rs] |  | resolved=true (live run, engine-emitted) |
 | GOOSE_SWARM_SPIRAL_BREAK_CHARS | raw env read [swarm.rs] |  | resolved=12000 (live run, engine-emitted) |
 | GOOSE_SWARM_SPIRAL_THINKING_CHARS | raw env read [swarm.rs] |  | resolved=0 (live run, engine-emitted) |
