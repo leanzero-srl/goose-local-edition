@@ -19678,3 +19678,22 @@ SUPERVISION_POOL OFF — all runtime env flips, no rebuild; pipelined-prologue D
 post-verdict batch): fix-wave EARLY-CLOSE (first strictly-better twin wins, cancel the rest)
 + EARLIER drift detection with guided retry — together they attack ~4900 non-converting
 node-seconds per run (~27 node-minutes, a fifth of the n3 wall).
+
+## F846 — the daring batch, adversarially reviewed and reworked before a single unit ran on it
+
+Mihai's directives: implement the next-big now, be daring, skip the n1 rerun. SHIPPED (after
+an 11-finding adversarial review of the diff): (1) FIX-WAVE EARLY-CLOSE, reworked on the
+review's four real defects — a claim now requires a fully-ESTABLISHED gate (a port-collision-
+blinded re-verify can no longer kill siblings), the claim ONLY cancels (winner selection stays
+the proven minimum-pick over ALL graded shadows, cancelled twins included — the red-to-green
+class survives and a dead claimant can't discard the round), and the signal is a level-
+triggered CancellationToken (no missed-wakeup race). (2) PYTEST COLLISION RETRY keyed on a
+shared structural predicate (prose-proof) with staggered 5/12/19/26-s backoff (no retry herd).
+(3) scout_docs_mode event fed by the SAME resolver the prompt builder uses (no dual-
+computation drift). (4) TESTGEN armed in the regime (idle-slot test generation, worst case
+unused files). ACCEPTED RESIDUALS, named: cancelled twins' shell children may outlive the drop
+(pre-existing on the timeout path; the reaper backstops between units); the TS smoke leg still
+lacks collision classification (queued). N1 DECISION: the 8 rows stand — the early-close race
+cannot engage with one model, so the batch is n1-inert; curve.py whitelists their build id
+with the argument in code. THE GRIND: n3-only from 15:36, 8 units on the reviewed binary,
+verdict expected Monday morning, early-call armed.
