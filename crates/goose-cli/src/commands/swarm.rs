@@ -27102,7 +27102,24 @@ impl TaskDispatcher for GooseAgentDispatcher {
             "GOAL: {goal}{pillars_block}\n\nREVIEW DIMENSION ({dim_id}): {dim_brief}\n\nFiles produced:\n{files_block}\nYour one-line review:"
         );
         let text = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            // IDLE-FILL MUST STAY CHEAP. This borrowed the 900s PLANNER budget, and the tail
+            // reviewer is dispatched into every free slot on every scheduler tick — so one
+            // unbounded review can hold a whole node for a quarter of an hour. MEASURED live
+            // (run 6, the first run where this mechanism emitted an event at all): the
+            // `correctness` dimension hit the 900s ceiling TWICE, 30 node-minutes, zero findings
+            // both times — its brief asks for a wrong constant/unit/sign anywhere in the tree,
+            // an unbounded search the model simply reasons at until it is cut off. Meanwhile the
+            // reviews that DID find defects returned in 74s and 156s. A review that has not
+            // reached a conclusion in four minutes is not about to; the node is worth more back
+            // in the pool. Env-overridable for the arm that measures whether the cap costs
+            // anything.
+            std::time::Duration::from_secs(
+                std::env::var("GOOSE_SWARM_TAIL_REVIEW_SECS")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .filter(|n| *n >= 30)
+                    .unwrap_or(240),
+            ),
             self.run_agent(model_id, system, user, None, 2, &[], 0, None),
         )
         .await
