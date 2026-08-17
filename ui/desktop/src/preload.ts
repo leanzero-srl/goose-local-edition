@@ -158,6 +158,8 @@ type ElectronAPI = {
     heartbeat: number | null;
     events: Array<Record<string, unknown>>;
     activity: Record<string, unknown>;
+    /** Per-digest file mtimes (ms), keyed like `activity` — the per-node realtime signal. */
+    activityMtimes?: Record<string, number>;
     clarify: {
       pending: boolean;
       questions: Array<{ question: string; options: string[]; resolves?: string }>;

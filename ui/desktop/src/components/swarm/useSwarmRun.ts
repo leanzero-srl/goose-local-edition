@@ -364,6 +364,12 @@ export interface SwarmRunState {
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
+  /** Verify REPAIR-WAVE twin lanes (complete_fix_dispatched/…completed) — the fix work runs OUTSIDE the
+   *  task_dispatched lifecycle, so without these a node grinding a 10-18 min fix twin read "idle". */
+  fixLanes: TurnLane[];
+  /** The RESOLVED fleet as canonical node names (pool_resolved, falling back to run_started.pool) — the
+   *  honest fleet size. Every pool node renders a fleet row, idle ones included. */
+  pool: string[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
   phaseTodo: PhaseTodo[];
   /** End-of-run overview (what built / how to run / next) — null until the run cleanly finishes at DONE. */
@@ -376,6 +382,9 @@ export interface SwarmRunState {
    *  reasoning, model, per-tool call breakdown), keyed by task id. Powers the per-task "live generation" detail
    *  in the phase checklist — the answer to "what is the model actually doing / why is it taking so long". */
   activityDigests: Record<string, unknown>;
+  /** Per-digest file mtimes (ms), same keys as activityDigests — the per-node realtime signal deriveFleet
+   *  uses to tell a live open call from a crashed worker's leftover digest. */
+  activityMtimes: Record<string, number>;
   /** The FULL timeline — every dispatch, judge verdict + hint, pre-review, completion, smoke result — for
    *  the verbose view. The compact `activity` is a subset of headline phases. */
   verboseActivity: ActivityItem[];
@@ -441,11 +450,14 @@ const EMPTY: SwarmRunState = {
   scoutLanes: [],
   contractLanes: [],
   detailLanes: [],
+  fixLanes: [],
+  pool: [],
   phaseTodo: [],
   overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
   activity: [],
   activityDigests: {},
+  activityMtimes: {},
   verboseActivity: [],
   meta: null,
   plan: [],
@@ -477,6 +489,31 @@ function nodeName(device: string): string {
 const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** Canonical node label: the prefix before the first '-' or '/' of a model id ('gabee-qwen…' -> 'gabee'). */
+const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
+
+/**
+ * The run's RESOLVED fleet, as canonical node names — from `pool_resolved.devices` (the engine's
+ * post-push truth), falling back to `run_started.pool` for logs that predate it. This is the honest
+ * fleet SIZE: a node that never got a task is still in the pool, and the fleet strip must render it
+ * as explicitly idle rather than omit it (measured: a 3-device pool read "FLEET · 2 NODES" because
+ * the third was idle at that moment and only lane devices were counted).
+ */
+export function resolvePool(events: Array<Record<string, unknown>>): string[] {
+  const fromList = (list: unknown): string[] =>
+    (Array.isArray(list) ? list : [])
+      .map((d) => {
+        const rec = d as Record<string, unknown>;
+        return shortNode(str(rec['model_id'])) || shortNode(str(rec['id']));
+      })
+      .filter(Boolean);
+  const resolved = events.find((e) => e['event'] === 'pool_resolved');
+  const fromResolved = fromList(resolved?.['devices']);
+  if (fromResolved.length > 0) return Array.from(new Set(fromResolved)).sort();
+  const started = events.find((e) => e['event'] === 'run_started');
+  return Array.from(new Set(fromList(started?.['pool']))).sort();
+}
 
 // The engine ships each task's FULL worker spec as `description` — a wall of markdown ("**Subtask: [id] Do X**
 // **Owned files:** … **Implementation spec:** …"). For the todo list + lane headers we want a clean one-liner,
@@ -1092,7 +1129,7 @@ type Digest = {
   phase?: string;
 };
 
-function foldEvents(
+export function foldEvents(
   events: Array<Record<string, unknown>>,
   activity: Record<string, unknown>
 ): {
@@ -1102,8 +1139,14 @@ function foldEvents(
   scoutLanes: TurnLane[];
   contractLanes: TurnLane[];
   detailLanes: TurnLane[];
+  fixLanes: TurnLane[];
 } {
   const tasks = new Map<string, TurnLane>();
+  // The verify REPAIR WAVE dispatches fix twins via complete_fix_dispatched / complete_fix_completed —
+  // NOT the task_dispatched lifecycle — so for its whole duration (10-18 min per twin, measured) no lane
+  // existed and every busy node read "idle — no task". Kept separate from `tasks` so the header's task
+  // totals stay engine-task counts.
+  const fixTasks = new Map<string, TurnLane>();
   const descriptions = new Map<string, string>();
   let seq = 0;
 
@@ -1117,8 +1160,33 @@ function foldEvents(
       }
       continue;
     }
+    if (type === 'spec_repair_wave' || type === 'complete_result' || type === 'run_finished') {
+      // The wave (or the run) is over — no twin may keep spinning past it, even if its own
+      // complete_fix_completed was lost (early close).
+      for (const [k, t] of fixTasks)
+        if (t.status === 'running') fixTasks.set(k, { ...t, status: 'done', seq: seq++ });
+      continue;
+    }
     const taskId = String(e['task_id'] ?? '');
     if (!taskId) continue;
+
+    if (type === 'complete_fix_dispatched') {
+      const model = str(e['model']);
+      fixTasks.set(taskId, {
+        taskId,
+        description: `Repairing verify findings (round ${num(e['round']) ?? 0})`,
+        device: model || '?',
+        model: model || undefined,
+        status: 'running',
+        seq: seq++,
+      });
+      continue;
+    }
+    if (type === 'complete_fix_completed') {
+      const prev = fixTasks.get(taskId);
+      if (prev) fixTasks.set(taskId, { ...prev, status: 'done', seq: seq++ });
+      continue;
+    }
 
     if (type === 'task_dispatched') {
       const prev = tasks.get(taskId);
@@ -1171,16 +1239,19 @@ function foldEvents(
   // The engine reports a device by its POOL id ('mac-qwen3.6-27b') for worker tasks but by its MODEL id
   // ('gabee-qwen/qwen3.6-27b') for scouts/plan drafts, so the SAME physical node showed up twice — 6 rows for 3
   // machines. run_started.pool ties them ({id, model_id}); canonicalize every device to ONE label (the model
-  // prefix) so the fleet reads 3, not 6.
-  const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
+  // prefix) so the fleet reads 3, not 6. pool_resolved is folded in too — it is the post-push truth and can
+  // carry devices run_started did not.
   const deviceCanon: Record<string, string> = {};
-  for (const p of arr(events.find((e) => e['event'] === 'run_started')?.['pool'])) {
-    const rec = p as Record<string, unknown>;
-    const id = str(rec['id']);
-    const modelId = str(rec['model_id']);
-    const canon = shortNode(modelId) || shortNode(id);
-    if (id) deviceCanon[id] = canon;
-    if (modelId) deviceCanon[modelId] = canon;
+  for (const src of ['pool', 'devices'] as const) {
+    const ev = events.find((e) => e['event'] === (src === 'pool' ? 'run_started' : 'pool_resolved'));
+    for (const p of arr(ev?.[src])) {
+      const rec = p as Record<string, unknown>;
+      const id = str(rec['id']);
+      const modelId = str(rec['model_id']);
+      const canon = shortNode(modelId) || shortNode(id);
+      if (id) deviceCanon[id] = canon;
+      if (modelId) deviceCanon[modelId] = canon;
+    }
   }
   const canonDevice = (d: string): string => deviceCanon[d] ?? shortNode(d);
 
@@ -1196,6 +1267,25 @@ function foldEvents(
       fullReasoning: act?.full_reasoning ?? t.fullReasoning,
       calls: act?.calls ?? t.calls,
       toolCalls: act?.tool_calls ?? t.toolCalls,
+      errors: act?.errors ?? t.errors,
+    };
+  });
+
+  // Repair-wave twins, canonicalized + joined to any digest they wrote — the fleet strip folds these in
+  // so a node grinding a fix twin reads WORKING, not idle.
+  const fixLanes = [...fixTasks.values()].map((t) => {
+    const act = activity[t.taskId] as Digest | undefined;
+    return {
+      ...t,
+      device: canonDevice(t.device),
+      lastText: act?.last_text || t.lastText,
+      recent: act?.recent ?? t.recent,
+      reasoning: act?.reasoning ?? t.reasoning,
+      fullReasoning: act?.full_reasoning ?? t.fullReasoning,
+      calls: act?.calls ?? t.calls,
+      toolCalls: act?.tool_calls ?? t.toolCalls,
+      thinkingChars: act?.thinking_chars ?? t.thinkingChars,
+      lastThinking: act?.last_thinking ?? t.lastThinking,
       errors: act?.errors ?? t.errors,
     };
   });
@@ -1313,7 +1403,85 @@ function foldEvents(
     .map((k, i) => laneFromDigest(k, `Detailing · ${k.replace(/^detail-/, '')}`, planned, i))
     .filter(hasActivity);
 
-  return { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes };
+  return { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes, fixLanes };
+}
+
+// How long a digest may go unwritten and still count as a live open call. A streaming worker rewrites
+// its digest ~2.5x/s, so this is generous headroom for a long single tool call inside a laneless worker
+// (verify::*), while an interrupted call (phase never stamped 'done', file gone quiet) drops out.
+export const DIGEST_FRESH_MS = 120_000;
+
+/** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
+function digestLabel(key: string): string {
+  if (key.startsWith('verify-e2e::')) return 'End-to-end verify';
+  if (key.startsWith('verify::')) return `Verifying ${key.slice('verify::'.length)}`;
+  if (key.startsWith('complete-fix::')) return 'Repairing verify findings';
+  if (key.startsWith('scout-')) return `Scouting · ${key.slice('scout-'.length)}`;
+  if (key.startsWith('contract-')) return `Contract · ${key.slice('contract-'.length)}`;
+  if (key.startsWith('detail-')) return `Detailing · ${key.slice('detail-'.length)}`;
+  if (/^plandraft-\d+$/.test(key)) return 'Drafting the plan';
+  return humanizeTaskId(key);
+}
+
+/**
+ * The fleet strip's single source of truth — PURE so it is testable.
+ *
+ * Rows: every node of the RESOLVED POOL renders, idle ones included (absence is not an idle state),
+ * plus any lane device the pool missed. WORKING: a node with an open lane per the engine's task
+ * lifecycle (build tasks, plan drafts, scouts/contracts/detailers, repair twins), else a node whose
+ * activity digest shows an OPEN call — `phase` not stamped 'done' (the engine stamps 'done' the
+ * instant a call ends, seeds 'processing' at dispatch, and omits the key mid-stream) — with a fresh
+ * file mtime as the crashed-worker guard. This is what makes the strip realtime: the digest is
+ * rewritten continuously while a node generates, so a busy node reads WORKING within a poll or two
+ * and idle the moment its call closes.
+ */
+export function deriveFleet(args: {
+  pool: string[];
+  laneSources: TurnLane[];
+  digests: Record<string, unknown>;
+  digestMtimes: Record<string, number>;
+  now: number;
+}): { devices: string[]; workingByDevice: Map<string, TurnLane> } {
+  const devices = Array.from(
+    new Set([...args.pool, ...args.laneSources.map((l) => l.device)])
+  ).sort();
+  const workingByDevice = new Map<string, TurnLane>();
+  for (const l of args.laneSources) {
+    if (l.status === 'running' && !workingByDevice.has(l.device)) workingByDevice.set(l.device, l);
+  }
+  // A lane the LIFECYCLE closed (task_completed / fix completed) is over even if its digest predates
+  // the phase stamp — engine truth beats file freshness.
+  const closed = new Set(
+    args.laneSources.filter((l) => l.status !== 'running').map((l) => l.taskId)
+  );
+  for (const [key, raw] of Object.entries(args.digests)) {
+    if (closed.has(key)) continue;
+    const d = raw as (Digest & { model?: string }) | undefined;
+    const device = shortNode(str(d?.model));
+    if (!device || workingByDevice.has(device) || !devices.includes(device)) continue;
+    const open = d?.phase !== 'done';
+    const fresh = args.now - (args.digestMtimes[key] ?? 0) < DIGEST_FRESH_MS;
+    if (!open || !fresh) continue;
+    workingByDevice.set(device, {
+      taskId: key,
+      description: digestLabel(key),
+      device,
+      model: d?.model,
+      status: 'running',
+      lastText: d?.last_text,
+      recent: d?.recent,
+      reasoning: d?.reasoning,
+      fullReasoning: d?.full_reasoning,
+      calls: d?.calls,
+      toolCalls: d?.tool_calls,
+      thinkingChars: d?.thinking_chars,
+      lastThinking: d?.last_thinking,
+      phase: d?.phase,
+      errors: d?.errors,
+      seq: 0,
+    });
+  }
+  return { devices, workingByDevice };
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
@@ -1726,10 +1894,8 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           lastRunId.current = null;
           return;
         }
-        const { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes } = foldEvents(
-          data.events,
-          data.activity
-        );
+        const { lanes, totals, planLanes, scoutLanes, contractLanes, detailLanes, fixLanes } =
+          foldEvents(data.events, data.activity);
         const phaseTodo = buildPhaseTodo(data.events, data.activity, {
           clarifyPending: !!data.clarify?.pending,
         });
@@ -1766,11 +1932,14 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           scoutLanes,
           contractLanes,
           detailLanes,
+          fixLanes,
+          pool: resolvePool(data.events),
           phaseTodo,
           overview,
           totals,
           activity,
           activityDigests: data.activity,
+          activityMtimes: data.activityMtimes ?? {},
           verboseActivity: verbose,
           meta,
           plan,
