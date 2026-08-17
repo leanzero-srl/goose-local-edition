@@ -2634,10 +2634,14 @@ def main() -> int:
         # the best product-regime score ever recorded — and was voided to score=None because an
         # operator had set STOP 90 minutes into its run. The gate now demands actual death:
         # a non-zero/absent exit code. Half-born trees still void (their exit is the kill signal).
+        # ...and exit 1 is the engine's DESIGNED still-red finish (F844), a kept measurement —
+        # the first narrowing voided r4's honest 0.805/90min red finish for its exit code.
+        # Death evidence = a NEGATIVE exit (signal kill) or no exit at all.
+        _stop_exit = result.get("engine_exit")
         if (
             (HERE / "STOP").exists()
             and result.get("score") is not None
-            and result.get("engine_exit") != 0
+            and not (isinstance(_stop_exit, int) and _stop_exit >= 0)
         ):
             result["kill_artifact_score"] = result.pop("score")
             result["score"] = None

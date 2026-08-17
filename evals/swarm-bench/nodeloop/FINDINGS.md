@@ -19987,3 +19987,14 @@ with walls 90-142 min vs an n1 arm that has NEVER finished. The mechanism story 
 green: wave promotions 2→1 then 1→0 — the one-ruler grade converting every round, exactly
 the design. The findings-held lottery's remaining mass is the ETag + DOM classes that the
 F864 levers (already built, restarting now) attack at the SOURCE.
+
+## F866 — r4: 0.805/90.4min (quality win by 0.005, speed 5/5) — restored from a SECOND over-void (exit 1 = the F844 honest red finish; gate re-narrowed to negative/absent exit only); F864 levers fired on their first unit
+
+r4 on the F864 binary: 0.805 / 90.4 min, honest red finish (exit 1). The narrowed F784 gate
+still swallowed it (exit != 0) — the F844 rule says exit 1 is a KEPT measurement; the gate now
+demands NEGATIVE/absent exit. Curve: quality 3W/2L, speed 5/5 — since the F862 one-ruler fix
+the swarm is 3W/1L on quality with walls 90-110 min. First F864 unit: pitfalls_delivered x27,
+scout_docs_mode armed; dom_id_scan emitted nothing (gated on ran — my own scan violates the
+emit-when-not-scanned honesty rule; queued with its trigger question). JOURNEY WINDOW OPEN:
+sweep parked on schedule, packaged app verified (payload + frozen engine in Resources), the
+user-journey run takes the fleet next.
