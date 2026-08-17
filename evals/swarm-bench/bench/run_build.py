@@ -24,7 +24,10 @@ import score_build  # noqa: E402
 import vendor_service  # noqa: E402
 
 ROOT = HERE.parent
-GOOSE = Path.home() / "Projects/goose/target/release/goose"
+# BENCH_GOOSE (product contract 2026-08-17): the packaged desktop app passes its bundled engine
+# here; the dev default stays the checkout's release binary.
+GOOSE = Path(os.environ["BENCH_GOOSE"]) if os.environ.get("BENCH_GOOSE") \
+    else Path.home() / "Projects/goose/target/release/goose"
 MODELS = {
     "opus-5": "us.anthropic.claude-opus-5",
     "sonnet-5": "us.anthropic.claude-sonnet-5",
@@ -168,6 +171,11 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     server = vendor_service.serve(port, trace)
+    # Quality screenshots (product contract 2026-08-17): the browser probe leaves
+    # <epoch>-<scenario>.png in here on every render-gate pass DURING the run and again at
+    # scoring — the repair-progression evidence the published post carries. Set in our own
+    # environ too so score_build's in-process probe runs inherit it.
+    os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
         agent = invoke(entrant, workdir, port, load_env(), timeout)
         ctx = score_build.gather(workdir, port, workdir / "graded.db", trace,
