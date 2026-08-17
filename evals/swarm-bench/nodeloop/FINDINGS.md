@@ -19998,3 +19998,25 @@ scout_docs_mode armed; dom_id_scan emitted nothing (gated on ran — my own scan
 emit-when-not-scanned honesty rule; queued with its trigger question). JOURNEY WINDOW OPEN:
 sweep parked on schedule, packaged app verified (payload + frozen engine in Resources), the
 user-journey run takes the fleet next.
+
+## F867 — THE FULL USER JOURNEY, COMPLETE: packaged app → run → live panel → deep scoring detail → publish → promoted card on leanzero.net; one probe-gap caught before it shipped a mismeasure
+
+The journey ran exactly as a user would (Playwright-CDP clicking the real packaged .app):
+Benchmark page (fresh sb-5.2 ladder, identity badge mighty-crane-54f2) → Run(3) → the live
+SwarmRunPanel showing the weekend's mechanisms working in-product (diverse-plan skip-ladder
+narration, read-only shard rules rendering in the lanes, 3 nodes working) → 86-min build →
+results. THE CATCH (check-everything rule earning its keep): the packaged verdict read 0.5843
+with V=0.0 and ZERO screenshots — the bundled node shim cannot resolve playwright, so every
+browser probe died silently and the harness gap was scored as app quality. Auto-publish was
+BLOCKED minutes before it fired; resolveBenchNode now prefers a playwright-capable node
+(committed); the SAME TREE rescored honestly with working probes: 0.6618 (J .45 / V .55 /
+P .67, A 1.0, HARD 1.0, B .38 real — the sync/ETag class), 10 repair screenshots produced
+(first rescore attempt on a fresh vendor port collapsed C to 0.1 — the app was BUILT against
+port 8850; rescore on its own port, honest). The ScoringDetail view (built same-day on
+Mihai's "explain the scoring clearly") rendered the whole story in-app: the formula with the
+run's numbers summing to 66.2, all 60 checks with evidence, findings-held verbatim (the full
+ETag diagnosis), repair chips, root-cause attribution. PUBLISHED via the v2.1 contract from
+the app: draft carried score 0.6618 + title + handle + 4 screenshots + ALL 60 CHECKS;
+promoted; the run card is LIVE with "How this score was built" + screenshots; the comparison
+bar lands with the ISR refresh. The fleet resumed the formal curve (r5) the moment the
+journey window closed.
