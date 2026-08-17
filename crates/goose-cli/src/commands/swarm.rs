@@ -20242,7 +20242,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // The regime names the binary absolutely; bare "node" is only the fallback.
                 let node =
                     std::env::var("GOOSE_SWARM_RENDER_NODE").unwrap_or_else(|_| "node".to_string());
-                let mut cmd = tokio::process::Command::new(node);
+                let mut cmd = tokio::process::Command::new(&node);
                 cmd.args([&probe, "load", &format!("http://127.0.0.1:{port}")]);
                 match smoke_output(cmd, 100).await {
                     Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
@@ -20305,6 +20305,69 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 .pointer("/styling/distinctBackgroundCount")
                                 .and_then(|x| x.as_i64())
                                 == Some(0);
+                            // THE SYNC VIEW — the half of the journey the gate never looked at.
+                            // This block only ever ran the probe's `load` scenario, where an empty
+                            // table is LEGITIMATE (fresh database, nothing synced yet), so the one
+                            // state that proves the frontend works — the page AFTER the user's sync
+                            // — was never checked. Measured on the run that exposed it: the API held
+                            // all 247 payments, `POST /api/sync` returned
+                            // {"fetched":247,"inserted":247,"total":247}, and the page still read
+                            // "Never synced · showing 0–0 of 0" with no rows. The scorer punished it
+                            // (journey 0.30, no date or status cells rendered) while the engine had
+                            // no finding for it, so the repair loop was never told — the exact
+                            // scorer-check-without-an-engine-sibling class this project has a
+                            // standing law against. Probe failures stay inconclusive, as everywhere.
+                            let mut sync_cmd = tokio::process::Command::new(&node);
+                            sync_cmd.args([&probe, "sync", &format!("http://127.0.0.1:{port}")]);
+                            match smoke_output(sync_cmd, 140).await {
+                                Some(so) => {
+                                    match serde_json::from_slice::<serde_json::Value>(&so.stdout) {
+                                        Ok(sv) => {
+                                            let num = |k: &str| sv.get(k).and_then(|x| x.as_i64());
+                                            let found =
+                                                sv.get("found").and_then(|x| x.as_bool()) == Some(true);
+                                            let completed = sv
+                                                .get("completed")
+                                                .and_then(|x| x.as_bool())
+                                                != Some(false);
+                                            let after = num("rowCountAfter").unwrap_or(-1);
+                                            if !found {
+                                                findings.push(
+                                                    "the page has no working SYNC control — the probe \
+                                                     could not find a control to start a sync, so a \
+                                                     user has no way to load data at all. The page \
+                                                     must expose the sync action the spec describes."
+                                                        .to_string(),
+                                                );
+                                            } else if completed && after == 0 {
+                                                findings.push(
+                                                    "after a SUCCESSFUL sync the page still renders \
+                                                     ZERO rows — the backend acquired the data (the \
+                                                     API returns it) but the frontend never displays \
+                                                     it, so the user sees an empty table forever. \
+                                                     After the sync completes, re-fetch the payments \
+                                                     endpoint and RENDER the returned rows into the \
+                                                     table, and update the last-synced/count readouts \
+                                                     from that same response."
+                                                        .to_string(),
+                                                );
+                                            } else if after > 0 {
+                                                verified += 1;
+                                            }
+                                        }
+                                        Err(_) => inconclusive.push(
+                                            "render-gate(sync): probe output was not JSON — nothing \
+                                             proven either way"
+                                                .to_string(),
+                                        ),
+                                    }
+                                }
+                                None => inconclusive.push(
+                                    "render-gate(sync): probe did not complete — nothing proven \
+                                     either way"
+                                        .to_string(),
+                                ),
+                            }
                             if default_serif && zero_bg {
                                 findings.push(if no_sheet {
                                     "the served page renders with browser-DEFAULT styling — no \
