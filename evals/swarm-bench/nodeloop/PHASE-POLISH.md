@@ -45,3 +45,46 @@ Seeded from the first two audited runs (r1 old binary / r0-redo F851 binary):
 - skeleton_convergence: 8.0 min (best ever 5.0)
 - REGRESSION skeleton_convergence: 8.0 min vs best 5.0 — find the cause before the next batch ships
 - dag occupancy 1.89 of pool; 23.1 min at concurrency <=1
+
+## swarm-20260817-003133940  wall 142 min  (audited 2026-08-17T05:54:38)
+- dead_attempt_node_secs: 52.3 min (best ever 19.4)
+- repair_phase: 42.9 min (best ever 16.0)
+- research: 5.9 min (best ever 5.9)
+- REGRESSION dag_window: 83.4 min vs best 47.4 — find the cause before the next batch ships
+- REGRESSION dead_attempt_node_secs: 52.3 min vs best 19.4 — find the cause before the next batch ships
+- REGRESSION repair_phase: 42.9 min vs best 16.0 — find the cause before the next batch ships
+- REGRESSION wall_total: 142.3 min vs best 89.7 — find the cause before the next batch ships
+- dag occupancy 1.72 of pool; 49.5 min at concurrency <=1
+
+## swarm-20260817-025439301  wall 104 min  (audited 2026-08-17T07:39:31)
+- dead_attempt_node_secs: 39.7 min (best ever 19.4)
+- repair_phase: 20.4 min (best ever 16.0)
+- research: 6.5 min (best ever 5.9)
+- REGRESSION skeleton_convergence: 5.9 min vs best 3.3 — find the cause before the next batch ships
+- REGRESSION detail_fan: 5.3 min vs best 3.9 — find the cause before the next batch ships
+- REGRESSION dead_attempt_node_secs: 39.7 min vs best 19.4 — find the cause before the next batch ships
+- dag occupancy 2.58 of pool; 16.7 min at concurrency <=1
+
+## swarm-20260817-045132704  wall 90 min  (audited 2026-08-17T09:22:38)
+- repair_phase: 20.4 min (best ever 16.0)
+- dead_attempt_node_secs: 15.9 min (best ever 15.9)
+- research: 7.7 min (best ever 5.9)
+- REGRESSION skeleton_convergence: 5.5 min vs best 3.3 — find the cause before the next batch ships
+- REGRESSION detail_fan: 5.3 min vs best 3.9 — find the cause before the next batch ships
+- dag occupancy 3.74 of pool; 4.1 min at concurrency <=1
+
+## swarm-20260817-081600135  wall 112 min  (audited 2026-08-17T13:09:16)
+- repair_phase: 39.5 min (best ever 16.0)
+- dead_attempt_node_secs: 18.3 min (best ever 15.9)
+- research: 6.3 min (best ever 5.9)
+- REGRESSION skeleton_convergence: 4.7 min vs best 3.3 — find the cause before the next batch ships
+- REGRESSION repair_phase: 39.5 min vs best 16.0 — find the cause before the next batch ships
+- dag occupancy 2.34 of pool; 13.1 min at concurrency <=1
+
+## swarm-20260817-100917796  wall 74 min  (audited 2026-08-17T14:24:49)
+- dead_attempt_node_secs: 39.2 min (best ever 15.9)
+- repair_phase: 8.2 min (best ever 8.2)
+- research: 7.2 min (best ever 5.9)
+- REGRESSION skeleton_convergence: 6.0 min vs best 3.3 — find the cause before the next batch ships
+- REGRESSION dead_attempt_node_secs: 39.2 min vs best 15.9 — find the cause before the next batch ships
+- dag occupancy 2.69 of pool; 9.8 min at concurrency <=1
