@@ -83,3 +83,13 @@ share one model; joined with " + " when they differ) and the user can edit it be
 publishing — the field is theirs to set, the prefill is the honest default. Site: schema
 field, API allowlist (reject missing/short), shown on the run card metadata and as a muted
 line under the entrant name on the leaderboard/bars.
+
+## v2.3 addition (2026-08-17): per-node detail + card hygiene
+- Payload gains optional `nodesDetail`: array (<=8) of `{ name: string<=40, model: string<=120 }`
+  — one entry per fleet node, derived by the DESKTOP from the run's own pool_resolved event
+  (device id → name, model_id → model, verbatim). The card renders a per-node table; the
+  summary `model` field remains the deduped headline.
+- Public labels are NEUTRAL: the desktop's label for posts is "<N>-node local fleet" (never
+  "Your fleet" — first-person framing must not leak to the public board).
+- Run-card breadcrumbs: the "Run" segment is plain text, never a link (there is no /run index
+  route; it 404'd).
