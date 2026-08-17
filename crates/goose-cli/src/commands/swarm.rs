@@ -3978,10 +3978,26 @@ fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     }
     // Fannable modules: everything that is neither the sink nor a test AND owns at least one file (a
     // scaffolding task owning nothing has no isolated surface to verify).
+    //
+    // …at least one file WITH A CHECKABLE SURFACE. The gate's spec is import/build-check language;
+    // a docs-only module (a `readme` task owning README.md) was still fanned, so a 27B was
+    // dispatched to import-check MARKDOWN — a wasted slot and a nonsense task card (operator
+    // report, run 3). Docs are graded by the scorer's docs tier; they have no isolated
+    // import/build surface, so they get no verify:: gate.
+    let is_doc = |f: &str| {
+        let b = base_of(f).to_ascii_lowercase();
+        b.ends_with(".md")
+            || b.ends_with(".txt")
+            || b.ends_with(".rst")
+            || b.ends_with(".adoc")
+            || b == "license"
+            || b == "notice"
+    };
     let modules: Vec<(String, Vec<String>)> = arr
         .iter()
-        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s) && !files_of(s).is_empty())
+        .filter(|s| id_of(s) != "integrate-verify" && !is_test(s))
         .map(|s| (id_of(s), files_of(s)))
+        .filter(|(_, files)| !files.is_empty() && !files.iter().all(|f| is_doc(f)))
         .collect();
     if modules.is_empty() {
         return 0;
@@ -4375,6 +4391,32 @@ mod tests {
             .unwrap()
             .iter()
             .find(|s| s["id"] == id)
+    }
+
+    #[test]
+    fn fan_verify_split_skips_docs_only_modules() {
+        // A `readme` module owning only markdown got a verify:: gate whose spec is
+        // import/build-check language — a 27B dispatched to import-check MARKDOWN (operator
+        // report). Docs-only modules have no isolated surface; mixed modules still fan.
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"core","depends_on":[],"files":["core.py"]},
+                {"id":"readme","depends_on":["core"],"files":["README.md"]},
+                {"id":"docs","depends_on":["core"],"files":["docs/guide.md","LICENSE"]},
+                {"id":"web","depends_on":["core"],"files":["web/index.html","web/README.md"]},
+                {"id":"integrate-verify","depends_on":["core","readme","docs","web"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = fan_verify_split(&mut plan, TargetLang::Python);
+        assert_eq!(n, 2, "core and web fan; readme and docs do not");
+        assert!(fv_task(&plan, "verify::core").is_some());
+        assert!(
+            fv_task(&plan, "verify::web").is_some(),
+            "a module with ANY checkable file still gets its gate"
+        );
+        assert!(fv_task(&plan, "verify::readme").is_none());
+        assert!(fv_task(&plan, "verify::docs").is_none());
     }
 
     #[test]
