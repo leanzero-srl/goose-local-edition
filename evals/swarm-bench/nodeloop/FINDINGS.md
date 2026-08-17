@@ -20020,3 +20020,12 @@ the app: draft carried score 0.6618 + title + handle + 4 screenshots + ALL 60 CH
 promoted; the run card is LIVE with "How this score was built" + screenshots; the comparison
 bar lands with the ISR refresh. The fleet resumed the formal curve (r5) the moment the
 journey window closed.
+
+## F868 — pair r5: 0.6076/112.5min vs 0.5198-cap — quality 4/6, speed 6/6; the honest machinery holds its shape (one conversion, one flat round, stall exit, no waste)
+
+Fresh r5 on the F864 binary: rounds 3→2→2 — one real conversion, then flat, stall exit before
+a wasted wave; dead attempts 1,098 node-s (the batch-era lows hold); prologue 1,069s. The
+pair goes to n3 on both axes. Since the F862 one-ruler fix the quality tally is 4W/1L
+(r2's 0.022 knife-edge), overall rolling 4/6 with the two losses both pre/knife-edge; speed
+is 6/6 with n1 never finishing. r6-r7 today, the n1 block overnight, r0-r3 re-runs after —
+formal verdict Tuesday morning.
