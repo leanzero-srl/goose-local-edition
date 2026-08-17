@@ -4,12 +4,14 @@ import {
   Check, X, Loader2, CircleSlash, ChevronRight, ChevronDown, Wrench,
   Search, ListChecks, Play, Pause, FlaskConical, RotateCcw, Gavel, Eye, FileText, Cpu, AlignLeft,
   MessageCircleQuestion, Send, Gauge, AlertTriangle, FolderOpen, TrendingUp, Info, Braces,
-  Circle, Minus, ListTodo, Terminal, FilePlus2, FilePenLine, Hammer,
+  Circle, Minus, Terminal, FilePlus2, FilePenLine, Hammer,
   MessageSquare,
 } from 'lucide-react';
 import {
   useSwarmRun,
   deriveFleet,
+  deriveTaskBoard,
+  runAppName,
   classifyCall,
   collapseRepeats,
   substantiveChunk,
@@ -25,8 +27,13 @@ import {
   type PhaseTodo,
   type PhaseTodoItem,
   type TodoState,
+  type BoardRow,
+  type TaskBoard,
+  type SupervisionSpan,
+  type SwarmRunState,
   type RunOverview as RunOverviewData,
 } from './useSwarmRun';
+import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
 import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { useFleetStatus } from './useFleet';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
@@ -110,6 +117,9 @@ function ago(mtime: number | null): string {
 const CALL_KIND_COLOR: Record<CallMeaning['kind'], string> = {
   ok: CALL_OK,
   'app-error': AMBER,
+  // Exit 0 but the OUTPUT proves nothing ran (a `| head` pipe swallowed pytest's failure exit) — solid
+  // amber, never the green the exit code lied its way toward.
+  'ran-nothing': AMBER,
   malformed: CALL_ERR,
   pending: CALL_PENDING,
 };
@@ -117,6 +127,7 @@ const CALL_KIND_COLOR: Record<CallMeaning['kind'], string> = {
 const CALL_KIND_PILL: Record<CallMeaning['kind'], string> = {
   ok: '',
   'app-error': 'app output',
+  'ran-nothing': 'ran nothing',
   malformed: 'retried',
   pending: '',
 };
@@ -632,7 +643,9 @@ const ActivityContextMenu: React.FC<{
 
 // One line in the activity timeline. Tone (when set) tints the icon so judge warnings / failures stand out.
 // Right-click reveals a menu — "Reveal in Finder" when the line references a file path, plus Copy.
-const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string }> = ({ it, wrap, workingDir }) => {
+// `dim` renders the EVENT LOG register: denser and on the secondary color — the log is the subordinate
+// narrative record, never competing with the zones above it (dim = solid secondary text, NOT opacity washes).
+const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: string; dim?: boolean }> = ({ it, wrap, workingDir, dim }) => {
   const Icon = ACTIVITY_ICON[it.kind];
   const color = it.tone ? TONE_COLOR[it.tone] : ACTIVITY_COLOR[it.kind];
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -648,15 +661,15 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
   return (
     <div className="flex flex-col">
       <div
-        className={`flex items-start gap-2 text-xs ${expandable ? 'cursor-pointer' : ''}`}
+        className={`flex items-start gap-2 ${dim ? 'text-[11px] leading-snug' : 'text-xs'} ${expandable ? 'cursor-pointer' : ''}`}
         onClick={expandable ? () => setOpen((o) => !o) : undefined}
         onContextMenu={(e) => {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        <Icon size={13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
-        <span className="text-text-primary shrink-0">{it.text}</span>
+        <Icon size={dim ? 12 : 13} strokeWidth={2.5} className="mt-0.5 shrink-0" style={{ color }} />
+        <span className={`shrink-0 ${dim ? 'text-text-secondary' : 'text-text-primary'}`}>{it.text}</span>
         {it.sub && !open && (
           <span
             className={`text-text-secondary ${wrap ? 'break-words' : 'truncate'} ${it.kind === 'brief' ? 'line-clamp-3' : ''}`}
@@ -786,22 +799,20 @@ const NodeExpandBox: React.FC<{ text: string }> = ({ text }) => {
 const FleetStrip: React.FC<{
   /** Every node the run's RESOLVED POOL carries (idle ones included) + any lane device — see deriveFleet. */
   deviceOrder: string[];
-  /** node -> its live lane (task lifecycle or open activity digest), from deriveFleet. */
+  /** node -> its live lane (task lifecycle, open activity digest, or supervision span), from deriveFleet. */
   runningByDevice: Map<string, TurnLane>;
   live: boolean;
   dev: boolean;
   /** LM Studio's own live status per node short-name (generating/processingPrompt/idle), for the truth dot. */
   nodeStatus: Record<string, string>;
-}> = ({ deviceOrder, runningByDevice, live, dev, nodeStatus }) => {
+  /** Open supervision spans deriveFleet could not pin to a busy node — still shown, never dropped. */
+  unattributed: SupervisionSpan[];
+}> = ({ deviceOrder, runningByDevice, live, dev, nodeStatus, unattributed }) => {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (deviceOrder.length === 0) return null;
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
   return (
-    <div className="px-3 py-2 border-b border-border-primary bg-background-primary space-y-1">
-      <div className="text-[10px] uppercase tracking-wide text-text-secondary">
-        Fleet · {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
-        {live ? ` · ${runningByDevice.size} working` : ''}
-      </div>
+    <div className="px-3 py-2 bg-background-primary space-y-1">
       {deviceOrder.map((device, i) => {
         const hue = FORMATION_RAMP[i % FORMATION_RAMP.length];
         const letter = String.fromCharCode(65 + (i % 26));
@@ -885,20 +896,37 @@ const FleetStrip: React.FC<{
                         that died mid-task never emits task_completed), so on a non-live run show a static
                         interrupted marker instead of a fake spinner — this is why opening an old session used to
                         look like it was still streaming. */}
-                    {live ? (
-                      <Loader2
-                        size={12}
-                        className="animate-spin shrink-0"
-                        style={{ color: STATUS_COLOR.running }}
-                      />
-                    ) : (
-                      <CircleSlash size={12} className="shrink-0" style={{ color: STOPPED }} />
-                    )}
+                    {(() => {
+                      // SUPERVISION work (a judge generation with no task lane) is visually its own class:
+                      // a solid violet gavel, never the amber build spinner — a supervising node says what
+                      // it is really doing instead of reading "idle — no task".
+                      const supervising = lane.phase === 'supervision';
+                      if (!live)
+                        return <CircleSlash size={12} className="shrink-0" style={{ color: STOPPED }} />;
+                      if (supervising)
+                        return <Gavel size={12} className="shrink-0" style={{ color: '#b14cff' }} />;
+                      return (
+                        <Loader2
+                          size={12}
+                          className="animate-spin shrink-0"
+                          style={{ color: STATUS_COLOR.running }}
+                        />
+                      );
+                    })()}
                     <span
-                      className={`truncate ${live ? 'text-text-primary' : ''}`}
-                      style={live ? undefined : { color: STOPPED }}
+                      className={`truncate ${live && lane.phase !== 'supervision' ? 'text-text-primary' : ''}`}
+                      style={
+                        !live
+                          ? { color: STOPPED }
+                          : lane.phase === 'supervision'
+                            ? { color: '#b14cff', fontWeight: 600 }
+                            : undefined
+                      }
                     >
                       {lane.description || lane.taskId}
+                      {lane.phase === 'supervision' && typeof lane.elapsedMs === 'number'
+                        ? ` · ${Math.round(lane.elapsedMs / 1000)}s`
+                        : ''}
                     </span>
                     {canExpand ? (
                       <ChevronRight
@@ -954,34 +982,103 @@ const FleetStrip: React.FC<{
                     )
                   ) : null}
                 </div>
-              ) : (
-                <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
-              )}
+              ) : (() => {
+                  // No lane, no span — but LM Studio's own status may still say the node is generating.
+                  // The engine's pre-review / test-gen / sink-review calls report ONLY on completion
+                  // (verified in swarm.rs), so a busy node here is running exactly that class of call.
+                  // Saying "idle — no task" while LM Studio shows requests in flight was the lie Mihai
+                  // caught live; name the work class honestly instead.
+                  const st = nodeStatus[shortName(device)];
+                  const busy = live && (st === 'generating' || st === 'processingPrompt');
+                  return busy ? (
+                    <Tip label="LM Studio reports this node generating. The engine's supervision calls (pre-review, test-gen, sink review) log only when they finish — the result lands in the event log.">
+                      <span style={{ color: '#b14cff', fontWeight: 600 }} className="flex items-center gap-1.5">
+                        <Eye size={12} className="shrink-0" />
+                        supervising — review/test-gen call in flight
+                      </span>
+                    </Tip>
+                  ) : (
+                    <span style={{ color: STOPPED }}>{live ? 'idle — no task' : 'idle'}</span>
+                  );
+                })()}
             </div>
             {isExpanded && canExpand ? <NodeExpandBox text={fullGen} /> : null}
           </div>
         );
       })}
+      {live &&
+        unattributed.map((s) => (
+          // A judge span with no busy node to pin it to — real work, shown unattributed rather than dropped.
+          <div key={`sup-${s.taskId}`} className="flex items-center gap-2 text-xs">
+            <span className="shrink-0" style={{ width: 16 }} />
+            <Gavel size={12} className="shrink-0" style={{ color: '#b14cff' }} />
+            <span style={{ color: '#b14cff', fontWeight: 600 }}>{s.label}</span>
+            <span className="text-text-secondary">— on an idle node (the verdict names it when it lands)</span>
+          </div>
+        ))}
     </div>
   );
 };
 
-// The live "what goose is doing" timeline — the fix for a build showing nothing during planning. Latest
-// at the bottom; a spinner tail while the run is live. In verbose mode it shows the FULL stream and wraps.
+// The chronological engine narrative — the body of the EVENT LOG zone. Latest at the bottom; a spinner
+// tail while the run is live. In verbose mode it shows the FULL stream and wraps. Deliberately dense and
+// on the secondary color: the zones above are the primary read; this is the record.
 const ActivityFeed: React.FC<{ items: ActivityItem[]; live: boolean; verbose: boolean; workingDir?: string }> = ({ items, live, verbose, workingDir }) => {
   const shown = verbose ? items : items.slice(-8);
   if (items.length === 0) return null;
   return (
-    <div className="px-3 py-2 space-y-1 border-b border-border-primary bg-background-primary">
+    <div className="px-3 py-2 space-y-0.5 bg-background-primary">
       {shown.map((it) => (
-        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} />
+        <ActivityLine key={it.seq} it={it} wrap={verbose} workingDir={workingDir} dim />
       ))}
       {live && (
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <Loader2 size={13} className="animate-spin shrink-0" />
+        <div className="flex items-center gap-2 text-[11px] text-text-secondary">
+          <Loader2 size={12} className="animate-spin shrink-0" />
           <span>working…</span>
         </div>
       )}
+    </div>
+  );
+};
+
+/**
+ * EVENT LOG zone — the feed, explicitly named for what it is and visually subordinate. Collapsed by
+ * default outside developer/verbose mode: judge verdicts and failures already surface on WORK-board rows,
+ * so the log is the narrative/debugging record, not the primary read. Collapsed, it still shows the count
+ * and the latest line so nothing feels hidden.
+ */
+const EventLogZone: React.FC<{
+  items: ActivityItem[];
+  live: boolean;
+  verbose: boolean;
+  workingDir?: string;
+}> = ({ items, live, verbose, workingDir }) => {
+  const [override, setOverride] = useState<boolean | null>(null);
+  if (items.length === 0) return null;
+  const open = override ?? verbose;
+  const last = items[items.length - 1];
+  return (
+    <div className="border-t border-border-primary">
+      <ZoneHeader
+        hue={ZONE_HUES.log}
+        label="Event log"
+        explain="everything the engine reported, in order"
+        collapsed={!open}
+        onToggle={() => setOverride((o) => !(o ?? verbose))}
+        right={
+          <>
+            {!open && last ? (
+              <span className="text-[10px] text-text-secondary truncate max-w-[18rem]">{last.text}</span>
+            ) : null}
+            <span className="text-[10px] tabular-nums text-text-secondary shrink-0">
+              {items.length} events
+            </span>
+          </>
+        }
+      />
+      {open ? (
+        <ActivityFeed items={items} live={live} verbose={verbose} workingDir={workingDir} />
+      ) : null}
     </div>
   );
 };
@@ -1308,78 +1405,21 @@ const ConfidenceBreakdownBody: React.FC<{
   );
 };
 
-// Full-width breakdown section that drops in under the header when the badge is expanded. Informational (no
-// loud colored strip), sharp corners, no left rail.
-const ConfidencePanel: React.FC<{
-  conf: ConfidenceBreakdown;
-  trail?: number[];
-  hasPendingQuestions: boolean;
-  askFloor?: number | null;
-}> = (p) => (
-  <div className="border-b border-border-primary bg-background-secondary px-3 py-3">
-    <ConfidenceBreakdownBody {...p} />
-  </div>
-);
-
-// Compact header pill — the live meter (advances as the swarm retargets). Click to expand the breakdown; a
-// +Δ chip appears when the meter has climbed over the run.
-const ConfidenceBadge: React.FC<{
-  value: number;
-  trail?: number[];
-  expanded?: boolean;
-  onToggle?: () => void;
-  hasBreakdown?: boolean;
-  askFloor?: number | null;
-}> = ({ value, trail, expanded, onToggle, hasBreakdown, askFloor = null }) => {
-  const color = confColorVsFloor(value, askFloor);
-  // Same rule as the expanded panel: the verdict comes from the ENGINE's floor, never a band the UI made
-  // up. The panel was fixed for this and the badge's tooltip was not, so the tooltip went on calling a 73
-  // "confident" while the run had ASKED because 73 was under the bar of 80 — with the floor named in the
-  // very next sentence of the same tooltip.
-  const label = confVerdict(value, askFloor);
-  const climb = trail && trail.length >= 2 ? trail[trail.length - 1] - trail[0] : 0;
-  const pill = (
+// The PLANNING zone's compact confidence pill — solid fill in the floor-judged color, shown in the zone
+// header so the number is present whether the zone is open or collapsed to its one-line summary.
+const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value, askFloor = null }) => (
+  <Tip
+    label={`Planner confidence in how it broke this app down — ${value}/100. ${confVerdict(value, askFloor)}.`}
+  >
     <span
       className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
-      style={{ backgroundColor: color, borderRadius: 2 }}
+      style={{ backgroundColor: confColorVsFloor(value, askFloor), borderRadius: 2 }}
     >
       <Gauge className="h-2.5 w-2.5" />
       conf {value}
-      {hasBreakdown ? (
-        expanded ? (
-          <ChevronDown className="h-2.5 w-2.5" />
-        ) : (
-          <ChevronRight className="h-2.5 w-2.5" />
-        )
-      ) : null}
     </span>
-  );
-  return (
-    <span className="flex items-center gap-1 shrink-0">
-      <Tip
-        label={`Planner confidence in how it broke this app down — ${value}/100. ${label}.${hasBreakdown ? ' Click for the breakdown.' : ''}`}
-      >
-        {hasBreakdown ? (
-          <button type="button" onClick={onToggle} className="flex">
-            {pill}
-          </button>
-        ) : (
-          pill
-        )}
-      </Tip>
-      {climb > 0 ? (
-        <Tip label={`Confidence climbed ${trail![0]} → ${trail![trail!.length - 1]} as goose retargeted it.`}>
-          <span
-            className="text-[10px] tabular-nums flex items-center gap-0.5 shrink-0"
-            style={{ color: STATUS_COLOR.done }}
-          >
-            <TrendingUp className="h-2.5 w-2.5" /> +{climb}
-          </span>
-        </Tip>
-      ) : null}
-    </span>
-  );
-};
+  </Tip>
+);
 
 // The fixed pipeline every build moves through, so the free-text `phase` label reads as PROGRESS, not a
 // mystery. The active step is filled; passed steps get a check; upcoming steps stay muted.
@@ -1413,16 +1453,15 @@ function fmtElapsed(min: number): string {
   return `${s}s`;
 }
 
-// Live progress metrics at the top of the panel: TOTAL ELAPSED (a fact, ticking every second) + a rough,
-// clearly-labeled ETA for the rest + the current phase. The ETA is deliberately a WIDE range: the local fleet
-// is slow and variable and the single-node verify sink dominates the tail, so a fake-precise figure would lie.
-// It updates and shifts as tasks complete, and is suppressed until at least one task has finished.
-const SwarmMetricsStrip: React.FC<{
+// Live progress metrics inside the RUN HEADER band: TOTAL ELAPSED (a fact, ticking every second) + a rough,
+// clearly-labeled ETA for the rest. The ETA is deliberately a WIDE range: the local fleet is slow and
+// variable and the single-node verify sink dominates the tail, so a fake-precise figure would lie. It
+// updates and shifts as tasks complete, and is suppressed until at least one task has finished. Merged into
+// the header (was a floating strip) so identity, phase and timing read as ONE band.
+const HeaderMetrics: React.FC<{
   startedAt: number | null;
-  phase: string;
-  totals: { running: number; done: number; failed: number; tasks: number };
   phaseTodo: PhaseTodo[];
-}> = ({ startedAt, phase, totals, phaseTodo }) => {
+}> = ({ startedAt, phaseTodo }) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -1436,7 +1475,6 @@ const SwarmMetricsStrip: React.FC<{
   const itemsDone = phaseTodo.reduce((n, p) => n + p.counts.done, 0);
   const itemsTotal = phaseTodo.reduce((n, p) => n + p.counts.total, 0);
   let etaLabel: string;
-  let etaSub: string | undefined;
   if (itemsDone >= 1 && itemsTotal > itemsDone) {
     const perItem = elapsedMin / itemsDone;
     const remaining = itemsTotal - itemsDone;
@@ -1446,29 +1484,26 @@ const SwarmMetricsStrip: React.FC<{
     // guess — a range that shifts is honest; a fake-precise minute count is not.
     const lo = Math.max(1, Math.round(mid * 0.5));
     const hi = Math.max(lo + 1, Math.round(mid * 2));
-    etaLabel = `~${lo}–${hi} min`;
-    etaSub = 'rough';
+    etaLabel = `~${lo}–${hi} min left`;
   } else if (itemsTotal > 0 && itemsDone >= itemsTotal) {
     etaLabel = 'wrapping up';
   } else {
     // Never blank — before the first checklist item completes there is genuinely no basis to estimate from yet.
     etaLabel = 'estimating…';
   }
-  const tile = (label: string, value: string, color: string, sub?: string) => (
-    <div className="flex flex-col" style={{ minWidth: 84 }}>
-      <span className="text-[10px] uppercase tracking-wide text-text-secondary">{label}</span>
-      <span className="text-sm font-semibold tabular-nums" style={{ color }}>
-        {value}
-      </span>
-      {sub ? <span className="text-[10px] text-text-secondary">{sub}</span> : null}
-    </div>
-  );
   return (
-    <div className="flex items-center gap-6 px-3 py-2 border-b border-border-primary">
-      {tile('Elapsed', fmtElapsed(elapsedMin), '#2e8bff')}
-      {tile('Est. left', etaLabel, '#f5a623', etaSub)}
-      {tile('Phase', phase || '—', '#34c759', totals.tasks > 0 ? `${totals.done}/${totals.tasks} tasks` : undefined)}
-    </div>
+    <span className="flex items-center gap-3 shrink-0 tabular-nums">
+      <Tip label="Total wall-clock time since the run started.">
+        <span className="text-xs font-semibold" style={{ color: '#2e8bff' }}>
+          {fmtElapsed(elapsedMin)}
+        </span>
+      </Tip>
+      <Tip label="A deliberately rough range — the local fleet is variable, so a precise figure would lie.">
+        <span className="text-xs font-semibold" style={{ color: AMBER }}>
+          {etaLabel}
+        </span>
+      </Tip>
+    </span>
   );
 };
 
@@ -1479,7 +1514,7 @@ const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean
 }) => {
   const active = phaseStepIndex(phase);
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border-primary overflow-x-auto">
+    <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto min-w-0">
       {PHASE_STEPS.map((step, i) => (
         <React.Fragment key={step}>
           {i > 0 && <span className="text-text-secondary text-[10px] shrink-0">›</span>}
@@ -1746,80 +1781,360 @@ const PhaseTodoRow: React.FC<{
   );
 };
 
-// The accordion of per-phase checklists. Active phase default-open; finished phases collapse to a counts
-// header. Sits under the phase breadcrumb, above the activity feed.
-const PhaseTodoList: React.FC<{
-  phases: PhaseTodo[];
+// A WORK-board group header: solid state dot + the mono uppercase group name + count. The three groups
+// (RUNNING / QUEUED / DONE) are the "what is ongoing, what is planned, what is done" Mihai asked for.
+const BoardGroupHeader: React.FC<{ label: string; color: string; count: number; extra?: React.ReactNode }> = ({
+  label,
+  color,
+  count,
+  extra,
+}) => (
+  <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
+    <span aria-hidden className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
+    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color }}>
+      {label}
+    </span>
+    <span className="text-[10px] tabular-nums text-text-secondary">· {count}</span>
+    {extra}
+  </div>
+);
+
+// One WORK-board row: the task's engine-truth state, node, title + summary collapsed; RUNNING rows carry a
+// live tool-call line. Click → the row's OWN card (full spec, tool calls, reasoning, judge) — the per-task
+// detail that used to live in a parallel duplicate list.
+const BoardTaskRow: React.FC<{
+  row: BoardRow;
   deviceOrder: string[];
   stale: boolean;
-  activity?: Record<string, unknown>;
-  plan?: PlanTask[];
+  dev: boolean;
   workingDir?: string;
-}> = ({ phases, deviceOrder, stale, activity, plan, workingDir }) => {
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const shown = phases.filter((p) => p.items.length > 0);
-  if (shown.length === 0) return null;
+  digest?: Record<string, unknown>;
+}> = ({ row, deviceOrder, stale, dev, workingDir, digest }) => {
+  const interrupted = stale && row.state === 'running';
+  const c = interrupted ? CALL_PENDING : TODO_COLOR[row.state];
+  const idx = row.device ? deviceIndex(row.device, deviceOrder) : -1;
+  const lane = row.lane;
+  const calls = lane?.calls ?? [];
+  const reasoning = lane?.fullReasoning?.trim() || lane?.reasoning?.trim() || '';
+  const failLike = row.state === 'failed' || row.state === 'judge_failed' || interrupted;
+  const laneError = failLike && lane?.error ? lane.error.trim() : '';
+  const hasDetail = !!(
+    row.description ||
+    (row.files && row.files.length) ||
+    row.judge ||
+    calls.length > 0 ||
+    reasoning ||
+    laneError ||
+    digest ||
+    row.deps.length ||
+    row.difficulty
+  );
+  const [open, setOpen] = useState(false);
+  const expanded = open || (dev && row.state === 'running' && !interrupted);
+  const judgeFlag =
+    row.judge && row.judge.verdict && !['ok', 'accept', ''].includes(row.judge.verdict)
+      ? row.judge.verdict.replace(/_/g, ' ')
+      : null;
+  // The live line: what this row's node is DOING right now — the latest tool call, else the freshest
+  // substantive narration. Only for RUNNING rows; everything else states its outcome instead.
+  const lastCall = calls.length ? calls[calls.length - 1] : undefined;
+  const liveGen = substantiveChunk(lane?.reasoning) || substantiveChunk(lane?.lastText);
+  const secs = typeof row.elapsedMs === 'number' ? Math.round(row.elapsedMs / 1000) : null;
+  const revealFile = (rel: string) => {
+    if (!workingDir) return;
+    const base = workingDir.replace(/\/$/, '');
+    void window.electron.revealInFinder(rel.startsWith('/') ? rel : `${base}/${rel}`);
+  };
+  const firstBadCall = calls.findIndex((cl) => {
+    const k = classifyCall(cl).kind;
+    return k === 'malformed' || k === 'ran-nothing';
+  });
   return (
-    <div className="border-b border-border-primary">
-      <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-text-secondary flex items-center gap-1.5">
-        <ListTodo className="h-3 w-3" /> Phase checklist
-        <span className="text-[9px] normal-case text-text-secondary opacity-70">
-          · every check is an engine fact, not a claim
+    <div className="min-w-0" data-testid="board-row">
+      <div
+        {...(hasDetail
+          ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              onClick: () => setOpen((o) => !o),
+              onKeyDown: (e: React.KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setOpen((o) => !o);
+                }
+              },
+            }
+          : {})}
+        className={`w-full flex items-center gap-1.5 text-[11px] py-0.5 min-w-0 text-left ${hasDetail ? 'cursor-pointer hover:opacity-80' : ''}`}
+      >
+        {interrupted ? (
+          <CircleSlash className="h-3.5 w-3.5 shrink-0" style={{ color: c }} />
+        ) : (
+          <TodoGlyph state={row.state} />
+        )}
+        {idx >= 0 ? (
+          <span
+            className="text-[9px] font-mono shrink-0"
+            style={{ color: FORMATION_RAMP[idx % FORMATION_RAMP.length] }}
+          >
+            ⬢{String.fromCharCode(65 + (idx % 26))}
+          </span>
+        ) : null}
+        <span
+          className="shrink-0 font-medium"
+          style={{
+            color:
+              row.state === 'failed'
+                ? STATUS_COLOR.error
+                : row.state === 'pending'
+                  ? 'var(--color-text-secondary)'
+                  : 'var(--color-text-primary)',
+          }}
+        >
+          {row.title}
+        </span>
+        {row.kind === 'repair' ? <TodoPill text="repair" color="#b14cff" /> : null}
+        {row.summary ? <span className="text-text-secondary truncate">· {row.summary}</span> : null}
+        {interrupted ? <TodoPill text="interrupted" color={c} /> : null}
+        {!interrupted && row.state === 'unverified' ? <TodoPill text="unverified" color={c} /> : null}
+        {!interrupted && row.state === 'judge_failed' ? <TodoPill text="judge" color={c} /> : null}
+        {!interrupted && row.state === 'blocked' ? <TodoPill text="blocked" color={c} /> : null}
+        {judgeFlag ? (
+          <Tip label={`The judge intervened: ${judgeFlag}${row.judge?.hint ? ` — ${row.judge.hint.slice(0, 140)}` : ''}`}>
+            <span className="flex items-center gap-0.5 shrink-0" style={{ color: AMBER }}>
+              <Gavel className="h-3 w-3" /> {judgeFlag}
+            </span>
+          </Tip>
+        ) : null}
+        {row.detail ? <span className="text-[10px] text-text-secondary truncate">· {row.detail}</span> : null}
+        <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[10px] tabular-nums text-text-secondary">
+          {row.state === 'running' && lane?.toolCalls ? (
+            <span className="flex items-center gap-0.5">
+              <Wrench className="h-3 w-3" />
+              {lane.toolCalls}
+            </span>
+          ) : null}
+          {row.state === 'running' && lane?.errors ? (
+            <span style={{ color: STATUS_COLOR.error }}>{lane.errors}✕</span>
+          ) : null}
+          {row.state !== 'running' && secs != null ? <span>{secs}s</span> : null}
+          {typeof row.attempts === 'number' && row.attempts > 1 ? <span>×{row.attempts}</span> : null}
+          {row.state === 'pending' && row.deps.length ? (
+            <span className="font-mono truncate max-w-[12rem]">after {row.deps.join(', ')}</span>
+          ) : null}
+          {row.state === 'pending' && row.difficulty ? <span>{row.difficulty}</span> : null}
+          {hasDetail ? (
+            expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+          ) : null}
         </span>
       </div>
-      {shown.map((p) => {
-        const isOpen = open[p.key] ?? p.active;
-        // On a stale run a 'running' phase isn't live — it stopped. Show 'interrupted', not 'running'.
-        const interrupted = stale && p.state === 'running';
-        const label = interrupted ? 'interrupted' : p.state === 'unverified' ? 'unverified' : p.state;
-        const chip = interrupted ? CALL_PENDING : TODO_COLOR[p.state];
-        return (
-          <div key={p.key}>
-            <button
-              onClick={() => setOpen((o) => ({ ...o, [p.key]: !(o[p.key] ?? p.active) }))}
-              className="w-full flex items-center gap-2 px-3 py-1 hover:bg-background-secondary transition-colors text-left"
-            >
-              {isOpen ? (
-                <ChevronDown className="h-3 w-3 text-text-secondary shrink-0" />
-              ) : (
-                <ChevronRight className="h-3 w-3 text-text-secondary shrink-0" />
-              )}
-              <span
-                className={`text-[11px] font-medium ${p.active && !interrupted ? '' : 'text-text-secondary'}`}
-                style={p.active && !interrupted ? { color: chip } : undefined}
-              >
-                {p.label}
-              </span>
-              <span
-                className="text-[9px] uppercase tracking-wide px-1 py-px shrink-0"
-                style={{ color: chip, border: `1px solid ${chip}`, borderRadius: 2 }}
-              >
-                {label}
-              </span>
-              {p.counts.total > 0 ? (
-                <span className="text-[10px] tabular-nums text-text-secondary ml-auto">
-                  {p.counts.done}/{p.counts.total}
+      {row.state === 'running' && !interrupted && !expanded ? (
+        <div className="flex items-center gap-1.5 pl-5 pb-0.5 text-[10px] min-w-0">
+          {lastCall ? (
+            (() => {
+              const cm = classifyCall(lastCall);
+              return (
+                <>
+                  <CallTypeIcon icon={cm.icon} color={CALL_KIND_COLOR[cm.kind]} />
+                  <span className="text-text-secondary truncate">
+                    {cm.action}
+                    {lastCall.summary ? <span className="font-mono opacity-80"> · {lastCall.summary}</span> : null}
+                  </span>
+                </>
+              );
+            })()
+          ) : liveGen ? (
+            <span className="text-text-secondary truncate">{liveGen}</span>
+          ) : (
+            <span className="text-text-secondary">generating…</span>
+          )}
+        </div>
+      ) : null}
+      {expanded && hasDetail ? (
+        <div
+          className="ml-5 mt-1 mb-2 px-2.5 py-2 space-y-2 border border-border-primary bg-background-secondary"
+          style={{ borderRadius: 3 }}
+        >
+          {row.difficulty || row.deps.length || lane?.model ? (
+            <div className="text-[10px] text-text-secondary flex flex-wrap gap-x-3">
+              {row.difficulty ? (
+                <span>
+                  difficulty <span className="text-text-primary">{row.difficulty}</span>
                 </span>
               ) : null}
-            </button>
-            {isOpen ? (
-              <div className="px-3 pb-2 pl-8 space-y-0">
-                {p.items.map((item) => (
-                  <PhaseTodoRow
-                    key={item.id}
-                    item={item}
-                    deviceOrder={deviceOrder}
-                    stale={stale}
-                    activity={activity}
-                    plan={plan}
-                    workingDir={workingDir}
-                  />
+              {row.deps.length ? (
+                <span>
+                  after <span className="font-mono text-text-primary">{row.deps.join(', ')}</span>
+                </span>
+              ) : null}
+              {lane?.model ? (
+                <span>
+                  model <span className="font-mono text-text-primary">{lane.model}</span>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {row.files && row.files.length ? (
+            <div className="text-[10px] text-text-secondary break-words">
+              <span className="uppercase tracking-wide text-text-tertiary">Files</span>{' '}
+              {row.files.map((f, i) => (
+                <span key={f}>
+                  {i > 0 ? ', ' : ''}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      revealFile(f);
+                    }}
+                    disabled={!workingDir}
+                    title={workingDir ? 'Reveal in Finder' : undefined}
+                    className={`font-mono text-text-primary ${workingDir ? 'hover:underline cursor-pointer' : ''}`}
+                  >
+                    {f}
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {laneError ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: STATUS_COLOR.error }}>
+                {interrupted ? 'Last error before it stalled' : 'Why it failed'}
+              </div>
+              <MonoOutput text={laneError} failed />
+            </div>
+          ) : null}
+          {row.description ? <ReasoningBlock text={row.description} label="Task spec" /> : null}
+          {reasoning ? (
+            <ReasoningBlock
+              text={reasoning}
+              live={row.state === 'running' && !interrupted}
+              forceOpen={dev}
+              label={row.state === 'running' ? 'Generating' : 'Reasoning'}
+            />
+          ) : null}
+          {calls.length > 0 ? (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary mb-1.5">
+                Tool calls · {lane?.toolCalls ?? calls.length}
+              </div>
+              <div className="bg-background-primary border border-border-primary px-2 py-1" style={{ borderRadius: 3 }}>
+                {calls.map((cl, i) => (
+                  <CallRow key={i} call={cl} defaultOpen={dev || i === firstBadCall} />
                 ))}
               </div>
-            ) : null}
-          </div>
-        );
-      })}
+            </div>
+          ) : null}
+          {!lane && digest ? <TaskGenDetail digest={digest} /> : null}
+          {row.judge && (row.judge.verdict || row.judge.hint) ? <JudgeReason judge={row.judge} /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/**
+ * WORK zone — the ONE source of truth for "what is the plan, what is ongoing, what is done": the task
+ * board (deriveTaskBoard) in three groups, each row expanding into its own detail card. This replaces the
+ * old trio that showed the same tasks three ways (phase-checklist rows, a parallel lane list under a
+ * "Drafting the plan" header that wasn't theirs, and feed lines) without saying which was authoritative.
+ */
+const WorkZone: React.FC<{
+  board: TaskBoard;
+  deviceOrder: string[];
+  stale: boolean;
+  dev: boolean;
+  live: boolean;
+  workingDir?: string;
+  digests: Record<string, unknown>;
+}> = ({ board, deviceOrder, stale, dev, live, workingDir, digests }) => {
+  const total = board.running.length + board.queued.length + board.done.length;
+  const failedCount = board.done.filter(
+    (r) => r.state === 'failed' || r.state === 'judge_failed'
+  ).length;
+  const digestFor = (id: string) =>
+    typeof digests[id] === 'object' && digests[id] !== null
+      ? (digests[id] as Record<string, unknown>)
+      : undefined;
+  const rows = (list: BoardRow[]) => (
+    <div className="px-3 pb-1 pl-4 space-y-0">
+      {list.map((r) => (
+        <BoardTaskRow
+          key={r.id}
+          row={r}
+          deviceOrder={deviceOrder}
+          stale={stale}
+          dev={dev}
+          workingDir={workingDir}
+          digest={digestFor(r.id)}
+        />
+      ))}
+    </div>
+  );
+  return (
+    <div className="border-t border-border-primary">
+      <ZoneHeader
+        hue={ZONE_HUES.work}
+        label="Work"
+        explain="the plan as a live board — running, queued, done"
+        right={
+          total > 0 ? (
+            <span className="text-[10px] tabular-nums text-text-secondary">
+              {board.running.length} running · {board.queued.length} queued · {board.done.length} done
+              {board.addedByReplan > 0 ? ` · +${board.addedByReplan} re-planned` : ''}
+            </span>
+          ) : undefined
+        }
+      />
+      {board.stuck ? (
+        <div className="mx-3 mb-2 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5" style={{ backgroundColor: STATUS_COLOR.error, borderRadius: 3 }}>
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          {board.stuck}
+        </div>
+      ) : null}
+      {total === 0 ? (
+        <div className="px-3 pb-2 text-[11px] text-text-secondary">
+          {live
+            ? 'The plan lands here once it is agreed — tasks appear the moment the first one is dispatched.'
+            : 'No tasks were dispatched in this run.'}
+        </div>
+      ) : (
+        <>
+          {board.running.length > 0 ? (
+            <>
+              <BoardGroupHeader label="Running" color={STATUS_COLOR.running} count={board.running.length} />
+              {rows(board.running)}
+            </>
+          ) : null}
+          {board.queued.length > 0 ? (
+            <>
+              <BoardGroupHeader
+                label="Queued"
+                color={CALL_PENDING}
+                count={board.queued.length}
+                extra={<span className="text-[10px] text-text-secondary">— waiting on dependencies</span>}
+              />
+              {rows(board.queued)}
+            </>
+          ) : null}
+          {board.done.length > 0 ? (
+            <>
+              <BoardGroupHeader
+                label="Done"
+                color={STATUS_COLOR.done}
+                count={board.done.length}
+                extra={
+                  failedCount > 0 ? (
+                    <span className="text-[10px] font-semibold" style={{ color: STATUS_COLOR.error }}>
+                      · {failedCount} failed
+                    </span>
+                  ) : undefined
+                }
+              />
+              {rows(board.done)}
+            </>
+          ) : null}
+        </>
+      )}
     </div>
   );
 };
@@ -2094,6 +2409,173 @@ const ClarifyPrompt: React.FC<{
   );
 };
 
+/**
+ * PLANNING zone — how the plan was agreed BEFORE building: the confidence gauge and its two signals, the
+ * planning checklist (research / plan / contracts — every check an engine event), the candidate plan
+ * drafts, and the clarify prompt when goose pauses to ask. HISTORICAL once building starts: the zone
+ * collapses to its one-line summary (confidence pill · tasks · climb) so it stops dominating the view
+ * mid-build — expandable any time; forced open while goose is waiting on the user's answers.
+ */
+const PlanningZone: React.FC<{
+  conf: ConfidenceBreakdown | null;
+  planConfidence: number | null;
+  trail: number[];
+  askFloor: number | null;
+  clarify: SwarmRunState['clarify'];
+  plan: PlanTask[];
+  /** The planning-history phases only: research, plan, contracts. */
+  phases: PhaseTodo[];
+  planLanes: TurnLane[];
+  deviceOrder: string[];
+  stale: boolean;
+  mode: SwarmLogMode;
+  dev: boolean;
+  buildStarted: boolean;
+  workingDir?: string;
+  activity?: Record<string, unknown>;
+}> = ({
+  conf,
+  planConfidence,
+  trail,
+  askFloor,
+  clarify,
+  plan,
+  phases,
+  planLanes,
+  deviceOrder,
+  stale,
+  mode,
+  dev,
+  buildStarted,
+  workingDir,
+  activity,
+}) => {
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+  const [laneOpen, setLaneOpen] = useState<Record<string, boolean>>({});
+  const clarifyPending = !!clarify?.pending;
+  const shownPhases = phases.filter((p) => p.items.length > 0);
+  const hasBody =
+    clarifyPending || !!conf || shownPhases.length > 0 || planLanes.length > 0;
+  if (!hasBody && planConfidence == null) return null;
+  // Historical once build starts: collapse by default, keep the one-line summary in the header.
+  const open = clarifyPending ? true : (openOverride ?? !buildStarted);
+  const climb = trail.length >= 2 ? trail[trail.length - 1] - trail[0] : 0;
+  const explain = buildStarted
+    ? 'how the plan was agreed before building'
+    : clarifyPending
+      ? 'goose is asking you before it builds'
+      : 'agreeing on the plan before building';
+  return (
+    <div className="border-t border-border-primary">
+      <ZoneHeader
+        hue={ZONE_HUES.planning}
+        label="Planning"
+        explain={explain}
+        collapsed={!open}
+        onToggle={clarifyPending ? undefined : () => setOpenOverride((o) => !(o ?? !buildStarted))}
+        right={
+          <>
+            {typeof planConfidence === 'number' ? (
+              <ConfPill value={planConfidence} askFloor={askFloor} />
+            ) : null}
+            {climb > 0 ? (
+              <Tip label={`Confidence climbed ${trail[0]} → ${trail[trail.length - 1]} as goose retargeted it.`}>
+                <span
+                  className="text-[10px] tabular-nums flex items-center gap-0.5 shrink-0"
+                  style={{ color: STATUS_COLOR.done }}
+                >
+                  <TrendingUp className="h-2.5 w-2.5" /> +{climb}
+                </span>
+              </Tip>
+            ) : null}
+            {!open && plan.length > 0 ? (
+              <span className="text-[10px] tabular-nums text-text-secondary">
+                {plan.length} task{plan.length === 1 ? '' : 's'} planned
+              </span>
+            ) : null}
+          </>
+        }
+      />
+      {open ? (
+        clarifyPending && clarify ? (
+          <ClarifyPrompt clarify={clarify} plan={plan} askFloor={askFloor} />
+        ) : (
+          <div className="pb-1">
+            {conf ? (
+              <div className="px-3 py-2">
+                <ConfidenceBreakdownBody
+                  conf={conf}
+                  trail={trail}
+                  hasPendingQuestions={false}
+                  askFloor={askFloor}
+                />
+              </div>
+            ) : null}
+            {shownPhases.map((p) => (
+              <div key={p.key}>
+                <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+                    {p.label}
+                  </span>
+                  {p.counts.total > 0 ? (
+                    <span className="text-[10px] tabular-nums text-text-secondary">
+                      {p.counts.done}/{p.counts.total}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="px-3 pl-4 space-y-0">
+                  {p.items.map((item) => (
+                    <PhaseTodoRow
+                      key={item.id}
+                      item={item}
+                      deviceOrder={deviceOrder}
+                      stale={stale}
+                      activity={activity}
+                      plan={plan}
+                      workingDir={workingDir}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+            {planLanes.length > 0 ? (
+              <div className="mt-1">
+                <div className="px-3 pt-1 pb-0.5 flex items-center gap-1.5">
+                  <Braces className="h-3 w-3" style={{ color: ZONE_HUES.planning }} />
+                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+                    Candidate drafts · {planLanes.length} model{planLanes.length === 1 ? '' : 's'}
+                    {planLanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
+                  </span>
+                </div>
+                <div className="divide-y divide-border-primary">
+                  {planLanes.map((lane) => {
+                    const defaultOpen = lane.status === 'running';
+                    const isOpen = laneOpen[lane.taskId] ?? defaultOpen;
+                    return (
+                      <LaneRow
+                        key={lane.taskId}
+                        lane={lane}
+                        deviceOrder={deviceOrder}
+                        stale={stale}
+                        open={isOpen}
+                        mode={mode}
+                        dev={dev}
+                        onToggle={() =>
+                          setLaneOpen((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+};
+
 // End-of-run OVERVIEW at DONE: what was built (grounded summary), how to run it (engine-stamped command),
 // VERIFICATION (from phaseTodo — engine only, never the summary model), and what's next. An unverified ship
 // LEADS with an amber caveat + hedged headers so three confident-looking lines can never out-shout the one
@@ -2266,7 +2748,9 @@ const TerminalBanner: React.FC<{
       {summary && summary.perDevice.length > 0 ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-[11px] bg-background-secondary border-t border-border-primary/50">
           {summary.perDevice.map((d) => {
-            const hue = FORMATION_RAMP[deviceIndex(d.device, deviceOrder) % FORMATION_RAMP.length];
+            // Key the hue by the CANONICAL node name — d.device is the raw pool id, which is not in
+            // deviceOrder, so every node collapsed onto the same out-of-range hue.
+            const hue = FORMATION_RAMP[deviceIndex(d.node, deviceOrder) % FORMATION_RAMP.length];
             return (
               <Tip
                 key={d.device}
@@ -2314,10 +2798,6 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   const runDir = run.runDir ?? workingDir;
   // LM Studio's OWN live per-node status (lms ps --json) — the ground-truth generating/idle dot per node.
   const nodeStatus = useFleetStatus();
-  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  // Default OPEN so the confidence gauge shows on EVERY build, not only when the badge is clicked or an ask
-  // fires (Mihai: "I would like to see it for every app"). The badge still collapses it.
-  const [confOpen, setConfOpen] = useState(true);
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';
@@ -2349,8 +2829,27 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
     digests: run.activityDigests,
     digestMtimes: run.activityMtimes,
     now: Date.now(),
+    // SUPERVISION: open judge spans (foldSupervision) joined to the nodes LM Studio itself reports busy —
+    // the workload class that used to render a hard-working node as "idle — no task".
+    supervision: run.supervision,
+    busyNodes: Object.entries(nodeStatus)
+      .filter(([, st]) => st === 'generating' || st === 'processingPrompt')
+      .map(([n]) => n),
   });
   const deviceOrder: string[] = fleet.devices;
+  // The WORK board — the single source of truth for plan / ongoing / done (see deriveTaskBoard).
+  const board = deriveTaskBoard({
+    plan: run.plan,
+    phaseTodo: run.phaseTodo,
+    lanes: run.lanes,
+    fixLanes: run.fixLanes,
+  });
+  // Planning history (research / plan / contracts) lives in the PLANNING zone; build + verify ARE the board.
+  const planningPhases = run.phaseTodo.filter(
+    (p) => p.key === 'research' || p.key === 'plan' || p.key === 'contracts'
+  );
+  const buildStarted = run.totals.tasks > 0 || phaseStepIndex(run.phase) >= 3;
+  const appName = runAppName(run.meta?.prompt, runDir);
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
   // last-activity mtime with the old conservative window (runs that predate heartbeats).
@@ -2396,19 +2895,34 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       className={`border border-border-primary bg-background-secondary text-text-primary text-sm ${className}`}
       style={{ borderRadius: 3 }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-primary gap-2">
+      {/* ── RUN HEADER zone — identity + state in ONE band: what is being built, the phase, counts,
+          elapsed/ETA, pause + display mode. Replaces the floating fragments (brand pill, metrics strip,
+          breadcrumb) Mihai read as "lacking any visual definition". */}
+      <div className="border-b border-border-primary">
+      <div className="flex items-center justify-between px-3 py-2 gap-2">
         <span className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold shrink-0">Swarm LeanZero</span>
-          {typeof run.planConfidence === 'number' ? (
-            <ConfidenceBadge
-              value={run.planConfidence}
-              trail={run.confidenceTrail}
-              expanded={confOpen}
-              onToggle={() => setConfOpen((o) => !o)}
-              hasBreakdown={!!run.confidence}
-              askFloor={run.askFloor}
-            />
-          ) : null}
+          <span
+            aria-hidden
+            className="shrink-0"
+            style={{ width: 8, height: 8, background: ZONE_HUES.run, borderRadius: 1 }}
+          />
+          <span
+            className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] shrink-0"
+            style={{ color: ZONE_HUES.run }}
+          >
+            Swarm run
+          </span>
+          <Tip
+            label={
+              run.meta?.prompt ? (
+                <span className="whitespace-pre-wrap">{run.meta.prompt.slice(0, 400)}</span>
+              ) : (
+                'What this run is building'
+              )
+            }
+          >
+            <span className="text-xs font-semibold truncate text-text-primary">{appName}</span>
+          </Tip>
           {clarifyPending ? (
             // Paused waiting on the human — NOT active work, so no spinner and a distinct amber "paused" chip
             // (the old code showed a spinning "Planning" here, implying it was still churning).
@@ -2532,15 +3046,28 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
           </button>
         </span>
       </div>
-
-      {confOpen && run.confidence && !run.clarify?.pending ? (
-        <ConfidencePanel
-          conf={run.confidence}
-          trail={run.confidenceTrail}
-          hasPendingQuestions={false}
-          askFloor={run.askFloor}
-        />
-      ) : null}
+      {/* Row 2 of the band: the pipeline breadcrumb + live timing — progress and time read together. */}
+      {(run.inProgress || ended) && (
+        <div className="flex items-center justify-between gap-2 pr-3 border-t border-border-primary/50">
+          <PhaseSteps
+            phase={run.phase}
+            live={run.inProgress && !stale && !ended && !clarifyPending}
+            activeColor={
+              ended
+                ? outcome === 'done'
+                  ? STATUS_COLOR.done
+                  : outcome === 'failed'
+                    ? STATUS_COLOR.error
+                    : STOPPED
+                : STATUS_COLOR.running
+            }
+          />
+          {run.inProgress && !stale && !ended && !clarifyPending ? (
+            <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
+          ) : null}
+        </div>
+      )}
+      </div>
 
       {/* While it is actually building — not ended, and not already blocked on a clarify prompt (that one
           is a question awaiting YOUR answer; two input boxes at once would be a puzzle). */}
@@ -2567,113 +3094,70 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
         />
       ) : null}
 
-      {run.clarify?.pending ? (
-        <ClarifyPrompt clarify={run.clarify} plan={run.plan} askFloor={run.askFloor} />
-      ) : null}
-
-      {run.inProgress && !stale && !ended && !clarifyPending && (
-        <SwarmMetricsStrip
-          startedAt={run.startedAt}
-          phase={run.phase}
-          totals={run.totals}
-          phaseTodo={run.phaseTodo}
-        />
-      )}
-
-      {(run.inProgress || ended) && (
-        <PhaseSteps
-          phase={run.phase}
-          live={run.inProgress && !stale && !ended && !clarifyPending}
-          activeColor={
-            ended
-              ? outcome === 'done'
-                ? STATUS_COLOR.done
-                : outcome === 'failed'
-                  ? STATUS_COLOR.error
-                  : STOPPED
-              : STATUS_COLOR.running
-          }
-        />
-      )}
-
-      <FleetStrip
-        deviceOrder={deviceOrder}
-        runningByDevice={fleet.workingByDevice}
-        dev={dev}
-        live={run.inProgress && !stale && !ended}
-        nodeStatus={nodeStatus}
-      />
-
-      <PhaseTodoList
-        phases={run.phaseTodo}
+      {/* ── PLANNING zone — the confidence story + planning checklist + candidate drafts, and the clarify
+          prompt when goose is asking. Collapses to its one-line summary once building starts. */}
+      <PlanningZone
+        conf={run.confidence}
+        planConfidence={run.planConfidence}
+        trail={run.confidenceTrail}
+        askFloor={run.askFloor}
+        clarify={run.clarify}
+        plan={run.plan}
+        phases={planningPhases}
+        planLanes={run.planLanes}
         deviceOrder={deviceOrder}
         stale={stale}
-        activity={run.activityDigests}
-        plan={run.plan}
+        mode={mode}
+        dev={dev}
+        buildStarted={buildStarted}
         workingDir={runDir}
+        activity={run.activityDigests}
       />
 
-      <ActivityFeed
+      {/* ── FLEET zone — the fixed realtime per-node rows, now under the same header register. */}
+      {deviceOrder.length > 0 ? (
+        <div className="border-t border-border-primary">
+          <ZoneHeader
+            hue={ZONE_HUES.fleet}
+            label="Fleet"
+            explain="what each node is doing right now"
+            right={
+              <span className="text-[10px] tabular-nums text-text-secondary">
+                {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
+                {run.inProgress && !stale && !ended ? ` · ${fleet.workingByDevice.size} working` : ''}
+              </span>
+            }
+          />
+          <FleetStrip
+            deviceOrder={deviceOrder}
+            runningByDevice={fleet.workingByDevice}
+            dev={dev}
+            live={run.inProgress && !stale && !ended}
+            nodeStatus={nodeStatus}
+            unattributed={fleet.unattributed}
+          />
+        </div>
+      ) : null}
+
+      {/* ── WORK zone — the one task board: running / queued / done, rows expanding into their own cards. */}
+      <WorkZone
+        board={board}
+        deviceOrder={deviceOrder}
+        stale={stale}
+        dev={dev}
+        live={run.inProgress && !stale && !ended}
+        workingDir={runDir}
+        digests={run.activityDigests}
+      />
+
+      {/* ── EVENT LOG zone — the chronological engine narrative, subordinate and collapsed by default in
+          compact mode (judge verdicts + failures already surface on the WORK rows). */}
+      <EventLogZone
         items={verbose ? run.verboseActivity : run.activity}
         live={run.inProgress && !stale && !ended}
         verbose={verbose}
         workingDir={runDir}
       />
-
-      {run.planLanes.length > 0 ? (
-        <div className="border-t border-border-primary">
-          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-text-secondary flex items-center gap-1.5">
-            <Braces className="h-3 w-3" style={{ color: '#b14cff' }} />
-            Drafting the plan · {run.planLanes.length} model
-            {run.planLanes.length === 1 ? '' : 's'}
-            {run.planLanes.some((l) => l.status === 'running') ? ' · thinking…' : ''}
-          </div>
-          <div className="divide-y divide-border-primary">
-            {run.planLanes.map((lane) => {
-              // Plan drafts: expand while thinking, collapse once the plan is chosen. Mode controls density.
-              const defaultOpen = lane.status === 'running';
-              const open = overrides[lane.taskId] ?? defaultOpen;
-              return (
-                <LaneRow
-                  key={lane.taskId}
-                  lane={lane}
-                  deviceOrder={deviceOrder}
-                  stale={stale}
-                  open={open}
-                  mode={mode}
-                  dev={dev}
-                  onToggle={() =>
-                    setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))
-                  }
-                />
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="divide-y divide-border-primary">
-        {run.lanes.map((lane) => {
-          // Regardless of mode: IN-PROGRESS lanes default OPEN (you watch the live work), FINISHED ones
-          // default COLLAPSED (headline only — the history stays scannable). The mode controls the CONTENT
-          // density of an open lane (compact = titles, developer = full reasoning), not whether it's open.
-          // The user can still expand/collapse any lane via the override.
-          const defaultOpen = lane.status === 'running';
-          const open = overrides[lane.taskId] ?? defaultOpen;
-          return (
-            <LaneRow
-              key={lane.taskId}
-              lane={lane}
-              deviceOrder={deviceOrder}
-              stale={stale}
-              open={open}
-              mode={mode}
-              dev={dev}
-              onToggle={() => setOverrides((o) => ({ ...o, [lane.taskId]: !(o[lane.taskId] ?? defaultOpen) }))}
-            />
-          );
-        })}
-      </div>
     </div>
   );
 };

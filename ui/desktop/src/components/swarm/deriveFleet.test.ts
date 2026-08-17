@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { deriveFleet, resolvePool, foldEvents, DIGEST_FRESH_MS } from './useSwarmRun';
+import {
+  deriveFleet,
+  resolvePool,
+  foldEvents,
+  foldSupervision,
+  DIGEST_FRESH_MS,
+  DIGEST_OPEN_CALL_FRESH_MS,
+  JUDGE_SPAN_MAX_MS,
+} from './useSwarmRun';
 import type { TurnLane } from './useSwarmRun';
 
 // Shapes taken verbatim from a measured benchmark run log (swarm-3node-r0, 2026-08-17): a 3-device
@@ -117,6 +125,193 @@ describe('deriveFleet — every pool node renders; idle is a state, never absenc
       now,
     });
     expect(workingByDevice.size).toBe(0);
+  });
+});
+
+describe('digest freshness — an OPEN tool call beats the short mtime window', () => {
+  it('an open LANE stays WORKING even when its digest mtime is 3 minutes old', () => {
+    const now = 10_000_000;
+    const { workingByDevice } = deriveFleet({
+      pool: ['gabee'],
+      laneSources: [lane('gabee', 'running', 'api')],
+      digests: { api: { model: 'gabee-qwen3.6-27b-fable-fusion-711-mtp' } },
+      digestMtimes: { api: now - 180_000 },
+      now,
+    });
+    expect(workingByDevice.get('gabee')?.taskId).toBe('api');
+  });
+
+  it("a LANELESS digest whose last call is pending (ok: null) survives past DIGEST_FRESH_MS — one long shell call streams no tokens", () => {
+    const now = 10_000_000;
+    const digest = {
+      model: 'workhorse-qwen3.6-27b-fable-fusion-711-mtp',
+      calls: [
+        { name: 'shell', summary: 'cargo build', ok: true },
+        { name: 'shell', summary: 'python3 -m pytest -q', ok: null },
+      ],
+    };
+    const { workingByDevice } = deriveFleet({
+      pool: ['workhorse'],
+      laneSources: [],
+      digests: { 'verify::api': digest },
+      digestMtimes: { 'verify::api': now - 180_000 }, // 3 min — past the 120s window
+      now,
+    });
+    expect(workingByDevice.get('workhorse')?.taskId).toBe('verify::api');
+  });
+
+  it('the open-call grace is not forever — past DIGEST_OPEN_CALL_FRESH_MS it still drops out', () => {
+    const now = 100_000_000;
+    const digest = {
+      model: 'workhorse-qwen3.6-27b-fable-fusion-711-mtp',
+      calls: [{ name: 'shell', summary: 'python3 -m pytest -q', ok: null }],
+    };
+    const { workingByDevice } = deriveFleet({
+      pool: ['workhorse'],
+      laneSources: [],
+      digests: { 'verify::api': digest },
+      digestMtimes: { 'verify::api': now - DIGEST_OPEN_CALL_FRESH_MS - 1 },
+      now,
+    });
+    expect(workingByDevice.size).toBe(0);
+  });
+
+  it('a stale digest with NO open call still reads idle within the old window (unchanged behavior)', () => {
+    const now = 10_000_000;
+    const { workingByDevice } = deriveFleet({
+      pool: ['gabee'],
+      laneSources: [],
+      digests: {
+        x: {
+          model: 'gabee-qwen3.6-27b-fable-fusion-711-mtp',
+          calls: [{ name: 'shell', summary: 'ls', ok: true }],
+        },
+      },
+      digestMtimes: { x: now - DIGEST_FRESH_MS - 1 },
+      now,
+    });
+    expect(workingByDevice.size).toBe(0);
+  });
+});
+
+// Shapes VERBATIM from the live incident (swarm-3node-r0, 2026-08-17): workhorse showed "idle — no task"
+// while LM Studio had it processing 2 requests. The log tail at that moment — the node's real work was
+// SUPERVISION: a judge generation (judge_observed with no verdict yet) that creates no task lane.
+const SUPERVISION_TAIL = [
+  {
+    event: 'task_completed',
+    task_id: 'verify::web',
+    status: 'done',
+    device: 'worksmacstudio-workhorse-qwen3.6-27b-fable-',
+    ts: '2026-08-17T16:36:11.000000+00:00',
+  },
+  {
+    event: 'pre_review',
+    task_id: 'web-js',
+    device: 'workhorse-qwen3.6-27b-fable-fusion-711-mtp', // model-id spelling — the OTHER device spelling
+    had_findings: false,
+    secs: 124.0,
+    ts: '2026-08-17T16:38:33.000000+00:00',
+  },
+  {
+    event: 'judge_verdict',
+    task_id: 'verify::web',
+    device: 'worksmacstudio-workhorse-qwen3.6-27b-fable-',
+    judge_node: 'gabee-qwen3.6-27b-fable-fusion-711-mtp',
+    verdict: 'ok',
+    action: 'observed',
+    ts: '2026-08-17T16:39:06.000000+00:00',
+  },
+  {
+    event: 'judge_observed',
+    task_id: 'verify::meridian',
+    elapsed_secs: 90,
+    tool_calls: 6,
+    ts: '2026-08-17T16:39:07.000000+00:00',
+  },
+];
+
+describe('supervision — judge generations count as WORKING (the "idle while LM Studio shows 2 requests" bug)', () => {
+  const NOW = Date.parse('2026-08-17T16:39:40.000000+00:00');
+
+  it('foldSupervision: an unmatched judge_observed is an open span; verdict/skip/completion closes it', () => {
+    const open = foldSupervision([RUN_STARTED, POOL_RESOLVED, ...SUPERVISION_TAIL]);
+    expect(open).toHaveLength(1);
+    expect(open[0].taskId).toBe('verify::meridian');
+    expect(open[0].label).toBe('Judging · verify::meridian');
+    const closed = foldSupervision([
+      ...SUPERVISION_TAIL,
+      { event: 'judge_verdict', task_id: 'verify::meridian', verdict: 'ok', action: 'observed' },
+    ]);
+    expect(closed).toHaveLength(0);
+    const skipped = foldSupervision([
+      ...SUPERVISION_TAIL,
+      { event: 'judge_skipped', task_id: 'verify::meridian', reason: 'no_idle_device' },
+    ]);
+    expect(skipped).toHaveLength(0);
+    // A verdict on finished work never arrives — the task's own completion closes the span too.
+    const done = foldSupervision([
+      ...SUPERVISION_TAIL,
+      { event: 'task_completed', task_id: 'verify::meridian', status: 'done' },
+    ]);
+    expect(done).toHaveLength(0);
+  });
+
+  it('OLD derivation read the supervising node as idle; with the busy join it is WORKING and says why', () => {
+    const supervision = foldSupervision([RUN_STARTED, POOL_RESOLVED, ...SUPERVISION_TAIL]);
+    // verify::meridian's own worker is busy on mihai; workhorse is the LM-Studio-busy node with no lane.
+    const laneSources = [lane('mihai', 'running', 'verify::meridian')];
+    const before = deriveFleet({
+      pool: ['gabee', 'mihai', 'workhorse'],
+      laneSources,
+      digests: {},
+      digestMtimes: {},
+      now: NOW,
+    });
+    expect(before.workingByDevice.has('workhorse')).toBe(false); // the measured lie
+    const after = deriveFleet({
+      pool: ['gabee', 'mihai', 'workhorse'],
+      laneSources,
+      digests: {},
+      digestMtimes: {},
+      now: NOW,
+      supervision,
+      busyNodes: ['workhorse', 'mihai'],
+    });
+    const w = after.workingByDevice.get('workhorse');
+    expect(w?.description).toBe('Judging · verify::meridian');
+    expect(w?.phase).toBe('supervision');
+    expect(after.unattributed).toHaveLength(0);
+  });
+
+  it('with no busy node to pin it to, the span is returned unattributed — real work is never dropped', () => {
+    const supervision = foldSupervision([RUN_STARTED, POOL_RESOLVED, ...SUPERVISION_TAIL]);
+    const { workingByDevice, unattributed } = deriveFleet({
+      pool: ['gabee', 'mihai', 'workhorse'],
+      laneSources: [],
+      digests: {},
+      digestMtimes: {},
+      now: NOW,
+      supervision,
+    });
+    expect(workingByDevice.size).toBe(0);
+    expect(unattributed).toHaveLength(1);
+    expect(unattributed[0].label).toBe('Judging · verify::meridian');
+  });
+
+  it('a span older than JUDGE_SPAN_MAX_MS is a crashed run leftover, not live work', () => {
+    const supervision = foldSupervision([...SUPERVISION_TAIL]);
+    const { workingByDevice, unattributed } = deriveFleet({
+      pool: ['workhorse'],
+      laneSources: [],
+      digests: {},
+      digestMtimes: {},
+      now: NOW + JUDGE_SPAN_MAX_MS + 1,
+      supervision,
+      busyNodes: ['workhorse'],
+    });
+    expect(workingByDevice.size).toBe(0);
+    expect(unattributed).toHaveLength(0);
   });
 });
 
