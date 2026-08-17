@@ -2337,11 +2337,17 @@ const resolveBenchNode = (): string => {
   // screenshots (a harness gap punished as app quality). Prefer a node that can actually
   // resolve playwright; the shim is the fallback so the run still proceeds (probe checks
   // then read honestly low and the scoring detail shows the probe errors).
-  const probeTest =
-    "try{const{createRequire}=require('module');const{execSync}=require('child_process');" +
-    "const g=execSync('npm root -g',{encoding:'utf8'}).trim();" +
-    "createRequire(require('path').join(g,'x.js'))('playwright');process.exit(0)}" +
-    'catch(e){process.exit(1)}';
+  // The test IS the probe. The first version required('playwright') from `npm root -g` and
+  // passed — while the probe's own resolution ladder prefers a walk-up-local playwright,
+  // which on this dev machine found a different install whose BROWSERS were never
+  // downloaded: browserType.launch died on every probe and a finished 93-minute run scored
+  // V 0.0 with zero screenshots (checked a neighbour, not the property — second incident of
+  // this class). Now the candidate must run the actual product_probe.mjs and produce probe
+  // JSON, which requires the real resolution AND a real browser launch end to end. The
+  // dummy port never navigates (ERR_UNSAFE_PORT) — launch success alone yields the JSON.
+  const probePath = app.isPackaged
+    ? path.join(process.resourcesPath, 'swarm-bench', 'bench', 'product_probe.mjs')
+    : path.join(process.cwd(), '..', '..', 'evals', 'swarm-bench', 'bench', 'product_probe.mjs');
   const candidates: string[] = [];
   const envNode = process.env.GOOSE_SWARM_RENDER_NODE;
   if (envNode) candidates.push(envNode);
@@ -2357,8 +2363,11 @@ const resolveBenchNode = (): string => {
   for (const c of candidates) {
     try {
       if (!fsSync.existsSync(c)) continue;
-      const r = spawnSync(c, ['-e', probeTest], { timeout: 15000 });
-      if (r.status === 0) return c;
+      const r = spawnSync(c, [probePath, 'load', 'http://127.0.0.1:9'], {
+        timeout: 45000,
+        encoding: 'utf8',
+      });
+      if (r.status === 0 && (r.stdout ?? '').includes('"scenario"')) return c;
     } catch {
       /* try next */
     }
