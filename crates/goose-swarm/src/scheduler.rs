@@ -600,10 +600,18 @@ const SPECULATION_CAP: u32 = 8;
 /// unbounded generations on one app.
 const TESTGEN_CAP: u32 = 3;
 
-/// F779: total tail-review jobs per run. The tail can be long, so this is generous — but a cap
-/// keeps a pathological multi-hour tail from unbounded review spawns. Read-only, so the ceiling
-/// is about noise/CPU, not correctness.
-const TAIL_REVIEW_CAP: u32 = 40;
+/// F779: total tail-review jobs per run. "Generous" was written when this mechanism emitted no
+/// event and nobody could see what it cost — the ceiling was reasoned about as noise/CPU because
+/// the reviews are read-only.
+///
+/// MEASURED the first run that instrumented it (run 6): 27 calls, 12,382s — **3.4 hours of fleet
+/// time in one run** — for 7 findings, five of the calls sitting at the 900s timeout having found
+/// nothing. It is dispatched into EVERY free slot on EVERY scheduler tick, so a long tail
+/// multiplies it, and it takes the idle slot ahead of `testgen`, whose output IS consumed. The
+/// per-call cap (240s, swarm.rs) bounds one review; this bounds the run. 8 calls rotates the
+/// dimension set roughly twice, which is where every finding in the measured run came from —
+/// the productive dimension (`wiring`) found 5 defects in under 3 minutes each, all early.
+const TAIL_REVIEW_CAP: u32 = 8;
 
 struct State {
     dag: Dag,
