@@ -19951,3 +19951,23 @@ LOTTERY IS NOW THE WHOLE GAME: the findings-held class (vendor/sync family, 6 he
 held on r0's 0.769) is the single blocker between the swarm and dominance on both axes — the
 standing #1 on PHASE-POLISH and the next deep hunt: WHY do the fix waves convert these
 findings on some runs (r0: 3→2→1) and go flat on others (r1: 6→6)?
+
+## F863 — pair r2: 0.6644 vs 0.6867 — quality loss #2 by 0.022 → PRE-REGISTERED EARLY CALL: quality NOT-ESTABLISHED on the rolling curve; speed 3/3 with n1 never finishing
+
+r2 on the F862 binary: 0.6644 / 142.3 min, valid. The honest ruler WORKED as built: round 0's
+wave promoted a REAL improvement (twin graded 2<3 — under the old ruler a zero-edit twin had
+claimed this exact spot), round 1 verified 3→2, round 2 came back flat 2→2 and the stall exit
+ended the phase instead of buying a third wave. Prologue 961s — best ever again. The wall
+(142 min, slowest F859+ unit) went to the DAG lottery: dead attempts back at 3,136 node-s (the
+LLM drift-kill latency class, still the #1 open item on PHASE-POLISH). THE CALL: 0.6644 <
+0.6867 is quality loss #2, and by the pre-registered sequential rule the QUALITY axis on this
+rolling curve is NOT-ESTABLISHED — stated plainly. The margin is a fifteenth of the replicate
+spread and the n1 comparator is a cap-tree, but the rule was set before the data and it
+binds. What the three F859+ pairs actually say: quality is a statistical TIE at margins of
+0.02-0.2 in both directions dominated by the findings-held lottery, while SPEED is 3/3 with
+walls 90-142 min against an n1 arm that has NEVER self-completed. The formal single-binary
+curve (the rolling contract's endgame) re-runs after the config freezes; the fleet's next
+hours go to the QUALITY levers the forensics named — vendor-doc fetch (the ETag class failed
+in every run), the DOM-id contract scan (the frontend TypeError class), pitfall observability
+— not to three more pairs of a called question. STOP set: r3 finishes and keeps its row, then
+the morning batch ships.
