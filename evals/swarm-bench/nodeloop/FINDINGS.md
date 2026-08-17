@@ -20037,3 +20037,29 @@ score of the campaign. The repair phase cost 491s total: round 1 read flat (3→
 stall exit refused the wasted wave on the spot. The pair is the widest margin either
 direction all campaign (+0.6327). One pair remains (r7 vs 0.1998-cap); then the n1 block
 overnight and the r0-r3 re-runs close the formal curve.
+
+## F870 — the journey app shipped UNSTYLED and every gate stayed green: three workers, three class vocabularies, zero contract — css_coherence_scan committed (binary-freeze: enters the engine at the post-curve rebuild)
+
+Mihai read the run-card screenshots: "the styles are missing completely… Why were the styles
+not fixed during that very long fix phase?!" Diagnosis on the tree (swarm-3node-r0/vendorsync):
+styles.css EXISTS (11KB), index.html LINKS it, api.py SERVES it text/css — and the page still
+renders browser-default, because the stylesheet defines 35 class rules and exactly ONE
+(.status-badge) matches anything the markup uses. Three-way drift: the CSS worker designed
+.app-header/.btn-primary/.state-overlay…, the HTML worker wrote id-only markup (zero class
+attributes), the JS worker invented a third vocabulary for its generated rows (cell-date,
+empty-row, filter-btn…). The all-states-at-once mess in the shots is the SAME root cause —
+the .state-overlay display:none rules never match, so loading/empty/error all show. Why the
+fix phase never touched it: the F862 law violated one layer over — the scorer's v_styling
+partially punishes it (stylesheet=True + system-ui satisfied 0.7 of a weak check) but NO
+ruler finding exists for it, so the repair loop was structurally blind; it spent its budget
+on what it could see (pytest, sync, timeouts). The contract machinery freezes Python module
+interfaces and (since F864) DOM ids — nobody owned the class vocabulary. FIX (committed,
+NOT built — the F864 binary freeze holds until the formal curve closes): css_coherence_scan,
+sibling of dom_id_scan at BOTH ruler sites — class tokens parsed from selector positions
+only, "used" harvested greedily from html class= + js classList/className/setAttribute +
+js-built markup; ≥8 rules with <40% matched (or the mirror: ≥8 markup classes <40% styled)
+fires ONE finding naming the dead rules and the markup's actual vocabulary, demanding
+unification without deleting styling. Proven on the real tree (35/1/7 fires; the coherent
+control stays silent; end-to-end test with python per L242). QUEUED post-curve, same class:
+the scorer's v_styling should measure selector coverage so the benchmark grades what users
+see (scorer frozen mid-curve for comparability).
