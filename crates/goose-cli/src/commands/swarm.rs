@@ -922,10 +922,12 @@ pub struct SwarmConfig {
     /// nothing.
     #[serde(default = "default_true")]
     pub degrade_on_stall: bool,
-    /// FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into per-concern child
-    /// tasks at planning time, so each gets its own small contract stub instead of one whole-package stub that
-    /// times out and cascades an API divergence. OFF by default = byte-identical (the split transform is not run).
-    /// GOOSE_SWARM_SPLIT_FAT env overrides; GOOSE_SWARM_SPLIT_FAT_FILES sets the file-count threshold (default 4).
+    /// ⚠️ BAKED ON (F873). FINER SLICING (#131): split a FAT `hard` module (the whole package as one task) into
+    /// per-concern child tasks at planning time, so each gets its own small contract stub instead of one
+    /// whole-package stub that times out and cascades an API divergence. Baked ON with threshold 3 after the
+    /// waste mine measured the 3-file web triplet paying a deterministic ~700s judge-split tax in 9 of the
+    /// last 10 runs (12,964 node-s corpus-wide) while this transform sat gated.
+    /// GOOSE_SWARM_SPLIT_FAT env overrides; GOOSE_SWARM_SPLIT_FAT_FILES sets the file-count threshold (default 3).
     #[serde(default)]
     pub split_fat: bool,
     /// INCREMENTAL REPLAN (Phase 1, #122/#129): instead of re-drafting the WHOLE plan from scratch, pin the
@@ -1300,7 +1302,14 @@ impl Default for SwarmConfig {
             read_on_fix: false,
             kind_prompt: true,
             degrade_on_stall: true,
-            split_fat: false,
+            // BAKED ON (F873 waste mine): the vendorsync spec demands a 3-file web triplet
+            // "each owned and written separately", yet 22 of 41 archived plans shipped ONE
+            // `web` task owning all three — and 9 of the last 10 runs replayed the same
+            // movie: dispatch, burn 528-1,224s, judge splits it mid-flight anyway (~700s/run
+            // of pure split tax, 12,964 node-s corpus-wide). The deterministic pre-split has
+            // existed all along with full plumbing; only this gate and the 4-file threshold
+            // (the triplet is 3 files) blocked it.
+            split_fat: true,
             incremental_replan: false,
             ask_away: false,
             ask_rounds_max: None,
@@ -4642,6 +4651,43 @@ mod tests {
         assert!(
             iv.split(',').all(|d| d != "core-miner"),
             "the fat parent id is no longer a dependency"
+        );
+    }
+
+    #[test]
+    fn split_fat_splits_the_three_file_web_triplet() {
+        // F873: the spec demands three separately-owned web files; 22 of 41 archived plans
+        // shipped ONE `web` task owning all three and paid ~700s of judge-split tax. At the
+        // new default threshold (3) the triplet must split at PLAN time into per-role
+        // children with the parent's deps preserved.
+        let mut plan: serde_json::Value = serde_json::from_str(
+            r#"{"subtasks":[
+                {"id":"api","depends_on":[],"files":["vendorsync/api.py"],"difficulty":"hard"},
+                {"id":"web","depends_on":["api"],"difficulty":"hard",
+                 "files":["vendorsync/web/index.html","vendorsync/web/styles.css","vendorsync/web/app.js"]},
+                {"id":"integrate-verify","depends_on":["api","web"],"files":[]}
+            ]}"#,
+        )
+        .unwrap();
+        let n = split_fat_modules(&mut plan, TargetLang::Python, 3);
+        assert_eq!(
+            n, 1,
+            "the 3-file multi-role web task must split at threshold 3"
+        );
+        let ids: Vec<String> = plan["subtasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(
+            !ids.contains(&"web".to_string()),
+            "the fat parent is replaced"
+        );
+        let children: Vec<&String> = ids.iter().filter(|i| i.starts_with("web-")).collect();
+        assert!(
+            children.len() >= 2,
+            "per-role children must exist (html/css/js roles): {ids:?}"
         );
     }
 
@@ -16656,11 +16702,14 @@ impl GooseAgentDispatcher {
         // (a fat whole-package stub timed out → the package diverged → no compile). Runs first so children flow
         // through every transform below. OFF => not called => byte-identical.
         if swarm_gate_cfg("GOOSE_SWARM_SPLIT_FAT", load_config().split_fat) {
+            // Default 3, not 4: the measured fat module is the 3-file web triplet, which the
+            // old threshold let through every time (F873). The >=2-role condition inside the
+            // transform still protects cohesive 3-file single-concern tasks from splitting.
             let min_files = std::env::var("GOOSE_SWARM_SPLIT_FAT_FILES")
                 .ok()
                 .and_then(|v| v.trim().parse::<usize>().ok())
                 .filter(|&n| n >= 2)
-                .unwrap_or(4);
+                .unwrap_or(3);
             let split = split_fat_modules(&mut v, lang, min_files);
             if split > 0 {
                 eprintln!(
@@ -25423,7 +25472,32 @@ impl GooseAgentDispatcher {
                 // A SUBTRACTION, gated. With the lever OFF this branch is not taken and the prompt is
                 // byte-identical, so the kind_prompt arm still measures a real difference rather than a
                 // rewrite. The test author sees FEWER rules than today, never more.
-                let owner_body = if kind_prompt_on && is_test_author {
+                // ASSET OWNER (F873 waste mine): a styles.css/index.html owner got the
+                // implementer rules VERBATIM — "verify by RUNNING", "run python3 -m pytest"
+                // — so css workers ran the full Python suite (measured: 11 css-owner tasks,
+                // 57 shell calls, ~2,500 node-s above floor; web-css ran the whole suite
+                // twice in one run). No Python suite applies to a static asset.
+                let is_asset_owner = !req.owned_files.is_empty()
+                    && req.owned_files.iter().all(|f| {
+                        f.ends_with(".html")
+                            || f.ends_with(".htm")
+                            || f.ends_with(".css")
+                            || f.ends_with(".js")
+                            || f.ends_with(".mjs")
+                            || f.ends_with(".md")
+                            || f.ends_with(".txt")
+                    });
+                let owner_body = if is_asset_owner {
+                    "WRITE FIRST. Your owned file(s) are STATIC ASSETS (frontend/docs) — no \
+                     Python test suite applies to them, so do NOT run pytest or start the \
+                     backend; that only burns your budget on checks that cannot exercise your \
+                     file. Write each owned file IN FULL from the spec. You MAY read the page's \
+                     sibling web files (html/css/js) to keep ONE shared class/id vocabulary. \
+                     For a .js file you may run `node --check <file>` if node exists — nothing \
+                     else. A turn that ends without your owned file written and non-empty FAILS \
+                     and is retried.\n\n"
+                        .to_string()
+                } else if kind_prompt_on && is_test_author {
                     "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must \
                      be to `write` your owned test file(s) IN FULL from it. You MAY read the SOURCE MODULE \
                      YOU ARE TESTING to get its real signatures, and YOUR OWN test file after you write \
@@ -26040,6 +26114,9 @@ impl GooseAgentDispatcher {
              only the part you need.\n\
              {lang_rules}             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
              (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
+             - In SHELL commands prefer RELATIVE paths (your cwd is the project root); if you must pass an \
+             absolute path, QUOTE it — the project's absolute path contains a SPACE and an unquoted `cat \
+             /Users/...` splits into two bogus paths and fails the call.\n\
              - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
              - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \
              `content` (the whole file). A write with `content` but no `path` FAILS with 'missing field path' \
