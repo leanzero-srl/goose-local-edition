@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import {
   useSwarmRun,
+  deriveFleet,
   classifyCall,
   collapseRepeats,
   substantiveChunk,
@@ -783,38 +784,17 @@ const NodeExpandBox: React.FC<{ text: string }> = ({ text }) => {
 };
 
 const FleetStrip: React.FC<{
-  lanes: TurnLane[];
-  planLanes: TurnLane[];
-  scoutLanes: TurnLane[];
-  contractLanes: TurnLane[];
-  detailLanes: TurnLane[];
+  /** Every node the run's RESOLVED POOL carries (idle ones included) + any lane device — see deriveFleet. */
   deviceOrder: string[];
+  /** node -> its live lane (task lifecycle or open activity digest), from deriveFleet. */
+  runningByDevice: Map<string, TurnLane>;
   live: boolean;
   dev: boolean;
   /** LM Studio's own live status per node short-name (generating/processingPrompt/idle), for the truth dot. */
   nodeStatus: Record<string, string>;
-}> = ({
-  lanes,
-  planLanes,
-  scoutLanes,
-  contractLanes,
-  detailLanes,
-  deviceOrder,
-  live,
-  dev,
-  nodeStatus,
-}) => {
+}> = ({ deviceOrder, runningByDevice, live, dev, nodeStatus }) => {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (deviceOrder.length === 0) return null;
-  // Worker lanes (EXECUTE) + plan-draft lanes (PLAN) always count a node as busy. In DEVELOPER mode also fold the
-  // research (scout) and contracts lanes, so those phases show live per-node activity instead of every node idle.
-  const runningByDevice = new Map<string, TurnLane>();
-  const sources = dev
-    ? [...lanes, ...planLanes, ...scoutLanes, ...contractLanes, ...detailLanes]
-    : [...lanes, ...planLanes];
-  for (const l of sources) {
-    if (l.status === 'running' && !runningByDevice.has(l.device)) runningByDevice.set(l.device, l);
-  }
   const shortName = (device: string): string => device.match(/^([^-]+)/)?.[1] ?? device;
   return (
     <div className="px-3 py-2 border-b border-border-primary bg-background-primary space-y-1">
@@ -2351,20 +2331,26 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
   if (!run.present) return null;
 
   // Stable node identity: run.lanes RE-SORTS every poll (running first, then recency), so deriving letters
-  // from first-seen lane order made a node's letter/hue flicker between polls. Sort the distinct devices
-  // deterministically so ⬢A/hue is fixed for the whole run.
-  // In DEVELOPER mode the research (scout) + contracts lanes enter the pipeline too, so the Fleet strip shows
-  // per-node activity in those phases. In compact/verbose they stay out, so a research/contracts-only run keeps
-  // deviceOrder empty → the FleetStrip renders null exactly as before (byte-identical default view).
-  const deviceOrder: string[] = Array.from(
-    new Set(
-      [
-        ...run.lanes,
-        ...run.planLanes,
-        ...(dev ? [...run.scoutLanes, ...run.contractLanes, ...run.detailLanes] : []),
-      ].map((l) => l.device)
-    )
-  ).sort();
+  // from first-seen lane order made a node's letter/hue flicker between polls. deriveFleet keys the row set
+  // off the RESOLVED POOL (pool_resolved / run_started.pool), sorted deterministically, so EVERY fleet node
+  // renders — idle ones as an explicit idle row, never absence — and ⬢A/hue is fixed for the whole run.
+  // ALL lane kinds count toward WORKING in every mode (scouts/contracts/detailers/repair twins included):
+  // the mode toggle controls display density below, not whether a busy node reads busy.
+  const fleet = deriveFleet({
+    pool: run.pool,
+    laneSources: [
+      ...run.lanes,
+      ...run.planLanes,
+      ...run.scoutLanes,
+      ...run.contractLanes,
+      ...run.detailLanes,
+      ...run.fixLanes,
+    ],
+    digests: run.activityDigests,
+    digestMtimes: run.activityMtimes,
+    now: Date.now(),
+  });
+  const deviceOrder: string[] = fleet.devices;
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
   // last-activity mtime with the old conservative window (runs that predate heartbeats).
@@ -2611,13 +2597,9 @@ export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className
       )}
 
       <FleetStrip
-        lanes={run.lanes}
-        planLanes={run.planLanes}
-        scoutLanes={run.scoutLanes}
-        contractLanes={run.contractLanes}
-        detailLanes={run.detailLanes}
-        dev={dev}
         deviceOrder={deviceOrder}
+        runningByDevice={fleet.workingByDevice}
+        dev={dev}
         live={run.inProgress && !stale && !ended}
         nodeStatus={nodeStatus}
       />

@@ -55,6 +55,19 @@ function fmtElapsed(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
 }
 
+/** Short completion stamp for a stored result ("Aug 17, 18:27") — how a result stays identifiable. */
+function fmtWhen(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /**
  * The run's pipeline at a glance: which phase is live, what already finished, and the harness's
  * latest output line — never a bare spinner. The swarm-build phase gets its full live panel below;
@@ -368,6 +381,7 @@ export default function BenchmarkView() {
 
   const publishable = mine != null && mine.runMeta != null;
   const modelValid = model.trim().length >= 8 && model.trim().length <= 120;
+  const mineFinished = fmtWhen(mine?.runMeta?.finishedAt);
 
   return (
     <MainPanelLayout>
@@ -471,7 +485,7 @@ export default function BenchmarkView() {
           {mine && !running && (
             <section className="mt-8">
               <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-                Your last run
+                Your last run{mineFinished ? ` · completed ${mineFinished}` : ''}
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatTile
@@ -513,6 +527,22 @@ export default function BenchmarkView() {
                 <ShotsStrip shots={shots} />
               </div>
             </section>
+          )}
+
+          {running && mine && comparable && (
+            // A NEW run is in progress, so the "Your fleet" row below is the PREVIOUS run's stored
+            // result — say so unmistakably, in the view's own uppercase label register. Solid amber
+            // (the run-in-progress color), full border, no washes.
+            <div className="mt-8 rounded border-2 px-4 py-3" style={{ borderColor: PHASE_ACTIVE }}>
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: PHASE_ACTIVE }}>
+                Previous result · {(mine.score * 100).toFixed(1)}%
+                {mineFinished ? ` · completed ${mineFinished}` : ''}
+              </p>
+              <p className="mt-1 text-sm text-text-primary">
+                The &ldquo;Your fleet&rdquo; rows below are your last completed run — the run in
+                progress replaces them when it finishes.
+              </p>
+            </div>
           )}
 
           <section className="mt-8">

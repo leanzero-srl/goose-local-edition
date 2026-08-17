@@ -3101,6 +3101,10 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     const activityDir = path.join(swarmDir, 'activity');
     const actEntries = await fs.readdir(activityDir).catch(() => [] as string[]);
     const activity: Record<string, unknown> = {};
+    // Per-digest mtimes: a worker rewrites its digest ~2.5x/s while streaming, so a digest's own
+    // freshness is the per-NODE realtime signal the fleet strip needs (an open call whose digest went
+    // quiet long ago is a crashed worker, not a busy one).
+    const activityMtimes: Record<string, number> = {};
     // A worker rewrites its activity digest every turn but the run log only gets a line on task
     // events, so the freshest activity mtime is the real liveness signal — fold it into `mtime` so a
     // long-running task is not mistaken for stalled, and a killed run correctly goes stale.
@@ -3114,7 +3118,9 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             const st = await fs.stat(p);
             if (st.mtimeMs > freshest) freshest = st.mtimeMs;
             const c = await fs.readFile(p, 'utf8');
-            activity[f.replace(/\.json$/, '')] = JSON.parse(c);
+            const key = f.replace(/\.json$/, '');
+            activity[key] = JSON.parse(c);
+            activityMtimes[key] = st.mtimeMs;
           } catch {
             /* a digest mid-write — skip it this poll */
           }
@@ -3234,6 +3240,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
       heartbeat,
       events,
       activity,
+      activityMtimes,
       clarify,
       pauseRequested,
     };
