@@ -21605,8 +21605,23 @@ impl Judge for GooseAgentDispatcher {
                 .file_contents
                 .iter()
                 .map(|(p, c)| {
-                    let body: String = c.chars().take(1800).collect();
-                    format!("### {p}\n```\n{body}\n```")
+                    // SAY WHEN IT IS CUT. The judge is asked whether this worker's code can satisfy
+                    // its spec, and it was handed the first 1800 characters of each file with no
+                    // marker — so a large, complete, correct file arrived looking like it stopped
+                    // mid-function. The one thing the prompt tells the judge never to flag is
+                    // merely-unfinished work, and this is how a finished file was made to look
+                    // unfinished. An honest excerpt marker costs one line and removes the illusion.
+                    let total = c.chars().count();
+                    if total > 1800 {
+                        let body: String = c.chars().take(1800).collect();
+                        format!(
+                            "### {p}\n(excerpt: first 1800 of {total} characters — the file \
+                             CONTINUES beyond this point; judge only what you can see and never \
+                             treat the cut as an unfinished file)\n```\n{body}\n```"
+                        )
+                    } else {
+                        format!("### {p} (complete, {total} characters)\n```\n{c}\n```")
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n")
