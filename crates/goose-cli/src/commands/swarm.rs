@@ -21787,6 +21787,25 @@ impl Judge for GooseAgentDispatcher {
         )
         .await
         {
+            Ok(Ok(o)) if is_agent_loop_filler(&o.text) => {
+                // THE JUDGE'S OWN MODEL EXHAUSTED ITS TURNS. goose's agent loop then returns its
+                // fixed meta-message ("I've reached the maximum number of actions…") instead of a
+                // verdict — a full generation on a fleet node that supervised nothing. The engine
+                // already recognises this filler everywhere else (detailers, repro authors); the
+                // judge treated it as a reply and `parse_judge_reply` quietly degraded it to OK, so
+                // it was indistinguishable from a real pass. Caught live the first hour the
+                // `judge_review` event existed. It must NOT record the reviewed-fingerprint either:
+                // this state was never actually judged, so the next attempt must be allowed to run.
+                self.events.write_value(serde_json::json!({
+                    "event": "judge_review",
+                    "task_id": req.task_id,
+                    "elapsed_secs": req.elapsed_secs,
+                    "reply": "(no verdict — the judge's own turn budget was exhausted)",
+                    "filler": true,
+                }));
+                me_events_skip(&self.events, &req.task_id, "judge_turn_budget_exhausted");
+                JudgeOutcome::ok()
+            }
             Ok(Ok(o)) => {
                 if let Ok(mut seen) = self.judge_seen.lock() {
                     seen.insert(seen_key, review_fp);
