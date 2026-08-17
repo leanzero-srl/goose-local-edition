@@ -962,13 +962,22 @@ impl State {
             //
             // For everything else load stays primary, which is what spreads ordinary work across the
             // fleet and keeps idle nodes busy.
+            //
+            // Operator directive (2026-08-17): the highest-speed-weight host must be the unit that
+            // gets the MOST tasks. Ordinary placement used to break equal-load ties by preferred
+            // model then INDEX — and index order is discovery order, so on the operator's fleet
+            // every tie went to the slowest host (measured on a full app run: gabee 73 dispatches,
+            // workhorse 42, the exact inverse of `speed_weights: {gabee:1, local:2,
+            // worksmacstudio:3}`). Weight now ranks directly after load in BOTH branches: the
+            // fastest host wins every tie, and load-primary still guarantees it is never stacked
+            // while a sibling idles.
             let weight_rank = u32::MAX - d.cfg.speed_weight.max(1);
             if hard {
                 hard_device_key(d.in_flight, weight_rank, speed, weighted_load, i)
             } else {
                 (
                     d.in_flight as u64,
-                    speed,
+                    weight_rank as u64,
                     prefers_rank as u64,
                     weighted_load,
                     i,

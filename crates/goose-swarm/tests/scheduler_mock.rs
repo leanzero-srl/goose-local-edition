@@ -265,6 +265,54 @@ async fn spreads_independent_tasks_across_idle_devices() {
 }
 
 #[tokio::test]
+async fn speed_weight_wins_every_equal_load_tie_without_stacking() {
+    // Operator directive: the highest-speed-weight host is the unit that gets the MOST tasks.
+    // Placement used to break equal-load ties by INDEX, which on the real fleet always chose the
+    // slowest host. One independent task against a fully idle fleet must land on the fastest
+    // device even though it sorts LAST by index; with two tasks, load-primary must still spread
+    // the second to another device rather than stacking the fastest.
+    let mut fast = dev("z-fast", "m-z", 2);
+    fast.speed_weight = 3;
+    let mut mid = dev("b-mid", "m-b", 2);
+    mid.speed_weight = 2;
+    let slow = dev("a-slow", "m-a", 2); // speed_weight 1, sorts FIRST by index
+
+    let dag = Dag::from_specs(vec![spec("only", &[], &[])]).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let sched = Scheduler::new(vec![slow.clone(), mid.clone(), fast.clone()], 3);
+    let report = sched.run(dag, mock(&rec, 20), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 1);
+    assert_eq!(
+        rec.lock()
+            .unwrap()
+            .total_per_device
+            .get("z-fast")
+            .copied()
+            .unwrap_or(0),
+        1,
+        "an idle-fleet tie must go to the highest speed_weight, not the first index"
+    );
+
+    let dag2 = Dag::from_specs(vec![spec("x1", &[], &[]), spec("x2", &[], &[])]).unwrap();
+    let rec2 = Arc::new(Mutex::new(Recorder::default()));
+    let sched2 = Scheduler::new(vec![slow, mid, fast], 3);
+    let report2 = sched2
+        .run(dag2, mock(&rec2, 40), String::new())
+        .await
+        .unwrap();
+    assert_eq!(report2.done.len(), 2);
+    let r2 = rec2.lock().unwrap();
+    assert!(
+        r2.total_per_device.get("z-fast").copied().unwrap_or(0) >= 1,
+        "the fastest device gets the first of two tasks"
+    );
+    assert!(
+        r2.peak_per_device.get("z-fast").copied().unwrap_or(0) <= 1,
+        "load stays primary: the second task spreads instead of stacking the fastest device"
+    );
+}
+
+#[tokio::test]
 async fn preferred_model_breaks_ties_but_does_not_concentrate() {
     // Two independent tasks both preferring device `a`'s model, with `a` and `b` each weight 2.
     // Spread must place the second on `b` (idle) rather than doubling up on `a`.
