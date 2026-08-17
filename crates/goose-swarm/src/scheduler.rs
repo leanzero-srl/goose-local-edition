@@ -1768,7 +1768,11 @@ impl State {
             .iter()
             .enumerate()
             .filter(|(_, d)| d.cfg.enabled && !d.cfg.supervision && d.in_flight < d.cfg.weight)
-            .min_by_key(|(i, d)| (d.in_flight, *i))
+            // Same tie rule as pick_device: at equal load the FASTEST host wins, never the
+            // first index (which on the real fleet is the slowest host — the class the
+            // operator directive fixed in ordinary placement; a twin exists to BEAT the
+            // primary, so it wants the fast node even more).
+            .min_by_key(|(i, d)| (d.in_flight, u32::MAX - d.cfg.speed_weight.max(1), *i))
             .map(|(i, _)| i)?;
         let mut best: Option<(TaskId, u64)> = None;
         for (tid, n) in &self.dag.tasks {

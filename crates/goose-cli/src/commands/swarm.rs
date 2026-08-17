@@ -5826,6 +5826,82 @@ mod tests {
         );
     }
 
+    /// F871 holistic-review round: the DELETION ESCAPE (a fix twin deleting/gutting the
+    /// stylesheet cleared the finding and was PROMOTED), and the TS/React false-fire (scope
+    /// dropped .tsx and JSX className was never harvested — confirmed on two real archived
+    /// apps).
+    #[tokio::test]
+    async fn css_coherence_closes_the_deletion_escape_and_reads_jsx() {
+        let have_py = std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !have_py {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("goose_cssdel_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        // (a) DELETED: the html links a stylesheet that does not exist — must fire even with
+        // no .css in scope at all.
+        std::fs::write(
+            dir.join("web/index.html"),
+            "<head><link rel=\"stylesheet\" href=\"styles.css\"></head><body><h1>App</h1></body>",
+        )
+        .unwrap();
+        let files_no_css: Vec<String> = vec!["web/index.html".to_string()];
+        let gone = css_coherence_scan(&dir, &files_no_css).await;
+        assert!(gone.ran, "html-only scope must still run the scan");
+        assert!(
+            gone.findings.len() == 1 && gone.findings[0].contains("does NOT exist"),
+            "a linked-but-deleted stylesheet is a finding, not a clean tree: {:?}",
+            gone.findings
+        );
+        // (b) GUTTED: the stylesheet exists but holds almost nothing.
+        std::fs::write(dir.join("web/styles.css"), "body { color: #111 }").unwrap();
+        let files: Vec<String> = vec!["web/index.html".into(), "web/styles.css".into()];
+        let gutted = css_coherence_scan(&dir, &files).await;
+        assert!(
+            gutted.findings.len() == 1 && gutted.findings[0].contains("effectively unstyled"),
+            "a nearly-empty linked stylesheet must fire: {:?}",
+            gutted.findings
+        );
+        // (c) JSX/TS: a React-shaped app whose vocabulary lives in className attributes of a
+        // .tsx file — quoted AND braced forms — must be silent (the real loop-05 false-fire).
+        std::fs::write(
+            dir.join("web/styles.css"),
+            ".mine-counter { color: red } .cell { border: 0 } .cell-open { background: #eee }\n\
+             .board { display: grid } .status { font-weight: 700 } .btn-reset { padding: 4px }\n\
+             .timer { font-family: monospace } .flag { color: orange } .grid-row { display: flex }\n\
+             .overlay { position: fixed } .won { color: green } .lost { color: black }",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("web/app.tsx"),
+            "export function Board() {\n\
+             return <div className=\"board overlay\">\n\
+               <span className=\"mine-counter timer\">0</span>\n\
+               <button className=\"btn-reset\">r</button>\n\
+               <div className={r.won ? 'won status' : 'lost status'}>\n\
+                 <i className={`cell ${open ? 'cell-open' : 'flag'}`} />\n\
+                 <b className=\"grid-row\"/></div></div>;\n}",
+        )
+        .unwrap();
+        let files_tsx: Vec<String> = vec![
+            "web/index.html".into(),
+            "web/styles.css".into(),
+            "web/app.tsx".into(),
+        ];
+        let jsx = css_coherence_scan(&dir, &files_tsx).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            jsx.ran && jsx.findings.is_empty(),
+            "a styled JSX/TSX app must stay silent — className quoted and braced forms are \
+             real usage: {:?}",
+            jsx.findings
+        );
+    }
+
     /// C1 END-TO-END (F711/F712): the SCAN must skip the swarm's own tests, not merely the helper.
     ///
     /// My first test for this covered `is_test_path` in isolation and passed — which proves nothing
@@ -22715,19 +22791,23 @@ async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResul
 /// markup), classList calls and className writes — over-collecting weakens the detector,
 /// it never false-fires it.
 const CSS_COHERENCE_SCRIPT: &str = r#"
-import json, re, sys, pathlib
+import json, re, sys, pathlib, posixpath
 root = pathlib.Path(sys.argv[1])
 files = [f for f in sys.stdin.read().splitlines() if f.strip()]
 css_classes, used, checked, css_files = set(), set(), 0, []
-CLASS_ATTR = re.compile(r"""\bclass\s*=\s*(?:["']([^"'<>]*)["']|([\w-]+))""")
+rule_blocks = 0
+linked = []  # (html_rel, href) for every local stylesheet link
+CLASS_ATTR = re.compile(r"""\bclass(?:Name)?\s*=\s*(?:["']([^"'<>]*)["']|([\w-]+))""")
 WORD = re.compile(r"[\w-]+")
 def harvest_css(src):
+    global rule_blocks
     body = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
     sel = []
     for ch in body:
         if ch == "{":
             chunk = "".join(sel).split(";")[-1].strip()
-            if not chunk.startswith("@"):
+            if chunk and not chunk.startswith("@"):
+                rule_blocks += 1
                 for m in re.finditer(r"\.(-?[A-Za-z_][\w-]*)", chunk):
                     css_classes.add(m.group(1))
             sel = []
@@ -22751,10 +22831,19 @@ for rel in files:
             used.update(t for t in WORD.findall(m.group(1) or m.group(2) or ""))
         for m in re.finditer(r"<style[^>]*>(.*?)</style>", src, re.S | re.I):
             harvest_css(m.group(1))
+        for m in re.finditer(r"""<link[^>]*rel\s*=\s*["']stylesheet["'][^>]*>""", src, re.I):
+            h = re.search(r"""href\s*=\s*["']([^"']+)["']""", m.group(0))
+            if h and not h.group(1).startswith(("http:", "https:", "//")):
+                linked.append((rel, h.group(1).split("?")[0].split('#')[0]))
     elif rel.endswith((".js", ".mjs", ".ts", ".tsx", ".jsx")):
         checked += 1
         for m in CLASS_ATTR.finditer(src):
             used.update(t for t in WORD.findall(m.group(1) or m.group(2) or ""))
+        # JSX braces form: className={cond ? 'a b' : 'c'} — harvest words from the string
+        # literals inside the expression (review: JSX apps read as 0 matched without this).
+        for m in re.finditer(r"class(?:Name)?\s*=\s*\{([^}]*)\}", src):
+            for q in re.finditer(r"""["'`]([\w -]{1,79})["'`]""", m.group(1)):
+                used.update(WORD.findall(q.group(1)))
         for m in re.finditer(r"""classList\.(?:add|remove|toggle|contains|replace)\(\s*["']([\w-]+)["']""", src):
             used.add(m.group(1))
         for m in re.finditer(r"""\.className\s*[+]?=\s*["'`]([^"'`]*)["'`]""", src):
@@ -22769,7 +22858,7 @@ for rel in files:
         # positive in the corpus via id-name coincidences (getElementById('pagination')
         # matching .pagination) — ids are not class usage.
         has_interp = False
-        for m in re.finditer(r"""class\s*=\s*\\?"((?:[^"\\]|\\.)*)\\?"|class\s*=\s*\\?'((?:[^'\\]|\\.)*)\\?'""", src):
+        for m in re.finditer(r"""class(?:Name)?\s*=\s*\\?"((?:[^"\\]|\\.)*)\\?"|class(?:Name)?\s*=\s*\\?'((?:[^'\\]|\\.)*)\\?'""", src):
             val = m.group(1) or m.group(2) or ""
             if "${" in val:
                 has_interp = True
@@ -22782,10 +22871,28 @@ for rel in files:
             for m in re.finditer(r"""["']([\w][\w -]{0,79})["']""", src):
                 used.update(WORD.findall(m.group(1)))
 findings = []
+# THE DELETION ESCAPE (review): a fix twin that deletes or guts the stylesheet used to CLEAR
+# the dead-vocabulary finding and get promoted as strictly better. A linked-but-missing
+# stylesheet and a linked-but-nearly-empty one are now findings in their own right, so
+# destroying styling can never read as a repair.
+missing = []
+for html_rel, href in linked:
+    cand = posixpath.normpath(posixpath.join(posixpath.dirname(html_rel), href.lstrip("/")))
+    if not ((root / cand).is_file() or (root / href.lstrip("/")).is_file()):
+        missing.append((html_rel, href))
+for html_rel, href in missing[:2]:
+    findings.append({"kind": "missing", "css": href, "html": html_rel})
+if linked and not missing and rule_blocks < 3:
+    findings.append({
+        "kind": "gutted",
+        "css": css_files[0] if css_files else linked[0][1],
+        "rules_total": rule_blocks,
+    })
 matched = css_classes & used
 n = len(css_classes)
 if n >= 10 and len(matched) * 4 < n:
     findings.append({
+        "kind": "dead",
         "css": css_files[0] if css_files else "styles.css",
         "other_css": ", ".join(css_files[1:3]),
         "rules": n, "matched": len(matched), "markup": len(used),
@@ -22816,23 +22923,42 @@ fn parse_css_coherence(stdout: &str) -> DriftResult {
                 .map(|f| {
                     let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
                     let num = |k: &str| f.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
-                    let other = match g("other_css") {
-                        "" | "?" => String::new(),
-                        o => format!(" (the app has further stylesheets: {o})"),
-                    };
-                    format!(
-                        "{}: the stylesheet defines {} class rules but only {} are referenced \
-                         anywhere in the app's html/js — the page renders with browser-default \
-                         styling (the unstyled-page class). Dead rules include: {}.{} Read the \
-                         html/js to learn the class and id names the markup ACTUALLY carries, \
-                         then rewrite this stylesheet's selectors to target those real names \
-                         (element and #id selectors are fine) — do not delete the styling.",
-                        g("css"),
-                        num("rules"),
-                        num("matched"),
-                        g("dead"),
-                        other,
-                    )
+                    match g("kind") {
+                        "missing" => format!(
+                            "{}: the html links stylesheet `{}` which does NOT exist on disk — \
+                             the page ships with browser-default styling. Restore the stylesheet \
+                             file with real styling; removing the <link> is NOT a fix.",
+                            g("html"),
+                            g("css"),
+                        ),
+                        "gutted" => format!(
+                            "{}: the page links a stylesheet but only {} css rule(s) exist in \
+                             total — the page ships effectively unstyled. Write real styling for \
+                             the markup's elements and classes; deleting or emptying css can \
+                             never clear this finding.",
+                            g("css"),
+                            num("rules_total"),
+                        ),
+                        _ => {
+                            let other = match g("other_css") {
+                                "" | "?" => String::new(),
+                                o => format!(" (the app has further stylesheets: {o})"),
+                            };
+                            format!(
+                                "{}: the stylesheet defines {} class rules but only {} are referenced \
+                                 anywhere in the app's html/js — the page renders with browser-default \
+                                 styling (the unstyled-page class). Dead rules include: {}.{} Read the \
+                                 html/js to learn the class and id names the markup ACTUALLY carries, \
+                                 then rewrite this stylesheet's selectors to target those real names \
+                                 (element and #id selectors are fine) — do not delete the styling.",
+                                g("css"),
+                                num("rules"),
+                                num("matched"),
+                                g("dead"),
+                                other,
+                            )
+                        }
+                    }
                 })
                 .collect::<Vec<_>>()
         })
@@ -22852,6 +22978,10 @@ async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> Dri
     if !swarm_gate_cfg("GOOSE_SWARM_CSS_COHERENCE", true) {
         return DriftResult::default();
     }
+    // Scope mirrors EXACTLY what the script parses (review: .ts/.tsx/.jsx were parsed by the
+    // script but filtered out here, so TS/React frontends read as 0-matched and false-fired
+    // on two real archived apps). html alone is enough to run: the missing-stylesheet clause
+    // must fire even when the css file no longer exists in the tree (the deletion escape).
     let scope: Vec<String> = all_files
         .iter()
         .filter(|f| {
@@ -22860,15 +22990,17 @@ async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> Dri
                 || f.ends_with(".htm")
                 || f.ends_with(".js")
                 || f.ends_with(".mjs")
+                || f.ends_with(".ts")
+                || f.ends_with(".tsx")
+                || f.ends_with(".jsx")
         })
         .filter(|f| root.join(f.as_str()).is_file())
         .cloned()
         .collect();
-    let has_css = scope.iter().any(|f| f.ends_with(".css"));
     let has_html = scope
         .iter()
         .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
-    if !(has_css && has_html) {
+    if !has_html {
         return DriftResult::default();
     }
     let Some(out) = run_scoped_py_check(CSS_COHERENCE_SCRIPT, root, &scope).await else {
@@ -24909,10 +25041,13 @@ impl GooseAgentDispatcher {
         // the scale helper returns the base unchanged — old behavior exactly.
         let root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
         let fix_cap = fix_cap_secs_scaled(&root, &fr.all_files);
+        // "model" like every wave-path emitter — the desktop's fleet strip keys the lane's
+        // device off it, and the model-less sched event minted a phantom "?" fleet row that
+        // then persisted as a 4th idle node for the rest of the run (holistic review).
         self.events.write_value(serde_json::json!({
             "event": "complete_fix_dispatched", "path": "sched",
             "round": fr.round, "task_id": req.task_id, "baseline_findings": baseline,
-            "fix_cap_secs": fix_cap,
+            "fix_cap_secs": fix_cap, "model": req.model_id,
         }));
         let started = std::time::Instant::now();
         let guard = FixShadowGuard {

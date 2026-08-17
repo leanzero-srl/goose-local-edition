@@ -20092,3 +20092,29 @@ the sink_shard ruler unification is QUEUED. Re-validation after all cures: the b
 fires 5/35 matched, the working-SPA/element-selector/Jinja fixtures and all 59 good corpus
 trees stay silent, 238 tests green, the detector test can no longer pass without the scan
 actually running.
+
+## F872 — the holistic day-review (12 agents): five confirmed serious — TS/React blindness, the deletion escape, a phantom fleet node, and two probe-gate regressions; all engine-side fixed same-day
+
+Mihai ordered a judicious holistic re-review of everything shipped today; four lenses, every
+serious claim adversarially verified. CONFIRMED and FIXED in this batch: (1) the coherence
+scan's Rust scope filter dropped .ts/.tsx/.jsx that its own script parses, and JSX
+className= was never harvested — a real archived TS app (nf-ts-cadence) false-fired 34/0;
+scope widened + className quoted/braced harvest added; nf-ts-cadence now silent, and the
+other flagged app (loop-05-react-minesweeper) turns out to be a genuinely half-built tree —
+10 of its 12 rules appear NOWHERE in its source — so its fire is honest. (2) THE DELETION
+ESCAPE: a fix twin that deleted or gutted styles.css cleared the dead-vocabulary finding
+(has_css gate skipped the scan entirely) and was PROMOTED as strictly better — the scan now
+runs on has_html alone and files linked-but-MISSING and linked-but-GUTTED (<3 total rules)
+stylesheets as findings in their own right, so destroying styling can never read as repair.
+(3) The sched-path complete_fix_dispatched event carried no "model" — the desktop fleet
+strip would mint a phantom "?" node that persisted as a 4th idle row; the event now carries
+req.model_id like every wave-path emitter. (4) pick_speculation_target still broke idle
+ties by index (the exact slowest-host class the operator directive fixed in pick_device) —
+now speed-weight ties like its sibling. (5) resolveBenchNode's real-probe test runs
+spawnSync on the Electron MAIN process (a 45s×candidates UI freeze at Run click) and its
+dev probePath is cwd-fragile — both DESKTOP-side, queued behind the in-flight UI-cohesion
+agent to avoid a same-file collision. Also shipped this round from Mihai's live catches: the
+pipe-hides-exit-code worker instruction (pytest "collected 0 items" read as a green pass
+through `| head -80` — twice, on a file that did not exist), and docs-only modules no longer
+get import-check verify:: gates. Refuted by the verifiers, for the record: resolvePool
+same-model collapse, and the strong variant of the phantom-node claim.
