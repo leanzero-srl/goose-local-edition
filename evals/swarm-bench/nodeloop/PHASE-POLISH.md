@@ -32,3 +32,16 @@ Seeded from the first two audited runs (r1 old binary / r0-redo F851 binary):
   merge (~3 min) is the recorded next step; full pipelining NO-GO with reasons in F859).
 - OPEN: e2e twin straggler tail (re-measure on the 2-shard cut before touching); no-claimant
   wave cap (bounded to one wave by progress-rounds; conservative design recorded).
+
+## swarm-20260816-202317154  wall 110 min  (audited 2026-08-17T01:13:33)
+- repair_phase: 43.4 min (best ever 43.4)
+- dead_attempt_node_secs: 25.3 min (best ever 25.3)
+- research: 6.8 min (best ever 6.8)
+- dag occupancy 2.38 of pool; 12.2 min at concurrency <=1
+
+## swarm-20260816-221334699  wall 90 min  (audited 2026-08-17T02:46:59)
+- dead_attempt_node_secs: 19.4 min (best ever 19.4)
+- repair_phase: 16.0 min (best ever 16.0)
+- skeleton_convergence: 8.0 min (best ever 5.0)
+- REGRESSION skeleton_convergence: 8.0 min vs best 5.0 — find the cause before the next batch ships
+- dag occupancy 1.89 of pool; 23.1 min at concurrency <=1
