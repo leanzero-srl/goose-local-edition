@@ -5872,6 +5872,36 @@ mod tests {
         );
     }
 
+    /// F874: a task id with a path separator aimed its digest at a nonexistent directory and the
+    /// write failed SILENTLY — every scheduled fix task ran invisible, and the judge, whose
+    /// deterministic evidence IS that digest, was disarmed for exactly the tasks that repair the
+    /// app (measured: 9 empty `ok` reviews in 10 minutes on one fix task). The key must be a flat
+    /// filename AND must round-trip back to the task id, because the desktop indexes digests by
+    /// filename and every consumer looks them up by task id.
+    #[test]
+    fn activity_digest_key_flattens_paths_and_round_trips() {
+        for id in [
+            "fix::r0::vendorsync/web/app.js",
+            "fix::r12::a/b/c/d.py",
+            "verify::web-index",
+            "integrate-verify",
+        ] {
+            let k = activity_digest_key(id);
+            assert!(
+                !k.contains('/') && !k.contains('\\'),
+                "digest key must be a flat filename: {k}"
+            );
+            assert_eq!(
+                k.replace('~', "/"),
+                id,
+                "the desktop un-sanitizes `~` back to `/` — the key must round-trip"
+            );
+        }
+        // Ids without separators are untouched, so every existing digest keeps its name.
+        assert_eq!(activity_digest_key("api"), "api");
+        assert_eq!(activity_digest_key("verify::api"), "verify::api");
+    }
+
     /// F871 holistic-review round: the DELETION ESCAPE (a fix twin deleting/gutting the
     /// stylesheet cleared the finding and was PROMOTED), and the TS/React false-fire (scope
     /// dropped .tsx and JSX className was never harvested — confirmed on two real archived
@@ -11807,6 +11837,17 @@ fn build_reasoning(texts: &[String]) -> String {
     clip_tail(&joined, 1200)
 }
 
+/// The FILENAME a task's activity digest lives under. Task ids may contain path separators —
+/// every scheduled fix task is `fix::r{N}::{owned/file/path}` — and the digest path was built by
+/// interpolating the id directly, so the write aimed at a nested directory that does not exist and
+/// FAILED SILENTLY. Measured live (operator report): two fix workers ground for ten minutes each
+/// while the desktop showed "generating…" with no content and the judge had no digest to read, so
+/// its over-read/thrash checks were disarmed for exactly the tasks that repair the app. Slashes
+/// become `~`, which cannot appear in a normalized path id, so ids stay reversible on sight.
+fn activity_digest_key(task_id: &str) -> String {
+    task_id.replace(['/', '\\'], "~")
+}
+
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
@@ -13696,6 +13737,14 @@ pub struct GooseAgentDispatcher {
     fix_promotions: std::sync::atomic::AtomicUsize,
     /// F790-3: questions currently being answered, so two ticks never answer the same one.
     qa_inflight: Mutex<std::collections::HashSet<String>>,
+    /// Per-task fingerprint of what the SEMANTIC REVIEW last saw. The judge re-ran a full 27B
+    /// review of the same unchanged task every ~60s: measured live on one fix task, 9 reviews in
+    /// 10 minutes, every one returning `ok` with an empty hint while the worker's state never
+    /// moved. The review's inputs are exactly (owned-file bytes, tool calls, thinking chars); if
+    /// none of them changed there is nothing new to judge, and paying a generation to re-derive
+    /// the same verdict is pure node-time. Keyed by task id, holding the last reviewed
+    /// fingerprint.
+    judge_seen: Mutex<std::collections::HashMap<String, u64>>,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): read-only whole-tree review findings accumulated by idle
     /// nodes while the integrate-verify sink runs solo; drained + re-verified by run_swarm after the sink.
     /// Empty unless the flag is on.
@@ -13832,6 +13881,7 @@ impl GooseAgentDispatcher {
             fix_round: Mutex::new(None),
             fix_promotions: std::sync::atomic::AtomicUsize::new(0),
             qa_inflight: Mutex::new(std::collections::HashSet::new()),
+            judge_seen: Mutex::new(std::collections::HashMap::new()),
             sink_review_findings: Mutex::new(Vec::new()),
             prereview_dim: std::sync::atomic::AtomicUsize::new(0),
             clarity_fail: Mutex::new(None),
@@ -14301,7 +14351,7 @@ impl GooseAgentDispatcher {
             // twin's heartbeat stays inside its shadow rather than touching the real tree's .swarm/activity.
             let dir = work_dir.join(".swarm").join("activity");
             let _ = std::fs::create_dir_all(&dir);
-            dir.join(format!("{k}.json"))
+            dir.join(format!("{}.json", activity_digest_key(k)))
         });
         if let Some(p) = &activity_file {
             // Seed the digest the instant the call is DISPATCHED — before the first token — carrying the node
@@ -21233,7 +21283,7 @@ impl Judge for GooseAgentDispatcher {
         let digest = std::fs::read_to_string(
             cwd.join(".swarm")
                 .join("activity")
-                .join(format!("{}.json", req.task_id)),
+                .join(format!("{}.json", activity_digest_key(&req.task_id))),
         )
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
@@ -21378,6 +21428,33 @@ impl Judge for GooseAgentDispatcher {
         if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
             me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
             return JudgeOutcome::ok(); // genuinely nothing produced yet
+        }
+        // NOTHING NEW TO JUDGE. The semantic review below is a full generation on a fleet node, and
+        // its ONLY inputs are the owned files' bytes, the tool-call count and the thinking volume.
+        // When none of them has moved since the last review, the review can only re-derive the
+        // verdict it already gave — and it did: MEASURED live on `fix::r0::vendorsync/web/app.js`,
+        // 9 reviews in 10 minutes, every one `ok` with an empty hint, roughly a node-quarter-hour
+        // spent re-reading an unchanged worker. Fingerprint those exact inputs and skip while they
+        // are unchanged. This can never suppress a review of anything the reviewer could have seen,
+        // and it is named in the log rather than silent.
+        let seen_fp = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            acts.hash(&mut h);
+            thinking.hash(&mut h);
+            for (p, c) in &input.file_contents {
+                p.hash(&mut h);
+                c.len().hash(&mut h);
+                content_hash(c.as_bytes()).hash(&mut h);
+            }
+            h.finish()
+        };
+        if let Ok(mut seen) = self.judge_seen.lock() {
+            if seen.get(&req.task_id) == Some(&seen_fp) {
+                me_events_skip(&self.events, &req.task_id, "unchanged_since_last_review");
+                return JudgeOutcome::ok();
+            }
+            seen.insert(req.task_id.clone(), seen_fp);
         }
         let files_block = if input.file_contents.is_empty() {
             "(no file written yet)".to_string()
@@ -21755,7 +21832,7 @@ impl PreReviewer for GooseAgentDispatcher {
                 })
                 .collect();
             let _ = std::fs::write(
-                dir.join(format!("{}.json", req.task_id)),
+                dir.join(format!("{}.json", activity_digest_key(&req.task_id))),
                 serde_json::json!({"task_id": req.task_id, "findings": findings, "dimension": dim_id,
                                    "files": file_hashes})
                     .to_string(),
