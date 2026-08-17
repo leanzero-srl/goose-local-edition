@@ -3162,8 +3162,19 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             if (st.mtimeMs > freshest) freshest = st.mtimeMs;
             const c = await fs.readFile(p, 'utf8');
             const key = f.replace(/\.json$/, '');
-            activity[key] = JSON.parse(c);
+            const parsed = JSON.parse(c);
+            activity[key] = parsed;
             activityMtimes[key] = st.mtimeMs;
+            // The engine sanitizes path separators out of the digest FILENAME (a scheduled fix
+            // task is `fix::r{N}::{owned/file/path}`, which as a filename aimed at a directory
+            // that does not exist and failed silently). Consumers look digests up by the task id
+            // verbatim, so also index the un-sanitized id — otherwise every fix task stays
+            // invisible in the panel and every legacy digest keeps working unchanged.
+            if (key.includes('~')) {
+              const taskKey = key.replace(/~/g, '/');
+              activity[taskKey] = parsed;
+              activityMtimes[taskKey] = st.mtimeMs;
+            }
           } catch {
             /* a digest mid-write — skip it this poll */
           }
