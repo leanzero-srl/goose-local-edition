@@ -2372,23 +2372,47 @@ const benchRunLog = async (workdir: string): Promise<string | null> => {
 };
 
 // runMeta per the contract: engineEvents = line count of the run's event log; repairRounds =
-// complete_verify events minus one (the first verify is not a repair), floored at 0.
+// complete_verify events minus one (the first verify is not a repair), floored at 0. The verify
+// rounds themselves (per-round finding counts + the texts of the findings that HELD at the end)
+// feed the scoring-detail view — they are the repair story the score alone cannot tell.
+interface BenchVerifyRound {
+  round: number;
+  findings: number;
+  findingTexts: string[];
+}
+
 const benchRunCounts = async (
   workdir: string
-): Promise<{ engineEvents: number; repairRounds: number }> => {
+): Promise<{ engineEvents: number; repairRounds: number; verifyRounds: BenchVerifyRound[] }> => {
   const logPath = await benchRunLog(workdir);
-  if (!logPath) return { engineEvents: 0, repairRounds: 0 };
+  if (!logPath) return { engineEvents: 0, repairRounds: 0, verifyRounds: [] };
   const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
   const lines = raw.split('\n').filter((l) => l.trim().length > 0);
-  let verifies = 0;
+  const verifyRounds: BenchVerifyRound[] = [];
   for (const l of lines) {
     try {
-      if ((JSON.parse(l) as { event?: string }).event === 'complete_verify') verifies += 1;
+      const e = JSON.parse(l) as {
+        event?: string;
+        round?: number;
+        findings?: number;
+        finding_texts?: unknown;
+      };
+      if (e.event === 'complete_verify') {
+        verifyRounds.push({
+          round: typeof e.round === 'number' ? e.round : verifyRounds.length,
+          findings: typeof e.findings === 'number' ? e.findings : 0,
+          findingTexts: Array.isArray(e.finding_texts) ? e.finding_texts.map(String) : [],
+        });
+      }
     } catch {
       /* partial last line */
     }
   }
-  return { engineEvents: lines.length, repairRounds: Math.max(0, verifies - 1) };
+  return {
+    engineEvents: lines.length,
+    repairRounds: Math.max(0, verifyRounds.length - 1),
+    verifyRounds,
+  };
 };
 
 // The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
@@ -2627,6 +2651,27 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
             repairRounds: counts.repairRounds,
           },
           workdir,
+          // The FULL scoring detail for the "How this score was built" view: every check with its
+          // evidence string, the tier table (incl. J/V/P/HARD), the composition inputs, the
+          // root-cause attribution, and the run's repair story from complete_verify. Local-only —
+          // benchmark-publish never sends any of this.
+          verdict: {
+            checks: Array.isArray(v.checks) ? v.checks : [],
+            tiers: v.tiers ?? {},
+            ...(typeof v.core === 'number' ? { core: v.core } : {}),
+            ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
+            ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
+            ...(typeof v.solid === 'boolean' ? { solid: v.solid } : {}),
+            root_causes: v.root_causes ?? {},
+            // The findings that HELD when verification ended (pre-elided by the engine; cap 12).
+            findingsHeld: (
+              counts.verifyRounds[counts.verifyRounds.length - 1]?.findingTexts ?? []
+            ).slice(0, 12),
+            repairRounds: counts.verifyRounds.map((r) => ({
+              round: r.round,
+              findings: r.findings,
+            })),
+          },
         };
         await fs.mkdir(BENCH_DIR, { recursive: true });
         await fs.writeFile(BENCH_RESULT, JSON.stringify(row, null, 2));
