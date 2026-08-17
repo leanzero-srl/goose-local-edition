@@ -8,6 +8,7 @@
 import { createRequire } from 'module';
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
+import { mkdirSync } from 'fs';
 
 const err = (...a) => console.error('[probe]', ...a);
 
@@ -461,6 +462,37 @@ async function main() {
   }
   const page = await context.newPage();
 
+  // QUALITY SCREENSHOTS (product contract 2026-08-17): when BENCH_SHOTS_DIR is set, each
+  // scenario leaves a PNG named <epoch>-<name>.png. The probe runs during the engine's
+  // repair/verify rounds, so successive epochs show the page AS THE SWARM REPAIRS IT; the
+  // publisher picks first/last epochs for the before/after story. Never fatal: a failed
+  // screenshot logs to stderr and the probe's JSON verdict is unaffected.
+  const shotsDir = process.env.BENCH_SHOTS_DIR || '';
+  const shotEpoch = Math.floor(Date.now() / 1000);
+  async function saveShot(name) {
+    if (!shotsDir) return;
+    try {
+      mkdirSync(shotsDir, { recursive: true });
+      await page.screenshot({ path: join(shotsDir, `${shotEpoch}-${name}.png`), timeout: 5000 });
+    } catch (e) {
+      err('screenshot failed:', String((e && e.message) || e).slice(0, 200));
+    }
+  }
+  async function saveShotMobile() {
+    if (!shotsDir) return;
+    try {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await sleep(400);
+      await page.screenshot({
+        path: join(shotsDir, `${shotEpoch}-mobile.png`),
+        timeout: 5000,
+      });
+      await page.setViewportSize({ width: 1280, height: 800 });
+    } catch (e) {
+      err('mobile screenshot failed:', String((e && e.message) || e).slice(0, 200));
+    }
+  }
+
   const consoleErrorTexts = [];
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrorTexts.push(m.text());
@@ -543,6 +575,8 @@ async function main() {
     } catch (e) {
       err('viewport375 check failed:', e.message.split('\n')[0]);
     }
+    await saveShot('loaded');
+    await saveShotMobile();
     emit({
       consoleErrors: consoleErrors(),
       timeToFirstDataMs,
@@ -637,6 +671,7 @@ async function main() {
     }
     const tableHashChanged = !!(before && after) && after.tableHash !== before.tableHash;
 
+    await saveShot('synced');
     emit({
       found: true,
       buttonText: state.text,
@@ -662,6 +697,7 @@ async function main() {
     }
     const banner = await evalRetry(pageErrorBanner, null);
     const blank = await evalRetry(pageBlankAndBody, { blankPage: true, bodyTextLength: 0 });
+    await saveShot('error');
     emit({
       navigationError,
       errorStateVisible: banner != null,
@@ -687,6 +723,7 @@ async function main() {
       if (emptyText != null || rowCount > 0) break;
       await sleep(250);
     }
+    await saveShot('empty');
     emit({
       emptyStateVisible: emptyText != null,
       emptyStateText: emptyText,
