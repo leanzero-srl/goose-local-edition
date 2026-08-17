@@ -22,7 +22,9 @@ export interface SwarmCall {
 // distinction: a MALFORMED call (bad tool arguments) is a genuine slip Goose retries; an APP-ERROR (the tool ran
 // fine but the COMMAND it invoked exited non-zero / a test failed / a traceback) is the worker PRODUCTIVELY
 // running + testing the app — finding a failing test is the job, not a failure. Mirrors the backend taxonomy.
-export type CallKind = 'ok' | 'app-error' | 'malformed' | 'pending';
+// 'ran-nothing' is the LYING-GREEN case: the reported exit is 0 but the OUTPUT proves nothing ran (a `| head`
+// pipe swallowed pytest's failure exit while it printed "no tests ran") — never allowed to render plain green.
+export type CallKind = 'ok' | 'app-error' | 'ran-nothing' | 'malformed' | 'pending';
 
 export interface CallMeaning {
   kind: CallKind;
@@ -44,6 +46,26 @@ const MALFORMED_SIGNS = [
   'invalid arguments',
   'unexpected argument',
 ];
+
+// Output signatures proving a "successful" shell call actually ran NOTHING. MEASURED live (2026-08-17): a
+// worker ran `python3 -m pytest test_meridian.py -v 2>&1 | head -80`; the file did not exist, pytest printed
+// "ERROR: file or directory not found … no tests ran in 0.00s" — but the `| head` pipe made the exit code 0
+// and the panel painted the call green. Twice. The exit code lies through a pipe; the output does not.
+const RAN_NOTHING_SIGNS: RegExp[] = [
+  /no tests ran/i,
+  /collected 0 items/i,
+  /file or directory not found/i,
+  /no such file or directory/i,
+  /command not found/i,
+  /command exited with code\s*:?\s*[1-9]\d*/i,
+];
+
+/** Does this call's OUTPUT prove nothing ran, regardless of the reported exit status? Pure + exported so the
+ *  lying-green detection is unit-testable against the verbatim measured output. */
+export function ranNothing(result: string | undefined | null): boolean {
+  if (!result) return false;
+  return RAN_NOTHING_SIGNS.some((re) => re.test(result));
+}
 
 /** Best-effort filename out of a call summary (write/edit/read args or a path in a shell command). */
 function pathHint(summary: string): string {
@@ -119,6 +141,11 @@ export function classifyCall(call: SwarmCall): CallMeaning {
     return { kind: 'pending', icon, action, outcome: 'running…' };
   }
   if (call.ok === true) {
+    // Exit 0 is not proof of work: a `| head` pipe reports the pipe's exit, not the command's. When the
+    // output itself says nothing ran, the row must never read plain green.
+    if (ranNothing(call.result)) {
+      return { kind: 'ran-nothing', icon, action, outcome: 'exit 0, but the output shows nothing ran' };
+    }
     return { kind: 'ok', icon, action, outcome: 'done' };
   }
   // ok === false — is it a genuine tool-format slip, or the app reporting something while being tested?
@@ -149,7 +176,9 @@ export function callTallies(calls: SwarmCall[]): { ok: number; appError: number;
     const k = classifyCall(c).kind;
     if (k === 'ok') ok++;
     else if (k === 'malformed') malformed++;
-    else if (k === 'app-error') appError++;
+    // 'ran-nothing' tallies with app-errors: the command surface reported a problem, the tool call itself
+    // was well-formed — and it must never inflate the success count.
+    else if (k === 'app-error' || k === 'ran-nothing') appError++;
   }
   return { ok, appError, malformed };
 }
@@ -370,6 +399,8 @@ export interface SwarmRunState {
   /** The RESOLVED fleet as canonical node names (pool_resolved, falling back to run_started.pool) — the
    *  honest fleet size. Every pool node renders a fleet row, idle ones included. */
   pool: string[];
+  /** OPEN supervision spans (judge generations with no lane) — see foldSupervision. */
+  supervision: SupervisionSpan[];
   /** Per-phase TODO checklist, derived entirely from the engine's deterministic events (see buildPhaseTodo). */
   phaseTodo: PhaseTodo[];
   /** End-of-run overview (what built / how to run / next) — null until the run cleanly finishes at DONE. */
@@ -452,6 +483,7 @@ const EMPTY: SwarmRunState = {
   detailLanes: [],
   fixLanes: [],
   pool: [],
+  supervision: [],
   phaseTodo: [],
   overview: null,
   totals: { tasks: 0, running: 0, done: 0, failed: 0 },
@@ -479,19 +511,38 @@ const EMPTY: SwarmRunState = {
   loading: true,
 };
 
-/** Short node name from a device id like 'mac-gabee-qwopus3.6-27b-coder-ml-2' -> 'gabee'. */
-function nodeName(device: string): string {
-  const bare = device.replace(/-qwopus.*$/i, '');
-  const parts = bare.split('-').filter(Boolean);
-  return parts[parts.length - 1] || device;
-}
-
 const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
 /** Canonical node label: the prefix before the first '-' or '/' of a model id ('gabee-qwen…' -> 'gabee'). */
 const shortNode = (s: string): string => s.match(/^([^-/]+)/)?.[1] ?? s;
+
+/**
+ * Canonical node labeler: any device or model id -> the node's short name (gabee/mihai/workhorse).
+ *
+ * The engine names the SAME physical node two ways — a pool/device id ('mac-gabee-qwen3.6-27b-fable-fusi',
+ * sometimes truncated to a trailing dash) and a model id ('gabee-qwen3.6-…-mtp'). Guessing a short name off
+ * the raw device id is how the feed printed "Fleet: 3 nodes — fusi, fusi, fable" (the last dash-segment of a
+ * truncated id). run_started.pool / pool_resolved.devices tie the two ({id, model_id}), and the model id's
+ * prefix IS the node name — so every rendered node label goes through this one map. Pure + exported so the
+ * mapping is unit-testable against the measured pool shapes.
+ */
+export function nodeLabeler(events: Array<Record<string, unknown>>): (device: string) => string {
+  const canon: Record<string, string> = {};
+  for (const src of ['pool', 'devices'] as const) {
+    const ev = events.find((e) => e['event'] === (src === 'pool' ? 'run_started' : 'pool_resolved'));
+    for (const p of arr(ev?.[src])) {
+      const rec = p as Record<string, unknown>;
+      const id = str(rec['id']);
+      const modelId = str(rec['model_id']);
+      const label = shortNode(modelId) || shortNode(id);
+      if (id) canon[id] = label;
+      if (modelId) canon[modelId] = label;
+    }
+  }
+  return (device: string) => canon[device] ?? shortNode(device);
+}
 
 /**
  * The run's RESOLVED fleet, as canonical node names — from `pool_resolved.devices` (the engine's
@@ -695,6 +746,9 @@ function buildActivity(events: Array<Record<string, unknown>>): {
   let overview: RunOverview | null = null;
   const compact = (it: Omit<ActivityItem, 'seq'>) => feed.push({ ...it, seq: cseq++ });
   const verbose = (it: Omit<ActivityItem, 'seq'>) => vfeed.push({ ...it, seq: vseq++ });
+  // NODE NAMES, never truncated device-id fragments — the same canonical map foldEvents uses, so the feed's
+  // "Fleet: … — gabee, mihai, workhorse" and "on workhorse" match the fleet rows letter for letter.
+  const nodeOf = nodeLabeler(events);
   // Push each distinct confidence value onto the trail (initial → retargets → final) and set the live
   // header value; last-write-wins on each poll makes the pill advance without ref plumbing.
   const setConf = (v: number) => {
@@ -712,7 +766,11 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     }
     switch (type) {
       case 'run_started': {
-        const pool = arr(e['pool']).map((d) => nodeName(str((d as Record<string, unknown>)['id'])));
+        const pool = arr(e['pool']).map((d) => {
+          const rec = d as Record<string, unknown>;
+          // model_id's prefix is the node's real name; the raw id may be truncated ('…-fable-' -> 'fable').
+          return shortNode(str(rec['model_id'])) || nodeOf(str(rec['id']));
+        });
         // `gates` is now an OBJECT of per-gate booleans, so `!!e['gates']` was always true. Treat gates as on
         // when the assured bundle is on or ANY individual gate is enabled.
         const gatesVal = e['gates'];
@@ -733,7 +791,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         verbose({
           kind: 'config',
           text: `Fleet: ${pool.length} node${pool.length === 1 ? '' : 's'}${pool.length ? ' — ' + pool.join(', ') : ''}`,
-          sub: `planner ${nodeName(meta.plannerModel)}${meta.gates ? ' · gates on' : ''}`,
+          sub: `planner ${nodeOf(meta.plannerModel)}${meta.gates ? ' · gates on' : ''}`,
           tone: 'info',
         });
         phase = 'Starting';
@@ -917,7 +975,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         // verifying — the exact "isn't this already Verify? it still shows Building" confusion.
         const isSink = task === 'integrate-verify';
         const verb = isSink ? 'Integrating & verifying' : `Building ${task}`;
-        const node = e['device'] ? nodeName(str(e['device'])) : '';
+        const node = e['device'] ? nodeOf(str(e['device'])) : '';
         const attempt = num(e['attempt']) ?? 0;
         compact({ kind: 'dispatch', text: verb, sub: node ? `on ${node}` : undefined });
         const owned = arr(e['owned_files']).map(String).join(', ');
@@ -1055,7 +1113,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
           .map(([device, v]) => {
             const d = (v ?? {}) as Record<string, unknown>;
             return {
-              node: nodeName(device),
+              node: nodeOf(device),
               device,
               dispatched: num(d['dispatched']) ?? 0,
               toolCalls: num(d['tool_calls']) ?? 0,
@@ -1238,22 +1296,9 @@ export function foldEvents(
 
   // The engine reports a device by its POOL id ('mac-qwen3.6-27b') for worker tasks but by its MODEL id
   // ('gabee-qwen/qwen3.6-27b') for scouts/plan drafts, so the SAME physical node showed up twice — 6 rows for 3
-  // machines. run_started.pool ties them ({id, model_id}); canonicalize every device to ONE label (the model
-  // prefix) so the fleet reads 3, not 6. pool_resolved is folded in too — it is the post-push truth and can
-  // carry devices run_started did not.
-  const deviceCanon: Record<string, string> = {};
-  for (const src of ['pool', 'devices'] as const) {
-    const ev = events.find((e) => e['event'] === (src === 'pool' ? 'run_started' : 'pool_resolved'));
-    for (const p of arr(ev?.[src])) {
-      const rec = p as Record<string, unknown>;
-      const id = str(rec['id']);
-      const modelId = str(rec['model_id']);
-      const canon = shortNode(modelId) || shortNode(id);
-      if (id) deviceCanon[id] = canon;
-      if (modelId) deviceCanon[modelId] = canon;
-    }
-  }
-  const canonDevice = (d: string): string => deviceCanon[d] ?? shortNode(d);
+  // machines. nodeLabeler ties them via run_started.pool / pool_resolved and is the ONE canonical map every
+  // rendered node label goes through (the feed included — see buildActivity).
+  const canonDevice = nodeLabeler(events);
 
   const lanes = [...tasks.values()].map((t) => {
     const act = activity[t.taskId] as Digest | undefined;
@@ -1410,6 +1455,61 @@ export function foldEvents(
 // its digest ~2.5x/s, so this is generous headroom for a long single tool call inside a laneless worker
 // (verify::*), while an interrupted call (phase never stamped 'done', file gone quiet) drops out.
 export const DIGEST_FRESH_MS = 120_000;
+// The longer window for a digest whose OWN RECORD says a tool call is still open (last call `ok: null`,
+// phase not stamped 'done'). The engine rewrites the digest only while STREAMING; during one long shell
+// call (cargo build, a big pytest run) the file sits unmodified, so the 120s mtime window alone flipped a
+// laneless node to "idle" mid-call. The pending-call record is the digest's own open-state — trust it for
+// as long as a legitimate single tool call can run; the run-level heartbeat still catches a dead engine.
+export const DIGEST_OPEN_CALL_FRESH_MS = 900_000;
+
+/** An OPEN supervision generation — engine work that creates no task lane. */
+export interface SupervisionSpan {
+  kind: 'judge';
+  /** The task being supervised (NOT the node doing the supervising — the events never name it at start). */
+  taskId: string;
+  /** Honest row label, e.g. "Judging · verify::meridian". */
+  label: string;
+  /** Epoch ms of the span's opening event, or null when the ts did not parse. */
+  sinceMs: number | null;
+}
+
+// Longest a judge span may stay open before it is presumed lost (measured semantic reviews run 50–175s;
+// a span past this is a crashed run's leftover, not live work).
+export const JUDGE_SPAN_MAX_MS = 600_000;
+
+/**
+ * OPEN supervision spans from the event stream — the workload class the fleet strip was blind to.
+ *
+ * MEASURED (swarm-3node-r0, live): workhorse read "idle — no task" while LM Studio showed it processing 2
+ * requests; the log tail was task_completed verify::web → pre_review web-js → judge_verdict verify::web →
+ * judge_observed verify::meridian. The node's real work was SUPERVISION generations. Of that family, only
+ * the judge has a derivable lifecycle PAIR: `judge_observed` opens (emitted on every judge invocation,
+ * before any early return) and `judge_verdict` / `judge_skipped` for the same task closes (Δ = the semantic
+ * review's 50–175s generation when a verdict names a judge_node). pre_review / testgen / sink_review emit
+ * a SINGLE end-stamped event (verified in swarm.rs) — no open span is derivable for them, which is why a
+ * busy-but-unexplained node still needs the LM Studio join (see deriveFleet). A task's completion also
+ * closes its span: a verdict on finished work never arrives.
+ */
+export function foldSupervision(events: Array<Record<string, unknown>>): SupervisionSpan[] {
+  const open = new Map<string, SupervisionSpan>();
+  for (const e of events) {
+    const t = String(e['event'] ?? '');
+    const taskId = str(e['task_id']);
+    if (!taskId) continue;
+    if (t === 'judge_observed') {
+      const ts = typeof e['ts'] === 'string' ? Date.parse(e['ts'] as string) : NaN;
+      open.set(taskId, {
+        kind: 'judge',
+        taskId,
+        label: `Judging · ${taskId}`,
+        sinceMs: Number.isNaN(ts) ? null : ts,
+      });
+    } else if (t === 'judge_verdict' || t === 'judge_skipped' || t === 'task_completed') {
+      open.delete(taskId);
+    }
+  }
+  return [...open.values()];
+}
 
 /** Human label for a digest key that has no lane of its own ('verify::api' -> 'Verifying api'). */
 function digestLabel(key: string): string {
@@ -1441,7 +1541,18 @@ export function deriveFleet(args: {
   digests: Record<string, unknown>;
   digestMtimes: Record<string, number>;
   now: number;
-}): { devices: string[]; workingByDevice: Map<string, TurnLane> } {
+  /** Open supervision spans (foldSupervision) — judge generations that create no lane. */
+  supervision?: SupervisionSpan[];
+  /** Nodes LM Studio itself reports generating/prompt-processing — the join that attributes a
+   *  supervision span to the node actually running it (the events never name it at start). */
+  busyNodes?: string[];
+}): {
+  devices: string[];
+  workingByDevice: Map<string, TurnLane>;
+  /** Open supervision spans that could not be pinned to a busy node — still real work; the panel
+   *  shows them as an unattributed supervision line rather than dropping them. */
+  unattributed: SupervisionSpan[];
+} {
   const devices = Array.from(
     new Set([...args.pool, ...args.laneSources.map((l) => l.device)])
   ).sort();
@@ -1460,7 +1571,14 @@ export function deriveFleet(args: {
     const device = shortNode(str(d?.model));
     if (!device || workingByDevice.has(device) || !devices.includes(device)) continue;
     const open = d?.phase !== 'done';
-    const fresh = args.now - (args.digestMtimes[key] ?? 0) < DIGEST_FRESH_MS;
+    // The digest's OWN open-call record (a provisional `ok: null` tail entry the engine appends while a
+    // tool call is in flight) beats the short mtime window: one long shell call streams no tokens, so the
+    // file legitimately sits unmodified past 120s while the node is hard at work. Mtime alone demoted
+    // exactly that node to "idle" mid-call.
+    const lastCall = d?.calls?.length ? d.calls[d.calls.length - 1] : undefined;
+    const callOpen = lastCall != null && (lastCall.ok === null || lastCall.ok === undefined);
+    const age = args.now - (args.digestMtimes[key] ?? 0);
+    const fresh = age < DIGEST_FRESH_MS || (callOpen && age < DIGEST_OPEN_CALL_FRESH_MS);
     if (!open || !fresh) continue;
     workingByDevice.set(device, {
       taskId: key,
@@ -1481,14 +1599,41 @@ export function deriveFleet(args: {
       seq: 0,
     });
   }
-  return { devices, workingByDevice };
+  // SUPERVISION: an open judge span is real work on SOME node, but judge_observed never names it (the
+  // engine picks an idle device; only the closing verdict carries judge_node). LM Studio's own busy
+  // signal is the join: a node it reports generating, with no lane and no digest, is running exactly
+  // this class of call — attach the span there so the busy state always has a visible explanation.
+  const liveSpans = (args.supervision ?? []).filter(
+    (s) => s.sinceMs == null || args.now - s.sinceMs < JUDGE_SPAN_MAX_MS
+  );
+  const freeBusy = (args.busyNodes ?? []).filter(
+    (n) => devices.includes(n) && !workingByDevice.has(n)
+  );
+  const unattributed: SupervisionSpan[] = [];
+  for (const span of liveSpans) {
+    const node = freeBusy.shift();
+    if (!node) {
+      unattributed.push(span);
+      continue;
+    }
+    workingByDevice.set(node, {
+      taskId: `supervision:${span.kind}:${span.taskId}`,
+      description: span.label,
+      device: node,
+      status: 'running',
+      phase: 'supervision',
+      elapsedMs: span.sinceMs != null ? args.now - span.sinceMs : undefined,
+      seq: 0,
+    });
+  }
+  return { devices, workingByDevice, unattributed };
 }
 
 // Derive the per-phase TODO from the engine's deterministic event stream. Every checkbox is flipped by a
 // scheduler/orchestrator EVENT, never by a model claiming it did something — that is what makes it honest.
 // The load-bearing rule: a completed build task is 'unverified' (the app was never run), and only Verify's
 // complete_result.passed&&verified earns a green 'done'.
-function buildPhaseTodo(
+export function buildPhaseTodo(
   events: Array<Record<string, unknown>>,
   activity: Record<string, unknown>,
   opts: { clarifyPending: boolean }
@@ -1520,6 +1665,9 @@ function buildPhaseTodo(
   let repro: number | null = null;
   let reviewFix: { reproduced: number; accepted: number } | null = null;
   let astReview: number | null = null;
+  // Canonical node names throughout — a raw pool id stored here reaches the node chip and mis-keys its
+  // letter/hue against the canonical device order (same defect class as the "fusi, fusi, fable" feed line).
+  const nodeOf = nodeLabeler(events);
 
   for (const e of events) {
     const t = String(e['event'] ?? '');
@@ -1548,7 +1696,7 @@ function buildPhaseTodo(
     } else if (t === 'task_dispatched') {
       planned = true;
       const id = str(e['task_id']);
-      if (id) tstate.set(id, { state: 'running', device: str(e['device']) });
+      if (id) tstate.set(id, { state: 'running', device: nodeOf(str(e['device'])) });
     } else if (t === 'task_retry') {
       const id = str(e['task_id']);
       if (id) tstate.set(id, { ...(tstate.get(id) ?? { state: 'running' }), error: str(e['error']) });
@@ -1556,7 +1704,8 @@ function buildPhaseTodo(
       const id = str(e['task_id']);
       if (id) {
         const cur = tstate.get(id);
-        const dev = str(e['device']) || cur?.device;
+        const rawDev = str(e['device']);
+        const dev = rawDev ? nodeOf(rawDev) : cur?.device;
         if (str(e['status']) === 'failed')
           tstate.set(id, { device: dev, state: judgeFailed.has(id) ? 'judge_failed' : 'failed' });
         // BUILT but UNVERIFIED — the worker loop returned + passed a syntax gate; the app was NOT run.
@@ -1873,6 +2022,158 @@ function buildPhaseTodo(
   return phases;
 }
 
+/** Readable WORK-board title for a task id — names the verify/repair machinery for what it is instead of
+ *  echoing its raw id ('verify::api' -> 'Verify api', 'complete-fix::twin2' -> 'Repair twin 2'). */
+export function boardTitle(id: string): string {
+  if (id === 'integrate-verify') return 'Integrate & verify';
+  if (id.startsWith('verify-e2e::')) return `End-to-end verify ${id.slice('verify-e2e::'.length)}`;
+  if (id.startsWith('verify::')) return `Verify ${id.slice('verify::'.length)}`;
+  if (id.startsWith('complete-fix::twin')) return `Repair twin ${id.slice('complete-fix::twin'.length)}`;
+  return humanizeTaskId(id);
+}
+
+/** One row of the WORK board — a unit of work the run planned, is doing, or finished. */
+export interface BoardRow {
+  id: string;
+  title: string;
+  summary?: string;
+  /** Engine-truth state (phase-todo / task lifecycle) — never a model claim. */
+  state: TodoState;
+  kind: 'build' | 'verify' | 'repair';
+  detail?: string;
+  deps: string[];
+  difficulty?: string;
+  files?: string[];
+  description?: string;
+  judge?: { verdict: string; hint: string; action: string };
+  /** The task's lane (canonical device, live calls/reasoning, elapsed/attempts) when one exists. */
+  lane?: TurnLane;
+  device?: string;
+  elapsedMs?: number;
+  attempts?: number;
+}
+
+export interface TaskBoard {
+  running: BoardRow[];
+  queued: BoardRow[];
+  done: BoardRow[];
+  /** Tasks added by dynamic re-planning — header bookkeeping, not board rows. */
+  addedByReplan: number;
+  /** Set when the scheduler deadlocked — surfaced as a banner, never a silent row. */
+  stuck: string | null;
+}
+
+/**
+ * The WORK zone's single source of truth: the plan + task lifecycle folded into ONE board of three groups —
+ * RUNNING (live), QUEUED (planned, waiting on deps), DONE (finished, failures distinct). This is the
+ * de-duplication fix: build tasks used to appear three times (phase-checklist rows, per-task lanes, feed
+ * lines) with no statement of which was authoritative. Every row keeps its engine-truth TodoState (a
+ * finished build task is 'unverified', never green) and carries its lane so the tool-call/reasoning card is
+ * the row's own expansion instead of a parallel list. Pure + exported for unit tests.
+ */
+export function deriveTaskBoard(args: {
+  plan: PlanTask[];
+  phaseTodo: PhaseTodo[];
+  lanes: TurnLane[];
+  fixLanes: TurnLane[];
+}): TaskBoard {
+  const laneById = new Map(args.lanes.map((l) => [l.taskId, l]));
+  const planById = new Map(args.plan.map((t) => [t.id, t]));
+  const rows: BoardRow[] = [];
+  const seen = new Set<string>();
+  let addedByReplan = 0;
+  let stuck: string | null = null;
+  for (const phase of args.phaseTodo) {
+    if (phase.key !== 'build' && phase.key !== 'verify') continue;
+    for (const item of phase.items) {
+      if (/^b-replan-/.test(item.id)) {
+        addedByReplan += Number(item.id.slice('b-replan-'.length)) || 0;
+        continue;
+      }
+      if (item.id === 'b-stuck') {
+        stuck = item.label;
+        continue;
+      }
+      if (item.state === 'advisory') continue;
+      const isTask = item.id.startsWith('b-');
+      const id = isTask ? item.id.slice(2) : item.id;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const lane = laneById.get(id);
+      const pt = planById.get(id);
+      rows.push({
+        id,
+        // Verdict rows (v-e2e, v-repro…) already carry a good label; task rows get the readable title.
+        title: isTask ? boardTitle(id) : item.label,
+        summary: item.summary,
+        state: item.state,
+        kind: isTask && !/^verify/.test(id) && id !== 'integrate-verify' ? 'build' : 'verify',
+        detail: item.detail,
+        deps: pt?.deps ?? [],
+        difficulty: pt?.difficulty || undefined,
+        files: item.files ?? pt?.files,
+        description: item.description ?? pt?.description,
+        judge: item.judge,
+        lane,
+        device: lane?.device ?? item.device,
+        elapsedMs: lane?.elapsedMs,
+        attempts: lane?.attempts,
+      });
+    }
+  }
+  // Verify repair twins run OUTSIDE the task lifecycle (complete_fix_*) — fold their lanes in as repair
+  // rows so the board covers everything the fleet is actually grinding.
+  for (const l of args.fixLanes) {
+    if (seen.has(l.taskId)) continue;
+    seen.add(l.taskId);
+    rows.push({
+      id: l.taskId,
+      title: boardTitle(l.taskId),
+      summary: l.description,
+      state: l.status === 'running' ? 'running' : l.status === 'error' ? 'failed' : 'done',
+      kind: 'repair',
+      deps: [],
+      lane: l,
+      device: l.device,
+      elapsedMs: l.elapsedMs,
+      attempts: l.attempts,
+    });
+  }
+  const groupOf = (r: BoardRow): 'running' | 'queued' | 'done' =>
+    r.state === 'running'
+      ? 'running'
+      : r.state === 'pending' || r.state === 'blocked'
+        ? 'queued'
+        : 'done';
+  const running = rows.filter((r) => groupOf(r) === 'running');
+  const done = rows.filter((r) => groupOf(r) === 'done');
+  // RUNNING in dispatch order, DONE in completion order (lane seq); rows with no lane (skipped split
+  // parents, verify verdict rows) sink to the end. QUEUED keeps plan order — that IS the plan.
+  running.sort((a, b) => (a.lane?.seq ?? 0) - (b.lane?.seq ?? 0));
+  done.sort(
+    (a, b) =>
+      (a.lane?.seq ?? Number.MAX_SAFE_INTEGER) - (b.lane?.seq ?? Number.MAX_SAFE_INTEGER)
+  );
+  return {
+    running,
+    queued: rows.filter((r) => groupOf(r) === 'queued'),
+    done,
+    addedByReplan,
+    stuck,
+  };
+}
+
+/** A human name for WHAT this run is building — the RUN HEADER's identity. From the brief's first heading
+ *  ('# Build `vendorsync`' -> 'vendorsync'), else the run directory's basename. Pure + exported for tests. */
+export function runAppName(prompt: string | undefined, runDir: string | null | undefined): string {
+  const line = (prompt ?? '').split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  const heading = line.match(/^#+\s*(?:build\s+)?(.+)$/i)?.[1] ?? '';
+  const name = heading.replace(/[`*_"']/g, '').trim();
+  if (name) return name.length > 48 ? name.slice(0, 45).trimEnd() + '…' : name;
+  const base = (runDir ?? '').replace(/\/+$/, '').split('/').pop() ?? '';
+  return base || 'build';
+}
+
 export function useSwarmRun(workingDir: string | undefined, pollMs = 500): SwarmRunState {
   const [state, setState] = useState<SwarmRunState>(EMPTY);
   // Keep the last non-empty run visible between polls so a finished run does not flicker away.
@@ -1934,6 +2235,7 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           detailLanes,
           fixLanes,
           pool: resolvePool(data.events),
+          supervision: foldSupervision(data.events),
           phaseTodo,
           overview,
           totals,

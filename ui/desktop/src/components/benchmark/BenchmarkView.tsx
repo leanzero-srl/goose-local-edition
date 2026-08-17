@@ -13,6 +13,7 @@ import { TierBreakdown } from './TierBreakdown';
 import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
+import { ZoneHeader, ZONE_HUES } from '../swarm/ZoneHeader';
 import { Input } from '../ui/input';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 
@@ -69,9 +70,11 @@ function fmtWhen(iso: string | undefined): string | null {
 }
 
 /**
- * The run's pipeline at a glance: which phase is live, what already finished, and the harness's
- * latest output line — never a bare spinner. The swarm-build phase gets its full live panel below;
- * this strip covers the phases that are NOT the swarm (vendor sim boot, scoring).
+ * BENCHMARK PIPELINE zone — the harness AROUND the swarm: which phase is live, what already finished,
+ * and the harness's latest output line — never a bare spinner. Labeled in the same zone register as the
+ * swarm panel's own zones (its "SWARM RUN" band sits right below), so benchmark chrome and swarm run are
+ * never ambiguous. The swarm-build phase gets its full live panel below; this strip covers the phases
+ * that are NOT the swarm (vendor sim boot, scoring).
  */
 function PhaseStrip({
   phase,
@@ -85,14 +88,17 @@ function PhaseStrip({
   const activeIdx = PHASES.findIndex((p) => p.key === phase);
   return (
     <div className="rounded border border-border-primary">
-      <div className="flex items-center gap-2 border-b border-border-primary px-3 py-2">
-        <span className="text-xs font-bold uppercase tracking-widest text-text-secondary">
-          Run in progress
-        </span>
-        <span className="ml-auto text-xs font-semibold tabular-nums text-text-primary">
-          {fmtElapsed(elapsedMs)}
-        </span>
-      </div>
+      <ZoneHeader
+        hue={ZONE_HUES.bench}
+        label="Benchmark pipeline"
+        explain="the harness around the swarm — boot, build, scoring"
+        className="border-b border-border-primary py-2"
+        right={
+          <span className="text-xs font-semibold tabular-nums text-text-primary">
+            {fmtElapsed(elapsedMs)}
+          </span>
+        }
+      />
       <div className="flex flex-wrap gap-2 px-3 py-3">
         {PHASES.map((p, i) => {
           const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
@@ -530,15 +536,22 @@ export default function BenchmarkView() {
           )}
 
           {running && mine && comparable && (
-            // A NEW run is in progress, so the "Your fleet" row below is the PREVIOUS run's stored
-            // result — say so unmistakably, in the view's own uppercase label register. Solid amber
-            // (the run-in-progress color), full border, no washes.
-            <div className="mt-8 rounded border-2 px-4 py-3" style={{ borderColor: PHASE_ACTIVE }}>
-              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: PHASE_ACTIVE }}>
-                Previous result · {(mine.score * 100).toFixed(1)}%
-                {mineFinished ? ` · completed ${mineFinished}` : ''}
-              </p>
-              <p className="mt-1 text-sm text-text-primary">
+            // PREVIOUS RESULT zone — a NEW run is in progress, so the "Your fleet" row below is the
+            // PREVIOUS run's stored result. Same zone-header register as the swarm panel, solid amber
+            // (the run-in-progress color), full border, no washes — never ambiguous against the live run.
+            <div className="mt-8 rounded border-2" style={{ borderColor: PHASE_ACTIVE }}>
+              <ZoneHeader
+                hue={PHASE_ACTIVE}
+                label="Previous result"
+                explain="your last completed run — replaced when this run finishes"
+                className="pt-2"
+                right={
+                  <span className="text-xs font-bold tabular-nums" style={{ color: PHASE_ACTIVE }}>
+                    {(mine.score * 100).toFixed(1)}%{mineFinished ? ` · ${mineFinished}` : ''}
+                  </span>
+                }
+              />
+              <p className="px-3 pb-3 pt-1 text-sm text-text-primary">
                 The &ldquo;Your fleet&rdquo; rows below are your last completed run — the run in
                 progress replaces them when it finishes.
               </p>
