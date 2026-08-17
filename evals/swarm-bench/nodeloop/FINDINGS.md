@@ -20217,3 +20217,34 @@ config.yaml unshadowed (the split_fat lesson — a stale saved value silently ou
 default), and env-pinned in both the desktop benchmark and REGIME.env so no config can shadow it
 again. This is the highest-value single change of the campaign if it holds: the mechanism, the
 fetch and the channel all already existed and were fully built — only the forwarding was off.
+
+## F877 — the repair worker was given first-authoring rules and denied the evidence: two defects that explain why fix rounds promote nothing
+
+Two ceremony-hunt findings, both about the task that repairs the app, both confirmed against the
+archive and today's live run.
+
+(1) FIX MODE NEVER APPLIED. `is_fix_round` tested `req.owned_files.is_empty()` as a proxy for "this
+is the repair task" — but a scheduled fix task is built with `owned_files: vec![g.file]`, the whole
+point of the disjoint per-file partition, so the proxy was FALSE for every one. Measured across
+21,805 archived logs: 384 `fix::` dispatches, ZERO received the fix directive; the only ids that
+ever dispatch with an empty owned list are the read-only verify shards (explicitly excluded) and
+`integrate-verify`. So every repair worker got the FIRST-AUTHORING script — "your VERY FIRST action
+must be to `write` your owned file(s) IN FULL", "NEVER `cat` the module", "tests are a SEPARATE
+subtask" — while its actual job was a targeted edit to an existing file against a reproduced
+failure spanning several. That also explains repair rounds that REGRESS: a worker told to rewrite
+its file from memory destroys the parts that were already right. FIXED: the predicate now
+identifies a fix task by what it is (`fix::`/`complete-fix` prefix, keeping the legacy
+empty-owned branch for `integrate-verify`), and a fourth `owner_body` branch replaces the
+authoring script with repair instructions — read first, smallest edit, keep what the finding does
+not name, read the failing test, re-run the exact command.
+
+(2) THE EVIDENCE WAS WITHHELD. A finding states one half of a defect; the other half is a file the
+worker never received, because the dependency-injection loop skips test files by construction and
+injects only OWNED files. Live: `fix::r0::vendorsync/meridian.py` was handed five failing
+assertions from `test_meridian.py` plus an ELIDED pytest tail and never one byte of the test that
+defines the expectation — 1,756s, promoted:false. Same shape for the dom-id fixer, told an id is
+missing and never shown the html that would have to define it. FIXED: `fix_evidence_pointers`
+extracts every path the findings cite — handling pytest node ids (`t.py::Class::case`) and
+file:line refs (`app.js:32`), the two shapes that a naive extension match misses, which the new
+unit test caught — and appends a READ THESE FIRST block that explicitly suspends the no-reading
+rules for those files.
