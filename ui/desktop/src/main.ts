@@ -2418,8 +2418,11 @@ const benchRunCounts = async (
 // The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
 // sets BENCH_SHOTS_DIR). The publisher's story: the FIRST loaded shot (the page before repairs)
 // plus the LAST epoch's loaded/synced/mobile (the shipped quality). Cap 5, skip >1.4MB each —
-// the server magic-sniffs PNG and rejects >1.5MB decoded, so stay under with margin.
+// the server magic-sniffs PNG and rejects >1.5MB decoded, so stay under with margin — AND cap
+// the decoded TOTAL at 3.5MB: the contract assigns that gate to the desktop publisher (the
+// site's SSR lambda rejects ~6MB invocations before the route even runs).
 const BENCH_SHOT_MAX_BYTES = Math.floor(1.4 * 1024 * 1024);
+const BENCH_SHOT_TOTAL_MAX_BYTES = Math.floor(3.5 * 1024 * 1024);
 
 interface BenchShot {
   name: string;
@@ -2430,7 +2433,7 @@ interface BenchShot {
 const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
   const dir = path.join(workdir, 'bench-shots');
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
-  const shots: Array<{ epoch: number; scenario: string; file: string }> = [];
+  const shots: Array<{ epoch: number; scenario: string; file: string; size: number }> = [];
   for (const f of entries) {
     const m = f.match(/^(\d+)-(loaded|synced|error|empty|mobile)\.png$/);
     if (!m) continue;
@@ -2439,7 +2442,7 @@ const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
     const file = path.join(dir, f);
     const size = await fs.stat(file).then((s) => s.size).catch(() => Number.MAX_SAFE_INTEGER);
     if (size > BENCH_SHOT_MAX_BYTES) continue;
-    shots.push({ epoch: Number(m[1]), scenario: m[2], file });
+    shots.push({ epoch: Number(m[1]), scenario: m[2], file, size });
   }
   if (shots.length === 0) return [];
   const byScenario = (s: string) => shots.filter((x) => x.scenario === s);
@@ -2471,13 +2474,12 @@ const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
   // route ever runs (website integration finding), so the whole batch stays ≤3.5MB decoded
   // (~4.7MB as base64 + JSON overhead). Order matters — picks are story-ordered, so the
   // before/after pair survives and the extras are what get dropped.
-  const BENCH_SHOTS_TOTAL_MAX = Math.floor(3.5 * 1024 * 1024);
   let totalBytes = 0;
   for (const p of picks) {
     if (out.length >= 5) break;
     try {
       const buf = await fs.readFile(p.file);
-      if (totalBytes + buf.length > BENCH_SHOTS_TOTAL_MAX) continue;
+      if (totalBytes + buf.length > BENCH_SHOT_TOTAL_MAX_BYTES) continue;
       totalBytes += buf.length;
       out.push({ name: p.name, caption: p.caption, b64: buf.toString('base64') });
     } catch {
@@ -2761,6 +2763,61 @@ ipcMain.handle(
       ...(screenshots.length > 0 ? { screenshots } : {}),
       runMeta,
     };
+    // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
+    // story the desktop shows, on the site's run card. Built key-by-key from the persisted
+    // verdict — never a spread — and each field omitted entirely for legacy results without one.
+    const verdict = stored.verdict as
+      | {
+          checks?: Array<{ check?: unknown; tier?: unknown; score?: unknown; detail?: unknown }>;
+          tiers?: Record<string, { mean?: unknown } | undefined>;
+          core?: unknown;
+          hard?: unknown;
+          findingsHeld?: unknown;
+          repairRounds?: Array<{ round?: unknown; findings?: unknown }>;
+        }
+      | undefined;
+    if (verdict) {
+      const checksSummary = (Array.isArray(verdict.checks) ? verdict.checks : [])
+        .filter(
+          (c) =>
+            typeof c?.check === 'string' &&
+            typeof c?.tier === 'string' &&
+            typeof c?.score === 'number'
+        )
+        .slice(0, 90)
+        .map((c) => ({
+          check: (c.check as string).slice(0, 60),
+          tier: c.tier as string,
+          score: c.score as number,
+          detail: (typeof c.detail === 'string' ? c.detail : '').slice(0, 220),
+        }));
+      if (checksSummary.length > 0) payload.checksSummary = checksSummary;
+
+      const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+      const composition = {
+        core: num(verdict.core),
+        journey: num(verdict.tiers?.J?.mean),
+        visual: num(verdict.tiers?.V?.mean),
+        perf: num(verdict.tiers?.P?.mean),
+        hard: num(verdict.hard),
+      };
+      // All five or none — a partial object (an sb-4-era verdict without J/V/P) would trip the
+      // server's strict validation for no gain.
+      if (Object.values(composition).every((v) => typeof v === 'number')) {
+        payload.composition = composition;
+      }
+
+      const repairRounds = (Array.isArray(verdict.repairRounds) ? verdict.repairRounds : [])
+        .filter((r) => typeof r?.round === 'number' && typeof r?.findings === 'number')
+        .map((r) => ({ round: r.round as number, findings: r.findings as number }));
+      if (repairRounds.length > 0) payload.repairRounds = repairRounds;
+
+      const findingsHeld = (Array.isArray(verdict.findingsHeld) ? verdict.findingsHeld : [])
+        .filter((f): f is string => typeof f === 'string')
+        .slice(0, 12)
+        .map((f) => f.slice(0, 400));
+      if (findingsHeld.length > 0) payload.findingsHeld = findingsHeld;
+    }
     try {
       const res = await fetch('https://leanzero.net/api/benchmark-runs', {
         method: 'POST',
