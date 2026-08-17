@@ -10,6 +10,7 @@ import {
 } from './baselines';
 import { ScoreBars } from './ScoreBars';
 import { TierBreakdown } from './TierBreakdown';
+import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
 import { Input } from '../ui/input';
@@ -22,6 +23,8 @@ type NodeChoice = (typeof NODE_CHOICES)[number];
 interface MineRow extends BenchmarkRow {
   runMeta?: { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number };
   workdir?: string;
+  /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
+  verdict?: VerdictDetail;
 }
 
 interface BenchShot {
@@ -518,6 +521,32 @@ export default function BenchmarkView() {
             </p>
             <TierBreakdown rows={rows} />
           </section>
+
+          {mine && !running && (
+            <section className="mt-10">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-text-secondary">
+                How this score was built
+              </h2>
+              {mine.verdict ? (
+                <>
+                  <p className="mb-4 mt-1 max-w-[80ch] text-sm text-text-secondary">
+                    Every number below is scorer evidence from YOUR run — the exact checks it ran,
+                    what each one saw, and what the misses cost. The formula:{' '}
+                    <span className="font-bold text-text-primary">
+                      60% core build + 15% journey + 10% visual + 5% performance + 10% hard block
+                    </span>
+                    .
+                  </p>
+                  <ScoringDetail verdict={mine.verdict} score={mine.score} />
+                </>
+              ) : (
+                <p className="mt-3 rounded border border-border-primary bg-background-secondary px-4 py-3 text-sm text-text-primary">
+                  This stored result predates the detailed verdict — the full check-by-check
+                  breakdown appears from your next run.
+                </p>
+              )}
+            </section>
+          )}
 
           {mine && (
             <section className="mt-10 rounded border border-border-primary p-4">
