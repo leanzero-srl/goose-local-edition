@@ -2420,17 +2420,37 @@ const benchRunCounts = async (
   repairRounds: number;
   verifyRounds: BenchVerifyRound[];
   poolModelIds: string[];
+  poolDevices: Array<{ id: string; modelId: string }>;
 }> => {
   const logPath = await benchRunLog(workdir);
-  if (!logPath) return { engineEvents: 0, repairRounds: 0, verifyRounds: [], poolModelIds: [] };
+  if (!logPath) {
+    return {
+      engineEvents: 0,
+      repairRounds: 0,
+      verifyRounds: [],
+      poolModelIds: [],
+      poolDevices: [],
+    };
+  }
   const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
   const lines = raw.split('\n').filter((l) => l.trim().length > 0);
   const verifyRounds: BenchVerifyRound[] = [];
   let poolModelIds: string[] = [];
+  // Per-device (id, model_id) pairs, from pool_resolved ONLY — nodesDetail is contractually
+  // derived from that event and omitted when it is absent.
+  let poolDevices: Array<{ id: string; modelId: string }> = [];
   const modelIdsFrom = (list: unknown): string[] =>
     (Array.isArray(list) ? list : [])
       .map((d) => (d as { model_id?: unknown })?.model_id)
       .filter((m): m is string => typeof m === 'string' && m.length > 0);
+  const devicesFrom = (list: unknown): Array<{ id: string; modelId: string }> =>
+    (Array.isArray(list) ? list : [])
+      .map((d) => d as { id?: unknown; model_id?: unknown })
+      .filter((d) => typeof d.model_id === 'string' && d.model_id.length > 0)
+      .map((d) => ({
+        id: typeof d.id === 'string' ? d.id : '',
+        modelId: d.model_id as string,
+      }));
   for (const l of lines) {
     try {
       const e = JSON.parse(l) as {
@@ -2448,9 +2468,11 @@ const benchRunCounts = async (
           findingTexts: Array.isArray(e.finding_texts) ? e.finding_texts.map(String) : [],
         });
       } else if (e.event === 'pool_resolved') {
-        // The pool the run ACTUALLY used — feeds the `model` prefill. pool_resolved is the
-        // engine's post-push truth; run_started.pool below is only the pre-push fallback.
-        poolModelIds = modelIdsFrom(e.devices);
+        // The pool the run ACTUALLY used — feeds the `model` prefill and nodesDetail.
+        // pool_resolved is the engine's post-push truth; run_started.pool below is only the
+        // pre-push fallback for the model prefill (never for nodesDetail).
+        poolDevices = devicesFrom(e.devices);
+        poolModelIds = poolDevices.map((d) => d.modelId);
       } else if (e.event === 'run_started' && poolModelIds.length === 0) {
         poolModelIds = modelIdsFrom(e.pool);
       }
@@ -2463,6 +2485,7 @@ const benchRunCounts = async (
     repairRounds: Math.max(0, verifyRounds.length - 1),
     verifyRounds,
     poolModelIds,
+    poolDevices,
   };
 };
 
@@ -2486,6 +2509,22 @@ const deriveBenchModel = (poolModelIds: string[]): string => {
   };
   const distinct = [...new Set(poolModelIds.map(stripHost))];
   return distinct.join(' + ').slice(0, 120);
+};
+
+// nodesDetail's `name` (contract v2.3): the short host token from the device id — the segment
+// just BEFORE the model portion ("mac-gabee-qwen3.6-…" → gabee, "local-mihai-qwen…" → mihai,
+// "worksmacstudio-workhorse-qwen…" → workhorse). Anchored per-segment matching, because the
+// substring MODELISH would false-positive host names ("sophia" contains "phi") and miss family
+// variants ("phi4" lacks the dash the substring form needs).
+const MODEL_SEG = /^(\d+(\.\d+)?b$|qwen|llama|mistral|gemma|deepseek|phi|glm|minimax|granite)/i;
+
+const benchNodeName = (deviceId: string): string => {
+  const segs = deviceId.split('-').filter(Boolean);
+  const modelIdx = segs.findIndex((s) => MODEL_SEG.test(s));
+  // Conservative: only a segment that has something BEFORE it names a host; a bare model id
+  // (modelIdx 0) or no model portion at all falls back to the full id.
+  if (modelIdx > 0) return segs[modelIdx - 1].slice(0, 40);
+  return deviceId.slice(0, 40);
 };
 
 // The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
@@ -2729,6 +2768,9 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
           // Engine-truth model identifier (contract v2.2) — the publish form's prefill; the user
           // may edit it there, and the edit is persisted back onto this field.
           modelId: deriveBenchModel(counts.poolModelIds),
+          // Per-device (id, model_id) pairs from pool_resolved (contract v2.3) — publish derives
+          // nodesDetail from these; empty when the run's log carried no pool_resolved.
+          poolDevices: counts.poolDevices,
           // The FULL scoring detail for the "How this score was built" view: every check with its
           // evidence string, the tier table (incl. J/V/P/HARD), the composition inputs, the
           // root-cause attribution, and the run's repair story from complete_verify. Local-only —
@@ -2847,8 +2889,11 @@ ipcMain.handle(
     const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
     // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
     // is built key by key (never a spread of the stored row, which carries mine/workdir).
+    // v2.3 card hygiene: the PUBLIC label is neutral — "<N>-node local fleet", never the in-app
+    // first-person "Your fleet · N nodes".
+    const nodeCount = typeof stored.nodes === 'number' ? stored.nodes : null;
     const payload: Record<string, unknown> = {
-      label: stored.label,
+      label: nodeCount != null ? `${nodeCount}-node local fleet` : 'local fleet',
       score: stored.score,
       tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
       ...(typeof stored.nodes === 'number' ? { nodes: stored.nodes } : {}),
@@ -2864,6 +2909,21 @@ ipcMain.handle(
       ...(screenshots.length > 0 ? { screenshots } : {}),
       runMeta,
     };
+    // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
+    // the run's log had no pool_resolved (legacy results store no poolDevices).
+    const poolDevices = (Array.isArray(stored.poolDevices) ? stored.poolDevices : []) as Array<{
+      id?: unknown;
+      modelId?: unknown;
+    }>;
+    const nodesDetail = poolDevices
+      .filter((d) => typeof d?.modelId === 'string' && d.modelId.length > 0)
+      .slice(0, 8)
+      .map((d) => ({
+        name: benchNodeName(typeof d.id === 'string' ? d.id : ''),
+        model: (d.modelId as string).slice(0, 120),
+      }))
+      .filter((n) => n.name.length > 0);
+    if (nodesDetail.length > 0) payload.nodesDetail = nodesDetail;
     // v2.1 scoring depth (contract addition 2026-08-17): the same "How this score was built"
     // story the desktop shows, on the site's run card. Built key-by-key from the persisted
     // verdict — never a spread — and each field omitted entirely for legacy results without one.
