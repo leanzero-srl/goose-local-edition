@@ -5938,6 +5938,36 @@ mod tests {
         assert_eq!(activity_digest_key("verify::api"), "verify::api");
     }
 
+    /// F877: a fix worker repairing `meridian.py` against five failing assertions in
+    /// `test_meridian.py` never received the test file — the dependency loop skips tests by
+    /// construction — so it was asked to satisfy an expectation it could not read (measured:
+    /// 1,756s, promoted:false). The finding text already names the evidence; extract it.
+    #[test]
+    fn fix_evidence_pointers_names_the_files_the_findings_cite() {
+        let findings = vec![
+            "`pytest -q` failed: FAILED test_meridian.py::TestFetchAllPaymentsPagination::\
+             test_multi_page_pagination — assert body == {...}"
+                .to_string(),
+            "vendorsync/web/app.js:32 references DOM id `summary-line` which NO html file in the \
+             app defines (see vendorsync/web/index.html)."
+                .to_string(),
+        ];
+        let block = fix_evidence_pointers(&findings);
+        for p in [
+            "test_meridian.py",
+            "vendorsync/web/app.js",
+            "vendorsync/web/index.html",
+        ] {
+            assert!(block.contains(p), "must point the fixer at {p}: {block}");
+        }
+        assert!(
+            block.contains("read prohibitions in your rules do NOT apply"),
+            "the pointer is useless unless it overrides the no-reading rules: {block}"
+        );
+        // A finding naming no file adds nothing — no empty ceremony section.
+        assert!(fix_evidence_pointers(&["the server never bound a port".to_string()]).is_empty());
+    }
+
     /// F871 holistic-review round: the DELETION ESCAPE (a fix twin deleting/gutting the
     /// stylesheet cleared the finding and was PROMOTED), and the TS/React false-fire (scope
     /// dropped .tsx and JSX className was never harvested — confirmed on two real archived
@@ -24570,8 +24600,64 @@ fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
         "The integrated app FAILS a deterministic end-to-end smoke check the harness just ran. Findings:\n{}\n\n\
          FIX THE ROOT CAUSE directly — edit the offending file(s) in this project so that {verify} succeed. \
          Do NOT add features or rewrite working modules; make the SMALLEST change that resolves the findings, \
-         then run those commands yourself to confirm before finishing.",
-        findings.join("\n")
+         then run those commands yourself to confirm before finishing.{}",
+        findings.join("\n"),
+        fix_evidence_pointers(findings)
+    )
+}
+
+/// NAME THE FILES THE FINDING'S EVIDENCE LIVES IN. A finding states one half of a defect — "5 failed"
+/// with an elided pytest tail, or "app.js references DOM id `summary-line` which no html defines" — and
+/// the other half is a file the fix worker was never given: the dependency-injection loop skips test
+/// files by construction and injects only OWNED files, so the worker repairing `meridian.py` against
+/// five failing assertions in `test_meridian.py` never saw one byte of the test that defines the
+/// expectation (measured live: 1,756s, promoted:false). Extracting the referenced paths is deterministic
+/// — they are already written in the finding text — and pairing them with an explicit instruction to
+/// read them is what turns "here is a symptom" into "here is where the truth is". Pure + unit-tested.
+fn fix_evidence_pointers(findings: &[String]) -> String {
+    let joined = findings.join("\n");
+    let mut paths: Vec<String> = Vec::new();
+    for raw in joined
+        .split(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | ',' | ';'))
+    {
+        // The two shapes a real finding uses: a pytest NODE ID (`test_x.py::Class::test_case`) and a
+        // file:line reference (`app.js:32`). Neither ends in the extension, so a bare `ends_with`
+        // extractor found neither — which is exactly the evidence the fixer most needs.
+        let t = raw.split("::").next().unwrap_or(raw);
+        let t = t
+            .rsplit_once(':')
+            .filter(|(_, tail)| !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()))
+            .map(|(head, _)| head)
+            .unwrap_or(t);
+        let t = t.trim_end_matches([':', '.']);
+        let looks_like_path = t.ends_with(".py")
+            || t.ends_with(".js")
+            || t.ends_with(".mjs")
+            || t.ends_with(".ts")
+            || t.ends_with(".html")
+            || t.ends_with(".htm")
+            || t.ends_with(".css")
+            || t.ends_with(".rs")
+            || t.ends_with(".go");
+        if looks_like_path && !t.is_empty() && !paths.iter().any(|p| p == t) {
+            paths.push(t.to_string());
+        }
+    }
+    if paths.is_empty() {
+        return String::new();
+    }
+    paths.truncate(12);
+    format!(
+        "\n\n## READ THESE FIRST — the evidence for the findings above lives in them\n{}\n\
+         These files are named BY the findings, so they are the definition of what 'fixed' means here: \
+         a failing test states the expected behaviour, and a file a finding says is missing a name is \
+         where that name has to exist. Read each one before editing anything — the read prohibitions in \
+         your rules do NOT apply to these — and never infer their contents from the finding text alone.",
+        paths
+            .iter()
+            .map(|p| format!("- {p}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     )
 }
 
@@ -25505,6 +25591,10 @@ impl GooseAgentDispatcher {
         // fixed, because I patched the instance in front of me instead of the class.
         let read_only_shard = req.owned_files.is_empty()
             && (req.task_id.starts_with("verify::") || req.task_id.starts_with("verify-e2e::"));
+        // A REPAIR task — its file already exists and its job is a targeted edit, never a rewrite.
+        // Same shape as `is_fix_round` further down (which this file has already been bitten by
+        // twice: one defect, two sites, only one fixed).
+        let repairing = req.task_id.starts_with("fix::") || req.task_id.starts_with("complete-fix");
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
@@ -25700,7 +25790,24 @@ impl GooseAgentDispatcher {
                             || f.ends_with(".md")
                             || f.ends_with(".txt")
                     });
-                let owner_body = if is_asset_owner {
+                let owner_body = if repairing {
+                    // The repair worker used to receive the first-authoring script verbatim: "your
+                    // VERY FIRST action must be to `write` your owned file(s) IN FULL", "NEVER `cat`
+                    // the module", "tests are a SEPARATE subtask". Every clause is wrong for a task
+                    // whose file exists, whose defect was proven by running the app, and whose
+                    // evidence is usually a test the worker was forbidden to read. Rewriting the file
+                    // from scratch is also how a repair round REGRESSES work that was already right.
+                    "YOU ARE REPAIRING AN EXISTING FILE. It is already written and mostly works — the \
+                     finding below names a PROVEN defect in it. Read the file first, then make the \
+                     SMALLEST edit that removes that defect: use `edit`, keep everything the finding \
+                     does not name, and never re-emit the whole file from memory (that is how a repair \
+                     round destroys work that was already correct). You MAY read any file the finding \
+                     mentions — including the TEST that failed, which is the definition of the expected \
+                     behaviour — and any module whose symbol appears in the error. Fix the side that is \
+                     wrong against the spec, not the side that is easier to edit. Finish by re-running \
+                     the exact command from the finding and confirming THAT passes.\n\n"
+                        .to_string()
+                } else if is_asset_owner {
                     "WRITE FIRST. Your owned file(s) are STATIC ASSETS (frontend/docs) — no \
                      Python test suite applies to them, so do NOT run pytest or start the \
                      backend; that only burns your budget on checks that cannot exercise your \
@@ -26283,10 +26390,21 @@ impl GooseAgentDispatcher {
         // design of the parallel verify shards depends entirely on those prohibitions holding.
         // `integrate-verify` owns nothing too and is deliberately NOT excluded: it IS the run's sole repair
         // point, so the fix directive is correct for it.
-        let is_fix_round = req.owned_files.is_empty()
-            && !req.all_files.is_empty()
-            && !req.task_id.starts_with("verify::")
-            && !req.task_id.starts_with("verify-e2e::");
+        // IDENTIFY A FIX TASK BY WHAT IT IS, NOT BY A SIDE EFFECT. This tested
+        // `owned_files.is_empty()` as a proxy for "this is the repair task" — but a scheduled fix task
+        // is built with `owned_files: vec![g.file]` (the whole point of the disjoint per-file
+        // partition), so the proxy was FALSE for every one of them. Measured across the archive:
+        // 384 `fix::` dispatches, 0 received this directive; the only ids that ever dispatch with an
+        // empty owned list are the read-only verify shards (excluded here) and `integrate-verify`.
+        // So the repair worker was handed the FIRST-AUTHORING rules — "write your owned file(s) IN
+        // FULL", never read the module, tests are someone else's subtask — while its actual job was
+        // to edit an existing file against a reproduced failure spanning several of them.
+        let is_fix_round = (req.task_id.starts_with("fix::")
+            || req.task_id.starts_with("complete-fix")
+            || (req.owned_files.is_empty()
+                && !req.task_id.starts_with("verify::")
+                && !req.task_id.starts_with("verify-e2e::")))
+            && !req.all_files.is_empty();
         let read_on_fix =
             is_fix_round && swarm_gate_cfg("GOOSE_SWARM_READ_ON_FIX", load_config().read_on_fix);
         let fix_directive = if read_on_fix {
