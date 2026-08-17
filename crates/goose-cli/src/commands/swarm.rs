@@ -14438,7 +14438,11 @@ impl GooseAgentDispatcher {
         // mirrored: they are unique per round+file, whereas a speculative TWIN shares its task id with
         // the primary and two writers would fight over one file — the case the comment above protects.
         let activity_mirror = activity_key
-            .filter(|k| k.starts_with("fix::"))
+            // BOTH repair paths. The scheduled per-file tasks are `fix::rN::<file>`; the wave path
+            // races `complete-fix::twinN`, and those are speculative too, so leaving them out put
+            // the panel right back where it started — three nodes grinding repair twins with
+            // nothing behind them. Caught live watching this very run, one prefix short.
+            .filter(|k| k.starts_with("fix::") || k.starts_with("complete-fix"))
             .and_then(|k| {
                 let dir = self.working_dir.join(".swarm").join("activity");
                 if dir == work_dir.join(".swarm").join("activity") {
