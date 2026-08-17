@@ -2627,7 +2627,18 @@ def main() -> int:
         # void=False) and any naive mean read them as catastrophic n3 scores. If the STOP sentinel
         # exists when the unit ends, the run was cut by the operator boundary — void it. The score
         # is preserved under kill_artifact_score for forensics, never under score.
-        if (HERE / "STOP").exists() and result.get("score") is not None:
+        # F865 NARROWING: STOP presence alone is no longer kill evidence — today's loop honors
+        # STOP at unit BOUNDARIES, so an engine that exited 0 with a complete run ran its full
+        # course regardless of when the sentinel appeared. MEASURED cost of the broad predicate:
+        # baseline-n3-r3 finished GREEN (rounds 2→1→0, exit 0, run_finished present) at 0.8645 —
+        # the best product-regime score ever recorded — and was voided to score=None because an
+        # operator had set STOP 90 minutes into its run. The gate now demands actual death:
+        # a non-zero/absent exit code. Half-born trees still void (their exit is the kill signal).
+        if (
+            (HERE / "STOP").exists()
+            and result.get("score") is not None
+            and result.get("engine_exit") != 0
+        ):
             result["kill_artifact_score"] = result.pop("score")
             result["score"] = None
             result["void"] = True

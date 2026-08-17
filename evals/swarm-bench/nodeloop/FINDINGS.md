@@ -19971,3 +19971,19 @@ hours go to the QUALITY levers the forensics named — vendor-doc fetch (the ETa
 in every run), the DOM-id contract scan (the frontend TypeError class), pitfall observability
 — not to three more pairs of a called question. STOP set: r3 finishes and keeps its row, then
 the morning batch ships.
+
+## F865 — r3 went GREEN at 0.8645 — THE BEST PRODUCT-REGIME SCORE EVER RECORDED — and an over-broad void gate threw it away until the row was reclaimed; quality pair +0.385 to n3, speed 4/4
+
+r3 on the F862 binary: repair rounds 2→1→0 — the first fully-GREEN complete phase of the
+product regime (the honest ruler converged to ZERO findings), 104.4 min, clean exit 0.
+Score 0.8645 vs n1-r3's 0.4794: the largest quality margin either direction all campaign.
+THE GATE BUG: F784 voided any scored row if the STOP sentinel existed at unit end — written
+when STOP killed engines mid-unit; today's loop honors STOP at unit BOUNDARIES, so this
+engine ran its full course and was voided anyway (score buried in kill_artifact_score).
+Narrowed: the gate now demands actual death evidence (non-zero exit); the row is restored
+with a void_correction note. CURVE: quality 2/4 (the early call from 2 losses stands as
+pre-registered — but the post-F862 trend is 1 win, 1 knife-edge loss, 1 big win), speed 4/4
+with walls 90-142 min vs an n1 arm that has NEVER finished. The mechanism story of r3's
+green: wave promotions 2→1 then 1→0 — the one-ruler grade converting every round, exactly
+the design. The findings-held lottery's remaining mass is the ETag + DOM classes that the
+F864 levers (already built, restarting now) attack at the SOURCE.
