@@ -62,3 +62,14 @@ baseline bars (distinct accent + "Anthropic baseline" tag) + every promoted run'
 sorted by score; click ANY bar -> that run's card page /agentic-benchmarks/run/[id]:
 score + tiers + screenshots gallery + poster handle + title/notes + scorer/build metadata.
 Only same-scorer rows share the chart (sb-5.2); older rows stay in a collapsed legacy table.
+
+## v2.1 addition (2026-08-17): checksSummary — full scoring depth on the site cards
+The POST payload gains an optional `checksSummary`: an array (<=90 entries) of
+`{ check: string<=60, tier: "A"|"B"|"C"|"D"|"J"|"V"|"P", score: number 0..1, detail: string<=220 }`
+— the scorer's own per-check evidence, verbatim-elided. Plus optional
+`composition: { core, journey, visual, perf, hard }` (each 0..1) and
+`repairRounds: [{round, findings}]` and `findingsHeld: string[]<=12 entries <=400 chars`.
+Strict-allowlisted like everything else; the run card renders the same "How this score was
+built" story the desktop shows: composition table, per-tier check rows with evidence and
+consequence-of-loss, findings-that-held, repair progression. A payload without checksSummary
+renders the card as before.
