@@ -25295,9 +25295,13 @@ impl GooseAgentDispatcher {
                      it — those two and nothing else. Do NOT `ls`/`find`/`tree` the project or read the \
                      rest of the suite: the PROJECT FILE LAYOUT above IS the complete structure, and the \
                      API of every dependency is ALREADY injected below under 'API of …'. Then run \
-                     `python3 -m pytest` ONCE to prove your file COLLECTS and RUNS. A test file with a \
-                     SyntaxError or a bad import is worse than none. A turn that ends without your owned \
-                     file written and non-empty FAILS and is retried.\n\n"
+                     `python3 -m pytest` ONCE to prove your file COLLECTS and RUNS. READ that output: \
+                     `collected 0 items`, `no tests ran` or `file or directory not found` means NOTHING \
+                     ran — that is a FAILURE even if the command exits 0, fix the path/collection before \
+                     finishing. NEVER pipe the test command through `head`/`tail` — the pipe replaces \
+                     the real exit code with the pipe's and a broken run reads as a pass. A test file \
+                     with a SyntaxError or a bad import is worse than none. A turn that ends without \
+                     your owned file written and non-empty FAILS and is retried.\n\n"
                         .to_string()
                 } else {
                     "WRITE FIRST. Your spec above is the COMPLETE contract — your VERY FIRST action must be to \
@@ -25308,7 +25312,10 @@ impl GooseAgentDispatcher {
                      under 'API of …' — read it THERE, NEVER `cat` the module. Cat-ing files whose APIs are \
                      already injected only bloats your context until you LOOP — repeating 'let me write the \
                      file' over and over without ever emitting the write. Implement from the spec + injected \
-                     APIs, THEN run `python3 -m pytest` to check. A turn that ends without every owned file \
+                     APIs, THEN run `python3 -m pytest` to check — never piped through `head`/`tail` (the \
+                     pipe hides the real exit code), and `collected 0 items`/`no tests ran`/`file or \
+                     directory not found` in the output means the check DID NOT RUN, whatever the exit \
+                     code says. A turn that ends without every owned file \
                      written and non-empty FAILS and is retried — exploring/cat-ing instead of writing is the \
                      #1 way workers burn their whole budget and produce nothing.\n\n"
                         .to_string()
