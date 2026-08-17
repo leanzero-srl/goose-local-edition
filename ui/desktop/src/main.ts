@@ -23,7 +23,7 @@ import fsSync from 'node:fs';
 import started from 'electron-squirrel-startup';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync, spawn, execFile } from 'child_process';
+import { execFileSync, spawn, spawnSync, execFile } from 'child_process';
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
 import { startGooseServe, findGooseBinaryPath } from './gooseServe';
@@ -2331,6 +2331,38 @@ const resolveBenchPayloadDir = (): string => {
 // The render gate + scorer probe shell to node via GOOSE_SWARM_RENDER_NODE; a bare "node" dies with
 // the user's PATH under a packaged app, so hand them the bundled shim (src/bin/node) by absolute path.
 const resolveBenchNode = (): string => {
+  // The browser probe (product_probe.mjs) resolves `playwright` via its node's global module
+  // root — MEASURED on the first packaged journey run: the bundled shim's root has no
+  // playwright, every probe died silently, and the run scored J 0.2 / V 0.0 with zero
+  // screenshots (a harness gap punished as app quality). Prefer a node that can actually
+  // resolve playwright; the shim is the fallback so the run still proceeds (probe checks
+  // then read honestly low and the scoring detail shows the probe errors).
+  const probeTest =
+    "try{const{createRequire}=require('module');const{execSync}=require('child_process');" +
+    "const g=execSync('npm root -g',{encoding:'utf8'}).trim();" +
+    "createRequire(require('path').join(g,'x.js'))('playwright');process.exit(0)}" +
+    'catch(e){process.exit(1)}';
+  const candidates: string[] = [];
+  const envNode = process.env.GOOSE_SWARM_RENDER_NODE;
+  if (envNode) candidates.push(envNode);
+  try {
+    const which = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['node'], {
+      encoding: 'utf8',
+    });
+    const sys = which.stdout?.split('\n')[0]?.trim();
+    if (sys) candidates.push(sys);
+  } catch {
+    /* no system node */
+  }
+  for (const c of candidates) {
+    try {
+      if (!fsSync.existsSync(c)) continue;
+      const r = spawnSync(c, ['-e', probeTest], { timeout: 15000 });
+      if (r.status === 0) return c;
+    } catch {
+      /* try next */
+    }
+  }
   const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
   const shim = app.isPackaged
     ? path.join(process.resourcesPath, 'bin', shimName)
