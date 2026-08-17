@@ -20248,3 +20248,28 @@ extracts every path the findings cite — handling pytest node ids (`t.py::Class
 file:line refs (`app.js:32`), the two shapes that a naive extension match misses, which the new
 unit test caught — and appends a READ THESE FIRST block that explicitly suspends the no-reading
 rules for those files.
+
+## F878 — run 5: 0.8029, ABOVE Haiku 4.5, Tier B 0.38→0.938 — and the one gap left is a scorer check with no engine sibling
+
+Run 5 (all of today's engine work except F876/F877, which landed after it started) scored
+**0.8029** — the fleet's first result above a frontier cloud baseline on this benchmark (Haiku
+4.5 = 0.7861). A 1.0 / B 0.938 / C 1.0 / D 0.938, HARD 0.833, v_styling 1.0. The Behaviour
+collapse that has defined the campaign is GONE: sync_completeness 247/247, payment_row_shape
+exact, total_field 247, summary_accuracy 4409197 matching to the cent; 15 of 16 B checks pass
+(only resync_idempotent still 0). Repair converged 12→6→3 findings and the frontend detectors
+converged 9→3→0 dom-id with css coherence clean throughout — the styling machinery Mihai
+demanded after the unstyled screenshots, working end to end.
+
+THE REMAINING GAP, and it is the standing law again: journey 0.30, visual 0.60, "no date cells
+rendered", "0 rows in one view". The screenshot tells it exactly — a properly styled page
+(gradient header, cards, real table, pagination) that after a sync still reads "Never synced ·
+showing 0–0 of 0" while the API holds all 247 rows. The frontend never displays what the backend
+acquired. The engine could not see this because the render gate only ever ran the probe's `load`
+scenario, where an empty table is LEGITIMATE (fresh database) — the one state that proves the
+frontend works, the page AFTER the user's sync, was never checked. So the scorer punished a
+defect the repair loop was never told about: a scorer check with no engine sibling measures a gap
+the swarm cannot close (F408's law). FIXED: the render gate now also runs the `sync` scenario —
+the probe already reported rowCountAfter/viewRefreshed/completed and nothing consumed them — and
+files two blocking findings: no working sync control at all, and (the measured one) a completed
+sync that still renders zero rows, with the concrete correction (re-fetch and render after the
+sync resolves, update the readouts from that same response). Probe failure stays inconclusive.
