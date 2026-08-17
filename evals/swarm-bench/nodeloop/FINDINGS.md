@@ -20118,3 +20118,30 @@ pipe-hides-exit-code worker instruction (pytest "collected 0 items" read as a gr
 through `| head -80` — twice, on a file that did not exist), and docs-only modules no longer
 get import-check verify:: gates. Refuted by the verifiers, for the record: resolvePool
 same-model collapse, and the strong variant of the phantom-node claim.
+
+## F873 — the waste mine: 41 runs, 11 ranked findings, ~150k node-s of identified waste; three highest-confidence fixes shipped same-day
+
+Mihai: "there's some modicum of waste in here and I would like you to continue finding it."
+A dedicated agent mined 41 deduplicated runs (~290k task node-s) to tool-call level. Ranked:
+(1) pre-review idle-fill 72,029 node-s with an 81% empty-handed rate, and 26% of judge
+no_idle_device skips fall inside a pre-review window — yield-to-judge QUEUED; (2) the
+verify:: fan 38,057 node-s including a measured FALSE FAIL (verify::api failed the module on
+a symbol the USER spec never names — the detailer invented it, the verifier enforced it) —
+the docs-only half was already fixed this morning, spec-vs-detailer judging QUEUED; (3)
+repair waves fighting probe-shaped findings twins cannot beat: 15,309 node-s — QUEUED; (4)
+8.1% of all shell calls fail ≈14,000 node-s; (5) THE WEB SPLIT TAX, deterministic in 9 of
+the last 10 runs: the spec demands three separately-owned web files, 22/41 plans shipped ONE
+web task, the judge split it mid-flight after 528-1,224s — FIXED: split_fat baked ON at
+threshold 3 (the transform existed all along with full plumbing; only its gate and 4-file
+threshold blocked it; plan-time split now, self-declaration gate satisfied); (6) foreign
+writes: workers overwrite files other tasks own, the owned_file_fence defaults OFF and
+restores-at-sink silently voids foreign fixes — QUEUED with write-time refusal design; (7)
+asset owners ran the full Python suite (css worker ran it TWICE in one run; ~2,500 node-s
+above floor) because the kind taxonomy had no asset branch — FIXED: asset-owner owner_body
+(no pytest, no backend, node --check at most, sibling reads for the shared vocabulary); (8)
+micro-children from judge splits (__init__.py tasks) — QUEUED fold-into-sibling; (9) stale
+judge verdicts landing 5-162s after task completion, 41 events — QUEUED state-check before
+dispatch; (10) unquoted space-containing paths — FIXED with one shell-rules bullet; (11)
+"fusi, fusi, fable" was display-side and already fixed by the UI batch. Also: 111 stub runs
+relaunched every ~11s for 24 min on Aug 15 (a harness crash-loop guard is queued
+harness-side).
