@@ -73,3 +73,13 @@ Strict-allowlisted like everything else; the run card renders the same "How this
 built" story the desktop shows: composition table, per-tier check rows with evidence and
 consequence-of-loss, findings-that-held, repair progression. A payload without checksSummary
 renders the card as before.
+
+## v2.2 addition (2026-08-17): model identifier
+The POST payload gains `model` (string, 8..120 chars, REQUIRED for new posts): the exact
+model identifier the fleet ran, e.g.
+`qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`. The desktop PREFILLS
+it from engine truth (the run's pool_resolved `model_id`, host prefix stripped when all nodes
+share one model; joined with " + " when they differ) and the user can edit it before
+publishing — the field is theirs to set, the prefill is the honest default. Site: schema
+field, API allowlist (reject missing/short), shown on the run card metadata and as a muted
+line under the entrant name on the leaderboard/bars.
