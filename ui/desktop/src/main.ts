@@ -2745,6 +2745,10 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
           // shadowed the baked default (measured live — run 4 planned ONE web task).
           // Env beats config, so the benchmark regime is immune to config shadows.
           GOOSE_SWARM_SPLIT_FAT: '1',
+          // F876: the scouts DO fetch the vendor's protocol docs (grounded 3/3, measured), but the
+          // channel that forwards those verbatim facts to the worker writing the vendor client was
+          // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
+          GOOSE_SWARM_DOC_PREFETCH: '1',
           GOOSE_SWARM_DIVERSE_PLAN: '1',
           GOOSE_SWARM_TEMP: '0.2',
         },

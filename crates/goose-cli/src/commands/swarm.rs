@@ -985,9 +985,18 @@ pub struct SwarmConfig {
     /// the workers ZERO times: it survives only as a lossy planner-model paraphrase riding pillars/contracts,
     /// which preserves a convention and destroys a literal. This routes the exact looked-up text to the
     /// worker un-paraphrased. Grounded-only by construction (an INVENTED finding is never injected, so a
-    /// hallucinated API can never be hardcoded), and grounding requires `research_tools` + a key, so with
-    /// tools off there are no grounded findings and this stays empty. OFF by default => empty block =>
-    /// byte-identical to today's worker prompt. GOOSE_SWARM_DOC_PREFETCH env overrides.
+    /// hallucinated API can never be hardcoded).
+    ///
+    /// ⚠️ BAKED ON (F876). The doc comment below used to say grounding "requires `research_tools` + a
+    /// key, so with tools off there are no grounded findings and this stays empty" — that is FALSE and
+    /// has been since `research_lookups` started grounding on `is_mcp || fetched_external`: a scout with
+    /// only a shell curls the URLs the spec names and IS grounded. MEASURED on the live run that exposed
+    /// this: `research_completed.grounded: 3` — all three scouts fetched the vendor's protocol docs —
+    /// while `doc_prefetch: false` meant not one verbatim line reached the worker that writes the vendor
+    /// client. That worker then invented pagination, 429 handling, ETag revalidation and the idempotency
+    /// header from priors, the generated tests failed on exactly those four, `POST /api/sync` acquired
+    /// nothing, and NINE Tier-B checks collapsed together on the resulting empty collection. The fleet
+    /// was reading the manual and then throwing it away. GOOSE_SWARM_DOC_PREFETCH env overrides.
     #[serde(default)]
     pub doc_prefetch: bool,
     /// Fetch every http(s) document the SPEC names, in the engine, and splice it VERBATIM into both the
@@ -1316,7 +1325,7 @@ impl Default for SwarmConfig {
             occupancy: false,
             write_first: false,
             research_tools: false,
-            doc_prefetch: false,
+            doc_prefetch: true,
             doc_fetch: false,
             dep_signatures: Some(true),
             think_off_test_authors: None,
@@ -3501,7 +3510,8 @@ fn id_names_a_test(id: &str) -> bool {
 ///
 /// So the fetch is the ENGINE's, not a model's: no key, no extension, no tool call to hallucinate.
 /// A document the engine retrieved is grounded by construction, which is exactly the property
-/// `doc_prefetch` demands (`grounded == is_mcp && ok`) and never gets here.
+/// `doc_prefetch` demands. (The parenthetical here used to read `grounded == is_mcp && ok`; that is
+/// stale — grounding is `is_mcp || fetched_external`, so a shell curl grounds too.)
 ///
 /// Delimiter discipline is the same one `spec_get_endpoints` had to learn: the URL arrives wrapped in
 /// backticks, so scanning to whitespace captures the closing delimiter and the fetch 404s on a URL
