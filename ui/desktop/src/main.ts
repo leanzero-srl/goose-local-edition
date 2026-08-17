@@ -3171,7 +3171,9 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             // verbatim, so also index the un-sanitized id — otherwise every fix task stays
             // invisible in the panel and every legacy digest keeps working unchanged.
             if (key.includes('~')) {
-              const taskKey = key.replace(/~/g, '/');
+              // Exact inverse of the engine's activity_digest_key: `~~` -> `~`, a lone `~` -> `/`.
+              // A plain global replace would alias `a~b` and `a/b` onto one task.
+              const taskKey = key.replace(/~~|~/g, (m) => (m === '~~' ? '~' : '/'));
               activity[taskKey] = parsed;
               activityMtimes[taskKey] = st.mtimeMs;
             }
