@@ -1,12 +1,42 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
-const { resolve } = require('path');
+const { resolve, join } = require('path');
+const fs = require('fs');
 
 const isLinuxVulkanBuild = process.env.GOOSE_DESKTOP_LINUX_VARIANT === 'vulkan';
 
+// Benchmark harness payload: the frozen swarm-bench runner + scorer + specs, mirrored from
+// evals/swarm-bench into src/swarm-bench so it ships via extraResource exactly like src/bin.
+// The layout must match the checkout's (bench/ beside the specs) — run_build.py resolves the
+// spec as `bench/..`/spec-build.md and vendor_service serves `bench/`/vendor_docs.md by path.
+// Only the harness code + specs ship; runs/, nodeloop/, legacy/ and caches stay out.
+function mirrorSwarmBenchPayload() {
+  const src = resolve(__dirname, '..', '..', 'evals', 'swarm-bench');
+  const dest = resolve(__dirname, 'src', 'swarm-bench');
+  if (!fs.existsSync(join(src, 'bench', 'run_build.py'))) {
+    throw new Error(`swarm-bench payload source not found at ${src}`);
+  }
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(join(dest, 'bench', 'probes'), { recursive: true });
+  for (const spec of ['spec-build.md', 'spec-build-v2.md']) {
+    fs.copyFileSync(join(src, spec), join(dest, spec));
+  }
+  const benchSrc = join(src, 'bench');
+  for (const name of fs.readdirSync(benchSrc)) {
+    if (name.endsWith('.py') || name === 'product_probe.mjs' || name === 'vendor_docs.md') {
+      fs.copyFileSync(join(benchSrc, name), join(dest, 'bench', name));
+    }
+  }
+  for (const name of fs.readdirSync(join(benchSrc, 'probes'))) {
+    if (name.endsWith('.py')) {
+      fs.copyFileSync(join(benchSrc, 'probes', name), join(dest, 'bench', 'probes', name));
+    }
+  }
+}
+
 let cfg = {
   asar: true,
-  extraResource: ['src/bin', 'src/images', 'src/app-update.yml'],
+  extraResource: ['src/bin', 'src/images', 'src/app-update.yml', 'src/swarm-bench'],
   icon: 'src/images/icon',
   // Windows specific configuration
   win32: {
@@ -76,6 +106,11 @@ if (process.env.APPLE_TEAM_ID) {
 
 module.exports = {
   packagerConfig: cfg,
+  hooks: {
+    prePackage: async () => {
+      mirrorSwarmBenchPayload();
+    },
+  },
   rebuildConfig: {},
   publishers: [
     {

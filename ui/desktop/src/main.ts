@@ -2267,6 +2267,201 @@ ipcMain.handle('select-import-session-file', async () => {
 
 const BENCH_DIR = path.join(os.homedir(), '.config', 'goose', 'benchmark');
 const BENCH_RESULT = path.join(BENCH_DIR, 'result.json');
+const BENCH_IDENTITY = path.join(BENCH_DIR, 'identity.json');
+
+// Poster identity per PRODUCT-CONTRACT.md: created once, on the first benchmark run. The handle is
+// the public pseudonym; installId groups a poster's runs server-side and is NEVER displayed. Fixed
+// word lists so the handle is readable and stable per install — regenerating on every run would
+// scatter one user's history across many posters.
+const BENCH_ADJECTIVES = [
+  'crimson', 'amber', 'cobalt', 'emerald', 'scarlet', 'indigo', 'golden', 'silver',
+  'violet', 'copper', 'teal', 'coral', 'onyx', 'ivory', 'azure', 'jade',
+  'rapid', 'quiet', 'bold', 'bright', 'calm', 'clever', 'daring', 'eager',
+  'fierce', 'gentle', 'keen', 'lively', 'mighty', 'noble', 'prime', 'proud',
+  'sharp', 'solid', 'steady', 'swift', 'vivid', 'wild', 'wise', 'brisk',
+];
+const BENCH_ANIMALS = [
+  'heron', 'falcon', 'otter', 'lynx', 'raven', 'badger', 'condor', 'dolphin',
+  'elk', 'ferret', 'gecko', 'hawk', 'ibis', 'jackal', 'kestrel', 'lemur',
+  'marten', 'narwhal', 'ocelot', 'panther', 'quail', 'robin', 'stork', 'tapir',
+  'urchin', 'viper', 'walrus', 'wren', 'yak', 'zebra', 'bison', 'crane',
+  'dingo', 'egret', 'fox', 'gull', 'hare', 'iguana', 'jay', 'koala',
+];
+
+interface BenchIdentity {
+  installId: string;
+  handle: string;
+}
+
+const ensureBenchIdentity = async (): Promise<BenchIdentity> => {
+  try {
+    const existing = JSON.parse(await fs.readFile(BENCH_IDENTITY, 'utf8')) as BenchIdentity;
+    if (typeof existing.installId === 'string' && typeof existing.handle === 'string') {
+      return existing;
+    }
+  } catch {
+    /* first run — create below */
+  }
+  const pick = (list: string[]) => list[crypto.randomInt(list.length)];
+  const identity: BenchIdentity = {
+    installId: crypto.randomUUID(),
+    handle: `${pick(BENCH_ADJECTIVES)}-${pick(BENCH_ANIMALS)}-${crypto.randomBytes(2).toString('hex')}`,
+  };
+  await fs.mkdir(BENCH_DIR, { recursive: true });
+  await fs.writeFile(BENCH_IDENTITY, JSON.stringify(identity, null, 2));
+  return identity;
+};
+
+// The harness payload (run_build.py + scorer + specs + probe). Packaged builds ship it in
+// resources via forge.config.ts's mirrorSwarmBenchPayload; dev keeps reading the checkout so the
+// operator's edits to evals/swarm-bench are live without a package step.
+const resolveBenchPayloadDir = (): string => {
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, 'swarm-bench')]
+    : [
+        path.resolve(process.cwd(), '..', '..', 'evals', 'swarm-bench'),
+        path.join(os.homedir(), 'Projects', 'goose', 'evals', 'swarm-bench'),
+      ];
+  for (const c of candidates) {
+    if (fsSync.existsSync(path.join(c, 'bench', 'run_build.py'))) return c;
+  }
+  throw new Error(`benchmark harness not found (looked in ${candidates.join(', ')})`);
+};
+
+// The render gate + scorer probe shell to node via GOOSE_SWARM_RENDER_NODE; a bare "node" dies with
+// the user's PATH under a packaged app, so hand them the bundled shim (src/bin/node) by absolute path.
+const resolveBenchNode = (): string => {
+  const shimName = process.platform === 'win32' ? 'node.cmd' : 'node';
+  const shim = app.isPackaged
+    ? path.join(process.resourcesPath, 'bin', shimName)
+    : path.join(process.cwd(), 'src', 'bin', shimName);
+  return fsSync.existsSync(shim) ? shim : 'node';
+};
+
+// Writable ground for every run. resourcesPath is read-only in a packaged app, so the run's
+// workdir, verdicts, traces and screenshots all live under userData.
+const benchWorkRoot = (): string => path.join(app.getPath('userData'), 'benchmark');
+
+interface ActiveBenchRun {
+  child: ReturnType<typeof spawn>;
+  workdir: string;
+  nodes: number;
+  startedAt: string;
+  cancelled: boolean;
+}
+let activeBenchRun: ActiveBenchRun | null = null;
+
+// The bench harness passes --log-file <workdir>/run.jsonl, so the engine's event stream lives
+// there rather than at the default .swarm/run-<id>.jsonl. Prefer it; fall back to the newest
+// .swarm log for anything that ran without the flag.
+const benchRunLog = async (workdir: string): Promise<string | null> => {
+  const direct = path.join(workdir, 'run.jsonl');
+  if (await fs.stat(direct).then(() => true, () => false)) return direct;
+  const swarmDir = path.join(workdir, '.swarm');
+  const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
+  const logs = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
+  if (logs.length === 0) return null;
+  const withMtime = await Promise.all(
+    logs.map(async (f) => ({
+      f,
+      m: await fs.stat(path.join(swarmDir, f)).then((s) => s.mtimeMs).catch(() => 0),
+    }))
+  );
+  withMtime.sort((a, b) => b.m - a.m);
+  return path.join(swarmDir, withMtime[0].f);
+};
+
+// runMeta per the contract: engineEvents = line count of the run's event log; repairRounds =
+// complete_verify events minus one (the first verify is not a repair), floored at 0.
+const benchRunCounts = async (
+  workdir: string
+): Promise<{ engineEvents: number; repairRounds: number }> => {
+  const logPath = await benchRunLog(workdir);
+  if (!logPath) return { engineEvents: 0, repairRounds: 0 };
+  const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
+  const lines = raw.split('\n').filter((l) => l.trim().length > 0);
+  let verifies = 0;
+  for (const l of lines) {
+    try {
+      if ((JSON.parse(l) as { event?: string }).event === 'complete_verify') verifies += 1;
+    } catch {
+      /* partial last line */
+    }
+  }
+  return { engineEvents: lines.length, repairRounds: Math.max(0, verifies - 1) };
+};
+
+// The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
+// sets BENCH_SHOTS_DIR). The publisher's story: the FIRST loaded shot (the page before repairs)
+// plus the LAST epoch's loaded/synced/mobile (the shipped quality). Cap 5, skip >1.4MB each —
+// the server magic-sniffs PNG and rejects >1.5MB decoded, so stay under with margin.
+const BENCH_SHOT_MAX_BYTES = Math.floor(1.4 * 1024 * 1024);
+
+interface BenchShot {
+  name: string;
+  caption: string;
+  b64: string;
+}
+
+const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
+  const dir = path.join(workdir, 'bench-shots');
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  const shots: Array<{ epoch: number; scenario: string; file: string }> = [];
+  for (const f of entries) {
+    const m = f.match(/^(\d+)-(loaded|synced|error|empty|mobile)\.png$/);
+    if (!m) continue;
+    // Size-gate BEFORE picking, so an oversize final shot falls back to the newest one that
+    // fits instead of silently dropping the "after" half of the story.
+    const file = path.join(dir, f);
+    const size = await fs.stat(file).then((s) => s.size).catch(() => Number.MAX_SAFE_INTEGER);
+    if (size > BENCH_SHOT_MAX_BYTES) continue;
+    shots.push({ epoch: Number(m[1]), scenario: m[2], file });
+  }
+  if (shots.length === 0) return [];
+  const byScenario = (s: string) => shots.filter((x) => x.scenario === s);
+  const minBy = (xs: typeof shots) =>
+    xs.length ? xs.reduce((a, b) => (b.epoch < a.epoch ? b : a)) : null;
+  const maxBy = (xs: typeof shots) =>
+    xs.length ? xs.reduce((a, b) => (b.epoch > a.epoch ? b : a)) : null;
+
+  const firstLoaded = minBy(byScenario('loaded'));
+  const lastLoaded = maxBy(byScenario('loaded'));
+  const picks: Array<{ name: string; caption: string; file: string }> = [];
+  if (firstLoaded) {
+    picks.push({
+      name: 'loaded-before',
+      caption: 'First render — before repairs',
+      file: firstLoaded.file,
+    });
+  }
+  if (lastLoaded && (!firstLoaded || lastLoaded.file !== firstLoaded.file)) {
+    picks.push({ name: 'loaded', caption: 'Final render', file: lastLoaded.file });
+  }
+  const lastSynced = maxBy(byScenario('synced'));
+  if (lastSynced) picks.push({ name: 'synced', caption: 'After sync', file: lastSynced.file });
+  const lastMobile = maxBy(byScenario('mobile'));
+  if (lastMobile) picks.push({ name: 'mobile', caption: 'Mobile · 375px', file: lastMobile.file });
+
+  const out: BenchShot[] = [];
+  // TOTAL cap, not only per-file: Amplify's SSR lambda rejects ~6MB invocations before the
+  // route ever runs (website integration finding), so the whole batch stays ≤3.5MB decoded
+  // (~4.7MB as base64 + JSON overhead). Order matters — picks are story-ordered, so the
+  // before/after pair survives and the extras are what get dropped.
+  const BENCH_SHOTS_TOTAL_MAX = Math.floor(3.5 * 1024 * 1024);
+  let totalBytes = 0;
+  for (const p of picks) {
+    if (out.length >= 5) break;
+    try {
+      const buf = await fs.readFile(p.file);
+      if (totalBytes + buf.length > BENCH_SHOTS_TOTAL_MAX) continue;
+      totalBytes += buf.length;
+      out.push({ name: p.name, caption: p.caption, b64: buf.toString('base64') });
+    } catch {
+      /* a shot mid-write or gone — skip it */
+    }
+  }
+  return out;
+};
 
 ipcMain.handle('benchmark-read', async () => {
   try {
@@ -2276,31 +2471,137 @@ ipcMain.handle('benchmark-read', async () => {
   }
 });
 
-ipcMain.handle('benchmark-run', async (_event, nodes: number) => {
-  const repo = path.join(os.homedir(), 'Projects', 'goose');
-  const runner = path.join(repo, 'evals', 'swarm-bench', 'bench', 'run_build.py');
-  try {
-    await fs.access(runner);
-  } catch {
-    throw new Error('benchmark harness not found at ' + runner);
+ipcMain.handle('benchmark-identity', async () => ensureBenchIdentity());
+
+// Lets the view re-attach to a run in progress after navigation/remount — a run takes hours and
+// must not become invisible because the page unmounted.
+ipcMain.handle('benchmark-status', async () => {
+  if (!activeBenchRun) return { running: false };
+  const { workdir, nodes, startedAt } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt };
+});
+
+ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
+  let dir = typeof workdir === 'string' && workdir ? workdir : '';
+  if (!dir) {
+    try {
+      const stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as { workdir?: string };
+      dir = stored.workdir ?? '';
+    } catch {
+      return [];
+    }
   }
+  if (!dir) return [];
+  return pickBenchShots(dir);
+});
+
+ipcMain.handle('benchmark-run', async (event, nodes: number) => {
+  if (activeBenchRun) {
+    throw new Error('a benchmark run is already in progress');
+  }
+  const payloadDir = resolveBenchPayloadDir();
+  const runner = path.join(payloadDir, 'bench', 'run_build.py');
+  // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
+  // lookup. run_build.py honors BENCH_GOOSE for the engine path.
+  const engineBinary = findGooseBinaryPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+  });
+  await ensureBenchIdentity();
+  const workRoot = benchWorkRoot();
+  const outRoot = path.join(workRoot, 'runs', 'build');
+  await fs.mkdir(outRoot, { recursive: true });
   const entrant = `swarm-${nodes}node`;
-  return await new Promise((resolve, reject) => {
+  const workdir = path.join(outRoot, `${entrant}-r0`);
+  // run_build.py wipes the workdir itself, but only once it gets that far — a runner that dies
+  // before then (bad python, import error) would leave the PREVIOUS run's verdict in place and
+  // the close handler would report it as this run's success. Clear it first so a missing verdict
+  // is always the truthful failure signal.
+  await fs.rm(workdir, { recursive: true, force: true });
+  const startedAt = new Date().toISOString();
+  const sender = event.sender;
+  const sendSafe = (channel: string, payload: unknown) => {
+    try {
+      if (!sender.isDestroyed()) sender.send(channel, payload);
+    } catch {
+      /* window gone — the run continues headless */
+    }
+  };
+
+  return await new Promise((resolvePromise, reject) => {
     const child = spawn(
       'python3',
-      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '16200'],
-      { cwd: path.join(repo, 'evals', 'swarm-bench'), detached: true }
+      ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '16200',
+        '--out', outRoot],
+      {
+        cwd: workRoot,
+        detached: true,
+        env: {
+          ...process.env,
+          BENCH_GOOSE: engineBinary,
+          GOOSE_SWARM_RENDER_NODE: resolveBenchNode(),
+          // The render gate is inert without the probe path, and without the gate there are no
+          // repair rounds and no screenshots — the product story of the run.
+          GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', 'product_probe.mjs'),
+          // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
+          // a user run must be scored by the same scorer against the same spec or the board
+          // cannot hold both.
+          BENCH_PRODUCT: '1',
+          BENCH_SPEC: path.join(payloadDir, 'spec-build-v2.md'),
+          // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
+          // paths): a user's benchmark must run the same engine configuration the baked
+          // baselines and the campaign's numbers ran, or the board compares different swarms.
+          GOOSE_SWARM_PROBE_ADVERTISED_POST: '1',
+          GOOSE_SWARM_FIX_SCHED: '1',
+          GOOSE_SWARM_SHIP_BEST: '1',
+          GOOSE_SWARM_TESTGEN: '1',
+          GOOSE_SWARM_DIVERSE_PLAN: '1',
+          GOOSE_SWARM_TEMP: '0.2',
+        },
+      }
     );
+    activeBenchRun = { child, workdir, nodes, startedAt, cancelled: false };
+    // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
+    // at the run, then resolve with the scored row on completion as before.
+    sendSafe('benchmark-started', { workdir, nodes, startedAt });
+
     let tail = '';
-    child.stdout?.on('data', (d) => (tail = (tail + d.toString()).slice(-4000)));
-    child.stderr?.on('data', (d) => (tail = (tail + d.toString()).slice(-4000)));
-    child.on('error', reject);
+    const buffers: Record<string, string> = { stdout: '', stderr: '' };
+    const onData = (stream: 'stdout' | 'stderr') => (d: Buffer | string) => {
+      tail = (tail + d.toString()).slice(-4000);
+      buffers[stream] += d.toString();
+      const lines = buffers[stream].split('\n');
+      buffers[stream] = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.trim().length > 0) sendSafe('benchmark-log', { line, stream });
+      }
+    };
+    child.stdout?.on('data', onData('stdout'));
+    child.stderr?.on('data', onData('stderr'));
+    child.on('error', (err) => {
+      activeBenchRun = null;
+      sendSafe('benchmark-finished', { error: err.message });
+      reject(
+        new Error(
+          `could not start the benchmark runner (is python3 installed?): ${err.message}`
+        )
+      );
+    });
     child.on('close', async () => {
+      // Keep activeBenchRun set until the result is ON DISK — a status poll that sees
+      // "not running" must find the fresh row, never the previous one.
+      const wasCancelled = activeBenchRun?.cancelled === true;
+      const finishedAt = new Date().toISOString();
+      if (wasCancelled) {
+        activeBenchRun = null;
+        sendSafe('benchmark-finished', { cancelled: true });
+        reject(new Error('run cancelled'));
+        return;
+      }
       try {
-        const verdictPath = path.join(
-          repo, 'evals', 'swarm-bench', 'runs', 'build', `${entrant}-r0`, 'verdict.json'
-        );
+        const verdictPath = path.join(workdir, 'verdict.json');
         const v = JSON.parse(await fs.readFile(verdictPath, 'utf8'));
+        const counts = await benchRunCounts(workdir);
         const row = {
           label: `Your fleet · ${v.actual_nodes ?? nodes} node${(v.actual_nodes ?? nodes) > 1 ? 's' : ''}`,
           score: v.score,
@@ -2316,30 +2617,133 @@ ipcMain.handle('benchmark-run', async (_event, nodes: number) => {
           ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
           ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
           ...(typeof v.agent?.secs === 'number' ? { wallSecs: v.agent.secs } : {}),
+          // v2 publisher inputs — stored with the result so Publish works across app restarts.
+          // `workdir` and `mine` never leave this machine; benchmark-publish builds the strict
+          // allowlisted payload from here.
+          runMeta: {
+            startedAt,
+            finishedAt,
+            engineEvents: counts.engineEvents,
+            repairRounds: counts.repairRounds,
+          },
+          workdir,
         };
         await fs.mkdir(BENCH_DIR, { recursive: true });
         await fs.writeFile(BENCH_RESULT, JSON.stringify(row, null, 2));
-        resolve(row);
-      } catch (err) {
+        activeBenchRun = null;
+        sendSafe('benchmark-finished', { row });
+        resolvePromise(row);
+      } catch {
+        activeBenchRun = null;
+        sendSafe('benchmark-finished', { error: `no verdict produced. ${tail.slice(-400)}` });
         reject(new Error(`no verdict produced. ${tail.slice(-400)}`));
       }
     });
   });
 });
 
-ipcMain.handle('benchmark-publish', async (_event, row: unknown) => {
-  try {
-    const res = await fetch('https://leanzero.net/api/benchmark-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(row),
-    });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    return { ok: true, ...(await res.json().catch(() => ({}))) };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+ipcMain.handle('benchmark-cancel', async () => {
+  const run = activeBenchRun;
+  if (!run) return { ok: false, error: 'no benchmark run is active' };
+  run.cancelled = true;
+  const pid = run.child.pid;
+  // Kill the runner's whole process group (python + the in-process vendor sim)…
+  if (pid) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try {
+        run.child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
   }
+  // …then the engine. run_build spawns `goose swarm run` with start_new_session=True, so it is
+  // NOT in the runner's group and would keep the fleet generating for a dead run. Its command
+  // line carries the workdir (--log-file <workdir>/run.jsonl), as does the scorer's vendorsync
+  // child (--db <workdir>/graded.db) — match on that, which is unique to this run.
+  if (process.platform !== 'win32') {
+    try {
+      execFile('pkill', ['-9', '-f', run.workdir], () => {
+        /* exit 1 = nothing matched, which is fine */
+      });
+    } catch {
+      /* pkill unavailable — the group kill above still stopped the runner */
+    }
+  }
+  return { ok: true };
 });
+
+ipcMain.handle(
+  'benchmark-publish',
+  async (_event, args?: { title?: string }) => {
+    let stored: Record<string, unknown>;
+    try {
+      stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return { ok: false, error: 'no benchmark result to publish — run the benchmark first' };
+    }
+    const runMeta = stored.runMeta as
+      | { startedAt: string; finishedAt: string; engineEvents: number; repairRounds: number }
+      | undefined;
+    if (!runMeta) {
+      return {
+        ok: false,
+        error: 'this result predates the v2 publisher — run the benchmark again to publish',
+      };
+    }
+    const identity = await ensureBenchIdentity();
+    const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
+    const screenshots =
+      typeof stored.workdir === 'string' ? await pickBenchShots(stored.workdir) : [];
+    const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
+    // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
+    // is built key by key (never a spread of the stored row, which carries mine/workdir).
+    const payload: Record<string, unknown> = {
+      label: stored.label,
+      score: stored.score,
+      tiers: { A: tiers.A ?? 0, B: tiers.B ?? 0, C: tiers.C ?? 0, D: tiers.D ?? 0 },
+      ...(typeof stored.nodes === 'number' ? { nodes: stored.nodes } : {}),
+      ...(typeof stored.hard === 'number' ? { hard: stored.hard } : {}),
+      ...(typeof stored.excellent === 'boolean' ? { excellent: stored.excellent } : {}),
+      ...(typeof stored.wallSecs === 'number' ? { wallSecs: stored.wallSecs } : {}),
+      ...(typeof stored.scorerVersion === 'string'
+        ? { scorerVersion: stored.scorerVersion }
+        : {}),
+      ...(title ? { title } : {}),
+      poster: { installId: identity.installId, handle: identity.handle },
+      ...(screenshots.length > 0 ? { screenshots } : {}),
+      runMeta,
+    };
+    try {
+      const res = await fetch('https://leanzero.net/api/benchmark-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        // 422 = the server's consistency gates fired; surface ITS message, not a bare status.
+        const body = await res.text().catch(() => '');
+        let serverMessage = '';
+        try {
+          const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+          serverMessage = String(parsed.error ?? parsed.message ?? '');
+        } catch {
+          serverMessage = body.slice(0, 300);
+        }
+        return {
+          ok: false,
+          status: res.status,
+          error: serverMessage ? `HTTP ${res.status}: ${serverMessage}` : `HTTP ${res.status}`,
+        };
+      }
+      return { ok: true, ...(await res.json().catch(() => ({}))) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+);
 
 ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
   try {
@@ -2353,40 +2757,63 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     const spawnSwarmDir = path.join(expandTilde(workingDir), '.swarm');
     let swarmDir = spawnSwarmDir;
     let pinnedRunFile: string | null = null;
+    let pinnedRunId: string | null = null;
+    let hadBreadcrumb = false;
     try {
       const ptr = JSON.parse(
         await fs.readFile(path.join(spawnSwarmDir, 'current-run.json'), 'utf8')
       ) as { run_id?: string; dir?: string };
+      hadBreadcrumb = true;
       if (ptr?.dir) {
         const dir = path.join(expandTilde(ptr.dir), '.swarm');
         if (await fs.stat(dir).then(() => true, () => false)) swarmDir = dir;
       }
-      if (ptr?.run_id) pinnedRunFile = `run-${ptr.run_id}.jsonl`;
+      if (ptr?.run_id) {
+        pinnedRunId = ptr.run_id;
+        pinnedRunFile = `run-${ptr.run_id}.jsonl`;
+      }
     } catch {
       /* no breadcrumb (older run, or the engine has not written it yet) — fall through */
     }
 
     const entries = await fs.readdir(swarmDir).catch(() => [] as string[]);
     const runFiles = entries.filter((f) => f.startsWith('run-') && f.endsWith('.jsonl'));
-    if (runFiles.length === 0) return null;
+    let runFilePath: string;
+    let runId: string;
+    let mtime: number;
+    if (runFiles.length === 0) {
+      // The BENCHMARK harness runs the engine with --log-file <workdir>/run.jsonl, so the event
+      // stream lives beside .swarm instead of inside it. The breadcrumb still lands in .swarm, so
+      // breadcrumb + no .swarm run log + a run.jsonl next door IS that layout — treat the named
+      // file exactly like a pinned run log. Gated on the breadcrumb so an unrelated run.jsonl in
+      // some project dir can never masquerade as a live run.
+      if (!hadBreadcrumb) return null;
+      const benchLog = path.join(path.dirname(swarmDir), 'run.jsonl');
+      const st = await fs.stat(benchLog).catch(() => null);
+      if (!st) return null;
+      runFilePath = benchLog;
+      runId = pinnedRunId ?? 'bench';
+      mtime = st.mtimeMs;
+    } else {
+      const withMtime = await Promise.all(
+        runFiles.map(async (f) => {
+          const m = await fs
+            .stat(path.join(swarmDir, f))
+            .then((s) => s.mtimeMs)
+            .catch(() => 0);
+          return { f, m };
+        })
+      );
+      withMtime.sort((a, b) => b.m - a.m);
+      // The breadcrumb names the run EXACTLY; only fall back to newest-by-mtime if that file is not there.
+      const pinned = pinnedRunFile ? withMtime.find((x) => x.f === pinnedRunFile) : undefined;
+      const chosen = pinned ?? withMtime[0];
+      runFilePath = path.join(swarmDir, chosen.f);
+      runId = chosen.f.replace(/^run-/, '').replace(/\.jsonl$/, '');
+      mtime = chosen.m;
+    }
 
-    const withMtime = await Promise.all(
-      runFiles.map(async (f) => {
-        const m = await fs
-          .stat(path.join(swarmDir, f))
-          .then((s) => s.mtimeMs)
-          .catch(() => 0);
-        return { f, m };
-      })
-    );
-    withMtime.sort((a, b) => b.m - a.m);
-    // The breadcrumb names the run EXACTLY; only fall back to newest-by-mtime if that file is not there.
-    const pinned = pinnedRunFile ? withMtime.find((x) => x.f === pinnedRunFile) : undefined;
-    const chosen = pinned ?? withMtime[0];
-    const runFile = chosen.f;
-    const mtime = chosen.m;
-
-    const raw = await fs.readFile(path.join(swarmDir, runFile), 'utf8').catch(() => '');
+    const raw = await fs.readFile(runFilePath, 'utf8').catch(() => '');
     const events = raw
       .split('\n')
       .filter((l) => l.trim().length > 0)
@@ -2525,7 +2952,7 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
     }
 
     return {
-      runId: runFile.replace(/^run-/, '').replace(/\.jsonl$/, ''),
+      runId,
       // Where this run ACTUALLY lives. Differs from workingDir whenever the engine redirected the build
       // (it refuses to treat $HOME as an app tree). Everything that writes back into the run — the pause
       // sentinel, the notes inbox, activity file paths — must target THIS, not the spawn dir, or it lands

@@ -1,6 +1,8 @@
 node_modules
 .vite/
 out
+# Benchmark harness payload mirrored from evals/swarm-bench at package time (forge prePackage hook)
+src/swarm-bench/
 src/bin/goosed
 src/bin/goose-npm/
 /src/bin/*.exe
