@@ -144,9 +144,11 @@ type ElectronAPI = {
     workdir?: string
   ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
   /** Build + POST the v2 payload from the stored result. Must go through main: the renderer CSP
-   *  blocks external hosts. Returns the server's own message on 422. */
+   *  blocks external hosts. `model` is required (8..120 chars) — engine-truth prefilled, user
+   *  editable. Returns the server's own message on 422. */
   benchmarkPublish: (args?: {
     title?: string;
+    model?: string;
   }) => Promise<{ ok: boolean; error?: string; status?: number }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
@@ -317,7 +319,8 @@ const electronAPI: ElectronAPI = {
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
   benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
-  benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
+  benchmarkPublish: (args?: { title?: string; model?: string }) =>
+    ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),

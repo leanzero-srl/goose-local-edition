@@ -25,6 +25,8 @@ interface MineRow extends BenchmarkRow {
   workdir?: string;
   /** Full scoring detail (every check + evidence + repair story) — absent on pre-detail results. */
   verdict?: VerdictDetail;
+  /** Engine-truth model identifier (pool_resolved, host prefixes stripped) — the Model prefill. */
+  modelId?: string;
 }
 
 interface BenchShot {
@@ -169,6 +171,7 @@ export default function BenchmarkView() {
   const [mine, setMine] = useState<MineRow | null>(null);
   const [handle, setHandle] = useState<string | null>(null);
   const [title, setTitle] = useState('');
+  const [model, setModel] = useState('');
   const [shots, setShots] = useState<BenchShot[]>([]);
   const [activeWorkdir, setActiveWorkdir] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
@@ -194,6 +197,7 @@ export default function BenchmarkView() {
       const result = await window.electron.benchmarkRead?.();
       if (result) {
         setMine(result as MineRow);
+        setModel((result as MineRow).modelId ?? '');
         void loadShots((result as MineRow).workdir);
       }
     } catch {
@@ -247,6 +251,8 @@ export default function BenchmarkView() {
         setStatus('Run cancelled.');
       } else if (p?.row) {
         setMine(p.row);
+        // A fresh run's engine truth replaces any stale edit — the prefill is the honest default.
+        setModel(p.row.modelId ?? '');
         setStatus('Run complete.');
         void loadShots(p.row.workdir);
       } else if (p?.error) {
@@ -309,6 +315,7 @@ export default function BenchmarkView() {
       const result = await window.electron.benchmarkRun?.(nodes);
       if (result) {
         setMine(result as MineRow);
+        setModel((result as MineRow).modelId ?? '');
         setStatus('Run complete.');
         void loadShots((result as MineRow).workdir);
       }
@@ -343,7 +350,10 @@ export default function BenchmarkView() {
     setPublishing(true);
     setStatus('Publishing to leanzero.net…');
     try {
-      const res = await window.electron.benchmarkPublish?.({ title: title.trim() || undefined });
+      const res = await window.electron.benchmarkPublish?.({
+        title: title.trim() || undefined,
+        model: model.trim(),
+      });
       setStatus(
         res?.ok
           ? 'Published for review. It appears once a human approves it.'
@@ -354,9 +364,10 @@ export default function BenchmarkView() {
     } finally {
       setPublishing(false);
     }
-  }, [mine, title]);
+  }, [mine, title, model]);
 
   const publishable = mine != null && mine.runMeta != null;
+  const modelValid = model.trim().length >= 8 && model.trim().length <= 120;
 
   return (
     <MainPanelLayout>
@@ -559,33 +570,58 @@ export default function BenchmarkView() {
                 <span className="font-bold text-text-primary">{handle ?? 'your handle'}</span>.
                 The result appears on the leanzero.net board immediately.
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value.slice(0, 80))}
-                  maxLength={80}
-                  placeholder="Optional title — e.g. My M4 fleet first run"
-                  className="max-w-[360px]"
-                  disabled={publishing}
-                />
-                <button
-                  type="button"
-                  onClick={publish}
-                  disabled={!publishable || running || publishing}
-                  title={
-                    publishable
-                      ? 'Publish this result to leanzero.net'
-                      : 'Run the benchmark (v2) first'
-                  }
-                  className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                >
-                  {publishing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                  Publish
-                </button>
+              <div className="mt-3 flex flex-col gap-3">
+                <div className="max-w-[560px]">
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-text-secondary">
+                    Model <span style={{ color: '#e5484d' }}>*</span>
+                  </label>
+                  <Input
+                    value={model}
+                    onChange={(e) => setModel(e.target.value.slice(0, 120))}
+                    maxLength={120}
+                    placeholder="The exact model your fleet ran — e.g. qwen3.6-27b-…-mtp"
+                    disabled={publishing}
+                    aria-invalid={!modelValid}
+                  />
+                  <p className="mt-1 text-[11px] text-text-secondary">
+                    Prefilled from the run's own pool — edit it if that is not the exact model.
+                    {!modelValid && (
+                      <span className="ml-1 font-bold" style={{ color: '#e5484d' }}>
+                        Required, 8–120 characters.
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+                    maxLength={80}
+                    placeholder="Optional title — e.g. My M4 fleet first run"
+                    className="max-w-[360px]"
+                    disabled={publishing}
+                  />
+                  <button
+                    type="button"
+                    onClick={publish}
+                    disabled={!publishable || running || publishing || !modelValid}
+                    title={
+                      !publishable
+                        ? 'Run the benchmark (v2) first'
+                        : !modelValid
+                          ? 'Set the Model field first (8–120 characters)'
+                          : 'Publish this result to leanzero.net'
+                    }
+                    className="flex items-center gap-2 rounded bg-[var(--color-block-teal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                  >
+                    {publishing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                    Publish
+                  </button>
+                </div>
               </div>
               {!publishable && (
                 <p className="mt-2 text-xs text-text-secondary">
