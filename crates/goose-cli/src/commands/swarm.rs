@@ -18920,8 +18920,14 @@ fn spec_python_entry(spec: &str) -> Option<String> {
 /// F818 scout_docs_mode event — two independent computations of the same condition is the
 /// sink_review_enabled drift class this file documents (adversarial-review finding).
 fn scout_docs_decision(prompt: &str) -> (bool, Vec<String>) {
+    // DEFAULT ON (F864). The ETag/If-None-Match class failed in EVERY product-regime run — the
+    // vendor documents the conditional-fetch protocol and no fact channel carried it to where
+    // the protocol is DECIDED (the detail planner invents a wrong single-ETag scheme and the
+    // implementer faithfully builds it). The scout_doc_urls arm measured 0.782 (2nd-best
+    // mechanism single). Self-gating: a spec that names no doc URLs yields an empty list and
+    // the mechanism is inert; env opts out.
     (
-        swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", false),
+        swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", true),
         spec_doc_urls(prompt),
     )
 }
@@ -22356,6 +22362,112 @@ async fn http_timeout_scan(
     d
 }
 
+/// DOM-ID CONTRACT SCAN (F864). The r1 frontend shipped a page that rendered NOTHING because
+/// app.js referenced element ids index.html never defined — a cross-FILE contract drift no
+/// deterministic checker could see (the drift scan reads Python, the render probe needs a
+/// browser, and the browser probe only names the SYMPTOM). Literal-only on purpose: only
+/// getElementById('x') / querySelector('#x') string literals are checked against id= attributes
+/// across every .html in scope, so dynamically-built ids can never false-positive. A missing id
+/// is a guaranteed null-deref at runtime — exactly the class the finding text says.
+const DOM_ID_SCRIPT: &str = r#"
+import json, re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = [f for f in sys.stdin.read().splitlines() if f.strip()]
+html_ids, findings, checked = set(), [], 0
+js_refs = []
+for rel in files:
+    p = root / rel
+    try:
+        src = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        continue
+    if rel.endswith(".html") or rel.endswith(".htm"):
+        checked += 1
+        for m in re.finditer(r"""\bid\s*=\s*["']([\w-]+)["']""", src):
+            html_ids.add(m.group(1))
+    elif rel.endswith(".js") or rel.endswith(".mjs"):
+        checked += 1
+        for i, line in enumerate(src.splitlines(), 1):
+            for m in re.finditer(r"""getElementById\(\s*["']([\w-]+)["']\s*\)""", line):
+                js_refs.append((rel, i, m.group(1)))
+            for m in re.finditer(r"""querySelector(?:All)?\(\s*["']#([\w-]+)["']\s*\)""", line):
+                js_refs.append((rel, i, m.group(1)))
+if html_ids:
+    for rel, line, ref in js_refs:
+        if ref not in html_ids:
+            findings.append({"file": rel, "line": line, "id": ref})
+print(json.dumps({"checked": checked, "findings": findings}))
+"#;
+
+/// Pure parser for the DOM-id script's JSON (testable without python, like its siblings).
+fn parse_dom_id_scan(stdout: &str) -> DriftResult {
+    let Some(v) = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .or_else(|| {
+            stdout
+                .lines()
+                .rev()
+                .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        })
+    else {
+        return DriftResult::default();
+    };
+    let checked = v.get("checked").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let findings = v
+        .get("findings")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
+                    let line = f.get("line").and_then(|x| x.as_u64()).unwrap_or(0);
+                    format!(
+                        "{}:{} references DOM id `{}` which NO html file in the app defines — \
+                         getElementById returns null there and the page throws at runtime (the \
+                         rendered-nothing class). Either add the id to the HTML or fix the \
+                         reference to an id that exists.",
+                        g("file"),
+                        line,
+                        g("id")
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    DriftResult {
+        ran: true,
+        checked,
+        findings,
+        partial: false,
+    }
+}
+
+/// Runs on any tree whose scope carries BOTH html and js — language-blind by design (the web/
+/// files of a Python app are exactly the case that motivated it). Env `GOOSE_SWARM_DOM_ID_SCAN`
+/// opts out.
+async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResult {
+    if !swarm_gate("GOOSE_SWARM_DOM_ID_SCAN", true) {
+        return DriftResult::default();
+    }
+    let scope: Vec<String> = all_files
+        .iter()
+        .filter(|f| {
+            f.ends_with(".html") || f.ends_with(".htm") || f.ends_with(".js") || f.ends_with(".mjs")
+        })
+        .filter(|f| root.join(f.as_str()).is_file())
+        .cloned()
+        .collect();
+    let has_html = scope.iter().any(|f| f.ends_with(".html") || f.ends_with(".htm"));
+    let has_js = scope.iter().any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
+    if !(has_html && has_js) {
+        return DriftResult::default();
+    }
+    let Some(out) = run_scoped_py_check(DOM_ID_SCRIPT, root, &scope).await else {
+        return DriftResult::default();
+    };
+    parse_dom_id_scan(&out)
+}
+
 async fn cross_module_drift(
     root: &std::path::Path,
     lang: TargetLang,
@@ -25010,6 +25122,15 @@ impl GooseAgentDispatcher {
         } else {
             String::new()
         };
+        // F864 observability (forensics ask): "did THIS task's prompt carry pitfall facts" used
+        // to require reconstructing retrieval by hand — the r1 urlopen question burned an agent
+        // proving the F388 fact HAD been delivered. Now it is one grep.
+        self.events.write_value(serde_json::json!({
+            "event": "pitfalls_delivered",
+            "task_id": req.task_id,
+            "delivered": !pitfalls_block.is_empty(),
+            "chars": pitfalls_block.len(),
+        }));
         // QUEUED USER NOTES — read at DISPATCH, which is the one safe moment: run() is called once at the
         // START of a worker's life, so a live worker is never mutated. The dispatcher already does exactly
         // this class of read here (read_prereview_findings). Placed before the pillars so it reads as
@@ -27176,6 +27297,7 @@ async fn one_ruler_grade(
         .await
         .findings
         .len();
+    n += dom_id_scan(root, all_files).await.findings.len();
     if swarm_gate_cfg(
         "GOOSE_SWARM_CROSS_MODULE_CHECK",
         load_config().cross_module_check,
@@ -30465,6 +30587,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
             }
             verdict.findings.extend(no_timeout.findings.iter().cloned());
+            // DOM-ID CONTRACT (F864): app.js referencing an id no HTML defines is the
+            // rendered-nothing class (guaranteed null at runtime), invisible to every other
+            // checker. Enters the round ruler and one_ruler_grade TOGETHER — the F862 law.
+            let dom = dom_id_scan(&cwd, &smoke_all_files).await;
+            if dom.ran {
+                sink.write_value(serde_json::json!({
+                    "event": "dom_id_scan",
+                    "round": round,
+                    "checked": dom.checked,
+                    "findings": dom.findings.len(),
+                    "detail": if dom.findings.is_empty() {
+                        "every literal DOM id the js references exists in the html"
+                    } else {
+                        "js references a DOM id no html defines — driving the fix loop"
+                    },
+                }));
+            }
+            verdict.findings.extend(dom.findings.iter().cloned());
             // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
             // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
             // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
