@@ -554,9 +554,10 @@ export default function BenchmarkView() {
                 Publish to leanzero.net
               </h2>
               <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">
-                Posts your score, tier split and the before/after screenshots as{' '}
-                <span className="font-bold text-text-primary">{handle ?? 'your handle'}</span>. A
-                human reviews every submission before it appears.
+                Posts your score, the full check-by-check breakdown and the before/after
+                screenshots as{' '}
+                <span className="font-bold text-text-primary">{handle ?? 'your handle'}</span>.
+                The result appears on the leanzero.net board immediately.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Input
