@@ -20029,3 +20029,11 @@ pair goes to n3 on both axes. Since the F862 one-ruler fix the quality tally is 
 (r2's 0.022 knife-edge), overall rolling 4/6 with the two losses both pre/knife-edge; speed
 is 6/6 with n1 never finishing. r6-r7 today, the n1 block overnight, r0-r3 re-runs after —
 formal verdict Tuesday morning.
+
+## F869 — pair r6: 0.8194/73.5min vs 0.1867-cap — the FASTEST unit of the campaign and a +0.63 quality margin; quality 5/7, speed 7/7
+
+r6: 73.5 min wall — under the old binary's best by 16 minutes — with the second-best product
+score of the campaign. The repair phase cost 491s total: round 1 read flat (3→3) and the
+stall exit refused the wasted wave on the spot. The pair is the widest margin either
+direction all campaign (+0.6327). One pair remains (r7 vs 0.1998-cap); then the n1 block
+overnight and the r0-r3 re-runs close the formal curve.
