@@ -11908,7 +11908,14 @@ fn build_worker_digest(
             )
         })
         .collect();
-    let lt = texts.last().cloned().unwrap_or_default();
+    // STREAM DELTAS, NOT MESSAGES. `texts` gets one entry per streamed Text chunk, so `.last()` was
+    // whatever fragment the model emitted last — routinely a few words or a bare "." — and this field
+    // is what the judge's prompt presents as the worker's own account of itself, and what the desktop
+    // shows as the node's last line. The Thinking path hit exactly this and was fixed by accumulating
+    // a rolling tail (see its comment at the stream site); text never was. Concatenate a bounded tail
+    // of chunks so the field carries a readable run of what the worker actually said.
+    let start = texts.len().saturating_sub(64);
+    let lt: String = texts[start..].concat();
     let n = lt.chars().count();
     let last_text: String = if n > 400 {
         lt.chars().skip(n - 400).collect()
@@ -21565,8 +21572,11 @@ impl Judge for GooseAgentDispatcher {
             FAILED task. Give a concrete CORRECTION the worker can act on. BE CONSERVATIVE — a wrong kill \
             wastes real work, so when unsure say OK. Reply with EXACTLY one line `VERDICT|CONFIDENCE|hint`: \
             VERDICT one of OK, BROKEN_CODE, LOOPING, SPEC_DRIFT; CONFIDENCE one of HIGH or LOW (HIGH only \
-            when you are sure and can point to the evidence); hint = a short, concrete correction (empty \
-            for OK)."
+            when you are sure and can point to the evidence); hint = for a NON-OK verdict, the concrete \
+            correction; for OK, ONE clause naming the specific evidence you checked and what it showed \
+            (e.g. `wrote store.py with all 6 spec methods, 2 tool errors both self-resolved, no repeated \
+            action`). NEVER leave the hint blank and never write generic praise — an OK you cannot \
+            evidence is not an OK you should give."
             .to_string();
         // GOOSE_SWARM_GOALS (part 5): give the judge the app's PILLARS so its existing SPEC_DRIFT verdict is
         // grounded in the concrete acceptance criteria (a wrong command name/interface is now a nameable
@@ -21676,6 +21686,19 @@ impl Judge for GooseAgentDispatcher {
                     let reply: String = o.text.replace('\n', " ").chars().take(240).collect();
                     let _ = writeln!(f, "{}\t{}s\t{}", req.task_id, req.elapsed_secs, reply);
                 }
+                // THE REVIEW'S ACTUAL WORDS, IN THE RUN LOG. An OK verdict returns
+                // `JudgeOutcome::ok()`, which carries no text, so a semantic review that genuinely
+                // read the worker and concluded it was healthy was indistinguishable in the event
+                // stream from a deterministic early-return — every `judge_verdict` read `ok /
+                // confidence 1.0 / hint ""`, which is what "the judge observed and did nothing"
+                // looks like from outside. The verdict types stay untouched; this event just makes
+                // the reasoning visible to the panel, the operator and the audits.
+                self.events.write_value(serde_json::json!({
+                    "event": "judge_review",
+                    "task_id": req.task_id,
+                    "elapsed_secs": req.elapsed_secs,
+                    "reply": o.text.replace('\n', " ").chars().take(400).collect::<String>(),
+                }));
                 parse_judge_reply(&o.text)
             }
             _ => JudgeOutcome::ok(),
@@ -21922,11 +21945,50 @@ impl PreReviewer for GooseAgentDispatcher {
         if files.is_empty() {
             return;
         }
-        if let Some(finding) = self
+        let started = std::time::Instant::now();
+        let found = self
             .review_dimension(model_id, dim.id, dim.brief, goal, &files)
-            .await
-        {
+            .await;
+        // ROUTE IT TO THE ONE CONSUMER THAT EXISTS. This reviewer is default-ON and saturates every
+        // free node each scheduler tick — measured as the single largest class of model-seconds in a
+        // run — and it pushed its findings into a Mutex with exactly two drains: one that logs the
+        // count as `review_findings_dropped` and BINS them, and one gated on `sink_review`, which has
+        // never fired in 21,805 recorded runs. So the fleet's biggest supervision spend produced
+        // findings nobody has ever read; the ledger even quoted the discard counter as proof the
+        // mechanism was working. `.swarm/prereview/` is the channel that IS read — pre-review
+        // findings are injected into the sink with content-hash provenance and staleness expiry —
+        // so the review's output now lands there, in the same shape, and the vector keeps its
+        // legacy drain for the gated path. It also gets an EVENT: it was invisible in the log and in
+        // levers_resolved, which is why every previous waste audit missed it entirely.
+        let secs = started.elapsed().as_secs();
+        if let Some(finding) = found {
+            let dir = cwd.join(".swarm").join("prereview");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let file_hashes: serde_json::Map<String, serde_json::Value> = files
+                    .iter()
+                    .filter_map(|f| {
+                        std::fs::read(cwd.join(f))
+                            .ok()
+                            .map(|b| (f.clone(), serde_json::json!(content_hash(&b))))
+                    })
+                    .collect();
+                let key = activity_digest_key(&format!("tail-review-{}", dim.id));
+                let _ = std::fs::write(
+                    dir.join(format!("{key}.json")),
+                    serde_json::json!({"task_id": format!("tail-review::{}", dim.id),
+                                       "findings": finding, "dimension": dim.id,
+                                       "files": file_hashes})
+                    .to_string(),
+                );
+            }
+            self.events.write_value(serde_json::json!({
+                "event": "tail_review", "dimension": dim.id, "secs": secs, "had_findings": true,
+            }));
             self.sink_review_findings.lock().unwrap().push(finding);
+        } else {
+            self.events.write_value(serde_json::json!({
+                "event": "tail_review", "dimension": dim.id, "secs": secs, "had_findings": false,
+            }));
         }
     }
 

@@ -20145,3 +20145,50 @@ dispatch; (10) unquoted space-containing paths — FIXED with one shell-rules bu
 "fusi, fusi, fable" was display-side and already fixed by the UI batch. Also: 111 stub runs
 relaunched every ~11s for 24 min on Aug 15 (a harness crash-loop guard is queued
 harness-side).
+
+## F875 — the ceremony hunt: 36 confirmed mechanisms that fire without grounded substance; the biggest is a reviewer whose findings have NEVER been read in 21,805 runs
+
+Mihai: "we still have generic crap and a lack of interest in places where our phases must
+stick to very specific stuff… especially the judge I am sure it has other areas where it's
+just there for the fuck of it. We have to root all of these out." A 33-agent hunt over six
+surfaces (judge, reviewers, scouts, verifiers, planning, worker prompts), every claim
+re-measured independently before acceptance. 36 mechanisms confirmed ceremonial. The four
+shipped in this batch:
+
+(1) TAIL_REVIEW — the blocker. Default ON, dispatched in a `loop{}` that saturates every free
+node each tick, measured as the single largest class of model-seconds in a run (mean 243s per
+call). Its findings go into a Mutex with exactly two drains: one that logs the count as
+`review_findings_dropped` and BINS them, and one gated on `sink_review` — which has fired
+ZERO times across 21,805 archived runs. Tonight's run binned 3 more. F799 had quoted that
+discard counter as proof the mechanism was supervising. It also emitted no event and appeared
+in neither `gates` nor the 111 keys of `levers_resolved`, which is why every prior waste audit
+missed it, and it starves `testgen` (whose output IS consumed) of the idle slot. FIXED: its
+findings now land in `.swarm/prereview/` — the channel that IS read, with the same
+content-hash provenance and staleness expiry — plus a `tail_review{dimension,secs,had_findings}`
+event so the spend is finally visible.
+
+(2) THE JUDGE'S OWN OUTPUT CONTRACT ordered `hint = ... (empty for OK)`, and ~96% of verdicts
+are OK — so the judge was REQUIRED to say nothing almost always. That is precisely what "the
+judge observed and did nothing" looks like from outside. FIXED: an OK must now name the
+specific evidence it checked and what it showed, blank hints are forbidden, and every semantic
+review emits a `judge_review` event carrying its verbatim reply (the OK path returns
+`JudgeOutcome::ok()`, which drops the hint, so the event is the only way its reasoning reaches
+the log and the panel).
+
+(3) `build_worker_digest.last_text` was `texts.last()` — the last streamed TEXT DELTA, i.e. a
+fragment like "." — and the judge's prompt presents that field as the worker's last reasoning.
+The Thinking path had already hit this exact bug and fixed it by accumulating; text never was.
+FIXED: a bounded tail of chunks is concatenated.
+
+(4) F874's own review found the digest mirror and prompt-fingerprint defects (see that entry).
+
+QUEUED with measured costs, ranked: read_on_fix/fix_directive (3376 node-s, the "read
+prohibitions suspended" path that never fires), smoke_fix_description's evidence for fix
+workers (2349), the redraft rung of the confidence retarget ladder (2000), verify-e2e shards
+re-implementing the engine's own deterministic probe (1266), the scout fan's SpecDocs branch
+(1197 — the vendor-docs path that would fix Tier B), is_entry_file (2436), dep_signatures
+(1507), pre_review delivery only reaching the sink (1122), fix::rN::#join owning all_files
+(981), omni-judge (700), the verify:: fan (751), CONTRACTS (400), the libraries scout (399),
+the blind DETAIL fan (396), the detail-accept guard (350), plan_confidence as a max of three
+statistics (120), clarify_questions (110), and the 1800-char silent truncation of every file
+the judge reads (247).
