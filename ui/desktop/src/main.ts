@@ -2415,12 +2415,22 @@ interface BenchVerifyRound {
 
 const benchRunCounts = async (
   workdir: string
-): Promise<{ engineEvents: number; repairRounds: number; verifyRounds: BenchVerifyRound[] }> => {
+): Promise<{
+  engineEvents: number;
+  repairRounds: number;
+  verifyRounds: BenchVerifyRound[];
+  poolModelIds: string[];
+}> => {
   const logPath = await benchRunLog(workdir);
-  if (!logPath) return { engineEvents: 0, repairRounds: 0, verifyRounds: [] };
+  if (!logPath) return { engineEvents: 0, repairRounds: 0, verifyRounds: [], poolModelIds: [] };
   const raw = await fs.readFile(logPath, 'utf8').catch(() => '');
   const lines = raw.split('\n').filter((l) => l.trim().length > 0);
   const verifyRounds: BenchVerifyRound[] = [];
+  let poolModelIds: string[] = [];
+  const modelIdsFrom = (list: unknown): string[] =>
+    (Array.isArray(list) ? list : [])
+      .map((d) => (d as { model_id?: unknown })?.model_id)
+      .filter((m): m is string => typeof m === 'string' && m.length > 0);
   for (const l of lines) {
     try {
       const e = JSON.parse(l) as {
@@ -2428,6 +2438,8 @@ const benchRunCounts = async (
         round?: number;
         findings?: number;
         finding_texts?: unknown;
+        devices?: unknown;
+        pool?: unknown;
       };
       if (e.event === 'complete_verify') {
         verifyRounds.push({
@@ -2435,6 +2447,12 @@ const benchRunCounts = async (
           findings: typeof e.findings === 'number' ? e.findings : 0,
           findingTexts: Array.isArray(e.finding_texts) ? e.finding_texts.map(String) : [],
         });
+      } else if (e.event === 'pool_resolved') {
+        // The pool the run ACTUALLY used — feeds the `model` prefill. pool_resolved is the
+        // engine's post-push truth; run_started.pool below is only the pre-push fallback.
+        poolModelIds = modelIdsFrom(e.devices);
+      } else if (e.event === 'run_started' && poolModelIds.length === 0) {
+        poolModelIds = modelIdsFrom(e.pool);
       }
     } catch {
       /* partial last line */
@@ -2444,7 +2462,30 @@ const benchRunCounts = async (
     engineEvents: lines.length,
     repairRounds: Math.max(0, verifyRounds.length - 1),
     verifyRounds,
+    poolModelIds,
   };
+};
+
+// The publish payload's `model` prefill (contract v2.2): the fleet's model identifier from engine
+// truth. Device ids are <host>-<model> (e.g. mihai-qwen3.6-27b-fable-…), so strip the host prefix
+// — but ONLY when the remainder still reads as a model id (a size token like "27b" or a known
+// family name); a conservative rule, because over-stripping fabricates an identifier the fleet
+// never ran. Distinct per-node models join with " + ".
+const MODELISH = /(\d+(\.\d+)?b(\b|-)|qwen|llama|mistral|gemma|deepseek|phi-|glm|minimax|granite)/i;
+
+const deriveBenchModel = (poolModelIds: string[]): string => {
+  const stripHost = (id: string): string => {
+    const i = id.indexOf('-');
+    if (i <= 0) return id;
+    const head = id.slice(0, i);
+    const rest = id.slice(i + 1);
+    // Strip only when the head reads as a HOST (not itself model-ish) and the rest reads as a
+    // model — an id already starting with the family token ("qwen3.6-27b-…") must stay whole,
+    // or the strip would fabricate "27b-…" (measured on the bare-id case).
+    return !MODELISH.test(head) && MODELISH.test(rest) ? rest : id;
+  };
+  const distinct = [...new Set(poolModelIds.map(stripHost))];
+  return distinct.join(' + ').slice(0, 120);
 };
 
 // The probe drops flat PNGs named <epoch>-<scenario>.png into <workdir>/bench-shots (run_build
@@ -2685,6 +2726,9 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
             repairRounds: counts.repairRounds,
           },
           workdir,
+          // Engine-truth model identifier (contract v2.2) — the publish form's prefill; the user
+          // may edit it there, and the edit is persisted back onto this field.
+          modelId: deriveBenchModel(counts.poolModelIds),
           // The FULL scoring detail for the "How this score was built" view: every check with its
           // evidence string, the tier table (incl. J/V/P/HARD), the composition inputs, the
           // root-cause attribution, and the run's repair story from complete_verify. Local-only —
@@ -2756,7 +2800,7 @@ ipcMain.handle('benchmark-cancel', async () => {
 
 ipcMain.handle(
   'benchmark-publish',
-  async (_event, args?: { title?: string }) => {
+  async (_event, args?: { title?: string; model?: string }) => {
     let stored: Record<string, unknown>;
     try {
       stored = JSON.parse(await fs.readFile(BENCH_RESULT, 'utf8')) as Record<string, unknown>;
@@ -2771,6 +2815,30 @@ ipcMain.handle(
         ok: false,
         error: 'this result predates the v2 publisher — run the benchmark again to publish',
       };
+    }
+    // `model` is REQUIRED (contract v2.2, 8..120 chars): the field's current value from the
+    // view, falling back to the stored engine-truth prefill. Refuse locally with the reason
+    // rather than letting the server 422 on it.
+    const model = (
+      typeof args?.model === 'string' && args.model.trim()
+        ? args.model
+        : typeof stored.modelId === 'string'
+          ? stored.modelId
+          : ''
+    ).trim();
+    if (model.length < 8 || model.length > 120) {
+      return {
+        ok: false,
+        error:
+          'a model identifier (8–120 characters) is required — set the Model field to the exact model your fleet ran',
+      };
+    }
+    // Persist the user's edit so it survives restarts and prefills the next publish.
+    if (model !== stored.modelId) {
+      stored.modelId = model;
+      await fs
+        .writeFile(BENCH_RESULT, JSON.stringify(stored, null, 2))
+        .catch(() => undefined);
     }
     const identity = await ensureBenchIdentity();
     const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
@@ -2791,6 +2859,7 @@ ipcMain.handle(
         ? { scorerVersion: stored.scorerVersion }
         : {}),
       ...(title ? { title } : {}),
+      model,
       poster: { installId: identity.installId, handle: identity.handle },
       ...(screenshots.length > 0 ? { screenshots } : {}),
       runMeta,
