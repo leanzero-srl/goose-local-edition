@@ -2741,6 +2741,10 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
           GOOSE_SWARM_FIX_SCHED: '1',
           GOOSE_SWARM_SHIP_BEST: '1',
           GOOSE_SWARM_TESTGEN: '1',
+          // Env pin: a stale saved config.yaml carried split_fat:false and silently
+          // shadowed the baked default (measured live — run 4 planned ONE web task).
+          // Env beats config, so the benchmark regime is immune to config shadows.
+          GOOSE_SWARM_SPLIT_FAT: '1',
           GOOSE_SWARM_DIVERSE_PLAN: '1',
           GOOSE_SWARM_TEMP: '0.2',
         },
