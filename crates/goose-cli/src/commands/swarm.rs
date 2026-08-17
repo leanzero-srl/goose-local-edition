@@ -5663,16 +5663,27 @@ mod tests {
         );
     }
 
-    /// F871 END-TO-END (L242: the DETECTOR, not the parser). The measured defect verbatim:
-    /// swarm-3node-r0's styles.css defined 36 class rules, index.html used ONLY ids, zero
-    /// matched — the page shipped browser-default and every gate stayed green. The negative
-    /// controls carry equal weight: this scan feeds `verdict.findings`, so a false fire on a
-    /// coherent triplet sends the repair loop to break working styling.
+    /// F870 END-TO-END (L242: the DETECTOR, not the parser). The measured defect verbatim:
+    /// swarm-3node-r0's styles.css defined 35 class rules and the markup wore almost none —
+    /// the page shipped browser-default and every gate stayed green. The negative controls
+    /// carry equal weight: this scan feeds `verdict.findings`, so a false fire sends the
+    /// repair loop to break working styling. Review-hardened v2: the adversarial pass proved
+    /// the first version's test PASSED VACUOUSLY (the gate resolved OFF and the early-return
+    /// blamed python3), so this version checks python3 itself and then DEMANDS the scan ran.
     #[tokio::test]
-    async fn css_coherence_flags_the_dead_stylesheet_and_spares_a_coherent_triplet() {
+    async fn css_coherence_flags_the_dead_stylesheet_and_spares_real_styling_shapes() {
+        let have_py = std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !have_py {
+            return; // the one legitimate skip; a dead gate can no longer hide behind it
+        }
         let dir = std::env::temp_dir().join(format!("goose_cssco_{}", std::process::id()));
         std::fs::create_dir_all(dir.join("web")).unwrap();
-        // THE MEASURED DEFECT: id-only markup, class-only stylesheet, js toggling nothing.
+        // THE MEASURED DEFECT: id-only markup, a class-only stylesheet, js that builds rows
+        // with literal classes from a THIRD vocabulary.
         std::fs::write(
             dir.join("web/index.html"),
             "<body><h1 id=\"title\">App</h1><table id=\"rows\"></table>\
@@ -5685,12 +5696,13 @@ mod tests {
              .app-header { padding: 1rem } .btn { border: 0 } .btn-primary { background: #333 }\n\
              .toolbar { display: flex } .spinner { transition: .5s } .state-overlay { display: none }\n\
              .status-badge { background: url(ok.png) } .pagination { gap: 4px }\n\
+             .summary-bar { color: #222 } .error-banner { color: red }\n\
              @media (max-width: 600px) { .table-wrapper { overflow-x: auto } }",
         )
         .unwrap();
         std::fs::write(
             dir.join("web/app.js"),
-            "document.getElementById('rows').innerHTML = '<tr><td>x</td></tr>';",
+            "document.getElementById('rows').innerHTML = '<tr><td class=\"cell-x\">x</td></tr>';",
         )
         .unwrap();
         let files: Vec<String> = ["web/index.html", "web/styles.css", "web/app.js"]
@@ -5698,10 +5710,11 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         let res = css_coherence_scan(&dir, &files).await;
-        if !res.ran {
-            let _ = std::fs::remove_dir_all(&dir);
-            return; // python3 not available in this environment
-        }
+        assert!(
+            res.ran,
+            "python3 is present yet the scan did not run — the gate is dead again (the exact \
+             defect the review caught: swarm_gate(_, true) is not a default)"
+        );
         assert_eq!(res.checked, 3, "all three web files must be parsed");
         assert_eq!(
             res.findings.len(),
@@ -5711,23 +5724,27 @@ mod tests {
         );
         let f = &res.findings[0];
         for needle in [
+            "web/styles.css",
             ".app-header",
-            "NO class attributes",
+            "defines 11 class rules",
             "do not delete the styling",
         ] {
             assert!(f.contains(needle), "finding must carry `{needle}`: {f}");
         }
-        // `.ghost` lives in a comment and `.5s`/`url(ok.png)` inside blocks — none may count.
+        // The finding must lead with a SINGLE routable path token (multi-file "a.css, b.css"
+        // prefixes fail is_code and fall to the unassigned bucket — review finding).
+        let prefix = f.split(':').next().unwrap_or("");
         assert!(
-            f.contains("defines 9 class rules"),
-            "selector census must be 9 (comment + value tokens excluded): {f}"
+            !prefix.contains(' ') && prefix.ends_with(".css"),
+            "finding prefix must be one routable css path: {prefix}"
         );
 
-        // COHERENT TRIPLET, same scan: markup + classList usage cover the vocabulary — silent.
+        // COHERENT SHAPES, same scan — each must stay silent.
+        // (a) literal classes wearing most of the stylesheet;
         std::fs::write(
             dir.join("web/index.html"),
             "<body class=\"app-header\"><button class=\"btn btn-primary\">Go</button>\
-             <div class=\"toolbar spinner state-overlay\"></div>\
+             <div class=\"toolbar spinner state-overlay summary-bar error-banner\"></div>\
              <span class=\"status-badge\"></span><nav class=\"pagination\"></nav></body>",
         )
         .unwrap();
@@ -5737,12 +5754,33 @@ mod tests {
         )
         .unwrap();
         let clean = css_coherence_scan(&dir, &files).await;
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(
             clean.ran && clean.findings.is_empty(),
-            "a stylesheet the markup actually wears must stay silent — a false positive here \
-             breaks working styling: {:?}",
+            "a stylesheet the markup actually wears must stay silent: {:?}",
             clean.findings
+        );
+        // (b) the SPA shape from the review's fp1: classes applied via interpolated
+        // attributes whose names live in constants/returns — the widened same-file literal
+        // harvest must silence it.
+        std::fs::write(
+            dir.join("web/index.html"),
+            "<body><div id=\"app\"></div></body>",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("web/app.js"),
+            "const T = 'toolbar';\nfunction rowCls(r){ return r.ok ? 'app-header' : 'error-banner'; }\n\
+             function badge(r){ if (r.s === 'paid') return 'btn btn-primary'; if (r.s === 'x') \
+             return 'spinner state-overlay'; return 'status-badge pagination summary-bar table-wrapper'; }\n\
+             app.innerHTML = `<div class=\"${T}\"><span class=\"${badge(r)} ${rowCls(r)}\"></span></div>`;",
+        )
+        .unwrap();
+        let spa = css_coherence_scan(&dir, &files).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            spa.ran && spa.findings.is_empty(),
+            "computed-class SPAs whose names appear as literals must stay silent: {:?}",
+            spa.findings
         );
     }
 
@@ -6167,6 +6205,19 @@ mod tests {
             joined.contains("app.orphan"),
             "a module nothing names must STILL be flagged — the fix must not blind the check: {joined}"
         );
+    }
+
+    #[test]
+    fn web_vocab_note_fires_for_frontend_owners_only() {
+        // css/html owners always get the vocabulary obligation.
+        assert!(web_vocab_note(&["web/styles.css".into()], true).contains("ONE vocabulary"));
+        assert!(web_vocab_note(&["web/index.html".into()], true).contains("hidden by default"));
+        // js only under a frontend-shaped path — a Node backend shares no styling vocabulary.
+        assert!(web_vocab_note(&["server/api.js".into()], true).is_empty());
+        assert!(web_vocab_note(&["web/app.js".into()], true).contains("ONE vocabulary"));
+        // python-only tasks and the OFF gate stay byte-identical.
+        assert!(web_vocab_note(&["pkg/store.py".into()], true).is_empty());
+        assert!(web_vocab_note(&["web/styles.css".into()], false).is_empty());
     }
 
     #[test]
@@ -19009,8 +19060,14 @@ fn scout_docs_decision(prompt: &str) -> (bool, Vec<String>) {
     // implementer faithfully builds it). The scout_doc_urls arm measured 0.782 (2nd-best
     // mechanism single). Self-gating: a spec that names no doc URLs yields an empty list and
     // the mechanism is inert; env opts out.
+    //
+    // F870 review: `swarm_gate(name, true)` is ASSURED-BUNDLE membership, not a default — with
+    // GOOSE_SWARM_ASSURED unset (every regime and desktop run) this lever was DEAD despite the
+    // "default ON" intent; the arm that measured 0.782 set the env var explicitly, which is why
+    // F818 found the mechanism unverifiable in regime artifacts. swarm_gate_cfg(_, true) is the
+    // real default-ON with the same env escape hatch.
     (
-        swarm_gate("GOOSE_SWARM_SCOUT_DOC_URLS", true),
+        swarm_gate_cfg("GOOSE_SWARM_SCOUT_DOC_URLS", true),
         spec_doc_urls(prompt),
     )
 }
@@ -19900,6 +19957,51 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 ));
                             } else {
                                 verified += 1;
+                            }
+                            // F870's runtime half. The static scans can all pass — css present,
+                            // linked, a serve route in the table — and the browser still applies
+                            // ZERO css (href 404s at runtime, wrong page served at `/`, css
+                            // route shadowed). Only the browser sees the EFFECT, so only the
+                            // browser can file this finding. Review-hardened: it fires ONLY on
+                            // the full default-rendering conjunction — the browser's literal
+                            // default font (computed family exactly "Times"; a designed serif
+                            // STACK never computes to the bare UA default, so `contains` was a
+                            // false-positive on fallback stacks) AND zero styled backgrounds —
+                            // because a missing <link> alone can be a legitimately inline- or
+                            // CSSOM-styled page. Probes without the styling field stay silent.
+                            let no_sheet = v
+                                .pointer("/styling/hasStylesheet")
+                                .and_then(|x| x.as_bool())
+                                == Some(false);
+                            let default_serif = v
+                                .pointer("/styling/bodyFontFamily")
+                                .and_then(|x| x.as_str())
+                                .map(|f| f.trim().trim_matches('"') == "Times")
+                                .unwrap_or(false);
+                            let zero_bg = v
+                                .pointer("/styling/distinctBackgroundCount")
+                                .and_then(|x| x.as_i64())
+                                == Some(0);
+                            if default_serif && zero_bg {
+                                findings.push(if no_sheet {
+                                    "the served page renders with browser-DEFAULT styling — no \
+                                     stylesheet reached the browser (no <link rel=\"stylesheet\">, \
+                                     no <style> block), the body renders in the default serif \
+                                     font and zero elements carry a styled background. A user \
+                                     sees bare unstyled HTML. Link a real stylesheet from \
+                                     index.html, make the server serve it, and verify the \
+                                     styling visibly applies."
+                                        .to_string()
+                                } else {
+                                    "a stylesheet is linked but NO css takes effect in a real \
+                                     browser (body renders in the default serif font and zero \
+                                     elements carry a styled background) — the link href 404s, \
+                                     the server does not actually serve the css path, or the \
+                                     rules match nothing on the page. Fetch the css URL the html \
+                                     links, make it return the real stylesheet, and verify the \
+                                     styling visibly applies."
+                                        .to_string()
+                                });
                             }
                         }
                         Err(_) => inconclusive.push(
@@ -22529,7 +22631,10 @@ fn parse_dom_id_scan(stdout: &str) -> DriftResult {
 /// files of a Python app are exactly the case that motivated it). Env `GOOSE_SWARM_DOM_ID_SCAN`
 /// opts out.
 async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResult {
-    if !swarm_gate("GOOSE_SWARM_DOM_ID_SCAN", true) {
+    // F870 review: swarm_gate(_, true) is assured-bundle membership, and no real environment
+    // sets GOOSE_SWARM_ASSURED — this scan had ZERO events in the entire run archive despite
+    // shipping as "default ON" in F864. swarm_gate_cfg is the real default-ON.
+    if !swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true) {
         return DriftResult::default();
     }
     let scope: Vec<String> = all_files
@@ -22572,7 +22677,22 @@ import json, re, sys, pathlib
 root = pathlib.Path(sys.argv[1])
 files = [f for f in sys.stdin.read().splitlines() if f.strip()]
 css_classes, used, checked, css_files = set(), set(), 0, []
-CLASS_ATTR = re.compile(r"""\bclass\s*=\s*["']([^"'<>]*)["']""")
+CLASS_ATTR = re.compile(r"""\bclass\s*=\s*(?:["']([^"'<>]*)["']|([\w-]+))""")
+WORD = re.compile(r"[\w-]+")
+def harvest_css(src):
+    body = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    sel = []
+    for ch in body:
+        if ch == "{":
+            chunk = "".join(sel).split(";")[-1].strip()
+            if not chunk.startswith("@"):
+                for m in re.finditer(r"\.(-?[A-Za-z_][\w-]*)", chunk):
+                    css_classes.add(m.group(1))
+            sel = []
+        elif ch == "}":
+            sel = []
+        else:
+            sel.append(ch)
 for rel in files:
     p = root / rel
     try:
@@ -22582,44 +22702,52 @@ for rel in files:
     if rel.endswith(".css"):
         checked += 1
         css_files.append(rel)
-        body = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
-        sel = []
-        for ch in body:
-            if ch == "{":
-                chunk = "".join(sel).strip()
-                if not chunk.startswith("@"):
-                    for m in re.finditer(r"\.(-?[A-Za-z_][\w-]*)", chunk):
-                        css_classes.add(m.group(1))
-                sel = []
-            elif ch == "}":
-                sel = []
-            else:
-                sel.append(ch)
+        harvest_css(src)
     elif rel.endswith((".html", ".htm")):
         checked += 1
         for m in CLASS_ATTR.finditer(src):
-            used.update(m.group(1).split())
-    elif rel.endswith((".js", ".mjs")):
+            used.update(t for t in WORD.findall(m.group(1) or m.group(2) or ""))
+        for m in re.finditer(r"<style[^>]*>(.*?)</style>", src, re.S | re.I):
+            harvest_css(m.group(1))
+    elif rel.endswith((".js", ".mjs", ".ts", ".tsx", ".jsx")):
         checked += 1
         for m in CLASS_ATTR.finditer(src):
-            used.update(t for t in m.group(1).split() if re.fullmatch(r"[\w-]+", t))
+            used.update(t for t in WORD.findall(m.group(1) or m.group(2) or ""))
         for m in re.finditer(r"""classList\.(?:add|remove|toggle|contains|replace)\(\s*["']([\w-]+)["']""", src):
             used.add(m.group(1))
         for m in re.finditer(r"""\.className\s*[+]?=\s*["'`]([^"'`]*)["'`]""", src):
-            used.update(re.findall(r"[\w-]+", m.group(1)))
+            used.update(WORD.findall(m.group(1)))
         for m in re.finditer(r"""setAttribute\(\s*["']class["']\s*,\s*["'`]([^"'`]*)["'`]""", src):
-            used.update(re.findall(r"[\w-]+", m.group(1)))
+            used.update(WORD.findall(m.group(1)))
+        # Class attributes with INTERPOLATED values in js-built markup: `class="badge ${x
+        # ? 'row-ok' : 'row-bad'}"` — the plain attribute regex stops at the first inner
+        # quote and loses the branch literals, so harvest every word of the full attribute
+        # value including its ${...} expressions. Class-POSITION evidence only by default:
+        # a broad every-string-literal harvest was tried and it silenced the one true
+        # positive in the corpus via id-name coincidences (getElementById('pagination')
+        # matching .pagination) — ids are not class usage.
+        has_interp = False
+        for m in re.finditer(r"""class\s*=\s*\\?"((?:[^"\\]|\\.)*)\\?"|class\s*=\s*\\?'((?:[^'\\]|\\.)*)\\?'""", src):
+            val = m.group(1) or m.group(2) or ""
+            if "${" in val:
+                has_interp = True
+            used.update(WORD.findall(val))
+        # When class values are computed (`class="${rowCls(r)}"`), the names live in
+        # constants and returns, not in class position — static certainty collapses, so for
+        # THIS file only, accept every single-token string literal (the shape of a class
+        # name) as usage. Widening can only silence the detector, never fire it.
+        if has_interp:
+            for m in re.finditer(r"""["']([\w][\w -]{0,79})["']""", src):
+                used.update(WORD.findall(m.group(1)))
 findings = []
 matched = css_classes & used
-n, k = len(css_classes), len(used)
-dead_css = n >= 8 and len(matched) * 5 < n * 2
-unstyled_markup = k >= 8 and n >= 1 and len(matched) * 5 < k * 2
-if dead_css or unstyled_markup:
+n = len(css_classes)
+if n >= 10 and len(matched) * 4 < n:
     findings.append({
-        "css": ", ".join(css_files[:3]),
-        "rules": n, "matched": len(matched), "markup": k,
+        "css": css_files[0] if css_files else "styles.css",
+        "other_css": ", ".join(css_files[1:3]),
+        "rules": n, "matched": len(matched), "markup": len(used),
         "dead": ", ".join("." + c for c in sorted(css_classes - used)[:10]),
-        "vocab": ", ".join(sorted(used)[:10]) if used else "(the markup carries NO class attributes at all)",
     })
 print(json.dumps({"checked": checked, "findings": findings}))
 "#;
@@ -22646,20 +22774,22 @@ fn parse_css_coherence(stdout: &str) -> DriftResult {
                 .map(|f| {
                     let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
                     let num = |k: &str| f.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+                    let other = match g("other_css") {
+                        "" | "?" => String::new(),
+                        o => format!(" (the app has further stylesheets: {o})"),
+                    };
                     format!(
-                        "{}: the stylesheet defines {} class rules but only {} match any class \
-                         the html/js actually uses ({} markup classes: {}) — the page renders \
-                         with browser-default styling (the unstyled-page class). Dead rules \
-                         include: {}. The html, css and js must agree on ONE class vocabulary: \
-                         rewrite the stylesheet's selectors to target the classes/ids the markup \
-                         actually has, or add the stylesheet's classes to the markup — do not \
-                         delete the styling.",
+                        "{}: the stylesheet defines {} class rules but only {} are referenced \
+                         anywhere in the app's html/js — the page renders with browser-default \
+                         styling (the unstyled-page class). Dead rules include: {}.{} Read the \
+                         html/js to learn the class and id names the markup ACTUALLY carries, \
+                         then rewrite this stylesheet's selectors to target those real names \
+                         (element and #id selectors are fine) — do not delete the styling.",
                         g("css"),
                         num("rules"),
                         num("matched"),
-                        num("markup"),
-                        g("vocab"),
                         g("dead"),
+                        other,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -22677,7 +22807,7 @@ fn parse_css_coherence(stdout: &str) -> DriftResult {
 /// sibling (a Python app's web/ triplet is the motivating case). Env
 /// `GOOSE_SWARM_CSS_COHERENCE` opts out.
 async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> DriftResult {
-    if !swarm_gate("GOOSE_SWARM_CSS_COHERENCE", true) {
+    if !swarm_gate_cfg("GOOSE_SWARM_CSS_COHERENCE", true) {
         return DriftResult::default();
     }
     let scope: Vec<String> = all_files
@@ -24418,6 +24548,40 @@ fn multifile_stub_note(owned_files: &[String], enabled: bool) -> String {
         .to_string()
 }
 
+/// WEB-TRIPLET VOCABULARY (F870, the authoring-time half). swarm-3node-r0's css worker
+/// designed 36 class rules, its html worker wrote id-only markup, and its js worker invented
+/// a third vocabulary for generated rows — three honest workers, zero shared names, an
+/// unstyled page. The module contracts freeze Python signatures but nobody froze the ONE
+/// thing a web triplet actually shares: its class/id names. This note makes the vocabulary a
+/// stated obligation and licenses the ONE read that satisfies it (the sibling web files),
+/// overriding the no-exploration rule exactly as SKELETON-FIRST does. Fires for owners of
+/// .css/.html always, and for .js/.mjs only under a frontend-shaped path — a Node backend's
+/// js has no styling vocabulary to share. Gated on GOOSE_SWARM_WEB_VOCAB (default ON).
+fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
+    let frontend_js = |f: &str| {
+        (f.ends_with(".js") || f.ends_with(".mjs") || f.ends_with(".ts") || f.ends_with(".tsx"))
+            && f.split('/')
+                .any(|seg| matches!(seg, "web" | "static" | "public" | "frontend" | "assets"))
+    };
+    let owns_web = owned_files.iter().any(|f| {
+        f.ends_with(".css") || f.ends_with(".html") || f.ends_with(".htm") || frontend_js(f)
+    });
+    if !enabled || !owns_web {
+        return String::new();
+    }
+    "\nWEB VOCABULARY (you own a frontend file — this ADDS one permitted read to the rules \
+     below): the page's html, css and js MUST share ONE vocabulary of class names and element \
+     ids — a stylesheet whose selectors match nothing in the markup ships an UNSTYLED page and \
+     FAILS verification, exactly like broken code. You MAY (and should) read the page's sibling \
+     web files (its html/css/js) before writing yours, and you MUST reuse the EXACT class and \
+     id names they already define — never invent parallel names. If the sibling files do not \
+     exist yet, put the class names ON the markup you write (or, for css/js written first, keep \
+     the vocabulary minimal and obvious: name classes after the spec's visible parts) so the \
+     others can match it. State containers (loading / empty / error) must be hidden by default \
+     and toggled by the js — never all visible at once."
+        .to_string()
+}
+
 /// F781/#16 c3: the active fix round's shared context — the round-opening baseline every
 /// per-file fix is graded against, the language for the shadow gate, and the real file list a
 /// fix req is normalized to.
@@ -25062,6 +25226,10 @@ impl GooseAgentDispatcher {
                     cli_contract_enabled(),
                 );
                 let multifile_note = multifile_stub_note(&req.owned_files, skeleton_first);
+                let web_note = web_vocab_note(
+                    &req.owned_files,
+                    swarm_gate_cfg("GOOSE_SWARM_WEB_VOCAB", true),
+                );
                 // A TEST AUTHOR OWNS A FILE, SO IT LANDS HERE — AND EVERY THIRD SENTENCE IS FALSE FOR IT.
                 //
                 // The generic text below tells this worker "tests are a SEPARATE subtask" when it IS the
@@ -25106,7 +25274,7 @@ impl GooseAgentDispatcher {
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}\n\
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}{web_note}\n\
                      {owner_body}"
                 )
             };

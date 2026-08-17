@@ -20063,3 +20063,32 @@ unification without deleting styling. Proven on the real tree (35/1/7 fires; the
 control stays silent; end-to-end test with python per L242). QUEUED post-curve, same class:
 the scorer's v_styling should measure selector coverage so the benchmark grades what users
 see (scorer frozen mid-curve for comparability).
+
+## F871 — the adversarial review of F870 found the fixes DEAD ON ARRIVAL and five real false-positive classes; and the same dead gate silently killed two shipped F864 mechanisms
+
+A 15-agent adversarial workflow over the F870 diff (3 lenses, every serious claim re-verified
+against the code, several empirically with the extracted script). The headline: `swarm_gate(name,
+true)` is ASSURED-BUNDLE membership, not a default — with GOOSE_SWARM_ASSURED unset in every
+regime and desktop environment, css_coherence_scan and web_vocab_note would have shipped DEAD,
+and the end-to-end test PASSED VACUOUSLY (its python3 early-return hid the gate-off state; the
+0.00s runtime was the tell). Worse, the same pattern already shipped in F864: dom_id_scan has
+ZERO events in the entire run archive (it never ran once), and scout_doc_urls was live only in
+its explicitly-env'd mechanism single — which retro-explains F818's "mechanism unverifiable
+from artifacts". CORRECTIONS: F864's "default ON" claims for both are false in practice; all
+four sites now use swarm_gate_cfg(_, true) — a real default-ON with the env escape hatch — and
+the test checks python3 itself, then DEMANDS the scan ran. Confirmed FP classes, each cured and
+re-validated: (1) interpolated/computed JS classes invisible to the harvest → class-position
+capture now spans ${...} attribute values, and any interp presence widens the same-file harvest
+to string literals; (2)+(3) unstyled_markup false-fired on element-selector styling and on
+Jinja token junk → the clause is DELETED, dead_css is the sole trigger, tightened to <25%
+matched at n>=10; (4) render-gate no_sheet called inline-/CSSOM-styled pages bare → both prongs
+now require the full default-rendering conjunction; (5) 'Times' substring matched designed
+serif STACKS → exact computed-value equality; (6) multi-css finding prefixes ("a.css, b.css:")
+failed is_code and fell to the unassigned bucket → single-path prefix; (7) the "add classes to
+the markup" remedy was unpromotable for a css-only fix shard → the remedy is now css-side only.
+Also filed: on the fix_sched-OFF default path fixes are graded smoke-only so these findings
+could never clear — our regime and the desktop both set FIX_SCHED=1, so the journey is covered;
+the sink_shard ruler unification is QUEUED. Re-validation after all cures: the broken tree
+fires 5/35 matched, the working-SPA/element-selector/Jinja fixtures and all 59 good corpus
+trees stay silent, 238 tests green, the detector test can no longer pass without the scan
+actually running.
