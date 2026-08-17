@@ -23403,8 +23403,15 @@ fn normalize_rel_path(p: &str) -> String {
 }
 
 fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<String> {
+    // F862 forensics: .js/.html/.css were missing, so every FRONTEND finding (render-no-rows,
+    // DOM TypeError) fell out of per-file fix scoping and collapsed into the unscoped join.
     let is_code = |p: &str| {
-        (p.ends_with(".py") || p.ends_with(".rs") || p.ends_with(".ts"))
+        (p.ends_with(".py")
+            || p.ends_with(".rs")
+            || p.ends_with(".ts")
+            || p.ends_with(".js")
+            || p.ends_with(".html")
+            || p.ends_with(".css"))
             && !p.is_empty()
             && !p.contains(' ')
     };
@@ -24084,6 +24091,9 @@ struct FixRound {
     /// graded shadows at >=k against a baseline that excluded those k findings when the gate was
     /// off, discarding genuine fixes.
     composite: bool,
+    /// Whether the round counts missing deliverables (delivery_on || failed_tasks_block_green) —
+    /// one more ruler category the F862 one-ruler grade must mirror exactly.
+    missing_gate: bool,
 }
 
 /// Pure trigger for fix mode: an ACTIVE round and the fix:: prefix, both. With no active round a
@@ -24270,8 +24280,19 @@ impl GooseAgentDispatcher {
             // left it — re-gated NOW, after their promotions. If the gate cannot run there is no
             // baseline to beat and the agent is not spent (the wave's own skip rule).
             let real_root = std::env::current_dir().unwrap_or_else(|_| self.working_dir.clone());
-            let g = run_smoke_gate(&real_root, fr.lang).await;
-            if !g.ran {
+            // F862 ONE RULER: the join's baseline and every shadow grade below now measure the
+            // round's full category set — smoke-only (then smoke+sc) baselines biased every
+            // strictly-better comparison by the categories they omitted.
+            let (graded, _) = one_ruler_grade(
+                &real_root,
+                &fr.prompt,
+                fr.lang,
+                &fr.all_files,
+                fr.composite,
+                fr.missing_gate,
+            )
+            .await;
+            let Some(base) = graded else {
                 self.events.write_value(serde_json::json!({
                     "event": "complete_fix_completed", "path": "sched",
                     "round": fr.round, "task_id": req.task_id,
@@ -24280,20 +24301,7 @@ impl GooseAgentDispatcher {
                 return Ok("fix join skipped: the real-tree gate cannot run"
                     .to_string()
                     .into());
-            }
-            // COMPOSITE baseline (speed hunt 2026-08-16): the join's grade below is now
-            // smoke + spec_contract (the F848 ruler); a smoke-only baseline here would bias
-            // strictly-better against every promotion by the spec_contract findings it omits.
-            // Gated on fr.composite so shadow grade and round baseline always share ONE ruler.
-            let sc_count = if fr.composite {
-                run_spec_contract(&real_root, &fr.prompt, fr.lang)
-                    .await
-                    .findings
-                    .len()
-            } else {
-                0
             };
-            let base = g.findings.len() + sc_count;
             // F799 polish: a CLEAN post-wave tree means nothing can promote (strictly-better
             // than 0 is impossible) — observed live on the first proof run, where the join
             // spent a full agent generation on work that was discarded by construction.
@@ -24370,27 +24378,19 @@ impl GooseAgentDispatcher {
                 return Err(DispatchError::Transient(e));
             }
         }
+        // F862 ONE RULER (see one_ruler_grade): the shadow answers the round's exact question.
         let verified = match self.speculative_root(&req.task_id) {
             Some(root) => {
-                let g = run_smoke_gate(&root, fr.lang).await;
-                if g.ran {
-                    // COMPOSITE grade (F848 parity for the sched path — speed hunt 2026-08-16):
-                    // smoke-only certified "0 findings" twice in one run while the gate then read
-                    // 2; the shadow must be judged by the same ruler that decides the round —
-                    // including the ruler's WIDTH: the spec_contract term applies exactly when
-                    // the round's verify includes it (fr.composite), never unconditionally.
-                    let sc_count = if fr.composite {
-                        run_spec_contract(&root, &fr.prompt, fr.lang)
-                            .await
-                            .findings
-                            .len()
-                    } else {
-                        0
-                    };
-                    Some(g.findings.len() + sc_count)
-                } else {
-                    None
-                }
+                one_ruler_grade(
+                    &root,
+                    &fr.prompt,
+                    fr.lang,
+                    &fr.all_files,
+                    fr.composite,
+                    fr.missing_gate,
+                )
+                .await
+                .0
             }
             None => None,
         };
@@ -27137,6 +27137,76 @@ fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
         .or(cfg_temp)
 }
 
+/// ONE RULER (F862). Grades a tree by the SAME categories the round's complete_verify counts:
+/// smoke + spec_contract (when the round runs it) + http_timeout_scan + cross_module_drift (when
+/// its lever is on) + the missing-deliverables stat (when the round gates on it). The r1
+/// forensics proved the cost of a subset ruler in its worst form: a twin with ZERO shadow edits
+/// graded baseline-3 (the three timeout findings were invisible to smoke+spec_contract), claimed
+/// "strictly better", cancelled the two twins that were actually editing, and promoted twelve
+/// byte-identical files — the wave then went 6→6 flat and the run stalled out red. Any category
+/// the round counts and the grade cannot see converts real work into an invisible delta, in BOTH
+/// directions. Returns (None, false) when the smoke gate cannot run (the vacuous-pass trap);
+/// `established` folds spec_contract's inconclusive legs in, so a blinded probe cannot license
+/// an early-close claim.
+async fn one_ruler_grade(
+    root: &std::path::Path,
+    prompt: &str,
+    lang: TargetLang,
+    all_files: &[String],
+    composite: bool,
+    missing_gate: bool,
+) -> (Option<usize>, bool) {
+    let g = run_smoke_gate(root, lang).await;
+    if !g.ran {
+        return (None, false);
+    }
+    let mut est = g.established();
+    let mut n = g.findings.len();
+    if composite {
+        let sc = run_spec_contract(root, prompt, lang).await;
+        est = est && sc.inconclusive.is_empty();
+        n += sc.findings.len();
+    }
+    let app_only: Vec<String> = all_files
+        .iter()
+        .filter(|f| !is_test_path(lang, f))
+        .cloned()
+        .collect();
+    n += http_timeout_scan(root, lang, &app_scope_py(root, &app_only))
+        .await
+        .findings
+        .len();
+    if swarm_gate_cfg(
+        "GOOSE_SWARM_CROSS_MODULE_CHECK",
+        load_config().cross_module_check,
+    ) {
+        n += cross_module_drift(root, lang, &app_scope_py(root, all_files))
+            .await
+            .findings
+            .len();
+    }
+    if missing_gate {
+        n += all_files
+            .iter()
+            .filter(|f| {
+                lang.is_source_file(f) && !lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
+            })
+            .filter(|f| {
+                let base = f.rsplit('/').next().unwrap_or(f);
+                base != "__init__.py" && base != "py.typed"
+            })
+            .filter(|f| {
+                !root
+                    .join(f)
+                    .metadata()
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+            })
+            .count();
+    }
+    (Some(n), est)
+}
+
 /// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
 /// the file list the fix phase itself carries — NOT from the dispatcher's `sink_tree_files`
 /// OnceCell, which the adversarial review proved is never filled on the fresh fix-wave
@@ -29834,11 +29904,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             persona_snapshot.stack_key = detect_stack_key(&opts.prompt, &files);
         }
     }
-    let smoke_all_files: Vec<String> = dag
-        .tasks
-        .values()
-        .flat_map(|n| n.spec.owned_files.clone())
-        .collect();
+    let smoke_all_files: Vec<String> = {
+        let mut v: Vec<String> = dag
+            .tasks
+            .values()
+            .flat_map(|n| n.spec.owned_files.clone())
+            .collect();
+        // Dedup (F862 verifier hardening): nothing enforces cross-task file disjointness, and a
+        // duplicated path would count twice in the one-ruler missing check while the round's
+        // message dedup counts it once.
+        v.sort();
+        v.dedup();
+        v
+    };
     // Per task: the files it owns, and the files owned by everything it depends on. Captured here for
     // the same reason as `smoke_all_files` — the scheduler consumes `dag` — and used by the
     // failed-task finding to tell "the deliverable was never written" apart from "the deliverable is
@@ -30311,7 +30389,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
             // the AttributeError only happens at request time), so without this the loop breaks green at
             // round 0 on an app whose main endpoint 500s.
-            verdict.findings.extend(drift.findings.iter().cloned());
+            // F862 (mirror of the shadow-ruler bug, round side): the pre-loop drift was FROZEN
+            // and re-added verbatim every round, so a genuine drift fix could never clear the
+            // count — the same invisible-delta mechanism, pointing the other way. Re-scan the
+            // CURRENT tree each round (a sub-second static scan); the pre-loop `drift` above
+            // remains the first-look event only.
+            let drift_now = if drift.ran {
+                cross_module_drift(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await
+            } else {
+                DriftResult::default()
+            };
+            verdict.findings.extend(drift_now.findings.iter().cloned());
             // NO-TIMEOUT SCAN. Rides the same scope and the same fix loop as the drift check, because it
             // is the same KIND of defect: invisible to the smoke gate (the module imports fine and the
             // call is correct Python) and fatal at request time.
@@ -30681,6 +30769,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let facts = doc_facts.clone();
                 let desc = smoke_fix_description(&verdict.findings, complete_lang);
                 let wave_prompt = opts.prompt.clone();
+                // F862: the ruler flags the round graded with — the twins grade with the same.
+                let wave_composite = delivery_on || spec_contract_enabled();
+                let wave_missing_gate = missing_deliverable_gate;
                 let sink_r = sink.clone();
                 // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
                 // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
@@ -30792,28 +30883,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // regression dressed as a safety improvement. A shadow holds whatever its agent
                             // wrote before it was stopped, so the honest question is whether the TREE is
                             // better, never whether the agent got to say so.
+                            // F862 ONE RULER: the F848 smoke+spec_contract grade was still a
+                            // SUBSET of the round's — the r1 forensics caught a zero-edit twin
+                            // grading baseline-3 on the invisible timeout findings, claiming the
+                            // round, cancelling the twins that were editing, and promoting twelve
+                            // byte-identical files. The shadow now answers the round's exact
+                            // question, every category included.
                             let (verified, gate_established) = match me.speculative_root(&task_id) {
                                 Some(root) => {
-                                    let g = run_smoke_gate(&root, complete_lang).await;
-                                    // `ran: false` means the gate could not run in this shadow at all. That is
-                                    // not a clean twin — scoring it 0 findings would promote an UNCHECKED tree
-                                    // over a checked one, which is the vacuous-pass trap in its most damaging
-                                    // form: it would land on the real app.
-                                    let est = g.established();
-                                    if g.ran {
-                                        // COMPOSITE GRADING (F848): the round's baseline includes the
-                                        // spec_contract findings (vendor-truth, render gate), so a shadow
-                                        // graded on smoke alone is measured against a different ruler —
-                                        // MEASURED: a twin re-verified "6 -> 0" and early-closed while
-                                        // the sync-acquisition finding it never probed persisted, and
-                                        // every round rediscovered the same two findings. The shadow now
-                                        // answers the SAME question the round asks.
-                                        let sc =
-                                            run_spec_contract(&root, &wave_prompt, complete_lang).await;
-                                        (Some(g.findings.len() + sc.findings.len()), est)
-                                    } else {
-                                        (None, false)
-                                    }
+                                    one_ruler_grade(
+                                        &root,
+                                        &wave_prompt,
+                                        complete_lang,
+                                        &all_files,
+                                        wave_composite,
+                                        wave_missing_gate,
+                                    )
+                                    .await
                                 }
                                 None => (None, false),
                             };
@@ -30931,6 +31017,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     prompt: opts.prompt.clone(),
                                     race_next: fleet_models.len() > 1 && spec_repair(),
                                     composite: delivery_on || spec_contract_enabled(),
+                                    missing_gate: missing_deliverable_gate,
                                 });
                                 let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
                                     .with_sink(sink.clone())
