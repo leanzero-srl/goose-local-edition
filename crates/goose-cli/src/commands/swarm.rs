@@ -5880,11 +5880,31 @@ mod tests {
     /// filename and every consumer looks them up by task id.
     #[test]
     fn activity_digest_key_flattens_paths_and_round_trips() {
+        // The desktop's decoder, mirrored here so the two can never drift apart: `~~` -> `~`,
+        // a lone `~` -> `/`.
+        fn decode(k: &str) -> String {
+            let mut out = String::new();
+            let mut it = k.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '~' {
+                    if it.peek() == Some(&'~') {
+                        it.next();
+                        out.push('~');
+                    } else {
+                        out.push('/');
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
         for id in [
             "fix::r0::vendorsync/web/app.js",
             "fix::r12::a/b/c/d.py",
             "verify::web-index",
             "integrate-verify",
+            "fix::r0::weird~name.py",
         ] {
             let k = activity_digest_key(id);
             assert!(
@@ -5892,11 +5912,17 @@ mod tests {
                 "digest key must be a flat filename: {k}"
             );
             assert_eq!(
-                k.replace('~', "/"),
+                decode(&k),
                 id,
-                "the desktop un-sanitizes `~` back to `/` — the key must round-trip"
+                "the key must round-trip through the decoder"
             );
         }
+        // INJECTIVE: a literal `~` and a separator must never collide on one digest file.
+        assert_ne!(
+            activity_digest_key("fix::r0::a/b"),
+            activity_digest_key("fix::r0::a~b"),
+            "a/b and a~b must not alias onto the same digest"
+        );
         // Ids without separators are untouched, so every existing digest keeps its name.
         assert_eq!(activity_digest_key("api"), "api");
         assert_eq!(activity_digest_key("verify::api"), "verify::api");
@@ -11842,10 +11868,14 @@ fn build_reasoning(texts: &[String]) -> String {
 /// interpolating the id directly, so the write aimed at a nested directory that does not exist and
 /// FAILED SILENTLY. Measured live (operator report): two fix workers ground for ten minutes each
 /// while the desktop showed "generating…" with no content and the judge had no digest to read, so
-/// its over-read/thrash checks were disarmed for exactly the tasks that repair the app. Slashes
-/// become `~`, which cannot appear in a normalized path id, so ids stay reversible on sight.
+/// its over-read/thrash checks were disarmed for exactly the tasks that repair the app.
+///
+/// INJECTIVE, because the desktop reverses it to recover the task id: a literal `~` doubles
+/// (`~` -> `~~`) before separators become `~`, so `a/b` and `a~b` can never land on one file and
+/// the decode (`~~` -> `~`, lone `~` -> `/`) is exact. Review finding: the first version was a
+/// plain replace, which aliased those two ids onto the same digest.
 fn activity_digest_key(task_id: &str) -> String {
-    task_id.replace(['/', '\\'], "~")
+    task_id.replace('~', "~~").replace(['/', '\\'], "~")
 }
 
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
@@ -14353,6 +14383,23 @@ impl GooseAgentDispatcher {
             let _ = std::fs::create_dir_all(&dir);
             dir.join(format!("{}.json", activity_digest_key(k)))
         });
+        // MIRROR A FIX TASK'S HEARTBEAT INTO THE REAL TREE. A `fix::` task always runs speculative,
+        // so the line above puts its digest inside a system-temp shadow that the desktop never reads
+        // and that is deleted when the round ends — which is why two fix workers showed "generating…"
+        // with nothing behind them for ten minutes (operator report; the shadow-locality was the
+        // second half of that defect, found by adversarial review of the first fix). Only fix ids are
+        // mirrored: they are unique per round+file, whereas a speculative TWIN shares its task id with
+        // the primary and two writers would fight over one file — the case the comment above protects.
+        let activity_mirror = activity_key
+            .filter(|k| k.starts_with("fix::"))
+            .and_then(|k| {
+                let dir = self.working_dir.join(".swarm").join("activity");
+                if dir == work_dir.join(".swarm").join("activity") {
+                    return None; // not a shadow — the primary write already lands here
+                }
+                std::fs::create_dir_all(&dir).ok()?;
+                Some(dir.join(format!("{}.json", activity_digest_key(k))))
+            });
         if let Some(p) = &activity_file {
             // Seed the digest the instant the call is DISPATCHED — before the first token — carrying the node
             // (`model`) and phase="processing". LM Studio processes the prompt (often many seconds on a big
@@ -14372,6 +14419,9 @@ impl GooseAgentDispatcher {
                 })
                 .to_string(),
             );
+            if let Some(m) = &activity_mirror {
+                let _ = std::fs::copy(p, m);
+            }
         }
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
@@ -14932,6 +14982,9 @@ impl GooseAgentDispatcher {
                         model_id,
                     );
                     let _ = std::fs::write(p, digest.to_string());
+                    if let Some(m) = &activity_mirror {
+                        let _ = std::fs::write(m, digest.to_string());
+                    }
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
             }
@@ -14966,6 +15019,12 @@ impl GooseAgentDispatcher {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
             let _ = std::fs::write(p, digest.to_string());
+            // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
+            // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
+            // moment the round ends, so the mirror is the only copy left to correct.
+            if let Some(m) = &activity_mirror {
+                let _ = std::fs::write(m, digest.to_string());
+            }
         }
 
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
@@ -21429,33 +21488,6 @@ impl Judge for GooseAgentDispatcher {
             me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
             return JudgeOutcome::ok(); // genuinely nothing produced yet
         }
-        // NOTHING NEW TO JUDGE. The semantic review below is a full generation on a fleet node, and
-        // its ONLY inputs are the owned files' bytes, the tool-call count and the thinking volume.
-        // When none of them has moved since the last review, the review can only re-derive the
-        // verdict it already gave — and it did: MEASURED live on `fix::r0::vendorsync/web/app.js`,
-        // 9 reviews in 10 minutes, every one `ok` with an empty hint, roughly a node-quarter-hour
-        // spent re-reading an unchanged worker. Fingerprint those exact inputs and skip while they
-        // are unchanged. This can never suppress a review of anything the reviewer could have seen,
-        // and it is named in the log rather than silent.
-        let seen_fp = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            acts.hash(&mut h);
-            thinking.hash(&mut h);
-            for (p, c) in &input.file_contents {
-                p.hash(&mut h);
-                c.len().hash(&mut h);
-                content_hash(c.as_bytes()).hash(&mut h);
-            }
-            h.finish()
-        };
-        if let Ok(mut seen) = self.judge_seen.lock() {
-            if seen.get(&req.task_id) == Some(&seen_fp) {
-                me_events_skip(&self.events, &req.task_id, "unchanged_since_last_review");
-                return JudgeOutcome::ok();
-            }
-            seen.insert(req.task_id.clone(), seen_fp);
-        }
         let files_block = if input.file_contents.is_empty() {
             "(no file written yet)".to_string()
         } else {
@@ -21592,6 +21624,35 @@ impl Judge for GooseAgentDispatcher {
             trace = trace_block,
             instruments = instruments_block,
         );
+        // NOTHING NEW TO JUDGE. The semantic review is a full generation on a fleet node, and the
+        // prompt just built IS everything it can see — goal, run state, this worker's files, its
+        // activity trace, the instrument readings. When that prompt is byte-identical to the one the
+        // last completed review answered, the model can only re-derive the verdict it already gave,
+        // and it did: MEASURED live on `fix::r0::vendorsync/web/app.js`, 9 reviews in 10 minutes,
+        // every one `ok` with an empty hint — a node-quarter-hour spent re-reading an unchanged
+        // worker while the fleet had real work queued.
+        //
+        // Fingerprinting the PROMPT rather than a hand-picked tuple is deliberate (review finding):
+        // an earlier version hashed only files+acts+thinking and would have skipped reviews whose
+        // verdict could legitimately change because the RUN moved around the worker (a sibling
+        // failed, imports broke tree-wide). If it cannot change the prompt, it cannot change the
+        // verdict. The key carries `attempts` so a re-dispatched attempt — which restarts at the
+        // same zeroed counters — is always reviewed afresh, and the fingerprint is recorded ONLY
+        // after a review actually completes, so a timed-out or errored review never marks itself
+        // done and suppresses its own retry.
+        let review_fp = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            user.hash(&mut h);
+            h.finish()
+        };
+        let seen_key = format!("{}#{}", req.task_id, req.attempt);
+        if let Ok(seen) = self.judge_seen.lock() {
+            if seen.get(&seen_key) == Some(&review_fp) {
+                me_events_skip(&self.events, &req.task_id, "unchanged_since_last_review");
+                return JudgeOutcome::ok();
+            }
+        }
         match tokio::time::timeout(
             std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
             self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
@@ -21599,6 +21660,9 @@ impl Judge for GooseAgentDispatcher {
         .await
         {
             Ok(Ok(o)) => {
+                if let Ok(mut seen) = self.judge_seen.lock() {
+                    seen.insert(seen_key, review_fp);
+                }
                 // Research log: record EVERY semantic review (including the OK ones) so the judge's
                 // behaviour can actually be studied — when it ran and what it concluded. A semantic OK is
                 // otherwise indistinguishable from a deterministic OK in the verdict event.

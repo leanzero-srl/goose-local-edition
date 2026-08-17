@@ -115,6 +115,13 @@ def f499_unmeasured_is_the_judge_set(ev, a) -> tuple[str, str]:
     return PASS, f"{len(um)} task(s), both signals agree"
 
 
+def activity_digest_key(task_id: str) -> str:
+    """Mirror of the engine's `activity_digest_key` (crates/goose-cli/src/commands/swarm.rs): a
+    literal `~` doubles, then path separators become `~`, so the filename is flat and the mapping
+    stays injective."""
+    return task_id.replace("~", "~~").replace("/", "~").replace("\\", "~")
+
+
 def activity_dir_for(log_path: str) -> str | None:
     """Where this log's per-task digests live, for an ARCHIVED snapshot or a LIVE cell.
 
@@ -147,7 +154,12 @@ def f500_every_invisible_task_recovered(ev, a, log_path) -> tuple[str, str]:
         return INERT, (f"{len(um)} invisible task(s) but no digest directory exists for this log — "
                        "an un-archived live cell reads identically to a broken dispatcher here, so "
                        "this says nothing either way")
-    missing = [t for t in um if not os.path.exists(os.path.join(act, f"{t}.json"))]
+    # The engine sanitizes path separators out of the digest FILENAME (a scheduled fix task is
+    # `fix::r{N}::{owned/file/path}`; the raw id aimed at a directory that does not exist and the
+    # write failed silently — F874). Join on the SAME key the engine writes, or every fix task
+    # reads as "no digest" and this check turns into a false FAIL the moment those digests appear.
+    missing = [t for t in um
+               if not os.path.exists(os.path.join(act, f"{activity_digest_key(t)}.json"))]
     if missing:
         return FAIL, f"{len(missing)}/{len(um)} have no digest in {act}: {', '.join(missing[:4])}"
     return PASS, f"{len(um)}/{len(um)} recovered from {os.path.basename(act)}"
