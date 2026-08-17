@@ -5663,6 +5663,89 @@ mod tests {
         );
     }
 
+    /// F871 END-TO-END (L242: the DETECTOR, not the parser). The measured defect verbatim:
+    /// swarm-3node-r0's styles.css defined 36 class rules, index.html used ONLY ids, zero
+    /// matched — the page shipped browser-default and every gate stayed green. The negative
+    /// controls carry equal weight: this scan feeds `verdict.findings`, so a false fire on a
+    /// coherent triplet sends the repair loop to break working styling.
+    #[tokio::test]
+    async fn css_coherence_flags_the_dead_stylesheet_and_spares_a_coherent_triplet() {
+        let dir = std::env::temp_dir().join(format!("goose_cssco_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        // THE MEASURED DEFECT: id-only markup, class-only stylesheet, js toggling nothing.
+        std::fs::write(
+            dir.join("web/index.html"),
+            "<body><h1 id=\"title\">App</h1><table id=\"rows\"></table>\
+             <div id=\"loading-state\">Loading</div></body>",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("web/styles.css"),
+            "body { font-family: system-ui; } /* .ghost { color: red } */\n\
+             .app-header { padding: 1rem } .btn { border: 0 } .btn-primary { background: #333 }\n\
+             .toolbar { display: flex } .spinner { transition: .5s } .state-overlay { display: none }\n\
+             .status-badge { background: url(ok.png) } .pagination { gap: 4px }\n\
+             @media (max-width: 600px) { .table-wrapper { overflow-x: auto } }",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("web/app.js"),
+            "document.getElementById('rows').innerHTML = '<tr><td>x</td></tr>';",
+        )
+        .unwrap();
+        let files: Vec<String> = ["web/index.html", "web/styles.css", "web/app.js"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let res = css_coherence_scan(&dir, &files).await;
+        if !res.ran {
+            let _ = std::fs::remove_dir_all(&dir);
+            return; // python3 not available in this environment
+        }
+        assert_eq!(res.checked, 3, "all three web files must be parsed");
+        assert_eq!(
+            res.findings.len(),
+            1,
+            "an id-only page under a class-only stylesheet is THE unstyled-page defect: {:?}",
+            res.findings
+        );
+        let f = &res.findings[0];
+        for needle in [
+            ".app-header",
+            "NO class attributes",
+            "do not delete the styling",
+        ] {
+            assert!(f.contains(needle), "finding must carry `{needle}`: {f}");
+        }
+        // `.ghost` lives in a comment and `.5s`/`url(ok.png)` inside blocks — none may count.
+        assert!(
+            f.contains("defines 9 class rules"),
+            "selector census must be 9 (comment + value tokens excluded): {f}"
+        );
+
+        // COHERENT TRIPLET, same scan: markup + classList usage cover the vocabulary — silent.
+        std::fs::write(
+            dir.join("web/index.html"),
+            "<body class=\"app-header\"><button class=\"btn btn-primary\">Go</button>\
+             <div class=\"toolbar spinner state-overlay\"></div>\
+             <span class=\"status-badge\"></span><nav class=\"pagination\"></nav></body>",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("web/app.js"),
+            "el.classList.add('table-wrapper');\nrow.innerHTML = `<td class=\"status-badge\">ok</td>`;",
+        )
+        .unwrap();
+        let clean = css_coherence_scan(&dir, &files).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            clean.ran && clean.findings.is_empty(),
+            "a stylesheet the markup actually wears must stay silent — a false positive here \
+             breaks working styling: {:?}",
+            clean.findings
+        );
+    }
+
     /// C1 END-TO-END (F711/F712): the SCAN must skip the swarm's own tests, not merely the helper.
     ///
     /// My first test for this covered `is_test_path` in isolation and passed — which proves nothing
@@ -22457,8 +22540,12 @@ async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResul
         .filter(|f| root.join(f.as_str()).is_file())
         .cloned()
         .collect();
-    let has_html = scope.iter().any(|f| f.ends_with(".html") || f.ends_with(".htm"));
-    let has_js = scope.iter().any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
+    let has_html = scope
+        .iter()
+        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
+    let has_js = scope
+        .iter()
+        .any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
     if !(has_html && has_js) {
         return DriftResult::default();
     }
@@ -22466,6 +22553,156 @@ async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResul
         return DriftResult::default();
     };
     parse_dom_id_scan(&out)
+}
+
+/// CSS-CLASS COHERENCE SCAN (F871). swarm-3node-r0 shipped a page that rendered as bare
+/// browser-default HTML: styles.css defined 36 class rules (.app-header, .btn-primary,
+/// .state-overlay…) and index.html referenced NONE of them — the markup used only ids. The
+/// only rules that applied were bare-element ones (body font/background), which is exactly
+/// why the render probe reported a stylesheet present and no gate objected: the CSS worker
+/// and the HTML worker each honoured the module contract and disagreed on the class
+/// vocabulary the contract never froze. Same blindness class as the DOM-id scan one file
+/// over: a cross-file agreement no checker owned. Class tokens are read from SELECTOR text
+/// only (outside `{}` blocks), so `transition: .5s` and `url(img.png)` can never
+/// contribute; "used" is harvested greedily from class= attributes (html AND js-built
+/// markup), classList calls and className writes — over-collecting weakens the detector,
+/// it never false-fires it.
+const CSS_COHERENCE_SCRIPT: &str = r#"
+import json, re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = [f for f in sys.stdin.read().splitlines() if f.strip()]
+css_classes, used, checked, css_files = set(), set(), 0, []
+CLASS_ATTR = re.compile(r"""\bclass\s*=\s*["']([^"'<>]*)["']""")
+for rel in files:
+    p = root / rel
+    try:
+        src = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        continue
+    if rel.endswith(".css"):
+        checked += 1
+        css_files.append(rel)
+        body = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        sel = []
+        for ch in body:
+            if ch == "{":
+                chunk = "".join(sel).strip()
+                if not chunk.startswith("@"):
+                    for m in re.finditer(r"\.(-?[A-Za-z_][\w-]*)", chunk):
+                        css_classes.add(m.group(1))
+                sel = []
+            elif ch == "}":
+                sel = []
+            else:
+                sel.append(ch)
+    elif rel.endswith((".html", ".htm")):
+        checked += 1
+        for m in CLASS_ATTR.finditer(src):
+            used.update(m.group(1).split())
+    elif rel.endswith((".js", ".mjs")):
+        checked += 1
+        for m in CLASS_ATTR.finditer(src):
+            used.update(t for t in m.group(1).split() if re.fullmatch(r"[\w-]+", t))
+        for m in re.finditer(r"""classList\.(?:add|remove|toggle|contains|replace)\(\s*["']([\w-]+)["']""", src):
+            used.add(m.group(1))
+        for m in re.finditer(r"""\.className\s*[+]?=\s*["'`]([^"'`]*)["'`]""", src):
+            used.update(re.findall(r"[\w-]+", m.group(1)))
+        for m in re.finditer(r"""setAttribute\(\s*["']class["']\s*,\s*["'`]([^"'`]*)["'`]""", src):
+            used.update(re.findall(r"[\w-]+", m.group(1)))
+findings = []
+matched = css_classes & used
+n, k = len(css_classes), len(used)
+dead_css = n >= 8 and len(matched) * 5 < n * 2
+unstyled_markup = k >= 8 and n >= 1 and len(matched) * 5 < k * 2
+if dead_css or unstyled_markup:
+    findings.append({
+        "css": ", ".join(css_files[:3]),
+        "rules": n, "matched": len(matched), "markup": k,
+        "dead": ", ".join("." + c for c in sorted(css_classes - used)[:10]),
+        "vocab": ", ".join(sorted(used)[:10]) if used else "(the markup carries NO class attributes at all)",
+    })
+print(json.dumps({"checked": checked, "findings": findings}))
+"#;
+
+/// Pure parser for the coherence script's JSON (testable without python, like its siblings).
+fn parse_css_coherence(stdout: &str) -> DriftResult {
+    let Some(v) = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .or_else(|| {
+            stdout
+                .lines()
+                .rev()
+                .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        })
+    else {
+        return DriftResult::default();
+    };
+    let checked = v.get("checked").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let findings = v
+        .get("findings")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    let g = |k: &str| f.get(k).and_then(|x| x.as_str()).unwrap_or("?");
+                    let num = |k: &str| f.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+                    format!(
+                        "{}: the stylesheet defines {} class rules but only {} match any class \
+                         the html/js actually uses ({} markup classes: {}) — the page renders \
+                         with browser-default styling (the unstyled-page class). Dead rules \
+                         include: {}. The html, css and js must agree on ONE class vocabulary: \
+                         rewrite the stylesheet's selectors to target the classes/ids the markup \
+                         actually has, or add the stylesheet's classes to the markup — do not \
+                         delete the styling.",
+                        g("css"),
+                        num("rules"),
+                        num("matched"),
+                        num("markup"),
+                        g("vocab"),
+                        g("dead"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    DriftResult {
+        ran: true,
+        checked,
+        findings,
+        partial: false,
+    }
+}
+
+/// Runs on any tree whose scope carries BOTH css and html — language-blind like its DOM-id
+/// sibling (a Python app's web/ triplet is the motivating case). Env
+/// `GOOSE_SWARM_CSS_COHERENCE` opts out.
+async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> DriftResult {
+    if !swarm_gate("GOOSE_SWARM_CSS_COHERENCE", true) {
+        return DriftResult::default();
+    }
+    let scope: Vec<String> = all_files
+        .iter()
+        .filter(|f| {
+            f.ends_with(".css")
+                || f.ends_with(".html")
+                || f.ends_with(".htm")
+                || f.ends_with(".js")
+                || f.ends_with(".mjs")
+        })
+        .filter(|f| root.join(f.as_str()).is_file())
+        .cloned()
+        .collect();
+    let has_css = scope.iter().any(|f| f.ends_with(".css"));
+    let has_html = scope
+        .iter()
+        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
+    if !(has_css && has_html) {
+        return DriftResult::default();
+    }
+    let Some(out) = run_scoped_py_check(CSS_COHERENCE_SCRIPT, root, &scope).await else {
+        return DriftResult::default();
+    };
+    parse_css_coherence(&out)
 }
 
 async fn cross_module_drift(
@@ -27298,6 +27535,7 @@ async fn one_ruler_grade(
         .findings
         .len();
     n += dom_id_scan(root, all_files).await.findings.len();
+    n += css_coherence_scan(root, all_files).await.findings.len();
     if swarm_gate_cfg(
         "GOOSE_SWARM_CROSS_MODULE_CHECK",
         load_config().cross_module_check,
@@ -30605,6 +30843,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
             }
             verdict.findings.extend(dom.findings.iter().cloned());
+            // CSS-CLASS COHERENCE (F871): a stylesheet whose class vocabulary the markup never
+            // uses ships an unstyled page while every gate stays green (the probe sees "a
+            // stylesheet is present", the DOM-id scan sees ids, nothing owns the agreement).
+            // Enters the round ruler and one_ruler_grade TOGETHER — the F862 law.
+            let css = css_coherence_scan(&cwd, &smoke_all_files).await;
+            if css.ran {
+                sink.write_value(serde_json::json!({
+                    "event": "css_coherence_scan",
+                    "round": round,
+                    "checked": css.checked,
+                    "findings": css.findings.len(),
+                    "detail": if css.findings.is_empty() {
+                        "the stylesheet's class vocabulary matches the markup"
+                    } else {
+                        "css classes and markup disagree — the page renders unstyled — driving the fix loop"
+                    },
+                }));
+            }
+            verdict.findings.extend(css.findings.iter().cloned());
             // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
             // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
             // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
