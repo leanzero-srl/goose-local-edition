@@ -20192,3 +20192,28 @@ re-implementing the engine's own deterministic probe (1266), the scout fan's Spe
 the blind DETAIL fan (396), the detail-accept guard (350), plan_confidence as a max of three
 statistics (120), clarify_questions (110), and the 1800-char silent truncation of every file
 the judge reads (247).
+
+## F876 — THE TIER-B ROOT CAUSE: the fleet fetches the vendor's protocol docs and then throws them away
+
+Chasing the ceremony hunt's scout lens to its end found the defect that has capped Behaviour all
+campaign. The live run's own events, side by side: `research_completed.grounded: 3` — all three
+scouts DID curl the vendor documentation the spec names (pagination, cursoring, 429 Retry-After,
+ETag revalidation, the Idempotency-Key header) — and `doc_prefetch: false`, the channel that
+splices those fetched facts VERBATIM into every worker's prompt. So the manual was read and
+binned. The worker writing `vendorsync/meridian.py` then invented all four mechanics from priors;
+the generated tests failed on exactly those four (`test_multi_page_pagination`,
+`test_429_retry_with_seconds`, `test_429_retry_with_http_date`, `test_etag_304_caching`,
+`test_create_payment_success`); `POST /api/sync` acquired nothing; and NINE Tier-B checks —
+row shape, totals, ordering, summary accuracy, UTC bounds, idempotent resync — collapsed together
+on the resulting empty collection, which is 52% of all score lost.
+
+Why it stayed hidden: the field's own doc comment asserted that grounding "requires research_tools
++ a key, so with tools off there are no grounded findings and this stays empty" — which justified
+leaving the lever off. That comment is STALE and the corpus refutes it: `research_lookups` grounds
+on `is_mcp || fetched_external`, and a shell curl sets `fetched_external`, so scouts with no MCP
+ground at 2.27/3 on average with ZERO runs at 0. A second stale comment at the doc-fetch helper
+repeated the same false predicate. Both corrected. FIXED: `doc_prefetch` BAKED ON, the saved
+config.yaml unshadowed (the split_fat lesson — a stale saved value silently outranks a baked
+default), and env-pinned in both the desktop benchmark and REGIME.env so no config can shadow it
+again. This is the highest-value single change of the campaign if it holds: the mechanism, the
+fetch and the channel all already existed and were fully built — only the forwarding was off.
