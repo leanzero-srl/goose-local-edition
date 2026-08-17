@@ -124,10 +124,30 @@ type ElectronAPI = {
   readFile: (directory: string) => Promise<FileResponse>;
   /** Read the last benchmark result from disk, or null on first run. */
   benchmarkRead: () => Promise<unknown | null>;
-  /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row. */
+  /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row.
+   *  Two-phase: 'benchmark-started' {workdir} fires immediately (subscribe via `on`), then
+   *  'benchmark-log' lines stream and 'benchmark-finished' closes the run. */
   benchmarkRun: (nodes: number) => Promise<unknown>;
-  /** POST a result to leanzero.net. Must go through main: the renderer CSP blocks external hosts. */
-  benchmarkPublish: (row: unknown) => Promise<{ ok: boolean; error?: string }>;
+  /** Kill the active benchmark run — the runner's process group AND the detached engine. */
+  benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
+  /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
+  benchmarkStatus: () => Promise<{
+    running: boolean;
+    workdir?: string;
+    nodes?: number;
+    startedAt?: string;
+  }>;
+  /** Poster identity (~/.config/goose/benchmark/identity.json), created on first use. */
+  benchmarkIdentity: () => Promise<{ installId: string; handle: string }>;
+  /** The publish-picked screenshots (before/after) from a run's bench-shots dir, base64 PNGs. */
+  benchmarkShots: (
+    workdir?: string
+  ) => Promise<Array<{ name: string; caption: string; b64: string }>>;
+  /** Build + POST the v2 payload from the stored result. Must go through main: the renderer CSP
+   *  blocks external hosts. Returns the server's own message on 422. */
+  benchmarkPublish: (args?: {
+    title?: string;
+  }) => Promise<{ ok: boolean; error?: string; status?: number }>;
   readSwarmRun: (workingDir: string) => Promise<{
     runId: string;
     /** Where the run actually lives — differs from workingDir when the engine redirected the build. */
@@ -293,7 +313,11 @@ const electronAPI: ElectronAPI = {
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
   benchmarkRun: (nodes: number) => ipcRenderer.invoke('benchmark-run', nodes),
-  benchmarkPublish: (row: unknown) => ipcRenderer.invoke('benchmark-publish', row),
+  benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
+  benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
+  benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
+  benchmarkShots: (workdir?: string) => ipcRenderer.invoke('benchmark-shots', workdir),
+  benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),

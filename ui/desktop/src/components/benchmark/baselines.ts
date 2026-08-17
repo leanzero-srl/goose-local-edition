@@ -16,7 +16,14 @@ export interface BenchmarkRow {
   nodes?: number;
   mine?: boolean;
   scorerVersion: string;
+  wallSecs?: number;
 }
+
+/**
+ * The comparability rail. Rows measured by a different scorer are NOT comparable and must not sit
+ * in the same chart — the view keeps a mismatched user row off the board and says why.
+ */
+export const COMPARABLE_SCORER = 'sb-5.2';
 
 export const TIER_LABELS: Record<Tier, string> = {
   A: 'A structure',
@@ -27,30 +34,30 @@ export const TIER_LABELS: Record<Tier, string> = {
 
 export const TIER_WEIGHTS: Record<Tier, number> = { A: 0.25, B: 0.3, C: 0.25, D: 0.2 };
 
+// The FROZEN sb-5.2 ladder (cloud, Bedrock, v2 spec) — the contract's baseline docs. Tier means and
+// wall times come from the frozen verdicts (runs/build/{opus-5-r2,sonnet-5-r2,haiku-4.5-r2}); the
+// overall scores are the contract's canonical 3-decimal figures.
 export const BASELINES: BenchmarkRow[] = [
   {
     label: 'Claude Opus 5',
-    score: 0.98,
-    tiers: { A: 1.0, B: 1.0, C: 1.0, D: 0.9 },
-    scorerVersion: 'sb-3',
+    score: 0.975,
+    tiers: { A: 1.0, B: 0.9688, C: 1.0, D: 0.975 },
+    scorerVersion: COMPARABLE_SCORER,
+    wallSecs: 1170,
   },
   {
     label: 'Claude Sonnet 5',
-    score: 0.92,
-    tiers: { A: 1.0, B: 1.0, C: 0.86, D: 0.78 },
-    scorerVersion: 'sb-3',
+    score: 0.969,
+    tiers: { A: 1.0, B: 1.0, C: 1.0, D: 0.875 },
+    scorerVersion: COMPARABLE_SCORER,
+    wallSecs: 410,
   },
   {
     label: 'Claude Haiku 4.5',
-    score: 0.73,
-    tiers: { A: 0.83, B: 0.85, C: 0.43, D: 0.8 },
-    scorerVersion: 'sb-3',
-  },
-  {
-    label: 'Local 27b, single agent',
-    score: 0.841,
-    tiers: { A: 0.83, B: 0.88, C: 0.86, D: 0.78 },
-    scorerVersion: 'sb-3',
+    score: 0.786,
+    tiers: { A: 0.8333, B: 0.8747, C: 0.5, D: 0.7875 },
+    scorerVersion: COMPARABLE_SCORER,
+    wallSecs: 318,
   },
 ];
 

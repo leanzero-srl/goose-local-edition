@@ -14,8 +14,8 @@ word lists + 4 hex chars so they are readable, unique enough, and stable per ins
 
 ## Screenshots (probe side — engine binary untouched)
 product_probe.mjs captures PNG screenshots when env `BENCH_SHOTS_DIR` is set:
-one per scenario (`loaded.png`, `synced.png`, `error.png`, `empty.png`, `mobile.png` at
-375px) into `$BENCH_SHOTS_DIR/<epoch>/`. The render gate runs the probe during the engine's
+one per scenario, FLAT-NAMED `<epoch>-<scenario>.png` (loaded/synced/error/empty + mobile at
+375px) into `$BENCH_SHOTS_DIR/`. The render gate runs the probe during the engine's
 repair/verify rounds, so successive epochs show the page AS THE SWARM REPAIRS IT; the final
 epoch is the shipped quality. run_build.py sets BENCH_SHOTS_DIR=<workdir>/bench-shots.
 The publisher picks: first epoch's `loaded.png` (before) + final epoch's full set (after).
@@ -38,7 +38,9 @@ Strict allowlist; unknown keys REJECT. All of v1 plus:
 }
 ```
 Server rules (best-effort gating, decided 2026-08-17):
-- screenshots: PNG magic-sniffed, <=1.5MB decoded each, <=5; uploaded as Sanity assets.
+- screenshots: PNG magic-sniffed, <=1.5MB decoded each, <=5, AND <=3.5MB decoded TOTAL
+  (Amplify's SSR lambda rejects ~6MB invocations before the route runs — the desktop
+  publisher enforces the total); uploaded as Sanity assets.
 - consistency: 0<=score<=1, tiers all present in [0,1], engineEvents>=100 for swarm labels,
   wallSecs>=600 for nodes>=1 swarm entrants, finishedAt>startedAt. Fail => 422.
 - rate limit per IP + per installId (5/day). Result: draft benchmarkRun (202, human-promoted).
