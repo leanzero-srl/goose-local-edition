@@ -11558,6 +11558,42 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// F885 (run 10, round 0, watched live): the app.js shard's worker added every missing DOM
+    /// id to index.html — a file it did not own — so grade-what-lands refused the byte-identical
+    /// app.js and a CORRECT repair was discarded. A js/css shard owns its page markup too.
+    #[test]
+    fn a_script_shard_owns_the_markup_it_must_reconcile_with() {
+        let files: Vec<String> = [
+            "vendorsync/web/app.js",
+            "vendorsync/web/index.html",
+            "vendorsync/web/styles.css",
+            "vendorsync/api.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let taken: std::collections::HashSet<String> =
+            ["vendorsync/web/app.js".to_string()].into_iter().collect();
+        assert_eq!(
+            shard_owned_files("vendorsync/web/app.js", &files, &taken),
+            vec![
+                "vendorsync/web/app.js".to_string(),
+                "vendorsync/web/index.html".to_string()
+            ]
+        );
+        // If a sibling group already owns the html, the partition stays disjoint.
+        let taken2: std::collections::HashSet<String> = [
+            "vendorsync/web/app.js".to_string(),
+            "vendorsync/web/index.html".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            shard_owned_files("vendorsync/web/app.js", &files, &taken2),
+            vec!["vendorsync/web/app.js".to_string()]
+        );
+    }
+
     #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
@@ -25413,6 +25449,26 @@ fn shard_owned_files(
         }) {
             if module.as_str() != group_file && !taken.contains(module.as_str()) {
                 owned.push(module.clone());
+            }
+        }
+    }
+    // A SCRIPT'S FINDINGS RECONCILE AGAINST ITS MARKUP. MEASURED (run 10, round 0): the dom-id
+    // scan attributed nine findings to app.js — each saying "either add the id to the HTML or fix
+    // the reference" — and the shard owning only app.js took the natural half of that
+    // instruction: seven tool calls, every missing id added to index.html, pytest collect green
+    // in its shadow. Promote copies only owned files, so the grade-what-lands preview correctly
+    // refused the byte-identical app.js — and the round DISCARDED a correct repair. The js/css
+    // shard now owns the page markup too (when planned and unclaimed), so whichever side of the
+    // reconciliation the worker picks can actually land.
+    if base.ends_with(".js") || base.ends_with(".css") {
+        let dir = group_file.strip_suffix(base).unwrap_or("");
+        if let Some(html) = all_files
+            .iter()
+            .filter(|f| f.ends_with(".html"))
+            .max_by_key(|f| f.starts_with(dir))
+        {
+            if html.as_str() != group_file && !taken.contains(html.as_str()) {
+                owned.push(html.clone());
             }
         }
     }
