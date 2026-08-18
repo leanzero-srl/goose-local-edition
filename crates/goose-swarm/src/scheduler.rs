@@ -551,12 +551,19 @@ impl Drop for IdleSlotGuard {
                     }
                 }
                 // F779/F778: wake the loop ONLY when this release actually freed a DEVICE — a
-                // device-less idle job (the judge running with no idle node to catch a stuck
-                // worker) frees nothing dispatchable, so notifying just re-wakes the loop into an
-                // immediate re-pick of the same task: the measured ~40/sec judge_observed/skipped
-                // spin. Intervention has its own explicit notify; the 15s tick still fires the
-                // device-less judge, just not at CPU speed.
-                if claimed.is_some() {
+                // device-less idle job frees nothing dispatchable, so notifying just re-wakes the
+                // loop into an immediate re-pick of the same task: the measured ~40/sec
+                // judge_observed/skipped spin. Intervention has its own explicit notify; the 15s
+                // tick still fires the device-less judge, just not at CPU speed.
+                //
+                // F893: and never notify for a JUDGE release even WITH a claimed device — the
+                // claimed-device variant of the same spin. Measured live (fleet sb-6 run, fix
+                // round): idle fleet -> judge claims a device -> the dedup skip returns in
+                // microseconds (no LLM call) -> this release notified -> immediate re-pick of the
+                // same unchanged task, 333 observe/skip/verdict cycles in five minutes. The judge
+                // job's own `intervened` notify covers the one case where waking the loop buys
+                // anything; everything else re-evaluates on the tick.
+                if claimed.is_some() && !is_judge {
                     if let Some(n) = notify {
                         n.notify_one();
                     }
