@@ -17712,6 +17712,11 @@ fn pytest_port_collision(low: &str) -> bool {
     low.contains("address already in use") || low.contains("errno 48")
 }
 
+/// How many times a port-collided `pytest -q` is re-run before the gate gives up and records
+/// INCONCLUSIVE. Sized to outlast a sibling task's check rather than to blink at it: with the
+/// staggered backoff below, three retries span roughly a minute of contention.
+const PYTEST_COLLISION_RETRIES: usize = 3;
+
 fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     let low = output.to_lowercase();
     if low.contains("no module named pytest") || low.contains("no module named 'pytest'") {
@@ -18356,18 +18361,31 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 // concurrent gates that collide with each other would otherwise all sleep the
                 // same fixed interval and re-collide in lockstep (the review's herd finding).
                 // The process-global counter fans retries 5/12/19/26 s apart deterministically.
-                if pytest_port_collision(&combined.to_lowercase())
+                // F881: ONE retry was not enough. Run 8 collided on BOTH attempts, so the app's
+                // five test files never executed during verification at all and the gate recorded
+                // "nothing was proven either way" — while the scorer went on to find twenty-nine
+                // losses the suite had a real chance of catching. The collision is transient by
+                // nature (a sibling task holding the port for the length of ITS check), so the
+                // retry budget should outlast a sibling, not just blink at it.
+                let mut attempts = 0;
+                while attempts < PYTEST_COLLISION_RETRIES
+                    && pytest_port_collision(&combined.to_lowercase())
                     && !matches!(v, TestRunVerdict::Pass)
                 {
                     static RETRY_STAGGER: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(0);
                     let slot = RETRY_STAGGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tokio::time::sleep(std::time::Duration::from_secs(5 + 7 * (slot % 4))).await;
+                    attempts += 1;
                     let mut retry_cmd = tokio::process::Command::new("python3");
                     retry_cmd.args(["-m", "pytest", "-q"]).current_dir(root);
-                    if let Some(out2) = smoke_output(retry_cmd, 120).await {
-                        let combined2 = combined_output(&out2);
-                        v = interpret_pytest_run(out2.status.code(), &combined2);
+                    let Some(out2) = smoke_output(retry_cmd, 120).await else {
+                        break;
+                    };
+                    let combined2 = combined_output(&out2);
+                    v = interpret_pytest_run(out2.status.code(), &combined2);
+                    if !pytest_port_collision(&combined2.to_lowercase()) {
+                        break;
                     }
                 }
                 if let TestRunVerdict::Failures(ref t) = v {
@@ -26350,7 +26368,12 @@ impl GooseAgentDispatcher {
                      `collected 0 items`, `no tests ran` or `file or directory not found` means NOTHING \
                      ran — that is a FAILURE even if the command exits 0, fix the path/collection before \
                      finishing. NEVER pipe the test command through `head`/`tail` — the pipe replaces \
-                     the real exit code with the pipe's and a broken run reads as a pass. A test file \
+                     the real exit code with the pipe's and a broken run reads as a pass. If a test \
+                     starts the app or any server, it must bind an EPHEMERAL port it asks the OS for \
+                     (bind port 0, read back the assigned port) — NEVER a literal port number. Several \
+                     tasks in this run execute at the same time on one machine, so a hard-coded port \
+                     makes your suite fail with `Address already in use` through no fault of the code \
+                     under test, and that failure is indistinguishable from a real one. A test file \
                      with a SyntaxError or a bad import is worse than none. A turn that ends without \
                      your owned file written and non-empty FAILS and is retried.\n\n"
                         .to_string()
