@@ -2417,6 +2417,13 @@ def main() -> int:
         return 2
     trace = args.tree / "vendor-trace-sb6.jsonl"
     trace.unlink(missing_ok=True)
+    # Hermetic scoring (F767 at the CLI): a graded db left by a PREVIOUS scoring run makes
+    # the first sync a warm re-sync — update_propagation, webhook counters, conflict dance
+    # and ETag cheapness all measure corrupted state (golden re-gate measured 1.00 -> 0.7995
+    # from this alone). Every invocation starts from an empty db, like the first one did.
+    for leftover in ("graded-sb6.db", "graded-sb6.db-wal", "graded-sb6.db-shm",
+                     "empty-probe.db", "empty-probe.db-wal", "empty-probe.db-shm"):
+        (args.tree / leftover).unlink(missing_ok=True)
     server = V.serve(args.port, trace)
     try:
         ctx = gather(args.tree, args.port, args.tree / "graded-sb6.db", trace,
