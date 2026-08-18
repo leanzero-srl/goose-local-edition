@@ -20476,3 +20476,32 @@ F884+F885+F886 binary is the publish candidate. Separately, the sb-6 hard-tier d
 (data-mined saturation case, VendorSync Pro spec draft, deterministic 3D pixel-truth probing,
 punishing scoring math, Bedrock calibration protocol, red-team amendments) landed in
 evals/swarm-bench/sb6/ — design only, sb-5.3 stays the live scorer.
+
+## F891 — RUN 11: 0.93 sb-5.3, published; the fix chain works and the wall does not
+
+Run 11 (binary bd9e2f002 = F881-F886): the complete corrected chain fired end to end. Round 0
+named everything — ten dom-id findings each with file:line, the ETag NotCheap WITH the client
+path, a pytest failure — and F882 attribution + F885 dual ownership routed three per-file shards
+(the app.js shard owning index.html too; the test shard owning store.py). The judge's semantic
+split (add-dom-ids-to-html / fix-js-dom-references) landed the frontend reconciliation: findings
+14 -> 4, the campaign's first landed frontend repair. Scored 0.93 (A/B/C 1.0, D 0.9375), published
+as brun-14840f84 — 0.004 under the Opus sb-5.3 baseline (0.9344), roughly double Sonnet (0.4971).
+The publish script initially wrote the title into the MODEL field; patched to engine truth within
+minutes (logged here because outward-facing data was briefly wrong).
+
+THE WALL (Mihai: "why is this 3 hours in?!"), accounted to the minute: planning 19m + build 52m
+(normal), fix round 0 63m (paid for itself), fix round 1+ 47m of which 48 total minutes across
+three attempts were ZERO-tool-call workers — and the completion cap could not stop it because it
+is enforced only at round heads while judge splits kept the round alive: 117 minutes used of an
+80-minute cap when the engine was terminated by hand at findings=4. Closed at both ends the same
+hour: F888 (repair prompt puts the edit on a clock, names the measured four-attempt paralysis in
+its own text), F889 (an attempt with zero tool calls at five minutes is aborted — the unchanged
+shadow could never promote, so every further minute was pure loss; fix_attempt_stillborn event),
+F890 (the fix-round scheduler runs inside tokio::timeout(cap remaining) — promoted work stays,
+workers reap via kill_on_drop, fix_sched_wall_cut names the cut; no amount of in-round splitting
+outlives the wall again).
+
+BOARD STATE (sb-5.3, honest, live at leanzero.net with the era selector + screenshots): Opus
+0.9344 · fleet 0.93 · Sonnet 0.4971 · Haiku 0.4615. sb-6 ("VendorSync Pro", 3D, webhooks,
+optimistic concurrency) is implemented with its golden reference passing the freeze gate at 100%;
+Opus calibrated at 0.7445 on it; Sonnet/Haiku baselines in flight; threshold fit next.
