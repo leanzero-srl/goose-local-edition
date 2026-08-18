@@ -26342,11 +26342,48 @@ impl GooseAgentDispatcher {
             task_id: req.task_id.clone(),
             armed: true,
         };
-        let ran = tokio::time::timeout(
-            std::time::Duration::from_secs(fix_cap),
-            self.run_task_inner(req.clone()),
-        )
-        .await;
+        // F889: the cap races a STILLBORN check — an attempt with zero tool calls at five
+        // minutes is aborted instead of consuming the rest of its budget (the narrate-don't-act
+        // stall; the shadow is unchanged so the grade below refuses it regardless — the only
+        // question is whether the round loses 5 minutes or 15 to learn that).
+        let ran = {
+            let digest_path = root
+                .join(".swarm/activity")
+                .join(format!("{}.json", activity_digest_key(&req.task_id)));
+            let fut = self.run_task_inner(req.clone());
+            tokio::pin!(fut);
+            let deadline = tokio::time::sleep(std::time::Duration::from_secs(fix_cap));
+            tokio::pin!(deadline);
+            let started_at = std::time::Instant::now();
+            let mut poll =
+                tokio::time::interval(std::time::Duration::from_secs(FIX_STILLBORN_POLL_SECS));
+            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    r = &mut fut => break Ok(r),
+                    _ = &mut deadline => break Err("cap"),
+                    _ = poll.tick() => {
+                        if started_at.elapsed().as_secs() >= FIX_STILLBORN_SECS {
+                            let tool_calls = std::fs::read_to_string(&digest_path)
+                                .ok()
+                                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                .and_then(|v| v.get("tool_calls").and_then(|t| t.as_u64()));
+                            if tool_calls == Some(0) {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "fix_attempt_stillborn", "path": "sched",
+                                    "round": fr.round, "task_id": req.task_id,
+                                    "secs": started_at.elapsed().as_secs(),
+                                    "detail": "zero tool calls past the stillborn floor — attempt \
+                                               aborted; the unchanged shadow could never promote",
+                                }));
+                                break Err("stillborn");
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
         // A shadow that was never built grades nothing: keep the Transient bail (re-shadow is
         // safe — make_shadow's insert overwrites) instead of minting a vacuous verdict.
         if self.speculative_root(&req.task_id).is_none() {
@@ -28723,6 +28760,17 @@ fn tree_fingerprint(root: &std::path::Path) -> (usize, u64) {
     walk(root, &mut count, &mut newest);
     (count, newest)
 }
+
+/// F889: how long a fix attempt may run with ZERO tool calls before the round stops paying for
+/// it. Run 11 (watched live, Mihai's "why is this 3 hours in"): three repair workers burned 48
+/// minutes producing literally no edits — each read its file, narrated a plan, and consumed the
+/// full 15-minute cap. A worker that has not made ONE tool call after five minutes is not slow,
+/// it is the F423 narrate-don't-act stall, and every minute after that is pure wall-clock loss:
+/// its shadow is unchanged, so grade_promotion_preview will refuse it anyway. Any worker that
+/// made even one tool call keeps its full budget — the guard only stops attempts that provably
+/// never started acting.
+const FIX_STILLBORN_SECS: u64 = 300;
+const FIX_STILLBORN_POLL_SECS: u64 = 30;
 
 /// F781/#15: ONE sampler for both repair fans (race twins AND file shards) — same signal, same
 /// cadence, one implementation, so the two paths can never drift apart the way the two fix caps
@@ -33245,14 +33293,47 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     fix_run = fix_run
                                         .with_pre_reviewer(fresh.clone() as Arc<dyn PreReviewer>);
                                 }
-                                let report = fix_run
-                                    .run_with_decisions(
-                                        fix_dag,
-                                        fresh.clone() as Arc<dyn TaskDispatcher>,
-                                        opts.prompt.clone(),
-                                        user_decisions.clone(),
-                                    )
-                                    .await;
+                                // F890 (run 11, measured live: the fix loop ran 117 minutes
+                                // against an 80-minute cap and was still spawning children when
+                                // the operator asked why the run was three hours in). The
+                                // completion cap is enforced ONLY at round heads, and a fix-round
+                                // DAG has no wall bound of its own — the judge's splits keep
+                                // adding tasks INSIDE the round, so the round head that would
+                                // enforce the cap never arrives. The scheduler run now lives
+                                // inside the cap's remaining window: on expiry the run future is
+                                // dropped (kill_on_drop reaps the workers), promoted shards are
+                                // already landed, unpromoted shadows are discarded, and the loop
+                                // proceeds to the honest re-verify exactly as a cap at the round
+                                // head would have.
+                                let fix_sched_run = fix_run.run_with_decisions(
+                                    fix_dag,
+                                    fresh.clone() as Arc<dyn TaskDispatcher>,
+                                    opts.prompt.clone(),
+                                    user_decisions.clone(),
+                                );
+                                let report = match cap_deadline {
+                                    Some(dl) => {
+                                        let remaining =
+                                            dl.saturating_duration_since(std::time::Instant::now());
+                                        match tokio::time::timeout(remaining, fix_sched_run).await {
+                                            Ok(r) => r,
+                                            Err(_) => {
+                                                sink.write_value(serde_json::json!({
+                                                    "event": "fix_sched_wall_cut",
+                                                    "round": round,
+                                                    "detail": "the completion cap expired inside \
+                                                               the fix round — workers reaped, \
+                                                               promoted work kept, proceeding to \
+                                                               re-verify",
+                                                }));
+                                                Err(anyhow::anyhow!(
+                                                    "fix round cut by the completion wall cap"
+                                                ))
+                                            }
+                                        }
+                                    }
+                                    None => fix_sched_run.await,
+                                };
                                 fresh.end_fix_round();
                                 // The fix run's review findings have no consumer yet — drained to
                                 // an informational event so they are visible, never green-blocking.
