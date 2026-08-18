@@ -13,7 +13,7 @@ The `local-edition-` prefix therefore cannot collide with any existing upstream 
 upstream versions bare `vX.Y.Z`, cannot collide with future ones either. Subsequent releases
 follow the same scheme (`local-edition-v1.0.1`, `local-edition-v1.1.0`, …).
 
-The tag targets the release commit on branch `local-edition` (at draft time: `383cab70c`).
+The tag targets the release commit on branch `local-edition` (the release commit on `local-edition` at tag time).
 
 ## What this release contains
 
@@ -36,10 +36,15 @@ The first stable build of goose Local Edition — goose adapted to run a swarm o
   isolation controls, the run supervisor, the product contract shared with the website, and the
   FINDINGS ledger (F1–F873).
 
-Honest headline numbers (sb-5.2, frozen scorer): cloud baselines Opus 5 0.9755 / Sonnet 5
-0.9692 / Haiku 4.5 0.7861; the fleet's published 3-node entry 0.6618 in 94 min. The closing
-campaign's paired curve stands at quality 5/7 and speed 7/7 for three nodes over one, best
-product-regime run 0.8645.
+Honest headline numbers (sb-5.3, the rendered-means-seen scorer; the sb-5.2 era stays
+published as a frozen historic board behind the site's scorer selector): the fleet's
+published 3-node entry **0.93** (tiers 1.00/1.00/1.00/0.94, 190 min) against cloud
+baselines re-scored on the same ruler — Opus 5 0.9344, Sonnet 5 0.4971, Haiku 4.5 0.4615.
+The fleet lands 0.004 below Opus and roughly doubles Sonnet. Also in this release: the
+sb-6 hard tier ("VendorSync Pro" — raw-WebGL 3D graded by analytic pixel recomputation,
+HMAC webhooks, optimistic concurrency) fully implemented with its golden reference
+passing the freeze gate at 100%; Opus calibrates at 0.7445 on it, threshold freeze
+pending the remaining Bedrock baselines.
 
 ## Artifact plan
 
