@@ -10980,8 +10980,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(prefer_shard_over_race(true, 2, 2));
         assert!(prefer_shard_over_race(true, 5, 9));
         assert!(
-            !prefer_shard_over_race(true, 1, 1),
-            "a single lone finding: racing is still the designed win"
+            prefer_shard_over_race(true, 1, 1),
+            "one finding that NAMES A FILE goes to a focused fixer — racing whole-tree twins \
+             promoted 0 of 9 across three measured waves"
         );
         assert!(!prefer_shard_over_race(true, 0, 0));
         assert!(
@@ -28044,7 +28045,17 @@ fn prefer_shard_over_race(
     // holding a cluster of findings is the BEST case for a focused fixer, not a reason to fall
     // back to whole-tree racing; a single lone finding is still worth racing, since sharding it
     // occupies one node and leaves the rest idle for a problem that may need a second opinion.
-    shard_on && (distinct_file_groups >= 2 || attributed_findings >= 3)
+    //
+    // MEASURED AGAIN, and the threshold moved twice for the same reason. Across three waves in
+    // two runs the whole-tree race promoted 0 of 9 twins — every one re-verifying at EXACTLY the
+    // baseline — while the per-file path promoted 2 of 3 in the run that used it. The last wave
+    // is the clearest: three findings, one of them a single DOM id the html simply had to
+    // declare, and the twins spent 23 / 19 / 6 tool calls on filter handlers and reading without
+    // one of them making that one-line edit. A generalist told to fix everything fixes the
+    // interesting thing; a fixer handed ONE FILE fixes that file. So the rule is now simply
+    // whether the finding names a file at all: if anything is attributable, shard it; race only
+    // when nothing is, which is the case sharding genuinely cannot serve.
+    shard_on && distinct_file_groups >= 1 && attributed_findings >= 1
 }
 
 /// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
