@@ -2694,10 +2694,14 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (event, nodes: number) => {
+ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
+  // sb-6 ("VendorSync Pro" — the hard tier): same engine, same pipeline, a different frozen
+  // ruler. The payload carries both scorers; the tier only switches which spec/probe/scorer the
+  // harness wires up, so a run is always scored by exactly one frozen version end to end.
+  const sb6 = tier === 'sb-6';
   const payloadDir = resolveBenchPayloadDir();
   const runner = path.join(payloadDir, 'bench', 'run_build.py');
   // The engine the run measures: the exact binary this app ships (or the dev build), never a PATH
@@ -2732,7 +2736,7 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
     const child = spawn(
       'python3',
       ['-u', runner, '--entrant', entrant, '--only-rep', '0', '--timeout', '16200',
-        '--out', outRoot],
+        '--out', outRoot, ...(sb6 ? ['--sb6'] : [])],
       {
         cwd: workRoot,
         detached: true,
@@ -2742,12 +2746,16 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
           GOOSE_SWARM_RENDER_NODE: benchNode,
           // The render gate is inert without the probe path, and without the gate there are no
           // repair rounds and no screenshots — the product story of the run.
-          GOOSE_SWARM_RENDER_PROBE: path.join(payloadDir, 'bench', 'product_probe.mjs'),
+          GOOSE_SWARM_RENDER_PROBE: path.join(
+            payloadDir,
+            'bench',
+            sb6 ? 'product_probe_v2.mjs' : 'product_probe.mjs'
+          ),
           // sb-5.2 comparability rail: the baked baselines are v2-spec product-regime numbers, so
           // a user run must be scored by the same scorer against the same spec or the board
           // cannot hold both.
           BENCH_PRODUCT: '1',
-          BENCH_SPEC: path.join(payloadDir, 'spec-build-v2.md'),
+          BENCH_SPEC: path.join(payloadDir, sb6 ? 'spec-build-v3.md' : 'spec-build-v2.md'),
           // The FULL tuned regime (REGIME.env parity, minus harness-only keys and resolved
           // paths): a user's benchmark must run the same engine configuration the baked
           // baselines and the campaign's numbers ran, or the board compares different swarms.

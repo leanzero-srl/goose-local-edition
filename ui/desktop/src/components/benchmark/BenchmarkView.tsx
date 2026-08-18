@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Gauge, Play, Upload, Loader2, XCircle, BadgeCheck } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import {
-  BASELINES,
+  BASELINES_BY_TIER,
   COMPARABLE_SCORER,
+  DEFAULT_TIER,
+  TIERS,
+  TIER_SCORER,
+  type BenchTier,
   TIER_LABELS,
   type BenchmarkRow,
   type Tier,
@@ -295,6 +299,7 @@ function StatTile({ label, value, color }: { label: string; value: string; color
  */
 export default function BenchmarkView() {
   const [nodes, setNodes] = useState<NodeChoice>(3);
+  const [tier, setTier] = useState<BenchTier>(DEFAULT_TIER);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -430,21 +435,28 @@ export default function BenchmarkView() {
     return 'boot';
   }, [scored, swarm.present, swarm.finished]);
 
-  const comparable = mine != null && mine.scorerVersion === COMPARABLE_SCORER;
+  // The board follows the SELECTED tier; a stored result whose scorer matches a different tier
+  // flips the view to that tier's board (so finishing an sb-6 run shows the sb-6 ladder).
+  const comparable = mine != null && mine.scorerVersion === TIER_SCORER[tier];
   const rows = useMemo<BenchmarkRow[]>(
     () =>
-      (comparable && mine ? [...BASELINES, mine] : BASELINES)
+      (comparable && mine ? [...BASELINES_BY_TIER[tier], mine] : BASELINES_BY_TIER[tier])
         .slice()
         .sort((a: BenchmarkRow, b: BenchmarkRow) => b.score - a.score),
-    [comparable, mine]
+    [comparable, mine, tier]
   );
+  useEffect(() => {
+    const mineScorer = mine?.scorerVersion;
+    const owningTier = TIERS.find((t) => TIER_SCORER[t] === mineScorer);
+    if (owningTier) setTier(owningTier);
+  }, [mine?.scorerVersion]);
 
   const run = useCallback(async () => {
     setRunning(true);
     setScored(false);
     setStatus(null);
     try {
-      const result = await window.electron.benchmarkRun?.(nodes);
+      const result = await window.electron.benchmarkRun?.(nodes, tier);
       if (result) {
         setMine(result as MineRow);
         setModel((result as MineRow).modelId ?? '');
@@ -530,6 +542,30 @@ export default function BenchmarkView() {
           </header>
 
           <section className="mt-6 flex flex-wrap items-center gap-3">
+            <span className="text-sm text-text-secondary">Benchmark</span>
+            <div className="flex overflow-hidden rounded border border-border-primary">
+              {TIERS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTier(t)}
+                  disabled={running}
+                  aria-pressed={tier === t}
+                  title={
+                    t === 'sb-6'
+                      ? 'VendorSync Pro — the hard tier: raw-WebGL 3D, webhooks, optimistic concurrency (scorer sb-6.0)'
+                      : 'VendorSync — the standard tier (scorer sb-5.3)'
+                  }
+                  className={`px-4 py-2 text-sm font-bold transition-colors ${
+                    tier === t
+                      ? 'bg-[var(--color-node-5)] text-white'
+                      : 'bg-background-secondary text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {t === 'sb-6' ? 'sb-6 · HARD' : 'sb-5.3'}
+                </button>
+              ))}
+            </div>
             <span className="text-sm text-text-secondary">Nodes</span>
             <div className="flex overflow-hidden rounded border border-border-primary">
               {NODE_CHOICES.map((n) => (
