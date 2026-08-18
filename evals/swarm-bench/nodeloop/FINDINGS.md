@@ -20302,3 +20302,37 @@ silent. The defect is state-dependent — it appears on the REPEAT call, when th
 second: measured on the real tree, `fetch_all_payments()` 1st=247 2nd=100 -> FINDING,
 `total_count()` 0/0 -> FINDING, reproducing the scorer's verdict exactly. Silence on every
 failure to import/construct/call.
+
+## F880 — run 7 = 0.7676 (honest, worse than run 6) and it bought two structural fixes the score alone would never have found
+
+Run 7, on the 12-fix build: **0.7676** — BELOW run 6's 0.8342, and the run is more valuable than
+its number. The frontend improved (J 0.85, V 0.9167, HARD 0.95, P 1.0, the DOM drift fully
+repaired, sync idempotent at last: `{fetched 247, inserted 247}` then `{fetched 247, inserted
+0}`). The score fell because the vendor client's `fetch_all_payments()` RAISES at scoring time,
+so sync acquired 0 and Tier B collapsed with it — and, crucially, THE ENGINE SAW IT: F879's new
+client-API probe was the sole remaining finding of the whole run (11 -> 10 -> 1). The defect run
+6 shipped invisibly is now named, blocking, and repairable. That is the machinery working; the
+app simply ran out of rounds.
+
+TWO STRUCTURAL DEFECTS THE RUN EXPOSED, both fixed:
+
+(1) THE DOM VOCABULARY WAS THE LAST UNFROZEN CROSS-FILE INTERFACE. Run 6 drifted on 2 ids, run 7
+on SEVEN (`summary`, `filter-btn`, `filter-menu`, `table-body`, `pagination`, `loader`,
+`error-banner` — every one referenced by app.js and defined by no html), which made 7 of its 10
+round-1 findings and left the page inoperable ("no working SYNC control", caught by F878's new
+post-sync check). Identical instructions, opposite outcomes: "share one vocabulary" is a hope,
+and the contracts phase freezes Python signatures between modules precisely because agreement
+cannot be negotiated. FIXED: `web_vocab_note` now carries a CONCRETE frozen id list
+(`sync-button`, `payments-body`, `loading-state`, `error-state`, `page-info`, …) spelled
+identically into every web worker's prompt.
+
+(2) SHARD-VS-RACE KEYED ON THE WRONG AXIS. The per-file repair scheduler runs only when findings
+span >=2 FILES; otherwise the engine races whole-tree twins. Run 6: two groups -> sharded ->
+2 of 3 promoted. Run 7: seven findings in ONE file plus a few unattributable -> one group ->
+raced -> all three twins re-verified at EXACTLY the baseline, nothing promoted, TWICE, ~63
+node-minutes per wave — and that burned budget is why the wall-clock cap denied the run its
+final round while findings were still falling 10 -> 1 (the extension rule requires falling
+findings AND headroom; it had the first and not the second). A cluster of findings in one file
+is the BEST case for a focused per-file fixer, not a reason to fall back to racing. FIXED:
+`prefer_shard_over_race` now keys on ATTRIBUTED WORK (>=2 groups OR >=3 attributed findings),
+with the measured 7-in-one-file case as its regression test; a single lone finding still races.

@@ -10976,17 +10976,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn a_multi_file_round_shards_instead_of_racing_when_the_lever_is_on() {
-        // S1 both directions: the preference needs the lever AND a real partition.
-        assert!(prefer_shard_over_race(true, 2));
-        assert!(prefer_shard_over_race(true, 5));
+        // S1 both directions: the preference needs the lever AND real per-file work.
+        assert!(prefer_shard_over_race(true, 2, 2));
+        assert!(prefer_shard_over_race(true, 5, 9));
         assert!(
-            !prefer_shard_over_race(true, 1),
-            "one group: racing is the designed win"
+            !prefer_shard_over_race(true, 1, 1),
+            "a single lone finding: racing is still the designed win"
         );
-        assert!(!prefer_shard_over_race(true, 0));
+        assert!(!prefer_shard_over_race(true, 0, 0));
         assert!(
-            !prefer_shard_over_race(false, 4),
+            !prefer_shard_over_race(false, 4, 8),
             "lever off: byte-identical race"
+        );
+        // THE MEASURED CASE: seven findings in ONE file (every DOM id app.js referenced and no
+        // html defined). Group count says 1, but that file is exactly what a focused fixer
+        // should be handed — racing it re-verified at baseline three times and promoted
+        // nothing, twice in one run.
+        assert!(
+            prefer_shard_over_race(true, 1, 7),
+            "a cluster in one file is the BEST case for a per-file fixer, not a reason to race"
         );
     }
 
@@ -28020,8 +28028,23 @@ fn spawn_fix_progress_sampler(
 }
 
 /// Pure: does this round shard instead of race? (Pinned by test — the decision, not the env.)
-fn prefer_shard_over_race(shard_on: bool, distinct_file_groups: usize) -> bool {
-    shard_on && distinct_file_groups >= 2
+fn prefer_shard_over_race(
+    shard_on: bool,
+    distinct_file_groups: usize,
+    attributed_findings: usize,
+) -> bool {
+    // "Two files or race" was the wrong axis, and two runs measured it. Run A's findings spanned
+    // TWO files, sharded into focused per-file fixers, and promoted 2 of 3. Run B had SEVEN
+    // findings in ONE file (every one a DOM id `app.js` referenced and no html defined) plus a
+    // few unattributable ones — one group, so it raced: three twins each had to repair the whole
+    // tree, each re-verified at EXACTLY the baseline, nothing promoted, twice, ~63 node-minutes
+    // per wave. The budget those waves burned is what later denied the run its final round.
+    //
+    // What actually decides it is whether the per-file partition covers real work. One file
+    // holding a cluster of findings is the BEST case for a focused fixer, not a reason to fall
+    // back to whole-tree racing; a single lone finding is still worth racing, since sharding it
+    // occupies one node and leaves the rest idle for a problem that may need a second opinion.
+    shard_on && (distinct_file_groups >= 2 || attributed_findings >= 3)
 }
 
 /// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
@@ -32171,10 +32194,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
             // one model there is nothing to recover and the overhead is pure cost. This matters now that
             // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            let shard_this_round = prefer_shard_over_race(sink_shard(), {
+            let shard_this_round = {
                 let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
-                groups.len()
-            });
+                let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
+                prefer_shard_over_race(sink_shard(), groups.len(), attributed)
+            };
             if spec_repair() && fleet_models.len() > 1 && !shard_this_round {
                 // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
                 // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
