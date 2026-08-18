@@ -48,6 +48,19 @@ struct SummarizeContext {
     messages: String,
 }
 
+/// Summarizer responses from reasoning models carry Thinking/RedactedThinking
+/// blocks. Those must not survive the re-role to `Role::User` — providers such
+/// as Bedrock reject user messages containing reasoning content, which kills
+/// the session at the first compaction.
+fn strip_reasoning_content(message: &mut Message) {
+    message.content.retain(|c| {
+        !matches!(
+            c,
+            MessageContent::Thinking(_) | MessageContent::RedactedThinking(_)
+        )
+    });
+}
+
 /// Compact messages by summarizing them
 ///
 /// This function performs the actual compaction by summarizing messages and updating
@@ -405,6 +418,7 @@ async fn do_compact(
         {
             Ok((mut response, mut provider_usage)) => {
                 response.role = Role::User;
+                strip_reasoning_content(&mut response);
 
                 crate::providers::usage_estimator::ensure_usage_tokens(
                     &mut provider_usage,
@@ -620,6 +634,7 @@ pub async fn summarize_tool_call(
     .await?;
 
     response.role = Role::User;
+    strip_reasoning_content(&mut response);
     response.created = matching_messages.last().unwrap().created;
     response.metadata = MessageMetadata::agent_only();
 
@@ -671,6 +686,17 @@ mod tests {
     use async_trait::async_trait;
     use goose_providers::conversation::token_usage::Usage;
     use rmcp::model::{AnnotateAble, CallToolRequestParams, RawContent, Tool};
+
+    #[test]
+    fn strip_reasoning_content_removes_thinking_keeps_text() {
+        let mut msg = Message::assistant()
+            .with_thinking("chain of thought", "sig")
+            .with_text("the summary");
+        msg.role = Role::User;
+        strip_reasoning_content(&mut msg);
+        assert_eq!(msg.content.len(), 1);
+        assert!(matches!(msg.content[0], MessageContent::Text(_)));
+    }
 
     fn create_tool_pair(
         call_id: &str,
