@@ -20565,3 +20565,15 @@ spec-compliant (the spec documents no --base-url flag and no env var; MERIDIAN_B
 undocumented harness channel). run_build now records vendor_port in every verdict; re-scores
 serve the vendor at the tree's advertised port (recovered for existing trees from each app's own
 hardcode: opus 8980, sonnet 8982, haiku 8987, luna 9003, fleet 8990).
+
+## F897 — Parallel scoring taxed the vendor-timing checks; serial re-scores move Opus +0.084
+
+The sb-6.1 serial re-scores (each tree alone on a quiet machine, advertised vendor port) moved
+Opus 0.7445→0.8281, Sonnet 0.7314→0.7666, Haiku 0.4518→0.4597, Luna r11 0.7887→0.7887 — and the
+per-check diff clears the ruler: NONE of the moved checks are the three probe fixes. All of them
+are vendor-interaction timing (h_webhook_ledger 0→1 with counters exactly [7,4,2,1],
+vendor_traps stall/retry-after → 1.0, c_batch_partial, h_conflict_dance, request_efficiency).
+The afternoon trio was scored in PARALLEL; webhook delivery races and stall-trap windows under
+that load read as app defects. Policy from here: scoring is SERIAL, always — which is also
+Mihai's explicit overnight order for the runs themselves. Any auto-score that overlapped other
+work gets a quiet serial re-score before publishing.
