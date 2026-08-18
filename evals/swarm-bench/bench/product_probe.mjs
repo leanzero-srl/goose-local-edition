@@ -109,14 +109,20 @@ function initFirstDataStamp() {
 
 function pageFirstDataMs() {
   if (window.__probeFirstDataMs != null) return window.__probeFirstDataMs;
+  // Rendered-means-seen here too: innerText of a display:none row falls back to textContent in
+  // Chromium, so without the rects check this timer fires on rows the user never saw.
+  const visible = (el) =>
+    !!(el.getClientRects && el.getClientRects().length) &&
+    getComputedStyle(el).visibility !== 'hidden';
   let rows = Array.from(document.querySelectorAll('tbody tr')).filter(
-    (r) => r.querySelectorAll('td,th').length >= 2
+    (r) => r.querySelectorAll('td,th').length >= 2 && visible(r)
   );
   if (rows.length === 0) {
     rows = Array.from(document.querySelectorAll('[role="row"]')).filter(
       (r) =>
         r.querySelectorAll('[role="cell"],[role="gridcell"]').length >= 2 &&
-        !r.querySelector('[role="columnheader"]')
+        !r.querySelector('[role="columnheader"]') &&
+        visible(r)
     );
   }
   rows = rows.filter((r) => (r.innerText || '').trim().length > 0);
@@ -141,9 +147,16 @@ function pageAnalyzeLoad() {
     }
     return rows;
   }
-  const rows = dataRows();
+  // RENDERED means SEEN. Run 9 shipped a page that loads all 247 payments, appends its rows,
+  // THROWS in the same render pass (an undefined identifier), and paints "Backend unreachable"
+  // over a display:none table — and this counter reported the hidden rows as rendered, scoring a
+  // page no human could read as if it worked. A row counts only if the browser would paint it;
+  // the raw DOM count stays as a diagnostic so the gap itself is visible in the probe output.
+  const domRows = dataRows();
+  const rows = domRows.filter(visible);
   const cellsOf = (r) => Array.from(r.querySelectorAll('td,th,[role="cell"],[role="gridcell"]'));
   const renderedRowCount = rows.length;
+  const domRowCount = domRows.length;
 
   const dateRe =
     /(\d{4}-\d{2}-\d{2})|(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4})|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
@@ -324,6 +337,7 @@ function pageAnalyzeLoad() {
 
   return {
     renderedRowCount,
+    domRowCount,
     totalClaimedInDom,
     dateTexts,
     statusStyles,
@@ -383,14 +397,20 @@ function pageClickSync() {
 }
 
 function pageViewSnapshot() {
+  // Same rendered-means-seen rule as pageAnalyzeLoad: rows behind display:none do not exist to
+  // the user, so they do not exist to the sync/pagination scenarios either.
+  const visible = (el) =>
+    !!(el.getClientRects && el.getClientRects().length) &&
+    getComputedStyle(el).visibility !== 'hidden';
   let rows = Array.from(document.querySelectorAll('tbody tr')).filter(
-    (r) => r.querySelectorAll('td,th').length >= 2
+    (r) => r.querySelectorAll('td,th').length >= 2 && visible(r)
   );
   if (rows.length === 0) {
     rows = Array.from(document.querySelectorAll('[role="row"]')).filter(
       (r) =>
         r.querySelectorAll('[role="cell"],[role="gridcell"]').length >= 2 &&
-        !r.querySelector('[role="columnheader"]')
+        !r.querySelector('[role="columnheader"]') &&
+        visible(r)
     );
   }
   let lastSyncText = null;

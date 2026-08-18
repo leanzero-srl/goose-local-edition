@@ -66,7 +66,14 @@ PRODUCT_CORE = 0.60  # core keeps the majority; hard-block keeps its 0.10
 # not comparable and the sweep will re-run it rather than reuse it. Without this, a stale verdict
 # scored by an older, buggier grader sits silently in a table next to fresh ones — which is how a
 # cheaper model appeared to beat a stronger one. The product gate IS a version change.
-SCORER_VERSION = "sb-5.2" if PRODUCT else "sb-4"
+# sb-5.3: RENDERED MEANS SEEN. Run 9 scored 0.9528 "excellent" on an app whose page shows
+# "Backend unreachable" to every user: it loads all 247 payments, appends its rows, throws on an
+# undefined identifier in the same render pass, and paints the error state over a display:none
+# table. Every row counter in product_probe.mjs read the raw DOM, so hidden rows scored as
+# rendered — inflating J/P and the frontend slice of B, and blinding the ENGINE's render gate
+# (which shares the probe) so no repair round was ever pointed at the frontend. Rows now count
+# only when the browser would paint them; the raw DOM count ships as a diagnostic (domRowCount).
+SCORER_VERSION = "sb-5.3" if PRODUCT else "sb-4"
 
 # ── ROOT-CAUSE ATTRIBUTION ────────────────────────────────────────────────────────────────────
 #
