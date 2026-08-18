@@ -27577,8 +27577,17 @@ impl GooseAgentDispatcher {
                             // IN FULL".
                             Err(_) => true,
                             Ok(m) => {
-                                m.len() == 0
-                                    && !(f.ends_with("__init__.py") || f.ends_with("py.typed"))
+                                if m.len() == 0 {
+                                    return !(f.ends_with("__init__.py")
+                                        || f.ends_with("py.typed"));
+                                }
+                                // F884: the engine PRE-CREATES owned files as signature skeletons,
+                                // so "exists and non-empty" is true before the worker's first
+                                // token. A file still holding only stub bodies was never written —
+                                // the run-10 meridian worker "completed" 585s of zero tool calls
+                                // exactly this way.
+                                std::fs::read_to_string(cwd.join(f.as_str()))
+                                    .is_ok_and(|c| goose_swarm::judge::skeleton_only(&c))
                             }
                         })
                         .cloned()
@@ -27718,9 +27727,15 @@ impl GooseAgentDispatcher {
                             .iter()
                             .all(|f| match cwd.join(f).metadata() {
                                 Ok(m) => {
-                                    m.len() > 0
-                                        || f.ends_with("__init__.py")
-                                        || f.ends_with("py.typed")
+                                    if m.len() == 0 {
+                                        return f.ends_with("__init__.py")
+                                            || f.ends_with("py.typed");
+                                    }
+                                    // F884: an untouched engine skeleton is not a finished
+                                    // deliverable — salvaging it as done would replay the
+                                    // run-10 laundering through the watchdog path.
+                                    !std::fs::read_to_string(cwd.join(f.as_str()))
+                                        .is_ok_and(|c| goose_swarm::judge::skeleton_only(&c))
                                 }
                                 Err(_) => false,
                             });
