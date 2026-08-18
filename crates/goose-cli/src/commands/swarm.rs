@@ -20090,6 +20090,51 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                     .to_string(),
             ),
         }
+        // F879: drive the spec's own CLIENT CLASS directly and size what it returns against that
+        // same vendor total. Everything else here reaches the client through the app's HTTP
+        // surface, so a client whose server path works while its public methods are broken is
+        // invisible — measured exactly that way on the campaign's best run.
+        if let Some((vendor_n, _)) = &vendor_total {
+            if let (Some(module), Some(class)) = spec_client_symbol(spec) {
+                let (_, base_url, api_key) = spec_vendor(spec);
+                if let Some(base) = base_url {
+                    let mut cmd = tokio::process::Command::new("python3");
+                    cmd.current_dir(root)
+                        .arg("-c")
+                        .arg(CLIENT_API_SCRIPT)
+                        .arg(&module)
+                        .arg(&class)
+                        .arg(&base)
+                        .arg(api_key.unwrap_or_default());
+                    if let Some(out) = smoke_output(cmd, 90).await {
+                        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                            if v.get("ran").and_then(|x| x.as_bool()) == Some(true) {
+                                if let Some(counts) = v.get("counts").and_then(|c| c.as_object()) {
+                                    for (name, got) in counts {
+                                        let Some(got) = got.as_i64() else { continue };
+                                        // Only the accessors that are SUPPOSED to be the whole
+                                        // collection: a short list or a zero count against a
+                                        // vendor that reports N is the accumulation/counting bug
+                                        // this exists for. A larger count is never a finding.
+                                        if got < *vendor_n && (got == 0 || got * 2 <= *vendor_n) {
+                                            findings.push(format!(
+                                                "{module}.{class}.{name}() returns {got} while the \
+                                                 vendor's own collection holds {vendor_n} — the \
+                                                 client's PUBLIC API is broken for a direct caller \
+                                                 even if the app's own sync path happens to work. \
+                                                 It must page to the end and return/count \
+                                                 EVERYTHING (accumulate across pages; do not \
+                                                 return or count only the first page)."
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for path in spec_post_endpoints(spec) {
             let url = format!("http://127.0.0.1:{port}{path}");
             // THE STATUS, NOT ONLY THE BODY. The GET arm above has treated `code >= 500` as a
@@ -23065,6 +23110,93 @@ async fn http_timeout_scan(
 /// getElementById('x') / querySelector('#x') string literals are checked against id= attributes
 /// across every .html in scope, so dynamically-built ids can never false-positive. A missing id
 /// is a guaranteed null-deref at runtime — exactly the class the finding text says.
+/// The (module, class) the spec names for its vendor client, read from the spec's own module
+/// heading + class line — `### 1. \`vendorsync/meridian.py\` — the vendor client` followed by
+/// `class MeridianClient:`. Pure and unit-tested; returns (None, None) when the spec does not
+/// document a class, which makes the direct-API check inert rather than guessing.
+fn spec_client_symbol(spec: &str) -> (Option<String>, Option<String>) {
+    let class = regex::Regex::new(r"(?m)^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)")
+        .ok()
+        .and_then(|re| re.captures(spec).map(|c| c[1].to_string()));
+    let module = regex::Regex::new(r"`([A-Za-z0-9_./-]+\.py)`")
+        .ok()
+        .and_then(|re| re.captures(spec).map(|c| c[1].to_string()))
+        .map(|p| {
+            p.trim_end_matches(".py")
+                .trim_start_matches("./")
+                .replace('/', ".")
+        });
+    match (module, class) {
+        (Some(m), Some(c)) => (Some(m), Some(c)),
+        _ => (None, None),
+    }
+}
+
+/// THE DOCUMENTED CLASS API, DRIVEN DIRECTLY (F879). Every engine check reaches the vendor client
+/// through the app's HTTP surface, so a client whose SERVER path works while its own public methods
+/// are broken is invisible: MEASURED on the best run of the campaign — the vendor saw all 7 pages,
+/// the store held 247 rows, the page rendered 247 — while `fetch_all_payments()` returned 100 to a
+/// direct caller and `total_count()` returned 0. Three scorer checks fell on that, and nothing
+/// engine-side could report it, which is the standing law (a scorer check with no engine sibling
+/// measures a gap the swarm cannot close).
+///
+/// Deterministic and self-limiting: it imports the module the spec names, calls only zero-argument
+/// documented accessors, and compares their SIZE against the vendor's own reported total, which the
+/// caller already fetched. Anything it cannot do — import, construct, call — is silence, never a
+/// finding: an unimportable module is already the smoke gate's business.
+const CLIENT_API_SCRIPT: &str = r#"
+import json, sys, importlib, inspect
+mod_name, cls_name, base_url, api_key = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+out = {"ran": False, "counts": {}, "first": {}}
+try:
+    m = importlib.import_module(mod_name)
+    cls = getattr(m, cls_name)
+    try:
+        inst = cls(base_url, api_key)
+    except Exception:
+        try:
+            inst = cls(base_url=base_url, api_key=api_key)
+        except Exception:
+            print(json.dumps(out)); raise SystemExit(0)
+    out["ran"] = True
+    for name in dir(inst):
+        if name.startswith("_"):
+            continue
+        fn = getattr(inst, name, None)
+        if not callable(fn):
+            continue
+        try:
+            sig = inspect.signature(fn)
+        except Exception:
+            continue
+        if any(p.default is inspect.Parameter.empty and p.kind in
+               (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):
+            continue
+        # TWICE, and the SECOND result is what is judged. The first call populates whatever
+        # conditional-request cache the client keeps; the defect this exists for only appears
+        # on the repeat, when the vendor answers 304 and a client that serves a partial cache
+        # returns a short list (measured: 247 then 100) — the same shape the spec means by
+        # "a second sync must be cheap and must not duplicate rows".
+        def size(v):
+            if isinstance(v, (list, tuple)):
+                return len(v)
+            if isinstance(v, int) and not isinstance(v, bool):
+                return v
+            return None
+        try:
+            first = size(fn())
+            second = size(fn())
+        except Exception:
+            continue
+        if first is None or second is None:
+            continue
+        out["counts"][name] = second
+        out["first"][name] = first
+except Exception:
+    pass
+print(json.dumps(out))
+"#;
+
 const DOM_ID_SCRIPT: &str = r#"
 import json, re, sys, pathlib
 root = pathlib.Path(sys.argv[1])
