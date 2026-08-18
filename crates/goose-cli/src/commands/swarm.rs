@@ -11498,6 +11498,56 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!wedged_after_populating(200, 500));
     }
 
+    /// F882 REGRESSION (run 9, round 0): TWO findings, both describing file-anchored work, BOTH
+    /// attributed to nothing — so the round raced whole-tree twins (lifetime 0 of 12 promoted)
+    /// instead of sharding. These are the REAL shapes from that round: (1) a `pytest -q` failure
+    /// whose only file mentions are node-id summary lines with a status word in front; (2) the
+    /// gate's own NotCheap finding, which described the client fix in full and named no file —
+    /// now required to carry the client path the spec's module table derives.
+    #[test]
+    fn run9_round0_findings_attribute_and_shard() {
+        let files: Vec<String> = [
+            "vendorsync/api.py",
+            "vendorsync/meridian.py",
+            "vendorsync/store.py",
+            "tests/test_api.py",
+            "tests/test_meridian.py",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let pytest_finding =
+            "`pytest -q` failed — the generated tests exercise runtime paths that \
+             `--help`/`--collect-only` never invoke:\n\
+             ERROR tests/test_api.py::TestPayments::test_payments_item_keys - AttributeError\n\
+             ERROR tests/test_api.py::TestSummarySync::test_summary_empty_db - AttributeError\n\
+             19 failed, 33 passed, 16 warnings, 15 errors in 22.59s"
+                .to_string();
+        let notcheap_finding = "POST /api/sync is not CHEAP on a repeat run — the second sync \
+             re-fetched 247 row(s) it already had. Key each page's ETag by the exact request that \
+             produced it. The vendor client lives in `vendorsync/meridian.py` — fix it there."
+            .to_string();
+        assert_eq!(
+            extract_file_from_finding(&pytest_finding, &files).as_deref(),
+            Some("tests/test_api.py"),
+            "a pytest -q node-id summary must resolve to its file"
+        );
+        assert_eq!(
+            extract_file_from_finding(&notcheap_finding, &files).as_deref(),
+            Some("vendorsync/meridian.py"),
+            "a client-behaviour finding must resolve to the client file it now names"
+        );
+        let (groups, unassigned) =
+            group_findings_by_file(&[pytest_finding, notcheap_finding], &files);
+        assert_eq!(groups.len(), 2, "two files, two shards");
+        assert!(unassigned.is_empty());
+        let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
+        assert!(
+            prefer_shard_over_race(true, groups.len(), attributed),
+            "run 9's round must shard, not race"
+        );
+    }
+
     #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
@@ -20364,6 +20414,25 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 }
             }
         }
+        // WHERE THE CLIENT LIVES. Every finding below describes CLIENT behaviour — pagination,
+        // conditional requests, idempotency — and until now said WHAT to fix without naming a
+        // file, which made each one unassignable by construction: the per-file repair router
+        // (`group_findings_by_file`) found no path, `attributed` stayed 0, and the round fell
+        // back to whole-tree racing (0 of 12 twins ever promoted). MEASURED on run 9 round 0:
+        // the NotCheap finding carried the complete per-page ETag remediation and reached no
+        // fixer that owned the file it described. The spec's own module table names the client
+        // file; derive it once and let every client finding carry it.
+        let client_loc = {
+            let (module, _) = spec_client_symbol(spec);
+            module
+                .map(|m| {
+                    format!(
+                        " The vendor client lives in `{}.py` — fix it there.",
+                        m.replace('.', "/")
+                    )
+                })
+                .unwrap_or_default()
+        };
         for path in spec_post_endpoints(spec) {
             let url = format!("http://127.0.0.1:{port}{path}");
             // THE STATUS, NOT ONLY THE BODY. The GET arm above has treated `code >= 500` as a
@@ -20452,7 +20521,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                          says there is no next page — and never re-issue an identical request because \
                          of the STATUS it returned, because an identical request returns the identical \
                          status forever. A conditional request answers 'this exact request is \
-                         unchanged'; retrying it unchanged loops without end."
+                         unchanged'; retrying it unchanged loops without end.{client_loc}"
                     ));
                 } else {
                     inconclusive.push(format!(
@@ -20479,7 +20548,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 RepeatedPost::Duplicates(why) => findings.push(format!(
                     "POST {path} is NOT idempotent — {why}. The spec requires that the tool be run \
                      repeatedly against the same database and that a second run not duplicate \
-                     rows. Upsert on the payment's own id rather than inserting."
+                     rows. Upsert on the payment's own id rather than inserting.{client_loc}"
                 )),
                 // THE REMEDIATION NAMES THE KEY, because the measured failure is not "forgot to send
                 // If-None-Match" — the apps DO send it. MEASURED across three cells: 0 of 13, 0 of 16
@@ -20493,7 +20562,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                      which the spec calls out as the top cause of quota exhaustion. Key each page's \
                      ETag by the exact request that produced it (path + offset + limit) and send \
                      If-None-Match only when re-issuing THAT SAME request. A single stored ETag \
-                     replayed on the following page can never match — it is the previous page's tag."
+                     replayed on the following page can never match — it is the previous page's tag.\
+                     {client_loc}"
                 )),
                 // INCONCLUSIVE ONLY WHEN THE VENDOR'S STATE IS UNKNOWN. A vendor with no rows is
                 // a legitimate empty sync — but when the vendor ITSELF reports a non-empty
@@ -24991,6 +25061,21 @@ fn extract_file_from_finding(finding: &str, all_files: &[String]) -> Option<Stri
             let c = chunk.trim();
             if is_code(c) {
                 take(c);
+            }
+        }
+        // A PYTEST NODE ID, anywhere in the line. `pytest -q` names the failing file ONLY as
+        // `FAILED tests/test_api.py::TestX::test_y - msg` / `ERROR tests/test_api.py::test_z` —
+        // a status word first, then the path fused to the test path with `::`. The line-leading
+        // split above sees "ERROR tests/test_api.py" (embedded space) and rejects it. MEASURED
+        // (run 9, round 0): a finding carrying FIFTEEN such lines attributed to NOTHING, so the
+        // round raced whole-tree twins — the 0-for-12 path — instead of handing tests/test_api.py
+        // to a focused fixer.
+        for tok in line.split_whitespace() {
+            if let Some((head, _)) = tok.split_once("::") {
+                let h = head.trim();
+                if is_code(h) {
+                    take(h);
+                }
             }
         }
     }
