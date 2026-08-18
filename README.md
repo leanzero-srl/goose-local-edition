@@ -153,7 +153,23 @@ The public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agent
 
 Read plainly: on the honest ruler the 3-node local fleet lands level with Opus — 0.93 against a baseline of 0.9142, inside Opus's own repeat spread (0.889–0.960 across reps), so the honest claim is parity, not victory — and roughly doubles Sonnet — the frontier gap on this task is, measured, four thousandths of a point, bought with a ~10× wall clock. The Sonnet and Haiku collapses are not typos: their builds ship frontends whose data the old probe credited while hidden behind error states, and the corrected probe prices that truthfully — the same correction that exposed (and then repaired) the fleet's own frontend defects.
 
-**sb-5.2** (historic era, frozen): Opus 0.9755 · Sonnet 0.9692 · Haiku 0.7861 · fleet (mighty-crane-54f2) 0.6618. The era's compression at the top was measured to be an instrument artifact — 42.8 of 100 points passed for ≥90% of serious builds — which is what drove both the sb-5.3 correction and the sb-6 hard tier ("VendorSync Pro": raw-WebGL 3D visualization graded by analytic pixel recomputation, HMAC webhooks, optimistic concurrency; its hand-written golden reference passes the freeze gate at 100%, and Opus calibrates at 0.7445 on it).
+**sb-6.1** (the hard tier — "VendorSync Pro": raw-WebGL 3D visualization graded by analytic pixel recomputation, HMAC webhooks, optimistic concurrency, DST-crossing money math; the hand-written golden reference passes the freeze gate at 100%). All entrants are scored serially and hermetically at the vendor port their spec advertised — the sb-6.0 provisional numbers were re-measured after three probe defects and a scoring-contention artifact were found and fixed the same night:
+
+| entrant | score | run |
+|---|---|---|
+| GPT-5.6 Sol (baseline) | 0.8690 | clean |
+| Claude Opus 5 (baseline) | 0.8281 | clean |
+| GPT-5.6 Luna (baseline) | 0.7887 | floor† |
+| Claude Sonnet 5 (baseline) | 0.7666 | clean |
+| GPT-5.6 Terra (baseline) | 0.7257 | floor† |
+| Claude Haiku 4.5 (baseline) | 0.4597 | clean |
+| **3-node local fleet** | **0.4527** | clean |
+
+† Luna's and Terra's sessions were cut early by a goose engine defect (compaction re-roled the summarizer's reasoning content into a user message, which Bedrock rejects — every GPT session died at its first compaction; fixed in `19b4ed6ef`). Their scores are floors, not ceilings, and are disclosed as such on the board.
+
+The hard tier does what it was built to do: it separates the field the soft tier compressed. The fleet's build ships a working backend (full 1553-payment sync, sub-2ms API latencies, rows rendering at 21 ms) but scores 0.05 on the 3D tier — the WebGL panel is where the 27B class currently breaks, and that is now measured instead of hidden.
+
+**sb-5.2** (historic era, frozen): Opus 0.9755 · Sonnet 0.9692 · Haiku 0.7861 · fleet (mighty-crane-54f2) 0.6618. The era's compression at the top was measured to be an instrument artifact — 42.8 of 100 points passed for ≥90% of serious builds — which is what drove both the sb-5.3 correction and the sb-6 hard tier above.
 
 Two findings frame these numbers honestly:
 
