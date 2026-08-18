@@ -33011,7 +33011,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             let verified = if twin_changed { verified } else { None };
                             sink_r.write_value(serde_json::json!({
                                 "event": "complete_fix_completed",
-                                "round": round, "twin": i, "model": model,
+                                // task_id: the desktop's fleet panel closes the twin's lane on THIS
+                                // event keyed by task_id — without it, a finished node showed
+                                // "Repairing…" until the wave's own end event, 10+ minutes of
+                                // phantom work on an idle node (Mihai caught it on screen).
+                                "round": round, "twin": i, "model": model, "task_id": task_id,
                                 "secs": started.elapsed().as_secs(),
                                 // Recorded, but NOT what decides the twin: a timed-out or
                                 // early-close-cancelled agent whose partial writes verify better
@@ -33319,6 +33323,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 sink_r.write_value(serde_json::json!({
                                     "event": "complete_fix_completed",
                                     "round": round, "shard": g.file, "model": model,
+                                    "task_id": task_id,
                                     "secs": started.elapsed().as_secs(),
                                     "agent_ok": matches!(ran, Ok(Ok(_))),
                                     "verified_findings": verified,
@@ -33424,6 +33429,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_completed",
                         "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
+                        "task_id": task_id,
                         "secs": started.elapsed().as_secs(),
                         "agent_ok": matches!(ran, Ok(Ok(_))),
                         "verified_findings": verified,

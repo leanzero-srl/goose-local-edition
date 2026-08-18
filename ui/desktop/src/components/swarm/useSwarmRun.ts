@@ -1225,7 +1225,19 @@ export function foldEvents(
         if (t.status === 'running') fixTasks.set(k, { ...t, status: 'done', seq: seq++ });
       continue;
     }
-    const taskId = String(e['task_id'] ?? '');
+    let taskId = String(e['task_id'] ?? '');
+    // The race/fan arms' completed events historically carried twin/shard but NO task_id, so a
+    // finished twin's lane stayed "running" until the wave's end event — a completed node showed
+    // "Repairing…" for 10+ minutes while actually idle (caught on screen against the live event
+    // stream). The engine now emits task_id everywhere; this fallback reconstructs it for streams
+    // recorded before that, using the same id scheme the dispatch events use.
+    if (!taskId && (type === 'complete_fix_completed' || type === 'fix_attempt_progress')) {
+      const twin = num(e['twin']);
+      const shard = e['shard'] ? String(e['shard']) : '';
+      if (twin != null) taskId = `complete-fix::twin${twin}`;
+      else if (shard && shard !== '(cross-file)') taskId = `complete-fix::${shard}`;
+      else if (shard) taskId = 'complete-fix::cross-file';
+    }
     if (!taskId) continue;
 
     if (type === 'complete_fix_dispatched') {
