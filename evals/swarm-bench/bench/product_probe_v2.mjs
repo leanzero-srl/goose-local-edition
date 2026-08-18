@@ -362,16 +362,23 @@ const hardTimer = setTimeout(() => {
 // so the reported time is the app's render time, not the probe's polling latency.
 function initFirstDataStamp() {
   window.__probeFirstDataMs = null;
+  // Rendered-means-seen (sb-6.1): the fallback below always filtered to visible rows,
+  // but this stamp did not — it fired on rows inside a hidden fallback table, handing
+  // p_page_interactive a vacuous pass on an app whose real table never renders.
+  const visible = (el) =>
+    !!(el.getClientRects && el.getClientRects().length) &&
+    getComputedStyle(el).visibility !== 'hidden';
   const check = () => {
     if (window.__probeFirstDataMs != null) return true;
     let rows = Array.from(document.querySelectorAll('tbody tr')).filter(
-      (r) => r.querySelectorAll('td,th').length >= 2
+      (r) => r.querySelectorAll('td,th').length >= 2 && visible(r)
     );
     if (rows.length === 0) {
       rows = Array.from(document.querySelectorAll('[role="row"]')).filter(
         (r) =>
           r.querySelectorAll('[role="cell"],[role="gridcell"]').length >= 2 &&
-          !r.querySelector('[role="columnheader"]')
+          !r.querySelector('[role="columnheader"]') &&
+          visible(r)
       );
     }
     if (rows.some((r) => (r.textContent || '').trim().length > 0)) {
@@ -1414,10 +1421,26 @@ async function main() {
     let errorBanner = null;
     let everDisabled = disabledDuringSync;
     let buttonPresentAfter = true;
+    // sb-6.1: "completed" needs CAUSAL evidence, not the absence of failure — a button
+    // with no handler used to score completed after 1500ms of nothing happening.
+    let syncRequested = false;
+    const syncRequestSeen = () =>
+      page
+        .evaluate((sinceEpochMs) => {
+          const origin = performance.timeOrigin;
+          return performance
+            .getEntriesByType('resource')
+            .some(
+              (e) =>
+                /\/api\/sync(\?|#|$)/.test(e.name) && origin + e.startTime >= sinceEpochMs - 100
+            );
+        }, clickAt)
+        .catch(() => false);
     const capMs = Math.min(70000, Math.max(budgetLeft() - 8000, 2000));
     while (Date.now() - clickAt < capMs) {
       const s = await page.evaluate(pageSyncState).catch(() => null);
       errorBanner = await page.evaluate(pageErrorBanner).catch(() => null);
+      if (!syncRequested) syncRequested = await syncRequestSeen();
       if (s && s.found && s.disabled) everDisabled = true;
       buttonPresentAfter = !!(s && s.found);
       const enabled = s && s.found && !s.disabled;
@@ -1449,11 +1472,20 @@ async function main() {
     }
     const tableHashChanged = !!(before && after) && after.tableHash !== before.tableHash;
 
+    if (!syncRequested) syncRequested = await syncRequestSeen();
+    // Demote a "completed" that nothing corroborates: no in-flight state, no observed
+    // /api/sync request, no view change — indistinguishable from a click that did nothing.
+    if (completed && !(everDisabled || syncRequested || viewRefreshed || tableHashChanged)) {
+      completed = false;
+      completedWithinMs = null;
+    }
+
     await saveShot('synced');
     emit({
       found: true,
       buttonText: state.text,
       disabledDuringSync,
+      syncRequested,
       completed,
       completedWithinMs,
       failedAfterMs,
@@ -1502,10 +1534,16 @@ async function main() {
       await sleep(250);
     }
     await saveShot('empty');
+    // sb-6.1: emit body text length here too — the scorer's "page renders but no
+    // matched empty-state string" middle rung was unreachable when only the error
+    // scenario reported it, so a visibly rendered page scored as a blank one.
+    const bodyState = await page.evaluate(pageBlankAndBody).catch(() => null);
     emit({
       emptyStateVisible: emptyText != null,
       emptyStateText: emptyText,
       renderedRowCount: rowCount,
+      blankPage: bodyState ? bodyState.blankPage : true,
+      bodyTextLength: bodyState ? bodyState.bodyTextLength : 0,
       consoleErrors: consoleErrors(),
     });
   } else if (scenario === 'viz') {
