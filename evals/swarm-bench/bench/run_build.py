@@ -43,6 +43,10 @@ MODELS = {
     "opus-5": "us.anthropic.claude-opus-5",
     "sonnet-5": "us.anthropic.claude-sonnet-5",
     "haiku-4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    # OpenAI on Bedrock (ids verified against the account's foundation-models listing 2026-08-18).
+    "gpt-5.6-luna": "openai.gpt-5.6-luna",
+    "gpt-5.6-sol": "openai.gpt-5.6-sol",
+    "gpt-5.6-terra": "openai.gpt-5.6-terra",
 }
 
 
