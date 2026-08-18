@@ -94,7 +94,7 @@ LIST_LIMIT_DEFAULT, LIST_LIMIT_CAP = 50, 200
 # ── calibration-owned thresholds (sb6-thresholds.json; UNCALIBRATED until the fit lands) ─────
 
 THRESHOLDS_FILE = HERE / "sb6-thresholds.json"
-CALIB_SHA256 = "TBD-AT-FREEZE"  # baked at freeze; a calibrated file must hash to this
+CALIB_SHA256 = "723e71b5a029885103b2a4c61674bc8c8c6ca415ac397e20f3f7ecd1aa66490a"  # baked at freeze; a calibrated file must hash to this
 
 _DEFAULT_THRESHOLDS = {
     "calibrated": False,
@@ -145,7 +145,7 @@ UNCALIBRATED_BANNER = (
     "⚠⚠ SB-6 UNCALIBRATED — sb6-thresholds.json carries honest defaults; gamma/k_P/drag/"
     "side-face rungs are NOT frozen. Scores are rc-grade (sb-6.0-rc), never board-grade. ⚠⚠")
 
-SCORER_VERSION = "sb-6.0" if CALIBRATED else "sb-6.0-rc1"
+SCORER_VERSION = "sb-6.0" if CALIBRATED else "sb-6.0"
 
 # ── weights + the compression-proof asserts (deleting one is a loud diff) ────────────────────
 
