@@ -334,6 +334,31 @@ describe('foldEvents — the repair wave has lanes (the 19-minute "all idle" gap
     expect(fixLanes[0].status).toBe('running');
   });
 
+  it("a completed event WITHOUT task_id (the race arm's real shape) still closes its twin", () => {
+    // Run 9, round 1, verbatim shape: the race arm emitted twin/model and NO task_id, and the
+    // panel showed two idle nodes as "Repairing…" for 10+ minutes. The fallback reconstructs
+    // the id from the twin index.
+    const { fixLanes } = foldEvents(
+      [
+        RUN_STARTED,
+        dispatched(0, 'mihai-qwen3.6-27b-fable-fusion-711-mtp'),
+        dispatched(2, 'workhorse-qwen3.6-27b-fable-fusion-711-mtp'),
+        {
+          event: 'complete_fix_completed',
+          round: 1,
+          twin: 2,
+          model: 'workhorse-qwen3.6-27b-fable-fusion-711-mtp',
+          verified_findings: 1,
+          baseline_findings: 1,
+        },
+      ],
+      {}
+    );
+    const byId = Object.fromEntries(fixLanes.map((l) => [l.taskId, l.status]));
+    expect(byId['complete-fix::twin2']).toBe('done');
+    expect(byId['complete-fix::twin0']).toBe('running');
+  });
+
   it('complete_fix_completed closes exactly that twin', () => {
     const { fixLanes } = foldEvents(
       [
