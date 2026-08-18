@@ -154,9 +154,20 @@ pub fn to_bedrock_message_with_caching(
     message: &Message,
     enable_caching: bool,
 ) -> Result<bedrock::Message> {
+    // Bedrock rejects reasoning content in user messages (ValidationException),
+    // so drop Thinking/RedactedThinking blocks that reach a user-role message
+    // (e.g. a summarizer response re-roled during compaction).
+    let is_user = matches!(message.role, rmcp::model::Role::User);
     let mut content_blocks: Vec<bedrock::ContentBlock> = message
         .content
         .iter()
+        .filter(|c| {
+            !(is_user
+                && matches!(
+                    c,
+                    MessageContent::Thinking(_) | MessageContent::RedactedThinking(_)
+                ))
+        })
         .map(to_bedrock_message_content)
         .collect::<Result<_>>()?;
 
