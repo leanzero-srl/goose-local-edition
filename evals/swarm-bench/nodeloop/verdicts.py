@@ -116,10 +116,9 @@ def f499_unmeasured_is_the_judge_set(ev, a) -> tuple[str, str]:
 
 
 def activity_digest_key(task_id: str) -> str:
-    """Mirror of the engine's `activity_digest_key` (crates/goose-cli/src/commands/swarm.rs): a
-    literal `~` doubles, then path separators become `~`, so the filename is flat and the mapping
-    stays injective."""
-    return task_id.replace("~", "~~").replace("/", "~").replace("\\", "~")
+    """Mirror of the engine's escape codec: ~ -> ~t, / -> ~s, \\ -> ~b (F883/E15 — the old
+    doubling scheme aliased 'a/~b' and 'a~/b' onto one key)."""
+    return task_id.replace("~", "~t").replace("/", "~s").replace("\\", "~b")
 
 
 def activity_dir_for(log_path: str) -> str | None:

@@ -2624,14 +2624,17 @@ const pickBenchShots = async (workdir: string): Promise<BenchShot[]> => {
   const firstLoaded = minBy(byScenario('loaded'));
   const lastLoaded = maxBy(byScenario('loaded'));
   const picks: Array<{ name: string; caption: string; file: string }> = [];
-  if (firstLoaded) {
+  // ONE loaded epoch means there is no before/after story — that single shot IS the final
+  // render, and captioning it "before repairs" publishes the shipped page under a label that
+  // says it was later fixed.
+  if (firstLoaded && lastLoaded && lastLoaded.file !== firstLoaded.file) {
     picks.push({
       name: 'loaded-before',
       caption: 'First render — before repairs',
       file: firstLoaded.file,
     });
-  }
-  if (lastLoaded && (!firstLoaded || lastLoaded.file !== firstLoaded.file)) {
+    picks.push({ name: 'loaded', caption: 'Final render', file: lastLoaded.file });
+  } else if (lastLoaded) {
     picks.push({ name: 'loaded', caption: 'Final render', file: lastLoaded.file });
   }
   const lastSynced = maxBy(byScenario('synced'));
@@ -2862,6 +2865,24 @@ ipcMain.handle('benchmark-run', async (event, nodes: number) => {
         };
         await fs.mkdir(BENCH_DIR, { recursive: true });
         await fs.writeFile(BENCH_RESULT, JSON.stringify(row, null, 2));
+        // Snapshot the screenshots NOW, next to the result row. The workdir is reused by the
+        // next run (and wiped within seconds of its start), so a publish that reads it later can
+        // attach a DIFFERENT run's screenshots to this row's score. The snapshot is this row's
+        // evidence, frozen at the moment the row was true.
+        try {
+          const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
+          await fs.rm(snapDir, { recursive: true, force: true });
+          await fs.mkdir(snapDir, { recursive: true });
+          const picked = await pickBenchShots(workdir);
+          for (const shot of picked) {
+            await fs.writeFile(
+              path.join(snapDir, `${shot.name}.json`),
+              JSON.stringify({ caption: shot.caption, b64: shot.b64 })
+            );
+          }
+        } catch {
+          // No snapshot is a degraded publish (falls back to the live workdir), never a failed run.
+        }
         activeBenchRun = null;
         sendSafe('benchmark-finished', { row });
         resolvePromise(row);
@@ -2951,8 +2972,31 @@ ipcMain.handle(
     }
     const identity = await ensureBenchIdentity();
     const title = typeof args?.title === 'string' ? args.title.trim().slice(0, 80) : '';
-    const screenshots =
-      typeof stored.workdir === 'string' ? await pickBenchShots(stored.workdir) : [];
+    // Prefer the frozen snapshot written WITH the result row — the workdir is reused and wiped
+    // by the next run, so reading it at publish time can attach another run's screenshots to
+    // this row's score.
+    const snapshotShots = await (async (): Promise<BenchShot[]> => {
+      const snapDir = path.join(BENCH_DIR, 'shots-snapshot');
+      const entries = await fs.readdir(snapDir).catch(() => [] as string[]);
+      const out: BenchShot[] = [];
+      for (const f of entries) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const parsed = JSON.parse(await fs.readFile(path.join(snapDir, f), 'utf8'));
+          if (typeof parsed?.b64 === 'string' && typeof parsed?.caption === 'string') {
+            out.push({ name: f.slice(0, -5), caption: parsed.caption, b64: parsed.b64 });
+          }
+        } catch {
+          // an unreadable snapshot entry is skipped, not fatal
+        }
+      }
+      return out;
+    })();
+    const screenshots = snapshotShots.length
+      ? snapshotShots
+      : typeof stored.workdir === 'string'
+        ? await pickBenchShots(stored.workdir)
+        : [];
     const tiers = (stored.tiers ?? {}) as Record<string, unknown>;
     // STRICT allowlist per the contract — unknown keys reject the whole payload, so the payload
     // is built key by key (never a spread of the stored row, which carries mine/workdir).
@@ -3186,9 +3230,13 @@ ipcMain.handle('read-swarm-run', async (_event, workingDir: string) => {
             // verbatim, so also index the un-sanitized id — otherwise every fix task stays
             // invisible in the panel and every legacy digest keeps working unchanged.
             if (key.includes('~')) {
-              // Exact inverse of the engine's activity_digest_key: `~~` -> `~`, a lone `~` -> `/`.
+              // Exact inverse of the engine's activity_digest_key escape codec (`~t`->`~`,
+              // `~s`->`/`, `~b`->`\\`); legacy `~~`/lone-`~` keys from older runs still decode
+              // via the trailing alternates.
               // A plain global replace would alias `a~b` and `a/b` onto one task.
-              const taskKey = key.replace(/~~|~/g, (m) => (m === '~~' ? '~' : '/'));
+              const taskKey = key.replace(/~[tsb]|~~|~/g, (m) =>
+                m === '~t' ? '~' : m === '~s' ? '/' : m === '~b' ? '\\' : m === '~~' ? '~' : '/'
+              );
               activity[taskKey] = parsed;
               activityMtimes[taskKey] = st.mtimeMs;
             }
